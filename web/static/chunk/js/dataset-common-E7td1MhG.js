@@ -1,0 +1,1 @@
+var r=(a=>(a.FILE_LOGS="fileLogs",a.DATASET_LOGS="datasetLogs",a))(r||{}),e=(a=>(a.knowledgeGraph="Graph",a.raptor="RAPTOR",a))(e||{});const p={Graph:"Knowledge Graph",RAPTOR:"RAPTOR",GraphRAG:"Knowledge Graph"};export{r as L,e as P,p as a};

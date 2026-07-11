@@ -1,0 +1,5 @@
+function w(v){let a,e,c,p,m,y,d;return g(),{feed:S,reset:g};function g(){a=!0,e="",c=0,p=-1,m=void 0,y=void 0,d=""}function S(f){e=e?e+f:f,a&&C(e)&&(e=e.slice(N.length)),a=!1;const i=e.length;let t=0,o=!1;for(;t<i;){o&&(e[t]===`
+`&&++t,o=!1);let r=-1,n=p,s;for(let l=c;r<0&&l<i;++l)s=e[l],s===":"&&n<0?n=l-t:s==="\r"?(o=!0,r=l-t):s===`
+`&&(r=l-t);if(r<0){c=i-t,p=n;break}else c=0,p=-1;b(e,t,n,r),t+=r+1}t===i?e="":t>0&&(e=e.slice(t))}function b(f,i,t,o){if(o===0){d.length>0&&(v({type:"event",id:m,event:y||void 0,data:d.slice(0,-1)}),d="",m=void 0),y=void 0;return}const r=t<0,n=f.slice(i,i+(r?o:t));let s=0;r?s=o:f[i+t+1]===" "?s=t+2:s=t+1;const l=i+s,E=o-s,u=f.slice(l,l+E).toString();if(n==="data")d+=u?"".concat(u,`
+`):`
+`;else if(n==="event")y=u;else if(n==="id"&&!u.includes("\0"))m=u;else if(n==="retry"){const h=parseInt(u,10);Number.isNaN(h)||v({type:"reconnect-interval",value:h})}}}const N=[239,187,191];function C(v){return N.every((a,e)=>v.charCodeAt(e)===a)}class F extends TransformStream{constructor(){let a;super({start(e){a=w(c=>{c.type==="event"&&e.enqueue(c)})},transform(e){a.feed(e)}})}}export{F as E};

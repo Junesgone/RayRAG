@@ -1,0 +1,7 @@
+/target/
+Cargo.lock
+.idea/
+*.swp
+*.swo
+.DS_Store
+models/*.safetensors
