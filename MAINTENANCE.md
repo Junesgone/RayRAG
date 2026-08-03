@@ -10,9 +10,31 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（705 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（713 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
+
+---
+
+## 2026-08-03 Presentation 移植：对标 rag/app/presentation.py + deepdoc/parser/ppt_parser.py
+
+- **新增 `src/presentation.rs`**（presentation.py 253 行 chunk() 移植，4 单测）：
+  - `is_presentation`（.ppt/.pptx 大小写不敏感）、`title_without_extension`（re.sub `\.[a-zA-Z]+$`）
+  - `chunk_pptx`：每页一个 chunk，`doc_type_kwd="image"`、`page_num_int=[pn+1]`、
+    `top_int=[0]`、`position_int=[(pn+1,0,0,0,0)]`、title_tks/title_sm_tks、tokenize_doc；
+    from_page/to_page 边界（镜像 presentation.py 140-152 行）
+  - PDF 分支路由到 `parser::pdf`（RayRAG 页级管线）；tika fallback 与 .ppt 二进制未移植
+    （仅 PPTX zip 容器，镜像 python-pptx 前置要求）
+- **重写 `src/parser/ppt.rs`**（RAGFlowPptParser 105 行移植，5 单测）：
+  - 轻量 XML 树 walker（quick_xml → XmlNode，去命名空间前缀）
+  - 形状排序 `(top//10, left)`（EMU 坐标，python-pptx None → 0）
+  - 文本框段落 + bullet 检测（`a:pPr` 子元素 buChar/buAutoNum/buBlip →
+    `'  '*level + '.'` 前缀）
+  - 表格（shape_type 19）：第 0 行表头 + 数据行 → `"header: value; ..."` 行
+  - 组形状（shape_type 6）：递归提取 + 子形状排序 join
+  - `slide_texts` 输出每页文本（按 slideN 数字排序），保留 Parse trait 兼容
+- 覆盖率矩阵：`rag/app/presentation.py` partial → **aligned**（aligned 72→73）
+- 全量测试：**713 passed / 0 failed / 26 ignored**；双 feature（postgres+zvec）构建通过
 
 ---
 
