@@ -11,8 +11,8 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 81 | 22544 |
-| partial | 1566 | 637913 |
+| aligned | 82 | 22608 |
+| partial | 1565 | 637849 |
 | replaced | 71 | 27674 |
 | reference | 2723 | 574185 |
 | unmapped | 0 | 0 |
@@ -591,7 +591,7 @@
 | `deepdoc/parser/resume/__init__.py` | 105 | 3140 | `8f35210cc7408029` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
 | `deepdoc/parser/resume/entities/__init__.py` | 15 | 622 | `177b91dd0511cf12` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
 | `deepdoc/parser/resume/entities/corporations.py` | 125 | 3927 | `0704ece1cfa3e0b0` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
-| `deepdoc/parser/resume/entities/degrees.py` | 44 | 1092 | `ddb936e0b8ff35ec` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
+| `deepdoc/parser/resume/entities/degrees.py` | 44 | 1092 | `ddb936e0b8ff35ec` | aligned | `src/resume.rs` | Full port to src/resume.rs (DegreeEntity): DEGREE_TBL id↔name 14-entry table (EMBA/MBA/MPA/专升本/专科/中专/中技/初中/博士/博士后/本科/硕士/职高/高中), get_name(id) → name (unknown → ""), get_id(name) → id (empty → "", uppercased + trimmed lookup). 1 unit test |
 | `deepdoc/parser/resume/entities/industries.py` | 712 | 37706 | `c2b1b8e8261cd7f8` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
 | `deepdoc/parser/resume/entities/regions.py` | 788 | 40115 | `f0a1dc430a901b33` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
 | `deepdoc/parser/resume/entities/res/corp.tks.freq.json` | 65 | 1238 | `c75e2498397cad5e` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |

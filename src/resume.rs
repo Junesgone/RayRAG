@@ -1441,9 +1441,77 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
     resume
 }
 
+/// Degree entity table — full port of
+/// `deepdoc/parser/resume/entities/degrees.py`.
+///
+/// Maps degree ids ↔ Chinese names (TBL / TBL_ reversed lookup) with
+/// `get_name(id)` / `get_id(name)` (case-insensitive, trimmed).
+pub struct DegreeEntity;
+
+/// id → name (degrees.py:17-32).
+pub const DEGREE_TBL: &[(&str, &str)] = &[
+    ("94", "EMBA"),
+    ("6", "MBA"),
+    ("95", "MPA"),
+    ("92", "专升本"),
+    ("4", "专科"),
+    ("90", "中专"),
+    ("91", "中技"),
+    ("86", "初中"),
+    ("3", "博士"),
+    ("10", "博士后"),
+    ("1", "本科"),
+    ("2", "硕士"),
+    ("87", "职高"),
+    ("89", "高中"),
+];
+
+impl DegreeEntity {
+    /// `get_name` — degrees.py:37-38.
+    pub fn get_name(id: &str) -> String {
+        DEGREE_TBL
+            .iter()
+            .find(|(k, _)| *k == id)
+            .map(|(_, v)| v.to_string())
+            .unwrap_or_default()
+    }
+
+    /// `get_id` — degrees.py:40-44 (None → ""; name uppercased + trimmed).
+    pub fn get_id(nm: &str) -> String {
+        if nm.is_empty() {
+            return String::new();
+        }
+        let key = nm.trim().to_uppercase();
+        DEGREE_TBL
+            .iter()
+            .find(|(_, v)| v.eq_ignore_ascii_case(&key))
+            .map(|(k, _)| k.to_string())
+            .unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn degree_entity_maps_ids_and_names() {
+        // get_name — degrees.py:37-38.
+        assert_eq!(DegreeEntity::get_name("1"), "本科");
+        assert_eq!(DegreeEntity::get_name("2"), "硕士");
+        assert_eq!(DegreeEntity::get_name("3"), "博士");
+        assert_eq!(DegreeEntity::get_name("6"), "MBA");
+        assert_eq!(DegreeEntity::get_name("94"), "EMBA");
+        assert_eq!(DegreeEntity::get_name("999"), "");
+
+        // get_id — degrees.py:40-44 (upper + trim).
+        assert_eq!(DegreeEntity::get_id("本科"), "1");
+        assert_eq!(DegreeEntity::get_id(" 硕士 "), "2");
+        assert_eq!(DegreeEntity::get_id("mba"), "6");
+        assert_eq!(DegreeEntity::get_id("EMBA"), "94");
+        assert_eq!(DegreeEntity::get_id("学士"), "");
+        assert_eq!(DegreeEntity::get_id(""), "");
+    }
 
     #[test]
     fn language_detection_and_field_maps() {
