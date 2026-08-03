@@ -11,8 +11,8 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 75 | 20468 |
-| partial | 1572 | 643434 |
+| aligned | 76 | 20525 |
+| partial | 1571 | 643371 |
 | replaced | 71 | 27674 |
 | reference | 2723 | 574185 |
 | unmapped | 0 | 0 |
@@ -606,7 +606,7 @@
 | `deepdoc/parser/resume/step_two.py` | 708 | 25582 | `f32d308deac21966` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
 | `deepdoc/parser/somark_parser.py` | 756 | 31048 | `057b9a886aad52a7` | partial | `src/parser/somark.rs; src/pipeline/mod.rs; src/lib.rs` | All 756 Python source lines and 322 fixed unit-test lines audited together with the fixed Go parser, provider UI and production call points. Rust implements private HEAD reachability with the source's any-status-below-500 rule, SaaS /usage key/quota validation, application/pdf multipart submit with repeated output_formats and JSON element/feature fields, optional api_key omission, code-1124 exponential backoff plus jitter, sleep-before-poll 1.5x/10-second-capped status polling, code/status/result errors and outputs.json.pages conversion. All 21 fixed block types are mapped: TOC/blank are dropped, header/footer obey configuration, unknown types fall back to text, valid titles retain levels, bbox-less images are skipped, images get unique captions, and table/image markers feed the Rust chunker. Every retained block now carries the fixed one-based @@page/x0/x1/top/bottom raw-bbox tag; the SoMark parser marks the document so the chunk boundary removes tags and persists position_int, page_num_int and top_int metadata without rewriting ordinary text. PDF outline/page rendering, rendered-page coordinate scaling, crop images, raw/manual/pipeline tuple shapes, progress callbacks and tenant provider lookup remain partial |
 | `deepdoc/parser/tcadp_parser.py` | 539 | 24565 | `37839eb87ac05447` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
-| `deepdoc/parser/txt_parser.py` | 67 | 2313 | `2a5e999f7d3b3617` | partial | `src/parser/; src/app_parsers.rs` | Rust parsers cover the main formats and explicit external-engine adapters; layout, table and format edge-case parity remains iterative |
+| `deepdoc/parser/txt_parser.py` | 67 | 2313 | `2a5e999f7d3b3617` | aligned | `src/parser/txt.rs` | Full port to src/parser/txt.rs: parser_txt (unicode-escape delimiter expansion mirroring encode/decode(unicode_escape), backtick-token + literal-char delimiter decomposition, capturing-group split re-emitting matched delimiters (Rust Regex::split drops captures), `^dels$` pure-delimiter segment skip with Python alternation semantics, token-budget accumulation via estimate_tokens proxy, `\n`-join segment merging, `(content, "")` chunk pairs); RAGFlowTxtParser Parse adapter keeps passthrough + UTF-16 BOM fallback (decode_text). 6 unit tests |
 | `deepdoc/parser/utils.py` | 283 | 13428 | `c9d2f1a7b3e5c8d0` | partial | `src/parser/pdf.rs` | extract_pdf_outlines mirrored as PdfParser::extract_outlines (OutlineEntry title/depth/page, lopdf get_outlines walk); real nested-bookmark PDF verified 2026-08-03 |
 | `deepdoc/server/README.md` | 204 | 4548 | `9e58a53cc4aadc20` | partial | `src/parser/; src/ocr.rs; src/app_parsers.rs` | Deep-document production runtime is explicitly tracked and no longer treated as repository reference material |
 | `deepdoc/server/adapters/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | partial | `src/parser/; src/ocr.rs; src/app_parsers.rs` | Deep-document production runtime is explicitly tracked and no longer treated as repository reference material |
