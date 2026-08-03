@@ -58,6 +58,7 @@ pub mod vision;
 pub mod audio;
 pub mod storage;
 pub mod hypergraph;
+pub mod manual;
 pub mod merge;
 pub mod dialog;
 pub mod one;
