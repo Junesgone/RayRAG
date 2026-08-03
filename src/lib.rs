@@ -28,6 +28,7 @@ pub mod baidu;
 pub mod baidu_scholar;
 pub mod bing;
 pub mod bocha;
+pub mod book;
 pub mod chunk;
 pub mod chunk_feedback;
 pub mod document_writer;
