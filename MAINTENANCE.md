@@ -10,11 +10,24 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（776 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（793 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 PdfBox 移植：对标 deepdoc/parser/pdf_parser.py 确定性算法段
+
+- **新建 `src/parser/pdfbox.rs`**（17 单测）——pdf_parser.py 中不依赖 DL 模型的确定性算法全量移植：
+  - 乱码检测：`_is_garbled_char`/`_is_garbled_text`（PUA/替换符/控制符/CID 占位）、`_has_subset_font_prefix`、`_is_garbled_by_font_encoding`（subset 比例 ≥30% + CJK<5% + 标点>40%）
+  - 投影匹配：`_match_proj`/`proj_match`（**Python re.match 锚定开头，Rust is_match 任意位置——必须加 `^` 前缀**；`{,48}` 简写 Rust 不支持 → `{0,48}`）
+  - 几何：`_x_dis`/`_y_dis`/`__char_width`/`__height`；`sort_X_by_page`（冒泡调整同列倒序）
+  - 合并：`_text_merge`（水平，同 layoutno 且 |y_dis|<mean_height/3）、`_naive_vertical_merge`（垂直，concatting/feats/detach 三组特征）、`_concat_downward`（sort_Y_firstly，Python 早期 return 后为死代码）
+  - 过滤：`_filter_forpages`（目录/致谢段 + 点线页 dirty 检测）、`_merge_with_same_bullet`、`_line_tag`（@@pages\tx0\tx1\ttop\tbottom##）、`__filterout_scraps`（**对象版 DFS**——Python 传 line 对象非索引，索引版在 remove 后越界）
+- **关键坑**：`X` 单大写字母命中 Ca 非 Sg；`$123` 不匹配 NE 前缀；`第3条` 不匹配中文数字模式；`三、是` 命中 pattern 3 非 12；`（1）范围` 锚定后命中 pattern 11 非 4
+- 剩余 partial：布局识别（ONNX/Ascend）、表格 transformer、OCR 管线、页面栅格化、表格/图片提取、xgboost updown-concat 模型——依赖 DL 模型工件，走 external-engine 适配器
+- 全量测试 793 passed / 0 failed / 26 ignored；双特性构建 0 错误
+- 覆盖率矩阵：pdf_parser.py 保持 partial（确定性算法段已对齐，标注细化）
 
 ## 2026-08-03 Docx 移植：对标 deepdoc/parser/docx_parser.py
 
