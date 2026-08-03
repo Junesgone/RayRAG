@@ -86,6 +86,7 @@ pub mod surname;
 pub mod server;
 pub mod store;
 pub mod stores;
+pub mod table;
 pub mod tavily;
 pub mod tencent_finance;
 pub mod tools_bench_flow;

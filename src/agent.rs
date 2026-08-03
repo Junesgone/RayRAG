@@ -10767,6 +10767,7 @@ fn read_excel_source(source: &ExcelSource) -> Result<Vec<crate::parser::excel::S
             name: "Sheet1".into(),
             rows,
             truncated: false,
+            merged_ranges: Vec::new(),
         }]);
     }
     crate::parser::excel::read_xlsx_sheets(&source.bytes, MAX_EXCEL_PROCESSOR_ROWS)

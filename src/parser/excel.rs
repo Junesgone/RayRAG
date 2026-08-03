@@ -20,6 +20,10 @@ pub(crate) struct SpreadsheetSheet {
     pub name: String,
     pub rows: Vec<Vec<String>>,
     pub truncated: bool,
+    /// Merged-cell ranges in 1-based (row, col) inclusive tuples:
+    /// `(min_row, min_col, max_row, max_col)` — mirrors openpyxl
+    /// `ws.merged_cells.ranges` consumed by `rag/app/table.py`.
+    pub merged_ranges: Vec<(u32, u32, u32, u32)>,
 }
 
 #[derive(Default)]
@@ -138,10 +142,12 @@ pub(crate) fn read_xlsx_sheets(
         let Some(xml) = read_zip_text(&mut archive, &path)? else {
             continue;
         };
-        let (rows, truncated) = parse_sheet_rows(&xml, &shared_strings, max_rows_per_sheet)?;
+        let (rows, merged_ranges, truncated) =
+            parse_sheet_rows(&xml, &shared_strings, max_rows_per_sheet)?;
         sheets.push(SpreadsheetSheet {
             name,
             rows,
+            merged_ranges,
             truncated,
         });
     }
@@ -149,6 +155,25 @@ pub(crate) fn read_xlsx_sheets(
 }
 
 pub(crate) fn write_xlsx_sheets(sheets: &[(String, Vec<Vec<Value>>)]) -> Result<Vec<u8>> {
+    let empty_merges: Vec<Vec<(u32, u32, u32, u32)>> = sheets.iter().map(|_| Vec::new()).collect();
+    write_xlsx_sheets_impl(sheets, &empty_merges)
+}
+
+/// Write an XLSX workbook with merged-cell ranges per sheet. Ranges are
+/// 1-based inclusive (min_row, min_col, max_row, max_col) and emitted as
+/// `<mergeCells><mergeCell ref="A1:B2"/></mergeCells>` — mirrors
+/// xlsxwriter `merge_range` output consumed by RAGFlow `rag/app/table.py`.
+pub(crate) fn write_xlsx_sheets_with_merges(
+    sheets: &[(String, Vec<Vec<Value>>)],
+    merged_ranges: &[Vec<(u32, u32, u32, u32)>],
+) -> Result<Vec<u8>> {
+    write_xlsx_sheets_impl(sheets, merged_ranges)
+}
+
+fn write_xlsx_sheets_impl(
+    sheets: &[(String, Vec<Vec<Value>>)],
+    merged_ranges: &[Vec<(u32, u32, u32, u32)>],
+) -> Result<Vec<u8>> {
     let normalized = normalize_workbook_sheets(sheets);
     let cursor = Cursor::new(Vec::new());
     let mut archive = zip::ZipWriter::new(cursor);
@@ -176,10 +201,11 @@ pub(crate) fn write_xlsx_sheets(sheets: &[(String, Vec<Vec<Value>>)]) -> Result<
     )?;
     write_zip_entry(&mut archive, "xl/styles.xml", STYLES_XML, options)?;
     for (index, (_, rows)) in normalized.iter().enumerate() {
+        let merges = merged_ranges.get(index).map(Vec::as_slice).unwrap_or(&[]);
         write_zip_entry(
             &mut archive,
             &format!("xl/worksheets/sheet{}.xml", index + 1),
-            &worksheet_xml(rows),
+            &worksheet_xml(rows, merges),
             options,
         )?;
     }
@@ -352,7 +378,7 @@ fn workbook_rels_xml(sheet_count: usize) -> String {
     )
 }
 
-fn worksheet_xml(rows: &[Vec<Value>]) -> String {
+fn worksheet_xml(rows: &[Vec<Value>], merged_ranges: &[(u32, u32, u32, u32)]) -> String {
     let rows = rows
         .iter()
         .enumerate()
@@ -367,8 +393,23 @@ fn worksheet_xml(rows: &[Vec<Value>]) -> String {
             format!("<row r=\"{}\">{cells}</row>", row_index + 1)
         })
         .collect::<String>();
+    let merge_cells = if merged_ranges.is_empty() {
+        String::new()
+    } else {
+        let entries = merged_ranges
+            .iter()
+            .map(|(min_row, min_col, max_row, max_col)| {
+                format!(
+                    "<mergeCell ref=\"{0}:{1}\"/>",
+                    cell_reference(*min_col as usize - 1, *min_row as usize - 1),
+                    cell_reference(*max_col as usize - 1, *max_row as usize - 1),
+                )
+            })
+            .collect::<String>();
+        format!("<mergeCells count=\"{}\">{entries}</mergeCells>", merged_ranges.len())
+    };
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>{rows}</sheetData></worksheet>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">{merge_cells}<sheetData>{rows}</sheetData></worksheet>"
     )
 }
 
@@ -462,7 +503,7 @@ fn parse_sheet_rows(
     xml: &str,
     shared_strings: &[String],
     max_rows: usize,
-) -> Result<(Vec<Vec<String>>, bool)> {
+) -> Result<(Vec<Vec<String>>, Vec<(u32, u32, u32, u32)>, bool)> {
     let mut reader = Reader::from_str(xml);
     let mut rows = Vec::new();
     let mut cells = Vec::new();
@@ -471,12 +512,32 @@ fn parse_sheet_rows(
     let mut cell_value = String::new();
     let mut in_cell_value = false;
     let mut in_row = false;
+    // Merged ranges collected from `<mergeCells><mergeCell ref="A1:B2"/>`.
+    let mut merged_ranges: Vec<(u32, u32, u32, u32)> = Vec::new();
 
     loop {
         match reader.read_event()? {
             Event::Start(event) if event.local_name().as_ref() == b"row" => {
                 cells.clear();
                 in_row = true;
+            }
+            Event::Start(event) if event.local_name().as_ref() == b"mergeCell" => {
+                // Attribute is `ref` (not `r`): "A1:B2".
+                let reference = attribute_value(&event, b"ref", reader.decoder())?;
+                if let Some((min_row, min_col, max_row, max_col)) =
+                    reference.as_deref().and_then(parse_merge_range)
+                {
+                    merged_ranges.push((min_row, min_col, max_row, max_col));
+                }
+            }
+            Event::Empty(event) if event.local_name().as_ref() == b"mergeCell" => {
+                // Self-closing `<mergeCell ref="A1:B2"/>`.
+                let reference = attribute_value(&event, b"ref", reader.decoder())?;
+                if let Some((min_row, min_col, max_row, max_col)) =
+                    reference.as_deref().and_then(parse_merge_range)
+                {
+                    merged_ranges.push((min_row, min_col, max_row, max_col));
+                }
             }
             Event::Start(event) if in_row && event.local_name().as_ref() == b"c" => {
                 cell_kind = attribute_value(&event, b"t", reader.decoder())?.unwrap_or_default();
@@ -528,7 +589,7 @@ fn parse_sheet_rows(
                 in_row = false;
                 if cells.iter().any(|value| !value.is_empty()) {
                     if rows.len() == max_rows {
-                        return Ok((rows, true));
+                        return Ok((rows, merged_ranges, true));
                     }
                     rows.push(cells.clone());
                 }
@@ -537,7 +598,47 @@ fn parse_sheet_rows(
             _ => {}
         }
     }
-    Ok((rows, false))
+    Ok((rows, merged_ranges, false))
+}
+
+/// Parse an Excel `ref` like `"A1:B2"` (or a single cell `"C5"`) into
+/// 1-based inclusive `(min_row, min_col, max_row, max_col)`.
+fn parse_merge_range(reference: &str) -> Option<(u32, u32, u32, u32)> {
+    let (first, second) = match reference.split_once(':') {
+        Some((f, s)) => (f, s),
+        None => (reference, reference),
+    };
+    let (row1, col1) = parse_cell_reference(first)?;
+    let (row2, col2) = parse_cell_reference(second)?;
+    Some((
+        row1.min(row2),
+        col1.min(col2),
+        row1.max(row2),
+        col1.max(col2),
+    ))
+}
+
+/// Parse `"A1"` into 1-based `(row, col)`.
+fn parse_cell_reference(reference: &str) -> Option<(u32, u32)> {
+    let letters: String = reference
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let digits: String = reference
+        .chars()
+        .skip_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    if letters.is_empty() || digits.is_empty() {
+        return None;
+    }
+    let mut col = 0u32;
+    for byte in letters.bytes() {
+        col = col
+            .checked_mul(26)?
+            .checked_add((byte.to_ascii_uppercase() - b'A' + 1) as u32)?;
+    }
+    let row = digits.parse::<u32>().ok()?;
+    Some((row, col))
 }
 
 fn attribute_value(
@@ -603,14 +704,46 @@ mod tests {
             r#"<sst><si><r><t>Hello &amp; </t></r><r><t>world</t></r></si></sst>"#,
         )
         .unwrap();
-        let (rows, truncated) = parse_sheet_rows(
-            r#"<worksheet><sheetData><row><c r="A1"><v>42</v></c><c r="B1" t="s"><v>0</v></c><c r="D1" t="inlineStr"><is><t>tail</t></is></c></row></sheetData></worksheet>"#,
+        let (rows, merged_ranges, truncated) = parse_sheet_rows(
+            r#"<worksheet><mergeCells count="1"><mergeCell ref="B2:C3"/></mergeCells><sheetData><row><c r="A1"><v>42</v></c><c r="B1" t="s"><v>0</v></c><c r="D1" t="inlineStr"><is><t>tail</t></is></c></row></sheetData></worksheet>"#,
             &shared,
             1000,
         )
         .unwrap();
         assert!(!truncated);
         assert_eq!(rows, vec![vec!["42", "Hello & world", "", "tail"]]);
+        // mergeCell ref="B2:C3" → 1-based inclusive range
+        assert_eq!(merged_ranges, vec![(2, 2, 3, 3)]);
+    }
+
+    #[test]
+    fn merge_range_parsing_handles_single_and_multi_cell_refs() {
+        assert_eq!(parse_merge_range("A1:B2"), Some((1, 1, 2, 2)));
+        assert_eq!(parse_merge_range("C5"), Some((5, 3, 5, 3)));
+        assert_eq!(parse_merge_range("B2:A1"), Some((1, 1, 2, 2)));
+        assert_eq!(parse_merge_range(""), None);
+        assert_eq!(parse_merge_range("12"), None);
+    }
+
+    #[test]
+    fn merged_ranges_round_trip_through_xlsx_writer() {
+        let bytes = write_xlsx_sheets_with_merges(
+            &[(
+                "Merged".into(),
+                vec![
+                    vec![json!("name"), json!("value")],
+                    vec![json!("a"), json!("1")],
+                ],
+            )],
+            &[vec![(1, 1, 2, 1), (1, 2, 1, 2)]],
+        )
+        .unwrap();
+        let sheets = read_xlsx_sheets(&bytes, 100).unwrap();
+        assert_eq!(sheets[0].merged_ranges, vec![(1, 1, 2, 1), (1, 2, 1, 2)]);
+        // Anchor cells survive: A1="name", B1="value", A2="a".
+        assert_eq!(sheets[0].rows[0][0], "name");
+        assert_eq!(sheets[0].rows[0][1], "value");
+        assert_eq!(sheets[0].rows[1][0], "a");
     }
 
     #[test]

@@ -10,9 +10,45 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（680 passed / 0 failed / 25 ignored，2026-08-03 复核；+13 naive 单测）；`postgres-backend,zvec-backend` 双 feature 通过（687 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（705 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
+
+---
+
+## 2026-08-03 Table/Figure 移植：对标 rag/app/table.py + picture.py + deepdoc/parser/figure_parser.py
+
+- **新增 `src/table.rs`**（RAGFlow `rag/app/table.py` 574 行移植，20 单测）：
+  - 表头/数据行分类：`looks_like_header`（CJK 规则：`ord(c) > 127` 即 header-like，忠实复刻）、
+    `looks_like_data`（Y/N/M/X 单字符、数字、短 hex）、`row_looks_like_header`（多数派）
+  - `detect_header_rows`：最多扫 5 行，遇首个数据行停止
+  - 复杂表头检测：合并范围触及第 1-2 行 → `build_hierarchical_headers`
+    （多级表头 `-` 拼接、Y/N/M/X 与纯数字 part 过滤、Column_N 占位）
+  - 合并继承：`merged_value`/`extract_row_data`（锚点单元格值下传）
+  - 类型推断：`trans_datatime`（ISO/`YYYY/MM/DD`/`YYYY年M月D日`/T+时区后缀）、
+    `trans_bool`（✓/√/是→yes 等中英符号）、`column_data_type`（int/float/datetime/bool/text 多数派+归一化）、
+    `field_name` 类型后缀（_long/_flt/_dt/_kwd/_tks）
+  - 每行一个 chunk：`row_to_chunk`（`- 字段: 值` 行格式，docnm_kwd/title_tks）
+- **`src/parser/excel.rs` 增强**：
+  - 读侧：`<mergeCells><mergeCell ref="A1:B2"/></mergeCells>` 解析（Start+Empty 事件），
+    `parse_cell_reference`/`parse_merge_range`（含单格、反向引用），1-based 闭区间
+  - 写侧：新增 `write_xlsx_sheets_with_merges`（镜像 xlsxwriter merge_range 输出），
+    实现 mergedCells 完整 round-trip 测试
+- **`src/parser/figure.rs` 增强**（picture.py 185 行 + figure_parser.py 292 行移植，6 单测 + 1 GPU 测试）：
+  - `vision_llm_chunk_sync`/`describe_image_bytes`：图片字节 → VisionClient → clean_markdown_block
+    （小图 <11px 跳过，镜像 picture.py min_side 保护）
+  - `clean_markdown_block`：剥离 ```markdown/```md/``` 围栏（Python 语义：无闭合围栏时保留剥离后内容）
+  - `detect_dimensions`：PNG/JPEG(SOF 扫描)/WebP(VP8/VP8L 14-bit 掩码)/GIF/BMP 魔数尺寸解析
+  - OCR 短文本富化：OCR <32 词（英）/32 字符（其他语言）→ 视觉模型描述（picture.py CV-LLM 分支）
+  - `VIDEO_EXTS` 11 种视频格式常量（视频分支路由预留）
+- **GPU 实测**（2026-08-03，8088 Qwen3.5-9B 视觉端点）：
+  - `gpu_vision_endpoint_describes_image_with_prompt` ✅（黑矩形 → black）
+  - `gpu_vision_describes_png_via_vision_llm_chunk_sync` ✅（figure.rs 新链路真实调用）
+  - 踩坑：llama.cpp 拒收无 CRC 的 PNG（400 Failed to load image）；PNG 魔数第 4 字节是 `G` 非 `N`；
+    JPEG SOF 扫描边界 `i+9 <= len`；GIF 仅需 10 字节头
+- **覆盖率矩阵**：`deepdoc/parser/excel_parser.py`、`deepdoc/parser/figure_parser.py`、
+  `rag/app/picture.py`、`rag/app/table.py` 四文件 partial → **aligned**（aligned 68→72）
+- 全量测试：**705 passed / 0 failed / 26 ignored**；双 feature（postgres+zvec）构建通过
 
 ---
 
