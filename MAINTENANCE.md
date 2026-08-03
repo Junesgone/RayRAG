@@ -16,6 +16,13 @@
 
 ---
 
+## 2026-08-03 Ppt 对齐：对标 deepdoc/parser/ppt_parser.py 补全分页语义
+
+- **`src/parser/ppt.rs`**：新增 `slide_texts_paged(data, from_page, to_page)`（0-based `from_page <= i < to_page`，镜像 `RAGFlowPptParser.__call__` 的 continue/break）；原 `slide_texts` 改为全量范围向后兼容包装
+- 既有实现已覆盖：`__sort_shapes`（top//10 再 left）、`__get_bulleted_text`（a:pPr buChar/buAutoNum/buBlip → `{level*2空格}.{text}`）、`__extract`（sp 文本帧 / tbl 19 表头:值 `; ` 行 / grpSp 6 递归）、NotImplementedError 容忍
+- 全量测试 793 passed / 0 failed / 26 ignored；双特性构建 0 错误
+- 覆盖率矩阵：`deepdoc/parser/ppt_parser.py` partial → **aligned**（aligned 80→81，累计 22,544 行对齐）
+
 ## 2026-08-03 PdfBox 移植：对标 deepdoc/parser/pdf_parser.py 确定性算法段
 
 - **新建 `src/parser/pdfbox.rs`**（17 单测）——pdf_parser.py 中不依赖 DL 模型的确定性算法全量移植：

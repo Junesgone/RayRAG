@@ -265,7 +265,13 @@ fn shape_position(node: &XmlNode) -> (i64, i64) {
 }
 
 /// Extract all slide texts (one per slide), sorted by slide number.
-pub fn slide_texts(data: &[u8]) -> Result<Vec<String>> {
+/// `from_page`/`to_page` mirror `RAGFlowPptParser.__call__` (0-based,
+/// `from_page <= i < to_page` kept); defaults include every slide.
+pub fn slide_texts_paged(
+    data: &[u8],
+    from_page: usize,
+    to_page: usize,
+) -> Result<Vec<String>> {
     let cursor = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(cursor)?;
 
@@ -281,8 +287,16 @@ pub fn slide_texts(data: &[u8]) -> Result<Vec<String>> {
     slide_files.sort_by_key(|name| slide_number(name).unwrap_or(usize::MAX));
 
     let mut texts = Vec::with_capacity(slide_files.len());
-    for slide_name in slide_files {
-        let mut slide = match archive.by_name(&slide_name) {
+    for (slide_index, slide_name) in slide_files.iter().enumerate() {
+        // Python: `for i, slide in enumerate(ppt.slides)` with
+        // `if i < from_page: continue; if i >= to_page: break`.
+        if slide_index < from_page {
+            continue;
+        }
+        if slide_index >= to_page {
+            break;
+        }
+        let mut slide = match archive.by_name(slide_name) {
             Ok(f) => f,
             Err(_) => continue,
         };
@@ -302,6 +316,11 @@ pub fn slide_texts(data: &[u8]) -> Result<Vec<String>> {
         texts.push(slide_text);
     }
     Ok(texts)
+}
+
+/// Backward-compatible wrapper — full page range.
+pub fn slide_texts(data: &[u8]) -> Result<Vec<String>> {
+    slide_texts_paged(data, 0, usize::MAX)
 }
 
 #[derive(Default)]
