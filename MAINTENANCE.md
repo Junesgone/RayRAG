@@ -10,11 +10,23 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（713 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（727 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 Resume 移植：对标 rag/app/resume.py（LLM-free 核心）
+
+- **新增 `src/resume.rs`**（resume.py 2768 行 LLM-free 部分移植，14 单测）：
+  - `FIELD_MAP_ZH`/`FIELD_MAP_EN` + `get_field_map`（32 字段双语）
+  - `parse_with_regex`：姓名/电话/邮箱/性别/年龄/出生/学历/学校/专业/公司/职位/工作年限/毕业年份，中英双语策略 + 动词过滤 + 子串去重（镜像 resume.py:1482-1787）
+  - `_postprocess_resume` 四阶段：源文本校验（幻觉剪枝）/ 领域归一化（日期/电话/性别）/ 上下文去重（公司子串+时间重叠、Jaccard 兜底、项目描述并入工作描述）/ 必填字段补齐
+  - `_build_chunk_document`：基本信息/教育背景/技能与证书/工作概况 4 个合并组 + 工作/项目描述逐条 chunk（公司+起止+年限前缀）+ 身份字段冗余 + 简历摘要行 + add_positions 逻辑排序
+  - `_normalize_for_comparison`（NFKC 近似+去空白+小写）、`_parse_date_str`（多格式）、`_calc_single_exp_years`/`_calculate_work_years`（Python round 语义）、`_shingling_jaccard`（tiktoken→字符 n-gram n=5）
+- 不移植（LLM 依赖）：prompt 模板 / `_call_llm` / `parse_with_llm` — RayRAG 以 `ResumeExtractor` 为 seam，regex 路径为确定性兜底
+- 全量测试 727 passed / 0 failed / 26 ignored；双特性构建 0 错误
+- 覆盖率矩阵：`rag/app/resume.py` partial → **aligned**（aligned 73→74，累计 19,357 行对齐）
 
 ## 2026-08-03 Presentation 移植：对标 rag/app/presentation.py + deepdoc/parser/ppt_parser.py
 
