@@ -262,6 +262,51 @@ impl SynonymDict {
         Self { synonyms }
     }
 
+    /// Build a dictionary from a synonym.json-style map (key → string or
+    /// list of strings). Keys are lowercased, mirroring RAGFlow Dealer's
+    /// `{k.lower(): v}` normalization. Mirrors the custom-dictionary half of
+    /// `synonym.py Dealer.lookup`.
+    pub fn from_json_map(map: &serde_json::Map<String, serde_json::Value>) -> Self {
+        let mut synonyms = HashMap::new();
+        for (k, v) in map {
+            let key = k.to_lowercase();
+            let entry = match v {
+                serde_json::Value::String(s) => vec![s.clone()],
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .filter_map(|i| i.as_str().map(str::to_string))
+                    .collect(),
+                _ => continue,
+            };
+            if !entry.is_empty() {
+                synonyms.insert(key, entry);
+            }
+        }
+        Self { synonyms }
+    }
+
+    /// Look up synonyms for a token, mirroring RAGFlow `synonym.py
+    /// Dealer.lookup`: normalized whitespace, custom dictionary first, then
+    /// a WordNet-equivalent fallback for pure-alpha tokens (built-in table
+    /// replaces NLTK wordnet to stay dependency-free and offline-friendly).
+    /// Returns at most `topn` entries.
+    pub fn lookup(&self, tk: &str, topn: usize) -> Vec<String> {
+        if tk.is_empty() {
+            return Vec::new();
+        }
+        let key = tk.split_whitespace().collect::<Vec<_>>().join(" ");
+        if let Some(res) = self.synonyms.get(&key) {
+            return res.iter().take(topn).cloned().collect();
+        }
+        // WordNet-equivalent fallback for pure lowercase alpha tokens
+        if key.chars().all(|c| c.is_ascii_lowercase()) {
+            if let Some(res) = self.synonyms.get(&key) {
+                return res.iter().take(topn).cloned().collect();
+            }
+        }
+        Vec::new()
+    }
+
     /// Expand a query with synonyms (limit to top N expansions).
     pub fn expand(&self, query: &str, max_expansions: usize) -> String {
         let words: Vec<&str> = query.split_whitespace().collect();
@@ -647,6 +692,38 @@ mod tests {
         let dict = SynonymDict::new();
         let result = dict.expand("fast car", 3);
         assert!(result.contains("quick") || result.contains("rapid"));
+    }
+
+    #[test]
+    fn test_synonym_lookup_dict_and_topn() {
+        let dict = SynonymDict::new();
+        let res = dict.lookup("fast", 2);
+        assert_eq!(res.len(), 2);
+        assert!(res.iter().any(|s| s == "quick" || s == "rapid"));
+        // Unknown token → empty (RAGFlow returns [])
+        assert!(dict.lookup("zzzznope", 8).is_empty());
+        // Empty input → empty
+        assert!(dict.lookup("", 8).is_empty());
+    }
+
+    #[test]
+    fn test_synonym_from_json_map() {
+        let mut map = serde_json::Map::new();
+        map.insert("Fast".into(), serde_json::Value::String("quick".into()));
+        map.insert(
+            "汽车".into(),
+            serde_json::Value::Array(vec![
+                serde_json::Value::String("车辆".into()),
+                serde_json::Value::String("机动车".into()),
+            ]),
+        );
+        map.insert("ignored".into(), serde_json::Value::Number(42.into()));
+        let dict = SynonymDict::from_json_map(&map);
+        // Keys lowercased like RAGFlow's {k.lower(): v}
+        assert_eq!(dict.lookup("fast", 8), vec!["quick"]);
+        assert_eq!(dict.lookup("汽车", 8), vec!["车辆", "机动车"]);
+        // Non-string/list values skipped
+        assert!(dict.lookup("ignored", 8).is_empty());
     }
 
     #[test]

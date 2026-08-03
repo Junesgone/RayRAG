@@ -70,6 +70,7 @@ pub mod rerank;
 pub mod runtime;
 pub mod search;
 pub mod searxng;
+pub mod surname;
 pub mod server;
 pub mod store;
 pub mod stores;

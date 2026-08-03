@@ -10,11 +10,34 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（555 passed / 0 failed / 25 ignored，2026-08-03 复核；+5 为 term_weight 查询词加权单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（563 passed / 0 failed / 25 ignored，2026-08-03 复核；+6 surname 百家姓单测，+2 synonym lookup 单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 中文姓氏 + 同义词扩展：对标 rag/nlp/surname.py + synonym.py
+
+- RAGFlow `surname.py`（144 行，正文即 百家姓集合）用于简历解析判断姓名
+  （`deepdoc/parser/resume/step_two.py`：`surname.isit(nm[0]) or surname.isit(nm[:2])`）；
+  `synonym.py`（106 行）Dealer.lookup(tk, topn) 给查询词做同义词扩展
+  （自定义 synonym.json 字典优先 + WordNet 兜底）。
+- **新增 `src/surname.rs`**：~490 单姓 + 54 复姓逐字对齐内嵌；
+  `is_chinese_surname(name)` 复刻 `isit(nm[0]) or isit(nm[:2])` 语义
+  （trim 后先查单姓，再查前两字复姓）。**接入 resume.rs**：简历首行
+  短行若以姓氏开头 → `# 姓名: <name>` 结构化标注（对标 step_two.py）。
+- **升级 `src/nlp.rs` `SynonymDict`**：新增 `lookup(tk, topn)`（空白归一化、
+  字典优先、纯字母兜底、topn 截断——RAGFlow lookup 语义）+
+  `from_json_map`（synonym.json 形态，key 小写化）。NLTK WordNet 用内置
+  同义词表替代（离线零依赖，符合大陆网络环境）；redis 实时同义词
+  （kevin_synonyms 每小时刷新）记系统级 gap（RayRAG 无 redis）。
+- 陷阱记录：RAGFlow 集合中"仉"仅存在于复姓"仉督"，单姓断言会误报
+  （测试初版含 "仉" 失败已改为 "仉督"）。
+- 测试：**563 passed / 0 failed / 25 ignored**（+6 surname 单测：
+  常见单姓/全名/复姓/非姓氏/trim/生僻姓；+2 synonym 单测：lookup
+  topn+字典+空输入、from_json_map 小写化+中文键+非法值跳过）。
+- 矩阵：`rag/nlp/surname.py` → `src/surname.rs; src/parser/resume.rs`；
+  `rag/nlp/synonym.py` → `src/nlp.rs`。
 
 ## 2026-08-03 查询词加权（term_weight.py 移植）：对标 rag/nlp/term_weight.py Dealer
 
