@@ -10,11 +10,20 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（752 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（762 passed / 0 failed / 26 ignored，2026-08-03 复核）；`postgres-backend,zvec-backend` 双 feature 通过。26 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_vision_endpoint_describes_image_with_prompt、gpu_vision_describes_png_via_vision_llm_chunk_sync、gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 Json 移植：对标 deepdoc/parser/json_parser.py（langchain 改编）
+
+- **重写 `src/parser/json.rs`**（json_parser.py 179 行全量移植，10 单测）：
+  - `RAGFlowJsonParser`：max_chunk_size×2、min_chunk_size=max(max-200,50) 默认、`_json_size` 紧凑序列化、`_set_nested_dict`、`_list_to_dict_preprocessing`（list→索引键 dict）、`_json_split` 忠实递归移植（有序迭代、放得下进当前 chunk、放不下且当前够 min 开新 chunk 并递归；langchain 允许最终 key 使 chunk 略超 max）、`split_json`（去尾空 chunk）、`split_text`（ensure_ascii \uXXXX 转义）、`is_jsonl_format`（整文解析失败 → 采样 ≤10 行 ≥80% 合法）、`_parse_json/_parse_jsonl`、`parse_binary` 入口
+  - `JsonParser` Parse 适配器 join sections；`flatten_json` 旧辅助保留
+- **关键坑**：初版迭代栈反转了 dict 处理顺序（rev+push 导致 b/c/d 顺序颠倒、chunk 归属错误），改回忠实递归版解决；serde_json::Map 无 `is_empty` 方法需自定义辅助；`json_size` 是关联函数非方法
+- 全量测试 762 passed / 0 failed / 26 ignored；双特性构建 0 错误
+- 覆盖率矩阵：`deepdoc/parser/json_parser.py` partial → **aligned**（aligned 77→78，累计 21,151 行对齐）
 
 ## 2026-08-03 Html 移植：对标 deepdoc/parser/html_parser.py
 
