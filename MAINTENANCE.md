@@ -10,11 +10,42 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（563 passed / 0 failed / 25 ignored，2026-08-03 复核；+6 surname 百家姓单测，+2 synonym lookup 单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（571 passed / 0 failed / 25 ignored，2026-08-03 复核；+8 graphrag 社区报告单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 GraphRAG 社区报告：对标 rag/graphrag/general/ 4 文件
+
+- RAGFlow GraphRAG 社区报告链路：degree→rank → leiden 社区检测 →
+  实体/关系 CSV → COMMUNITY_REPORT_PROMPT → LLM → JSON 校验 → 报告。
+- **新增 `src/graphrag.rs`**（对标 community_reports_extractor.py 183 行 +
+  community_report_prompt.py 158 行 + utils.py 4 个辅助函数）：
+  - `COMMUNITY_REPORT_PROMPT` 全文内嵌（title/summary/rating/rating_explanation/
+    findings JSON schema + grounding rules + 示例/真实数据段，{entity_df}/
+    {relation_df} 占位符）
+  - `CommunityReportsExtractor::run(graph, llm)`：rank（degree）→ 社区划分 →
+    ≥2 实体过滤 → CSV 渲染（10000 边上限）→ prompt 变量替换 → LLM chat
+    （system=渲染 prompt, user="Output:"）→ JSON 切片+花括号还原 →
+    dict_has_keys_with_types 校验 → weight/entities 富化 → 文本报告
+    （`# title\n\nsummary\n\n## findings`）+ max_report_length 截断
+  - `perform_variable_replacements`/`clean_str`（html.unescape + 控制字符剥离）/
+    `dict_has_keys_with_types`/`html_unescape`
+- **leiden.py 替代**：graspologic hierarchical_leiden 是 C++ 原生依赖，
+  用确定性连通分量（union-find）替代，保持 run() 契约（权重=Σrank*weight
+  归一化），零原生依赖。
+- **EntityGraph 扩展**（src/graphrag_enhanced.rs）：GraphNode 加
+  description 字段（serde default 兼容旧数据）；新增 neighbors/
+  description_of/edge_description/set_description/node_names/degree。
+- 陷阱：crate::llm::ChatMessage 无 `user` 关联函数（那是 ToolChatMessage
+  的）→ 用 `ChatMessage::new("user", ...)`；GraphNode 新增字段需同步
+  merge() 初始化器否则 E0063。
+- 测试：**571 passed / 0 failed / 25 ignored**（+8 graphrag 单测：连通分量
+  划分/变量替换/clean_str/类型校验/JSON 提取/文本格式化/截断/html 反转义）。
+- 矩阵：community_report_prompt.py → src/graphrag.rs；community_reports_
+  extractor.py → src/graphrag.rs；leiden.py → src/graphrag.rs；utils.py →
+  src/graphrag.rs; src/graphrag_enhanced.rs。
 
 ## 2026-08-03 中文姓氏 + 同义词扩展：对标 rag/nlp/surname.py + synonym.py
 
