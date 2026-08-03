@@ -13,7 +13,7 @@
 //!      validate keys/types, emit both text and structured output, and tag
 //!      nodes with their community titles.
 
-use crate::graphrag_enhanced::EntityGraph;
+use crate::graphrag_enhanced::{EntityGraph, EntityType};
 use crate::llm::LlmClient;
 use crate::Result;
 use serde_json::{json, Value};
@@ -469,7 +469,7 @@ fn extract_report_json(response: &str) -> Option<Value> {
     serde_json::from_str(&body).ok()
 }
 
-/// _get_text_output — mirrors community_reports_extractor.py: Markdown
+/// `_get_text_output` — mirrors community_reports_extractor.py: Markdown
 /// `# title\n\nsummary\n\n## finding summary\n\nfinding explanation…`.
 fn report_text_output(parsed: &Value, max_length: usize) -> String {
     let title = parsed.get("title").and_then(Value::as_str).unwrap_or("Report");
@@ -498,10 +498,602 @@ fn report_text_output(parsed: &Value, max_length: usize) -> String {
     chars.into_iter().collect()
 }
 
+// ── KG Search ────────────────────────────────────────────────────
+// Mirrors rag/graphrag/search.py (343 lines) + query_analyze_prompt.py's
+// minirag_query2kwd prompt. The upstream class subclasses the full-text
+// Dealer and reads entities/relations/community reports from the vector
+// store; RayRAG substitutes in-memory EntityGraph retrieval (keyword match
+// on entity names, type filter, n-hop path aggregation) while keeping the
+// fusion/ranking/output contract: P(E|Q) ≈ pagerank × sim, type hits ×2,
+// relation sim boosted by n-hop paths and type endpoints, topn + max_token
+// budget, and CSV-formatted Entities/Relations/Community Report sections.
+
+/// minirag_query2kwd — verbatim from query_analyze_prompt.py (MiniRAG, MIT).
+pub const MINIRAG_QUERY2KWD_PROMPT: &str = r#"---Role---
+
+You are a helpful assistant tasked with identifying both answer-type and low-level keywords in the user's query.
+
+---Goal---
+
+Given the query, list both answer-type and low-level keywords.
+answer_type_keywords focus on the type of the answer to the certain query, while low-level keywords focus on specific entities, details, or concrete terms.
+The answer_type_keywords must be selected from Answer type pool. 
+This pool is in the form of a dictionary, where the key represents the Type you should choose from and the value represents the example samples.
+
+---Instructions---
+
+- Output the keywords in JSON format.
+- The JSON should have three keys:
+  - "answer_type_keywords" for the types of the answer. In this list, the types with the highest likelihood should be placed at the forefront. No more than 3.
+  - "entities_from_query" for specific entities or details. It must be extracted from the query.
+######################
+-Examples-
+######################
+Example 1:
+
+Query: "How does international trade influence global economic stability?"
+Answer type pool: {{
+ 'PERSONAL LIFE': ['FAMILY TIME', 'HOME MAINTENANCE'],
+ 'STRATEGY': ['MARKETING PLAN', 'BUSINESS EXPANSION'],
+ 'SERVICE FACILITATION': ['ONLINE SUPPORT', 'CUSTOMER SERVICE TRAINING'],
+ 'PERSON': ['JANE DOE', 'JOHN SMITH'],
+ 'FOOD': ['PASTA', 'SUSHI'],
+ 'EMOTION': ['HAPPINESS', 'ANGER'],
+ 'PERSONAL EXPERIENCE': ['TRAVEL ABROAD', 'STUDYING ABROAD'],
+ 'INTERACTION': ['TEAM MEETING', 'NETWORKING EVENT'],
+ 'BEVERAGE': ['COFFEE', 'TEA'],
+ 'PLAN': ['ANNUAL BUDGET', 'PROJECT TIMELINE'],
+ 'GEO': ['NEW YORK CITY', 'SOUTH AFRICA'],
+ 'GEAR': ['CAMPING TENT', 'CYCLING HELMET'],
+ 'EMOJI': ['🎉', '🚀'],
+ 'BEHAVIOR': ['POSITIVE FEEDBACK', 'NEGATIVE CRITICISM'],
+ 'TONE': ['FORMAL', 'INFORMAL'],
+ 'LOCATION': ['DOWNTOWN', 'SUBURBS']
+}}
+################
+Output:
+{{
+  "answer_type_keywords": ["STRATEGY","PERSONAL LIFE"],
+  "entities_from_query": ["Trade agreements", "Tariffs", "Currency exchange", "Imports", "Exports"]
+}}
+#############################
+Example 2:
+
+Query: "When was SpaceX's first rocket launch?"
+Answer type pool: {{
+ 'DATE AND TIME': ['2023-10-10 10:00', 'THIS AFTERNOON'],
+ 'ORGANIZATION': ['GLOBAL INITIATIVES CORPORATION', 'LOCAL COMMUNITY CENTER'],
+ 'PERSONAL LIFE': ['DAILY EXERCISE ROUTINE', 'FAMILY VACATION PLANNING'],
+ 'STRATEGY': ['NEW PRODUCT LAUNCH', 'YEAR-END SALES BOOST'],
+ 'SERVICE FACILITATION': ['REMOTE IT SUPPORT', 'ON-SITE TRAINING SESSIONS'],
+ 'PERSON': ['ALEXANDER HAMILTON', 'MARIA CURIE'],
+ 'FOOD': ['GRILLED SALMON', 'VEGETARIAN BURRITO'],
+ 'EMOTION': ['EXCITEMENT', 'DISAPPOINTMENT'],
+ 'PERSONAL EXPERIENCE': ['BIRTHDAY CELEBRATION', 'FIRST MARATHON'],
+ 'INTERACTION': ['OFFICE WATER COOLER CHAT', 'ONLINE FORUM DEBATE'],
+ 'BEVERAGE': ['ICED COFFEE', 'GREEN SMOOTHIE'],
+ 'PLAN': ['WEEKLY MEETING SCHEDULE', 'MONTHLY BUDGET OVERVIEW'],
+ 'GEO': ['MOUNT EVEREST BASE CAMP', 'THE GREAT BARRIER REEF'],
+ 'GEAR': ['PROFESSIONAL CAMERA EQUIPMENT', 'OUTDOOR HIKING GEAR'],
+ 'EMOJI': ['📅', '⏰'],
+ 'BEHAVIOR': ['PUNCTUALITY', 'HONESTY'],
+ 'TONE': ['CONFIDENTIAL', 'SATIRICAL'],
+ 'LOCATION': ['CENTRAL PARK', 'DOWNTOWN LIBRARY']
+}}
+
+################
+Output:
+{{
+  "answer_type_keywords": ["DATE AND TIME", "ORGANIZATION", "PLAN"],
+  "entities_from_query": ["SpaceX", "Rocket launch", "Aerospace", "Power Recovery"]
+
+}}
+#############################
+Example 3:
+
+Query: "What is the role of education in reducing poverty?"
+Answer type pool: {{
+ 'PERSONAL LIFE': ['MANAGING WORK-LIFE BALANCE', 'HOME IMPROVEMENT PROJECTS'],
+ 'STRATEGY': ['MARKETING STRATEGIES FOR Q4', 'EXPANDING INTO NEW MARKETS'],
+ 'SERVICE FACILITATION': ['CUSTOMER SATISFACTION SURVEYS', 'STAFF RETENTION PROGRAMS'],
+ 'PERSON': ['ALBERT EINSTEIN', 'MARIA CALLAS'],
+ 'FOOD': ['PAN-FRIED STEAK', 'POACHED EGGS'],
+ 'EMOTION': ['OVERWHELM', 'CONTENTMENT'],
+ 'PERSONAL EXPERIENCE': ['LIVING ABROAD', 'STARTING A NEW JOB'],
+ 'INTERACTION': ['SOCIAL MEDIA ENGAGEMENT', 'PUBLIC SPEAKING'],
+ 'BEVERAGE': ['CAPPUCCINO', 'MATCHA LATTE'],
+ 'PLAN': ['ANNUAL FITNESS GOALS', 'QUARTERLY BUSINESS REVIEW'],
+ 'GEO': ['THE AMAZON RAINFOREST', 'THE GRAND CANYON'],
+ 'GEAR': ['SURFING ESSENTIALS', 'CYCLING ACCESSORIES'],
+ 'EMOJI': ['💻', '📱'],
+ 'BEHAVIOR': ['TEAMWORK', 'LEADERSHIP'],
+ 'TONE': ['FORMAL MEETING', 'CASUAL CONVERSATION'],
+ 'LOCATION': ['URBAN CITY CENTER', 'RURAL COUNTRYSIDE']
+}}
+
+################
+Output:
+{{
+  "answer_type_keywords": ["STRATEGY", "PERSON"],
+  "entities_from_query": ["School access", "Literacy rates", "Job training", "Income inequality"]
+}}
+#############################
+Example 4:
+
+Query: "Where is the capital of the United States?"
+Answer type pool: {{
+ 'ORGANIZATION': ['GREENPEACE', 'RED CROSS'],
+ 'PERSONAL LIFE': ['DAILY WORKOUT', 'HOME COOKING'],
+ 'STRATEGY': ['FINANCIAL INVESTMENT', 'BUSINESS EXPANSION'],
+ 'SERVICE FACILITATION': ['ONLINE SUPPORT', 'CUSTOMER SERVICE TRAINING'],
+ 'PERSON': ['ALBERTA SMITH', 'BENJAMIN JONES'],
+ 'FOOD': ['PASTA CARBONARA', 'SUSHI PLATTER'],
+ 'EMOTION': ['HAPPINESS', 'SADNESS'],
+ 'PERSONAL EXPERIENCE': ['TRAVEL ADVENTURE', 'BOOK CLUB'],
+ 'INTERACTION': ['TEAM BUILDING', 'NETWORKING MEETUP'],
+ 'BEVERAGE': ['LATTE', 'GREEN TEA'],
+ 'PLAN': ['WEIGHT LOSS', 'CAREER DEVELOPMENT'],
+ 'GEO': ['PARIS', 'NEW YORK'],
+ 'GEAR': ['CAMERA', 'HEADPHONES'],
+ 'EMOJI': ['🏢', '🌍'],
+ 'BEHAVIOR': ['POSITIVE THINKING', 'STRESS MANAGEMENT'],
+ 'TONE': ['FRIENDLY', 'PROFESSIONAL'],
+ 'LOCATION': ['DOWNTOWN', 'SUBURBS']
+}}
+################
+Output:
+{{
+  "answer_type_keywords": ["LOCATION"],
+  "entities_from_query": ["capital of the United States", "Washington", "New York"]
+}}
+#############################
+
+-Real Data-
+######################
+Query: {query}
+Answer type pool:{TYPE_POOL}
+######################
+Output:
+
+"#;
+
+/// keywords_extraction — verbatim from query_analyze_prompt.py (used by the
+/// graph extraction flow to split a chunk into high/low-level keywords).
+pub const KEYWORDS_EXTRACTION_PROMPT: &str = r#"---Role---
+
+You are a helpful assistant tasked with identifying both high-level and low-level keywords in the user's query.
+
+---Goal---
+
+Given the query, list both high-level and low-level keywords. High-level keywords focus on overarching concepts or themes, while low-level keywords focus on specific entities, details, or concrete terms.
+
+---Instructions---
+
+- Output the keywords in JSON format.
+- The JSON should have two keys:
+  - "high_level_keywords" for overarching concepts or themes.
+  - "low_level_keywords" for specific entities or details.
+
+######################
+-Examples-
+######################
+{examples}
+
+#############################
+-Real Data-
+######################
+Query: {query}
+######################
+The `Output` should be human text, not unicode characters. Keep the same language as `Query`.
+Output:
+
+"#;
+
+/// Default examples for KEYWORDS_EXTRACTION_PROMPT.
+pub const KEYWORDS_EXTRACTION_EXAMPLES: [&str; 3] = [
+    r#"Example 1:
+
+Query: "How does international trade influence global economic stability?"
+################
+Output:
+{
+  "high_level_keywords": ["International trade", "Global economic stability", "Economic impact"],
+  "low_level_keywords": ["Trade agreements", "Tariffs", "Currency exchange", "Imports", "Exports"]
+}
+#############################"#,
+    r#"Example 2:
+
+Query: "What are the environmental consequences of deforestation on biodiversity?"
+################
+Output:
+{
+  "high_level_keywords": ["Environmental consequences", "Deforestation", "Biodiversity loss"],
+  "low_level_keywords": ["Species extinction", "Habitat destruction", "Carbon emissions", "Rainforest", "Ecosystem"]
+}
+#############################"#,
+    r#"Example 3:
+
+Query: "What is the role of education in reducing poverty?"
+################
+Output:
+{
+  "high_level_keywords": ["Education", "Poverty reduction", "Socioeconomic development"],
+  "low_level_keywords": ["School access", "Literacy rates", "Job training", "Income inequality"]
+}
+#############################"#,
+];
+
+/// An entity hit: similarity, pagerank proxy (degree), n-hop neighbors.
+#[derive(Debug, Clone, Default)]
+pub struct KgEntity {
+    pub sim: f64,
+    pub pagerank: f64,
+    pub description: String,
+    pub n_hop_ents: Vec<String>,
+}
+
+/// A relation hit between two entities.
+#[derive(Debug, Clone, Default)]
+pub struct KgRelation {
+    pub sim: f64,
+    pub pagerank: f64,
+    pub description: String,
+}
+
+/// Knowledge-graph retrieval over an in-memory EntityGraph.
+///
+/// Mirrors `KGSearch` (rag/graphrag/search.py): query rewrite via LLM,
+/// entity/relation retrieval, n-hop path aggregation, fusion scoring
+/// (`sim × pagerank`, type hits boost, relation n-hop boost), topn and
+/// max-token budget, and CSV-style output sections.
+pub struct KgSearch;
+
+impl KgSearch {
+    /// Parse an LLM JSON reply into (answer_type_keywords, entities_from_query).
+    /// Mirrors `query_rewrite`'s json_repair fallback: strip to first `{`…
+    /// last `}`, then try to extract the two keys (missing keys → empty).
+    pub fn parse_rewrite_json(response: &str) -> (Vec<String>, Vec<String>) {
+        let Some(start) = response.find('{') else {
+            return (Vec::new(), Vec::new());
+        };
+        let Some(end) = response.rfind('}') else {
+            return (Vec::new(), Vec::new());
+        };
+        if end <= start {
+            return (Vec::new(), Vec::new());
+        }
+        let body = &response[start..=end];
+        let parsed = serde_json::from_str::<Value>(body).ok();
+        let types = parsed
+            .as_ref()
+            .and_then(|v| v.get("answer_type_keywords"))
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        let ents = parsed
+            .as_ref()
+            .and_then(|v| v.get("entities_from_query"))
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).take(5).collect())
+            .unwrap_or_default();
+        (types, ents)
+    }
+
+    /// Render the minirag_query2kwd prompt for a question + type pool.
+    pub fn render_query2kwd(query: &str, type_pool: &Value) -> String {
+        perform_variable_replacements(
+            MINIRAG_QUERY2KWD_PROMPT,
+            &HashMap::from([
+                ("query".to_string(), query.to_string()),
+                (
+                    "TYPE_POOL".to_string(),
+                    serde_json::to_string_pretty(type_pool).unwrap_or_default(),
+                ),
+            ]),
+        )
+    }
+
+    /// LLM query rewrite — returns (type_keywords, entities_from_query).
+    pub async fn query_rewrite(
+        llm: &LlmClient,
+        question: &str,
+        type_pool: &Value,
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let prompt = Self::render_query2kwd(question, type_pool);
+        let messages = [
+            crate::llm::ChatMessage::new("system", prompt),
+            crate::llm::ChatMessage::new("user", "Output:"),
+        ];
+        let response = llm.chat(&messages).await?;
+        Ok(Self::parse_rewrite_json(&response))
+    }
+
+    /// Keyword → in-graph entity hits. Mirrors
+    /// `get_relevant_ents_by_keywords` (vector search replaced by token
+    /// overlap; sim = Jaccard-ish score, pagerank = degree).
+    pub fn get_relevant_ents_by_keywords(
+        graph: &EntityGraph,
+        keywords: &[String],
+        sim_thr: f64,
+        n: usize,
+    ) -> HashMap<String, KgEntity> {
+        let mut res = HashMap::new();
+        if keywords.is_empty() {
+            return res;
+        }
+        let kw_joined = keywords.join(" ").to_lowercase();
+        for name in graph.node_names() {
+            let name_l = name.to_lowercase();
+            let overlap = keywords.iter().filter(|k| name_l.contains(&k.to_lowercase())).count();
+            if overlap == 0 && !kw_joined.contains(&name_l) {
+                continue;
+            }
+            let sim = if overlap > 0 {
+                (overlap as f64) / (keywords.len() as f64)
+            } else {
+                // name is a substring of the query text
+                0.5
+            };
+            if sim < sim_thr {
+                continue;
+            }
+            let mut e = KgEntity {
+                sim,
+                pagerank: graph.degree(&name) as f64,
+                description: graph.description_of(&name).unwrap_or_default().to_string(),
+                n_hop_ents: graph.search_connected(&name, 2),
+            };
+            e.n_hop_ents.retain(|x| x != &name);
+            res.insert(name, e);
+            if res.len() >= n {
+                break;
+            }
+        }
+        res
+    }
+
+    /// Type → in-graph entity hits (mirrors get_relevant_ents_by_types; the
+    /// upstream orders by rank desc, we order by degree desc).
+    pub fn get_relevant_ents_by_types(
+        graph: &EntityGraph,
+        types: &[String],
+        n: usize,
+    ) -> HashMap<String, KgEntity> {
+        let mut res = HashMap::new();
+        for ty in types {
+            let etype = match ty.to_uppercase().as_str() {
+                "PERSON" | "人" => EntityType::Person,
+                "ORGANIZATION" | "ORG" | "组织" => EntityType::Organization,
+                "LOCATION" | "GEO" | "地点" => EntityType::Location,
+                "DATE" | "时间" => EntityType::Date,
+                "TECHNOLOGY" | "技术" => EntityType::Technology,
+                "PRODUCT" | "产品" => EntityType::Product,
+                "EVENT" | "事件" => EntityType::Event,
+                "CONCEPT" | "概念" => EntityType::Concept,
+                _ => EntityType::Unknown,
+            };
+            let mut names = graph.entities_by_type(&etype);
+            names.sort_by(|a, b| graph.degree(b).cmp(&graph.degree(a)));
+            for name in names {
+                res.entry(name.clone()).or_insert_with(|| KgEntity {
+                    sim: 1.0,
+                    pagerank: graph.degree(&name) as f64,
+                    description: graph.description_of(&name).unwrap_or_default().to_string(),
+                    n_hop_ents: Vec::new(),
+                });
+                if res.len() >= n {
+                    return res;
+                }
+            }
+        }
+        res
+    }
+
+    /// Text → in-graph relation hits (mirrors get_relevant_relations_by_txt;
+    /// relation sim boosted when both endpoints are retrieved).
+    pub fn get_relevant_relations_by_txt(
+        graph: &EntityGraph,
+        txt: &str,
+        sim_thr: f64,
+        n: usize,
+    ) -> HashMap<(String, String), KgRelation> {
+        let mut res = HashMap::new();
+        let txt = txt.to_lowercase();
+        for name in graph.node_names() {
+            for nbr in graph.neighbors(&name) {
+                let key = if name < nbr { (name.clone(), nbr) } else { (nbr, name.clone()) };
+                let hit = txt.contains(&name.to_lowercase()) || txt.contains(&key.0.to_lowercase()) || txt.contains(&key.1.to_lowercase());
+                if !hit {
+                    continue;
+                }
+                let sim = if txt.contains(&key.0.to_lowercase()) && txt.contains(&key.1.to_lowercase()) {
+                    1.0
+                } else {
+                    0.5
+                };
+                if sim < sim_thr {
+                    continue;
+                }
+                let rel = KgRelation {
+                    sim,
+                    pagerank: graph.edge_weight(&key.0, &key.1).unwrap_or(0.0),
+                    description: graph
+                        .edge_description(&key.0, &key.1)
+                        .unwrap_or_default()
+                        .to_string(),
+                };
+                res.insert(key, rel);
+                if res.len() >= n {
+                    return res;
+                }
+            }
+        }
+        res
+    }
+
+    /// Community report retrieval — mirrors `_community_retrieval_`. RayRAG
+    /// keeps reports in a caller-supplied map (title → report text); the
+    /// section format matches upstream (`# N. title\n## Content\n…`).
+    pub fn community_retrieval(
+        community_reports: &HashMap<String, String>,
+        entities: &[String],
+        topn: usize,
+    ) -> String {
+        // Simple relevance: a report matches when any of its entities appear
+        // in the requested entity list. Reports are stored as
+        // "entities|title|report" to make this feasible in-memory.
+        let mut matched: Vec<(&String, &String)> = community_reports
+            .iter()
+            .filter(|(key, _)| {
+                key.split('|').any(|e| entities.iter().any(|q| q.eq_ignore_ascii_case(e)))
+            })
+            .take(topn)
+            .collect();
+        matched.sort_by_key(|(_, report)| report.len());
+        let mut txts = Vec::new();
+        for (i, (key, report)) in matched.iter().enumerate() {
+            let title = key.split('|').nth(1).unwrap_or("Community");
+            txts.push(format!("# {}. {}\n## Content\n{}\n", i + 1, title, report));
+        }
+        if txts.is_empty() {
+            return String::new();
+        }
+        "\n---- Community Report ----\n".to_string() + &txts.join("\n")
+    }
+
+    /// Full retrieval — mirrors `KGSearch.retrieval`. Returns the
+    /// content_with_weight payload (Entities/Relations/Community sections).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn retrieval(
+        graph: &EntityGraph,
+        llm: &LlmClient,
+        community_reports: &HashMap<String, String>,
+        question: &str,
+        ent_topn: usize,
+        rel_topn: usize,
+        comm_topn: usize,
+        sim_threshold: f64,
+    ) -> Result<String> {
+        let type_pool = graph.entity_type_pool();
+        let (ty_kwds, ents) = match Self::query_rewrite(llm, question, &type_pool).await {
+            Ok(v) => v,
+            Err(_) => (Vec::new(), vec![question.to_string()]),
+        };
+
+        let mut ents_from_query = Self::get_relevant_ents_by_keywords(graph, &ents, sim_threshold, 56);
+        let ents_from_types = Self::get_relevant_ents_by_types(graph, &ty_kwds, 10000);
+        let mut rels_from_txt = Self::get_relevant_relations_by_txt(graph, question, sim_threshold, 56);
+
+        // n-hop path aggregation: deep hops contribute less
+        let mut nhop_pathes: HashMap<(String, String), (f64, f64)> = HashMap::new();
+        for (ent_name, ent) in &ents_from_query {
+            let paths = graph.n_hop_paths(ent_name, 2, 64);
+            for (path, wts) in paths {
+                for i in 0..path.len().saturating_sub(1) {
+                    let (f, t) = if path[i] < path[i + 1] {
+                        (path[i].clone(), path[i + 1].clone())
+                    } else {
+                        (path[i + 1].clone(), path[i].clone())
+                    };
+                    let entry = nhop_pathes.entry((f, t)).or_insert((0.0, 0.0));
+                    entry.0 += ent.sim / (2.0 + i as f64);
+                    entry.1 = wts.get(i).copied().unwrap_or(0.0);
+                }
+            }
+        }
+
+        // type hits boost entity sim ×2
+        for ent in ents_from_types.keys() {
+            if let Some(e) = ents_from_query.get_mut(ent) {
+                e.sim *= 2.0;
+            }
+        }
+
+        // relation sim boost: n-hop paths + type endpoints
+        for (pair, rel) in rels_from_txt.iter_mut() {
+            let mut s = 0.0;
+            if let Some((nsim, _)) = nhop_pathes.remove(pair) {
+                s += nsim;
+            }
+            if ents_from_types.contains_key(&pair.0) {
+                s += 1.0;
+            }
+            if ents_from_types.contains_key(&pair.1) {
+                s += 1.0;
+            }
+            rel.sim *= s + 1.0;
+        }
+        // relations discovered only via n-hop paths
+        for ((f, t), (nsim, pr)) in nhop_pathes {
+            let mut s = 0.0;
+            if ents_from_types.contains_key(&f) {
+                s += 1.0;
+            }
+            if ents_from_types.contains_key(&t) {
+                s += 1.0;
+            }
+            rels_from_txt.insert(
+                (f.clone(), t.clone()),
+                KgRelation {
+                    sim: nsim * (s + 1.0),
+                    pagerank: pr,
+                    description: graph.edge_description(&f, &t).unwrap_or_default().to_string(),
+                },
+            );
+        }
+
+        // sort by sim × pagerank, take topn
+        let mut ents_sorted: Vec<(String, KgEntity)> = ents_from_query.into_iter().collect();
+        ents_sorted.sort_by(|a, b| {
+            (b.1.sim * b.1.pagerank)
+                .partial_cmp(&(a.1.sim * a.1.pagerank))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        ents_sorted.truncate(ent_topn);
+
+        let mut rels_sorted: Vec<((String, String), KgRelation)> = rels_from_txt.into_iter().collect();
+        rels_sorted.sort_by(|a, b| {
+            (b.1.sim * b.1.pagerank)
+                .partial_cmp(&(a.1.sim * a.1.pagerank))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        rels_sorted.truncate(rel_topn);
+
+        let mut ents_csv = String::new();
+        if !ents_sorted.is_empty() {
+            ents_csv.push_str("\n---- Entities ----\n");
+            ents_csv.push_str("Entity,Score,Description\n");
+            for (name, ent) in &ents_sorted {
+                let desc = ent.description.replace(',', " ").replace('\n', " ");
+                ents_csv.push_str(&format!("{},{:.2},{}\n", name, ent.sim * ent.pagerank, desc));
+            }
+        }
+        let mut rels_csv = String::new();
+        if !rels_sorted.is_empty() {
+            rels_csv.push_str("\n---- Relations ----\n");
+            rels_csv.push_str("From Entity,To Entity,Score,Description\n");
+            for ((f, t), rel) in &rels_sorted {
+                let desc = rel.description.replace(',', " ").replace('\n', " ");
+                rels_csv.push_str(&format!("{f},{t},{:.2},{desc}\n", rel.sim * rel.pagerank));
+            }
+        }
+
+        let comm = Self::community_retrieval(
+            community_reports,
+            &ents_sorted.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+            comm_topn,
+        );
+
+        Ok(ents_csv + &rels_csv + &comm)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::graphrag_enhanced::{EntityGraph, NerEntity, EntityType};
+
+    // ── community report helpers ──────────────────────────────────
 
     fn graph_with_entities() -> EntityGraph {
         let mut g = EntityGraph::new();
@@ -623,5 +1215,114 @@ mod tests {
         assert_eq!(html_unescape("a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;"), "a&b<c>\"d\"'e'");
         // unknown entity preserved verbatim
         assert_eq!(html_unescape("a&unknown;b"), "a&unknown;b");
+    }
+
+    // ── KG search ─────────────────────────────────────────────────
+
+    fn kg_graph() -> EntityGraph {
+        let mut g = EntityGraph::new();
+        g.add_entities(&[
+            NerEntity { name: "中山市百鲤居".into(), entity_type: EntityType::Organization, start: 0, end: 0, confidence: 1.0 },
+            NerEntity { name: "李锦澎".into(), entity_type: EntityType::Person, start: 0, end: 0, confidence: 1.0 },
+            NerEntity { name: "水产养殖基地".into(), entity_type: EntityType::Location, start: 0, end: 0, confidence: 1.0 },
+            NerEntity { name: "罗氏沼虾".into(), entity_type: EntityType::Product, start: 0, end: 0, confidence: 1.0 },
+        ]);
+        g.add_relation("中山市百鲤居", "李锦澎", 1.0);
+        g.add_relation("中山市百鲤居", "水产养殖基地", 0.8);
+        g.add_relation("水产养殖基地", "罗氏沼虾", 0.6);
+        g.set_description("罗氏沼虾", "淡水养殖虾类");
+        g
+    }
+
+    #[test]
+    fn kg_entities_by_keywords_matches_names() {
+        let g = kg_graph();
+        let hits = KgSearch::get_relevant_ents_by_keywords(
+            &g,
+            &["百鲤居".to_string()],
+            0.3,
+            10,
+        );
+        assert!(hits.contains_key("中山市百鲤居"));
+        let e = &hits["中山市百鲤居"];
+        assert!(e.pagerank >= 2.0, "hub node should have degree 2");
+    }
+
+    #[test]
+    fn kg_entities_by_types_filters_and_orders() {
+        let g = kg_graph();
+        let hits = KgSearch::get_relevant_ents_by_types(&g, &["PERSON".to_string()], 10);
+        assert!(hits.contains_key("李锦澎"));
+        assert!(!hits.contains_key("中山市百鲤居"));
+        let prods = KgSearch::get_relevant_ents_by_types(&g, &["产品".to_string()], 10);
+        assert!(prods.contains_key("罗氏沼虾"));
+    }
+
+    #[test]
+    fn kg_relations_by_txt_finds_edges() {
+        let g = kg_graph();
+        let rels = KgSearch::get_relevant_relations_by_txt(&g, "百鲤居 水产养殖基地", 0.3, 10);
+        assert!(rels.contains_key(&("中山市百鲤居".to_string(), "水产养殖基地".to_string())));
+    }
+
+    #[test]
+    fn kg_parse_rewrite_json_handles_fences() {
+        let raw = "Here you go:\n```json\n{\"answer_type_keywords\": [\"LOCATION\"], \"entities_from_query\": [\"中山\", \"虾\"]}\n```";
+        let (types, ents) = KgSearch::parse_rewrite_json(raw);
+        assert_eq!(types, vec!["LOCATION"]);
+        assert_eq!(ents.len(), 2);
+        // Truncation to 5 entities
+        let big = "{\"answer_type_keywords\": [], \"entities_from_query\": [\"1\",\"2\",\"3\",\"4\",\"5\",\"6\"]}";
+        let (_, ents2) = KgSearch::parse_rewrite_json(big);
+        assert_eq!(ents2.len(), 5);
+    }
+
+    #[test]
+    fn kg_render_query2kwd_substitutes_both_vars() {
+        let pool = json!({"LOCATION": ["中山市"]});
+        let rendered = KgSearch::render_query2kwd("Where is the farm?", &pool);
+        assert!(rendered.contains("Where is the farm?"));
+        assert!(rendered.contains("\"LOCATION\""));
+        assert!(!rendered.contains("{query}"));
+        assert!(!rendered.contains("{TYPE_POOL}"));
+    }
+
+    #[test]
+    fn kg_community_retrieval_matches_entities_and_formats() {
+        let mut reports = HashMap::new();
+        reports.insert(
+            "罗氏沼虾|罗氏沼虾社区|报告内容".to_string(),
+            "report body".to_string(),
+        );
+        reports.insert(
+            "无关实体|其他社区|其他内容".to_string(),
+            "unrelated".to_string(),
+        );
+        let out = KgSearch::community_retrieval(&reports, &["罗氏沼虾".to_string()], 5);
+        assert!(out.contains("---- Community Report ----"));
+        assert!(out.contains("# 1. 罗氏沼虾社区"));
+        assert!(out.contains("## Content"));
+        assert!(!out.contains("其他社区"));
+    }
+
+    #[test]
+    fn kg_n_hop_paths_return_weights() {
+        let g = kg_graph();
+        let paths = g.n_hop_paths("中山市百鲤居", 2, 64);
+        assert!(!paths.is_empty());
+        // every path starts at the query entity and has matching weights
+        for (path, wts) in &paths {
+            assert_eq!(path.first().map(String::as_str), Some("中山市百鲤居"));
+            assert_eq!(path.len() - 1, wts.len());
+        }
+    }
+
+    #[test]
+    fn kg_entity_type_pool_counts_samples() {
+        let g = kg_graph();
+        let pool = g.entity_type_pool();
+        let obj = pool.as_object().expect("object pool");
+        assert!(obj.contains_key("Person"));
+        assert!(obj.contains_key("Organization"));
     }
 }

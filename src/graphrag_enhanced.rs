@@ -2,7 +2,7 @@
 //! Replaces RAGFlow's `rag/graphrag/ner/graph_extractor.py` + `entity_resolution.py`.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // ── Named Entity Recognition ────────────────────────────────────
 
@@ -285,6 +285,16 @@ impl EntityGraph {
         }
     }
 
+    /// Edge weight between two nodes (either direction), if any.
+    pub fn edge_weight(&self, a: &str, b: &str) -> Option<f64> {
+        self.nodes.get(a).and_then(|n| {
+            n.connections
+                .iter()
+                .find(|(t, _)| t == b)
+                .map(|(_, w)| *w as f64)
+        })
+    }
+
     /// Add a relation between two entities.
     pub fn add_relation(&mut self, source: &str, target: &str, weight: f32) {
         if let Some(node) = self.nodes.get_mut(source) {
@@ -341,6 +351,75 @@ impl EntityGraph {
         let mut results = Vec::new();
         self.dfs(entity_name, 0, max_depth, &mut visited, &mut results);
         results
+    }
+
+    /// Entities of a given type (mirrors ES `entity_type_kwd` filter).
+    pub fn entities_by_type(&self, entity_type: &EntityType) -> Vec<String> {
+        self.nodes
+            .iter()
+            .filter(|(_, n)| n.entity_type == *entity_type)
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Per-type sample counts for the answer-type pool prompt — mirrors
+    /// `get_entity_type2samples` (upstream pulls entity_type→samples from
+    /// the index; here we count in-graph types).
+    pub fn entity_type_pool(&self) -> serde_json::Value {
+        let mut counts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (name, node) in &self.nodes {
+            let label = format!("{:?}", node.entity_type);
+            let samples = counts.entry(label).or_default();
+            if samples.len() < 3 {
+                samples.push(name.clone());
+            }
+        }
+        let mut obj = serde_json::Map::new();
+        for (k, v) in counts {
+            obj.insert(k, serde_json::Value::Array(v.into_iter().map(serde_json::Value::String).collect()));
+        }
+        serde_json::Value::Object(obj)
+    }
+
+    /// N-hop paths from an entity with edge weights — mirrors the
+    /// `n_hop_with_weight` field consumed by KGSearch (each path is a node
+    /// sequence plus per-edge weights; downstream weights deep hops less).
+    pub fn n_hop_paths(&self, entity_name: &str, max_depth: usize, max_paths: usize) -> Vec<(Vec<String>, Vec<f64>)> {
+        let mut results = Vec::new();
+        let mut visited = HashSet::new();
+        self.dfs_paths(entity_name, 0, max_depth, max_paths, &mut visited, &mut Vec::new(), &mut Vec::new(), &mut results);
+        results
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dfs_paths(
+        &self,
+        name: &str,
+        depth: usize,
+        max_depth: usize,
+        max_paths: usize,
+        visited: &mut HashSet<String>,
+        path: &mut Vec<String>,
+        weights: &mut Vec<f64>,
+        results: &mut Vec<(Vec<String>, Vec<f64>)>,
+    ) {
+        if results.len() >= max_paths || depth > max_depth || visited.contains(name) {
+            return;
+        }
+        visited.insert(name.to_string());
+        path.push(name.to_string());
+        if depth > 0 {
+            results.push((path.clone(), weights.clone()));
+        }
+        if let Some(node) = self.nodes.get(name) {
+            for (target, weight) in &node.connections {
+                weights.push(*weight as f64);
+                self.dfs_paths(target, depth + 1, max_depth, max_paths, visited, path, weights, results);
+                weights.pop();
+            }
+        }
+        path.pop();
+        visited.remove(name);
     }
 
     fn dfs(

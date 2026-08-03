@@ -10,11 +10,41 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（571 passed / 0 failed / 25 ignored，2026-08-03 复核；+8 graphrag 社区报告单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（579 passed / 0 failed / 25 ignored，2026-08-03 复核；+8 KGSearch 图检索单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 KG 图检索：对标 rag/graphrag/search.py + query_analyze_prompt.py
+
+- RAGFlow KGSearch（343 行）是 GraphRAG 查询侧核心：LLM 查询重写 →
+  实体/关系检索 → n-hop 路径聚合 → 融合打分 → CSV 输出 + 社区报告。
+- **`KgSearch`（src/graphrag.rs）**：纯内存 EntityGraph 版检索，保留上游
+  融合/排序/输出契约：
+  - `query_rewrite`：LLM 调 minirag_query2kwd（MINIRAG_QUERY2KWD_PROMPT
+    全文内嵌，4 个示例）+ JSON 切片/修复回退 → type_keywords +
+    entities_from_query（≤5）
+  - `get_relevant_ents_by_keywords`：token 重叠 sim（向量检索替代）+
+    pagerank=degree；`get_relevant_ents_by_types`：类型过滤 + degree 降序
+    （对标 rank_flt 降序）；`get_relevant_relations_by_txt`：端点文本匹配
+  - n-hop 聚合：`EntityGraph::n_hop_paths`（带权重路径），sim/(2+i) 衰减
+  - 融合：类型命中实体 sim×2；关系 sim×(1+nhop+类型端点)
+  - 排序 sim×pagerank + topn；输出 Entities/Relations CSV +
+    Community Report 段（`community_retrieval` 对标 `_community_retrieval_`）
+  - `parse_rewrite_json`：json_repair 替代（切片到首 `{` 尾 `}`）
+- **query_analyze_prompt.py（218 行）**：minirag_query2kwd +
+  keywords_extraction 两个 prompt + 3 个示例全文内嵌。
+- **EntityGraph 扩展**：entities_by_type（类型过滤）、entity_type_pool
+  （类型→样本，对标 get_entity_type2samples）、n_hop_paths（路径+权重）、
+  edge_weight。
+- 存储层 gap：向量检索/OrderByExpr/get_relation DB 回退/max_token 预算
+  （内存图替代）；json_repair 完整修复未移植。
+- 测试：**579 passed / 0 failed / 25 ignored**（+8 KGSearch 单测：关键词
+  检索/类型过滤/关系检索/JSON 解析/提示词渲染/社区检索/n-hop 权重/
+  类型池）。
+- 矩阵：search.py → src/graphrag.rs; src/graphrag_enhanced.rs；
+  query_analyze_prompt.py → src/graphrag.rs。
 
 ## 2026-08-03 GraphRAG 社区报告：对标 rag/graphrag/general/ 4 文件
 
