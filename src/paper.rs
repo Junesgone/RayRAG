@@ -11,7 +11,7 @@ use regex::Regex;
 
 /// Compile a pattern with re.match semantics (anchored at the start).
 /// Python's `re.match` anchors; Rust's `Regex::is_match` searches anywhere.
-fn anchored(p: &str) -> Regex {
+pub fn anchored(p: &str) -> Regex {
     Regex::new(&format!("^(?:{p})")).unwrap()
 }
 
@@ -22,7 +22,7 @@ fn search_re(p: &str) -> Regex {
 
 /// BULLET_PATTERN — five title-style families (rag/nlp/__init__.py:169-207).
 /// Order matters: bullets_category picks the family with the most hits.
-const BULLET_PATTERN: &[&[&str]] = &[
+pub const BULLET_PATTERN: &[&[&str]] = &[
     &[
         r"第[零一二三四五六七八九十百0-9]+(分?编|部分)",
         r"第[零一二三四五六七八九十百0-9]+章",

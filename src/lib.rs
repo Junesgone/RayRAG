@@ -47,6 +47,7 @@ pub mod jin10;
 pub mod kb;
 pub mod llm;
 pub mod llm_enhanced;
+pub mod laws;
 pub mod logging;
 pub mod metrics;
 pub mod model_meta;
