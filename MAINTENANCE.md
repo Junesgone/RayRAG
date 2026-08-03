@@ -10,11 +10,43 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（586 passed / 0 failed / 25 ignored，2026-08-03 复核；+7 GraphExtractor 实体抽取单测）；`postgres-backend,zvec-backend` 双 feature 通过（593 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（592 passed / 0 failed / 25 ignored，2026-08-03 复核；+6 graphrag_index 索引管线单测）；`postgres-backend,zvec-backend` 双 feature 通过（599 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 GraphRAG 索引管线：对标 rag/graphrag/general/index.py + extractor.py
+
+- RAGFlow GraphRAG 索引链路（run_graphrag）：chunk 列表 → generate_subgraph
+  （LLM 实体抽取→子图）→ merge_subgraph（合并进 KB 全局图 + pagerank）→
+  resolve_entities（实体消解）→ extract_community（社区报告）。
+- **新增 `src/graphrag_index.rs`**（对标 extractor.py 基类 + index.py 纯算法核心）：
+  - `extract_chunks`：extractor.py `__call__` 并发编排（semaphore=10 worker、
+    GRAPHRAG_MAX_ERRORS=3 错误上限、按 chunk 收集结果）
+  - `build_subgraph`：generate_subgraph 纯图核心（节点 add_node(**ent)，
+    关系端点缺失即丢弃并计数 ignored_rels）
+  - `graph_merge` + `GraphChange`：utils.py 图合并（description/source_id
+    以 `<SEP>` 拼接、边权重累加、rank=degree）
+  - `tidy_graph`：purge 缺 description/source_id 的节点
+  - `pagerank`：networkx.pagerank 幂迭代（alpha=0.85，含 dangling 处理）
+  - `run_doc_pipeline`：端到端内存版（extraction → subgraph）
+  - `apply_node_types`/`apply_edges`：抽取结果回写图
+  - 常量：DEFAULT_ENTITY_TYPES（5 类）、ENTITY_EXTRACTION_MAX_GLEANINGS=2、
+    MAX_CONCURRENT_PROCESS_AND_EXTRACT_CHUNK=10、GRAPH_FIELD_SEP=`<SEP>`
+- **EntityGraph 扩展**：add_node（upsert，对标 `add_node(**ent)`）、
+  set_node_type、set_edge_weight、remove_node、set_source_id/append_source_id/
+  source_id_of、GraphNode.source_id 字段（serde default）。
+- **修正**：GraphExtractor.max_gleanings 3→2（extractor.py:47 是 2）。
+- entity_embedding.py node2vec（graspologic C++）记 gap：用 pagerank/degree
+  替代图结构信号。
+- gap：chunk_list/does_graph_contains/set_graph/Redis 锁/DocumentService/
+  load_subgraph_from_store/run_graphrag_for_kb 扇出（存储层，调用方接入）。
+- 测试：**592 passed / 0 failed / 25 ignored**（+6 graphrag_index 单测：
+  tidy/merge/pagerank/build_subgraph/类型回写/常量）；双 feature **599 passed**
+  （592+7 PG 单测）。
+- 矩阵：extractor.py → src/graphrag.rs; src/graphrag_index.rs；index.py →
+  src/graphrag_index.rs；entity_embedding.py → src/graphrag_index.rs（gap）。
 
 ## 2026-08-03 Graph 实体抽取：对标 rag/graphrag/general/graph_extractor.py + graph_prompt.py
 

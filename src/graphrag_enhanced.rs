@@ -208,6 +208,9 @@ struct GraphNode {
     #[serde(default)]
     #[allow(dead_code)]
     description: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    source_id: Vec<String>,
     connections: Vec<(String, f32)>, // (target_name, weight)
 }
 
@@ -233,8 +236,71 @@ impl EntityGraph {
                     name: e.name.clone(),
                     entity_type: e.entity_type.clone(),
                     description: String::new(),
+                    source_id: Vec::new(),
                     connections: Vec::new(),
                 });
+        }
+    }
+
+    /// Add (or update) a node with description + source id — mirrors
+    /// generate_subgraph's `subgraph.add_node(ent["entity_name"], **ent)`.
+    /// Unlike set_description (update-only), this creates the node if needed.
+    pub fn add_node(
+        &mut self,
+        name: &str,
+        entity_type: EntityType,
+        description: impl Into<String>,
+        source_id: impl Into<String>,
+    ) {
+        let node = self
+            .nodes
+            .entry(name.to_string())
+            .or_insert_with(|| GraphNode {
+                name: name.to_string(),
+                entity_type,
+                description: String::new(),
+                source_id: Vec::new(),
+                connections: Vec::new(),
+            });
+        if !node.description.is_empty() {
+            node.description.push_str("<SEP>");
+        }
+        node.description.push_str(&description.into());
+        let sid = source_id.into();
+        if !node.source_id.iter().any(|s| s == &sid) {
+            node.source_id.push(sid);
+        }
+    }
+
+    /// Set a node's source_id (which chunks/documents it came from).
+    pub fn set_source_id(&mut self, name: &str, source_id: impl Into<String>) {
+        if let Some(node) = self.nodes.get_mut(name) {
+            node.source_id = vec![source_id.into()];
+        }
+    }
+
+    /// Append to a node's source_id list (used by graph_merge).
+    pub fn append_source_id(&mut self, name: &str, source_id: &str) {
+        if let Some(node) = self.nodes.get_mut(name) {
+            if !node.source_id.iter().any(|s| s == source_id) {
+                node.source_id.push(source_id.to_string());
+            }
+        }
+    }
+
+    /// Source ids of a node, if any.
+    pub fn source_id_of(&self, name: &str) -> Vec<String> {
+        self.nodes
+            .get(name)
+            .map(|n| n.source_id.clone())
+            .unwrap_or_default()
+    }
+
+    /// Remove a node and all its edges (mirrors nx.Graph.remove_node).
+    pub fn remove_node(&mut self, name: &str) {
+        self.nodes.remove(name);
+        for node in self.nodes.values_mut() {
+            node.connections.retain(|(t, _)| t != name);
         }
     }
 
@@ -295,6 +361,30 @@ impl EntityGraph {
         })
     }
 
+    /// Overwrite (or create) the weight of an undirected edge.
+    pub fn set_edge_weight(&mut self, a: &str, b: &str, weight: f64) {
+        let mut set = |node: &mut GraphNode| {
+            if let Some((_, w)) = node.connections.iter_mut().find(|(t, _)| t == b) {
+                *w = weight as f32;
+            }
+        };
+        if let Some(node) = self.nodes.get_mut(a) {
+            set(node);
+        }
+        if let Some(node) = self.nodes.get_mut(b) {
+            if let Some((_, w)) = node.connections.iter_mut().find(|(t, _)| t == a) {
+                *w = weight as f32;
+            }
+        }
+    }
+
+    /// Set a node's entity type (re-typing after extraction).
+    pub fn set_node_type(&mut self, name: &str, entity_type: EntityType) {
+        if let Some(node) = self.nodes.get_mut(name) {
+            node.entity_type = entity_type;
+        }
+    }
+
     /// Add a relation between two entities.
     pub fn add_relation(&mut self, source: &str, target: &str, weight: f32) {
         if let Some(node) = self.nodes.get_mut(source) {
@@ -312,6 +402,7 @@ impl EntityGraph {
                 name: node.name.clone(),
                 entity_type: node.entity_type.clone(),
                 description: node.description.clone(),
+                source_id: node.source_id.clone(),
                 connections: Vec::new(),
             });
             for connection in &node.connections {

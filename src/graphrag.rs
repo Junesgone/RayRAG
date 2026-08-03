@@ -1385,7 +1385,8 @@ pub struct GraphExtractionResult {
 
 /// GraphExtractor — mirrors GraphExtractor._process_single_content: one LLM
 /// pass per chunk + gleaning loop (CONTINUE/LOOP prompts), then record
-/// parsing. `max_gleanings` defaults to 3 (ENTITY_EXTRACTION_MAX_GLEANINGS).
+/// parsing. `max_gleanings` defaults to 2 (ENTITY_EXTRACTION_MAX_GLEANINGS).
+#[derive(Debug, Clone)]
 pub struct GraphExtractor {
     pub max_gleanings: usize,
 }
@@ -1399,7 +1400,7 @@ impl Default for GraphExtractor {
 impl GraphExtractor {
     pub fn new() -> Self {
         Self {
-            max_gleanings: 3,
+            max_gleanings: 2,
         }
     }
 

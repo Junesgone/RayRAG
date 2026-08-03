@@ -41,6 +41,7 @@ pub mod google_scholar;
 pub mod graph_store;
 pub mod graphrag_enhanced;
 pub mod graphrag;
+pub mod graphrag_index;
 pub mod integration;
 pub mod jin10;
 pub mod kb;
