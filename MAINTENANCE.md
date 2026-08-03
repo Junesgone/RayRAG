@@ -3,232 +3,2398 @@
 ## 项目信息
 
 - **名称**：RayRAG
-- **路径**：`/vol1/1000/RayRAG/`
-- **语言**：Rust（零 Python/JS，前端使用 RAGFlow React 构建产物）
-- **依赖**：zvec-rust、Candle、lopdf、docx-rs、hf-hub、tokenizers、axum、tower-http
-- **定位**：RAGFlow 解析管线 Rust 重写 + zvec 向量存储（替代 ES）
+- **版本**：v0.1.2（以 `Cargo.toml` 为准；历史台账误写 v0.1.3）
+- **路径**：`/home/junesgone/.openclaw/workspace/RayRAG/`
+- **语言**：Rust（应用代码全 Rust；可选接入 zvec 原生库、PostgreSQL 18.4 和 OpenAI-compatible 模型服务）
+- **定位**：RAGFlow 全栈 Rust 重写
+- **源文件**：86 个 .rs / 75,000+ 行 Rust
+- **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
+- **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
+- **编译状态**：✅ 默认 feature 测试通过（550 passed / 0 failed / 25 ignored，2026-08-03 复核；+18 为 4 个新国内连接器单测，+4 live ignored）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
-- **Rust 版本**：cargo 1.97.0
+- **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
+
+---
+
+## 2026-08-03 国内连接器扩容：东方财富/金十/和风天气/SearXNG（对标 akshare.py/jin10.py/qweather.py/searxng.py）
+
+- RAGFlow `agent/tools/` 全 22 工具对照（akshare/arxiv/code_exec/crawler/
+  deepl/duckduckgo/email/exesql/github/google/googlescholar/jin10/pubmed/
+  qweather/retrieval/searxng/tavily/tushare/wencai/wikipedia/yahoofinance）：
+  RayRAG 此前已有 14 个连接器，本次补齐 4 个大陆直连可用工具，覆盖度
+  18/22（code_exec/crawler/deepl/email/exesql 属沙箱/翻译/邮件子系统，
+  wencai 上游 pywencai 已废弃注释、tushare 需付费 token，均记录为系统级缺口）。
+- **新增 src/eastmoney.rs**：对标 akshare.py `stock_news_em`，直连
+  `search-api-web.eastmoney.com/search/jsonp` JSONP 端点（cb=x&param=...，
+  param 用 reqwest query_pairs 编码——中文 keyword 裸拼 URL 会 400），
+  解析 `result.cmsArticleWebOld`，剥离 `<em>` 高亮，输出 tool 行 + publish_time/
+  media_name。**免 key，本机 live 验证通过**（"农业" 3 条真实新闻）。
+- **新增 src/jin10.rs**：对标 jin10.py 四模式（flash/calendar/symbols/news），
+  secret-key header（`JIN10_SECRET_KEY`），flash 取 `data[].data.content`，
+  quotes 短键重命名（a→Selling Price 等 10 键，镜像 RAGFlow del 重命名链），
+  其余模式逐行渲染 key: value。live 需真实 key（占位 "xxx" 返回 404 secret-key
+  不存在，属上游校验，非客户端 bug）。
+- **新增 src/qweather.rs**：对标 qweather.py 三模式（weather/indices/airquality），
+  geoapi 城市→location id 解析，free/paid 双 host（devapi/api.qweather.com），
+  lang 透传，错误码透传（403=无效 key 为上游正常响应）。live 需真实 key。
+- **新增 src/searxng.rs**：对标 searxng.py JSON API（q/format=json/categories/
+  language/safesearch/pageno），实例 URL 取节点参数 `searxng_url` 或
+  `SEARXNG_URL`，无 key。live 需自建实例。
+- 注册链完整落地：lib.rs 4 模块；runtime.rs COMPONENT_REGISTRY 4 描述符 +
+  INPUTS/OUTPUTS；agent.rs import + `execute_canvas_agent_tool_with_providers`
+  分支 + `execute_node` 分支 + `_ERROR` 前缀映射 + 4 个 execute_*_with_provider
+  + 4 个 execute_agent_*_with_timeout（复用 domestic_search_outputs/
+  set_domestic_search_error/bing_top_n/重试语义）。
+- 陷阱记录：reqwest `Url::query_pairs_mut()` 编码 param JSON（裸拼中文 400）；
+  SearxngResult 含 f64 score 不能 derive Eq（E0277），仅 PartialEq。
+- 测试：默认 **550 passed / 0 failed / 25 ignored**（+18 单测：eastmoney 5、
+  jin10 5、qweather 4、searxng 4；+4 live ignored）；双 feature
+  **557 passed / 0 failed / 25 ignored**。东方财富 live 通过
+  （`-- --ignored eastmoney`，大陆直连验证）。
+- README 连接器清单 5→9；.env.example 增 JIN10_SECRET_KEY/QWEATHER_API_KEY/
+  SEARXNG_URL。
+
+## 2026-08-03 ISO-8601 日期解析：对标 api_service.py API4ConversationService._normalize_query_date
+
+- 审计六文件：memory_service（177L）/ connector_service（518L）/
+  api_service（133L）/ conversation_service（378L）/ chunk_feedback_service
+  （316L）/ pipeline_operation_log_service（290L）/ user_service（321L）。
+- **covered 判定**：memory_service（Vec<String> 存储 vs 位掩码 int 语义
+  等价，且未知类型严格报错优于 RAGFlow 静默忽略）、chunk_feedback_service
+  （retrieval_signal 三键 max / 最大余数法 split_integer_budget /
+  uniform+relevance 双模式——RayRAG src/chunk_feedback.rs 542 行逐条一致）、
+  conversation_service.structure_answer（RayRAG ConvStore::append_exchange +
+  replace_assistant_message 更强，带 expected_prior_answer 并发保护）、
+  user_service（RayRAG argon2 强于 werkzeug pbkdf2）、
+  pipeline_operation_log（list_operation_logs 已有聚合）。
+- **系统级缺口不移植**：connector_service（Connector2Kb/SyncLogs 同步
+  子系统）、get_or_create_for_channel（chat_channel 持久化实体）——属
+  功能缺失而非函数缺口，留待子系统实现时一并落地。
+- **实际补强**：parse_utc_datetime（src/api/features.rs）此前只接受
+  `YYYY-MM-DD HH:MM:SS` 空格分隔；补 ISO-8601 `T` 分隔符与可选尾随 `Z`
+  （统一归一为 UTC，保持 RayRAG UTC 锚点，不学 RAGFlow 本地时区转换）。
+  测试断言同步更新（原断言 "T 格式报错" 反转为接受）。
+- 测试：默认 **532 / 0 / 21**；双 feature **539 / 0 / 21**（既有用例
+  扩展，计数不变）。
+
+## 2026-08-03 画布标签规范化：对标 canvas_service.py UserCanvasService.update_tags
+
+- 审计 canvas_service.py（463 行）：CanvasTemplateService/DataFlowTemplate
+  Service/UserCanvasService 均为 CommonService 薄封装；唯一独立逻辑为
+  update_tags（标签清洗链）与 list_tags（跨画布聚合，RayRAG list_agent
+  _tags 已有等价实现）。
+- 对齐确认：RayRAG normalize_agent_tags（src/api/features.rs）与 RAGFlow
+  update_tags 语义逐条一致——逗号剥离（单列逗号分隔存储，逗号会破坏
+  编码）、trim、单标签 ≤64（TAG_MAX_LEN）、大小写不敏感去重保序、
+  拼接值 ≤512（TAGS_FIELD_MAX）截断。
+- 补漏：AgentStore::update_tags_owned 此前未过 normalize_agent_tags（仅
+  create/update_agent 两条路径清洗）——补上使三条写路径一致；新增
+  tag_normalization_tests 3 测：清洗去重限长 / 单标签 64 截断 + 总长
+  512 截断 / update_tags_owned 走规范化（"c,d"→"c d" 且与 "C" 并存，
+  镜像 RAGFlow key=lower() 语义）。
+- 测试：默认 **532 passed / 0 failed / 21 ignored**；双 feature
+  **539 passed / 0 failed / 21 ignored**（+3 默认 feature 内）。
+
+## 2026-08-03 对话 SQL 清洗 + TTS 文本清洗：对标 dialog_service.py use_sql/clean_tts_text
+
+- 继续审计 dialog_service.py 后半段（async_chat 流式、use_sql 问答、
+  tts）：use_sql.normalize_sql 清洗 LLM 生成的 SQL（去 </think> 块、
+  "思考"中文推理标记、```sql 代码围栏、引擎拒绝的尾部分号）；
+  clean_tts_text 清洗合成前文本（去 C0 控制字符/emoji、空白折叠、
+  500 字符截断 MAX_LEN=500）。两者均为纯函数。
+- 补入 src/dialog.rs：normalize_sql（四个正则替换链与 RAGFlow 逐字对齐）
+  + clean_tts_text（emoji 范围含 emotions/misc symbols/transport/flags/
+  dingbats/supplemental，镜像 RAGFlow emoji_pattern）+ regex_replace_all
+  辅助。未移植 add_kb_filter/_assert_valid_uuid（依赖 doc_engine 分支与
+  UUID 校验，属 SQL 问答执行器范畴，RayRAG 无 ES/Infinity 引擎）。
+- 单测 4：think 块+围栏+尾分号组合清洗 / 内部 SQL 分号保留与纯 SQL 不变
+  / 控制字符+emoji+空白折叠 / 500 字符截断（多字节安全，chars 计数）。
+- 测试：默认 **529 passed / 0 failed / 21 ignored**；双 feature
+  **536 passed / 0 failed / 21 ignored**（+4 默认 feature 内）。
+
+## 2026-08-03 对话引用规范化：对标 dialog_service.py repair_bad_citation_formats
+
+- 审计 dialog_service.py（1797 行）：CRUD 部分为 CommonService 薄封装；
+  有移植价值的两个纯函数——repair_bad_citation_formats（LLM 回答中
+  (ID: 12)/[ID: 12]/【ID: 12】/ref12 四种坏引用格式统一为 [ID:12]，
+  越界引用保留原文不标记）与 normalize_arabic_digits（阿拉伯-印度数字
+  0660-0669/06F0-06F9 → ASCII）。
+- 新增 src/dialog.rs（147 行）：四个坏格式正则（与 RAGFlow BAD_CITATION
+  _PATTERNS 逐字对齐）+ CITATION_MARKER 提取正则；normalize_arabic_digits
+  纯函数；repair_bad_citation_formats 返回 (规范文本, 有效引用索引集合)；
+  extract_cited_indexes 供响应元数据提取。
+- 四阶段顺序处理（PAREN→BRACKET→CJK→REF）镜像 RAGFlow find_and_replace
+  链；修复陷阱：阶段间传递用 std::mem::take 置空输出缓冲（初版用
+  mem::swap 导致旧 intermediate 回流，输出累积三倍——stage 调试定位）。
+- 单测 6：阿拉伯数字归一（两组码位）/ 四种格式规范化为 [ID:n] 且索引
+  集合正确 / 越界保留原文不标记 / ref 无数字不动 / 阿拉伯-印度数字
+  引用归一 / extract 解析规范标记。
+- 测试：默认 **525 passed / 0 failed / 21 ignored**；双 feature
+  **532 passed / 0 failed / 21 ignored**（+6 默认 feature 内）。
+
+## 2026-08-03 模型类型差异同步：对标 tenant_model_service.py upsert_model_type
+
+- 审计 api/db/services/ 模型四件套：tenant_model_service.py（92 行）、
+  tenant_model_instance_service.py（69 行）、tenant_model_group_service.py
+  （21 行）——均为 CommonService CRUD 薄封装；唯一有移植价值的是
+  `upsert_model_type`：按 (provider, instance, model_name) 对模型类型集
+  做差异同步——add 中缺失类型插入（继承样例记录状态/extra），存在则
+  恢复状态；delete 中类型标 UNSUPPORTED 留痕（不存在也插入墓碑记录）。
+- RayRAG TenantModelSpec 已有 model_types + enabled 字段（等价
+  ACTIVE/UNSUPPORTED 语义），缺差异同步方法。新增
+  `TenantModelStore::sync_model_types(tenant, provider, instance, model,
+  add, delete) -> usize`：add 缺失类型插入并 enabled=true（幂等），
+  delete 存在类型移除（移除即不可 resolve，等价 UNSUPPORTED 墓碑）；
+  返回操作计数；未知实例/模型报错。
+- 单测 3：add/删除/保留并计数（Chat 保留、Rerank 新增、Embedding 移除、
+  enabled 恢复）/ 重复 add 幂等（无重复能力项）/ 未知实例或模型报错。
+- 测试：默认 **519 passed / 0 failed / 21 ignored**；双 feature
+  **526 passed / 0 failed / 21 ignored**（+3 默认 feature 内）。
+
+## 2026-08-03 Postgres 死锁重试：对标 common_service.py retry_deadlock_operation
+
+- 审计 api/db/services/ 全量 33 文件清单：CommonService 是通用 CRUD
+  基类（query/get_all/get/get_or_none/save/insert 等，Rust 类型化仓储
+  已覆盖等价物）；唯一有真实移植价值的是 retry_deadlock_operation
+  （MySQL/OceanBase 1213 死锁指数退避重试 3 次，0.1s 基数）。
+- 移植到 PostgresSnapshotMirror 写路径：`retry_pg_write`（3 次尝试、
+  0.1/0.2/0.4s 指数退避）识别 40P01（deadlock_detected）/40001
+  （serialization_failure）；store_snapshot 事务整体重试（事务原子，
+  重试安全）；Load/Health 不重试。与既有 pg_advisory_xact_lock
+  （同 key 串行化）互补——后者防同 key 争用，前者兜底跨 key 死锁。
+- 实现细节：is_retryable_sqlstate 纯函数 + is_retryable_pg_error
+  downcast；retry_pg_write_with 谓词注入（tokio-postgres DbError 构造
+  私有，无法在单测构造真 Error——循环逻辑用 stub 谓词测，SQLSTATE
+  判定用纯函数测）。
+- 单测 4：SQLSTATE 分类（40P01/40001 真，23505 假）/ 瞬态中止后成功
+  （2 次调用）/ 三次放弃 / 非重试错误不重试。
+- 测试：默认 **516 passed / 0 failed / 21 ignored**；双 feature
+  **523 passed / 0 failed / 21 ignored**（+4：PG 重试单测，
+  postgres-backend feature 内编译）。
+
+## 2026-08-03 编译模板执行端点混合模板：tree + 超图全链路
+
+- 重构 execute_group_templates：模板按 kind 分双桶——tree 类走
+  run_tree_templates（RAPTOR 建树 + to_graph 投影），非 tree 类
+  （hypergraph/list/set）走 compile_hypergraph（两阶段 LLM 抽取）
+  + deduplicate_items（LLM 判定合并，cosine ≥ 0.9 前置过滤）；
+  单模板失败跳过不中断；两类结果统一返回。
+- 落库统一为 knowledge_compile checkpoint（method/content_hash=
+  knowledge_compile，entity_types 含 tree_node + entity）：tree 图 +
+  超图实体/关系合并投影到 EntityGraph 经 GraphStore.replace_document
+  持久化（RAGFlow _struct_upsert_graph_json 近似）。
+- EntityGraph 增 node_count()。
+- GPU live 测试扩展：同组混合 tree + hypergraph 模板，3 chunk 中文
+  ——建树（node_count ≥ 3）+ 超图实体（含养殖场/负责人）+ 落库
+  checkpoint（method=knowledge_compile、图节点非空）4.82s 通过。
+- 测试：默认 **516 passed / 0 failed / 21 ignored**；双 feature
+  **519 passed / 0 failed / 21 ignored**（数量同前——执行器测试为
+  既有 ignored 计数，非新增）。
+
+## 2026-08-03 知识编译合并：对标 structure.py merge 阶段（_struct_merge_pair）
+
+- 审计确认 RAGFlow 合并两阶段：本地 dedup（组内 pairwise cosine ≥ 0.9
+  才问 LLM）+ LLM 判定合并（_struct_merge_pair：MERGE 三 prompt、
+  temperature 0.0、返回 duplicated/merged）；relation 合并强制保留
+  source/target（_struct_apply_merge_invariants，from/to_entity_kwd 不可变）。
+- 新增 `src/merge.rs`（355 行）：
+  - MERGE_SYSTEM_PROMPT / MERGE_USER_PROMPT / MERGE_DECISION_INSTRUCTION
+    逐字镜像；`merge_pair`（temperature 0.0）→ `apply_merge_invariants`
+    （relation 端点保留，含 src/from、tgt/to 别名）。
+  - `cosine_similarity` + `payloads_similar`（embedding/q_*_vec 优先，
+    name 相等兜底）+ `maybe_merge`（阈值前置过滤）。
+  - `deduplicate_items`：贪心 pairwise——相似对 LLM 判定，重复则替换
+    并 union source_chunk_ids，否则追加。
+  - hypergraph.rs 增 `gen_json_with_temperature`（merge 用 0.0，
+    抽取用默认 0.1）。
+- 单测 4（cosine / relation 不变式 / 向量阈值+name 兜底 / chunk_ids 并集）；
+  GPU live 测试 gpu_merge_pair_judges_duplicate_and_merges（ignored）——
+  8088 Qwen3.5 判定同名组织重复并合并、无关实体拒绝合并 1.47s 通过。
+- 测试：默认 **516 passed / 0 failed / 21 ignored**；双 feature
+  **519 passed / 0 failed / 21 ignored**。
+
+## 2026-08-03 LLM 超图抽取：对标 structure.py 知识编译（非 tree 模板）
+
+- 审计确认 RAGFlow `compile_structure_from_text` 对非 tree 模板走
+  `_struct_extract_hypergraph`：两阶段 LLM JSON 抽取（先实体，再以
+  Known Entities 约束抽取关系），prompt 由 `_struct_hypergraph_prompts`
+  从模板 parser_config 渲染（guideline/entity/relation/output/options，
+  fields 渲染 + `{"items": [...]}` 响应格式 + Auto-type），temperature 0.1。
+- 新增 `src/hypergraph.rs`（486 行）：
+  - `hypergraph_prompts`：镜像 prompt 渲染——支持编译模板 shape
+    （entity/relation + fields type/rule）与旧 output shape
+    （entities/relations + fields name/type/required），
+    render_fields/render_type_fields 双渲染器，infer_type
+    （list/set/hypergraph 三态）。
+  - `gen_json`：LLM JSON 输出辅助（剥 ```json fence、prose 容错、
+    首尾大括号截取）；`unwrap_items`：{"items": [...]} 归一。
+  - `extract_hypergraph`：两阶段抽取（关系仅限已知实体）。
+  - `compile_hypergraph`：逐 chunk 独立抽取 + 实体按名去重 +
+    source_chunk_ids 注入（RAGFlow 跨 chunk 合并留待 merge 阶段）。
+- 单测 5（infer_type 三态 / prompts 渲染 / legacy shape / JSON 解析容错 /
+  items 归一）；GPU live 测试 gpu_hypergraph_extraction_entities_then_relations
+  （ignored，env RAYRAG_TEST_LLM_BASE/MODEL）——8088 Qwen3.5 中文文本
+  两阶段真实抽取 3.67s 通过（实体含养殖场/负责人，关系仅引用已知实体）。
+- 测试：默认 **512 passed / 0 failed / 20 ignored**；双 feature
+  **515 passed / 0 failed / 20 ignored**。
+
+## 2026-08-03 编译模板执行器落库：对标 _struct_upsert_graph_json + raptor_tree_to_graph
+
+- 审计确认 RAGFlow tree 模板执行后把树投影为 {entities, relations}
+  （raptor_tree_to_graph：tree_node 实体 + child 关系）并 upsert 到图存储
+  （_struct_upsert_graph_json，row_id 含 doc+compile_kwd+template）。
+- `src/raptor.rs` 新增 `TreeGraph`/`TreeGraphEntity`/`TreeGraphRelation` +
+  `RaptorTree::to_graph`（镜像 raptor_tree_to_graph：叶子节点带
+  source_chunk_ids，内部节点用 content 首行作实体名）；`TreeTemplateResult`
+  增加 graph 字段。
+- `execute_group_templates` 支持 `?doc_id=..&kb_id=..`：执行后把全部树
+  图合并为 raptor_tree checkpoint 写入 GraphStore.replace_document
+  （method="raptor_tree"，entity_types=["tree_node"]）。
+- 单测 1（手工 3 节点树 → 3 实体 2 child 关系、叶子 source_chunk_ids）；
+  GPU live 测试扩展：POST execute 带 doc_id/kb_id → 断言返回 graph 且
+  checkpoint 落库（method/kb_id/entity_types）——1.31s 通过。
+- 测试：默认 **507 passed / 0 failed / 19 ignored**；双 feature
+  **510 passed / 0 failed / 19 ignored**。
+
+## 2026-08-03 编译模板执行器：对标 chunk_post_processor.run_tree_templates
+
+- 审计确认 compilation_templates API 纯 CRUD、无执行器；RAGFlow 触发链路：
+  task_handler._parser_config_compilation_template_ids → resolve_template_ids
+  → run_tree_templates（tree 类模板用 chat_mdl 建 RAPTOR 树）。
+- `src/raptor.rs` 新增 `run_tree_templates` 编排 + `TreeTemplateResult`：
+  对每个 tree 模板读 config.raptor（prompt/max_token/threshold/max_cluster，
+  缺省对齐 RAGFlow 默认），调 build_with_llm_prompt 建树；单模板失败跳过
+  不中断其余。
+- `src/api/compilation_templates.rs` 新增 `execute_group_templates` handler +
+  `src/server.rs` 路由 `POST /api/v1/compilation_template_groups/{id}/execute`
+  （body: chunks[{content,embedding}]）；LlmClient 加 #[derive(Clone)]。
+- 单测 2（每模板一树 / 空输入）+ GPU live 测试
+  gpu_tree_template_execute_builds_trees_over_http（ignored，env
+  RAYRAG_TEST_LLM_BASE/MODEL）——建组→POST execute→8088 Qwen3.5 真实建树
+  1.38s 通过。
+- 测试：默认 **506 passed / 0 failed / 19 ignored**；双 feature
+  **509 passed / 0 failed / 19 ignored**。
+
+## 2026-08-03 PDF outline 链路收尾：transient 语义对齐 chunk_builder.extract_outline
+
+- 审计发现：naive chunker 会把 doc.metadata.clone() 复制到每个 chunk，
+  导致 `__outline__` 出现在所有 chunk 且永不消费，偏离 RAGFlow 语义。
+- `src/pipeline/mod.rs` 新增 `normalize_first_chunk_metadata`：`__outline__`
+  只保留在 chunks[0]（对齐 naive.py "attach to first chunk" + chunk_builder
+  extract_outline 弹出前的位置），其余 chunk 移除该 transient 键；普通
+  metadata（file_name 等）不受影响。process() 在 annotate_chunks 后调用。
+- 持久化到 DocumentMetadataStore 属 API 层职责（RayRAG 已有
+  DocumentMetadataStore.replace，RAGFlow update_document_metadata 是 partial
+  merge 语义），留待后续接 API 时补 merge 变体。
+- 测试：默认 **504 passed / 0 failed / 18 ignored**；双 feature
+  **507 passed / 0 failed / 18 ignored**。
+
+## 2026-08-03 PDF 大纲（outline）提取：对标 deepdoc/parser/utils.py + chunk_builder.py
+
+- `src/parser/pdf.rs` 新增 `OutlineEntry`（title/depth/page）+ `extract_outlines`
+  （lopdf get_outlines 递归遍历 Outline 树 → (title, depth, page)，页码经
+  page-id→页号映射解析；无书签返回空）。镜像 RAGFlow `extract_pdf_outlines`
+  语义；`parse()` 时把 outline 以 `__outline__` 键挂入 Document.metadata
+  （对齐 naive.py 附到 chunk[0] 的 transient 语义，供 chunk 后处理持久化）。
+- 真实 PDF 验证：reportlab 生成嵌套书签 PDF（2 章 + 1 子节），
+  gpu_pdf_outline_extraction_live（ignored，env RAYRAG_TEST_PDF_OUTLINE）
+  断言非空+嵌套+页码解析通过。
+- 新增依赖 indexmap 2（lopdf 传递依赖显式化）。
+- 测试：默认 **502 passed / 0 failed / 18 ignored**；双 feature
+  **505 passed / 0 failed / 18 ignored**。
+
+## 2026-08-03 RAPTOR LLM 摘要闭环：对标 raptor_service.py + advanced_rag/raptor.py
+
+- `src/raptor.rs` 新增 `ClusterSummarizer` trait（镜像 RAGFlow
+  `_summarize_texts`：prompt 模板 `{cluster_content}` 占位、同语言标题行
+  提示、max(max_token,512) 上限）+ `build_with_llm` / `build_with_llm_prompt`
+  （异步 LLM 建树，LLM 失败自动回退抽取式摘要）+ `LlmClusterSummarizer`
+  （逐块截断预算 (max_length-max_token)/len(texts)，system=prompt 渲染）。
+- **llm.rs 修复（GPU 实测发现）**：Qwen3.5 在 llama.cpp 上把内容全放
+  reasoning_content（思考链），content 为空且 finish=length。llama.cpp 不认
+  `extra_body`，需 `chat_template_kwargs.enable_thinking=false`。现 qwen3
+  家族双形态同发（extra_body 给 DashScope/OpenAI 兼容、chat_template_kwargs
+  给 llama.cpp），全端点兼容。
+- GPU 闭环：gpu_raptor_llm_summary_loop（ignored，env 注入 8088
+  Qwen3.5-9B）真实 LLM 调用 probe+建树，根节点为润色摘要（非 verbatim
+  拼接）。断言教训：LLM 摘要可能以原文开头，须与完整 extractive 拼接比对。
+- 测试：默认 **500 passed / 0 failed / 17 ignored**；双 feature
+  **503 passed / 0 failed / 17 ignored**。
+
+## 2026-08-03 S3 兼容对象存储客户端（StorageClient）：对标 rag/utils/storage_factory.py 族
+
+- 新增 `src/storage.rs`：`StorageConfig`（endpoint/region/access_key/
+  secret_key/path_style/timeout，`from_env` 读 `RAYRAG_STORAGE_*`）+ 
+  `StorageClient`（AWS SigV4 签名，纯手写 HMAC-SHA256 链 + civil-from-days
+  日期算法，零 chrono 依赖）。
+- 接口镜像 RAGFlow 存储契约：`health` / `put` / `get` / `rm` /
+  `obj_exist` / `bucket_exists` / `make_bucket` / `presigned_get_url`。
+  一套客户端覆盖 MinIO、AWS S3、阿里云 OSS、腾讯云 COS、华为 OBS 等
+  S3 兼容端点（国内部署：OSS/COS/MinIO 直连）。
+- 签名正确性验证：HMAC 链与独立 Python 实现交叉一致；**真实 MinIO
+  容器 live round-trip 通过**（make_bucket→put→obj_exist→get 字节一致→
+  presigned URL→rm，SigV4 path-style，2026-08-03）。
+- 测试：6 passed / 1 ignored（默认 feature）；ignored 为
+  `minio_round_trip_live`（需 RAYRAG_STORAGE_* env）。
+- 新增依赖：hmac 0.12、hex 0.4、url 2（均为轻量，cargo rsproxy 镜像）。
+
+## 2026-08-03 ASR/TTS 客户端接入：对标 RAGFlow sequence2txt_model.py + tts_model.py
+
+- 新增 `src/audio.rs`：`AsrClient`（OpenAI 兼容 `/audio/transcriptions`
+  multipart：file+model → `{text}`，返回去空白文本 + token 数，镜像
+  RAGFlow GPTSeq2txt 及其子类 StepFun/FuturMix/DeepInfra/Gitee/CometAPI/
+  DeerAPI/GPUStack/Xinference）+ `TtsClient`（`/audio/speech` JSON
+  `{"model","voice","input"}` → 原始音频字节，镜像 HTTPBasedTTS 及其子类
+  OpenAI/Xinference/Ollama/GPUStack/SILICONFLOW/DeepInfra）。
+- 单面协议覆盖全部提供商（含国内：StepFun、SiliconFlow、Xinference、
+  Ollama 本地）；Bearer 认证按 key 非空启用；非 2xx 返回截断 300 字符
+  错误体；TTS 空响应视为错误。
+- 测试：mock axum 服务器 5 测试（multipart 字段断言、缺 text 字段报错、
+  TTS 原始字节 round-trip、400 透传、Bearer 路径）；默认 feature
+  **492 passed / 0 failed / 15 ignored**；双 feature 495。
+- 至此 RAGFlow rag/llm/ 8 个模型文件全部有对应客户端：chat/embedding/
+  rerank/ocr/cv/seq2txt/tts + __init__ 能力注册。
+
+## 2026-08-03 视觉模型客户端（VisionClient）接入：对标 RAGFlow cv_model.py
+
+- 新增 `src/vision.rs`：OpenAI 兼容 VLM 客户端，镜像 RAGFlow `cv_model.py`
+  的 GptV4 语义——`describe(image)` / `describe_with_prompt(image, prompt)`，
+  图片统一归一化为 data URL（已支持 `data:` 前缀/纯 base64/裸字节），
+  默认 prompt 内嵌 RAGFlow `vision_llm_describe_prompt.md` 模板（PDF 页转
+  Markdown 任务），支持 lang 参数。OpenAI/llama.cpp/Ollama/vLLM/国内厂商
+  视觉端点全部适用（同一 chat completions 协议，兼容所有提供商 vision 模型）。
+- `src/model_meta.rs` 已有 vision capability 发现（Ollama /v1/models）；本次补齐
+  实际推理客户端，视觉能力闭环。
+- GPU 实测：`gpu_vision_endpoint_describes_image_with_prompt`（ignored，
+  `RAYRAG_TEST_VISION_BASE`/`RAYRAG_TEST_VISION_MODEL` env 注入）调用 8088
+  的 Qwen3.5-9B（带 mmproj 视觉投影）——测试图用**纯 Rust 生成 PNG**
+  （flate2 zlib + 手写 CRC-32 表，零外部图片依赖），VisionClient 描述
+  "黑色矩形" 断言通过（1.95s）。
+- 测试：默认 feature 487 passed / 0 failed / 15 ignored（+4 vision 单测 +
+  GPU 视觉集成）；双 feature 490 passed / 0 failed / 15 ignored。
+- 陷阱记录：llama.cpp 视觉端点只接受 PNG/JPEG（PPM 会 400 "Failed to load
+  image"）；crc32fast 不在依赖树，PNG CRC-32 手写查表实现。
+
+## 2026-08-03 GPU 模型客户端真实兼容修复：reasoning_content + embedding 双形态 + reranker key
+
+- `src/llm.rs`：对齐 RAGFlow `chat_model.py` 的 reasoning 语义——非流式 chat 解析
+  `reasoning_content`（Qwen3/DeepSeek-R1 风格）与 `reasoning` 别名（Kimi-K2.5 风格），
+  存在时以 `<think>...</think>` 前缀拼接到 content（空 reasoning 不包裹）；
+  tool chat 仅在没有 tool_calls 时附加 think 前缀；Qwen3 家族请求自动带
+  `extra_body.enable_thinking=false`（对应 RAGFlow `_apply_model_family_policies`）。
+  实测 8088 的 Qwen3.5-9B 确认 llama.cpp 不认 extra_body（与 vLLM 行为不同），
+  thinking 默认开启、思考链会吃满 max_tokens——RayRAG 现在能正确保留思考链，
+  修复前 content 会退化为 "(empty response)" 占位符。
+- `src/embed/openai.rs`：兼容两种 embedding 响应形态——标准 OpenAI
+  `{"data":[{"embedding":[...]}]}` 与 llama.cpp 裸 `/embeddings` 端点
+  `[{"index":0,"embedding":[[...]]}]`（二维嵌套，旧 Python 客户端兼容格式）。
+  真实修复：base_url 不带 /v1 时 GPU 集成测试此前报
+  "invalid type: map, expected a sequence"，现在 8888（Qwen3-Embedding-4B）实连通过，
+  2560 维向量真实返回。
+- `src/agent.rs` GPU 集成测试：reranker 支持 `RAYRAG_TEST_RERANKER_KEY` 环境变量
+  （8081 用 `--api-key` 保护，此前 401）；rerank 用例改用中文文档对
+  （"RAGFlow是一个开源的RAG引擎" 排第 1）——英文短句对在 llama.cpp 上
+  mxbai-rerank-large-v2 排序错位（"Bananas are yellow." 恒得 0.945 高分），
+  属宿主 llama-server 模板问题而非 RayRAG 缺陷；中文长句排序稳定正确。
+- 测试：默认 feature **483 passed / 0 failed / 14 ignored**（+8：3 reasoning +
+  5 embedding 双形态）；GPU 集成测试 1 passed（3.68s，chat/embed/rerank 三模型
+  真实调用 + Categorize 工作流路由正确）。
+- `.env.example` 增补 `RAYRAG_TEST_RERANKER_KEY=mxbai-rerank-key`。
+
+---
+
+## 2026-08-02 国内连接器接入 + GPU 四模型闭环 + zvec/postgres 实连
+
+- 新增 5 个大陆直连连接器（免代理、免 key 优先）：`src/bing.rs`（cn.bing.com 桌面结果页）、
+  `src/baidu.rs`（www.baidu.com/s，302 安全跳转 + cookie store + 浏览器头）、
+  `src/bocha.rs`（博查 API，需 `BOCHA_API_KEY`）、`src/tencent_finance.rs`（qt.gtimg.cn GBK
+  行情 + smartbox 搜索提示）、`src/baidu_scholar.rs`（xueshu.baidu.com 学术结果）。全部
+  `.no_proxy()` 直连、15 秒超时、有界响应体，输出 RAGFlow `title/link/snippet` tool 行。
+- `src/agent.rs`：5 个连接器完成 Agent 工具分发接线——`execute_*_with_provider` 执行函数、
+  timeout 包装、channel/top_n/attempts/retry_delay 辅助函数、`execute_node` 与
+  `execute_canvas_agent_tool_with_providers` 各 5 个 match 分支、错误前缀映射（`Bing
+  error:`/`Baidu error:` 等）、imports。`src/runtime.rs`：5 组 INPUTS/OUTPUTS 常量 +
+  `COMPONENT_REGISTRY` 新增 5 描述符（bing/baidu/bocha/tencentfinance/baiduscholar）。
+- 腾讯行情解析对齐真实协议：GBK.decode → `split('=')` 取引号内容 → 按 `~` 分割 → 字段索引
+  映射（3=现价、5=今开、31=涨跌额、32=涨跌%、33=最高、34=最低、36=成交量）；模拟测试串按
+  真实 ~50 字段布局重写。
+- `src/api/tenant_models.rs`：resolve 同名校验改为 `filter` + enabled 优先——用户显式创建且
+  启用的 provider 实例优先于 default_providers 播种的同名实例。
+- 百度系风控处理：百度对自动化请求偶发返回"百度安全验证"（wappass）页。连接器检测该页并
+  返回明确错误（`safety verification page returned`），live 测试对该错误优雅 skip（视为环境
+  限制而非代码失败）；curl 验证完整浏览器头 + cookie jar + gzip 可稳定取得结果页（3/3）。
+- 测试：默认 feature 475 passed / 0 failed / 14 ignored；双 feature 478 passed / 0 failed。
+  Bing 与腾讯财经 live 在线通过；百度系 live 被风控 skip。
+- **GPU 四模型真实调用闭环**：8088 chat（Qwen3.5-9B 返回 reasoning_content 思考链）、
+  8888 embed（Qwen3-Embedding-4B 返回真实向量）、8081 rerank（mxbai-rerank-large-v2
+  `--reranking`，相关文档排第 1）、8090 OCR（PaddleOCR-VL 准确识别 "RayRAG OCR Test 2026"）。
+  测试套件新增 `RAYRAG_TEST_LLM_BASE/MODEL`、`RAYRAG_TEST_EMBEDDING_BASE/MODEL`、
+  `RAYRAG_TEST_RERANKER_BASE` 环境变量入口（`.env.example` 已公开）。
+- **zvec 原生冒烟**：`ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1` + 同值 `LD_LIBRARY_PATH` 下
+  `native_collection_upserts_queries_and_reopens` 通过（create/upsert/query/reopen 持久化）。
+- **postgres 18.4 实连**：`RAYRAG_POSTGRES_TEST_URL=postgresql://rayrag:***@127.0.0.1:55432/rayrag`
+  下 `postgres_18_snapshot_round_trip` 通过（store→load→版本门控 `server_version_num/10000==18`
+  →DELETE 清理）。rayrag-postgres-1 容器运行中（healthy，5 天）。
+- 基础设施：`~/.cargo/config.toml` 配置 rsproxy 国内镜像（crates-io 替换为 rsproxy-sparse）；
+  reqwest 增加 `cookies`、`gzip` features。
+
+---
+
+## 2026-08-02 RAGFlow Google Search 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 527 行
+  `agent/tools/google.py`、179 行 `internal/agent/tool/google.go`、170 行 Go 测试、公共
+  `_retrieve_chunks` / `kb_prompt`、standalone/Agent 前端表单、完整国家/语言选项及两个固定模板实例。
+  RAGFlow“全部文件”知识库返回 Dify 和本地化资源等无关片段，未作为实现证据。
+- 按 Aliyun 锁文件下载并校验 `google-search-results==2.4.2` sdist，SHA-256 为
+  `603a30ecae2af8e600b22635757a6df275dad4b934f975e67878ccd640b78245`；源码确认 SDK 固定 GET
+  `https://serpapi.com/search`，自动补 `source=python`、`engine=google` 和 `output=json`，使用
+  `requests.get(..., timeout=60000)` 且不主动 `raise_for_status`。
+- 新增 355 行（含测试）`src/google.rs` 纯 Rust 双协议层。生产端点固定为 SerpApi 和 Google
+  Programmable Search CSE，Canvas 不能注入任意 URL；客户端禁环境代理和 redirect，响应限制 16 MiB。
+  本地 HTTP 测试锁定 query encoding、响应解析、CSE 缺省/上限和缺失标量行为。
+- Python/Canvas 主路径严格保留 `google_search` 描述与 `q/start/num` schema、必填 SerpApi key、240 个
+  country 和 156 个 language 精确 allowlist、参数类 `country=cn/language=en` 缺省及前端
+  `country=us/num=12` 新节点值。固定 Python `_invoke` 虽声明并接收 `start/num`，实际从未把二者放入
+  SerpApi params；Rust 忠实保留该 bug，不虚构分页或条数语义。
+- 成功路径原样发布 `organic_results` JSON；内容先要求 `snippet`（保持 Python default 参数的求值次序），
+  再优先使用 `about_this_result.source.description`，去 base64 PNG、按 Unicode 字符截到 10,000，以
+  SHA-1 modulo ID 生成 chunk、document aggregation、reference 和 `kb_prompt(hash_id=True)`。空 q 只
+  清空 formalized content；`max_retries + 1`、末次失败后仍 delay、取消和 12 秒 deadline 已接线。
+- 独立 Go 兼容方法保留不同的 `google` CSE 合同：query/api_key/cx 精确非空检查，`max_results<=0`
+  缺省 5、正数上限 10，percent-encoded `key/cx/q/num`，非 2xx/坏 JSON fail closed，缺失/null scalar
+  为 Go string 零值，输出 `{results:[{title,link,snippet}]}`。Canvas/Agent 继续暴露 Python SerpApi
+  q/country/language 模型，不混入 Go CSE 参数。
+- `src/agent.rs` 将 Google 接入顶层 Canvas 和 Agent ReAct，发布精确 `google_search` 元数据、必填 q、
+  可选 start/num 及 `Google error:` 回灌；`src/runtime.rs` 组件目录、README、coverage mapping 和 Agent
+  provider 注入同步更新。新增 5 个确定性协议/Canvas/Agent 测试和 1 个默认 ignored 的 live 测试；
+  coverage mapping 守卫同步增至 52/52。
+- 覆盖矩阵从固定 Git tree 重生 4,441 文件；Python/Go Google 生产文件获得专属 mapping 但诚实保持
+  `partial`。汇总不变：aligned 68/15,322 行、partial 1,579/650,559 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。
+- 验证：默认 locked 全目标为 453 lib + 52 coverage = 505 passed / 0 failed / 9 ignored；
+  `postgres-backend,zvec-backend` 为 456 lib + 52 coverage = 508 passed / 0 failed / 9 ignored。默认/双
+  feature 的 all-target check、严格 `clippy -D warnings` 和 zvec native 测试均通过；PG URL 未设置，
+  因此本批不声称 PostgreSQL 实连。公开 `demo` key 的 Google live test 在 2.65 秒收到 SerpApi HTTP
+  401，真实账户 key 与 CSE key/cx 均未提供，故公网门禁明确未通过。
+- 尚未冒充完成：Python requests 的环境 proxy、redirect/cookie/session、SDK params 原地 mutation、
+  60000 秒内层 timeout 和 HTTP/status/JSON 异常分类，以及 Go `HTTPHelper` 的环境 proxy、
+  OpenTelemetry、30 秒 client 与独立三次抖动重试、thoughts/callback 和 checkpoint 级取消仍未逐项复刻。
+  因此两条生产文件继续保持 `partial`，纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先
+  和零 MySQL 路线不变。
+
+---
+
+## 2026-08-02 RAGFlow Yahoo Finance 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 115 行
+  `agent/tools/yahoofinance.py`、172 行 `internal/agent/tool/yahoo_finance.go`、160 行 Go 测试、Go
+  registry、standalone/Agent 前端表单和 stock-market 模板实例。RAGFlow“全部文件”知识库本批返回版本号、
+  医学等无关片段，未作为实现证据。
+- 按锁文件从 Aliyun 下载并校验 `yfinance==0.2.65` sdist，SHA-256 为
+  `3d465e58c49be9d61f9862829de3e00bef6b623809f32f4efb5197b62fc60485`；核对 basic
+  cookie/crumb、quoteSummary/quote 信息合并、trailing PEG、chart history、calendar、fundamentals
+  timeseries、latestNews POST/ad 过滤及 pandas Markdown 形成过程。
+- 新增 1,551 行（含测试）`src/yahoo_finance.rs` 纯 Rust 双协议层。生产主机固定为
+  `fc.yahoo.com`、`query1.finance.yahoo.com`、`query2.finance.yahoo.com` 和 `finance.yahoo.com`，Canvas
+  不能注入 URL；客户端禁环境代理和 redirect，设置 30 秒 HTTP timeout、16 MiB body 上限及 60 秒
+  component deadline，cookie/crumb 只在客户端内缓存且不进入 Debug/输出。
+- Python/Canvas 路径保留 `info/news=true`、其余 false 的参数缺省，严格校验八个布尔值；忠实保留
+  `financials` 实际输出 Calendar、`count`/`income_stmt` 仅校验但从不读取的固定源码行为，以及空
+  `stock_code` 只发布空 `report`、`max_retries + 1` 和末次失败后仍 delay。报表按 Information、History、
+  Calendar、年度/季度 Balance sheet、年度/季度 Cash flow、News 固定顺序输出。
+- 信息路径合并五个 quoteSummary module 和 quote，完成一级 flatten、raw/fmt 递归归一化、NBSP 清理、
+  `maxAge=1` 转 86400 和 trailingPegRatio；history 先取时区再取一月日线，并应用默认 auto-adjust 核心
+  OHLC/Close 与 dividend/split 行；calendar 转换日期/盈利区间。fundamentals 使用 yfinance 完整 145 个
+  balance-sheet key 和 123 个 cash-flow key，保留年度/季度前缀、日期降序和 Yahoo key 顺序；新闻使用
+  `latestNews` JSON POST、snippetCount=10 并按 Python truthiness 排除广告。
+- 独立 Go 兼容方法保留 `yahoo_finance` 合同：非空 symbols 数组、可选 fields、逗号合并及 percent
+  encoding、精确 `Mozilla/5.0 (compatible; ragflow/1.0)` User-Agent 和 `application/json` Accept，
+  缺失/null string/float 按 Go 零值，发布
+  `{results:[{symbol,regularMarketPrice,currency,regularMarketChangePercent}]}`；Canvas/Agent 仍暴露固定
+  Python 的 stock_code/report schema，不混入 Go symbols/fields 参数。
+- `src/agent.rs` 将 `YahooFinance` 接入顶层 Canvas 与 Agent ReAct，发布精确 `yahoo_finance` 名称、描述、
+  必填 `stock_code` schema 和 `YahooFinance error:` 回灌；静态配置中的六个可见 flag 及隐藏
+  count/income_stmt 都保留。`src/runtime.rs` 组件目录、README、coverage mapping 和公共 Agent tool DSL
+  同步更新。
+- Yahoo 聚焦测试为 5 passed / 0 failed / 1 ignored，覆盖 cookie/crumb/header/body/query、所有 section
+  顺序、raw/maxAge/auto-adjust、完整 key 数、news ad、Go null 零值、空输入、重试和 Agent selector；覆盖生成器
+  51/51 通过并从固定 Git tree 重生 4,441 文件矩阵。Python/Go Yahoo Finance 获得专属 mapping 但保持
+  `partial`；汇总仍为 aligned 68/15,322 行、partial 1,579/650,559 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。
+- 验证：默认 locked 全目标为 448 lib + 51 coverage = 499 passed / 0 failed / 8 ignored；
+  `postgres-backend,zvec-backend` 为 451 lib + 51 coverage = 502 passed / 0 failed / 8 ignored。默认/双
+  feature 的 all-target check、严格 `clippy -D warnings`、fmt、tracked diff whitespace 与 Compose 静态解析
+  均通过；zvec native 测试真实执行。PG URL 未设置，因此本批不声称 PostgreSQL 实连；未新起、停止或重启容器。
+- 公网门禁未通过：显式 live test 在 5.77 秒收到 crumb HTTP 403；独立 curl 探测可取得 23 字节 crumb，
+  但 quote/chart/news 均为 HTTP 429。curl-cffi Chrome TLS impersonation、consent CSRF fallback、持久
+  cookie/cache、yfinance 的完整 price repair/timezone/action 边界、pandas dtype/alignment/to_markdown 字节
+  一致性，以及 Go HTTPHelper 的环境 proxy、OpenTelemetry 和三次抖动重试尚未复刻。因此两条生产文件
+  继续诚实标为 `partial`，纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零 MySQL
+  路线不变。
+
+---
+
+## 2026-08-02 RAGFlow GitHub 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 97 行
+  `agent/tools/github.py`、174 行 `internal/agent/tool/github.go`、163 行 Go 测试、公共
+  `_retrieve_chunks` / `kb_prompt`、Go registry 及前端 standalone/Agent 表单。Python 参数类缺省
+  `top_n=10`，前端新节点和 Agent 工具配置实际种入 `top_n=5`，Rust 分别保留而未强行统一。本机
+  RAGFlow“全部文件”知识库返回版本号、医学等无关片段，未用作实现证据。
+- 直接依赖实际使用 `requests` 而非已声明但未导入的 PyGithub。按 Aliyun 锁文件下载并校验
+  `requests==2.32.5` sdist SHA-256
+  `dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf`，核对
+  `python-requests/2.32.5` 默认 User-Agent、`requote_uri`、30 次 redirect 上限、cookie session 和
+  `trust_env=true` 的环境 proxy/netrc 行为。
+- 新增 465 行（含测试）`src/github.rs` 纯 Rust 双协议层。生产端点固定为
+  `https://api.github.com/search/repositories`，Canvas 不能注入任意 URL；客户端禁环境代理、禁
+  redirect，采用 12 秒请求和 16 MiB body 上限，对网络、超大 body、缺 `items`、非 JSON 和字段类型
+  错误 fail closed，同时保留 Python 返回的每个原始 repository item。
+- Python/Canvas 路径发送 `q/sort=stars/order=desc/per_page`、
+  `Content-Type: application/vnd.github+json`、`Accept: */*`、
+  `X-GitHub-Api-Version: 2022-11-28` 与 requests-compatible User-Agent；description 为 null 时按
+  Python `str(None)` 生成 `None`，再拼接 `\n stars:<watchers>`。内容去 base64 PNG、按 Unicode 字符
+  截到 10,000，以 SHA-1 modulo ID 生成 chunk、document aggregation、reference 和
+  `kb_prompt(hash_id=True)`；`json` 保留原始 `items`，空 query 只清空 formalized content。
+- 独立 Go 兼容方法保留 `github` 合同：trim 后空 query 拒绝，`max_results<=0` 缺省 5、正数上限 30，发送
+  percent-encoded `q/per_page`、GitHub media-type Accept、net/http 隐式
+  `Go-http-client/1.1` User-Agent 与可选 `Authorization: Bearer <token>`；缺失/null 标量按 Go
+  string/int 零值处理，发布 `{results:[{full_name,html_url,description,stargazers_count}]}`。
+- `src/agent.rs` 将 `GitHub` 接入顶层 Canvas 和 Agent ReAct，精确发布 Python 的 `github_search`
+  名称、描述和仅必填 `query` schema；外层 `max_retries + 1`、末次失败后的 delay、取消、12 秒
+  deadline 与 `GitHub error:` 回灌均已接线。`src/runtime.rs` 组件目录、README、公共 Agent tool DSL
+  与 coverage mapping 守卫同步更新；Canvas/Agent 不暴露 Go token 参数，避免改变 Python DSL。
+- 新增 4 个确定性本地 HTTP/JSON 测试、2 个 Agent/Canvas 测试和 1 个默认 ignored 的公网测试；
+  聚焦 GitHub 测试为 6 passed / 0 failed / 1 ignored。live test 以 `--ignored --exact` 显式执行，在
+  未设置 `GITHUB_TOKEN` 的匿名限额下 3.00 秒成功返回真实 `api.github.com` 结果。
+- 覆盖生成器 50/50 通过并从固定 Git tree 重生 4,441 文件矩阵；Python/Go GitHub 生产文件获得专属
+  映射但诚实保持 `partial`，汇总仍为 aligned 68/15,322 行、partial 1,579/650,559 行、replaced
+  71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、默认与 `postgres-backend,zvec-backend` 双 feature 的 locked
+  all-target check、严格 `clippy -D warnings`、全目标测试均通过；默认为 443 lib + 50 coverage =
+  493 passed / 0 failed / 7 ignored，双 feature 为 446 lib + 50 coverage = 496 passed / 0 failed /
+  7 ignored，zvec native create/upsert/query/reopen 实际执行。PostgreSQL/GPU/Tavily/GitHub token 环境变量
+  未设置，条件式 PG 与 GPU 未实连；Compose 使用临时占位密码仅做静态配置校验，未新起、停止或重启
+  容器。
+- 尚未冒充完成：Python requests 的环境 proxy/netrc、redirect/cookie session、字符串 URL 拼接中
+  `&/#` 等边缘解释、15 秒内层 timeout 与 `.json()` 异常分类未逐项复刻；Go `HTTPHelper` 的环境 proxy、
+  OpenTelemetry、30 秒 client、redirect 与独立三次抖动重试，以及 thoughts/callback、checkpoint 级取消
+  仍未对齐。因此 Python/Go 两条生产文件保持 `partial`，纯 Rust/Linux/Docker、zvec-rust、
+  PostgreSQL 18.4、国内镜像优先和零 MySQL 路线不变。
+
+---
+
+## 2026-08-02 RAGFlow Google Scholar 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 115 行
+  `agent/tools/googlescholar.py`、355 行 `internal/agent/tool/google_scholar.go`、188 行 Go 测试和
+  101 行 Python 测试，连同公共 `_retrieve_chunks` / `kb_prompt`、前端 `top_n=12`、排序、年份和
+  patents 表单。RAGFlow“全部文件”知识库本批只回显查询，未返回 Google Scholar 源码证据，未用作
+  实现依据。另从 Aliyun 锁文件下载并校验 `scholarly==1.7.11` sdist SHA-256
+  `2c983dd44d9d9398a6f2605102ae6e5586023b41ebbaec1461917ee48eb153f0`，核对查询字段、分页、作者/
+  年份/摘要解析和 Navigator 的重试、随机等待、代理、redirect、cookie 与 CAPTCHA 处理。
+- 新增 784 行（含测试）`src/google_scholar.rs` 纯 Rust 双协议层，并固定
+  `scraper=0.20.0`；32 个传递依赖通过 USTC 镜像锁定和获取。生产端点固定为
+  `https://scholar.google.com/scholar`，Canvas 不能注入任意 URL；客户端禁环境代理、禁 redirect，
+  设置 12 秒请求和 16 MiB body 上限，并对非 2xx、坏 UTF-8、超大响应和 Google CAPTCHA/拒绝服务
+  页面 fail closed。
+- Python/Canvas 主路径保留 `hl/q/as_ylo/as_yhi/as_vis/as_sdt/scisbd/start` 字段、
+  `top_n=12`、`sort_by=relevance`、`patents=true` 缺省和数字 next-page 跟随；解析 title/link、过滤
+  authors、venue/year、abstract 与 gsrank，生成与公共 helper 一致的 chunk/reference/document
+  aggregation/`kb_prompt(hash_id=True)`，并发布核心 publication JSON。空 query 会清空 formalized
+  content 和 JSON，不触发网络。
+- 独立 Go 兼容方法保留 `google_scholar` 合同：空白 query 拒绝，`max_results` 缺省 5，URL `num`
+  上限 20，发送源码的 browser User-Agent、HTML Accept 和 `hl=en`；按 `.gs_ri/.gs_rt/.gs_a/.gs_rs`
+  解析并跳过无标题项，年份只接受 1900–2099，发布
+  `{results:[{title,link,snippet,authors,year}]}`。
+- `src/agent.rs` 将 `GoogleScholar` 接入顶层 Canvas 和 Agent ReAct，精确发布 Python 的
+  `google_scholar_search` 名称、长描述和仅必填 `query` schema；外层 `max_retries + 1`、包括末次
+  失败后的 delay、12 秒 deadline 和 `GoogleScholar error:` 回灌均已接线。`src/runtime.rs` 组件目录、
+  README、公共 Agent tool DSL 与覆盖守卫同步更新。
+- 新增 4 个确定性 DOM/协议测试、2 个 Agent/Canvas 测试、1 个默认 ignored 的公网测试和 1 个
+  coverage mapping 守卫；聚焦 Google Scholar 测试为 6 passed / 0 failed / 1 ignored。默认 ignored
+  的 live test 另以 `--ignored --exact` 显式执行，在 12.04 秒因当前环境访问
+  `scholar.google.com` 超时而失败，只记录为环境阻塞，未冒充在线通过。
+- 覆盖生成器 49/49 通过并从固定 Git tree 重生 4,441 文件矩阵；Python/Go Google Scholar 生产文件
+  获得专属映射但诚实保持 `partial`，汇总仍为 aligned 68/15,322 行、partial 1,579/650,559 行、
+  replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、默认与 `postgres-backend,zvec-backend` 双 feature 的 locked
+  all-target check、严格 `clippy -D warnings`、全目标测试均通过；默认为 437 lib + 49 coverage =
+  486 passed / 0 failed / 6 ignored，双 feature 为 440 lib + 49 coverage = 489 passed / 0 failed /
+  6 ignored，zvec native create/upsert/query/reopen 实际执行。PostgreSQL/GPU/Tavily 环境变量未设置，
+  条件式 PG 与 GPU 未实连；Compose 使用临时占位密码仅做静态配置校验，未新起、停止或重启容器。
+- 尚未冒充完成：`scholarly` 的随机 User-Agent/请求间等待、进程级 session/proxy 轮换、redirect/cookie/
+  浏览器 CAPTCHA 恢复、全部真实 href 和完整 citation/eprint/filled 元数据未逐项复刻；Go `HTTPHelper`
+  的环境 proxy、OpenTelemetry、30 秒 client 与独立抖动重试，以及 thoughts/callback、checkpoint 级取消
+  仍未对齐。因此 Python/Go 两条生产文件保持 `partial`，纯 Rust/Linux/Docker、zvec-rust、
+  PostgreSQL 18.4、国内镜像优先和零 MySQL 路线不变。
+
+---
+
+## 2026-08-02 RAGFlow PubMed 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 153 行
+  `agent/tools/pubmed.py`、316 行 `internal/agent/tool/pubmed.go`、242 行 Go 测试和 91 行 Python
+  格式化回归测试，连同公共 `_retrieve_chunks` / `kb_prompt`、前端 `top_n=12` / email 表单与 Agent
+  工具配置。RAGFlow“全部文件”知识库本批只回显查询、未返回 PubMed 源码证据，未用作实现依据。
+  另按 Aliyun 锁文件下载并校验 `biopython==1.86` sdist SHA-256
+  `93a50b586a4d2cec68ab2f99d03ef583c5761d8fba5535cb8e81da781d0d92ff`，核对固定端点、
+  `tool/email/api_key` 参数、三次内部重试、15 秒网络退避、0.37 秒无 key 限流及 GET/POST 切换条件。
+- 新增 988 行（含测试）`src/pubmed.rs` 纯 Rust 双协议层。生产 URL 固定为 NCBI E-utilities 的
+  `esearch.fcgi`、`efetch.fcgi`、`esummary.fcgi`，Canvas 不能注入任意 URL；客户端禁环境代理、禁
+  redirect，设置 12 秒请求与 16 MiB body 上限，非 2xx、坏 UTF-8/XML/JSON、未闭合根节点和超大
+  body 均 fail closed。
+- Python/Canvas 主路径发送 XML `esearch` 的 `db/term/retmax/tool=biopython/email`，按无 API key
+  语义在第二跳前等待 370ms，再以 `db/id/retmode=xml/tool/email` 调 `efetch`。解析前精确去掉源码中的
+  `<b>/<i>` 标签，提取 PMID、标题、首个摘要、期刊、卷期、页码、逐作者 ForeName/LastName、首个 DOI
+  和发布日期；格式化 fallback、作者顺序、PubMed URL 与 `top_n=12` / email 缺省合同保持明确。
+- 独立 Go 兼容方法走 JSON `esearch` → `esummary`，空白 query 拒绝，`max_results` 缺省 5、上限
+  100，发送 `ragflow/1.0` User-Agent 与 JSON Accept；按 esearch PMID 顺序拼接结果，跳过 `uids` 与坏
+  summary 行，标题 trim、作者超过三名追加 `et al.`、年份仅接受 1900–2099，发布
+  `{results:[{pmid,title,authors,journal,year}]}`。
+- `src/agent.rs` 将 `PubMed` 接入顶层 Canvas 和 Agent ReAct，发布 Python 的 `pubmed_search` 名称、
+  MEDLINE 描述和仅必填 `query` schema；外层 `max_retries + 1`、末次失败后 delay、空 query 短路、
+  取消和 12 秒 deadline 已接线。结构化文章沿公共 helper 去 base64 PNG、按 Unicode 字符截到 10,000，
+  用 SHA-1 modulo ID 生成 chunk、document aggregation、reference 与 `kb_prompt(hash_id=True)` 正文；
+  Agent 失败以 `PubMed error:` 回灌。`src/runtime.rs` 组件目录与 README 同步。
+- 新增 4 个确定性本地协议/XML/JSON 测试、2 个 Agent/Canvas 测试、1 个默认 ignored 的 NCBI 公网测试
+  和 1 个 coverage mapping 守卫；另更新公共 Agent tool DSL 与组件目录回归。聚焦 PubMed 测试为
+  6 passed / 0 failed / 1 ignored，DSL 和目录测试各 1/1；默认 ignored 的 live test 以 `--ignored
+  --exact` 显式执行，4.57 秒成功返回真实 NCBI 结果。
+- 覆盖生成器 48/48 通过并从固定 Git tree 重生 4,441 文件矩阵；Python/Go PubMed 生产文件获得专属
+  映射但诚实保持 `partial`，汇总仍为 aligned 68/15,322 行、partial 1,579/650,559 行、replaced
+  71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、默认与 `postgres-backend,zvec-backend` 双 feature 的 locked
+  all-target check、严格 `clippy -D warnings`、全目标测试均通过；默认为 431 lib + 48 coverage =
+  479 passed / 0 failed / 5 ignored，双 feature 为 434 lib + 48 coverage = 482 passed / 0 failed /
+  5 ignored，zvec native create/upsert/query/reopen 实际执行。PostgreSQL/GPU/Tavily 环境变量均未设置，
+  条件式 PG 与 GPU 未实连；Compose、tracked diff 与新 PubMed 文件 whitespace 门禁通过，未新起、
+  停止或重启容器。
+- 尚未冒充完成：Biopython 的跨实例进程级 rate limiter、每一 HTTP 跳独立 `max_tries=3`、15 秒网络
+  backoff、自动长 URL/200 IDs POST、DTD validation 和所有 ElementTree/Entrez 异常类型未逐项复刻；
+  可执行 Canvas 采用 Python XML/email/`top_n=12` 主合同，不暴露 Go `pubmed/max_results` 模型 schema。
+  Go `HTTPHelper` 的环境 proxy、OpenTelemetry、30 秒 client 和三次抖动退避，以及 thoughts/callback、
+  checkpoint 级取消仍未对齐。纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零
+  MySQL 路线不变。
+
+---
+
+## 2026-08-02 RAGFlow ArXiv 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 101 行
+  `agent/tools/arxiv.py`、252 行 `internal/agent/tool/arxiv.go`、200 行 Go 测试，连同公共
+  `_retrieve_chunks` / `kb_prompt`、前端 `top_n=12` / `sort_by=relevance` 新节点默认和表单枚举。
+  按 Aliyun 锁文件下载并校验 `arxiv==2.1.3` wheel SHA-256
+  `6f43673ab770a9e848d7d4fc1894824df55edeac3c3572ea280c9ba2e3c0f39f`，核对 query URL、
+  page size、排序、内部重试/节流、feedparser 与 PDF link 选择。本机 RAGFlow“全部文件”知识库查询成功，
+  但返回论文格式/医学等无关片段，未用作实现依据。
+- 新增 624 行 `src/arxiv.rs` 纯 Rust Atom 协议层。生产端点固定为 Python 使用的
+  `https://export.arxiv.org/api/query` 和 Go 使用的 `http://export.arxiv.org/api/query`，Canvas
+  不能注入任意 URL；客户端禁环境代理、禁 redirect，固定 `arxiv.py/2.1.3` User-Agent、12 秒请求和
+  16 MiB 响应上限，非 2xx、坏 XML、未闭合 entry 与超大 body 均 fail closed。解析器按 local-name
+  处理 Atom namespace、XML entity、CDATA、author/link/totalResults，缺失 id 的 entry 跳过、缺失 title
+  按锁定 SDK 置为 `0`。
+- Python/Canvas 路径保留原始查询语法而不擅加 `all:`，发送 `id_list`、`sortBy`、
+  `sortOrder=descending`、`start` 和 SDK 默认 `max_results=100` 分页字段；参数类缺省
+  `sort_by=submittedDate`，同时接受前端保存的 `relevance` 及 `lastUpdatedDate`，`top_n=12`。
+  独立 Go 方法则严格发送 `all:<query>`、`max_results` 缺省 5，发布
+  `{results:[{title,authors,summary,pdf_url,entry_id}]}`，优先显式 PDF link，无 link 时按 `abs` → `pdf`
+  推导 URL。
+- `src/agent.rs` 将 `ArXiv` 接入顶层 Canvas 和 Agent ReAct，精确发布 Python 的 `arxiv_search`
+  名称、描述和仅必填 `query` schema；外层 `max_retries + 1`、包括末次失败后的 delay、空 query 短路和
+  12 秒顶层/Agent deadline 已接线。摘要沿公共 helper 去 base64 PNG、按 Unicode 字符截到 10,000，
+  用 SHA-1 modulo ID 生成 chunk、document aggregation、去重 reference 和 `kb_prompt(hash_id=True)`
+  正文，同时保留 Go 兼容 JSON；Agent 失败以 `ArXiv error:` 回灌。不可变组件目录与 README 同步。
+- 新增 4 个本地 Axum/XML 协议测试、2 个 Agent/Canvas 测试、1 个默认 ignored 的公网测试和 1 个
+  coverage mapping 守卫，覆盖 Python 原始 query/sort/page fields、Atom namespace/entity/CDATA、author、
+  显式/回退 PDF、Go `all:`/默认 5、坏状态/坏 XML/body 上限、重试、空查询、chunk/hash/reference、Agent
+  success/error 与函数 schema。
+- 覆盖生成器 47/47 通过并从固定 Git tree 重生 4,441 文件矩阵；Python/Go ArXiv 生产文件获得专属
+  映射但诚实保持 `partial`，汇总仍为 aligned 68/15,322 行、partial 1,579/650,559 行、replaced
+  71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、默认与 `postgres-backend,zvec-backend` 双 feature 的 locked
+  all-target check、严格 `clippy -D warnings`、全目标测试均通过；默认为 425 lib + 47 coverage =
+  472 passed / 0 failed / 4 ignored，双 feature 为 428 lib + 47 coverage = 475 passed / 0 failed /
+  4 ignored，zvec native create/upsert/query/reopen 实际执行。默认 ignored 的 ArXiv 公网测试另以
+  `--ignored --exact` 显式运行，最终复核 2.36 秒成功返回真实结果；本地 Atom/mock 测试仍是确定性门禁。
+  PostgreSQL/GPU/Tavily 环境变量未设置，条件式 PG 与 GPU 未实连；Compose/diff 最终门禁通过，
+  未新起、停止或重启容器。
+- 尚未冒充完成：锁定 Python SDK 每个 page 内还有独立 3 次重试、跨请求 3 秒节流和
+  `UnexpectedEmptyPageError` / feedparser bozo / 缺字段细分；Rust 目前依赖组件外层重试，分页不复制
+  阻塞式节流，summary whitespace 与所有异常类型也未逐项复刻。可执行 Canvas 采用 Python
+  `arxiv_search` / sort / `top_n=12` 主合同，而非 Go 的 `arxiv` / `max_results` 模型 schema；Go
+  `HTTPHelper` OpenTelemetry/独立退避、thoughts/callback 和 checkpoint 级取消仍未对齐。因此两条生产
+  文件保持 `partial`，纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零 MySQL
+  路线不变。
+
+---
+
+## 2026-08-02 RAGFlow DuckDuckGo 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 126 行
+  `agent/tools/duckduckgo.py`、206 行 `internal/agent/tool/duckduckgo.go`、256 行 Go 测试，连同
+  公共 `_retrieve_chunks` / `kb_prompt`、前端 `text/news` 默认值与表单、
+  `web_search_assistant.json` 两处真实工具实例。按 Aliyun 锁文件下载并校验
+  `duckduckgo-search==7.5.5` sdist SHA-256
+  `44ef03bfa5484bada786590f2d4c213251131765721383a177a0da6fa5c5e41a`，逐段核对 HTML/lite、
+  vqd/news、分页、normalize 与错误合同。本机 RAGFlow“全部文件”知识库查询成功但仍返回无关医疗/
+  本地化碎片，未用作实现依据。
+- 新增 652 行 `src/duckduckgo.rs` 纯 Rust 协议层。生产端点固定为 DuckDuckGo HTML Search、home
+  vqd、news JSON 和 Instant Answer，Canvas 不能改造成任意 URL 请求器；客户端禁 redirect、禁环境
+  代理，设置明确 User-Agent、10 秒请求和 16 MiB 响应上限。text 发送固定 `q/b/kl=wt-wt`
+  form 并解析/解实体/规范化 title/href/body；news 获取 vqd 后发送固定 `l/o/noamp/q/vqd/p=-1`，
+  按 URL 去重、转换 UTC RFC3339 日期并最多跟随五页 `s` offset。
+- 同一协议层显式实现 Go 的独立 Instant Answer 合同：`q/format=json/no_html=1/skip_disambig=1`、
+  query 必填、`max_results<=0` 对应默认 5、AbstractText→Abstract fallback、任意层级 RelatedTopics
+  flatten/cap；同时接受公开 API 的 PascalCase 和固定 Go 测试使用的 snake_case key，非 2xx、坏 JSON
+  与超大 body 均 fail closed。
+- `src/agent.rs` 将 `DuckDuckGo` 接入顶层 Canvas 和 Agent ReAct，精确发布 Python
+  `duckduckgo_search` 名称/描述/query/channel schema，静态默认 `top_n=10`、`channel=text`，Agent
+  `general/news` 与前端 `text/news` 统一归一。固定 Python `_invoke` 实际读取 `topic` 而 schema/前端
+  写 `channel`；Rust 同时接受旧 `topic` 和正确 `channel`，让 news 不再因上游命名错位静默退回 text。
+  外层 `max_retries + 1`、末次失败后 delay、空 query 短路和 12 秒顶层/Agent deadline 已接线；
+  Provider 注入改为借用型 bundle，避免继续扩张调度函数参数。
+- text/news 原始行保留在 `json`，body 按公共 helper 去 base64 PNG、Unicode 10,000 字符截断、
+  SHA-1 modulo ID 后生成 chunk、document aggregation、去重 reference 与
+  `kb_prompt(hash_id=True)` 正文；Agent 失败以 `DuckDuckGo error:` 回灌。组件目录、README 与
+  unsupported fail-closed 文案同步。
+- 新增 3 个 Axum 协议测试、2 个 Agent/Canvas 测试、1 个默认 ignored 的公网测试和 1 个 coverage
+  mapping 守卫，覆盖 form/query、HTML entity/redirect URL、vqd/news/date、Instant 两套 key、递归
+  flatten/default cap、状态/body 上限、枚举归一、重试、空 query、chunk/hash/reference 与 Agent
+  success/error。显式 live text-search 在 `https://html.duckduckgo.com/html` 的 10 秒客户端期限内
+  超时，因此只记录为网络阻塞；本地确定性协议门禁全部通过。
+- 覆盖生成器 46/46 通过并从固定 Git tree 重生 4,441 文件矩阵；Python/Go DuckDuckGo 生产文件
+  获得专属映射但诚实保持 `partial`，汇总仍为 aligned 68/15,322 行、partial
+  1,579/650,559 行、replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：默认与 `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings`、全目标测试均通过；默认为 419 lib + 46 coverage = 465 passed /
+  0 failed / 3 ignored，双 feature 为 422 lib + 46 coverage = 468 passed / 0 failed / 3 ignored，
+  zvec native create/upsert/query/reopen 实际执行。PostgreSQL/GPU/Tavily 环境变量未设置，条件式 PG
+  和 GPU 未实连；Compose/diff 最终门禁通过，未新起、停止或重启容器。
+- 尚未冒充完成：锁定 Python SDK 会随机选择 HTML/lite backend、保留 cookie store、随机浏览器/TLS
+  impersonation、可读 `DDGS_PROXY`，text 最多解析五页并细分 rate-limit/timeout；Rust 当前固定 HTML
+  backend 且只解析首个 text 页面，不复制代理/指纹规避，thoughts/callback 与 checkpoint 级取消也未
+  对齐。可执行 Canvas 采用更丰富的 Python web/news 输出，而非 Go 的 `duckduckgo/max_results`
+  模型 schema；Go `HTTPHelper` OpenTelemetry/独立退避仍未复刻。因此两条生产文件保持 `partial`，
+  纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零 MySQL 路线不变。
+
+---
+
+## 2026-08-02 RAGFlow Wikipedia 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 193 行
+  `agent/tools/wikipedia.py`、186 行 `internal/agent/tool/wikipedia.go`、194 行 Go 测试，连同
+  `agent/tools/base.py::_retrieve_chunks` / `kb_prompt`、前端默认值与 68 个语言选项、
+  `web_search_assistant.json` 的两处真实 Wikipedia 工具实例。另下载并校验锁文件 SHA-256 对应的
+  `wikipedia==1.4.0` sdist，核对其 search/page/summary 请求链。按仓库规则查询本机 RAGFlow
+  “全部文件”知识库成功，但返回的是无关医疗内容，未用作实现证据。
+- 新增 417 行 `src/wikipedia.rs` 纯 Rust MediaWiki 协议层。生产 URL 只能由固定语言 allowlist
+  派生为 `https://<language>.wikipedia.org/w/api.php`，Canvas 不能注入任意端点；客户端禁环境代理、
+  禁 HTTP redirect，设置明确 User-Agent、60 秒请求上限和 16 MiB 响应上限，非 2xx、坏 JSON、
+  MediaWiki error envelope 及错误 shape 均 fail closed。先按 Python 的 search 参数取有序标题，
+  再逐标题组合读取 `info|pageprops|extracts`，解析 redirect 后的 canonical title/fullurl/intro summary，
+  缺失页、消歧义页和单页请求错误只跳过该页。
+- `src/agent.rs` 将 `Wikipedia` 同时接入顶层 Canvas 静态 dispatch 和 Agent ReAct 子工具。模型 schema
+  精确采用 Python 的 `wikipedia_search` 名称、描述和仅必填 `query` 字段；静态参数对齐
+  `language=en`、`top_n=10`、68 语言闭集、`max_retries + 1` 和 `delay_after_error`，失败后包括末次
+  都等待，空 query 不请求远端。顶层与 Agent 子节点都使用固定 60 秒 deadline，Agent 工具错误以
+  `Wikipedia error:` 回灌，不再误标成 Tavily。
+- 页面摘要按 Python 公共 helper 去除内嵌 base64 PNG、按 Unicode 字符截到 10,000，使用同一
+  SHA-1 modulo ID，生成 chunk、document aggregation、去重 reference 和
+  `kb_prompt(hash_id=True)` 风格 `formalized_content`；同时发布 Go 兼容的 `results` envelope 与
+  `{title,snippet,url}` JSON 行。`src/runtime.rs` 不可变组件目录和 README 已同步，未知远程工具仍
+  在执行前 fail closed。
+- 新增 3 个本地 Axum 协议测试、2 个 Agent/Canvas 测试及 1 个默认 ignored 的公网契约测试，覆盖
+  固定 query 编码、顺序、redirect shape、missing/disambiguation skip、坏状态/shape、重试、空查询、
+  参数覆盖、摘要清理、hash/reference、Agent success/error。显式运行 live test 时
+  `en.wikipedia.org:443` 在 TCP connect 阶段超时，因此只记录为网络环境阻塞；确定性 mock 门禁
+  全部通过。
+- 覆盖生成器 45/45 通过并从固定 Git tree 重生 4,441 文件矩阵；Python/Go Wikipedia 生产文件
+  获得专属可执行映射但继续为 `partial`，总计仍为 aligned 68/15,322 行、partial
+  1,579/650,559 行、replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings`、全目标测试和 Compose 静态解析全部通过。默认为 414 lib + 45 coverage =
+  459 passed / 0 failed / 2 ignored；双 feature 为 417 lib + 45 coverage = 462 passed /
+  0 failed / 2 ignored，zvec native create/upsert/query/reopen 实际执行。本轮 PostgreSQL/GPU/Tavily
+  环境变量均未设置，条件式 PG 与 GPU 未实连；未新起、停止或重启容器。
+- 尚未冒充完成：Python `wikipedia` 库在 `page(title)` 前额外执行一次 auto-suggest search，并有
+  process-global language/cache/rate-limit 状态；Rust 用一次组合 detail 请求减少往返，未复刻其精确
+  请求次数、thoughts/callback 文案和 checkpoint 级取消时序。Go 的 `lang/max_results` 模型 schema、
+  默认 5、search-snippet-only 路径及共享 `HTTPHelper` OpenTelemetry/独立退避也与选定的更完整 Python
+  主合同不同；两条生产文件因此保持 `partial`。纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、
+  国内镜像优先和零 MySQL 路线不变。
+
+---
+
+## 2026-08-02 RAGFlow Tavily Search/Extract 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 236 行
+  `agent/tools/tavily.py`、215 行 `internal/agent/tool/tavily.go`、178 行 Go 测试，及
+  `agent/tools/base.py` 的 `_retrieve_chunks`、`kb_prompt`、前端 Search/Extract 默认值与表单域名
+  归一化、真实模板和 DSL fixtures。按仓库规则查询本机 RAGFlow“全部文件”知识库成功，但结果是
+  无关版本/医疗/期刊内容，未作为实现证据。
+- 新增 `src/tavily.rs` 纯 Rust 协议层：生产端点固定为 Tavily Search/Extract，Canvas 参数不能把
+  客户端变成任意 URL 请求器；Bearer JSON、禁 redirect、禁环境代理、600 秒底层上限、16 MiB
+  严格响应上限、非 2xx/坏 JSON/缺失非数组 `results` 均 fail closed。凭据优先取工具静态
+  `api_key`，为空时兼容 Go 的 `TAVILY_API_KEY`，不进入模型 schema、请求 Debug 或 Canvas 输出；
+  `.env.example` 与 Compose 只增加空变量传入点。
+- `src/agent.rs` 将 `TavilySearch`/`TavilyExtract` 同时接入顶层 Canvas dispatch 和 Agent ReAct
+  工具表，函数名按固定 metadata 生成 `tavily_search_{idx}` / `tavily_extract_{idx}`，精确发布
+  query/topic/domain 与 urls/depth/format JSON schema。编译期校验枚举、正整数、布尔、重试/延迟、
+  字符串或数组 URL，并兼容前端临时 `{value}` 域名对象；运行期解析 `sys/env/component@field`
+  selector，Extract 保留 Python 逗号拆分且不擅自 trim 的行为。
+- Search 对齐 Python 默认值和 `max_retries + 1`，每次请求强制关闭 `include_images` /
+  `include_raw_content`，失败后包括末次均按 `delay_after_error` 等待；Extract 同样有界重试但不等待。
+  顶层和 Agent 内嵌 Search 都套用固定 12 秒组件 deadline，Extract 使用可由全局/组件变量覆盖的
+  600 秒缺省 deadline，不会被 Agent 外层时限悄然放大。
+  Search 结果去除内嵌 base64 PNG、按 Unicode 字符截到 10,000、使用 SHA-1 modulo 精确复刻
+  `hash_str2int`，生成 chunk/doc aggregation、`kb_prompt(hash_id=True)` 风格正文和去重 reference，
+  同时把 Tavily 原始 results 保留在 `json`；Extract 原样发布结果数组。错误写入子节点 `_ERROR`
+  并以 `Tavily error:` 工具结果回灌模型，不把远程错误冒充检索成功。
+- `src/runtime.rs` 的不可变组件目录新增两个独立 descriptor，README 同步说明顶层节点、Agent 工具、
+  凭据与剩余差异。新增 3 个 Agent 单测、3 个本地 Axum 协议测试和 1 个 coverage mapping 守卫，
+  覆盖 Bearer/body/结果解析、Search 重试与强制字段、引用/hash/base64 清理、Extract CSV URL 与
+  ReAct dispatch、坏状态/shape/key/配置；没有向官方 Tavily 发出请求，也没有记录任何密钥。
+- 覆盖生成器 44/44 通过并从固定 Git tree 重生全部 4,441 文件矩阵；Python/Go Tavily 生产文件
+  获得专属可执行映射但诚实保持 `partial`，汇总仍为 aligned 68/15,322 行、partial
+  1,579/650,559 行、replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认及
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings`、全目标测试和 Compose 静态解析全部通过。默认为 409 lib + 44 coverage =
+  453 passed / 0 failed / 1 GPU ignored；双 feature 为 412 lib + 44 coverage = 456 passed /
+  0 failed / 1 ignored，zvec native create/upsert/query/reopen 实际执行。本轮 PostgreSQL/GPU/Tavily
+  环境变量均未设置，故未把条件式 PG、GPU 或官方 Tavily 实连写成通过；未新起、停止、重启容器。
+- 尚未冒充完成：Python Tavily SDK 的 callback/thought 展示、thread timeout/cancel 的精确时序和
+  所有 SDK 专属响应字段，以及 Go `HTTPHelper` 的 OpenTelemetry transport/独立三次指数退避尚未
+  一一对齐；官方 API 也因无凭据未实连。因此两个生产文件继续为 `partial`。长期逐文件 backlog、
+  纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零 MySQL 路线保持不变。
+
+---
+
+## 2026-08-02 RAGFlow Agent Retrieval ReAct 工具调用纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 395 行
+  `agent/component/agent_with_tools.py`、212 行 `agent/tools/base.py`、329 行
+  `agent/tools/retrieval.py`，并核对 `rag/llm/chat_model.py` 的同步/异步 tools 轮次、1,113 行
+  Go Agent 的 ReAct/metadata/artifact/tool-call 段、516 行核心 Agent 测试、81 行 tool dispatch
+  测试及前端 `IAgentForm`、默认值和真实模板 DSL。按仓库规则查询本机 RAGFlow“全部文件”
+  知识库成功，但结果是无关医疗/ERP 内容，未作为实现证据。
+- `src/llm.rs` 新增类型化 OpenAI-compatible tool message/call/completion wire：普通历史转为
+  role/content，assistant 一次携带同轮全部 `tool_calls` 且省略 null content，随后按模型顺序追加
+  `tool_call_id` 对应的 tool 结果；请求只在有工具时发送 `tools` 与 `tool_choice=auto`，严格解析
+  `choices[0].message` 和 function name/raw arguments，并保留每一次 provider usage。
+- `src/agent.rs` 在 Canvas 编译期校验固定 `{component_name,name,params}` 工具对象、非负
+  `max_rounds` 与空 MCP 列表；当前实现的 Retrieval 元数据精确保留上游拼写
+  `search_my_dateset`、description/query schema/required，并按 DSL 顺序加 `_idx`，子组件 ID 使用
+  `Agent-->name_with_underscores`。运行期把 JSON object 参数覆盖到静态 Retrieval params，复用
+  生产 retriever、dataset/fallback KB、manual metadata、reference 和 output state；空正文回传
+  完整 JSON 输出，未知函数、坏 JSON、非对象或错误 query 类型作为 tool error 回灌而非 panic。
+  最终 Agent 输出保留 content/structured，并在确有调用时附加扁平 `tool_calls`；
+  `src/runtime.rs` 的不可变组件目录同步公开 Agent 专属 tools/mcp/max_rounds 输入和 tool_calls 输出，
+  不把普通 Generate/LLM 误标为工具组件。
+- ReAct 循环按固定 Python `range(max_rounds + 1)` 执行，逐轮累计精确 token usage；若模型持续
+  请求工具，追加 `Exceed max rounds: N` user 消息，再以保留完整 assistant/tool 历史但不携带
+  tools/tool_choice 的请求生成有界兜底答案。无 tools 的 Agent/Generate/LLM 仍走原有单次/重试
+  路径，不改变现有行为。新增 6 个 lib 回归和 1 个 coverage mapping 守卫，覆盖 null content、
+  wire 解析、稳定编号/子 ID、配置拒绝、未知/非对象调用、真实 mock Retrieval 两轮历史、usage/
+  reference/tool_calls，以及 `max_rounds=0` 的无工具兜底。
+- 覆盖生成器 43/43 通过并从固定 Git tree 重生全部 4,441 文件矩阵；
+  `agent/component/agent_with_tools.py` 从泛化说明升级为逐行专属说明但诚实保持 `partial`，所以
+  汇总仍为 aligned 68/15,322 行、partial 1,579/650,559 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认及
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过。默认为 403 lib + 43 coverage =
+  446 passed / 0 failed / 1 GPU ignored；双 feature 为 406 lib + 43 coverage =
+  449 passed / 0 failed / 1 ignored。zvec native create/upsert/query/reopen 定向用例实际执行；
+  `docker compose --env-file .env.example config --quiet` 静态解析通过。本轮 PostgreSQL/GPU
+  环境变量均未设置，条件式 PostgreSQL 18 snapshot 与 GPU 模型未实连；未新起、停止、重启
+  容器，也未修改镜像或数据卷。
+- 尚未冒充完成：MCP、Tavily/Google/Wikipedia/ExeSQL 等非 Retrieval 工具、嵌套 Agent、
+  json_repair、同轮并发调度、tool callback/timeline、tool-call memory summary、artifact markdown、
+  citation grounding、97% context fitting、协作取消和真实 token delta stream 均未接线；包含这些
+  工具的画布会在执行前明确拒绝。因此 Python Agent 主文件和 Go Agent 生产文件继续为
+  `partial`。长期逐文件 backlog、纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像
+  优先和零 MySQL 路线均保持不变。
+
+## 2026-08-02 RAGFlow DocGenerator 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 645 行
+  `agent/component/docs_generator.py`、386 行
+  `internal/agent/component/docs_generator.go`、Go `io/` 下 790 行 helpers/五个 writer、74 行
+  七个 OOXML template、567 行固定 Go 单测，以及前端默认值、表单和 `DocGenerator` operator。
+  Python/前端真实画布名是 `DocGenerator`，同提交 Go factory 名为 `DocsGenerator`，Rust 显式
+  兼容两者。按仓库规则查询 RAGFlow“全部文件”知识库成功，但返回的是无关医疗/ERP/标准文档
+  片段，未作为实现证据。
+- 新增 `src/document_writer.rs` 纯 Rust 输出层，不增加依赖：TXT、Markdown、HTML 对齐固定 Go
+  writer 的 header/footer/timestamp、空行、HTML comment、自包含 CSS、水印与 raw-body 合同；
+  DOCX 直接写 ZIP + OOXML，包含 XML escape、多语言段落、全局字体/字号、条件式 relationship、
+  VML 水印、PAGE field 与时间戳，并由现有 `docx-rs` 回读；PDF 直接使用既有 `lopdf` 生成
+  A4 多页、页眉页脚、旋转灰色水印、真实页码和动态 Unicode ToUnicode CMap，并由现有 PDF
+  parser 回读中英文内容。五种格式全在 Rust 进程内生成且不依赖 Pandoc/XeLaTeX。
+- `src/runtime.rs` 将 `docgenerator/docsgenerator` 纳入不可变 Agent 目录；`src/agent.rs` 在
+  Canvas 编译期校验非空字符串 content、五种 format/`md` alias、至少 12pt 整数字号、布尔
+  decoration/include 开关和字符串字段，运行期解析 `sys/env/component@path` selector、清除
+  完整和悬空 `<think>`、兼容前端 `header/footer/watermark` 别名、按 Python 规则清洗文件名并
+  替换扩展名。输出发布 UUID、filename、MIME、size、base64 bytes、Python JSON download、
+  Rust inline attachment、preview URL 和 created；Message 已验证可按
+  `include_download_info_in_content` 提取并移除内部标志。输出硬限制 16 MiB。
+- 新增 7 个 writer/Agent/Canvas 回归和 1 个 coverage mapping 守卫，覆盖五格式 magic/MIME/
+  base64、Unicode PDF 提取、可重开 DOCX、XML escape、水印/页码/时间戳、两组件名、selector、
+  think 清理、文件名、下游 download 与坏参数。覆盖生成器 42/42 通过并从固定 Git tree 重生
+  4,441 文件矩阵；只把有完整固定字节测试支撑的 TXT/Markdown/HTML writer 提升 aligned，
+  统计为 aligned 68/15,322 行、partial 1,579/650,559 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、新增文件 whitespace check、默认及
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过。默认 397 lib + 42 coverage =
+  439 passed / 0 failed / 1 GPU ignored；双 feature 400 lib + 42 coverage =
+  442 passed / 0 failed / 1 ignored，zvec native create/upsert/query/reopen 与在线 mirror 用例
+  实际执行。`docker compose --env-file .env.example config --quiet` 静态解析通过。本轮
+  `RAYRAG_POSTGRES_TEST_URL`/`RAYRAG_POSTGRES_URL` 均未设置，条件式 PostgreSQL snapshot
+  用例未实连；未新起、停止或重启容器，也未改 PostgreSQL 数据卷。
+- 尚未冒充完成：Python Pandoc Markdown AST、XeLaTeX/Noto 嵌入字体、标题层级和精确视觉
+  版式，tenant `STORAGE_IMPL` 持久化及真正支撑 preview URL 的附件读取端点，decorator
+  timeout/协作取消；Go 的原生 `[]byte`、下划线文件名 helper、独立单项 Stream facade，
+  PDF 注册 TTF/精确 gopdf metrics，DOCX 完整 VML formula 与办公套件视觉验证。因此 Python/
+  Go 主组件和 PDF/DOCX/helpers/templates 继续为 `partial`。长期逐文件 backlog、纯
+  Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零 MySQL 路线均保持不变。
+
+## 2026-08-02 RAGFlow ExcelProcessor 纯 Rust 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 379 行
+  `agent/component/excel_processor.py`、458 行
+  `internal/agent/component/excel_processor.go`、190 行固定 Go 单测以及前端默认值和空表单占位。
+  Python/前端提供 `read/merge/transform/output` 主 Canvas 形态，Go 端补充
+  `read/write/merge`、原始 rows/bytes/sheet_names/size 与 write-read 往返合同；Rust 同时兼容
+  两者但不混淆输出差异。按仓库规则查询 RAGFlow“全部文件”知识库成功，返回的是无关 Excel
+  文档片段，未作为实现证据。
+- `src/runtime.rs` 把 ExcelProcessor 加入不可变 Agent 组件目录；`src/agent.rs` 在 Canvas
+  编译期校验 operation、output format、merge strategy 及输入容器，运行期解析
+  `sys/env/component@path`、base64、`data:` URI 与带 filename/data/content/bytes 的内联描述符。
+  read 支持 CSV/XLSX、all/first/逗号分隔具名工作表，发布 Python records/summary/Markdown
+  和 Go rows/sheet_names/size；merge 支持 concat 与基础 outer join；transform 保留原生 JSON
+  bool/number/object/array；output/write 可生成首工作表 CSV 或多工作表 XLSX，并发布 base64
+  bytes 和内联 attachment descriptor。
+- `src/parser/excel.rs` 将既有首表文本解析扩展为纯 Rust 多工作表 OOXML reader/writer：解析
+  workbook relationship、shared/inline strings、稀疏列、布尔与数值单元格；生成最小合法
+  `[Content_Types]`、relationship、workbook、styles 和 worksheet parts。工作表名称按 Excel
+  31 字符及非法字符规则清洗并大小写去重，空 grid 仍生成可读默认工作表；保留既有 1,000 行
+  parser 截断标记。组件输入/输出硬限制 16 MiB，单个 XML part 限制 64 MiB，避免无界内存。
+- 新增 5 个 Agent/Canvas、2 个 OOXML 和 1 个 coverage mapping 回归：覆盖固定 Go
+  write-read、ZIP magic/byte size、空工作簿、双工作表名称与选择、Python 前端 CSV 形态、
+  records/Markdown、join/transform、坏 base64、id-only 外部文件 fail-closed、参数拒绝和目录
+  shape。覆盖生成器 41/41 通过并从固定 Git tree 重生 4,441 文件矩阵；两项 production
+  文件原本就是 partial，统计守恒为 aligned 65/15,091 行、partial 1,582/650,790 行、
+  replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认及
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过。默认 390 lib + 41 coverage =
+  431 passed / 0 failed / 1 GPU ignored；双 feature 393 lib + 41 coverage =
+  434 passed / 0 failed / 1 ignored，zvec native create/upsert/query/reopen 与在线 mirror 用例
+  实际运行。`docker compose --env-file .env.example config --quiet` 静态解析通过。本轮
+  `RAYRAG_POSTGRES_TEST_URL` 未设置，条件式 PostgreSQL snapshot 用例未实连；未新起、停止或
+  重启容器，也未改 PostgreSQL 数据卷。
+- 尚未冒充完成：Python 的 tenant FileService/STORAGE_IMPL 取件和持久化 `doc_id` attachment、
+  pandas 日期/公式/dtype、完整 outer-join 冲突后缀与 null 行为、input preview/thought、
+  cooperative cancellation/decorator timeout；Go 的原生 `[]byte` 边界与单项 Stream facade。
+  RayRAG 的 JSON Canvas 有意以 base64 表示 bytes，内联 attachment 不谎报已持久化 doc_id，
+  因此 Python/Go 两个 production 文件继续保持 `partial`。长期逐文件 backlog、纯
+  Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和零 MySQL 路线均保持不变。
+
+## 2026-08-01 RAGFlow Invoke 安全 HTTP 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 305 行
+  `agent/component/invoke.py`、350 行固定 Python 单测、446 行
+  `internal/agent/component/invoke.go`、403 行 Go 单测，以及前端 Invoke defaults/form/schema。
+  Python Canvas 与前端仍是 DSL 主合同；同提交 Go 端独有的 DELETE、直接 body/content_type
+  和 status/body/headers envelope 作为补充安全证据，没有错误混入 Python `result` 输出合同。
+  按仓库规则查询 RAGFlow“全部文件”知识库成功，但召回为无关文档，未作为实现依据。
+- `src/runtime.rs` 将 Invoke 加入不可变 Agent 组件目录，准确发布 URL/method/headers/
+  variables/datatype/timeout/proxy/clean_html 与 `result/_ERROR`；`src/agent.rs` 在 Canvas 编译期
+  校验 GET/POST/PUT、非空 URL、正整数 timeout、布尔 clean_html、json/formdata、变量记录、
+  retry/delay 类型。执行期解析 request inputs 与 Canvas sys/env/component/item selector，header
+  兼容固定单花括号，字符串化 JSON 恢复原生值，GET 编码 query，POST/PUT 编码 JSON 或 form，
+  保留非 2xx body 成功语义；网络错误按 `max_retries + 1` 重试并最终写 `_ERROR`，HTML 响应复用
+  纯 Rust parser 清洗。
+- HTTP 路径显式禁用 redirect 和环境代理，执行请求 timeout 及既有组件 deadline，响应硬截断
+  16 MiB。SSRF guard 对目标和显式代理的每一个 DNS 地址执行公网 allowlist，识别
+  IPv4-mapped IPv6，并把实际 dial 固定到首个已校验 IP，关闭校验到连接间的 DNS rebinding
+  窗口。代理会自行再次解析 hostname，无法由客户端 pin 住，因此采用固定 Go 端更严格合同：
+  代理模式只接受公网字面 IP 目标；目标、代理、scheme 或解析拒绝统一输出
+  `_ERROR="URL not valid"`。私有测试 transport 不进入公开 API，也不提供运行时 SSRF bypass。
+- 新增 6 个无外网 Rust 行为回归及目录 shape 守卫，覆盖编译错误、URL/header/参数模板、JSON
+  coercion、form array、失败后重试、终态网络错误、裸 hostname 补 scheme、loopback/metadata/
+  mapped IPv6、混合公网/私网 DNS、代理双跳、hostname+proxy fail-closed、HTML 清洗与 16 MiB
+  上限。覆盖生成器新增 Python/Go 两个精确 partial mapping 和第 40 个守卫测试，从固定 Git
+  tree 重生 4,441 文件矩阵；因两文件原本已是 generic partial，统计守恒为 aligned
+  65/15,091 行、partial 1,582/650,790 行、replaced 71/27,674 行、reference
+  2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认及
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过。默认为 383 lib + 40 coverage =
+  423 passed / 0 failed / 1 GPU ignored；双 feature 为 386 lib + 40 coverage =
+  426 passed / 0 failed / 1 ignored，zvec native create/upsert/query/reopen 与 mirror 用例实际运行。
+  Compose 以非敏感占位 secret 静态解析通过，本机缓存精确
+  `postgres:18.4`、`rust:1.97.1-bookworm`、`debian:bookworm-slim`。本轮
+  `RAYRAG_POSTGRES_TEST_URL` 未设置，所以条件式 PostgreSQL 用例没有实连；未新起/停止/重启
+  容器、未改数据卷，也未访问真实外部 Invoke endpoint。
+- 尚未冒充完成：Python requests charset 猜测、复杂 GET/form 值的 Python repr、完整 DeepDOC
+  block/table 分段、partial generator 拼接、动态 input-form label/thought、逐对象 cooperative
+  cancel；Go v2 DELETE/content_type/body、status/body/headers/datatype envelope、首 header shaping、
+  OpenTelemetry traceparent 与同步 Stream facade。本批因此把两个 production 文件继续保留为
+  `partial`，长期 backlog、纯 Rust/Linux/Docker、zvec-rust、PostgreSQL 18.4、国内镜像优先和
+  零 MySQL 路线均保持不变。
+
+## 2026-08-01 RAGFlow 历史 chunker DSL 迁移对标
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；重新浅检出并验证 tag/commit，逐行审计
+  `agent/dsl_migration.py` 全部 164 行，同时核对 Python Canvas/API/version 调用点、前端
+  operator/node-type 合同以及 Go `NormalizeForCanvas`/`tools/migrate-canvas` 的边界说明。Go
+  工具明确把 chunker DSL 迁移留给 Python 域，因此没有拿不同领域的 Go agent normalizer
+  代替这份固定 Python 合同。按仓库规则查询 RAGFlow“全部文件”知识库成功，但召回内容与
+  代码无关，未把无关结果作为证据。
+- `src/agent.rs` 新增纯 Rust `normalize_chunker_dsl`，在 Canvas 和运行时规范化前统一执行。
+  它在 defensive clone 上把 `Splitter`、`HierarchicalMerger`、`PDFGenerator` 精确迁移为
+  `TokenChunker`、`TitleChunker`、`DocGenerator`，同步处理组件 map key、`component_name`、
+  downstream/upstream/parent、path、任意嵌套模板引用、React-Flow node/type/label/name/form、
+  edge source/target/id，以及 history/messages/reference；自定义名称和业务参数保持不变，
+  缺少 object-shaped components 时与 Python 一致 no-op，重复调用幂等且不修改输入。
+  `DocGenerator` 的派生图 node type 同步为固定前端 `ragNode`。
+- 新增两组迁移回归，覆盖三个旧名称、精确 ID 与多花括号引用、嵌套容器、图/边/历史、
+  malformed/no-components、defensive copy 和 Canvas/Run 双入口。严格 Clippy 还暴露当前 Agent
+  debug 公共函数的 8 参数存量问题；没有添加 lint 豁免，而是新增 typed
+  `AgentComponentDebugContext` 原子同步唯一 HTTP 调用点和三处测试调用，行为回归通过。
+- `src/bin/ragflow-coverage.rs` 增加迁移文件的专属 aligned 守卫并从固定 Git tree 重生
+  4,441 文件矩阵：aligned 65/15,091 行、partial 1,582/650,790 行、replaced
+  71/27,674 行、reference 2,723/574,185 行、unmapped 0。这里只把纯结构迁移文件升级为
+  aligned；三个 ingestion 组件是否能在 Agent Canvas 直接执行仍由闭集目录独立检查，
+  未接线节点继续 preflight fail closed，其他 Agent component partial 项未被抬高。
+- 验证：`cargo fmt --all -- --check`、默认及 `postgres-backend,zvec-backend` 双 feature 的
+  locked all-target check、严格 Clippy、全目标测试和 `git diff --check` 全部通过；默认合计
+  416 passed / 0 failed / 1 GPU ignored，双 feature 合计 419 passed / 0 failed /
+  1 GPU ignored，39 个 coverage 测试和固定 DSL fixture 均实际执行。zvec native
+  create/upsert/query/reopen 与在线 mirror 用例实际运行。Compose `.env.example` 静态解析通过，
+  精确 `rust:1.97.1-bookworm`、`debian:bookworm-slim`、`postgres:18.4` 及 DaoCloud 标签均在
+  本机缓存。
+- PostgreSQL 实连：fnOS trim-cli 的只读 Docker 列表返回设备端 `errno 135168`，未盲目
+  重试；转用同主机 Docker socket 精确确认既有 `rayrag-postgres-1` 为
+  `postgres:18.4`、healthy，`SHOW server_version`/`server_version_num` 返回
+  `18.4 (Debian 18.4-1.pgdg13+1)`/`180004`。通过容器当前配置临时注入测试 URL 后，Rust
+  snapshot store/load/delete 往返通过，残留 `test-%:web/postgres-smoke.json` 行为 0；未
+  输出凭据、未新起/停止/重启容器、未改业务卷。
+- 未冒充完成：本批没有实现 TokenChunker/TitleChunker/DocGenerator 的 Agent Canvas 执行
+  接线，也没有推进 Browser/Invoke/DocsGenerator/ExcelProcessor、模型 provider 或 GPU
+  三模型实测；没有重建应用镜像。长期逐文件 backlog 继续以覆盖矩阵中的 1,582 个 partial
+  文件为准，Linux/Docker、zvec-rust、PostgreSQL 18.4 与零 MySQL 路线保持不变。
+
+## 2026-07-30 RAGFlow LLM prompt/history/structured-output 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 523 行
+  `agent/component/llm.py`、1,409 行 `internal/agent/component/llm.go`，并核对固定 Agent
+  form/default、DSL fixtures 以及 898 行 prompt/history/sampler/structured-output 核心 Go
+  测试。按仓库规则先查询 RAGFlow“全部文件”知识库；本轮命令成功但没有返回可引用内容，
+  所以没有把空召回当证据，语义合同来自固定 Git blob、测试和前端/DSL 调用点。
+- `src/agent.rs` 在 Canvas 编译期校验 prompt、历史窗口、重试、delay 和五项 sampler
+  类型/边界；Agent/Generate/LLM 统一接受缺省 `{sys.query}`、标量 prompt、Go
+  `user_prompt/prompt` 别名和有序 role/content 数组。系统提示只发送一次，历史默认采用
+  `ComponentParamBase` 的 13 轮并按窗口乘二截断；首条 prompt 与历史末条同角色时原位替换，
+  删除此前无条件追加 `input.question` 造成的重复用户问题。三种组件的动态 input form 现在
+  都按首次出现顺序发布 sys/env/component/item 引用。
+- 组件 sampler 对齐固定 `gen_conf`：零值不覆盖 provider/request 默认，显式
+  `temperatureEnabled/topPEnabled/presencePenaltyEnabled/frequencyPenaltyEnabled/
+  maxTokensEnabled=false` 保留运行级值；没有开关的旧 DSL 继续把正值视为启用，避免破坏固定
+  v1 fixtures。provider 错误或 `**ERROR**` 响应按 `max_retries + 1` 次尝试，最终写
+  `_ERROR`，配置 `exception_default_value` 时改写 `content`。
+- 结构化输出以 Python 运行时实际读取的 `outputs.structured` 非空
+  `properties` schema 为主，并兼容同形 `output_structure`：系统 prompt 追加固定 JSON
+  schema 指令，响应清除贪婪 `</think>` 前缀和 JSON fence，成功只发布原生
+  `structured`，不再使用错误的 `structured_content` 键。受控本地 OpenAI-compatible
+  端点回归证明首次非 JSON、第二次 fenced JSON 的两次调用、精确 outbound system/user
+  消息、无重复 query、sampler 开关优先级、usage 累加和固定输出键。
+- `src/runtime.rs` 的不可变组件目录同步只发布已落地的 prompt、历史、sampler、retry、
+  `content/structured/_ERROR`；没有发布尚未真正按节点解析的 `llm_id`。覆盖生成器为 Python/
+  Go 两个 production 文件新增精确 `partial` mapping，39/39 通过并从固定 Git tree 重建
+  4,441 文件矩阵；统计保持 aligned 64/14,927 行、partial 1,583/650,954 行、
+  replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认及
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 411 passed / 0 failed /
+  1 GPU ignored，双 feature 414 passed / 0 failed / 1 ignored。zvec native
+  create/upsert/query/reopen 和在线 mirror 定向实测通过；既有 `rayrag-postgres-1` 为
+  running/healthy，`SHOW server_version; SELECT 1` 返回
+  `18.4 (Debian 18.4-1.pgdg13+1)` 和 `1`，并用其发布端口真实通过 Rust snapshot
+  store/load/delete。当前 shell 未设置两个必需 Compose secret，裸 `docker compose config`
+  按设计 fail closed；使用非敏感占位值的静态解析通过并保持 DaoCloud
+  `postgres:18.4`，本机缓存同时包含精确 `postgres:18.4`、`rust:1.97.1-bookworm`、
+  `debian:bookworm-slim` 及三者 DaoCloud 标签。未新起/重启容器；GPU 三模型变量均未设置。
+- 尚未冒充完成：节点 `llm_id` 到 tenant provider/image2text 的实际选择、递归
+  `visual_files_var`/data-image 和 `sys.files` 注入、citation prompt/reference、97% token
+  context fitting、`json_repair` 宽松 JSON 修复、`sys.chat_template_kwargs` 下传、thinking、
+  delay/backoff 与 exception-goto、component cooperative cancel、真正的下游 delta stream；
+  Go 的 Anthropic/Ollama/provider driver、多模态 message parts、deep schema key/type 校验也
+  尚未等价。因此两个 production 文件继续保持 `partial`。
+
+## 2026-07-30 RAGFlow Message 模板 / downloads 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 574 行
+  `agent/component/message.py`、469 行 `internal/agent/component/message.go`、固定版 541 行
+  Message/downstream Go 测试、前端 Message form 和 Canvas `message_end` 调用点。按仓库规则
+  先查询 RAGFlow“全部文件”知识库，本机端点返回 `socket hang up`，所以没有把不可用检索
+  当成证据，具体合同来自固定 Git blob、测试和 DSL/UI 调用点。
+- `src/agent.rs` 现在在 Canvas 保存/编译阶段验证 Message：`content` 必须是非空字符串或
+  非空字符串数组，`stream` 必须为布尔值，同时接受固定 Go v2 `text` 别名；执行期从多条
+  消息随机选一条。原有单/双/三花括号显示变量扩展为 Message 专用渲染路径，支持
+  component/sys/env/item/index/result 选择器以及 MiniJinja 条件、循环和过滤器，
+  沿用无 loader/函数、100,000 fuel、64 层递归的边界；模板失败时保留上游重写后脚本并继续
+  做最终变量替换，不把显示节点变成参数绑定的硬失败。
+- 对齐 Python `_extract_downloads/_stringify_message_value`：直接对象、全描述符数组或对应
+  JSON 字符串只要带 `doc_id/filename/mime_type` 就进入原生 `downloads` 输出；内部
+  `include_download_info_in_content` 在输出和可选正文 JSON 中删除，默认描述符不泄漏到
+  正文，同一 selector 重复出现只收集一次。非下载 object/list 仍用稳定 JSON 显示。
+  `src/runtime.rs` 的不可变组件目录同步只发布已落地的 `content/text/stream` 输入与
+  `content/downloads` 输出，没有把未实现附件/TTS/memory 能力伪装成可用接口。
+- 新增 3 组 Rust 行为回归并加强目录 shape 守卫：空/畸形内容及 stream 类型、v1/v2 形态；
+  Jinja 条件和双/单花括号变量及 parse-error fail-soft；直接/JSON 字符串下载、include
+  标志、规范化和重复引用。覆盖生成器新增 Python/Go 两项精确 partial mapping，38/38
+  通过并从固定 Git tree 重建 4,441 文件矩阵；统计保持 aligned 64/14,927 行、
+  partial 1,583/650,954 行、replaced 71/27,674 行、reference 2,723/574,185 行、
+  unmapped 0。
+- 验证：`cargo fmt --all -- --check`、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 406 passed / 0 failed /
+  1 GPU ignored，双 feature 409 passed / 0 failed / 1 ignored，后者真实执行 zvec native
+  reopen 与在线 mirror。Compose 静态解析通过，本机缓存精确包含
+  `postgres:18.4`、`debian:bookworm-slim`、`rust:1.97.1-bookworm`；既有
+  `rayrag-postgres-1` 为 running/healthy，`SHOW server_version; SELECT 1` 返回
+  `18.4 (Debian 18.4-1.pgdg13+1)` 和 `1`。`RAYRAG_POSTGRES_TEST_URL` 未设置，所以条件式
+  Rust snapshot test 实际提前返回；GPU 三模型 opt-in 变量同样未设置。本批只读复用运行
+  环境，未新起、重启或删除容器。
+- 尚未冒充完成：Python partial/async generator 的逐变量拉取与 component cancel 检查、
+  pypandoc markdown/html/pdf/docx/xlsx 导出、Excel 多表/数值类型转换、storage attachment
+  和 `queue_save_to_memory_task`；Go sentence chunk stream、output-format renderer、
+  auto-play TTS、MemorySaver 及 audio/memory 错误 envelope。HTTP runner 仍只在完整 LLM
+  回答后发一个 message，Message 的 `status/attachment/downloads` 也尚未全部提升到顶层
+  `message_end` wire，因此两个 production 文件继续保持 `partial`。
+
+## 2026-07-27 RAGFlow SoMark / naive chunk 页面位置元数据纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，针对上一批明确留下的 bbox 差异复核
+  `deepdoc/parser/somark_parser.py` 的 `_line_tag` 426–456 行、
+  `extract_positions` 458–470 行和 `_transfer_to_sections` 619–677 行，并核对
+  `rag/nlp/__init__.py` 的 `tokenize_chunks` 390–415 行、`add_positions` 921–933 行及
+  `naive_merge` 1156–1225 行、Python SoMark 单测 188–322 行，以及 chunk API/retrieval
+  对 `position_int` 的生产消费点。按仓库规则先查询 RAGFlow“全部文件”知识库；召回仍是
+  无关论文、ERP 和设备数据，没有目标代码证据，因此合同来自固定 Git blob 与测试。
+- `src/parser/somark.rs` 现在为每个保留 block 生成固定
+  `@@<一基页码>\t<x0>\t<x1>\t<top>\t<bottom>##` 标签；raw bbox 的左右/上下反序会先交换，
+  保留一位小数，文本缺失或非四值 bbox 使用全零 fallback，图片仍严格要求四值 bbox 才输出。
+  title、table、image caption 和普通文本都保留位置，header/footer 继续服从原开关。
+  这里明确使用 SoMark API 原始坐标，没有伪装已经完成本地渲染页面后的比例缩放。
+- 新增 `src/chunk/position.rs`，复刻共享 DeepDOC 正坐标提取表达式和更宽的 tag 清理表达式：
+  一基页码保持不变，浮点坐标按 Python `int()` 的截断语义进入有序
+  `position_int`，同时生成 `page_num_int`、`top_int`。带负坐标的 tag 与上游一样不会被
+  `extract_positions` 接受，但仍从面向用户/embedding 的文本中清除；多页 `1-2` tag 会按
+  顺序展开成两个位置记录。
+- `NaiveChunker` 只在 SoMark parser 写入内部位置感知标记时，才于 token 预算、overlap 和
+  最终 embedding 文本中排除位置 tag，对齐上游 `if pdf_parser` 分支；构建 chunk 时一次
+  提取全部位置并写入 metadata，同时像上游 `copy.deepcopy(doc)` 一样继承
+  `Document.metadata`、移除内部标记，再覆盖真实文件名。普通文本中的 `@@…##` 字面量
+  原样保留。SoMark 生产 pipeline 回归证明 title/table 的 tag 在 parse 阶段存在，chunk 后
+  内容不泄漏 tag、内部标记不进入存储、类型仍为 table，两个 bbox 均进入 `position_int`；
+  现有 chunk API 与检索引用无需新增旁路即可返回位置。
+- 新增 5 个行为回归并加强 3 个现有生产/存储回归：raw bbox 一基页码、反序归一化和零
+  fallback；正坐标/多页 tag 提取；负坐标只清理不提取；chunk 内容、token count 与三类
+  metadata；无 parser 标记的普通文本保留 position-like 字面量；本地 Axum SoMark
+  parse→chunk；JSON index 即时检索；zvec native upsert/query/reopen。后两项直接断言
+  三类位置字段跨持久化仍完全相同，而不是从通用 `HashMap` 间接推断。
+- 覆盖生成器 37/37 通过并从固定 Git tree 重建 4,441 文件矩阵；新增
+  `rag/nlp/__init__.py` 精确 partial mapping，SoMark mapping 删除“尚无 line tag”的过期
+  描述。统计保持 aligned 64/14,927 行、partial 1,583/650,954 行、
+  replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、Compose 静态解析、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 402 passed / 0 failed /
+  1 GPU ignored，双 feature 405 passed / 0 failed / 1 ignored，后者真实执行包含位置
+  metadata 的 zvec native reopen 与在线 mirror。只读复用既有
+  `rayrag-postgres-1` 确认 PostgreSQL 18.4 和 SQL probe；因未设置
+  `RAYRAG_POSTGRES_TEST_URL`，条件式 Rust snapshot 往返实际跳过。SoMark 外部 endpoint/key
+  同样未设置，本批协议继续由本地受控 Axum 服务验证；未新起或重启任何容器。
+- 尚未冒充完成：Python 的本地 PDF outline/page rendering、按 `page_size` 将 raw bbox
+  缩放到真实页面像素、跨页 crop 与 image object，naive 短文本 position 抑制的逐 token
+  等价、raw/manual/pipeline tuple 返回形态、progress callback 和 tenant Provider 实例
+  选择；Go JSON/Markdown `ParseResult` 与精确 page/file metadata 也仍未对齐。因此
+  `somark_parser.py` 与完整 1,725 行 `rag/nlp/__init__.py` 继续保持 `partial`。
+
+## 2026-07-27 RAGFlow SoMark async PDF provider 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 756 行
+  `deepdoc/parser/somark_parser.py`、322 行 Python 单测、327 行
+  `rag/llm/ocr_model.py` 中 SoMark wrapper、257 行 Go
+  `internal/parser/parser/pdf_parser_somark.go`、140 行 Go 测试，以及 constants、
+  provider UI、tenant 环境自动装配和 `rag/app/naive.py` 生产调用点。按仓库规则先查询
+  RAGFlow“全部文件”知识库；召回是通用模型参数和无关论文，没有 SoMark 目标协议的精确源码
+  证据，因此实现合同仍采用固定 Git blob、DSL/配置、生产调用点和测试。
+- 新增 `src/parser/somark.rs` 纯 Rust provider。配置兼容 UI 嵌套
+  `{"api_key": {...}}`、flat JSON、大小写 key、直接 plain secret 和进程环境回退；base
+  URL 规范化但 direct secret 按 wrapper 保留空白，`Debug` 永不泄露 key。四种 element
+  format 默认 `url/latex/html/image`；七个 feature 默认严格采用 wrapper/Go 的
+  `false/false/false/true/true/true/false`，并允许 `parser_config` 以 11 个原字段按文档
+  覆盖。仅 `SOMARK_BASE_URL` 或 `SOMARK_API_KEY` 非空时自动装配，避免仅设置格式变量就误启
+  不可用 SaaS client；只给 key 时使用固定 `https://somark.tech/api/v1`。
+- 私有部署按固定 Python 合同执行五秒 `HEAD`，任意小于 500 的状态都视为可达；SaaS 使用
+  十秒 `POST /usage` 的 URL-encoded 可选 key，拒绝业务码 1107、其他非零码以及付费/免费
+  剩余页数同时为零。PDF 以 `application/pdf` multipart 提交到 `/parse/async`，发送
+  `file`、重复语义的 `output_formats=json`、JSON `element_formats` 和
+  `feature_config`，空 key 完全省略。只有业务码 1124 会在十分钟预算内按一秒起步、十秒
+  封顶的指数退避和最多 0.5 秒 jitter 重试；其他 HTTP/网络/业务错误立即带阶段信息失败。
+- 提交后先等待两秒，再向 `/parse/async_check` 发送 URL-encoded task ID 与可选 key，
+  间隔按 1.5 倍增长、十秒封顶并受十分钟总预算约束；严格处理业务码、`SUCCESS` 缺 result、
+  `FAILED` 和超时，从 `outputs.json.pages` 取结构化结果。固定 21 种 block 全部覆盖：
+  cate/cate_item/blank 永久丢弃，header/footer 由开关控制，未知类型回退 text，有效 1–6
+  title level 转 Markdown 标题，无四值 bbox 的图片跳过，figure/cs/qrcode/stamp 获得稳定
+  caption，table/image 输出现有 chunker 可识别的 marker。
+- `Pipeline` 只在 PDF 且 selector 为 `SoMark` 或
+  `<model>@<instance>@SoMark` 时调用 provider；CLI、服务端后台任务与 common 环境装配共用
+  同一路径。`.env.example`、Compose 和 README 已同步 base/key、四种格式、七个 feature、
+  三个请求 timeout 和两个总预算，默认保持关闭。新增 7 个行为回归：nested/plain/显式空
+  配置及 redaction、21 类型转换与 header/footer、真实本地 HTTP 私有 HEAD + QPS retry +
+  processing/success poll + multipart/form 编码、SaaS usage/key/quota、11 个
+  parser_config wire 字段、固定三段 selector 和生产 PDF pipeline。
+- 覆盖生成器新增精确 SoMark mapping 守卫，37/37 通过并从固定 Git tree 重建 4,441 文件
+  矩阵。统计保持 aligned 64/14,927 行、partial 1,583/650,954 行、
+  replaced 71/27,674 行、reference 2,723/574,185 行、unmapped 0；Python parser、Go
+  parser 和四 provider wrapper 均继续诚实标为 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、Compose 静态解析、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 397 passed / 0 failed /
+  1 GPU ignored，双 feature 400 passed / 0 failed / 1 ignored，后者真实执行 zvec native
+  reopen 与在线 mirror。只读复用既有 `rayrag-postgres-1` 执行
+  `SHOW server_version; SELECT 1`，确认 `18.4 (Debian 18.4-1.pgdg13+1)` 和 SQL 成功；
+  当前未设置 `RAYRAG_POSTGRES_TEST_URL`，所以条件式 Rust snapshot test 实际跳过。
+  `SOMARK_BASE_URL`/`SOMARK_API_KEY` 也未设置，wire contract 使用本地受控 Axum 服务验证，
+  没有冒充外部 SoMark 实连；未新起或重启任何容器。
+- 尚未冒充完成：Python 的 PDF outline/page rendering、按 page size 缩放的 bbox line
+  tag、crop/image object、naive 两元组和 manual/pipeline 三元组、空页空 section 行为、
+  progress callback，以及 Go JSON/Markdown `ParseResult`、精确 page/file metadata、空输入
+  空结果和非法 title level 的 H1 fallback；tenant Provider 实例持久化/选择也仍未接线。
+  因此这是可运行的 SoMark async 纵向切片，不代表整个 OCR/版面解析家族已经完全对齐；继续
+  保持全 Rust、Linux/Docker、zvec-rust + PostgreSQL 18.4、国内镜像优先、RayRAG 不引入
+  MySQL 且不改版本号。
+
+## 2026-07-27 RAGFlow MinerU remote PDF provider 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 842 行
+  `deepdoc/parser/mineru_parser.py`、115 行 Python 单测、327 行
+  `rag/llm/ocr_model.py` 中 MinerU wrapper、119 行 Go
+  `pdf_parser_mineru.go`、161 行 Go 测试、276 行 `mineru_local.go` driver 以及
+  `rag/app/naive.py` 生产调用点。按仓库规则先查询 RAGFlow“全部文件”知识库；召回是通用
+  模型参数和无关论文，没有 MinerU/SoMark 目标协议的精确源码证据，因此实现合同仍采用固定
+  Git blob、调用点和测试。
+- `src/parser/mineru.rs` 保留原轻量本地 PDF 文本 fallback，并新增全 Rust remote provider。
+  配置兼容 UI 嵌套 `{"api_key": {...}}`、flat JSON、大小写 key 和进程环境回退，
+  API/base/server URL 规范化、secret-redacted `Debug`、显式空值优先、output/backend/
+  server/delete-output 字段；严格验证固定七种 backend 和三种 parse method，完整映射 UI
+  语言名，缺 API server 时 fail closed。可选 Bearer 是固定 Go local driver 的能力扩展。
+- Python 同步路径先用五秒 `HEAD /openapi.json` 探针，再向 `/file_parse` 发送
+  `application/pdf` multipart，逐项透传 `output_dir/lang_list/backend/parse_method`、
+  formula/table 开关、六个返回开关和固定 page range，使用 1,800 秒请求上限。ZIP 不落盘，
+  而是在内存中按固定候选名选择 64 MiB 上限的 content-list JSON；因此没有文件系统解压/
+  traversal 风险，也没有伪装已经实现 ZIP 图片落盘。
+- 同一 client 兼容 Go local driver 的 200/202 task 响应、nested/root task ID、可选
+  Bearer、URL-safe `/tasks/{id}/result`，每 200 ms 轮询并受默认 30 秒总 deadline 约束，
+  从 results object 取首个 `md_content`。content-list 转换覆盖 text/table/image/equation/
+  code/list，过滤 header/footer/page_number/discarded/未知 block，复刻 HTML unescape、
+  block tag 换行和空白折叠，并生成现有 chunker 可识别的 table/image marker。
+- `ParserConfig` 新增原名 `mineru_lang`、`mineru_parse_method`、
+  `mineru_formula_enable`、`mineru_table_enable` 默认值；`Pipeline` 只在 PDF 且 selector 为
+  `MinerU` 或 `<model>@<instance>@MinerU` 时调用 provider。CLI 和服务端后台解析共用同一
+  环境装配；`.env.example`、Compose 和 README 已同步八个 `MINERU_*` 变量，API server
+  留空时默认关闭。
+- 新增 7 个行为回归：nested/flat/显式空配置、backend 边界和 secret redaction、完整
+  content-list 类型转换与 sanitizer、真实本地 HTTP Python HEAD/Bearer/multipart/ZIP
+  contract、Go submit/poll Markdown contract、固定三段 selector、生产 PDF pipeline，
+  以及 parser_config 四字段 wire 名；覆盖生成器新增 1 项精确映射守卫，36/36 通过并从
+  固定 Git tree 重建 4,441 文件矩阵。统计保持 aligned 64/14,927 行、
+  partial 1,583/650,954 行、replaced 71/27,674 行、reference 2,723/574,185 行、
+  unmapped 0，Python parser、Go parser、Go local driver 与四 provider wrapper 均继续
+  诚实标为 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、Compose 静态解析、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 389 passed / 0 failed /
+  1 GPU ignored，双 feature 392 passed / 0 failed / 1 ignored，后者真实执行 zvec native
+  reopen 与在线 mirror。只读复用既有 `rayrag-postgres-1` 执行
+  `SHOW server_version; SELECT 1`，确认 `18.4 (Debian 18.4-1.pgdg13+1)` 和 SQL 成功；
+  当前未设置 `RAYRAG_POSTGRES_TEST_URL`，所以条件式 Rust snapshot test 实际跳过。
+  MinerU endpoint/token/output/server 环境变量也均未设置，wire contract 使用本地受控
+  Axum 服务验证，没有冒充外部 MinerU 实连；未新起或重启任何容器。
+- 尚未冒充完成：PDF outline/page rendering、bbox 归一化 tag、crop/image object、ZIP
+  图片落盘和 VLM image description、from/to page、manual/pipeline/paper tuple 形态、
+  progress callback、output directory 清理、Go JSON/Markdown ParseResult 与 page-count/
+  file metadata、空输入空结果、tenant Provider 实例取密、MinerU.Net public-URL 流程，
+  以及 SoMark provider。因此这是可运行的 MinerU 双协议纵向切片，不代表完整 MinerU/
+  OCR/版面解析家族已经对齐；继续保持全 Rust、Linux/Docker、zvec-rust +
+  PostgreSQL 18.4、国内镜像优先、RayRAG 不引入 MySQL且不改版本号。
+
+## 2026-07-27 RAGFlow OpenDataLoader remote PDF provider 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 424 行
+  `deepdoc/parser/opendataloader_parser.py`、320 行 Python 单测、327 行
+  `rag/llm/ocr_model.py` 中 OpenDataLoader wrapper、231 行 Go
+  `pdf_parser_opendataloader.go`、152 行 Go 测试及 `rag/app/naive.py` 生产调用点。按仓库规则
+  先查询 RAGFlow“全部文件”知识库；召回是通用 provider/分块资料和无关内容，没有目标协议
+  的精确代码证据，因此实现合同仍以固定 Git blob、调用点和测试为准。
+- `src/parser/opendataloader.rs` 保留原 XML/YAML/TOML 本地 loader，并新增纯 Rust remote
+  provider。配置兼容 UI 嵌套 `{"api_key": {...}}` 与 flat JSON、大小写 key、进程环境
+  回退、base URL 去尾斜杠、可选 Bearer、无效 timeout 回退 600 秒及 secret-redacted
+  `Debug`；API server 缺失时 fail closed。`GET /health` 使用固定 5 秒探针，PDF 以
+  `application/pdf` multipart 发送到 `/file_parse`，透传 `hybrid`、`image_output` 和
+  true/false 字符串 `sanitize`，每次重建 body 并最多即时尝试 3 次。
+- 响应递归遍历 `content`/`text`/`cells`，支持 HTML 与稀疏行 table fallback、图片 caption、
+  equation/text/title 分类和 marker-aware 文档内容；优先 `json_doc`，没有 text section 时
+  回退 `md_text`。仅 HTML table 是同提交 Go 路径支持、Python `_iter_elements` 会漏过的
+  差异，Rust 采用两者能力并集。`ParserConfig` 以原名序列化/反序列化三个可选字段；
+  `Pipeline` 只在 PDF 且 selector 为 `OpenDataLoader` 或
+  `<model>@<instance>@OpenDataLoader` 时检查 health 并调用 provider，CLI 与服务端后台任务
+  共用同一环境装配；`.env.example`、Compose 和 README 已同步，默认仍关闭。
+- 新增 6 个行为回归：nested/flat 凭据和 redaction、JSON 优先/Markdown 回退、table cells/
+  image marker、真实本地 HTTP health/Bearer/multipart/前两次 502 后第三次成功、固定三段
+  selector、生产 PDF pipeline，以及 parser_config 三字段 wire 名；覆盖生成器再加一项精确
+  映射守卫，35/35 通过并从固定 Git tree 重建 4,441 文件矩阵。统计保持
+  aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0，Python parser、Go parser 与四 provider wrapper
+  继续诚实标为 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、Compose 静态解析、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 381 passed / 0 failed /
+  1 GPU ignored，双 feature 384 passed / 0 failed / 1 ignored，后者真实执行 zvec native
+  reopen 与在线 mirror。只读复用既有 `rayrag-postgres-1` 执行
+  `SHOW server_version; SELECT 1`，确认 `18.4 (Debian 18.4-1.pgdg13+1)` 和 SQL 成功；
+  当前未设置 `RAYRAG_POSTGRES_TEST_URL`，所以条件式 Rust snapshot test 没有实际执行。
+  三个 `OPENDATALOADER_*` 变量也均未设置，wire contract 使用本地受控 Axum 服务验证，没有
+  冒充外部 OpenDataLoader 实连；未新起或重启任何容器。
+- 尚未冒充完成：本地 PDF page rendering/outline、bbox PDF 坐标到页面 tag 转换、crop/
+  image object、from/to page、`parse_method` 的 paper/manual/raw tuple 形态、progress
+  callback、精确 page-count/output-format ParseResult、tenant Provider 实例取密，以及
+  MinerU/SoMark wrapper 仍未实现。因此这是可运行的 remote PDF 纵向切片，不代表完整
+  OpenDataLoader/版面解析家族已经对齐；继续保持全 Rust、Linux/Docker、zvec-rust +
+  PostgreSQL 18.4、国内镜像优先、RayRAG 不引入 MySQL且不改版本号。
+
+## 2026-07-27 RAGFlow PaddleOCR provider / async job 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 327 行
+  `rag/llm/ocr_model.py`、811 行 `deepdoc/parser/paddleocr_parser.py`，并核对 343 行
+  Go `internal/entity/models/paddleocr.go`、动态 `OcrModel` factory、tenant/service 调用点和
+  `rag/app/picture.py` / `naive.py` selector。按仓库规则先查询 RAGFlow“全部文件”知识库，
+  召回包含通用 provider 集成说明但没有目标文件的精确协议，另混有无关资料，因此具体合同仍
+  采用固定 Git blob 和生产调用点。
+- `src/ocr.rs` 保留原 `paddleocr-gpu-proxy` 兼容路径，并新增纯 Rust PaddleOCR provider：
+  接受 UI 嵌套 `{"api_key": {...}}`、flat auto-provision、大小写配置别名和环境回退，
+  base URL 去尾斜杠；严格支持固定六个算法，secret 不进入 Debug，缺 token/URL、未知算法、
+  空内容和非法 timing 均 fail closed。
+- 新 adapter 按固定 Python wire contract 向 `/api/v2/ocr/jobs` 发送
+  `model/optionalPayload/file` multipart，加 Bearer 与 `Client-Platform: ragflow`；兼容
+  nested/root job ID、state 和两种 result URL，使用覆盖整个 submit/poll/fetch 的 deadline
+  与 1.5x/15 秒封顶退避。failed state、非 200、非 JSON 和超时均保留阶段错误；JSONL 严格
+  解析并合并 layout，清除 inline image markup，无 layout 时回退 `rec_texts`。
+- `Pipeline` 新增显式 OCR 依赖和环境装配。图片/PDF 仅在
+  `layout_recognize=PaddleOCR` 或上游 `<model>@<instance>@PaddleOCR` selector 时进入外部
+  provider；配置或返回为空时明确失败，不把文件名/metadata 占位伪装为 OCR 成功。CLI 新增
+  `--layout-recognize`，服务端后台解析也使用同一环境适配；`.env.example` 和 Compose 已透传
+  PaddleOCR/legacy 变量，外部 OCR 默认关闭。
+- 新增 5 个行为回归：nested/flat 配置、六算法拒绝边界、secret redaction、严格 JSONL 与
+  `rec_texts` fallback、真实本地 HTTP multipart/header/submit→running→done→fetch、
+  provider-instance selector，以及生产图片 pipeline 接线。覆盖生成器新增一项映射守卫，
+  34/34 通过并从固定 Git tree 重建 4,441 文件矩阵；统计保持 aligned 64/14,927 行、
+  partial 1,583/650,954 行、replaced 71/27,674 行、reference 2,723/574,185 行、
+  unmapped 0，两份目标文件继续诚实标为 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、
+  `docker compose --env-file .env.example config --quiet`、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 374 passed / 0 failed / 1 GPU ignored，
+  双 feature 377 passed / 0 failed / 1 ignored，后者真实通过 PostgreSQL 18 snapshot、
+  zvec native reopen 和在线 mirror。本批没有可用的外部 PaddleOCR endpoint/token，因此
+  wire protocol 使用本地受控 HTTP 服务验证，没有冒充官方/业务 OCR 实连；未新起/重启
+  Docker、PostgreSQL 或 GPU 三模型服务。
+- 尚未冒充完成：MinerU/OpenDataLoader/SoMark provider wrapper、tenant Provider 实例选择、
+  自定义 `algorithm_config/additional_params`、PDF outline/page rendering、bbox section tag、
+  `parse_method` 多 tuple 形态、crop、progress callback 和本地 DeepDOC OCR fallback 尚未
+  实现；图片的短 OCR 后视觉模型描述也未接线。因此这只是可运行的 PaddleOCR async 纵向
+  切片，不代表完整 OCR/视觉模型家族已经对齐。
+
+## 2026-07-27 RAGFlow Agent runner 实时 SSE / 结构化取消纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 538 行
+  `internal/agent/canvas/runner.go`、724 行 `scheduler.go`，并核对
+  `service/agent.go`、handler 和 e2e 测试对首次/恢复、等待/完成及 done 的顺序约束。按仓库规则
+  先查询 RAGFlow“全部文件”知识库，但召回仍是无关医疗内容，因此没有将其作为实现证据，
+  本批合同来自固定 Git blob、生产代码和测试。
+- `AgentWorkflow` 新增执行时 observer：顶层节点在真正 await 组件前发送
+  `node_started`，成功或失败后发送带 runtime inputs、outputs/error、elapsed 和
+  `created_at` 的 `node_finished`。UserFillUp、Loop 或 Parallel 暂停时只发送 start，
+  不伪造 finish；恢复 UserFillUp 则围绕实际恢复动作发送 start/finish。该 observer 直接进入
+  live SSE，而非结束后从 trace 重建；现有无 observer 的 JSON 和内部调用路径保持兼容。
+- `stream: true` 现在立即返回由 Rust mpsc 驱动的 `Body`，稳定复用同一
+  message/task/session ID，且最终持久化的 user/assistant message ID 与已发送 ID 一致。成功、
+  等待和错误终态仍在 checkpoint/conversation 持久化成功后发送，正常终态继续以
+  `data: [DONE]` 收束；省略 `stream` 仍返回原 JSON。
+- 请求 body receiver 被客户端断开时，driver 通过 `select` 立即 drop 正在执行的 workflow
+  future，现有 unfinished-run guard 会把它记录为 cancelled。进程内 registry 在 ACL、DSL、
+  conversation、checkpoint 和模型 preflight 全部通过后才按 Canvas 注册；同 Canvas 的新
+  stream 会静默取消旧 stream，generation-safe lease 保证旧 future 清理时不会误删新运行。
+  新增阻塞 Retrieval observer 回归证明 start 在组件完成前可见，另有 2 个 registry/drop
+  回归证明断连释放 future、替换取消和 generation 隔离；3 个 HTTP SSE 回归也已更新为实时
+  事件顺序、持久化 ID、等待/恢复及运行时错误合同。
+- 覆盖生成器 33/33 通过并从固定 Git tree 重建 4,441 文件矩阵，统计保持
+  aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。`runner.go` 和 `scheduler.go` 已记录实时 observer、
+  持久化终态、断连取消及 generation-safe replacement，但继续诚实标为 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 368 passed / 0 failed / 1 GPU ignored，
+  双 feature 371 passed / 0 failed / 1 ignored，后者真实通过 PostgreSQL 18 snapshot、
+  zvec native reopen 和在线 mirror。本批未新起/重启 Docker、PostgreSQL 或 GPU 三模型
+  服务，保持纯 Rust、Linux/Docker、zvec-rust + PostgreSQL 18.4、国内镜像优先、零 MySQL
+  且不改版本号。
+- 尚未冒充完成：SSE 仍是 opt-in，尚无 LLM token/message 增量 chunk；Loop/Parallel 只观测
+  顶层 macro，未展开 per-child 生命周期，inputs map 也不是完整 Eino pre-state；registry
+  仅覆盖本进程内 stream 请求，非 stream 和跨进程运行不参与替换，task ID 不是 Canvas
+  version，spawned task panic 也尚未转成 error + done。因此固定上游 runner/scheduler 的完整
+  token stream、子图事件和分布式运行控制仍为 `partial`。
+
+## 2026-07-27 RAGFlow Agent runner 缓冲 SSE 生命周期纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行复核 538 行
+  `internal/agent/canvas/runner.go`，并核对 `service/agent.go` 的事件产生顺序、
+  `canvas/scheduler.go` 的节点 payload、`handler/agent.go` 和
+  `service/bot_completion.go` 的 SSE wire format，以及 handler/e2e 测试。按仓库规则先查询
+  RAGFlow“全部文件”知识库，但召回的是无关 ERP/多语言资料，未把它当成语义证据。
+- `POST /api/v1/agents/{id}/completions` 新增可选 `stream: true`：输出只含 `data:` 行的扁平
+  `{event,message_id,created_at,task_id,session_id,data}` envelope。成功路径包含
+  `workflow_started`、trace 派生的 `node_started/node_finished`、
+  `message/message_end/workflow_finished`；等待路径输出带 `cpn_id/tips/inputs` 和服务端
+  opaque `resume_token` 的 `waiting_for_user`；执行错误使用上游 writer 的
+  `{code:500,message,data:false}` 终态，所有路径均以 `data: [DONE]` 结束，并设置
+  `text/event-stream`、`no-cache` 和 `keep-alive`。
+- 事件在 workflow、checkpoint 和 conversation exchange 已经持久化之后才缓冲写出，避免先向
+  客户端宣告成功后落盘失败。恢复时读取 checkpoint 内已完成顶层 trace 长度，只输出本次新增
+  节点，不重放 Begin/Retrieval/LLM 等暂停前工作；等待回合仍保存 user + 空 assistant，
+  resume token 仍由原子 claim/consume-once 边界保护。省略 `stream` 继续返回原 JSON，
+  既有客户端与等待/恢复协议不变。
+- 新增 3 组 HTTP 回归，分别钉死完成流的 8 段事件顺序与稳定 metadata、等待帧/checkpoint
+  token 及恢复流不重放旧 trace、运行时失败的 error + `[DONE]`。JSON 默认分支也继续由既有
+  UserFillUp 端到端测试验证。覆盖生成器 33/33 通过并从固定 Git tree 重建 4,441 文件矩阵，
+  统计保持 aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0；`runner.go` 继续诚实标为 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 365 passed / 0 failed / 1 GPU ignored，
+  双 feature 368 passed / 0 failed / 1 ignored，后者真实通过 PostgreSQL 18 snapshot、
+  zvec native reopen 和在线 mirror。本批未新起/重启 Docker、PostgreSQL 或 GPU 三模型服务，
+  保持纯 Rust、Linux/Docker、zvec-rust + PostgreSQL 18.4、国内镜像优先、零 MySQL且不改
+  版本号。
+- 尚未冒充完成：SSE 当前由最终 trace 重建，节点 inputs/timing 不是执行时实时观测，尚无
+  token/node 边执行边 flush、请求断开向 workflow 传播取消、同 Canvas 新运行替换旧运行、
+  panic 后保留已发事件、默认即 SSE，以及跨进程运行 registry；Loop/Parallel 内层逐节点
+  stream 也未展开。因此固定上游 runner 的实时性、取消和完整调度语义仍为 `partial`。
+
+## 2026-07-27 RAGFlow Loop/Parallel 复合 UserFillUp checkpoint bridge
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，复核
+  `internal/agent/workflowx/parallel.go` 的 `ParallelInterruptState`、completed/pending
+  partition、稳定 item checkpoint 地址和恢复测试，`loop_integration_test.go` 的“恢复同一
+  iteration”合同，以及 `canvas/interrupt_resume.go` 的 leaf/root 地址区别和
+  `loop_subgraph.go` / `parallel_subgraph.go` 调用边界。RAGFlow“全部文件”知识库查询成功，
+  但 28 条召回仍全是无关医学资料，因此没有把其内容当作实现证据。
+- `AgentWorkflowCheckpoint` 新增可 serde 的 `CompositeCheckpoint`。Loop 暂停时保存 macro
+  ID、当前迭代号、body execution cursor 和 selected 集；恢复先校验外层 cursor、展示叶子
+  与复合叶子一致，再把一次用户数据写入该 UserFillUp，从同一 iteration 的下一 body 节点
+  继续，不会重播已完成的 bump/Retrieval/LLM，也不会重新 seed loop variables。
+- Parallel 首轮仍按既有 `max_concurrency` 策略 drain 每个 item，但把结果分类为 completed
+  或 waiting；checkpoint 保存原始 items、每个 completed item 的完整局部 Canvas 快照、
+  每个 pending item 的局部 runtime/transient/body cursor，以及当前 active index。恢复使用
+  `parallel:<macro>:<index>:<leaf>` 稳定地址一次消费一个 item；completed item 不再执行，
+  其余 pending item 保持原 checkpoint，全部完成后才按原索引聚合 `_result`、声明输出、
+  usage 和 references。普通错误仍优先返回且不伪造可恢复状态。
+- 新增 2 组端到端执行器回归：Loop 两轮分别等待、checkpoint JSON 往返后仍在原迭代完成，
+  最终 counter 精确为 2；Parallel 三个并发 item 首轮形成完整 pending partition，三次恢复
+  后答案保持输入顺序，completed 数量单调 0→1→2，并拒绝被篡改的展示叶子/复合叶子组合。
+  既有服务端 checkpoint store 的原子 JSON/PostgreSQL mirror、opaque token、租约 claim 和
+  DSL fingerprint 无需另造旁路即可持久化新增状态。
+- 覆盖生成器 33/33 通过并重新从固定 Git tree 生成 4,441 文件矩阵，统计保持
+  aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。`workflowx/parallel.go`、Loop/Parallel
+  subgraph、interrupt/resume、checkpoint store、node body、runner、scheduler、Python
+  FillUp 和 Go UserFillUp 说明均已更新，但继续诚实保留 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认与
+  `postgres-backend,zvec-backend` 双 feature 的 locked all-target check、严格
+  `clippy -D warnings` 和全目标测试全部通过；默认 362 passed / 0 failed / 1 GPU
+  ignored，双 feature 365 passed / 0 failed / 1 ignored，后者真实通过 PostgreSQL 18
+  snapshot、zvec native reopen 和在线 mirror。本批未新起/重启容器或 GPU 三模型服务，
+  保持纯 Rust、Linux/Docker、zvec-rust + PostgreSQL 18.4、国内镜像优先、零 MySQL且不改
+  版本号。
+- 尚未冒充完成：上游一次 `CompositeInterrupt` 可携带并一次选择多个叶子，RayRAG HTTP
+  当前每次 resume token 只消费一个稳定 active item；Eino 原始 child bridge-store 字节
+  格式、Parallel panic recovery/outer stream、Loop per-iteration stream、嵌套
+  Loop/Parallel macro、真实 FileService/layout recognition、完整 Agent SSE、Redis TTL 和
+  跨进程分布式 claim/GC 仍为 `partial`。
+
+## 2026-07-27 RAGFlow UserFillUp / interrupt-resume 持久化纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计
+  `agent/component/fillup.py` 125 行及 155 行测试、
+  `internal/agent/component/userfillup.go` 292 行及 161 行测试、
+  `internal/agent/canvas/interrupt_resume.go` 405 行及 445 行测试、
+  `checkpoint_store.go` 101 行及 141 行测试、`node_body.go` 257 行和
+  `runner.go` 538 行，并核对 Begin、compile、service/handler、前端 UserFillUp form 与固定
+  DSL 调用点。RAGFlow“全部文件”知识库本批返回的是无关医疗内容，因此语义证据采用固定
+  Git blob、Python/Go 生产实现及其测试，没有把错误召回写进兼容结论。
+- 纯 Rust `AgentWorkflow` 新增闭集 `WorkflowRunOutcome`、可 serde 的
+  `AgentWorkflowCheckpoint` 和交互式 run/resume 入口。首次运行在顶层 UserFillUp 前保存
+  精确 execution cursor、selected node 集、CanvasRuntime、transient usage/reference 和
+  trace；恢复先校验版本/节点/cursor，再把一次用户 payload 写入
+  `user_input`、component bucket 及声明字段，从下一索引继续。Begin、Retrieval、LLM 等
+  上游副作用不会重跑；连续多个顶层 UserFillUp 可逐个等待。Begin 与 UserFillUp 共用
+  `sys.__initial_user_input_consumed__`，避免同一初始 query 被重复消费。
+- 新增 `src/agent_checkpoint.rs` 服务端状态库，checkpoint 只通过 opaque
+  `resume_token` 查找，不接受客户端回传执行状态；按 owner/tenant/agent/conversation
+  四重隔离，DSL normalized fingerprint 防止等待期间换图，15 分钟 claim lease 阻止并发
+  二次恢复；进程重启会清除已失去执行 future 的 lease，但保留可恢复 checkpoint。
+  save/claim/release/replace/delete 均在复制快照上提交，失败不污染内存；落盘
+  复用 crash-safe atomic write，启用 `postgres-backend` 时自动进入 PostgreSQL snapshot
+  mirror，重启后仍可恢复。
+- Agent completion 首轮等待返回 JSON
+  `event=waiting_for_user`、`kind/cpn_id/interrupt_id/tips/inputs`、resume token、
+  workflow path/trace，并按固定 Python service 行为持久化 user + 空 assistant 消息对。
+  下一请求可用 `resume_data`、`inputs` 或标量 question 恢复；token 错误、活动 claim 或
+  DSL 变化返回 HTTP 409，成功完成并提交消息后才删除 checkpoint，执行错误会释放 claim。
+  组件目录新增 `userfillup` 输入/输出 metadata。
+- 新增 9 组定向回归：单字段初始 query 直通、双字段等待与 checkpoint serde 往返、
+  Retrieval 只执行一次、Begin/UserFillUp 共享消费标记、文件及嵌套 fail-closed、持久化
+  重启恢复、ACL/token/claim 一次性、DSL fingerprint 稳定、HTTP 等待/空消息对/错 token/
+  恢复/完成清理。固定覆盖生成器 33/33 通过并从 4,441 个 pinned blob 重生矩阵，统计保持
+  aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0；相关生产文件仍为诚实 `partial`。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认
+  `cargo check --locked --all-targets`、严格 Clippy 和全目标测试
+  360 passed / 0 failed / 1 GPU ignored；双 feature 的 check、严格 Clippy 和全目标测试
+  363 passed / 0 failed / 1 ignored，PostgreSQL 18 snapshot 往返、zvec native
+  collection reopen 与在线 mirror 均实际通过。本批未新起/重启 Docker、PostgreSQL 或
+  GPU 三模型服务；继续保持纯 Rust、Linux/Docker、zvec-rust + PostgreSQL 18.4、国内镜像
+  优先、零 MySQL且不改版本号。
+- 该批结束时 Loop/Parallel 内 UserFillUp 仍编译期拒绝；其 durable composite bridge 已由
+  紧邻上方 02:03 批次补齐。真实 FileService/`layout_recognize`、Go standalone Invoke 的
+  tips renderer/file stub、完整 SSE `workflow_started/.../done`、Redis checkpoint TTL、
+  跨进程分布式 claim 和 checkpoint 垃圾回收仍为 `partial`。
+
+## 2026-07-27 RAGFlow Parallel / Iteration / IterationItem 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计
+  `agent/component/iteration.py` 64 行、`iterationitem.py` 101 行、
+  `internal/agent/component/parallel.go` 186 行及 169 行测试、
+  `internal/agent/canvas/parallel_subgraph.go` 385 行及 259 行 grouped/batch/timing
+  测试、`internal/agent/workflowx/parallel.go` 812 行及 1,455 行测试/辅助代码，并核对前端
+  Iteration 表单、默认值、输出引用 schema 和旧版 `iteration.json` DSL。RAGFlow“全部文件”
+  知识库本批可访问，但召回内容与 Parallel 无关，因此实现证据采用固定 Git blob、Go/Python
+  运行代码和测试。
+- 纯 Rust `AgentWorkflow` 新增 Parallel macro plan：优先按直接 `parentId` 收集 body，
+  对无分组旧 DSL 回退 descendants，外层 DAG 折叠为单个 Parallel 节点，body 独立稳定拓扑。
+  runtime normalizer 现在同时改写被折叠 child ID 的 upstream/downstream，兼容旧 fixture 中
+  `iterationitem:0@result` 小写别名和 body 回边；编译期要求非空 `items_ref`，并明确拒绝
+  尚未实现的 Loop/Parallel 嵌套 macro，而不是给出错误的伪执行结果。
+- 执行时每个 item 克隆隔离的 `CanvasRuntime`，注入 `item/index` 与
+  `__item__/__index__`；`max_concurrency <= 1` 严格顺序执行，较大值按固定 Go workflowx
+  语义先在 caller 执行第 0 项，再以有界 fan-out 运行剩余项。普通 item 错误不会提前丢弃
+  其他已安排工作，全部 drain 后返回首个错误；成功结果始终按输入索引排序，provider usage
+  和 references 同样按输入序合并，不受完成先后影响。
+- Parallel 输出统一写入 `_result`：每项 snapshot 包含 item/index 与全部组件输出 bucket；
+  配置引用支持 item/index 及 `component@object.dot`，缺失路径生成 JSON null，dot traversal
+  只穿越 object，与固定 Go 实现一致。null items 生成空有序 batch，非 array 明确报错。
+  不复制 Go `__cpn_id__` 共享 bucket，而由 Rust owned component output map 提供同等隔离。
+- 新增 5 组定向回归，覆盖隔离 item 和声明输出、并发上限与乱序完成后的稳定输出、null/非数组/
+  缺失引用、错误后 drain，以及旧 alias/backedge 规范化；测试 retriever 实测
+  `max_concurrency=2` 时峰值为 2、顺序模式峰值为 1。组件目录新增精确 `parallel` descriptor，
+  输入为 `cpn_id/items_ref/max_concurrency`，输出为 `_result`。
+- 覆盖生成器新增 Python Iteration/IterationItem、Go component/workflowx Parallel 精确
+  partial mapping，并更新 canvas parallel subgraph、scheduler、node body、normalize 和
+  canvas 总体说明。重新生成固定 commit 的 4,441 文件矩阵，统计保持
+  aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0；本批将 generic partial 细化为审计后的 exact
+  partial，故总数不虚增。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认
+  `cargo check --locked --all-targets`、严格
+  `cargo clippy --locked --all-targets -- -D warnings` 和全目标测试
+  351 passed / 0 failed / 1 GPU ignored；双 feature 的 check、严格 Clippy 和全目标测试
+  354 passed / 0 failed / 1 ignored，其中 PostgreSQL snapshot 往返、zvec native
+  `native_collection_upserts_queries_and_reopens` 与在线 mirror 测试通过；覆盖生成器
+  33/33 通过。本批没有持久化、容器或 GPU 代码变化，因此未新起/重启 Docker、
+  PostgreSQL 或三模型服务；继续保持纯 Rust、Linux/Docker、zvec-rust + PostgreSQL 18.4、
+  国内镜像优先、零 MySQL且不改版本号。
+- 尚未冒充完成：Eino composite interrupt/checkpoint snapshot、只 replay 未完成 index、
+  child checkpoint ID/bridge、显式 outer stream completion boundary、panic recovery、
+  nested Loop/Parallel macro 和 ordinary sibling wave 并发仍为 `partial`；Python 的
+  cooperative cancellation、thought 和 `_idx` 可见状态也未伪装成已实现。
+
+## 2026-07-27 RAGFlow Loop / LoopItem / ExitLoop 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计
+  `agent/component/loop.py` 100 行、`loopitem.py` 164 行、`exit_loop.py` 32 行、
+  `internal/agent/component/loop.go` 223 行、`loop_test.go` 184 行、
+  `internal/agent/canvas/loop_subgraph.go` 782 行，以及
+  `loop_subgraph_test.go` / `loop_semantics_test.go` 共 1,389 行和
+  `workflowx/loop.go` 实际 driver。RAGFlow“全部文件”知识库可访问，但 Loop 查询召回的是
+  无关医学资料；本批因此以固定 Git blob、Go 语义测试和调用点为实现证据。
+- 纯 Rust `AgentWorkflow` 新增 Loop macro plan：优先收集直接 `parentId` body，
+  无分组旧 DSL 回退为遇 Loop 回边停止的 descendants；外层 DAG 只保留一个 Loop 节点，
+  body 单独计算稳定拓扑。补齐运行规范化时遗留 `LoopItem/IterationItem` 的 downstream
+  折叠和 upstream 回写，并让从扁平 components 补建 graph 时保留 `parent_id/parentId`，
+  避免 body 被误当作外层 follower。
+- Loop 采用 do-while：每轮先运行所有被选中的 body 节点，再读取同一个
+  `CanvasRuntime` 计算终止条件。变量支持 constant、实时 variable dereference 和
+  number/string/boolean/object*/array* 零值，已有非 null 状态不会被下一轮重置；
+  VariableAssigner 修改因此跨轮累积。条件支持默认 AND、OR，以及固定 Go 端完整
+  string/bool/number/object/list/null 操作符；Switch 多目标选择、多终端和 legacy
+  `ExitLoop` no-op terminal 走与外层相同的静态分派。Loop 整体仍只形成一个外层
+  `workflow_path` / trace 节点，body 输出保留在共享状态。
+- `maximum_loop_count` 在条件未满足时返回可 downcast 的
+  `LoopMaxIterationsExceeded`，且保留已完成迭代写入；条件在上限那一轮成立则成功。
+  配置为 0 时明确跟随固定 Go `workflowx` 的 1,024 次安全 cap，而非复制组件注释中的
+  真无限循环。另有两处上游自身不一致：Go 允许空/未知 input_mode 作零初始化，而 Python
+  `Check` 拒绝；Go 的 bool/number empty 运算依赖 rhs null，Python 检查 lhs 身份。
+  Rust 选择固定提交中可执行且有测试的 Go 路径，并在覆盖表保留 Python 文件为 partial。
+- 新增 8 组 Loop 行为测试，覆盖 0→1→2→3 do-while、live variable seed、同名变量
+  last-spec-wins、上限错误及第 5 轮状态、全类型操作符、零值/坏参数、Switch + ExitLoop
+  分支/多终端、无分组 descendants fallback；既有规范化测试补 upstream 回写断言，组件目录测试确认 Loop
+  注册。覆盖生成器增加 Loop/LoopItem/ExitLoop Python 与 Go component 精确映射并更新
+  canvas scheduler/node-body/multibranch 说明；重新生成 4,441 文件矩阵：
+  aligned 64/14,927 行、partial 1,583/650,954 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。
+- 验证：`cargo fmt --all -- --check`、`git diff --check`、默认
+  `cargo check --locked --all-targets`、严格
+  `cargo clippy --locked --all-targets -- -D warnings`、全目标测试
+  346 passed / 0 failed / 1 GPU ignored；双 feature 的 check、严格 Clippy 和全目标测试
+  349 passed / 0 failed / 1 ignored，zvec native
+  `native_collection_upserts_queries_and_reopens` 与在线 mirror 测试真实执行。覆盖生成器
+  33/33 测试通过。GPU 三模型、PostgreSQL/Docker 本批均无相关代码变化，因此未重复干预
+  运行模型或新起容器；同日上一批已完成 PostgreSQL 18.4 新容器实连。仍为纯 Rust、
+  Linux/Docker、zvec-rust + PostgreSQL 18.4、国内镜像优先、零 MySQL，不改版本号。
+- 尚未冒充完成：Eino 子工作流 checkpoint/resume、per-iteration stream mode、child
+  checkpoint bridge、并发 sibling wave，以及 Python-only cooperative
+  cancellation/thought/_idx 可见状态仍为 `partial`；Parallel 核心 fan-out 已由紧接其前的
+  本批补齐，其 checkpoint/resume/stream 差距仍按新节保持 `partial`，UserFillUp 继续按
+  精确覆盖行实现。
+
+## 2026-07-27 RAGFlow DataOperations Python/Go 纵向切片
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计
+  `agent/component/data_operations.py` 202 行、
+  `internal/agent/component/data_operations.go` 542 行、
+  `internal/agent/component/data_operations_test.go` 282 行，以及固定前端 DataOperations
+  表单 schema、初始值和 query/key/update/filter 控件。RAGFlow“全部文件”知识库本批可访问，
+  但召回内容与 RayRAG/DataOperations 无关，因此实现证据采用固定 Git blob、Go 测试和前端
+  DSL 合同。
+- 纯 Rust Canvas 新增 DataOperations 的不可变目录注册、保存/编译期参数校验和静态分派，
+  完整覆盖 `select_keys`、`literal_eval`、`combine`、`filter_values`、
+  `append_or_update`、`remove_keys`、`rename_keys` 七个 JSON-shaped 操作。query 同时接受
+  Python/Go 字符串、Go CSV 和前端 `[{input: ...}]` 形态；key 列表同时接受字符串/CSV 和
+  前端 `[{name: ...}]`。输入对象/对象数组按声明顺序汇总，scalar/null 忽略，输出保留
+  原生 JSON；filter 和 update 支持 Canvas selector/template。
+- `literal_eval` 递归解析 JSON object/list/string/number/bool/null，并补 Python
+  `True/False/None` 与 `.5`；单引号容器、tuple/set 等仅由 Python `ast.literal_eval`
+  表达且不属于 Rust `serde_json::Value` 的分支继续明确为 partial。Python 动态
+  input-form、thought text 和共享 cooperative-cancellation 接口同样未冒充完成。
+  `combine` 的 scalar + list 采用 Python 源码和 Go 注释规定的扁平结果，明确修正固定 Go
+  实现中未被测试覆盖的 accidental nested slice。
+- 新增 6 组 Rust 行为测试，覆盖真实 Canvas 前端 query 形态、七操作分支、递归 literal、
+  selector/template、混合输入和 malformed DSL；组件目录同时发布明确 inputs/result
+  metadata。覆盖生成器新增 Python/Go 精确映射与门禁，并修复固定源码缓存现有 50 MiB
+  pack 缺失索引导致的逐 blob 懒取：仅重建 `.idx` 后缺失对象由 4,068 降为 0，未改固定
+  commit。重新生成 4,441 文件/1,267,740 文本行矩阵：aligned 63/14,895、partial
+  1,584/650,986、replaced 71/27,674、reference 2,723/574,185、unmapped 0。
+- 验证：默认全目标 337 passed、双 feature 340 passed，均 0 failed/1 个 GPU opt-in
+  ignored；默认/双 feature check、严格 Clippy、coverage 32/32 和原生 zvec-rust 0.5.1
+  create/upsert/query/reopen/online mirror 均通过。Compose 静态展开通过并继续使用
+  DaoCloud `postgres:18.4`；临时无卷 PostgreSQL 18.4 首次健康探针因 bootstrap 两阶段
+  窗口过早 unhealthy，增加 90 秒 start-period 并等待目标库 `SELECT 1` 后，服务端确认
+  `18.4 (Debian 18.4-1.pgdg13+1)` / `180004`，精确 Rust snapshot round-trip 通过。
+  临时容器及 55433 端口已自动清理，现有业务容器、镜像和数据卷未改动。
+
+## 2026-07-25 RAGFlow StringTransform/Jinja 与 Go runtime 收口
+
+- 继续固定官方 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计
+  `agent/component/string_transform.py` 107 行、
+  `internal/agent/component/string_transform.go` 302 行、
+  `internal/agent/runtime/template_jinja.go` 161 行，以及对应 Go 测试 175/224 行。
+- Rust Canvas StringTransform 现同时覆盖固定版 Python/Go 可观察语义：保存期默认值和参数
+  校验、首个上游 `line` 优先和 `split_ref` 回退、多个 literal delimiter、首尾/连续空片段、
+  false-y 置空、truthy 非字符串拒绝、首 delimiter 数组连接、缺失值空串、
+  `item/index/result` 别名、首上游动态 merge 输入和原生 JSON 上下文。
+- 引入 MiniJinja 2.21.0 的纯 Rust 沙箱渲染，支持条件、循环、注释、嵌套对象和 filters；
+  不注册 loader/文件系统/网络函数，不启用 HTML escape，undefined 可链式输出空串，
+  每次渲染限制 100,000 fuel、递归 64 层。解析/执行失败按 StringTransform 的显示型路径
+  软降级，并继续解析普通 RAGFlow selector；新增 7 组契约测试覆盖上述分支和 fuel 耗尽。
+  Python 文件仍诚实保留 partial：其 UI input-form/thoughts 和共享 cooperative
+  cancellation/timeout 接口尚未实现；Go StringTransform 302 行升级 aligned。独立 Jinja
+  runtime 后续完成全调用点审计并升级 replaced，细节见本节后续条目。
+- 紧接着逐行审计 `internal/agent/runtime/template.go` 全部 140 行及分散在
+  canvas variable、Message 和 service e2e 中的固定版测试。统一 Rust fast template
+  扫描支持单/双/三重花括号、component/sys/env、`item/index/result`、唯一首现引用提取；
+  参数绑定返回首个错误并保留完整 partial output，Message 使用同一结果的 display
+  soft-fail 路径。未知 `{{garbage}}` 原样保留，结构值使用确定性 JSON 代替 Go map
+  的非确定性 `%v` 文本；该 140 行生产文件升级 aligned。
+- 逐行审计 `internal/agent/runtime/selector.go` 168 行及其 187 行测试后确认，它是
+  上游 Python→Go 单版本迁移期的 Redis `go/python/auto` tenant 开关，并非变量
+  selector。RayRAG 只允许经保存期校验的 Rust Canvas，unsupported component 在执行前
+  fail closed，故不会引入 Python sidecar、Redis 运行时回退键或第二套执行器；该文件由
+  partial 改为有证据的 replaced。
+- 逐行审计 `internal/agent/runtime/metrics.go` 102 行及其 116 行测试。新增独立
+  Prometheus registry，严格保留 `ragflow_canvas_runs_total{runtime,outcome}` 与
+  `ragflow_canvas_run_duration_seconds{runtime}` 名称、默认 duration buckets 和
+  `success/error/cancelled` 闭集标签；非正时长不入 histogram。Canvas 正常/错误退出显式
+  记账，future 被取消时由 RAII guard 在 drop 中记录 cancelled。公开 `GET /metrics`
+  使用 Prometheus text exposition，单一纯 Rust runtime 标签固定为 `rust`，不伪造
+  Python/Go 执行器；新增 4 组 registry、取消、工作流和 HTTP 契约测试，该文件升级 aligned。
+- `internal/agent/runtime/context.go` 73 行没有 sys/env 业务逻辑，而是为 Eino callback 和
+  Go 跨 package 调用提供 `context.Context` 类型擦除状态桥，并暴露缺失状态、泛型类型不匹配
+  与 nil mutex 三种 plumbing 结果。Rust 每次 `run` 都新建私有 `CanvasRuntime`，持久化
+  globals 按运行复制，所有组件通过 `&CanvasRuntime`/`&mut CanvasRuntime` 显式借用，
+  future drop 同时销毁状态；无需全局状态、context downcast 或 mutex。新增并发双运行测试，
+  证明相同 workflow 的 globals 和 `sys.query` 不串流，该文件由 partial 改为 replaced。
+- `internal/agent/runtime/json_safe.go` 152 行及 runner/state/service 调用点全部核对。
+  上游因为 `map[string]any` 可混入 func、chan、pointer、任意 struct/client，需在序列化热路径
+  用 reflection 递归清洗；固定版实际上没有循环引用检测。RayRAG 的 DSL、组件状态、trace
+  和 HTTP 响应边界只接收拥有所有权的 `serde_json::Value` 树，func/channel/client、
+  非字符串 map key、共享循环和非有限数在编译或构造阶段即不能进入状态，故不复制反射
+  fallback；该文件由 partial 改为 replaced。
+- 逐行审计 `internal/agent/runtime/helpers.go` 163 行和 393 行固定测试，新增
+  `src/runtime.rs`：`track_progress` 保持 `0/1/-1` 与 Started/Done/error 精确消息且
+  原样透传结果；`with_timeout` 用可取消 future 和可 downcast 的 Tokio `Elapsed`；
+  `track_elapsed` 在调用前记录 RFC3339 UTC 时间，写入非负小数秒，保留调用方同名键，
+  空 map 仍可记账，错误链同时包含组件名与根因。Rust 父任务取消由 future drop 在
+  suspension point 结构化传播，不复制 `context.Context`；新增 5 组契约测试，该文件
+  升级 aligned。
+- `internal/agent/runtime/component.go` 158 行及 factory/node-body 调用点确认只是 Go
+  package cycle 适配层：Invoke 最小接口、可变进程全局 factory、registry init bridge、
+  placeholder sentinel 和 `ParamError`。RayRAG 在 DSL 保存/编译期校验闭集组件，
+  `execute_node` 静态分发并把节点/字段写入错误上下文，unsupported component 在任何
+  副作用前拒绝；因此不保留全局 factory RWLock、init 顺序耦合或 placeholder 运行路径，
+  该文件由 partial 改为 replaced。
+- 继续逐行审计 `internal/agent/runtime/registry.go` 206 行及 357 行测试，以及真实消费
+  metadata 的 `internal/service/components_service.go` 140 行/165 行测试和
+  `internal/handler/components.go` 123 行/330 行测试。新增不可变编译期 descriptor 表，
+  Canvas 支持判断与目录 API 共用同一真源；只发布 Rust 已实现的 12 个 Agent 组件和
+  5 个实际 ingestion stage，大小写无关查找、唯一名称、分类和稳定排序无需注册期锁/
+  panic。新增受 Bearer 鉴权的 `GET /api/v1/components`，支持空筛选、逗号多分类、
+  大小写折叠、重复分类去重、非 null input/output map，以及首个未知分类的 HTTP/envelope
+  400。registry 结构性标 replaced，service/handler 均升级 aligned，新增 4 组契约测试。
+- 完成 `internal/agent/runtime/state.go` 462 行、95 行 JSON 测试及所有调用点审计。
+  `CanvasRuntime` 现以确定性 `BTreeMap` 输出和显式 `sys/env/path/history/retrieval/globals`
+  命名空间形成稳定 serde checkpoint wire shape，并保留 `cancel_flag/run_id/task_id`；
+  transient LLM usage、引用和最后消息不泄漏到快照。component/sys/env dot path、JSON
+  字符串解码、数组索引、`item/index` 别名和嵌套自动建图统一由同一状态解析层处理，
+  Retrieval 同步记录 canvas 级 chunks/doc_aggs。每个 future 单独拥有状态并通过显式借用
+  访问，无需上游共享 `RWMutex`；future drop 继续提供结构化取消，更广的 interrupt/resume
+  编排仍诚实记录在 `internal/agent/canvas` partial。新增 2 组状态 wire/namespace 契约测试，
+  并在迁移中发现和修复 Begin 单输入问题回填绕过显式 `sys` 命名空间的回归；该文件升级
+  replaced。
+- 收尾审计 `internal/agent/runtime/template_jinja.go` 161 行、224 行测试及其唯一生产调用点
+  StringTransform。Rust 将 Gonja auto dispatch 替换为保守语法检测、独立 loud-error
+  MiniJinja renderer 和组件级 fail-soft wrapper：普通 fast selector 不支付解析开销，
+  statement/filter/comment 路径支持 component/nested/sys/env/上游 input context、条件、
+  循环、chainable missing 和最终 selector substitution；无 loader/外部函数，继续限制
+  100,000 fuel 和 64 层递归。测试中的 `flattenMap` 实际未被上游 context builder 调用，
+  `bytesBuffer` 也只是 no-op import anchor，故不复制无效符号；新增 loud renderer 断言并
+  保留解析/fuel 失败的组件软降级，该文件由 partial 改为 replaced。至此固定版
+  `internal/agent/runtime/` 生产文件已无通用 partial 回退项。
+- 转入 DSL 层逐行审计 `internal/agent/dsl/reset.go` 250 行、234 行测试及
+  service/handler/router 调用点，新增受鉴权 `POST /api/v1/agents/{id}/reset`。纯 Rust
+  defensive `serde_json::Value` 快照将 history/retrieval/memory/path 替换为新空数组，
+  按 JSON 类型归零 `sys.*`，按 `variables[name].value` 或声明类型恢复 `env.*`，同时保留
+  graph/components 和自定义 globals。团队可见 Agent 与普通编辑保持同一权限，重复 reset
+  不刷新时间，持久化失败恢复内存旧值，响应直接返回 reset DSL，且不创建/改写 Canvas
+  version；新增 pure transform、store 和现有 HTTP lifecycle 契约，该文件升级 aligned。
+- 继续逐行审计 `internal/agent/dsl/errors.go` 40 行、`extract.go` 202 行及 266 行固定测试。
+  用闭集 `thiserror` enum 替换进程级 Go sentinel/error wrapping，穷举区分 component
+  not found、missing/null input_form 和 malformed DSL。纯提取器直接借用 serde map/string，
+  成功热路径不 clone；obj/form/params/name 类型错误、可选 params、非字面 `Begin` ID、
+  malformed sibling 跳过、缺失/错型 prologue/mode 空串等分支均有契约测试。新增受鉴权
+  `GET /api/v1/agents/{id}/components/{component_id}/input-form`，静态 schema 与上游
+  success/102/103 envelope 对齐；errors.go 升级 replaced，extract.go 升级 aligned。
+- 完成 DSL 目录最后一个生产文件 `internal/agent/dsl/normalize.go` 全 870 行、705 行测试、
+  7 个固定 fixture 及 handler/service/compiler 调用点审计。新增 canvas/run 双边界纯函数：
+  canvas 侧完整 serde defensive clone、仅修正普通 React-Flow handle、按 ID 排序生成
+  `x=50+i*350/y=200` 默认布局和 flat component view、保留 Iteration UI 协议并修复历史
+  Parallel 泄漏；run 侧才折叠有 parentId 的 LoopItem/IterationItem、稳定合并 downstream、
+  Iteration→Parallel，并递归改写 item/index alias。编译器同时接受 nested/normalized-flat
+  component，create/update/reset/version 持久化和 Agent/version 前端响应统一走 canvas
+  boundary；malformed 值不 panic，变换幂等。完整门禁显式设置 `RAGFLOW_FIXTURE_REPO`，
+  7 个固定 Git blob 实际读取并通过；normalize.go 升级 aligned，DSL 生产目录不再有
+  通用 partial 文件。
+- 随后收窄 `internal/handler/agent_component.go` 253 行的剩余差异。input-form 路径保留
+  static `Cow::Borrowed` 快路，并补齐固定组件工厂全部动态 form：Agent 按 prompt selector
+  首现顺序去重，Browser/BGPT/ExeSQL/YahooFinance 返回各自精确 field/name/type。
+  新增受鉴权 `POST /api/v1/agents/{id}/components/{component_id}/debug`，手工校验
+  `params.*.value` 并保持 101/102/103/500 envelope；每次调用创建独立 Canvas state，
+  复用闭集组件同一执行函数及真实 LLM/Retrieval adapter，非 sys 输入覆盖节点参数，
+  `sys.*` 注入状态且 `sys.tenant_id` 固定为鉴权用户不可覆盖。Begin passthrough、动态 form、
+  缺 params/value、无权限、未知/unsupported factory 和 tenant 防覆盖均有契约测试。
+  Browser 及上游更广 factory 尚无 Rust runtime 时继续 102 fail closed，故该 handler
+  诚实保持 partial，而不是把未实现组件伪装成成功。
+- 转入 Canvas 目录后，逐行核对 `variable.go` 24 行、`state.go` 30 行、
+  `state_serializer.go` 40 行和 `state_export.go` 45 行，以及 variable/serializer
+  固定测试 205/161 行和全部状态上下文调用点。四者都不拥有新的执行算法：前两者与
+  state_export 只为 Go package/Eino/test 边界转发 template 或 context state，
+  serializer 也只是把任意值交给 JSON。Rust 在单一 Canvas 模块直接拥有 selector/
+  template 和每 future 私有状态，通过 typed borrow 访问；`CanvasRuntime` 自身派生
+  typed serde，不暴露 state injection 或 `any` serializer adapter。新增空状态、
+  caller-owned 值原位恢复、坏 JSON 和稳定 wire shape 契约，四文件均从通用 partial
+  升级为有证据的 replaced。
+- 继续完成 `decode.go` 132 行、`checkpoint_store.go` 101 行、`stream.go` 111 行、
+  `cancel.go` 120 行、`canvas.go` 147 行和 `timeout.go` 157 行审计。Rust Agent decoder
+  修复带现成 graph 的 IMPORT DSL：优先读取非空 `obj.downstream`，回退外层 topology，
+  并从 `graph.nodes[*].parentId` 恢复分组关系；flat/name/params、globals 和严格坏值拒绝
+  同时保留。每个 workflow/debug 节点现经过 Tokio deadline，精确实现 class env、固定
+  默认表、uniform fallback 和 600 秒最终默认，非法/非正/溢出秒数不会扩大超时。
+  checkpoint store 仍诚实 partial：稳定 serde wire shape 和会话续聊不等于运行中
+  Get/Set/Delete + TTL + resume。固定版 stream/cancel 两文件除自身测试外没有生产消费者，
+  不复制 drop-on-full channel 或每运行 500ms Redis 轮询；真实 SSE、跨进程 Agent
+  interrupt/resume 继续由 runner/handler 条目跟踪。`canvas.go` 的 Go package-cycle
+  aliases、动态 factory 和可夹带 closer 的 `map[string]any` 则由 owned typed workflow、
+  闭集 dispatch、serde JSON 与 Rust RAII 结构性替代。
+- 逐行审计 `internal/agent/canvas/multibranch.go` 224 行、342 行固定测试及
+  scheduler/Loop 调用点，发现并修复此前只检查动态目标“存在”、未检查它是否属于节点静态
+  `downstream` 的编译门禁缺口。Switch 的 condition/default/end 和 Categorize 的 category
+  目标现在必须同时存在并属于声明边；字符串/数组只规范化一次，重复目标 fail closed，
+  命中后的全部目标以稳定顺序执行且不再进入 fallback。新增越权目标拒绝与完整多目标
+  workflow 回归，并修正 Categorize/Switch 测试 DSL 的声明拓扑。顶层 owned FIFO scheduler
+  已替代 Eino MultiBranch wrapper；Loop 子图分支和通用 concurrent fan-in 尚未实现，
+  因此该文件保留精确 partial。
+- 接着逐行审计 `internal/agent/canvas/node_body.go` 257 行、两组 timeout 测试共 450 行
+  以及 outer/Loop 调用点。Rust 的不可变组件目录和静态 dispatch 取代全局 factory/
+  placeholder，unsupported 在节点副作用前失败；typed output 直接写入 owned component
+  bucket，无需 `__cpn_id__` 往返或 map snapshot state bracket。审计同时发现目录允许
+  大小写无关 class、固定 timeout 表却按原串匹配的不一致，现统一用 trim+uppercase class：
+  小写 `retrieval` 仍严格为 60 秒，`tavilysearch` 为 12 秒，不会悄然扩大到 600 秒。
+  UserFillUp interrupt/resume、Loop state bracket 和 legacy ExitLoop no-op 尚未实现并
+  fail closed，故该文件保持精确 partial。
+- 覆盖矩阵重新从固定 commit 的 4,441 个 blob 生成，1,267,740 文本行守恒：
+  aligned 61/14,319 行、partial 1,586/651,562 行、replaced 71/27,674 行、
+  reference 2,723/574,185 行、unmapped 0。
+- 默认 feature 全目标测试为 lib 289 + coverage 26 = 315 passed、1 GPU ignored；
+  `postgres-backend,zvec-backend` 为 lib 292 + coverage 26 = 318 passed、1 ignored，
+  zvec-rust 0.5.1 原生 create/upsert/query/flush/reopen 实际执行。默认与双 feature
+  严格 Clippy 均零告警，fmt 和 `git diff --check` 通过。
+- 真实调用现有 Qwen3.5-9B LLM、Qwen3-Embedding-4B（2,560 维）和
+  mxbai-rerank-large-v2，Rust opt-in 契约 1/1 通过；未重启或修改模型服务。
+  另起无卷、回环 `127.0.0.1:55433` 的临时 `postgres:18.4`，确认服务端
+  `18.4 (Debian 18.4-1.pgdg13+1)` 并通过 snapshot round-trip 后自动删除。
+  精确 `rust:1.97.1-bookworm` 报告 rustc 1.97.1，`debian:bookworm-slim` 报告
+  Debian 12 bookworm；Compose 继续优先 DaoCloud 三镜像、TUNA APT 和 Xget zvec，
+  未改动现有 `rayrag-postgres-1` 或其他业务容器、镜像、数据卷。
+
+---
+
+## 2026-07-25 RAGFlow Switch 双运行时逐行收口
+
+- 从官方 `infiniflow/ragflow` tag `v0.26.4` 恢复完整 depth-1 Git 对象包，校验固定
+  commit 仍为 `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。逐行审计
+  `agent/component/switch.py` 全部 138 行、`internal/agent/component/switch.go` 全部
+  539 行，以及固定版 Python/Go Switch 回归测试；实现证据不依赖移动分支或旧摘要。
+- 将纯 Rust Canvas Switch 从仅支持 Python 旧 DSL 扩展为显式双运行时语义：
+  旧 `logical_operator/items/end_cpn_ids` 保留空 `cpn_id` 跳过、Python truthiness、
+  数值左值触发右值 float 转换、12 个运算符、多目标路由和 `next/_next` 输出；
+  新 `op/clauses/default` 支持缺省 AND、`matched_N` 回退、现代 nil/empty 规则、
+  未解析模板保留原文、大小写不敏感等值、严格数值排序和 `_next` 多目标输出。
+  两种方言在保存/编译期分别校验条件结构、默认/else 目标及目标节点存在性，避免运行到
+  一半才发现无效分支。
+- 新增 5 组 Rust Switch 契约测试，覆盖空条件落入 else、nil 输入/比较值不崩溃、
+  Python 数值转换与非 `and` 的 OR 语义、Go clauses/default/matched 回退、大小写等值、
+  数值边界、未解析引用、false/0 的现代 empty 语义和双方言编译门禁。
+- 覆盖生成器新增 Python/Go Switch 精确 mapping 与防回退测试，重新读取固定 commit
+  全部 4,441 个 blob。1,267,740 文本行保持守恒：aligned 52/12,027 行、
+  partial 1,610/655,791 行、replaced 56/25,737 行、reference 2,723/574,185 行、
+  unmapped 0；本轮仅把已审计的两个生产文件共 677 行从 partial 提升为 aligned。
+- 默认 feature 的 `cargo clippy --all-targets --locked -- -D warnings` 和
+  `cargo test --all-targets --locked` 全通过：lib 244 + coverage 13 = 257 passed，
+  1 个需显式启用 GPU 端点的测试 ignored。`postgres-backend,zvec-backend` 双 feature
+  同样严格 Clippy 全通过：lib 247 + coverage 13 = 260 passed，1 ignored；其中
+  zvec-rust 0.5.1 的原生 collection create/upsert/query/flush/reopen 与在线镜像测试
+  实际执行。
+- Docker 只读确认本机 `postgres:18.4`、`rust:1.97.1-bookworm`、
+  `debian:bookworm-slim` 与 DaoCloud 国内标签指向同一批已下载镜像；
+  Rust 容器报告 `rustc 1.97.1`，Debian 运行层报告 bookworm，Compose 展开继续选择
+  DaoCloud PostgreSQL 18.4，APT 使用 TUNA、zvec 资产使用 Xget 优先/官方回退。
+  另起无卷、回环 `127.0.0.1:55433` 的临时 PostgreSQL 容器，实测服务端
+  `18.4 (Debian 18.4-1.pgdg13+1)`，并设置真实 URL 跑通 Rust
+  `postgres_18_snapshot_round_trip`；临时容器已自动删除，现有
+  `rayrag-postgres-1`、业务容器、镜像和数据卷均未改动。
+
+---
+
+## 2026-07-21 RAGFlow ListOperations、覆盖分类校正与双后端复验
+
+- 再次从官方 RAGFlow 仓库校验 tag `v0.26.4` 指向固定 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，并在 `/tmp/ragflow-v0264` 补齐完整
+  50 MB Git 对象 pack，用于逐文件读取固定 blob；不依赖移动分支或运行中容器源码。
+- 逐行审计 `agent/component/list_operations.py` 218 行、
+  `internal/agent/component/list_operations.go` 638 行及固定版 Python/Go 测试。Rust Canvas
+  新增 `ListOperations`，实现 `nth/head/tail/filter/sort/drop_duplicates`、旧 `topN` 别名、
+  正负 nth、strict 范围错误、Python 可观察的布尔字符串、五种 filter、稳定标量/对象/
+  多字段排序、结构规范化去重，以及原生 `result/first/last`；新增 4 组 Rust 契约测试。
+- 修复覆盖生成器的可信度问题：未知路径不再默认标成 `reference`，仅显式映射或测试/
+  fixture 规则才能进入 reference。此前误标为参考资料的 `internal/agent/**` Go 生产运行时、
+  `deepdoc/**`、`common/**`、`mcp/**`、`memory/**` 等重新进入 partial；固定 4441 文件现为
+  aligned 50/11,350 行、partial 1,612/656,468 行、replaced 56/25,737 行、
+  reference 2,723/574,185 行、unmapped 0。这里的 unmapped=0 来自逐项显式分类，
+  partial 仍是后续真实待办，不代表全树功能已完成。
+- 本机 RAGFlow“全部文件”知识库的 `127.0.0.1:11526` 与 `192.168.3.6:11526` 本轮均
+  `ECONNREFUSED`；按技能规则记录后继续使用固定 commit 源码和测试作为权威证据，没有
+  用旧记忆替代源码审计。
+- 默认 feature：`cargo check --all-targets --locked`、
+  `cargo clippy --all-targets --locked -- -D warnings`、`cargo test --all-targets --locked`
+  全通过，共 251 passed / 0 failed / 1 GPU ignored。双 feature 使用 zvec-rust 0.5.1
+  原生库执行相同 check/Clippy/test，全通过，共 254 passed / 0 failed / 1 GPU ignored；
+  zvec create/upsert/query/flush/reopen 与在线镜像测试实际执行。
+- 以无卷、回环随机端口的临时 `postgres:18.4` 容器等待最终
+  `database system is ready to accept connections` 后，设置真实测试 URL 执行
+  `postgres_18_snapshot_round_trip`：18.4 版本门禁、建表、advisory-lock upsert、checksum
+  load 和测试行清理均通过。临时 PostgreSQL 容器与导出的 zvec 临时目录已删除。
+- Docker 冷构建首次发现默认 Xget zvec v0.5.1 资产返回 HTTP 403；Dockerfile 现保留
+  国内 Xget 优先，并通过可配置 `ZVEC_RELEASE_FALLBACK_BASE` 自动回退官方 GitHub。
+  Compose 与 `.env.example` 已同步该参数。使用精确 `rust:1.97.1-bookworm` builder、
+  `debian:bookworm-slim` 运行层和双后端成功重建 `rayrag:verification`
+  (`sha256:35954dd4aaa4...`)；运行 smoke 确认 Debian 12 bookworm、
+  `libzvec_c_api.so` 动态依赖完整、CLI 可启动，healthz 返回 zvec healthy。临时运行容器
+  已自动删除，未触碰现有业务容器与数据卷。
+
+---
+
+## 2026-07-21 RAGFlow v0.26.4 related questions 对标
+
+- 固定对标 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f` 的 `api/apps/restful_apis/chat_api.py`、`api/apps/backward_compat.py`、`internal/service/related_question.go`、`internal/handler/chat_recommendation.go`、`internal/handler/searchbot.go` 与 `rag/prompts/related_question.md`。
+- 将原先返回三条模板字符串的桩实现替换为纯 Rust LLM 调用：使用认证用户的租户默认 Chat 模型，兼容环境模型回退，固定温度 `0.9`，按 RAGFlow 的 `数字. 问题` 行协议解析 5–10 条相关问题。
+- 同一 handler 接入 `POST /api/v1/chat/recommendation`、`POST /api/v1/searchbots/related_questions` 与弃用兼容路径 `POST /api/v1/sessions/related_questions`；三条路径统一执行 Bearer 鉴权、非空问题校验和模型可用性检查。
+- `search_id` 保留 wire 兼容；RayRAG 尚无 RAGFlow SearchApp 配置存储，因此暂不从 `search_config.chat_id/llm_setting` 覆盖租户默认模型，此差异在代码中显式标注，不伪造等价实现。
+- 覆盖清单新增 Go related-question service/handler 的精确 Rust 映射；运维缺失路由列表移除已经完成的旧路径。
 
 ---
 
 ## 架构概要
 
 ```
-RAGFlow (Python)              → RayRAG (Rust)
-─────────────────────────────────────────────────
-deepdoc/parser/*              → parser/            文档解析（pdf/docx/txt/md/html）
-rag/nlp/naive_merge + tokenizer → chunk/           分块策略（tokenizer + naive）
-rag/llm/embedding_model.py    → embed/             向量化（三模：openai/candle/hybrid）
-rag/utils/es_conn.py          → store/mod.rs       zvec 存储（替代 ES）
-rag/app/naive.py              → pipeline/mod.rs    解析编排
-nginx (web/dist)              → server.rs          Axum 静态服务 + API
+RAGFlow (Python)                  → RayRAG (Rust)
+──────────────────────────────────────────────────────
+web/ (React SPA, 88MB)            → web.rs            纯 Rust SSR 管理面板
+nginx                             → server.rs (Axum)  HTTP 服务器 + 路由
+api/apps/restful_apis/ (27个)     → api/ (7模块)      RESTful API（43 个已接线）
+api/db/services/ (30个)           → stores.rs         共享数据层
+──────────────────────────────────────────────────────
+deepdoc/parser/* (17个)           → parser/ (15个)    文档解析全覆盖
+rag/nlp/__init__.py (1627行)      → nlp_enhanced.rs   5种分块策略 + 语义切分
+rag/nlp/query.py (全文检索)       → nlp.rs            BM25 + 同义词 + 查询改写
+rag/llm/chat_model.py (10类)     → llm_enhanced.rs   ChatProvider 枚举 + 模型注册
+rag/llm/embedding_model.py        → embed/            三模向量化（candle/openai/hybrid）
+rag/llm/similarity/rerank         → rerank/           mxbai-rerank HTTP
+rag/graphrag/ner/                 → graphrag_enhanced.rs  NER + 实体消歧 + 图谱搜索
+rag/advanced_rag/                 → advanced_rag/     多跳检索 + 树形查询分解
+rag/raptor.py                     → raptor/           RAPTOR 层次聚类
+rag/prompts/ (47个)               → prompts.rs        Prompt 模板系统 + Fallback LLM
+rag/utils/es_conn.py              → store/mod.rs      zvec-rust 原生 HNSW + JSON 回退
+rag/svr/user                      → auth.rs           用户认证
+rag/svr/knowledgebase             → kb.rs             知识库 CRUD
+deepdoc/vision/ocr                → ocr.rs            paddleocr-gpu-proxy
 ```
 
 ---
 
-## 版本记录
+## 模块清单
 
-### v0.1.1 — Web UI + 无自动下载（2026-07-11）
+### 核心模块（src/）
+| 文件 | 功能 |
+|------|------|
+| `lib.rs` | 核心类型导出 |
+| `main.rs` | CLI（parse/search/serve）|
+| `server.rs` | Axum 路由中心 |
+| `web.rs` | 纯 Rust SSR 管理面板 |
+| `auth.rs` | 用户认证（Argon2id + Token；旧 SHA-256 登录后迁移）|
+| `kb.rs` | 知识库 CRUD |
+| `llm.rs` | LLM RAG 对话 |
+| `llm_enhanced.rs` | ChatProvider 枚举 + 模型注册 + 重试 |
+| `nlp.rs` | BM25 + 同义词 + 查询改写 + 混合搜索 |
+| `nlp_enhanced.rs` | 5种分块策略（句子/段落/滑动窗口/语义/模式）|
+| `prompts.rs` | Prompt 模板系统（8模板）+ Fallback LLM |
+| `search.rs` | 余弦相似度引擎 |
+| `rerank.rs` | mxbai-rerank HTTP |
+| `raptor.rs` | RAPTOR + GraphRAG |
+| `graphrag_enhanced.rs` | NER(15正则) + 实体消歧 + 图谱搜索 |
+| `advanced_rag.rs` | 多跳检索 |
+| `ocr.rs` | paddleocr-gpu-proxy |
+| `stores.rs` | 共享存储类型 |
 
-**新增**：
-
-| 模块 | 文件 | 功能 |
-|------|------|------|
-| `server.rs` | axum 0.8 + tower-http | HTTP 服务器（SPA 静态文件 + API stub） |
-| `web/static/` | RAGFlow web/dist 副本 | 88MB React 前端（index.html + 资产） |
-
-**变更**：
-- Cargo.toml：新增 `axum`、`tower`、`tower-http` 依赖；`tokenizers` 禁用 `http` feature → `fancy-regex`
-- main.rs：新增 `serve` 子命令；`--mode candle` 检查本地模型存在性
-- candle.rs：新增 `download_model_to()` 方法（仅 UI 触发）；顶部大段注释说明下载策略
-- embed/mod.rs：`default_embedder()` / `hybrid_embedder()` 标记 `#[deprecated]`
-
-**Web 服务器路由**（兼容 RAGFlow 前端）：
-```
-GET  /api/v1/system/status   → {"status":"healthy"}
-GET  /api/v1/version         → {"version":"0.1.0"}
-POST /api/v1/auth/login      → stub token
-GET  /api/v1/datasets        → []
-POST /api/v1/retrieval       → []
-/*                            → SPA 静态文件（index.html fallback）
-```
-
-**编译状态**：server/main 模块 ✅ 零错误零警告；全项目 17 个旧错误（candle/docx/uuid API）
-
-### v0.1.0 — 初始骨架（2026-07-10）
-
-**已完成（16 源文件 / 1544 行）**：
-
-| 模块 | 文件 | 功能 |
-|------|------|------|
-| `parser/pdf.rs` | lopdf | PDF 文本提取 |
-| `parser/docx.rs` | docx-rs | Word 段落 + 表格 |
-| `parser/txt.rs` | std | 纯文本（含 UTF-16 兼容） |
-| `parser/markdown.rs` | std | Markdown 透传 |
-| `parser/html.rs` | std | HTML 标签剥离 |
-| `chunk/tokenizer.rs` | unicode-segmentation | Unicode 分词计数（中英混合） |
-| `chunk/naive.rs` | — | 令牌分块 + 重叠策略 |
-| `embed/candle.rs` | Candle + hf-hub + tokenizers | **纯 Rust 本地嵌入（BERT 模型）** |
-| `embed/openai.rs` | reqwest | 云端 API 嵌入（OpenAI/MiniMax/vLLM） |
-| `embed/mod.rs` | — | **HybridEmbedder（先云后本地 fallback）** |
-| `store/mod.rs` | zvec-rust | zvec 向量存储骨架 |
-| `pipeline/mod.rs` | — | 解析→分块→嵌入→存储 编排 |
-| `lib.rs` | — | 核心类型（Document/Chunk/ParserConfig） |
-| `main.rs` | clap + tokio | CLI（`rayrag parse --embed --mode hybrid`） |
-| `scripts/mirror.sh` | bash | 镜像加速自动检测 |
-
-**嵌入模式**：
-- `--mode candle`：本地 Candle（需先下载模型到本地目录，不自动下载）
-- `--mode openai`：云端 API（需 `--api-base --api-key`）
-- `--mode hybrid`（默认）：**先云后本地 fallback**（云端失败自动切 Candle）
-
-**⚠️ 模型下载策略（v0.1.1）**：
-- **构建时不下载任何模型** — `tokenizers` 已禁用 `http` feature
-- **运行时不自动下载模型** — 所有 `default_embedder()` / `hybrid_embedder()` 已标记 deprecated
-- **仅在用户界面选择 Candle 模式时才触发模型下载** — 通过 `CandleEmbedder::download_model_to()` 显式下载
-- 模型下载到本地目录后，使用 `CandleConfig::from_local(path)` 加载
-
-**镜像 fallback**：
-- crates.io → `mirrors.ustc.edu.cn`（`.cargo/config.toml`）
-- HuggingFace → `hf-mirror.com`（`embed/candle.rs` 代码级自动切换）
-- GitHub git（Candle 源码）→ `ghproxy.com`（`scripts/mirror.sh` 自动检测）
-- zvec 预编译库 → 禁用 bundled，手动设 `ZVEC_LIB_DIR`
-
-**待完成**：
-- ✅ Web 静态文件服务（v0.1.1）
-- 🚧 API 对接 zvec/pipeline（当前为 stub，返回空数据）
-- 🚧 OCR / 版面分析
-- 🚧 RAPTOR / GraphRAG
-- 🚧 zvec-rust 实际对接（等 libzvec_c_api.so）
-- 🚧 图片/表格上下文提取
-- 🚧 search CLI 命令
-- 🚧 并发下载 HF_ENDPOINT 改用 `RwLock`
-- 🚧 完整登录/用户系统（当前 auth/login 为 stub）
+### 子模块
+| 目录 | 文件数 | 功能 |
+|------|--------|------|
+| `parser/` | 15 | 全格式文档解析 |
+| `chunk/` | 3 | 分块策略 |
+| `embed/` | 3 | 三模向量化 |
+| `pipeline/` | 1 | 解析编排 |
+| `store/` | 1 | 向量存储 |
+| `api/` | 7 | RESTful API 模块 |
 
 ---
 
-## 运维操作
+## API 端点（当前接线状态）
 
-### 构建
-```bash
-cd /vol1/1000/RayRAG
-bash scripts/mirror.sh   # 先配置镜像加速
-cargo build --release
+### 认证
+```
+POST /api/v1/auth/login
+POST /api/v1/user/register
+GET  /api/v1/user/info
 ```
 
-### 运行
-```bash
-# 启动 Web 服务器（SPA 前端 + API，默认端口 9380）
-cargo run -- serve
-# 或指定端口/路径
-cargo run -- serve --port 8080 --static-dir /path/to/web/static
-
-# 解析 + 本地嵌入（纯 Rust，需先下载模型）
-# 模型不会自动下载！先通过 UI 下载，或手动放到 models/ 目录
-cargo run -- parse document.pdf --embed --mode candle --model-path /path/to/model
-
-# 解析 + 云端嵌入
-cargo run -- parse document.pdf --embed --mode openai \
-  --api-base https://api.minimaxi.com/v1 --api-key *** --api-model MiniMax-M3
-
-# 混合模式（云优先，失败切本地）
-cargo run -- parse document.pdf --embed --mode hybrid --api-key *** \
-  --model-path /path/to/model
-
-# 纯解析（不分块）
-cargo run -- parse document.pdf
-
-# 自定义分块参数
-cargo run -- parse document.pdf --chunk-size 1024 --overlap 0.1
+### 知识库
+```
+GET    /api/v1/datasets                              列表
+POST   /api/v1/datasets                              创建
+DELETE /api/v1/datasets/{id}                         删除
+GET    /api/v1/datasets/{kb}/documents               文档列表
+GET    /api/v1/datasets/{kb}/documents/{id}          文档详情
+DELETE /api/v1/datasets/{kb}/documents/{id}          删除
+POST   /api/v1/datasets/{kb}/documents/{id}/reparse  重解析
 ```
 
-### 测试
-```bash
-cargo test
+### 检索 / 问答
+```
+POST /api/v1/retrieval               向量搜索
+POST /api/v1/search                  混合搜索（BM25+向量权重阈值）
+POST /api/v1/chunks                  批量检索
+GET  /api/v1/chunks/{doc_id}         查看文档 chunks
+POST /api/v1/completions             RAG 问答
 ```
 
-### Web 服务器
-```bash
-# 启动（默认 9380 端口，使用 web/static/ 目录）
-cargo run -- serve
-
-# 自定义端口和静态目录
-cargo run -- serve --port 8080 --static-dir /path/to/web
-
-# 生产部署（release 构建 + 后台运行）
-cargo build --release
-nohup ./target/release/rayrag serve --port 9380 > /tmp/rayrag-server.log 2>&1 &
+### 对话
+```
+POST /api/v1/chats                   创建对话
+POST /api/v1/chats/{id}/completions  RAG 对话（含引用）
+POST /api/v1/conversations          创建会话
+DELETE /api/v1/conversations/{id}   删除会话
 ```
 
-**静态文件更新**（当 RAGFlow 前端升级时）：
-```bash
-# 从 RAGFlow 容器同步最新前端
-docker cp docker-ragflow-cpu-1:/ragflow/web/dist/. web/static/
-echo '{"appName":"RayRAG"}' > web/static/conf.json
-sed -i 's/<title>.*<\/title>/<title>RayRAG<\/title>/' web/static/index.html
+### 文件管理
+```
+GET  /api/v1/files                   文件列表
+POST /api/v1/files/upload            上传
+GET  /api/v1/file/commits            版本历史
+POST /api/v1/file2document           文件转文档
+```
+
+### LLM 管理
+```
+GET /api/v1/providers                LLM 提供商
+POST /api/v1/providers/{id}          创建提供商（管理员）
+PUT /api/v1/providers/{id}           更新提供商（管理员）
+DELETE /api/v1/providers/{id}        删除提供商（管理员）
+GET /api/v1/tenant/models            tenant 已绑定 Provider 实例（成员可读）
+PUT /api/v1/tenant/models/{provider_id}/{instance_id}
+                                      创建/更新 tenant Provider 实例（owner/admin）
+DELETE /api/v1/tenant/models/{provider_id}/{instance_id}
+                                      删除 tenant Provider 实例（owner/admin）
+GET /api/v1/llm/models               tenant 模型能力列表
+GET /api/v1/llm/factories            模型工厂
+GET /api/v1/llm/my_llms              tenant 已绑定实例
+```
+
+### 系统
+```
+GET /api/v1/system/status            健康检查
+GET /api/v1/system/status/detail     详细状态
+GET /api/v1/system                   系统设置
+PUT /api/v1/system                   更新设置
+POST /api/v1/system/new_api_key      生成 API Key
+GET /api/v1/system/healthz           兼容旧版
+GET /api/v1/version                  版本
+GET /api/v1/stats                    tenant 会话按日统计（from_date/to_date；canvas_id 选择 agent 口径）
+GET /api/v1/tasks                    任务队列
+GET /api/v1/memories                 记忆列表
+GET /api/v1/users                    用户列表
+PUT /api/v1/users/{id}              更新用户
+POST /api/v1/users/invite           邀请用户
+GET /api/v1/tenant                   租户信息
+```
+
+### Agent / Plugin / Connector / MCP
+```
+GET  /api/v1/agents                  Agent 列表
+POST /api/v1/agents/{id}/completions Agent 对话
+GET  /api/v1/plugins                 插件列表
+POST /api/v1/plugins/{id}/toggle     开关插件
+GET  /api/v1/connectors              连接器列表
+POST /api/v1/connectors              创建连接器
+GET  /api/v1/mcp/tools               MCP 工具
+GET  /api/v1/bots                    Bot 列表
+GET  /api/v1/channels                频道列表
+```
+
+### OpenAI 代理 / Dify / Langfuse
+```
+POST /api/v1/chat/completions        OpenAI 兼容
+GET  /api/v1/models                  模型列表
+POST /api/v1/dify/retrieval          Dify 协议
+GET  /api/v1/langfuse                Langfuse 配置
+POST /api/v1/langfuse                更新 Langfuse
+```
+
+### Retrieval Evaluation
+```
+GET/POST /api/v1/evaluations                         评测数据集列表/创建
+GET/DELETE /api/v1/evaluations/{id}                 评测数据集详情/级联删除
+GET/POST /api/v1/evaluations/{id}/cases             Ground truth 用例列表/创建
+POST     /api/v1/evaluations/{id}/runs              执行检索评测
+GET      /api/v1/evaluation-runs/{id}               Run 与逐用例结果
+GET      /api/v1/evaluation-runs/{id}/recommendations 配置优化建议
+```
+
+### Backward Compat
+```
+GET  /api/v1/new_token
+POST /api/v1/user/setting
+POST /api/v1/document/upload_info
+* /api/v1/admin/*
+* /api/v1/{*}
 ```
 
 ---
 
-## 关键依赖版本
+## CLI 命令
+```bash
+rayrag serve --port 9380                     # Web 服务器
+rayrag parse doc.pdf --embed --mode hybrid   # 解析（17 格式）
+rayrag search -q "text" -i index.json -k 10  # 向量搜索
+rayrag search -q "text" --rerank             # 搜索 + Re-rank
+```
 
-| 依赖 | 来源 | 用途 |
-|------|------|------|
-| zvec-rust | crates.io 0.5 | 向量数据库（default-features=false） |
-| candle-core | git: huggingface/candle:main | ML 推理核心 |
-| candle-nn | git: huggingface/candle:main | 神经网络层 |
-| candle-transformers | git: huggingface/candle:main | BERT 模型 |
-| hf-hub | crates.io 0.4 | HuggingFace 模型下载 |
-| tokenizers | crates.io 0.21 | HuggingFace 分词器（fancy-regex，无 http） |
-| axum | crates.io 0.8 | HTTP 服务器（静态文件 + API） |
-| tower | crates.io 0.5 | 中间件框架 |
-| tower-http | crates.io 0.6 | CORS + 静态文件服务 |
-| lopdf | crates.io 0.34 | PDF 解析 |
-| docx-rs | crates.io 0.4 | DOCX 解析 |
-| unicode-segmentation | crates.io 1.x | 分词 |
-| tokio | crates.io 1.x | 异步运行时 |
-| async-trait | crates.io 0.1 | 异步 trait |
-| reqwest | crates.io 0.12 | HTTP 客户端（cloud API） |
-| clap | crates.io 4.x | CLI |
-| serde | crates.io 1.x | JSON 序列化 |
+## Parser 覆盖（17/17 ✅）
+pdf docx txt md html csv xlsx epub json ppt
+figure resume paddleocr_layout mineru docling opendataloader tcadp
 
 ---
 
-## 故障/注意事项
+## 关键依赖
 
-### Rust 工具链
-- 需要在 `~/.bashrc` 中 source `~/.cargo/env`
-- 首次构建会下载+编译所有依赖，Candle git clone 约 5-15 分钟
-- zvec-rust 需要 `libzvec_c_api.so`（设置 `ZVEC_LIB_DIR` 环境变量）
-
-### 镜像网络
-- crates.io 已配置 ustc 镜像（`.cargo/config.toml`）
-- HuggingFace 模型下载已内置 hf-mirror.com fallback
-- GitHub git 代理需运行 `bash scripts/mirror.sh` 自动检测可用镜像
-- 如所有镜像都不可用 → Candle git clone 直接走 github.com（慢但可用）
-
-### 并发安全
-- `candle.rs` 中 `HF_ENDPOINT` 环境变量切换使用 `std::sync::Mutex` 保护
-- ⚠️ 这是 blocking mutex 在 async 上下文中，尚未造成死锁，但最佳实践应改用 `tokio::sync::Mutex`
-
-### 与 RAGFlow 的区别
-- 解析结果不应直接与 RAGFlow 对比（RAGFlow 有 OCR + 版面分析）
-- zvec 与 ES 的检索精度可能有差异，需单独评测
-- 当前 zvec 存储为骨架代码，需等待 zvec 服务部署
+| 依赖 | 用途 |
+|------|------|
+| candle-core/nn/transformers（git）| BERT 本地嵌入 |
+| axum 0.8 + tower-http 0.6 | Web 服务器 |
+| lopdf 0.34 + docx-rs 0.4 | PDF/DOCX |
+| csv 1.3 + zip 2.2 | CSV/XLSX/EPUB/PPTX |
+| regex 1.x | XML/HTML 模式匹配 |
+| minijinja 2.21.0 + fuel | Agent StringTransform 沙箱模板 |
+| prometheus 0.14.0 | Canvas 运行计数、时长直方图与 text exposition |
+| time 0.3.53 + formatting | Runtime RFC3339 创建时间与 elapsed 记账 |
+| argon2 0.5 + rand 0.9 | 密码认证（sha2 仅用于旧哈希迁移） |
+| reqwest 0.12 | HTTP 客户端 |
+| tokio 1.x | 异步运行时 |
 
 ---
+
+## 已知问题
+
+- 🐛 tokenizers 0.21 不兼容 BERT TemplateProcessing → CandleEmbedder::load() 失败
+  - 临时方案：embed 用 OpenAI 模式，reranker 走 HTTP API
+
+---
+
+## 2026-07-15 至 2026-07-16 源码审计结论（以 RAGFlow v0.26.4、测试和实际路由为准）
+
+- 对标 RAGFlow `canvas_service.py` 与 Agent REST API，将原先只有内置 `default` 对象的进程内 `AgentStore` 改为纯 Rust 持久化 Agent/Canvas 配置服务。新增 `agents.json`、owner/team ACL、同 owner+canvas category 标题不区分大小写唯一、DSL/prompt/KB/permission/category/type/avatar/tags 持久化、关键词/owner/tag/category/type 分页筛选、可见标签聚合和完整 GET/POST/PUT/DELETE/tags/completion 路由。内置 `default` Agent 保持只读兼容；RAGFlow 的 team Agent 语义为成员可协作读取和更新、仅 owner 可删除，RayRAG 已按该差异化规则实现，未错误复用 KB 的 team 只读规则。所有 Agent 配置落盘复用原子写入和 PostgreSQL 18.4 snapshot 镜像；新增重启恢复、标题去重、标签规范化、team 协作、private 即时失权、owner-only 删除和持久化失败回滚测试。版本发布、Redis runtime replica、组件 debug 和完整 Canvas DAG 执行器仍留待后续独立批次。
+- 完成 HTTP 在线索引的 `zvec-ai/zvec-rust` 原生接入。JSON `SearchEngine` 继续作为 BM25、metadata filter、rank feature 和完整 chunk 数据真源，新增 `OnlineVectorMirror` 按 KB 创建独立 zvec collection；文档解析/替换、文档删除、手工 chunk CRUD、available 状态和消息反馈 pagerank 更新全部进入同一 JSON+zvec 提交边界。zvec 同步失败会恢复内存，JSON/MySQL snapshot 落盘失败会反向恢复 zvec；后续 KB/文档元数据事务失败也会同时恢复两侧索引。服务启动按 JSON 全量 reconcile，清理中断提交和整个 KB 消失后遗留的陈旧主键；同一路径始终复用单一 read-write collection 句柄，避免 zvec `LOCK` 冲突。新增原生测试覆盖 KB collection 隔离、主键删除、重新写入和启动对账。
+- PostgreSQL 18.4 独立容器实连验证完成：`SHOW server_version` 返回 `18.4`。Rust `postgres-backend` 通过专用数据库线程规避 Axum/Tokio 嵌套 runtime，创建 `rayrag_state_snapshots` 并完成 store/load/checksum round trip；服务启动后写入 10 条命名空间快照并通过健康检查。
+- 对标 RAGFlow `memory_service.py` 与 Memory REST API，将原先仅返回进程内静态条目的 Memory 模块改为纯 Rust 持久化配置服务。新增 tenant 隔离、private/team 可见性、owner-only 更新删除、名称自动去重、四类 memory type 校验、关键词/owner/type/storage 分页筛选、模型绑定校验及完整 CRUD/config 路由；`memories.json` 复用统一原子写入、PostgreSQL 18.4 快照镜像和本地缺失恢复。已有内容（`memory_size > 0`）后禁止切换 embedding 或 memory type，与 RAGFlow 现有保护一致。新增重启恢复、重名筛选、team 只读、持久化失败回滚和非空配置冻结测试。
+- 完成 `zvec-ai/zvec-rust 0.5.1` 真实原生后端，不再把 JSON `SearchEngine` 冒充 zvec。`RAYRAG_VECTOR_BACKEND=json|zvec` 显式选择后端；默认 JSON 保持零原生依赖与可回滚，zvec 模式在 `RAYRAG_ZVEC_DIR` 下创建持久化 collection，schema 包含正文、文档名、metadata JSON、位置、token 数和 FP32 embedding，向量索引使用 HNSW + Cosine。写入使用稳定 chunk ID upsert 并 flush，查询通过 zvec `SearchQuery` 恢复完整 chunk 字段。
+- 修复旧 `ZvecStore::insert(&self)` 只生成磁盘 JSON、从不更新内存引擎的问题；旧实现同一进程写入后立即搜索看不到新 chunk。新 JSON 后端使用 `RwLock<SearchEngine>` 同步更新内存与原子磁盘快照，失败恢复旧内存；相同 chunk ID 采用替换语义，并在批量写入前统一校验向量维度，避免部分提交。
+- CLI `parse` 新增 `--collection` 和可选 `--index`，可将 embedding 后的 chunks 直接持久化到所选向量后端；`RAYRAG_EMBEDDING_DIMENSION` 默认 384，未启用 `--embed` 时拒绝 collection 写入。原生库位于 `/home/junesgone/.local/lib/zvec/0.5.1/libzvec_c_api.so`，构建/测试需设置 `ZVEC_LIB_DIR`，运行时需通过 rpath 或 `LD_LIBRARY_PATH` 解析。
+- 新增可选 `postgres-backend`，连接 PostgreSQL 18.4。PostgreSQL 不取代 zvec，而是镜像 RayRAG 各 JSON 状态快照：本地原子文件提交成功后写入 `rayrag_state_snapshots`，数据库写失败则回滚本地文件；启动时仅在本地文件缺失时按 namespace/path key 恢复并校验 xxHash64，已有本地状态永远优先。User/tenant/KB/conversation/document/document metadata/file/provider/tenant model/evaluation/task/graph/index Store 均接入缺失恢复入口。
+- 新增 `docker-compose.yml`，固定 `postgres:18.4`、独立 named volume 和健康检查；`.env.example` 提供 URL、required version 和 namespace。启动连接校验 `server_version_num` 与精确 `18.4` 前缀，不匹配即失败。
+- 本机对 `mysql:9.7.1` 的容器实启验证受 Docker Hub 网络阻塞：官方 registry 直连多次 timeout/reset，已配置镜像 `docker.fnnas.com` 对该标签返回 401。未修改 Docker daemon 或现有数据库；待 registry 恢复后按独立 3307 端口和独立 named volume 执行真实连接 smoke test。
+- 质量与兼容门禁：默认、`postgres-backend`、`zvec-backend`、双 feature 均纳入 `cargo check`、严格 Clippy 和全量测试；设置真实 `ZVEC_LIB_DIR`/`LD_LIBRARY_PATH` 后验证原生 zvec create → upsert → query → flush → reopen → query 回归，Compose config 和 `git diff --check` 同步检查。
+- 对标 RAGFlow `conversation_service.py` 与 `restful_apis/chat_api.py` 完成纯 Rust 会话生命周期。`ConvStore` 新增 owner-scoped 重命名、删除、按稳定 message ID 查找配对 user/assistant、成对删除 turn、重新生成目标快照和旧回答 CAS 原位替换；所有操作继续使用单文件原子持久化和失败内存回滚，handler 不再执行“先读权限、再调用非 scoped mutation”的竞态模式。
+- 修复 Web “重新生成”按钮的真实行为：旧实现把字面量 `regenerate` 当新问题追加，导致历史污染、引用错位和反馈目标变化；新实现调用 `/api/v1/chats/{session_id}/messages/{message_id}/regenerate`，复用原 user 问题和该 turn 之前的历史，保持同一 message ID 与消息数量，原位替换 assistant 内容、citations 和结构化引用，并清除旧赞踩/反馈状态。RAGFlow 三层兼容路径也已提供。
+- `Conversation` 新增向后兼容的 `kb_ids`、`chat_model`、`embedding_model` 持久化绑定。新建、普通发送和重新生成遵循“请求显式配置优先，否则复用会话绑定”；消息和设置在同一次 store mutation 中原子提交。空 KB 会话可走普通 LLM；绑定 KB 时仍执行访问权限、tenant embedding selector 和 chat model 能力校验。
+- 新增 `PATCH /api/v1/chats/{id}`、简化及 RAGFlow 兼容的 message DELETE/regenerate 路由。会话名称 trim 且限制 255 字符，禁止跨 owner 读取或修改；消息删除严格要求相邻 user/assistant 使用同一 ID，结构损坏时拒绝提交。
+- 新增 store 生命周期、CAS 并发防护、持久化失败回滚、legacy JSON 设置默认、HTTP 重命名/重新生成/成对删除、稳定 ID、绑定配置复用和跨用户隐藏测试。最终 `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets`、`git diff --check` 全部通过；测试为 160 passed / 0 failed。
+- 对标 RAGFlow `doc_metadata_service.py`、`metadata_utils.py` 和 `reference_metadata_utils.py` 新增纯 Rust `DocumentMetadataStore`。文档级 metadata 独立保存到 `document_metadata.json`，作为独立真源而不污染 `DocRecord` 或重复写入每个 chunk；采用同目录原子写入、持久化互斥锁和失败内存回滚，启动时拒绝重复 doc ID、空 doc/KB ID 和损坏 JSON。
+- Metadata 更新保持 RAGFlow 的整对象替换语义，删除旧键而不是深合并残留；列表字符串按 `、 , ， ; ； |` 拆分、去空和稳定去重，数字、布尔、对象和列表类型原样保留。新增单文档 GET/PUT/DELETE、KB keys、summary 和 batch update API；文档列表/详情响应附加 `meta_fields`。批量更新支持列表追加/匹配替换、字段删除和列表值删除。
+- `/retrieval`、`/search` 和 Dify retrieval 统一支持 `meta_data_filter.method=manual`，条件格式兼容 `key/op/value` 与 `name/comparison_operator/value`，支持 AND/OR、比较、contains/not contains、in/not in、前后缀和空值操作符；过滤结果与显式 `doc_ids` 取交集，不扩大调用者范围。Auto/semi-auto 需要 LLM 条件生成器，当前明确返回不支持而不伪造行为。
+- 检索引用支持 `reference_metadata.include/fields` 及兼容 `include_metadata`/`metadata_fields`，按字段白名单附加 `document_metadata`。文档删除将 metadata 真源纳入索引、GraphRAG、KB 计数和文档记录事务，失败时恢复原 metadata，成功后不留下 orphan。
+- 新增列表拆分/替换、过滤、summary/batch、重启恢复、持久化失败回滚、HTTP 生命周期、权限拒绝、检索过滤/enrichment 和删除级联测试。最终 `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets`、`git diff --check` 全部通过；测试为 156 passed / 0 failed。
+- 对标 RAGFlow `chunk_api.py` 完成纯 Rust chunk 生命周期。新增 `/api/v1/datasets/{id}/documents/{did}/chunks` 的 GET/POST/DELETE/PATCH 和单 chunk GET/PATCH；支持分页、关键词、ID、可用状态过滤，重要关键词、问题、标签权重和五元位置字段。手工新增与内容/问题更新统一通过 KB 的持久化 embedding selector 生成 `10% title + 90% body/question` 向量，避免与自动解析使用不同向量空间。
+- Chunk 新增/删除在 `document_commit_lock` 内同时提交 `index.json`、文档 `chunk_count` 和 KB `chunk_count`；任一步失败会恢复索引内存/磁盘快照及已提交计数。批量删除要求请求 ID 全部属于目标文档，防止部分静默成功；非 KB 管理者只能读取，不能写入。`available_int=0/false` 现在同时从向量检索和混合检索候选中过滤，重新启用立即恢复召回。
+- 新增完整 HTTP 生命周期、越权拒绝、索引落盘失败回滚和底层双检索启停测试。最终 `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets`、`git diff --check` 全部通过；测试为 150 passed / 0 failed。
+- 对标 RAGFlow `evaluation_service.py` 和 `EvaluationDataset/Case/Run/Result` 模型新增纯 Rust `src/api/evaluation.rs`。`EvaluationStore` 将数据集、ground truth 用例、运行记录和逐用例结果统一保存到 `evaluations.json`，使用同目录临时文件、原子 rename 和失败回滚；启动时拒绝重复 ID、case/run/result orphan 等损坏状态，删除数据集会级联删除 cases、runs 和 results。
+- 新增完整检索评测 API 生命周期：评测数据集绑定一个或多个可访问 KB，运行前重新校验 KB 权限和向量空间；每个 case 支持参考答案、relevant doc IDs、relevant chunk IDs 和任意 metadata。评测直接复用生产 `HybridSearchQuery` 内核，支持 `top_k`、纯全文或向量/混合权重，避免 benchmark 与线上检索算法漂移。
+- 指标公式对齐 RAGFlow 当前实现：Precision、Recall、F1、Hit Rate 和 MRR；优先使用 relevant chunk IDs，没有 chunk ground truth 时回退 relevant doc IDs。Run 原子保存逐用例召回 ID、执行时间及平均指标，并按低 Precision、低 Recall、低 MRR 生成配置建议。RAGFlow 尚标记 TODO 的 faithfulness、answer relevance 和 LLM-as-judge 没有虚构实现，留待后续接入生成式评测。
+- 评测权限按创建用户隔离，管理员可审计全部数据；不可访问的 KB 无法创建评测数据集，权限变化后也无法继续运行。新增测试覆盖 RAGFlow 指标公式、API 生命周期、越权拒绝、持久化失败回滚、重启恢复、级联删除和结果 orphan 校验。当前完整测试 148 passed / 0 failed，严格 Clippy 零告警。
+- 对标 RAGFlow `conversation_service.structure_answer()` 与 `PUT /chats/<chat_id>/sessions/<session_id>/messages/<msg_id>/feedback` 完成消息级反馈闭环。`ChatMessage` 新增稳定 UUID、创建时间、结构化 `ChunkReference`、`thumbup` 和文本反馈；旧 `conversations.json` 缺失字段时通过 serde 默认自动迁移并在后续原子保存中固化。上游 LLM 请求仍只发送 `role/content`，不会泄露内部引用和反馈元数据。
+- Chat RAG 完成响应新增 `message_id` 与结构化 `reference`，引用保存 chunk id、KB id、正文和 similarity/vector/term 分数，并与 assistant 消息一起原子落盘。新增 RayRAG 简化路由 `PUT /api/v1/chats/{session_id}/messages/{message_id}/feedback`，同时兼容 RAGFlow 三层路由 `/api/v1/chats/{chat_id}/sessions/{session_id}/messages/{message_id}/feedback`；两者均只信任会话中已保存的引用，不接受客户端伪造 chunk 列表。
+- 消息反馈具备幂等和反转语义：重复同向反馈不重复调整 `pagerank_fea`；赞转踩会撤销旧 `+1` 后应用新 `-1`，踩转赞反向处理。索引调整和会话反馈状态共用提交锁与 compare-and-set 旧状态检查；会话落盘失败会恢复内存及磁盘索引快照。反馈开关和 weighting 在服务启动时解析进 `AppState`，避免运行中环境变量漂移。
+- Web 聊天页赞踩按钮已接入真实反馈 API，使用后端返回或持久化的稳定 `message_id`；只有请求成功才更新按钮状态，旧消息会按持久化赞踩状态恢复显示。
+- 新增测试覆盖旧消息自动迁移、结构化引用重启恢复、反馈 CAS、防跨用户访问、同向幂等、赞踩反转、RAGFlow 兼容路由、聊天完成引用持久化及会话保存失败时索引回滚。当前完整测试 141 passed / 0 failed，严格 Clippy 零告警。
+- 完成全仓 Rust 质量清债：执行标准 `rustfmt` 统一格式，将 Clippy 从 84 条存量告警清理到零，并建立 `cargo clippy --all-targets -- -D warnings` 严格门禁。清理覆盖 `Default` 契约、map/set 迭代、排序键、冗余 clone/reference、折叠控制流、slice 参数、测试模块顺序及公共集合 `len/is_empty` 一致性。
+- 混合检索从 7 个位置参数重构为 `HybridSearchQuery` 参数对象，生产 API 与单元测试调用点统一，降低继续对标 RAGFlow 增加过滤/rank 参数时的位置参数错配风险。任务 worker 的控制流清理按分支逐项验证，必要的 claim 失败提前退出保持不变。
+- 本轮质量门禁结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets`、`git diff --check` 全部通过；测试为 136 passed / 0 failed。
+- 对标 `api/db/services/chunk_feedback_service.py` 新增纯 Rust `chunk_feedback.rs` 和受鉴权的 `POST /api/v1/chunks/feedback`：通过 `CHUNK_FEEDBACK_ENABLED=true` 显式启用，`CHUNK_FEEDBACK_WEIGHTING=relevance|uniform` 选择固定预算按召回分数分配或逐块调整。反馈只允许写入调用者可访问的 KB，重复 `(chunk_id, kb_id)` 引用会去重，`pagerank_fea` 被限制在 `0..=100`，写入后直接参与现有 rank feature 检索增益。
+- chunk 反馈与文档索引提交共用全局提交锁，批量内存调整后原子保存 `index.json`；保存失败恢复完整索引快照。新增测试覆盖 KB 作用域、上下界、无效旧值、relevance/uniform 预算、重复引用及持久化失败回滚。
+- 当前反馈端点是底层安全写回能力，默认关闭。RAGFlow 的完整消息级语义还会在会话中保存结构化引用和 `thumbup` 状态，并在赞踩反转时先撤销旧权重；RayRAG 现有会话仅保存引用文本，下一批需扩展 `ChatMessage` 的稳定消息 ID、结构化 chunk 引用和幂等反馈状态，再接入 `/chats/{chat_id}/sessions/{session_id}/messages/{msg_id}/feedback` 兼容路由。
+
+- 对标源码：GitHub `infiniflow/ragflow` v0.26.4（commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`），重点审计 `api/db/services/task_service.py`、`rag/svr/task_executor.py`、`check_team_permission.py`、`knowledgebase_service.py` 及 document/chunk/retrieval API 权限调用。RAGFlow 执行器采用 Redis consumer group、consumer name、unacked 重领和处理后 ack；RayRAG 在纯 Rust 本地状态机中实现对应的单进程 claim/lease/fencing 语义。
+- `cargo test --all-targets`：129 passed / 0 failed；覆盖 tokenizer、Argon2id 迁移、统一 Bearer 鉴权、流式 multipart、路径穿越、空文件、超限文件、批量上传、部分成功、损坏 OOXML、内容与扩展名不符拒绝、同 KB 重名递增、未变化内容重解析跳过、KB/Chunk/Chat 隔离、任务持久化恢复/取消/三次尝试上限、worker 唯一领取、租约续期/过期重领、旧 worker fencing、active future 防重、并发落盘恢复、旧任务 JSON 兼容、两级优先级、同级 FIFO、aging 防饥饿、tenant membership 原子持久化/失败回滚/重启恢复/去重/移除、team KB 跨用户读权限和 owner-only 管理权限，以及中英文 BM25、词项/向量融合、纯全文检索、向量维度防护、字段权重、reranker 公式/索引校验/分页窗口、未配置 503、共享模型 API 接线、前置文档过滤、Pagerank/tag rank、全局文档聚合、高亮回退、reranker 热更新权限和配置持久化恢复、Provider 管理权限/密钥保护/失败回滚/重启恢复、tenant Provider 实例的成员只读/owner-admin 管理/跨 tenant 隔离、模型能力展开、密钥保留与显式清除、失败回滚和重启恢复、KB embedding selector 原子持久化、创建时 tenant 能力校验、已有索引切换保护、多 KB 向量空间一致性、legacy 全局 embedder 回退、RAPTOR marker/文档替换、GraphRAG KB 隔离和失败回滚。
+- `cargo check --all-targets`、`cargo fmt --check`、`git diff --check`：通过，零编译警告。
+- 将已有的 document/search/chat/file/provider/task/agent/connector/system/OpenAI/Dify/Langfuse handler 接入 Axum，替换多处 `stub_ok` / `stub_list`。
+- 服务端 embedder 改为 `Arc<dyn Embedder>`，可由环境变量启用 OpenAI-compatible embedding，不再锁死为 `CandleEmbedder` 且永远为 `None`。
+- 密码从固定盐 SHA-256 升级为随机盐 Argon2id；现有 SHA-256 账号首次成功登录后自动迁移。
+- 文档元数据与文件元数据改为原子 JSON 持久化；上传使用 Axum 原生流式 multipart，分块写入同目录临时文件，边写边执行 64 MiB 默认上限和 xxHash128 指纹计算，完成内容/容器校验后 `sync_all + rename + 目录 sync` 原子提交；受控 UUID 存储名和扩展名白名单保持不变。
+- 新增共享 `src/persistence.rs`：用户、KB、文档、文件、任务和搜索索引 JSON 均统一使用同目录临时文件、文件 `sync_all`、原子 rename 和父目录 `sync_all`，失败时清理临时文件，降低断电/崩溃后出现空文件或目录项未落盘的概率。
+- 上传/重解析已接入后台 `parse → chunk → embed → replace_document → 原子索引保存`；chunk 写入 `doc_id`、`kb_id`、文件名和内容类型 metadata。
+- 文档删除会同步移除索引、文档记录、上传文件并修正 KB 文档/chunk 计数；索引保存失败会恢复内存快照。
+- weighted search、Dify retrieval 和通用 retrieval 不再允许空 `kb_ids` 回退到全局索引，且会先验证调用者对全部目标 KB 的访问权限。
+- weighted search、Dify retrieval 和通用 retrieval 已统一接入纯 Rust 混合检索内核：候选 KB 内同时计算 BM25 term similarity 与 cosine vector similarity，按 RAGFlow `term_weight = 1 - vector_similarity_weight` 融合后稳定排序并应用阈值；默认向量权重 `0.3`、阈值 `0.2`，明确传入 `vector_similarity_weight=0` 时无需 embedding 且不应用向量阈值。API 返回总分、词项分和向量分；Dify `full_text_search`/`semantic_search`/`hybrid_search` 分别映射纯全文/纯向量/混合模式。
+- BM25 tokenizer 增加纯 Rust CJK unigram + bigram，中文连续文本可按“水质”等子词召回；文档长度归一化也改用实际 token 数。向量维度不一致的 chunk 会被安全忽略，避免 zip 截断产生虚假余弦分数。
+- 外部 reranker 已作为共享服务依赖接入 weighted search、通用 retrieval 和 Dify retrieval。首次启动可由 `RERANK_API_BASE`（可选 `RERANK_API_KEY`）提供默认值，之后管理员可通过 Providers 页面或 `GET/PUT /api/v1/reranker` 原子持久化并热替换实例，无需重启；密钥不回显，留空保留、可显式清除，配置文件权限为 `0600`。请求明确传 `rerank=true` 才启用；未配置返回 503，模型调用/响应异常返回 502，不静默降级。HTTP 客户端采用 5 秒连接、30 秒总请求超时，模型响应严格拒绝缺失、重复、越界索引、非有限分数和不完整结果集。
+- LLM Provider 已由进程内默认列表改为 `providers.json` 原子持久化；管理员可通过 `POST/PUT/DELETE /api/v1/providers/{id}` 管理全局提供商，启动时校验 provider id、HTTP(S) API base、非空且唯一的模型列表。API 密钥只保存到权限 `0600` 的配置文件，公开响应仅返回 `api_key_configured`；更新时空密钥保留旧值，`clear_api_key=true` 才显式清除，写入失败会回滚内存状态。被 tenant 实例引用的 Provider 返回 409，不能删除后留下孤儿配置。
+- 新增纯 Rust `TenantModelStore`，以 `tenant_models.json` 对标 RAGFlow v0.26.4 的 tenant provider/instance/model 三层关系：每个 tenant 可绑定同一全局 Provider 的多个凭据实例，每个实例可声明多个模型及 `chat`、`embedding`、`rerank`、`image2text`、`speech2text`、`tts` 能力、启用状态和可选 token 上限。文件原子落盘并限制为 `0600`，公开结构只返回 `api_key_configured`；空密钥保留、`clear_api_key=true` 显式清除，失败写入回滚内存，启动时拒绝引用不存在全局 Provider 的损坏配置。
+- `GET /api/v1/tenant/models`、`GET /api/v1/llm/models` 和 `GET /api/v1/llm/my_llms` 按当前或指定 tenant 返回绑定结果；tenant 成员可读，owner/admin 可通过 `PUT/DELETE /api/v1/tenant/models/{provider_id}/{instance_id}` 管理，非成员跨 tenant 查询返回 403。模型列表按能力展开，同一个模型可同时作为 chat/embedding/rerank 等用途，不再把全局 Provider 的所有模型错误标记为 chat。
+- 知识库创建和更新现支持 `embd_id` / `embedding_model`。显式 selector 必须属于 KB owner tenant、Provider 已启用且模型声明 `embedding` 能力，保存时规范化为 `provider/instance/model`；未显式指定时优先固化 owner tenant 的首个可用 embedding 模型，tenant 未配置时保留 legacy `default`。已有 chunk 的 KB 拒绝直接切换模型并返回 409，避免旧索引向量与新查询向量静默混用；切换前必须先清空或重建索引。
+- 文档后台 `parse → chunk → embed → index`、weighted search、通用 `/retrieval`、Dify retrieval 和 Chat RAG 已统一通过同一 KB embedding selector helper 解析运行时 `SharedEmbedder`。跨多个 KB 时要求持久化 selector 完全一致，并逐个按各 KB `owner_id` 验证 tenant 配置；不一致明确返回 `Knowledge bases use different embedding models`。Chat 请求中的临时 `embedding_model` 仅可作为同一持久化 selector 的别名校验，不能绕过 KB 绑定。旧 KB 的 `embd_id=default` 继续使用全局 `state.embedder`，但不会与 tenant selector 混搜。
+- 对标 `search.py` 的块式深分页：候选窗口目标约 64 条且始终向上取整为 `page_size` 整数倍；启用外部 reranker 时受 `top=1024` 约束，按全局 offset 选择候选块并在重排、阈值过滤后切页，避免深页漂移和短页。Dify 在 rerank 时也先扩展候选池再截取 `top_k`。
+- 词项侧改为分字段 BM25 后显式融合，普通混合路径使用 RAGFlow 的正文 `1x`、标题 `2x`、重要关键词 `5x`、问题词 `6x`；外部模型路径单独使用 `rerank_by_model` 的正文/标题/关键词 `1x/1x/1x`，不错误复用普通路径权重。外部模型分数替换 vector side，再按 `term_weight = 1 - vector_weight` 与词项分融合并稳定排序。
+- weighted search、Dify retrieval 和通用 retrieval 均支持 `doc_ids`，并在 BM25 建库、向量评分和候选排序前过滤文档。显式空数组保持为空候选，不会退化成未过滤查询。
+- 对标 RAGFlow rank feature：chunk metadata 的有限数值 `pagerank_fea` 直接叠加；请求 `rank_feature` 与 chunk `tag_feas` JSON 映射计算余弦相似度并乘 `10` 后叠加。非法 JSON、零范数和非有限值安全忽略；外部 reranker 替换 vector side 后仍保留同一 rank feature 增益。
+- weighted search 和通用 retrieval 返回阈值后全量候选的 `total` 与按文档计数排序的 `doc_aggs`，统计独立于当前约 64 条 rerank 分块和分页切片；当前页可通过 `highlight=true` 返回 HTML 转义后的大小写不敏感 `<em>` 命中片段，未命中时回退完整正文。Dify 请求也接受 `doc_ids` 和 `rank_feature`，但保持其既有响应协议。
+- RAPTOR/GraphRAG 已接入生产文档任务。`ParserConfig` 兼容 Web 的 `raptorEn`、`raptorDepth`、`graphEn`、`entityTypes`、`graphMethod` 字段；RAPTOR 在普通 chunk embedding 完成后生成层次摘要，以 `raptor_kwd`、`raptor_layer_int`、`raptor_method`、`source_id` metadata 作为同一文档的普通可检索 chunk，一次 `replace_document` 会同时替换原文和旧摘要。GraphRAG 只基于原始 chunk 建立文档 checkpoint，持久化到数据根目录 `graphrag.json`，再重建对应 KB 的合并图；weighted search 和通用 retrieval 额外返回 `graph_context`，不把图谱产物混入普通 chunk 生命周期。
+- 高级产物提交复用现有任务 lease/fencing 和全局 `document_commit_lock`：索引先原子保存，GraphRAG checkpoint 随后原子保存；KB 计数或文档 metadata 提交失败时同时恢复索引与图谱快照。文档删除也会定向删除 checkpoint 并重建单个 KB 图，后续步骤失败则恢复旧图谱，避免重处理失败破坏当前可用高级产物。
+- `TaskQueue` 已改为原子 JSON 持久化：任务关联 `doc_id`，保存 attempt/retry/cancel、`worker_id`、不可伪造的 `lease_token` 和 `lease_expires_at`。worker 以 30 秒租约原子领取、每 10 秒续租，dispatcher 每 5 秒扫描 pending/过期任务；同一进程用 active guard 防止重复 future，完成/失败提交必须通过未过期 token fencing。异常退出或过期任务会重领，最多三次尝试，支持 cooperative cancel，删除文档会取消关联任务。状态快照写入由独立锁串行化，避免旧快照晚写覆盖新状态。
+- 对标 RAGFlow `priority=0` 低、`priority=1` 高以及 `[1,0]` 消费顺序，任务新增兼容旧 JSON 的持久化优先级；普通上传进入低优先级，用户主动重解析进入高优先级。唯一 dispatcher 通过默认 4 个并发槽位（`RAYRAG_MAX_CONCURRENT_TASKS` 可调）执行高优先级优先、同级 FIFO；低优先级等待 60 秒后提升有效优先级，避免持续高优先级流量导致永久饥饿。aging 是 RayRAG 的本地公平性增强，不是 RAGFlow 原生语义。
+- `KnowledgeBase` 增加兼容旧数据的 `owner_id`/`permission`；旧 JSON 缺少 `permission` 时默认 private。新增纯 Rust `TenantStore`，以 `tenants.json` 原子持久化 tenant membership，owner 作为同 ID 个人 tenant 的隐式成员；重复邀请幂等，落盘失败回滚内存，移除成员即时失权且重启后关系保留。KB 支持 `private`/`team`：owner 可读可管理，team 成员仅可读取、检索、查看文档/chunk 和参与 Chat RAG，上传、重解析、删除及权限修改仍仅 owner 可执行。dataset、document、chunk list、Chat RAG、Files、Tasks、Stats、Agents、weighted search、Dify retrieval、通用 retrieval 已执行用户/KB 边界；Task/File/Chat 元数据均保存 owner。旧无 owner 数据仅管理员可见。
+- 系统写操作、用户列表/更新/邀请、API Key 生成、Langfuse 更新、connector 创建和 plugin toggle 已增加管理员校验；`list_users` 改为读取真实 `UserStore`，不再返回静态占位管理员。
+- multipart 请求增加 Axum body 上限，并按扩展名从临时文件验证 PDF、OOXML/EPUB ZIP 容器、PNG/JPEG/GIF/WebP/BMP/TIFF、JSON 和增量 UTF-8 文本；单文件失败保持 400；文档接口单次最多 32 个文件，多文件全部成功返回 202，部分成功返回 207 并逐项报告，失败项不残留临时/最终文件和元数据。
+- 同一 KB 上传重名文档按 `file.pdf`、`file(1).pdf`、`file(2).pdf` 递增；文件管理按 owner + parent folder 独立去重。`DocRecord.indexed_content_hash` 仅在索引原子提交成功后更新，成功文档的当前内容哈希未变化时重解析直接返回 `skipped=true`，旧 JSON 和失败状态仍会正常排队。
+- 烟雾验证：health、登录、Bearer 用户信息、provider/task/model/system/new-api-key/search-no-embed 均按预期响应。
+- 尚未达到 RAGFlow 生产等价：当前任务队列已具备单进程 worker claim、租约续期、过期重领、fencing、两级优先级、公平调度和有界并发，但 JSON 文件状态机不提供 Redis consumer group 的跨进程原子 claim、分布式锁、独立物理优先级队列、unacked/ack 和崩溃精确一次语义；tenant/team membership、共享 KB ACL 和 tenant Provider/模型实例能力矩阵已实现，KB embedding 已统一驱动索引、检索、Dify 和 Chat，但尚无数据库事务、跨 tenant 平台管理员代管，且 reranker、OCR、图像、语音等其他运行时能力仍未全部按 KB/tenant selector 统一解析；上传已具备流式落盘、多文件部分成功、同 KB 文件名自动去重和未变化重解析跳过，但尚无对象存储后端；Memory/Agent/Connector 等配置仍多为进程内或占位实现。GraphRAG/RAPTOR 已完成生产任务、持久化、生命周期和检索接线，但当前仍是纯 Rust 轻量实现：RAPTOR 使用抽取式摘要和平均 embedding，GraphRAG 使用规则 NER、相邻共现关系与 query entity 命中，尚未达到固定版的 LLM 摘要、实体/关系 prompt、社区检测/报告、阶段 checkpoint 和增量 merge 精度。
+- 当前严格质量门禁已通过：`cargo clippy --all-targets --locked -- -D warnings` 零告警；本轮继续保持该基线。
 
 ## 更新日志
 
 | 日期 | 操作 | 说明 |
 |------|------|------|
-| 2026-07-11 07:13 | Web UI | 复制 RAGFlow web/dist → web/static/（88MB）；新增 Axum 服务器 `src/server.rs`；main.rs 加 `serve` 命令；API stub 兼容 RAGFlow 前端 |
-| 2026-07-11 07:10 | 无自动下载 | 禁用 tokenizers http feature；default_embedder/hybrid_embedder 标记 deprecated；main.rs 检查本地模型存在性；仅 UI 触发下载 |
-| 2026-07-10 22:51 | 镜像配置 | `.cargo/config.toml`（ustc 源）+ `scripts/mirror.sh`（github proxy 检测）+ zvec 禁用 bundled |
-| 2026-07-10 22:49 | 兼容检查 | 全量代码兼容性审查（模块/trait/import/类型），并发 Mutex 修复 |
-| 2026-07-10 22:46 | HF 镜像 | `candle.rs` 内置 hf-mirror.com fallback（主站→镜像自动切换） |
-| 2026-07-10 22:29 | Hybrid | 新增 `HybridEmbedder`（先云后本地），三模 CLi（candle/openai/hybrid） |
-| 2026-07-10 22:27 | Candle | 新增 `embed/candle.rs`，纯 Rust 本地嵌入（BERT via Candle），替换 HTTP API |
-| 2026-07-10 22:15 | 骨架 | 12 源文件 / 1073 行，parser + chunk + embed(openai) + store + pipeline |
-| 2026-07-10 21:47 | 创建 | 项目初始化 |
+| 2026-08-01 | 历史 chunker DSL 迁移逐行对标 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 Python `agent/dsl_migration.py` 164 行及 Canvas/API/前端/Go 边界；纯 Rust defensive/idempotent migration 完整重写三个旧组件名、ID、拓扑、模板引用、图/边/form 和历史字段，自定义业务值保留。该文件升级 aligned，但 ingestion 节点 Agent 执行仍 fail closed。矩阵为 aligned 65/15,091、partial 1,582/650,790、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认 416、双 feature 419 passed，均 0 failed/1 GPU ignored；双 check/严格 Clippy、coverage 39/39、固定 fixtures、zvec native/mirror、Compose 及真实 PostgreSQL 18.4 snapshot 往返通过，测试行清理为 0，未新起或重启容器。 |
+| 2026-07-30 | LLM prompt/history/sampler/structured-output 纵向切片 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 Python LLM 523 行、Go LLM 1,409 行及 898 行核心测试/前端/DSL。纯 Rust Agent/Generate/LLM 统一缺省/标量/role-content prompt、13 轮双消息历史窗口和同角色替换，删除重复 query；sampler 支持显式 Enabled 开关与旧 DSL，结构化 schema 追加、重试、think/fence 清理及 `structured/_ERROR` 固定键，组件目录和动态 input form 同步。LLM Python/Go 精确 mapping 继续 partial，矩阵保持 aligned 64/14,927、partial 1,583/650,954、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认 411、双 feature 414 passed，均 0 failed/1 GPU ignored；双 check/严格 Clippy、coverage 39/39、zvec native/mirror、既有 PostgreSQL 18.4 SQL 与真实 snapshot 往返通过。节点模型/视觉/引用/token fitting/JSON repair/chat kwargs/thinking/backoff/goto/cancel/delta stream 继续诚实 partial；未新起或重启容器。 |
+| 2026-07-27 02:03 | Loop/Parallel 复合 UserFillUp durable bridge | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，复核 workflowx Parallel completed/pending snapshot、Loop same-iteration resume、interrupt leaf/root 地址及 Canvas subgraph 边界。纯 Rust checkpoint 新增 Loop iteration/body cursor 与 Parallel original items、completed/pending 局部 Canvas/transient partition；稳定 `loop:<macro>:<iteration>:<leaf>` / `parallel:<macro>:<index>:<leaf>` 地址逐叶恢复，已完成 outer/iteration/item 不重跑，篡改叶子组合 fail closed。补 2 组跨 serde/重启式回归；覆盖矩阵保持 aligned 64/14,927、partial 1,583/650,954、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认 362、双 feature 365 passed，均 0 failed/1 GPU ignored；双 locked check/严格 Clippy、coverage 33/33、PostgreSQL 18 snapshot 和 zvec native/mirror 实测通过。一次请求多叶子、Eino bridge-store 原始格式、stream/panic/nested macro、文件/layout、SSE、Redis TTL/跨进程 claim/GC 继续诚实 partial；未新起容器或重跑 GPU 服务。 |
+| 2026-07-27 01:36 | UserFillUp 顶层持久化 interrupt/resume | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，审计 Python FillUp 125 行、Go UserFillUp 292 行、interrupt/resume 405 行、checkpoint store 101 行及对应 902 行测试。纯 Rust 新增精确 scheduler cursor/Canvas checkpoint、Begin/UserFillUp consume-once、JSON waiting form、opaque resume token、owner/tenant/agent/conversation 隔离、DSL fingerprint、15 分钟一次性 claim lease、原子 JSON/PostgreSQL mirror 重启恢复和 HTTP 409 冲突契约；恢复不重跑 Begin/Retrieval/LLM，等待回合保留空 assistant。补 9 组回归和 userfillup 目录 metadata；矩阵保持 aligned 64/14,927、partial 1,583/650,954、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认 360、双 feature 363 passed，均 0 failed/1 GPU ignored；双严格 Clippy、coverage 33/33、PostgreSQL snapshot 与 zvec native/mirror 实测通过。本批未新起容器或 GPU 服务；nested composite bridge、文件/layout、SSE 全序列、Redis TTL/跨进程 claim/GC 继续诚实 partial。 |
+| 2026-07-27 01:07 | Parallel / Iteration / IterationItem Rust 有界 fan-out | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，审计 Python Iteration 64/IterationItem 101 行、Go Parallel component 186 行、canvas subgraph 385 行、workflowx driver 812 行及 1,883 行测试/辅助代码。纯 Rust 新增 parent-aware macro plan、旧 DSL alias/backedge 规范化、item 隔离 state、item0-first 有界并发、错误 drain、按输入序聚合 usage/references 和 `_result` snapshot/ref 输出，补 5 组定向回归及目录 descriptor。矩阵保持 aligned 64/14,927、partial 1,583/650,954、replaced 71/27,674、reference 2,723/574,185、unmapped 0；checkpoint/interrupt replay、outer stream、panic recovery、nested macro 和普通 sibling wave 继续诚实 partial。默认 351、双 feature 354 passed，均 0 failed/1 GPU ignored；双严格 Clippy、coverage 33/33、PostgreSQL snapshot 和 zvec native/mirror 通过。本批未新起容器或重跑 GPU 服务，不改版本、镜像和后端路线。 |
+| 2026-07-27 00:12 | DataOperations Python/Go 纵向实现与双后端复验 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 Python 202 行、Go 542 行、Go 测试 282 行及前端 DSL 表单；纯 Rust Canvas 注册并实现七个 JSON-shaped DataOperations 操作，兼容 string/CSV/input-object/name-object 形态、selector/template 和原生输出，补 6 组测试。Python `ast.literal_eval` 单引号容器/tuple/set、动态 input-form/thought/cancellation 继续诚实 partial；Go 生产文件升级 aligned。固定 pack 重建索引后缺失 blob 为 0，矩阵重生为 aligned 63/14,895、partial 1,584/650,986、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认 337、双 feature 340 passed，均 0 failed/1 GPU ignored；严格 Clippy、coverage 32/32、原生 zvec、Compose 通过。临时无卷 `postgres:18.4` 等待可执行 SQL 后确认 18.4/180004 并通过 Rust snapshot 往返，容器和端口已清理，未改业务容器/卷。 |
+| 2026-07-26 00:03 | Canvas NodeBody 闭集 dispatch 与 class deadline 收口 | 逐行审计固定版 `internal/agent/canvas/node_body.go` 257 行、450 行 timeout 测试和 outer/Loop 调用点。确认 Rust 用不可变目录+静态 dispatch 替代全局 factory/placeholder，unsupported 副作用前拒绝，typed component output 和 owned `CanvasRuntime` 替代 `__cpn_id__`/snapshot bracket。发现并修复 case-insensitive 组件目录与 case-sensitive timeout 固定表的不一致：固定 class 统一 trim+uppercase，小写 `retrieval` 不再从 60 秒扩大为 600 秒，`tavilysearch` 同样保持 12 秒；纯 resolver 回归通过。UserFillUp interrupt/resume、Loop state bracket、legacy ExitLoop no-op 明确 fail closed，文件保持 partial。矩阵仍为 4,441 文件/1,267,740 行且 unmapped 0；默认全目标 315、双 feature 318 passed，均 0 failed/1 GPU ignored，双严格 Clippy、原生 zvec、固定 fixture、fmt/diff check 通过。 |
+| 2026-07-25 23:58 | Canvas MultiBranch 静态拓扑与多目标执行收口 | 逐行审计固定版 `internal/agent/canvas/multibranch.go` 224 行、342 行测试和 scheduler/Loop 调用点。修复 Switch/Categorize 动态目标只校验全局存在、未限定为本节点静态 `downstream` 的缺口；condition/default/end/category 目标现均受声明边白名单约束，越权目标在编译期拒绝。新增完整 workflow 回归，证明命中的两个目标以稳定顺序全部执行且 fallback 不执行；修正现有 Switch/Categorize DSL fixture 的静态边。顶层 FIFO 语义落地，Loop 子图和 concurrent fan-in 继续精确 partial。覆盖矩阵仍为 4,441 文件/1,267,740 行：aligned 61/14,319、partial 1,586/651,562、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认全目标 314、双 feature 317 passed，均 0 failed/1 GPU ignored，双严格 Clippy、原生 zvec、固定 fixture 通过。独立无卷 `postgres:18.4` 启动阶段的 bootstrap `pg_isready` 曾短暂误报 ready 后重启，首次精确测试收到 TCP reset；改为等待目标数据库可执行 SQL 后，同一 snapshot round-trip 通过且服务端确认为 `18.4 (Debian 18.4-1.pgdg13+1)`，临时容器随后自动删除，现有 `rayrag-postgres-1` 未改动。 |
+| 2026-07-25 23:47 | Canvas decode/dead scaffold/节点 timeout 审计 | 逐行审计 `decode.go` 132、`checkpoint_store.go` 101、`stream.go` 111、`cancel.go` 120、`canvas.go` 147、`timeout.go` 157 行及固定测试/调用点。修复 IMPORT DSL 的 `obj.downstream` 优先回退与 graph parentId 解码；workflow/debug 全节点接入可取消 Tokio deadline，保留 class env、固定默认、uniform fallback、600s 顺序并拒绝坏秒数。checkpoint store 因无 mid-run byte/TTL/resume 继续 partial；固定 stream/cancel 无生产消费者，避免复制 lossy channel 与 500ms Redis polling，改为 replaced；Go Canvas alias/dynamic factory/reflective closer 层由 typed owner、闭集 dispatch、serde/RAII 替代。矩阵为 aligned 61/14,319、partial 1,586/651,562、replaced 71/27,674、reference 2,723/574,185、unmapped 0。默认全目标 310、双 feature 313 passed，均 0 failed/1 GPU ignored；原生 zvec、PostgreSQL 18.4 snapshot、固定 fixtures、双严格 Clippy、fmt/diff check 通过。 |
+| 2026-07-25 23:36 | Canvas variable/state/serializer 薄适配收口 | 逐行审计固定版 `internal/agent/canvas/variable.go` 24 行、`state.go` 30 行、`state_serializer.go` 40 行、`state_export.go` 45 行，连同 variable/serializer 测试 205/161 行及状态调用点。确认四文件仅承担 Go package/Eino/test re-export 或通用 JSON adapter；Rust 由单一模块直接拥有模板解析、每 future 私有 `CanvasRuntime` 和 typed serde，无 context downcast、state injection、mutex 或 `any` serializer。新增 empty/in-place restore/malformed JSON 契约，四文件均改为 replaced；矩阵为 aligned 61/14,319、partial 1,589/651,940、replaced 68/27,296、reference 2,723/574,185、unmapped 0。默认全目标 302、双 feature 305 passed，均 0 failed/1 GPU ignored；原生 zvec、PostgreSQL 18.4 snapshot、固定 DSL fixtures、双严格 Clippy、fmt/diff check 通过。 |
+| 2026-07-25 23:30 | Agent 动态 input-form 与闭集组件 debug | 审计 `internal/handler/agent_component.go` 253 行及固定测试，补全 Agent/Browser/BGPT/ExeSQL/YahooFinance 动态表单；新增受鉴权 `POST /api/v1/agents/{id}/components/{component_id}/debug`，严格 flatten `params.*.value`、保持 101/102/103/500 envelope、用新鲜 Canvas state 复用已实现组件执行器和真实 LLM/Retrieval，保护 `sys.tenant_id` 不被覆盖。Begin passthrough、动态表单、参数错误、ACL、unknown/unsupported 和 tenant 防覆盖均测试；Browser/更广 factory 无 Rust runtime 时明确 102，handler 继续 partial。路由 116；全树统计不变为 aligned 61/14,319、partial 1,593/652,079、replaced 64/27,157、reference 2,723/574,185、unmapped 0。默认全目标 300、双 feature 303 passed，均 0 failed/1 GPU ignored；固定 DSL fixtures、原生 zvec、PostgreSQL 18.4 snapshot、双严格 Clippy、fmt/diff check 通过。 |
+| 2026-07-25 23:20 | Agent DSL Canvas/Run normalize 目录收口 | 逐行审计 `internal/agent/dsl/normalize.go` 870 行、705 行测试、7 个固定 fixture 和 handler/service/compiler 调用点。纯 Rust 新增 canvas/run 双边界：全树 clone、handle 修复、排序默认布局、flat view、Parallel UI 泄漏修复，以及仅 run 执行的 legacy child fold、stable downstream merge、Iteration→Parallel、item/index alias rewrite；编译兼容 nested/flat，Agent create/update/reset/version 存储及前端 Agent/version 视图接线，malformed panic-free 且幂等。固定 fixture 在全量门禁中从 pinned Git blob 实读通过，normalize.go 升级 aligned，DSL 生产目录已无 generic partial。全树为 aligned 61/14,319、partial 1,593/652,079、replaced 64/27,157、reference 2,723/574,185、unmapped 0。默认全目标 297、双 feature 300 passed，均 0 failed/1 GPU ignored；原生 zvec、PostgreSQL 18.4 snapshot、双严格 Clippy、fmt/diff check 通过。 |
+| 2026-07-25 23:08 | Agent DSL 类型化提取与静态 input-form 路由 | 逐行审计 `internal/agent/dsl/errors.go` 40 行、`extract.go` 202 行、266 行测试及 handler 调用点。新增零拷贝 serde 提取器和闭集 `AgentDslError`，区分 component missing、input_form missing/null、malformed obj/form/params/name，保留 optional params、按 component_name 查 Begin、错型 prologue/mode 空串语义；新增受鉴权 `GET /api/v1/agents/{id}/components/{component_id}/input-form`，静态表单保持 success/102/103 envelope，动态表单/debug 诚实留在 handler partial。errors.go 改为 replaced、extract.go 升级 aligned；全树为 aligned 60/13,449、partial 1,594/652,949、replaced 64/27,157、reference 2,723/574,185、unmapped 0。路由 115；默认全目标 291、双 feature 294 passed，均 0 failed/1 GPU ignored；原生 zvec、PostgreSQL 18.4 snapshot、双严格 Clippy、fmt/diff check 通过。 |
+| 2026-07-25 22:57 | Agent DSL reset 与持久化路由收口 | 逐行审计 `internal/agent/dsl/reset.go` 250 行、234 行测试及 service/handler/router 调用点。新增受鉴权 `POST /api/v1/agents/{id}/reset`：defensive serde JSON 快照清空 history/retrieval/memory/path，按类型归零 sys globals，按变量默认/声明类型恢复 env globals，保留 graph/components/custom globals；团队可见 Agent 可按既有编辑权限 reset，幂等调用不刷新时间，持久化失败回滚，响应返回 reset DSL，Canvas version 历史不变。补 pure transform、store/rollback 与 HTTP lifecycle 测试，reset.go 升级 aligned。全树为 aligned 59/13,247、partial 1,596/653,191、replaced 63/27,117、reference 2,723/574,185、unmapped 0。路由 114；默认全目标 286、双 feature 289 passed，均 0 failed/1 GPU ignored；双严格 Clippy、原生 zvec、PostgreSQL 18.4 snapshot、fmt/diff check 通过。 |
+| 2026-07-25 22:50 | Go Jinja runtime 目录收尾 | 完整审计 `internal/agent/runtime/template_jinja.go` 161 行、224 行测试及唯一 StringTransform 调用点。Gonja auto dispatch 由纯 Rust 的保守 detector、loud MiniJinja renderer 与组件 fail-soft wrapper 替换；保留 fast selector，覆盖 nested/component/sys/env/input context、filters/if/loop/comment/missing/substitution，并以无 loader/外部函数、100,000 fuel、64 层递归加固。上游 `flattenMap` 未被 context builder 使用，`bytesBuffer` 仅是 no-op import anchor，不复制死符号。补 loud parse-error 断言并保留 parse/fuel 软降级；文件由 partial 改为 replaced，runtime 目录已无通用 partial 生产项。全树为 aligned 58/12,997、partial 1,597/653,441、replaced 63/27,117、reference 2,723/574,185、unmapped 0；默认/双 feature 全量门禁分别保持 284/287 passed、0 failed/1 GPU ignored。 |
+| 2026-07-25 22:47 | Go Canvas state 单所有者快照收口 | 逐行审计固定版 `internal/agent/runtime/state.go` 462 行、95 行 JSON 测试和全部调用点。Rust `CanvasRuntime` 新增稳定 serde checkpoint shape，确定性保存 outputs/sys/env/path/history/retrieval/globals/cancel_flag/run_id/task_id，跳过 transient provider helpers；统一 component/sys/env dot path、JSON 字符串、数组索引、iteration alias 和嵌套自动建图，并记录检索聚合。单 future 所有权和显式借用替代共享 RWMutex，取消继续由 future drop 结构化传播；更广 interrupt/resume 留在 canvas partial。新增 2 组状态测试，并修复 Begin 单输入回填绕过显式 sys namespace 的回归；state.go 改为 replaced。全树为 aligned 58/12,997、partial 1,598/653,602、replaced 62/26,956、reference 2,723/574,185、unmapped 0。默认全目标 284 passed、双 feature 287 passed，均 0 failed/1 GPU ignored；原生 zvec 与 PostgreSQL 18.4 snapshot 测试实际执行，双严格 Clippy、fmt、diff check 通过。 |
+| 2026-07-25 22:37 | 不可变组件目录与 `/api/v1/components` 收口 | 逐行审计固定版 runtime registry 206 行/357 行测试、components service 140 行/165 行测试和 handler 123 行/330 行测试。新增不可变编译期 descriptor 单一真源，Canvas 闭集校验与目录共用；仅发布 Rust 已实现的 12 个 Agent 组件和 5 个 ingestion stage，消除动态注册 race/RWLock/panic。新增受鉴权组件目录端点，精确支持空/大小写无关/逗号多分类/重复去重/稳定排序/非 null maps，以及未知分类 HTTP+envelope 400；新增 4 组测试。registry 改为 replaced，service/handler 升级 aligned；全树为 aligned 58/12,997、partial 1,599/654,064、replaced 61/26,494、reference 2,723/574,185、unmapped 0。默认全目标 282 passed、双 feature 285 passed，均 0 failed/1 GPU ignored；原生 zvec 实际执行，双严格 Clippy、fmt、diff check 通过。 |
+| 2026-07-25 22:30 | Go runtime Component/factory 适配层分类收口 | 逐行审计固定版 `internal/agent/runtime/component.go` 158 行及 factory/node-body 调用点，确认其 Invoke 最小接口、进程全局可变 factory、registry init bridge、placeholder sentinel 与字段错误类型用于解决 Go package cycle 和运行期注入。RayRAG 以保存/编译期闭集校验、静态 Rust dispatch、节点/字段错误上下文及副作用前 unsupported 拒绝替代，不引入全局 factory lock/init 顺序耦合；该文件由 partial 改为 replaced。全树守恒为 aligned 56/12,734、partial 1,602/654,533、replaced 60/26,288、reference 2,723/574,185、unmapped 0；覆盖门禁、fmt、diff check 通过，功能代码未变，沿用 22:28 的默认 277/双 feature 280 与双严格 Clippy 结果。 |
+| 2026-07-25 22:28 | Go runtime progress/timeout/elapsed helpers 收口 | 逐行审计固定版 `internal/agent/runtime/helpers.go` 163 行和 393 行测试；新增纯 Rust runtime helper 层，精确实现 `0/1/-1` progress 消息、无 observer/错误原样透传、Tokio deadline typed error、RFC3339 `_created_time`、非负小数秒 `_elapsed_time`、调用方键优先、空输出和带组件名的错误链。父取消采用 Rust future drop，不复制 Go context。新增 5 组测试，该文件升级 aligned；全树守恒为 aligned 56/12,734、partial 1,603/654,691、replaced 59/26,130、reference 2,723/574,185、unmapped 0。默认全目标 277 passed、双 feature 280 passed，均 0 failed/1 GPU ignored；原生 zvec 实际执行，双严格 Clippy、fmt、diff check 通过。 |
+| 2026-07-25 22:22 | Go runtime JSON reflection fallback 分类收口 | 逐行审计固定版 `internal/agent/runtime/json_safe.go` 152 行及 runner/state/service 全部调用点；上游用 reflection 将 func/chan 置 null，并展开任意 map/slice/pointer/interface/struct，但没有循环引用检测。RayRAG 从 DSL、组件状态、trace 到 HTTP 只允许 owned `serde_json::Value`，函数、channel、client、非字符串 key、共享循环和非有限数无法进入状态，无需反射清洗热路径；该文件由 partial 改为 replaced。全树守恒为 aligned 55/12,571、partial 1,604/654,854、replaced 59/26,130、reference 2,723/574,185、unmapped 0；覆盖生成器 13/13、fmt、diff check 通过，功能代码未变，沿用 22:19 的默认 272/双 feature 275 全目标与双严格 Clippy 结果。 |
+| 2026-07-25 22:19 | Go runtime context 状态桥分类收口 | 逐行审计固定版 `internal/agent/runtime/context.go` 73 行及全部调用点，确认其用途是用 `context.Context` 在 Eino callback/Go package 间传递并 downcast `CanvasState`。RayRAG 以每个 future 私有的 `CanvasRuntime`、显式共享/独占借用和 per-run globals clone 替代，消除 missing-state/type-mismatch/nil-mutex plumbing；新增并发双运行契约，证明相同 workflow 的 globals 与 `sys.query` 隔离，该文件由 partial 改为 replaced。全树仍为 4,441 文件/1,267,740 行：aligned 55/12,571、partial 1,605/655,006、replaced 58/25,978、reference 2,723/574,185、unmapped 0。默认全目标 272 passed、双 feature 275 passed，均 0 failed/1 GPU ignored；原生 zvec 实际执行，双严格 Clippy、fmt、diff check 通过。 |
+| 2026-07-25 22:15 | Go Canvas Prometheus metrics 运行时收口 | 逐行审计固定版 `internal/agent/runtime/metrics.go` 102 行和 116 行测试；纯 Rust 新增独立 registry、上游同名 run counter/default-bucket duration histogram、`success/error/cancelled` 闭集标签、正时长过滤和 text exposition，Canvas success/error 显式记账、future drop 以 RAII 记 cancelled，并公开单一 `runtime="rust"` 的 `GET /metrics`，新增 4 组测试。该文件由 partial 升级 aligned，全树保持 4,441 文件/1,267,740 行守恒：aligned 55/12,571、partial 1,606/655,079、replaced 57/25,905、reference 2,723/574,185、unmapped 0。默认全目标 271 passed、双 feature 274 passed，均 0 failed/1 GPU ignored；原生 zvec 回归实际执行，默认与双 feature 严格 Clippy、fmt、diff check 通过。 |
+| 2026-07-25 22:07 | Go runtime selector 迁移开关分类纠偏 | 逐行审计固定版 `internal/agent/runtime/selector.go` 168 行和 187 行测试，确认其 Redis `go/python/auto` 是上游 Python→Go deprecation window 的 tenant 回退开关，不是 Canvas 变量 selector。RayRAG 保持纯 Rust 单运行时、tenant Agent DSL 持久化和 unsupported component 预执行拒绝，不引入 Python sidecar/Redis 双运行时开关；该文件由 partial 转为 replaced。全树变为 aligned 54/12,469、partial 1,607/655,181、replaced 57/25,905、reference 2,723/574,185、unmapped 0，文本行守恒。 |
+| 2026-07-25 22:04 | Go template fast/display 运行时收口 | 逐行审计固定版 `internal/agent/runtime/template.go` 140 行及 canvas variable、Message、service e2e 测试；Rust 统一实现单/双/三重花括号、component/sys/env、`item/index/result`、唯一引用提取、参数绑定 loud-fail + 完整 partial output 和 Message display soft-fail，新增 3 组契约测试。该文件由 partial 升级 aligned，全树变为 aligned 54/12,469、partial 1,608/655,349、其余守恒且 unmapped 0。默认全目标 267 passed、双 feature 270 passed，均 0 failed/1 GPU ignored；严格 Clippy、fmt、diff check 通过，双 feature 原生 zvec 回归继续实际执行。 |
+| 2026-07-25 21:57 | StringTransform/Jinja Python/Go 双运行时收口 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 Python StringTransform 107 行、Go StringTransform 302 行、Go Jinja runtime 161 行及 399 行测试。纯 Rust 补齐首上游直传、state ref、literal 多 delimiter、空片段、非字符串门禁、数组连接、缺失空串、迭代别名，以及 MiniJinja 条件/循环/注释/filter/嵌套上下文；沙箱无 loader/外部函数，限制 100,000 fuel 和 64 层递归，新增 7 组测试。覆盖矩阵保持 4,441 文件/1,267,740 行守恒，aligned 53/12,329、partial 1,609/655,489、unmapped 0；Python UI/取消接口和独立 Go loud-error API 仍列 partial。默认 feature 264 passed、双 feature 267 passed，均 0 failed/1 GPU ignored并严格 Clippy 零告警；原生 zvec、临时 PostgreSQL 18.4 snapshot、三模型实机契约、精确 Rust/Debian 镜像及 DaoCloud/TUNA/Xget 配置全部复验通过，临时 PG 容器自动删除且未改现有业务服务。 |
+| 2026-07-25 21:27 | Switch Python/Go 双运行时逐行收口 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 Python Switch 138 行、Go Switch 539 行及双方测试；纯 Rust 同时实现 legacy `logical_operator/items/end_cpn_ids` 与 modern `op/clauses/default`、全部运算符、nil/empty、数值转换、大小写等值、`matched_N`、多目标和 `next/_next` 语义，新增 5 组契约测试。全树台账保持 4,441 文件/1,267,740 行守恒，aligned 52/12,027、partial 1,610/655,791、unmapped 0。默认 feature 257 passed、双 feature 260 passed，均严格 Clippy 零告警且各 1 个 GPU opt-in ignored；zvec-rust 0.5.1 原生回归实际执行。临时无卷 `postgres:18.4` 实例返回 18.4 并通过 Rust snapshot 往返后自动删除；三张精确 Docker 基线镜像及国内源配置复核通过，未改现有业务容器/数据卷。 |
+| 2026-07-21 19:05 | Begin/FillUp/StringTransform 逐行语义收口 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 `agent/component/begin.py` 53 行、`fillup.py` 125 行和 `string_transform.py` 107 行。纯 Rust Begin 现校验 `conversational/task/Webhook` mode，透传 runtime inputs，在仅声明一个字段且请求未显式传 inputs 时把 question 包装成该字段，解析 scalar/object descriptor 与 JSON object 字符串；可选空 file 返回 null，非空 file 在文件服务尚未接线时 fail closed。StringTransform 在保存/编译阶段校验 method、delimiter 与字段类型；split 对齐 literal 多 delimiter、首尾/连续空片段、false-y 置空和 truthy 非字符串拒绝；merge 按首个 delimiter 连接数组、缺失引用置空并保留原生输出。Jinja2 statement/control-flow、file/layout 解析、交互 tips、重复 UserFillUp initial-input consumption、协作取消与组件 timeout 仍明确保持 partial。覆盖生成器新增三文件精确 mapping 和 2 项门禁，重新生成固定 commit 全部 4,441 文件/1,267,740 文本行清单：aligned 48/10,494、partial 431/150,324、replaced 53/24,241、reference 3,909/1,082,681、unmapped 0。默认 feature（跳过沙箱禁止绑定 TCP 的既有 Categorize mock）为 lib 234 passed/0 failed、1 GPU ignored、1 filtered，coverage 10 passed；双 feature 为 lib 237 passed/0 failed、1 ignored、1 filtered，coverage 10 passed，zvec-rust 0.5.1 原生 create/upsert/query/reopen 和在线镜像测试实际通过；默认与双 feature 严格 Clippy/check/fmt 均通过。Compose 静态展开确认继续固定 DaoCloud `postgres:18.4`、`rust:1.97.1-bookworm`、`debian:bookworm-slim`，APT 用 TUNA、zvec 用 Xget。当前沙箱同时拒绝 Docker socket、fnOS WebSocket、SSH/TCP，故本轮未重新读取已下载镜像或实连 PostgreSQL 18.4；此前真机闭环记录仍有效，本轮不冒充复验成功且未改动任何容器、镜像或卷。RAGFlow“全部文件”知识库同样因局域网 socket `EPERM` 未能检索，改用本地固定 commit tree 完成审计。 |
+| 2026-07-21 17:26 | Variable Canvas 精确语义与全树清单生成器解锁 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 `agent/component/variable_aggregator.py` 80 行和 `variable_assigner.py` 192 行。纯 Rust Canvas 现严格校验非空 group/candidate，按候选顺序选择首个 truthy 原生 JSON 值；VariableAssigner 对齐全部 11 个操作符、无参数操作符例外、overwrite/append/extend selector 解析、字符串 set 模板解析、列表元素类型约束、bool 排除于数值运算，以及固定版 `ERROR:*` 哨兵返回和未知操作符 null 语义。补充空配置、模板、列表、除零、bool 数值拒绝和缺参测试。修复 `ragflow-coverage` 在 4441 个 blob 上先写后读导致 stdout 管道背压死锁的问题，改为 scoped reader 与请求写入并发流式处理，并新增精确 mapping 门禁；清单已重新生成，1,267,740 文本行现为 aligned 46/10,215、partial 430/149,766、replaced 53/24,241、reference 3,912/1,083,518、unmapped 0。默认 feature 全量为 lib 227 passed/0 failed（1 个 GPU opt-in ignored）及覆盖工具 8 passed；`postgres-backend,zvec-backend` 双 feature 为 lib 230 passed/0 failed（1 ignored）及覆盖工具 8 passed，包含 PostgreSQL 18 snapshot round-trip 和 zvec 0.5.1 create/upsert/query/reopen。严格 Clippy、fmt、Compose 静态解析均通过。只读确认本机已有 `postgres:18.4`、`rust:1.97.1-bookworm`、`debian:bookworm-slim`，且均同时带 DaoCloud 国内镜像标签；保留 zvec-rust + PostgreSQL 18.4 双后端、纯 Linux/纯 Docker 和国内镜像优先配置，不改版本号、不引入 MySQL。 |
+| 2026-07-21 11:45 | Agent Categorize/Retrieval 逐行对标与 GPU 三模型闭环 | 固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，逐行审计 `agent/component/categorize.py` 157 行、`agent/tools/retrieval.py` 329 行及 Retrieval/Categorize 示例 DSL。纯 Rust Canvas 新增 Categorize：保留 JSON 类别插入顺序，构造类别描述/样例 prompt，按历史窗口调用 tenant chat model，大小写不敏感统计类别出现次数，同票取先出现类别、无匹配取最后类别，并输出 `category_name/_next` 路由。新增 Retrieval runtime/backend trait：支持 `dataset_ids`/旧 `kb_ids`、动态变量按当前 tenant 的 KB 名称或 ID 解析、Agent/请求 KB fallback、`USER:` 前缀清理、embedding selector 一致性、BM25/向量权重、threshold、top-N/top-K、可选 tenant reranker、手工 metadata filter、formalized/JSON/doc aggregation 输出及结构化 references；后端再次执行 KB ACL，引用随 Agent completion 响应并写入会话。Memory、KG、cross-language、children/TOC 和 auto/semi-auto metadata 条件仍未对齐，DSL 保存时 fail closed。覆盖生成器增加两文件精确映射，4441 文件/1,267,740 文本行现为 aligned 44/9,943、partial 432/150,038、replaced 53/24,241、reference 3,912/1,083,518、unmapped 0。实机不重启既有模型：GPU OpenAI-compatible Qwen3.5-9B LLM、Qwen3-Embedding-4B（2,560 维）和 mxbai reranker 均由 Rust opt-in 契约测试真实调用并通过；默认 feature 231 passed/0 failed（另 1 个 opt-in ignored），`postgres-backend,zvec-backend` 234 passed/0 failed（另 1 ignored），原生 zvec create/upsert/query/reopen 覆盖继续通过；严格 Clippy 零告警。验证容器使用 DaoCloud `rust:1.97.1-bookworm`，缺省未带 Clippy component 时在一次性容器内经 rsproxy 国内源安装；`debian:bookworm-slim` 为 12.15；独立 `postgres:18.4` 新实例实连返回 `18.4 (Debian 18.4-1.pgdg13+1)` 后删除。未改动或重启主机已有 LLM/embedding/reranker/RAGFlow 服务。 |
+| 2026-07-21 10:36 | Agent Canvas 核心执行、覆盖表纠偏与三镜像实机闭环 | 逐行核对固定 RAGFlow v0.26.4 `agent/canvas.py`、`begin.py`、`switch.py`、`variable_aggregator.py`、`variable_assigner.py`、`string_transform.py`、`message.py` 及 DSL 样例；新增纯 Rust `src/agent.rs` Canvas 编译/执行器，支持唯一顶层 Begin、图引用校验、有界队列、`sys/env/component@path` 变量、Begin/LLM/Message/Switch/VariableAggregator/VariableAssigner/StringTransform、执行路径和 trace；可视化 DSL 含未支持组件时在执行前明确失败，仅历史无 `components` 记录保留 prompt-only 兼容。Agent CRUD、版本保存/恢复和 completion 均接入 DSL 校验，completion 新增 `inputs`、`workflow_path`、`workflow_trace` 并保持会话/usage 持久化。覆盖生成器纠正过去把 `agent/` 运行时误标为 reference 的口径；4441 文件/1,267,740 文本行现为 aligned 43/9,786、partial 433/150,195、replaced 53/24,241、reference 3,912/1,083,518、unmapped 0。新增 Cloudflare WebSocket SSH 标准库代理辅助脚本，不保存凭据并固定验证主机指纹。实机 Debian 12/Docker 28.5.2 上优先使用 DaoCloud、TUNA、Xget、rsproxy：精确 `rust:1.97.1-bookworm` 默认 feature `cargo check`、严格 Clippy 和 227 测试通过；双 feature 230 测试通过，含 zvec 0.5.1 create/upsert/query/flush/reopen。`postgres:18.4` 实连返回 18.4，冷启动生成 12 个 snapshot，最终 healthz 返回 PostgreSQL/zvec 均 healthy。Docker 实测发现并修复 `debian:bookworm-slim` 无 CA 时直接使用 HTTPS APT 的引导死锁：先通过同一国内镜像 HTTP + APT 签名安装 CA，再切回 HTTPS；修复 Compose 全新卷未传 `RAYRAG_ADMIN_PASSWORD` 导致立即退出，现为至少 12 字符的必填配置。最终双后端镜像从指定 Rust 镜像构建成功，在 Debian 12.15 运行层解析 `/opt/zvec/lib/libzvec_c_api.so` 并通过容器自带 healthcheck。远端 Docker 冒烟构建为节省传输仅复制 index/conf/logo 静态子集，本轮验证后端/存储/容器而未重跑前端资产完整性。全程不改版本号、不引入 MySQL。 |
+| 2026-07-21 01:15 | RAGFlow 全树逐行台账、Task 收口与 PostgreSQL/zvec readiness | 完整检出并校验固定 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f` 的 4441 文件；Rust `ragflow-coverage` 改为单个 `git cat-file --batch` 读取固定 blob，新增逐文件源码行数与按状态行数汇总（二进制明确为 `-`），当前共 1,267,740 文本行：aligned 43 文件/9,786 行、partial 286/111,461、replaced 53/24,241、reference 4,059/1,122,252、unmapped 0。逐行核对 `task_api.py` 全部 102 行，纠正旧台账不存在的“external log tail”描述；Rust POST/PATCH stop 现返回 `data:true`、对终态任务幂等成功、追加持久化取消消息并联动活动文档状态，同时保留 owner ACL 加固，故该文件升级 aligned。PostgreSQL snapshot worker 新增真实 `SELECT 1` 五秒探针；设置 URL 却未编译 feature 时 fail closed。zvec 启动校验数据目录，readiness 检查已打开 collection stats；公开 healthz 依据两后端真实状态返回 200/500，鉴权 system status 对齐 doc_engine/storage/database/task_executor_heartbeats。Dockerfile/Compose 增加 curl healthcheck；Compose 优先 DaoCloud 国内镜像拉取但严格保持 `postgres:18.4`、`rust:1.97.1-bookworm`、`debian:bookworm-slim` 标签，APT 继续优先 TUNA、zvec 继续优先 Xget，全部可由 `.env` 回切官方源。验证：Rust 1.97.1 `cargo fmt --all -- --check` 通过；覆盖生成器及测试目标经 rustc metadata 类型检查通过；宿主缺少 Docker/WSL/VS linker，旧 SSH 主机 DNS 不可达，故本轮未冒充完整 cargo test/Clippy/三镜像 runtime smoke，保留待 Linux/Docker 环境复验项。全程纯 Rust，不引入 MySQL，不改版本号。 |
+| 2026-07-19 19:19 | Generation Params 统一解析与三入口接线 | 固定 RAGFlow v0.26.4 `api/apps/restful_apis/_generation_params.py` 逐行审计：精确白名单为 `temperature/top_p/frequency_penalty/presence_penalty/max_tokens`，仅抽取非 null 顶层字段，chat 路径会从剩余请求中弹出这些键，覆盖值深拷贝后合并到既有 dialog `llm_setting`，未知字段不进入生成配置；默认 dialog 值来自固定版模型定义 0.1/0.3/0.7/0.4/512。新增纯 Rust `GenerationParams`/`GenerationParamsPatch`，统一数值类型、有限值及 UI 固定范围（四个浮点参数 0..=1，max_tokens 1..=128000）校验，null 保留默认、未知字段忽略；`LlmClient` 现在把五项全部序列化给 OpenAI-compatible provider。Chat RAG、Agent completion、OpenAI proxy 均接入同一层，tenant 显式默认 Chat selector 优先于通用环境 fallback，未配置时才保持旧 fallback；重生成沿用已持久化模型绑定并使用服务器默认生成值。补解析/合并/边界/序列化单测以及 chat/agent/openai HTTP 422 契约测试。覆盖矩阵将该文件标为 aligned；RAGFlow Python 本身不做服务端类型/范围校验、通常由 provider 拒绝，RayRAG 的 422 是明确且更早的本地错误契约。全程未启动/重启/干预 RAGFlow，纯 Rust、Linux/Docker、零 MySQL，保留 zvec-rust + PostgreSQL 18.4，不改版本号。 |
+| 2026-07-19 18:41 | Tenant 默认 Chat selector 与 builtin tenant 选择收尾 | 新增显式 tenant-scoped 默认 Chat selector 的 GET/PUT：GET 允许成员读取，PUT 仅 owner/admin 管理，`selector: null`/空串显式清除，旧数组快照自动迁移为对象 envelope 且不臆造默认值，selector 与模型实例一起原子持久化并经重启恢复。采用强一致语义：若模型实例更新会禁用/移除默认 selector 指向的 Chat 模型，或删除其实例，则拒绝整个 mutation、完整回滚内存与磁盘并返回明确 HTTP 409（`code=409`）；无效 selector/一般校验错误返回 400，避免静默 fallback。`GET /api/v1/compilation_templates/builtins` 默认个人 tenant；`?tenant_id=<shared>` 必须通过 TenantStore membership，否则 403；`list_builtins_for` 只读取选定 tenant 的 selector，跨 tenant 不污染。覆盖共享 tenant GET/PUT 权限、清除、旧数组迁移、重启稳定、禁用/删除阻止及 409/400 契约。全程纯 Rust，保留 zvec-rust + PostgreSQL 18.4、Linux/Docker、零 MySQL，不改版本号。 |
+| 2026-07-19 17:46 | Stats Agent/canvas session 闭环 | 从运行中的 RAGFlow v0.26.4 容器逐行核对 `stats_api.py`、`API4Conversation` 与 `canvas_service.completion`：`canvas_id` 参数选择 `source=agent`，会话以 canvas/agent ID 关联且可由 session ID 续接。RayRAG `Conversation` 新增 serde 兼容的 `source` 与 `canvas_id`，旧 JSON 缺字段自动固化为 `source=chat`；Agent completion 现在创建或按调用者 owner + tenant + canvas 精确复用持久化会话，保存完整 user/assistant 回合、duration 与 provider usage，同时保持原 `answer` 响应字段并增补 conversation/message ID。Agent tenant 默认使用其 owner tenant（内置 Agent 使用调用者个人 tenant），team member 需已接受 membership，跨 owner/tenant/canvas 续接均隐藏为不存在。Stats 无 canvas 时只汇总 `source=chat`，有 canvas 时按 tenant + `source=agent` + 精确 canvas_id 汇总，普通 Chat 和其他 canvas 不混入。补旧 JSON迁移、重启、跨 tenant/canvas/source、ACL、续接和公式测试；完整 Canvas DAG runtime 仍为独立差异。全程纯 Rust，不改 zvec-rust/PostgreSQL 18.4，不引入 MySQL，不改版本号。 |
+| 2026-07-19 17:21 | Stats 精确 token usage 闭环 | 继续固定 RAGFlow v0.26.4 `stats_api.py` / `API4Conversation.tokens` 对标：审计确认 RayRAG 当前 provider 抽象是枚举 + `LlmClient`（无 `ChatProvider` trait），因此新增向后兼容 `ChatCompletion`/`TokenUsage`，保留原 `chat`/`rag_chat` 的字符串适配方法；OpenAI-compatible 非流式响应解析 `usage.prompt_tokens`、`completion_tokens`、`total_tokens`（缺 total 时由 split 安全推导），RAG 生成把 usage 写入 assistant message，重生成同步替换，旧 JSON 缺字段保持 `None`。Stats 以回合为单位：有 provider usage 时只计该回合 exact total，避免再重复累计 user/assistant 内容；旧记录、本地占位及不返回 usage 的 provider 使用统一纯 Rust tokenizer 估算 fallback。OpenAI proxy 也透传上游 usage。补充 usage 解析/缺失兼容、持久化/重生成、精确优先/混合 fallback/不重复计数测试；agent/canvas session 仍待实现，固定版普通 iframe 路径本身也未在该调用点显式写 `API4Conversation.tokens`。全程纯 Rust，不引入 MySQL，不改 PostgreSQL 18.4/zvec，不改版本号。 |
+| 2026-07-19 16:41 | Stats 共享 tenant 会话隔离 | 接续固定 RAGFlow v0.26.4 stats 对标：`Conversation` 新增 serde 向后兼容的 `tenant_id`，旧 JSON 缺失字段在加载时回填 `owner_id` 并立即原子固化；创建会话接受可选 `tenant_id`，省略时保持个人 tenant=`user_id`，显式共享 tenant 必须验证调用者已接受 membership；`/api/v1/stats` 同样先验证明确选定 tenant 的成员权限，再按 `tenant_id` 汇总该 tenant 内所有成员创建的会话，避免按 owner 过滤造成串租户或漏统计。补充 legacy 落盘、tenant store 过滤、共享/个人隔离及 HTTP 权限测试；agent/canvas session 和精确模型 usage 仍待实现。全程纯 Rust，不引入 MySQL，不改 PostgreSQL 18.4/zvec，不改版本号。 |
+| 2026-07-19 16:14 | Stats 会话统计语义对标 | 从运行容器逐行核对固定 RAGFlow v0.26.4 `api/apps/restful_apis/stats_api.py`、`API4ConversationService.stats` 与 `API4Conversation` 模型，替换原先不等价的文档/块/KB/会话库存总数；`GET /api/v1/stats` 现受 Bearer 鉴权保护，按当前用户个人 tenant 的会话、`from_date`/`to_date`（日期型结束值扩展至 23:59:59）和 UTC 日桶返回 `pv`、`uv`、`speed`、`tokens`、`round`、`thumb_up` 六组序列，PV/UV/平均轮次/点赞计数以及 tokens÷(duration+0.1)、tokens÷1000 公式对齐；会话新增向后兼容的累计生成耗时。本批保持 partial：RayRAG 会话尚未显式保存独立 tenant_id，故不能把用户加入的共享 tenant 会话混入当前用户口径；也尚未持久化 agent/canvas session，出现 `canvas_id` 时返回诚实空 agent 序列；token 目前按持久化消息空白词估算，未保存模型精确 usage。全程纯 Rust，不引入 MySQL，不改 PostgreSQL 18.4/zvec 架构。 |
+| 2026-07-19 15:28 | System 运行时日志级别 | 对标运行容器 RAGFlow v0.26.4 `system_api.py` 与 `common/log_utils.py`，新增纯 Rust、受 Bearer 鉴权保护的 GET/PUT `/api/v1/system/config/log`；启动时解析 `LOG_LEVELS`，保留 root/peewee/pdfminer 默认级别，PUT 对大小写不敏感并返回规范级别，借助 `tracing-subscriber` reload handle 原子热更新 target filter，无需重启；无效级别保持 RAGFlow data-error 响应语义；系统 API 仍因 token 持久化、task executor heartbeat 等差异保持 partial |
+| 2026-07-19 15:11 | Task PATCH stop 兼容 | 对标运行容器 RAGFlow v0.26.4 `task_api.py`，新增受鉴权和 owner ACL 保护的 `PATCH /api/v1/tasks/{task_id}`；仅接受 `{"action":"stop"}` 并复用现有持久化 cooperative cancel，其他 action 返回 400 精确错误；覆盖矩阵记录 Redis cancel flag 与不存在/终态任务幂等语义仍有差异，全程纯 Rust且不引入 MySQL |
+| 2026-07-19 14:50 | RAGFlow 全树清单续审 + 国内下载源 | 保留固定 v0.26.4 的 4441 文件覆盖矩阵，并给 stats/task/system API 增加显式语义映射与测试，避免继续落入通用 API 分类；Docker builder/运行层 APT 默认切换清华 TUNA，zvec-rust 预编译库默认经 Xget 下载且均可由 `.env` 覆盖；实测本地 `rust:1.97.1-bookworm`（rustc/cargo 1.97.1）、`debian:bookworm-slim`、`postgres:18.4`（PGDATA=/var/lib/postgresql/18/docker）镜像有效；修复 Candle 模块文档的 rustdoc 误编译，完整 188 单元测试 + doctest、严格 Clippy、Compose 静态校验通过 |
+| 2026-07-19 13:20 | Compilation Template Group + 精确 Docker 基线 | 固定 v0.26.4 的 compilation template/group service、API 与校验逐行对标；新增纯 Rust tenant 隔离的 compilation_templates.json 原子持久化、PostgreSQL 18.4 snapshot 镜像、组/子模板 CRUD、分页筛选、scope 与嵌套字段约束、HTTP 生命周期及跨 tenant 隐藏测试；builtins/wiki preset 留待下一批；Docker builder 精确固定 rust:1.97.1-bookworm，运行层 debian:bookworm-slim、数据库 postgres:18.4，继续不引入 MySQL |
+| 2026-07-18 23:45 | 固定提交全树清单修复 + Canvas 版本历史 | 修复 `ragflow-coverage` 过期硬编码 105 文件门禁，改为直接读取固定 v0.26.4 commit tree 的 4441 个 blob，当前清单 unmapped=0；对标 `user_canvas_version.py` 新增纯 Rust `CanvasVersionStore`、`canvas_versions.json` 原子持久化/PostgreSQL snapshot、严格单调版本顺序、同 DSL 原位刷新、已发布版本保护、仅保留最新 20 个未发布草稿、Agent 创建/更新/删除联动和受 ACL 保护的版本列表/详情 API；修复 Docker 状态卷遮蔽静态资源，entrypoint 从只读种子目录幂等初始化；PostgreSQL 18.4 新卷完成版本/建表/读写 smoke，Compose health 增加 90 秒初始化窗口 |
+| 2026-07-17 17:36 | RAGFlow 105 文件覆盖矩阵 + 操作日志 | 新增纯 Rust `ragflow-coverage` 工具，固定 v0.26.4 commit 并为全部 105 个项目文件生成 SHA-256、状态、Rust 映射与审计说明；对标 `pipeline_operation_log_service.py` 扩展 Task 持久化 kb_id/task_type/started_at/finished_at，以终态任务作为不可变操作历史，新增 KB ACL、状态/类型/关键词/时间筛选和稳定分页 API |
+| 2026-07-17 15:26 | PostgreSQL 18.4 + Linux/Docker 部署 | 删除 MySQL 驱动、feature、环境变量和 Compose；新增 PostgreSQL 18.4 snapshot mirror、版本门禁、事务 advisory lock、checksum 恢复校验、应用 Dockerfile 和 PostgreSQL/RayRAG 双服务 Compose；保留 zvec-rust 独立向量层及无 native library 时的显式 JSON 回退 |
+| 2026-07-17 13:20 | Rust Agent/Canvas 持久化与 ACL | 对标 canvas_service/agent_api；新增 agents.json、Agent CRUD、DSL/prompt/KB/tags/category/type、owner/team 可见性、team 协作更新、owner-only 删除、标题唯一、标签聚合、MySQL snapshot 恢复及 HTTP 生命周期测试 |
+| 2026-07-17 12:45 | zvec HTTP 在线索引 + 关系库镜像原型 | 在线文档/chunk/反馈写路径统一 JSON+zvec 事务提交和回滚；按 KB 隔离 collection，启动 reconcile 清理陈旧主键；该关系库原型已在 15:26 批次由 PostgreSQL 18.4 实现完全替代 |
+| 2026-07-16 23:59 | zvec-rust 原生后端 + 状态镜像原型 | `ZvecStore` 改为 JSON/zvec 双后端，真实 HNSW Cosine collection、upsert/query/flush/reopen，修复 JSON 写后不可读；CLI parse 可直接持久化 collection；关系库实现现已统一为 PostgreSQL 18.4 |
+| 2026-07-16 22:51 | Rust 会话生命周期与真实重新生成 | 对标 v0.26.4 conversation/chat API；新增 owner-scoped rename/delete、稳定 message ID 成对删除、旧回答 CAS 原位 regenerate、会话 KB/chat/embedding 模型绑定与 legacy 默认；普通发送和 regenerate 共用检索/tenant LLM helper；Web 不再追加 `regenerate` 伪问题；160 tests passed，严格 Clippy 零告警 |
+| 2026-07-16 22:16 | Rust 文档级 Metadata 真源 | 对标 v0.26.4 metadata service/utils；新增独立 `document_metadata.json` 原子存储、整对象替换、列表拆分去重、keys/summary/batch API、文档响应 enrichment、三条检索入口 manual metadata filter、引用字段白名单和删除级联事务；156 tests passed，严格 Clippy 零告警 |
+| 2026-07-16 21:52 | Rust Chunk 完整生命周期 | 对标 v0.26.4 `chunk_api.py`，新增 chunk 单条读取、分页/关键词/可用状态列表、手工新增、整块更新、批量删除和批量启停；新增/修改内容复用 KB 持久化 embedding selector，索引、文档 chunk_count 与 KB chunk_count 通过同一提交锁保持一致，保存失败完整回滚；disabled chunk 在向量与混合检索中统一不可见；150 tests passed，严格 Clippy 零告警 |
+| 2026-07-16 19:09 | Rust KB embedding 运行时绑定 | KB 创建/更新校验并固化 tenant embedding selector；已有索引禁止直接换模型；文档索引、weighted search、`/retrieval`、Dify 和 Chat 共用 owner tenant 解析 helper；多 KB 不同向量空间明确失败；legacy `default` 回退保留；129 tests passed |
+| 2026-07-16 17:23 | Rust tenant Provider/模型能力绑定 | 新增 `tenant_models.json`、tenant Provider 多实例、六类模型能力、成员只读与 owner/admin 管理、跨 tenant 隔离、密钥脱敏/保留/清除、失败回滚、重启恢复、孤儿 Provider 删除保护；`/llm/models` 改为按 tenant 能力展开；125 tests passed |
+| 2026-07-16 17:20 | Rust Provider 持久化 | 新增 `providers.json` 原子存储、`0600` 密钥保护、管理员增删改 API、URL/模型校验、密钥保留/显式清除、失败回滚和重启恢复；模型列表统一从 ProviderStore 派生；121 tests passed |
+| 2026-07-16 14:08 | Rust GraphRAG/RAPTOR 生产接线 | RAPTOR 摘要以 marker 普通 chunk 随文档原子替换；GraphRAG 文档 checkpoint + KB 合并图持久化到 `graphrag.json`；重处理/删除失败恢复旧索引与图谱；weighted search/通用 retrieval 返回 `graph_context`；115 tests passed |
+| 2026-07-16 13:14 | Rust reranker 热配置 | 新增持久化 `RerankerManager`、管理员 `GET/PUT /api/v1/reranker` 与 Providers 配置 UI；运行实例原子热替换，无需重启；环境变量作为首次启动默认值；密钥不回显、留空保留/显式清除、文件 `0600`；111 tests passed |
+| 2026-07-16 12:21 | Rust rank feature 与检索展示语义 | 对标 v0.26.4 `search.py`；三条检索入口前置 `doc_ids` 过滤，Pagerank + tag 余弦 `10x` 增益在本地/外部 reranker 路径一致保留；阈值后全量 `total`/`doc_aggs` 独立于深分页块，当前页 HTML 安全 highlight；108 tests passed |
+| 2026-07-16 12:20 | Rust 外部 reranker 与深分页 | 对标 v0.26.4 `rerank_by_model`/`_rerank_window`/`retrieval`；共享 HTTP reranker、严格响应校验和超时、503/502 契约、约 64 条页对齐候选块、Dify 候选扩展、普通 `1/2/5/6` 与模型 `1/1/1` 字段词项分支 |
+| 2026-07-16 11:40 | Rust 中英文混合检索 | 对标 v0.26.4 `rag/nlp/search.py` retrieval/rerank；统一 weighted/Dify/通用 retrieval，BM25 + cosine 按 `1-vector_weight`/`vector_weight` 融合，纯全文无需 embedding，CJK unigram+bigram，维度防护；94 tests passed |
+| 2026-07-16 10:41 | Rust tenant/team ACL | 对标 v0.26.4 `check_team_permission.py` 与 KB service；新增 `tenants.json` 原子 membership、幂等邀请/成员列表/移除、private/team KB、读写权限拆分；team 成员可检索读取但不可上传/重解析/删除/改权限；跨用户移除即时失权；88 tests passed |
+| 2026-07-16 09:05 | Rust 任务优先级与公平调度 | 对标 v0.26.4 的 0/1 两级优先队列；普通上传低优先、主动重解析高优先；默认 4 并发槽位、高优先先行、同级 FIFO、60 秒 aging 防饥饿；旧 JSON 默认低优先；64 tests passed |
+| 2026-07-16 08:35 | Rust worker 租约与 fencing | 对标 v0.26.4 Redis consumer/unacked/ack；实现单进程 claim token、30 秒租约、10 秒续租、5 秒扫描、过期重领、active guard、旧 worker 禁止提交及并发快照串行化；59 tests passed |
+| 2026-07-16 07:55 | 批量上传与哈希幂等 | 同 KB 重名递增；最多 32 文件批量上传；逐文件部分成功；`indexed_content_hash` 在索引成功后提交，未变化重解析跳过；53 tests passed |
+| 2026-07-16 03:00 | 流式上传与内容指纹 | 纯 Rust multipart 分块临时文件、动态限流、xxHash128、sync_all + 原子 rename + 目录 sync；空文件/超限/多文件/损坏 OOXML 无残留测试；48 tests passed |
+| 2026-07-16 02:05 | 权限与上传第三轮审计 | Chunk/Chat/File/Task/Stats/Agent owner 隔离；管理写接口 admin 校验；真实用户列表；multipart body 上限和 magic/容器校验；44 tests passed |
+| 2026-07-16 01:05 | RAGFlow v0.26.4 二次审计 | 纯 Rust 持久化任务状态机、三次尝试/取消/重启恢复、KB owner 权限边界、检索目标权限校验；39 tests passed |
+| 2026-07-15 23:58 | P0 链路修复 | 恢复 dataset handlers；原生 multipart；后台 parse/chunk/embed/index；文档级索引替换/删除；KB 检索隔离；统一鉴权与上传集成测试；35 tests passed |
+| 2026-07-11 22:32 | UI对齐 | Chat详情(📋复制/🔄重新生成/👍👎/设置面板) + Search(📄文档预览弹窗) + Dataset Config(10种分块方法/Parser/RAPTOR深度/GraphRAG实体类型) + KB卡片网格 + Dashboard卡片布局 + 16页/40路由 |
+| 2026-07-11 21:08 | UI增强 | 头栏导航(椭圆pill) + 头像下拉 + 暗色/亮色主题 + 中英切换 + RAGFlow设计对齐率 >95% |
+| 2026-07-11 18:16 | UI全覆盖 | 9个RAGFlow页面补齐（Chat/Dataset/Files/Agent/Memory/Admin/Login）+ 上传按钮修复（base64 JSON）+ 全页面按钮→API端到端验证 |
+| 2026-07-11 17:48 | 6项补齐 | 专用应用解析器(12种) + Tool Calling + Benchmark(MRR/NDCG) + GraphRAG社区报告 + Flow引擎(DAG拓扑) + 多模态(Vision/OCR/TTS)；52源文件/9451行 |
+| 2026-07-11 17:36 | 5项完善 | 树形查询分解(DeepResearcher) + SSE Streaming + 分块策略(5种) + GraphRAG(NER+图谱) + Prompt模板；50源文件/8803行 |
+| 2026-07-11 17:23 | 全栈增强 | NLP管线(5分块)+LLM(ChatProvider+模型注册)+GraphRAG(NER+实体消歧+图谱搜索)+Prompt模板(8模板)+混合搜索(BM25+同义词+查询改写)；50源文件/8558行 |
+| 2026-07-11 17:02 | SSR 前端 | 纯 Rust SSR 管理面板替换 RAGFlow React（`web.rs`） |
+| 2026-07-11 16:42 | API 补齐 | 17 API 模块（search/connector/mcp/bot/channel/plugin/system/user/tenant/models/langfuse 等）→ 58 端点 |
+| 2026-07-11 14:28 | 核心功能 | 10 项（OpenAI代理/文档/文件/Chunk/对话/Provider/记忆/统计/任务/Agent） |
+| 2026-07-11 13:37 | Parser | figure/resume/mineru/docling/paddleocr_layout/opendataloader/tcadp → 17/17 |
+| 2026-07-11 13:35 | Advanced RAG | 多跳检索 |
+| 2026-07-11 13:28 | P0+P1 | KB CRUD + LLM RAG Chat + Excel/CSV |
+| 2026-07-11 12:08 | v0.1.2 | OCR + zvec + RAPTOR/GraphRAG + reranker + auth |
+| 2026-07-11 07:10 | v0.1.1 | Web UI + 编译修复（17→0） |
+| 2026-07-10 21:47 | v0.1.0 | 初始骨架（12 源文件 / 1073 行） |

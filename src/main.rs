@@ -10,7 +10,7 @@
 //! ```
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rayrag::{pipeline::Pipeline, ParserConfig};
+use rayrag::{pipeline::Pipeline, Embedder, ParserConfig};
 use tracing_subscriber;
 
 #[derive(Parser)]
@@ -69,6 +69,29 @@ enum Commands {
         /// Static files directory (default: web/static)
         #[arg(long, default_value = "web/static")]
         static_dir: String,
+    },
+
+    /// Search indexed documents using vector similarity
+    Search {
+        /// Search query text
+        #[arg(short, long)]
+        query: String,
+
+        /// Path to JSON index file
+        #[arg(short, long, default_value = "index.json")]
+        index: String,
+
+        /// Number of results to return (top-k)
+        #[arg(long, default_value = "10")]
+        top_k: usize,
+
+        /// Embedding model path (for query embedding)
+        #[arg(long, default_value = "models/all-MiniLM-L6-v2")]
+        model_path: String,
+
+        /// Use OpenAI API for embedding instead of local
+        #[arg(long)]
+        openai: bool,
     },
 }
 
@@ -218,6 +241,80 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             rayrag::server::run(port, &static_dir).await?;
+            Ok(())
+        }
+        Commands::Search {
+            query,
+            index,
+            top_k,
+            model_path,
+            openai,
+        } => {
+            // Load or create index
+            let engine = if std::path::Path::new(&index).exists() {
+                rayrag::search::SearchEngine::from_file(&index)?
+            } else {
+                anyhow::bail!(
+                    "Index file not found: {}\n\
+                     Build an index first:\n\
+                       rayrag parse docs/*.pdf --embed --mode candle --model-path {}",
+                    index, model_path
+                );
+            };
+
+            if engine.is_empty() {
+                println!("⚠️  Index is empty — no chunks to search.");
+                return Ok(());
+            }
+
+            // Embed the query
+            println!("🔍 Searching for: \"{}\"", query);
+            println!("📦 Index: {} chunks", engine.len());
+
+            let query_embedding = if openai {
+                anyhow::bail!("OpenAI mode not yet supported for search");
+            } else {
+                // Use local Candle embedder
+                let p = std::path::Path::new(&model_path);
+                if !p.join("model.safetensors").exists() {
+                    anyhow::bail!(
+                        "Candle model not found at: {}\n\
+                         Download it via the RayRAG UI first.",
+                        model_path
+                    );
+                }
+                let embedder = rayrag::embed::CandleEmbedder::load(
+                    rayrag::embed::CandleConfig::from_local(&model_path),
+                )
+                .await?;
+                let embs = embedder.embed(&[&query]).await?;
+                embs.into_iter().next().unwrap_or_default()
+            };
+
+            // Search
+            let results = engine.search(&query_embedding, top_k);
+
+            println!("\n📊 Results ({}):\n", results.len());
+            for result in &results {
+                println!(
+                    "#{}. [score: {:.4}] {} | {}",
+                    result.rank + 1,
+                    result.score,
+                    result.chunk.doc_name,
+                    result.chunk.id,
+                );
+                let preview = if result.chunk.content.len() > 150 {
+                    format!("{}...", &result.chunk.content[..150])
+                } else {
+                    result.chunk.content.clone()
+                };
+                println!("   {}\n", preview);
+            }
+
+            if results.is_empty() {
+                println!("   (no results found)");
+            }
+
             Ok(())
         }
     }

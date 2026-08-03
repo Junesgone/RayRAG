@@ -247,11 +247,12 @@ impl CandleEmbedder {
     /// Download model files from a specific endpoint.
     async fn download_model(endpoint: &str, config: &CandleConfig) -> Result<DownloadedFiles> {
         // hf-hub reads HF_ENDPOINT env var for the endpoint URL.
-        // Guard with a mutex to prevent races in concurrent downloads.
-        static HF_ENDPOINT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = HF_ENDPOINT_LOCK.lock().unwrap();
-        // SAFETY: set_var is called under a global mutex lock, no concurrent access
-        // to the HF_ENDPOINT env var from other threads.
+        // Use tokio::sync::Mutex to avoid blocking the async runtime.
+        static HF_ENDPOINT_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+            std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+        let _guard = HF_ENDPOINT_LOCK.lock().await;
+        // SAFETY: set_var is called under a mutex lock, no concurrent access
+        // to the HF_ENDPOINT env var from other tasks.
         unsafe { std::env::set_var("HF_ENDPOINT", endpoint) };
         let api = hf_hub::api::tokio::Api::new()?;
         drop(_guard); // Release lock after Api is created (it captures endpoint at build time)

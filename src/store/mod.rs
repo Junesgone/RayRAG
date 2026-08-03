@@ -69,7 +69,7 @@ impl ZvecStore {
     /// TODO: Implement with zvec-rust when ready.
     pub fn search(
         &self,
-        query_embedding: &[f32],
+        _query_embedding: &[f32],
         top_k: usize,
     ) -> Result<Vec<SearchResult>> {
         tracing::info!(

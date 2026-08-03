@@ -5,9 +5,9 @@
 
 use crate::chunk::{self, ChunkStrategy};
 use crate::embed::Embedder;
-use crate::parser::{self, Parse};
+use crate::parser;
 use crate::store::ZvecStore;
-use crate::{Chunk, Document, ParserConfig, Result};
+use crate::{Chunk, ParserConfig, Result};
 
 /// The full RayRAG parsing pipeline.
 pub struct Pipeline {

@@ -68,24 +68,24 @@ fn table_to_text(t: &docx_rs::Table) -> String {
     let mut text = String::new();
     // docx-rs 0.4.x: Table.rows is Vec<TableChild>, not Vec<Row>
     for row in &t.rows {
-        if let docx_rs::TableChild::TableRow(tr) = row {
-            let mut row_text = String::new();
-            // tr.cells is Vec<TableRowChild>, not Vec<Cell>
-            for cell in &tr.cells {
-                if let docx_rs::TableRowChild::TableCell(tc) = cell {
-                    // tc.children is Vec<TableCellContent>, not paragraphs
-                    for content in &tc.children {
-                        if let docx_rs::TableCellContent::Paragraph(p) = content {
-                            row_text.push_str(&paragraph_to_text(p));
-                            row_text.push(' ');
-                        }
-                    }
+        #[allow(irrefutable_let_patterns)]
+        let docx_rs::TableChild::TableRow(tr) = row;
+        let mut row_text = String::new();
+        // tr.cells is Vec<TableRowChild>, not Vec<Cell>
+        for cell in &tr.cells {
+            #[allow(irrefutable_let_patterns)]
+            let docx_rs::TableRowChild::TableCell(tc) = cell;
+            // tc.children is Vec<TableCellContent>, not paragraphs
+            for content in &tc.children {
+                if let docx_rs::TableCellContent::Paragraph(p) = content {
+                    row_text.push_str(&paragraph_to_text(p));
+                    row_text.push(' ');
                 }
-                row_text.push('\t');
             }
-            text.push_str(&row_text);
-            text.push('\n');
+            row_text.push('\t');
         }
+        text.push_str(&row_text);
+        text.push('\n');
     }
     text
 }
