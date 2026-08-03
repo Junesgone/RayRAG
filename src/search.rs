@@ -604,6 +604,244 @@ fn field_bm25_scores<'a>(
         .collect()
 }
 
+/// Rerank candidates with RAGFlow's lexical+vector fusion —
+/// mirrors `Dealer.rerank` (search.py:361-398) for the in-memory engine.
+/// `cfield` tokens come from chunk metadata (content_ltks); title/important
+/// keyword/question token fields are read from metadata when present.
+/// Returns (fused_scores, tksim, vtsim) aligned with `candidates` order.
+pub fn ragflow_rerank(
+    candidates: &[HybridSearchResult],
+    query: &str,
+    tw: &crate::nlp::TermWeightComputer,
+    tkweight: f64,
+    vtweight: f64,
+    rank_feature: Option<&HashMap<String, f32>>,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let keywords = tokenize_query_keywords(query);
+    let mut ins_embd: Vec<Vec<f32>> = Vec::new();
+    for c in candidates {
+        ins_embd.push(c.chunk.embedding.clone());
+    }
+    let ins_tw: Vec<Vec<String>> = candidates
+        .iter()
+        .map(|c| {
+            let content_ltks: Vec<String> = c
+                .chunk
+                .metadata
+                .get("content_ltks")
+                .map(|s| s.split_whitespace().map(String::from).collect())
+                .unwrap_or_default();
+            let mut title_tks: Vec<String> = c
+                .chunk
+                .metadata
+                .get("title_tks")
+                .map(|s| s.split_whitespace().map(String::from).filter(|t| !t.is_empty()).collect())
+                .unwrap_or_default();
+            let question_tks: Vec<String> = c
+                .chunk
+                .metadata
+                .get("question_tks")
+                .map(|s| s.split_whitespace().map(String::from).filter(|t| !t.is_empty()).collect())
+                .unwrap_or_default();
+            let important_kwd: Vec<String> = c
+                .chunk
+                .metadata
+                .get("important_kwd")
+                .map(|s| s.split_whitespace().map(String::from).collect())
+                .unwrap_or_default();
+            let mut tks = content_ltks;
+            tks.extend(title_tks.iter().cloned());
+            tks.extend(title_tks.iter().cloned());
+            tks.extend(important_kwd.iter().cloned());
+            tks.extend(important_kwd.iter().cloned());
+            tks.extend(important_kwd.iter().cloned());
+            tks.extend(important_kwd.iter().cloned());
+            tks.extend(important_kwd.iter().cloned());
+            tks.extend(question_tks.iter().cloned());
+            tks.extend(question_tks.iter().cloned());
+            tks.extend(question_tks.iter().cloned());
+            tks.extend(question_tks.iter().cloned());
+            tks.extend(question_tks.iter().cloned());
+            tks.extend(question_tks.iter().cloned());
+            tks
+        })
+        .collect();
+
+    let rank_fea = ragflow_rank_feature_scores(rank_feature, candidates);
+    let (sim, tksim, vtsim) = tw.hybrid_similarity(
+        &query_embedding_zero(),
+        &ins_embd,
+        &keywords,
+        &ins_tw,
+        tkweight,
+        vtweight,
+    );
+    let fused: Vec<f64> = sim
+        .iter()
+        .zip(rank_fea.iter())
+        .map(|(s, r)| s + r)
+        .collect();
+    (fused, tksim, vtsim)
+}
+
+/// Rerank with an external reranker model —
+/// mirrors `Dealer.rerank_by_model` (search.py:400-441):
+/// fused = tkweight * tksim + vtweight * vtsim + rank_fea, where vtsim comes
+/// from the reranker's relevance scores (aligned with candidates order).
+pub fn ragflow_rerank_by_model(
+    candidates: &[HybridSearchResult],
+    query: &str,
+    tw: &crate::nlp::TermWeightComputer,
+    tkweight: f64,
+    vtweight: f64,
+    reranker_scores: &[f32],
+    rank_feature: Option<&HashMap<String, f32>>,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    assert_eq!(
+        candidates.len(),
+        reranker_scores.len(),
+        "reranker scores must align with candidates"
+    );
+    let keywords = tokenize_query_keywords(query);
+    let ins_tw: Vec<Vec<String>> = candidates
+        .iter()
+        .map(|c| {
+            let content_ltks: Vec<String> = c
+                .chunk
+                .metadata
+                .get("content_ltks")
+                .map(|s| s.split_whitespace().map(String::from).collect())
+                .unwrap_or_default();
+            let title_tks: Vec<String> = c
+                .chunk
+                .metadata
+                .get("title_tks")
+                .map(|s| s.split_whitespace().map(String::from).filter(|t| !t.is_empty()).collect())
+                .unwrap_or_default();
+            let important_kwd: Vec<String> = c
+                .chunk
+                .metadata
+                .get("important_kwd")
+                .map(|s| s.split_whitespace().map(String::from).collect())
+                .unwrap_or_default();
+            let mut tks = content_ltks;
+            tks.extend(title_tks);
+            tks.extend(important_kwd);
+            tks
+        })
+        .collect();
+
+    let tksim = tw.token_similarity(&keywords, &ins_tw);
+    let rank_fea = ragflow_rank_feature_scores(rank_feature, candidates);
+    let vtsim: Vec<f64> = reranker_scores.iter().map(|s| *s as f64).collect();
+    let fused: Vec<f64> = tksim
+        .iter()
+        .zip(vtsim.iter())
+        .zip(rank_fea.iter())
+        .map(|((t, v), r)| tkweight * t + vtweight * v + r)
+        .collect();
+    (fused, tksim, vtsim)
+}
+
+/// Tokenize a query into keyword tokens (space-split, non-empty).
+fn tokenize_query_keywords(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(String::from)
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// A zero query vector (no embedding available) — mirrors the in-memory
+/// engine's embedding-less path.
+fn query_embedding_zero() -> Vec<f32> {
+    Vec::new()
+}
+
+/// Rank-feature scores — mirrors `Dealer._rank_feature_scores`
+/// (search.py:328-360): tag-feature cosine boost ×10 plus chunk pagerank.
+pub fn ragflow_rank_feature_scores(
+    query_features: Option<&HashMap<String, f32>>,
+    candidates: &[HybridSearchResult],
+) -> Vec<f64> {
+    let pageranks: Vec<f64> = candidates
+        .iter()
+        .map(|c| {
+            c.chunk
+                .metadata
+                .get("pagerank_fea")
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+                .unwrap_or(0.0)
+        })
+        .collect();
+
+    let Some(query_features) = query_features else {
+        return pageranks;
+    };
+    let q_denor: f64 = query_features
+        .iter()
+        .filter(|(t, s)| *t != "pagerank_fea" && s.is_finite())
+        .map(|(_, s)| (*s as f64) * (*s as f64))
+        .sum::<f64>()
+        .sqrt();
+    if q_denor == 0.0 {
+        return pageranks;
+    }
+    let mut rank_fea = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        let tag_fea = c
+            .chunk
+            .metadata
+            .get("tag_fea")
+            .map(|s| parse_tag_features(s))
+            .unwrap_or_default();
+        if tag_fea.is_empty() {
+            rank_fea.push(0.0);
+            continue;
+        }
+        let mut nor = 0.0_f64;
+        let mut denor = 0.0_f64;
+        for (t, sc) in &tag_fea {
+            if let Some(qs) = query_features.get(t) {
+                nor += (*qs as f64) * sc;
+            }
+            denor += sc * sc;
+        }
+        if denor == 0.0 {
+            rank_fea.push(0.0);
+        } else {
+            rank_fea.push(nor / denor.sqrt() / q_denor);
+        }
+    }
+    rank_fea
+        .into_iter()
+        .zip(pageranks)
+        .map(|(r, p)| r * 10.0 + p)
+        .collect()
+}
+
+/// Parse a tag-feature string like `{"tag": 1.5, ...}` (JSON or Python dict).
+fn parse_tag_features(s: &str) -> HashMap<String, f64> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return HashMap::new();
+    }
+    let json = trimmed
+        .replace('(', "[")
+        .replace(')', "]")
+        .replace('\'', "\"");
+    serde_json::from_str::<serde_json::Value>(&json)
+        .ok()
+        .and_then(|v| v.as_object().cloned())
+        .map(|obj| {
+            obj.into_iter()
+                .filter_map(|(k, v)| v.as_f64().map(|n| (k, n)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -989,5 +1227,83 @@ mod tests {
             rank_feature_score: 0.0,
             rank: 0,
         }
+    }
+
+    fn chunk_with_tokens(id: &str, doc_name: &str, content_ltks: &str) -> HybridSearchResult {
+        let mut r = hybrid_result(id, "d1", doc_name);
+        r.chunk.metadata.insert(
+            "content_ltks".into(),
+            content_ltks.split_whitespace().collect::<Vec<_>>().join(" "),
+        );
+        r.chunk
+            .metadata
+            .insert("pagerank_fea".into(), "0.5".into());
+        r
+    }
+
+    #[test]
+    fn ragflow_rerank_fuses_token_and_rank_features() {
+        let tw = crate::nlp::TermWeightComputer::new();
+        let hit = chunk_with_tokens("c1", "doc-a", "水产 养殖 水质");
+        let miss = chunk_with_tokens("c2", "doc-b", "金融 股票 债券");
+        let (fused, tksim, vtsim) = ragflow_rerank(
+            &[hit, miss],
+            "水产 养殖",
+            &tw,
+            0.3,
+            0.7,
+            Some(&HashMap::from([("pagerank_fea".into(), 10.0_f32)])),
+        );
+        assert_eq!(fused.len(), 2);
+        assert!(fused[0] > fused[1], "term hit should rank first: {fused:?}");
+        assert!(tksim[0] > tksim[1], "token sim ranks hit first: {tksim:?}");
+        assert_eq!(vtsim.len(), 2);
+        // pagerank 0.5 contributes to every fused score
+        assert!(fused[1] >= 0.5 - 1e-9, "pagerank added: {fused:?}");
+    }
+
+    #[test]
+    fn ragflow_rerank_by_model_weights_model_scores() {
+        let tw = crate::nlp::TermWeightComputer::new();
+        let hit = chunk_with_tokens("c1", "doc-a", "水产 养殖 水质");
+        let miss = chunk_with_tokens("c2", "doc-b", "金融 股票 债券");
+        // reranker says miss (0.9) is more relevant than hit (0.2)
+        let (fused, tksim, vtsim) = ragflow_rerank_by_model(
+            &[hit, miss],
+            "水产 养殖",
+            &tw,
+            0.3,
+            0.7,
+            &[0.2, 0.9],
+            None,
+        );
+        assert!((vtsim[0] - 0.2).abs() < 1e-6 && (vtsim[1] - 0.9).abs() < 1e-6);
+        // vtweight 0.7 dominates: miss should now rank first
+        assert!(fused[1] > fused[0], "model score should dominate: {fused:?}");
+        assert!(tksim[0] > tksim[1], "lexical still prefers hit: {tksim:?}");
+    }
+
+    #[test]
+    fn ragflow_rank_feature_scores_add_pagerank_and_tag_boost() {
+        let mut c = chunk_with_tokens("c1", "doc-a", "水产");
+        c.chunk
+            .metadata
+            .insert("tag_fea".into(), "{\"水产\": 2.0}".into());
+        let scores = ragflow_rank_feature_scores(
+            Some(&HashMap::from([("水产".into(), 1.0_f32), ("pagerank_fea".into(), 0.0_f32)])),
+            &[c],
+        );
+        // nor=1*2=2, denor=sqrt(4)=2, q_denor=sqrt(1)=1 → 2/2/1=1 → ×10 + pagerank 0.5
+        assert!((scores[0] - 10.5).abs() < 1e-9, "got {scores:?}");
+    }
+
+    #[test]
+    fn ragflow_rerank_by_model_requires_aligned_scores() {
+        let tw = crate::nlp::TermWeightComputer::new();
+        let hit = chunk_with_tokens("c1", "doc-a", "水产");
+        let result = std::panic::catch_unwind(|| {
+            ragflow_rerank_by_model(&[hit], "水产", &tw, 0.3, 0.7, &[0.5, 0.6], None)
+        });
+        assert!(result.is_err(), "length mismatch must panic");
     }
 }

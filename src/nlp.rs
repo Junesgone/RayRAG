@@ -547,6 +547,97 @@ impl TermWeightComputer {
         }
         tw.into_iter().map(|(t, w)| (t, w / s)).collect()
     }
+
+    /// Convert a token list into a weighted token dict — mirrors
+    /// `Query.token_similarity`'s `to_dict`: unigrams get 0.4× their weight,
+    /// adjacent bigrams get 0.6× the max of the two weights.
+    pub fn weighted_token_dict(&self, tks: &[String]) -> HashMap<String, f64> {
+        let mut d = HashMap::new();
+        let wts = self.weights(tks, false);
+        for (i, (t, c)) in wts.iter().enumerate() {
+            let e = d.entry(t.clone()).or_insert(0.0);
+            *e += c * 0.4;
+            if i + 1 < wts.len() {
+                let (_t, _c) = &wts[i + 1];
+                let bigram = format!("{t}{_t}");
+                let e = d.entry(bigram).or_insert(0.0);
+                *e += c.max(*_c) * 0.6;
+            }
+        }
+        d
+    }
+
+    /// Token-dict similarity — mirrors `Query.similarity`: the summed query
+    /// weights found in the doc, divided by the summed query weights
+    /// (s / q), with a 1e-9 floor. Score is 0..1.
+    pub fn dict_similarity(qtwt: &HashMap<String, f64>, dtwt: &HashMap<String, f64>) -> f64 {
+        let mut s = 1e-9;
+        for (k, v) in qtwt {
+            if dtwt.contains_key(k) {
+                s += v;
+            }
+        }
+        let q: f64 = 1e-9 + qtwt.values().sum::<f64>();
+        s / q
+    }
+
+    /// Token similarity between one query token list and many doc token
+    /// lists — mirrors `Query.token_similarity` (returns one score per doc).
+    pub fn token_similarity(&self, atks: &[String], btkss: &[Vec<String>]) -> Vec<f64> {
+        let atks = self.weighted_token_dict(atks);
+        btkss
+            .iter()
+            .map(|tks| {
+                let dtwt = self.weighted_token_dict(tks);
+                Self::dict_similarity(&atks, &dtwt)
+            })
+            .collect()
+    }
+
+    /// Hybrid similarity — mirrors `Query.hybrid_similarity`: cosine of the
+    /// query vector against each doc vector weighted by `vtweight`, plus
+    /// token similarity weighted by `tkweight`. When the vector sum is zero
+    /// only token similarity is returned.
+    pub fn hybrid_similarity(
+        &self,
+        avec: &[f32],
+        bvecs: &[Vec<f32>],
+        atks: &[String],
+        btkss: &[Vec<String>],
+        tkweight: f64,
+        vtweight: f64,
+    ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+        let sims: Vec<f64> = bvecs
+            .iter()
+            .map(|bvec| {
+                if avec.is_empty() || avec.len() != bvec.len() {
+                    return 0.0;
+                }
+                let (mut dot, mut na, mut nb) = (0.0_f64, 0.0_f64, 0.0_f64);
+                for (a, b) in avec.iter().zip(bvec.iter()) {
+                    dot += (*a as f64) * (*b as f64);
+                    na += (*a as f64) * (*a as f64);
+                    nb += (*b as f64) * (*b as f64);
+                }
+                if na == 0.0 || nb == 0.0 {
+                    0.0
+                } else {
+                    dot / (na.sqrt() * nb.sqrt())
+                }
+            })
+            .collect();
+        let tksim = self.token_similarity(atks, btkss);
+        let vec_sum: f64 = sims.iter().sum();
+        if vec_sum == 0.0 {
+            return (tksim.clone(), tksim, sims);
+        }
+        let fused: Vec<f64> = sims
+            .iter()
+            .zip(tksim.iter())
+            .map(|(v, t)| v * vtweight + t * tkweight)
+            .collect();
+        (fused, tksim, sims)
+    }
 }
 
 impl Default for TermWeightComputer {
@@ -800,5 +891,60 @@ mod tests {
         assert!(!weights.is_empty());
         let sum: f64 = weights.iter().map(|(_, w)| w).sum();
         assert!((sum - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn token_similarity_exact_match_outscores_partial() {
+        let tw = TermWeightComputer::new();
+        let q: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
+        let exact: Vec<String> = "水产 养殖 水质".split_whitespace().map(String::from).collect();
+        let partial: Vec<String> = "水质 管理".split_whitespace().map(String::from).collect();
+        let scores = tw.token_similarity(&q, &[exact.clone(), partial.clone()]);
+        assert!(scores[0] > scores[1], "exact should beat partial: {scores:?}");
+        assert!(scores[1] >= 0.0, "score must not go negative");
+    }
+
+    #[test]
+    fn weighted_token_dict_includes_bigrams() {
+        let tw = TermWeightComputer::new();
+        let tks: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
+        let d = tw.weighted_token_dict(&tks);
+        // bigram key 水产养殖 present (unigram+bigram 0.4/0.6 split)
+        assert!(d.contains_key("水产养殖"));
+        assert!(d.contains_key("水产"));
+        assert!(d.contains_key("养殖"));
+    }
+
+    #[test]
+    fn dict_similarity_is_symmetric_ratio() {
+        let mut a = HashMap::new();
+        a.insert("k".to_string(), 1.0);
+        let mut b = HashMap::new();
+        b.insert("k".to_string(), 1.0);
+        b.insert("j".to_string(), 2.0);
+        let s = TermWeightComputer::dict_similarity(&a, &b);
+        assert!((s - 1.0).abs() < 1e-9, "all query weight found: {s}");
+        let mut c = HashMap::new();
+        c.insert("z".to_string(), 1.0);
+        let s2 = TermWeightComputer::dict_similarity(&a, &c);
+        assert!(s2 < 0.01, "no overlap ~ 0: {s2}");
+    }
+
+    #[test]
+    fn hybrid_similarity_falls_back_to_token_only_on_zero_vectors() {
+        let tw = TermWeightComputer::new();
+        let q: Vec<String> = "水产".split_whitespace().map(String::from).collect();
+        let d: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
+        let (fused, tksim, vtsim) = tw.hybrid_similarity(
+            &[],
+            &[vec![0.0, 0.0]],
+            &q,
+            &[d.clone()],
+            0.3,
+            0.7,
+        );
+        assert_eq!(vtsim[0], 0.0, "zero vectors give zero cosine");
+        assert_eq!(fused, tksim, "fused == token sim when vectors sum to 0");
+        assert!(tksim[0] > 0.0);
     }
 }
