@@ -10,11 +10,31 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（600 passed / 0 failed / 25 ignored，2026-08-03 复核；+8 rerank 相似度单测）；`postgres-backend,zvec-backend` 双 feature 通过（607 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（610 passed / 0 failed / 25 ignored，2026-08-03 复核；+10 qa 解析单测）；`postgres-backend,zvec-backend` 双 feature 通过（617 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 Q&A 数据集解析：对标 rag/app/qa.py
+
+- RAGFlow Q&A 解析（chunk()）：Excel/csv(txt)/pdf/markdown/docx 五种格式
+  的问答对提取；csv/txt 每对 Q&A 为一个 chunk。
+- **新增 `src/qa.rs`**：
+  - `rm_prefix`：剥离 问题/答案/回答/user/assistant/Q/A/Question/Answer/问/答
+    前缀（含 \t:： 空格）
+  - `be_adoc`：`问题：q\t回答：a` content_with_weight + content_ltks
+  - `detect_delimiter`：TAB 计数 >= 逗号计数时选 TAB
+  - `parse_qa_text` / `parse_qa_csv`：畸形行在有未完成问题时并入答案，
+    否则计失败行；csv 支持引号字段（split_csv_line，"" 转义）
+  - `md_question_level` / `parse_qa_markdown`：标题层级问题栈 + 代码围栏跳过
+  - `parse_qa_file`：txt/csv/md/markdown/mdx 分发；pdf/docx/excel 路由到
+    现有 parser 模块
+- gap：Excel/Pdf/Docx 解析器子类、tokenize_table、add_positions、
+  callback 进度（parser 模块集成层）。
+- 测试：**610 passed / 0 failed / 25 ignored**（+10 qa 单测）；双 feature
+  **617 passed**（610+7 PG 单测）。
+- 矩阵：qa.py 行更新为详细移植说明。
 
 ## 2026-08-03 混合检索重排：对标 rag/nlp/search.py + rag/nlp/query.py
 

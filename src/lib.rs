@@ -65,6 +65,7 @@ pub mod persistence;
 pub mod pipeline;
 pub mod prompts;
 pub mod providers;
+pub mod qa;
 pub mod pubmed;
 pub mod qweather;
 pub mod raptor;
