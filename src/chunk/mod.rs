@@ -3,6 +3,7 @@
 //! Splits parsed document text into embeddable chunks.
 
 mod naive;
+mod position;
 mod tokenizer;
 
 pub use naive::NaiveChunker;
@@ -11,8 +12,11 @@ pub use tokenizer::token_count;
 use crate::{Chunk, Document, ParserConfig, Result};
 use uuid::Uuid;
 
+/// Internal parser-to-chunker signal matching RAGFlow's `if pdf_parser` branch.
+pub(crate) const RAGFLOW_POSITION_TAGS_METADATA: &str = "_rayrag_ragflow_position_tags";
+
 /// Chunking strategy trait.
-pub trait ChunkStrategy {
+pub trait ChunkStrategy: Send + Sync {
     /// Split document content into chunks.
     fn chunk(&self, doc: &Document, config: &ParserConfig) -> Result<Vec<Chunk>>;
 }

@@ -1,16 +1,16 @@
 //! Pure Rust embedding with Candle — no HTTP, no Python.
 //!
-//! ⚠️  MODEL DOWNLOADS ARE UI-TRIGGERED ONLY.
-//!     Models are NOT downloaded automatically at build time, runtime,
-//!     or on first use.  The user must explicitly trigger a download
-//!     from the RayRAG UI (by selecting "candle" mode) before a local
-//!     model is available.
+//! ⚠️ MODEL DOWNLOADS ARE UI-TRIGGERED ONLY.
+//! Models are NOT downloaded automatically at build time, runtime,
+//! or on first use. The user must explicitly trigger a download
+//! from the RayRAG UI (by selecting "candle" mode) before a local
+//! model is available.
 //!
-//!     To download a model explicitly (for UI integration):
-//!       CandleEmbedder::download_model_to(config, target_dir).await
+//! To download a model explicitly (for UI integration), call
+//! `CandleEmbedder::download_model_to(config, target_dir).await`.
 //!
-//!     To load a pre-downloaded model:
-//!       CandleEmbedder::load(CandleConfig::from_local("/path/to/model")).await
+//! To load a pre-downloaded model, call
+//! `CandleEmbedder::load(CandleConfig::from_local("/path/to/model")).await`.
 //!
 //! Default model: all-MiniLM-L6-v2 (~23 MB, 384-dim).
 
@@ -138,8 +138,8 @@ impl CandleConfig {
 
 /// HuggingFace endpoints to try in order.
 const HF_ENDPOINTS: &[&str] = &[
-    "https://huggingface.co",   // Primary
-    "https://hf-mirror.com",     // Mirror (China)
+    "https://huggingface.co", // Primary
+    "https://hf-mirror.com",  // Mirror (China)
 ];
 
 impl CandleEmbedder {
@@ -216,7 +216,11 @@ impl CandleEmbedder {
             return Self::build_from_files(files, &config, &device);
         }
 
-        tracing::info!("Loading embedding model: {} (device: {:?})", config.model_id, device);
+        tracing::info!(
+            "Loading embedding model: {} (device: {:?})",
+            config.model_id,
+            device
+        );
 
         let mut last_err = None;
 
@@ -343,8 +347,12 @@ impl CandleEmbedder {
             .encode(text, false)
             .map_err(|e| anyhow::anyhow!("Tokenization error: {}", e))?;
 
-        let token_ids: Vec<u32> = tokens.get_ids().iter().map(|&x| x).collect();
-        let attention_mask: Vec<f32> = tokens.get_attention_mask().iter().map(|&x| x as f32).collect();
+        let token_ids: Vec<u32> = tokens.get_ids().to_vec();
+        let attention_mask: Vec<f32> = tokens
+            .get_attention_mask()
+            .iter()
+            .map(|&x| x as f32)
+            .collect();
 
         // Truncate to max_length
         let len = token_ids.len().min(self.max_length);
@@ -353,7 +361,8 @@ impl CandleEmbedder {
 
         // Convert to Candle tensors
         let input_ids = candle_core::Tensor::new(token_ids, &self.device)?.unsqueeze(0)?;
-        let attention_mask = candle_core::Tensor::new(attention_mask, &self.device)?.unsqueeze(0)?;
+        let attention_mask =
+            candle_core::Tensor::new(attention_mask, &self.device)?.unsqueeze(0)?;
         let token_type_ids = input_ids.zeros_like()?;
 
         // Forward pass

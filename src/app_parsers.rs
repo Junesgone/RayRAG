@@ -1,0 +1,399 @@
+//! Specialized app parsers — domain-specific document extraction.
+//! Replaces RAGFlow's `rag/app/` (audio/book/email/laws/manual/paper/picture/qa/table/tag).
+//! Each parser applies domain knowledge for better extraction.
+
+use crate::parser::{Parse, new_document};
+use crate::{Document, Result};
+use regex::Regex;
+
+// ── Email Parser ────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct EmailParser;
+impl EmailParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let mut text = String::from("<!--EMAIL_START-->\n");
+        let mut in_headers = true;
+        for line in content.lines() {
+            if in_headers && line.is_empty() {
+                in_headers = false;
+                continue;
+            }
+            if in_headers {
+                if let Some((k, v)) = line.split_once(':') {
+                    text.push_str(&format!("{}: {}\n", k.trim(), v.trim()));
+                }
+            } else {
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
+        text.push_str("<!--EMAIL_END-->\n");
+        Ok(text)
+    }
+}
+impl Parse for EmailParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "message/rfc822",
+            data.len(),
+        ))
+    }
+}
+
+// ── Academic Paper Parser ──────────────────────────────────────
+
+#[derive(Default)]
+pub struct PaperParser;
+impl PaperParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let mut text = String::from("<!--PAPER_START-->\n");
+        let sections = Regex::new(
+            r"(?im)^(?:Abstract|Introduction|Related Work|Method|Experiment|Result|Conclusion|Reference|Discussion|Background|Approach|Evaluation)\b",
+        )?;
+
+        let parts: Vec<&str> = sections.split(&content).collect();
+        let headers: Vec<&str> = sections.find_iter(&content).map(|m| m.as_str()).collect();
+
+        for (i, part) in parts.iter().enumerate() {
+            if i == 0 && !part.trim().is_empty() {
+                text.push_str(&format!("# Title/Abstract\n{}\n\n", part.trim()));
+            } else if i <= headers.len() {
+                text.push_str(&format!("## {}\n{}\n\n", headers[i - 1], part.trim()));
+            }
+        }
+        text.push_str("<!--PAPER_END-->\n");
+        Ok(text)
+    }
+}
+impl Parse for PaperParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "application/pdf",
+            data.len(),
+        ))
+    }
+}
+
+// ── Legal Document Parser ──────────────────────────────────────
+
+#[derive(Default)]
+pub struct LawsParser;
+impl LawsParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let mut text = String::from("<!--LAWS_START-->\n");
+        let article_re =
+            Regex::new(r"(?im)^(?:Article|第[一二三四五六七八九十百千]+条|Section)\s+\d+")?;
+        let parts: Vec<&str> = article_re.split(&content).collect();
+        let headers: Vec<&str> = article_re.find_iter(&content).map(|m| m.as_str()).collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i == 0 && !part.trim().is_empty() {
+                text.push_str(&format!("{}\n\n", part.trim()));
+            } else if i <= headers.len() {
+                text.push_str(&format!("## {}\n{}\n\n", headers[i - 1], part.trim()));
+            }
+        }
+        text.push_str("<!--LAWS_END-->\n");
+        Ok(text)
+    }
+}
+impl Parse for LawsParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "application/pdf",
+            data.len(),
+        ))
+    }
+}
+
+// ── Manual / Book Parser ───────────────────────────────────────
+
+#[derive(Default)]
+pub struct BookParser;
+impl BookParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let mut text = String::from("<!--BOOK_START-->\n");
+        let ch_re =
+            Regex::new(r"(?im)^(?:Chapter|CHAPTER|第[一二三四五六七八九十百千]+章)\s+\d*.*$")?;
+        let parts: Vec<&str> = ch_re.split(&content).collect();
+        let headers: Vec<&str> = ch_re.find_iter(&content).map(|m| m.as_str()).collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i == 0 && !part.trim().is_empty() {
+                text.push_str(&format!("{}\n\n", part.trim()));
+            } else if i <= headers.len() {
+                text.push_str(&format!("## {}\n{}\n\n", headers[i - 1], part.trim()));
+            }
+        }
+        text.push_str("<!--BOOK_END-->\n");
+        Ok(text)
+    }
+}
+impl Parse for BookParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "application/pdf",
+            data.len(),
+        ))
+    }
+}
+
+// ── Picture / Image Content Parser ─────────────────────────────
+
+#[derive(Default)]
+pub struct PictureParser;
+impl PictureParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, name: &str, data: &[u8]) -> Result<String> {
+        let basename = std::path::Path::new(name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image");
+        let size_mb = data.len() as f64 / 1_048_576.0;
+        let fmt = detect_format(data);
+        let text = format!(
+            "<!--PICTURE_START-->\n[Image: {}] [{:.1}MB] [Format: {}]\n<!--PICTURE_END-->\n",
+            basename, size_mb, fmt
+        );
+        Ok(text)
+    }
+}
+impl Parse for PictureParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(name, data)?,
+            "image/png",
+            data.len(),
+        ))
+    }
+}
+
+fn detect_format(data: &[u8]) -> &'static str {
+    if data.len() < 4 {
+        return "unknown";
+    }
+    match &data[0..4] {
+        [0x89, b'P', b'N', b'G'] => "PNG",
+        [0xFF, 0xD8, 0xFF, _] => "JPEG",
+        [b'G', b'I', b'F', b'8'] => "GIF",
+        [b'R', b'I', b'F', b'F'] => "WEBP",
+        _ => "unknown",
+    }
+}
+
+// ── Table-specific Parser ──────────────────────────────────────
+
+#[derive(Default)]
+pub struct TableParser;
+impl TableParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let text = format!("<!--TABLE_START-->\n{}\n<!--TABLE_END-->\n", content.trim());
+        Ok(text)
+    }
+}
+impl Parse for TableParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "text/csv",
+            data.len(),
+        ))
+    }
+}
+
+// ── Tag / Metadata Generator ───────────────────────────────────
+
+#[derive(Default)]
+pub struct TagParser;
+impl TagParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data).to_lowercase();
+        let mut tags = Vec::new();
+        let keywords = [
+            ("api", "API"),
+            ("rust", "Rust"),
+            ("python", "Python"),
+            ("database", "Database"),
+            ("machine learning", "ML"),
+            ("ai", "AI"),
+            ("deep learning", "Deep Learning"),
+            ("web", "Web"),
+            ("mobile", "Mobile"),
+            ("security", "Security"),
+            ("cloud", "Cloud"),
+            ("devops", "DevOps"),
+            ("testing", "Testing"),
+            ("frontend", "Frontend"),
+            ("backend", "Backend"),
+            ("algorithm", "Algorithm"),
+        ];
+        for (kw, tag) in &keywords {
+            if content.contains(kw) {
+                tags.push(*tag);
+            }
+        }
+        Ok(format!(
+            "<!--TAG_START-->\n{}\n<!--TAG_END-->\n",
+            tags.join(", ")
+        ))
+    }
+}
+impl Parse for TagParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "text/plain",
+            data.len(),
+        ))
+    }
+}
+
+// ── Presentation (non-PPTX) Parser ─────────────────────────────
+
+#[derive(Default)]
+pub struct PresentationParser;
+impl PresentationParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let mut text = String::from("<!--PRESENTATION_START-->\n");
+        for (i, line) in content.lines().enumerate() {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if t.len() < 80
+                && t.chars()
+                    .all(|c| c.is_uppercase() || c.is_whitespace() || c.is_numeric())
+            {
+                text.push_str(&format!("## Slide {}: {}\n", i + 1, t));
+            } else {
+                text.push_str(&format!("{}\n", t));
+            }
+        }
+        text.push_str("<!--PRESENTATION_END-->\n");
+        Ok(text)
+    }
+}
+impl Parse for PresentationParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "text/plain",
+            data.len(),
+        ))
+    }
+}
+
+// ── Audio Parser (metadata) ───────────────────────────────────
+
+#[derive(Default)]
+pub struct AudioParser;
+impl AudioParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, name: &str, data: &[u8]) -> Result<String> {
+        let basename = std::path::Path::new(name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let duration = format!("[{:.1}s]", data.len() as f64 / 16000.0);
+        Ok(format!(
+            "<!--AUDIO_START-->\n[Audio: {}] {}\n<!--AUDIO_END-->\n",
+            basename, duration
+        ))
+    }
+}
+impl Parse for AudioParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(name, data)?,
+            "audio/mpeg",
+            data.len(),
+        ))
+    }
+}
+
+// ── Q&A / Interview Parser ────────────────────────────────────
+
+#[derive(Default)]
+pub struct QaParser;
+impl QaParser {
+    pub fn new() -> Self {
+        Self
+    }
+    fn extract(&self, data: &[u8]) -> Result<String> {
+        let content = String::from_utf8_lossy(data);
+        let qa_re = Regex::new(r"(?im)^(?:Q:|Question:|A:|Answer:)")?;
+        let mut text = String::from("<!--QA_START-->\n");
+        let mut last_q = String::new();
+        for line in content.lines() {
+            let t = line.trim();
+            if qa_re.is_match(t) {
+                if !last_q.is_empty() {
+                    text.push_str(&format!("A: {}\n\n", last_q));
+                    last_q.clear();
+                }
+                text.push_str(&format!("{}\n", t));
+            } else if !t.is_empty() {
+                last_q.push_str(t);
+                last_q.push(' ');
+            }
+        }
+        if !last_q.is_empty() {
+            text.push_str(&format!("A: {}\n", last_q));
+        }
+        text.push_str("<!--QA_END-->\n");
+        Ok(text)
+    }
+}
+impl Parse for QaParser {
+    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
+        Ok(new_document(
+            name,
+            self.extract(data)?,
+            "text/plain",
+            data.len(),
+        ))
+    }
+}

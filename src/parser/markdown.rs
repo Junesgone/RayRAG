@@ -1,8 +1,9 @@
 //! Markdown parser — ported from RAGFlow's `deepdoc/parser/markdown_parser.py`.
 
-use crate::parser::{new_document, Parse};
+use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
 
+#[derive(Default)]
 pub struct MarkdownParser;
 
 impl MarkdownParser {

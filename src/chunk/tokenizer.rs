@@ -3,21 +3,18 @@
 //! Ported from RAGFlow's `rag/nlp/rag_tokenizer.py`.
 //! Uses simple heuristic: ~4 chars/token for Latin, ~1.5 for CJK.
 
-use unicode_segmentation::UnicodeSegmentation;
-
 /// Count approximate tokens in text.
 /// English/Latin: ~4 characters per token.
 /// CJK: ~1.5 characters per token.
 pub fn token_count(text: &str) -> usize {
-    let mut count = 0;
-    for word in text.unicode_words() {
-        // Check if word is primarily CJK
-        if word.chars().any(is_cjk) {
-            count += (word.chars().count() as f64 / 1.5).ceil() as usize;
-        } else {
-            count += (word.len() as f64 / 4.0).ceil() as usize;
-        }
-    }
+    let cjk_chars = text.chars().filter(|c| is_cjk(*c)).count();
+    let latin_chars = text
+        .chars()
+        .filter(|c| !is_cjk(*c) && !c.is_whitespace() && !c.is_ascii_punctuation())
+        .count();
+    let cjk_tokens = (cjk_chars as f64 / 1.5).ceil() as usize;
+    let latin_tokens = (latin_chars as f64 / 4.0).ceil() as usize;
+    let mut count = cjk_tokens + latin_tokens;
     // Ensure minimum of 1 for non-empty strings
     if count == 0 && !text.trim().is_empty() {
         count = 1;

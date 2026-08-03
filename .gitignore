@@ -5,3 +5,7 @@ Cargo.lock
 *.swo
 .DS_Store
 models/*.safetensors
+.env
+data/
+zvec-data/
+*.index.json

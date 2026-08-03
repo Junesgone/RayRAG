@@ -10,8 +10,7 @@
 //! ```
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rayrag::{pipeline::Pipeline, Embedder, ParserConfig};
-use tracing_subscriber;
+use rayrag::{Embedder, ParserConfig, pipeline::Pipeline, rerank::Reranker};
 
 #[derive(Parser)]
 #[command(name = "rayrag", version, about = "RAGFlow parsing in Rust + zvec")]
@@ -34,6 +33,10 @@ enum Commands {
         /// Chunk overlap percentage (default: 0.05)
         #[arg(long, default_value = "0.05")]
         overlap: f32,
+
+        /// Layout selector, including PaddleOCR/OpenDataLoader/MinerU/SoMark suffixes
+        #[arg(long, default_value = "DeepDOC")]
+        layout_recognize: String,
 
         /// Enable embedding generation
         #[arg(long)]
@@ -58,6 +61,14 @@ enum Commands {
         /// Local model directory (for candle/hybrid mode)
         #[arg(long, default_value = "models/all-MiniLM-L6-v2")]
         model_path: String,
+
+        /// Persist embedded chunks in this collection
+        #[arg(long)]
+        collection: Option<String>,
+
+        /// Portable JSON index path (ignored by the zvec backend)
+        #[arg(long)]
+        index: Option<String>,
     },
 
     /// Start the web server (static SPA + API)
@@ -92,6 +103,14 @@ enum Commands {
         /// Use OpenAI API for embedding instead of local
         #[arg(long)]
         openai: bool,
+
+        /// Enable re-ranking (uses local mxbai-rerank at :8899)
+        #[arg(long)]
+        rerank: bool,
+
+        /// Reranker API URL (default: http://127.0.0.1:8899)
+        #[arg(long, default_value = "http://127.0.0.1:8899")]
+        rerank_url: String,
     },
 }
 
@@ -105,9 +124,32 @@ enum EmbedMode {
     Hybrid,
 }
 
+/// Display plain cosine similarity results.
+fn display_results(results: &[rayrag::search::SearchResult]) {
+    println!("\n📊 Results ({}):\n", results.len());
+    for result in results {
+        println!(
+            "#{}. [score: {:.4}] {} | {}",
+            result.rank + 1,
+            result.score,
+            result.chunk.doc_name,
+            result.chunk.id,
+        );
+        let preview = if result.chunk.content.len() > 150 {
+            format!("{}...", &result.chunk.content[..150])
+        } else {
+            result.chunk.content.clone()
+        };
+        println!("   {}\n", preview);
+    }
+    if results.is_empty() {
+        println!("   (no results found)");
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    let log_levels = rayrag::logging::init();
     let cli = Cli::parse();
 
     match cli.command {
@@ -115,20 +157,24 @@ async fn main() -> anyhow::Result<()> {
             file,
             chunk_size,
             overlap,
+            layout_recognize,
             embed,
             mode,
             api_base,
             api_key,
             api_model,
             model_path,
+            collection,
+            index,
         } => {
             let config = ParserConfig {
                 chunk_token_num: chunk_size,
                 overlapped_percent: overlap,
+                layout_recognize,
                 ..Default::default()
             };
 
-            let mut pipeline = Pipeline::new(config);
+            let mut pipeline = Pipeline::new(config).with_document_parsers_from_env()?;
 
             if embed {
                 let embedder: Box<dyn rayrag::embed::Embedder> = match mode {
@@ -147,7 +193,8 @@ async fn main() -> anyhow::Result<()> {
                                    - model.safetensors\n\
                                    - config.json\n\
                                    - tokenizer.json",
-                                model_path, model_path
+                                model_path,
+                                model_path
                             );
                         }
                         println!("🔧 Loading local model: {}", model_path);
@@ -159,8 +206,11 @@ async fn main() -> anyhow::Result<()> {
                         )
                     }
                     EmbedMode::Openai => {
-                        let key = api_key
-                            .ok_or_else(|| anyhow::anyhow!("--api-key or EMBED_API_KEY is required for openai mode"))?;
+                        let key = api_key.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "--api-key or EMBED_API_KEY is required for openai mode"
+                            )
+                        })?;
                         println!("🌐 Using cloud API: {}", api_base);
                         Box::new(rayrag::embed::openai_compatible_embedder(
                             &api_base, &key, &api_model,
@@ -197,6 +247,23 @@ async fn main() -> anyhow::Result<()> {
                 pipeline = pipeline.with_embedder(embedder);
             }
 
+            if let Some(collection) = collection {
+                if !embed {
+                    anyhow::bail!("--collection requires --embed");
+                }
+                let dimension = std::env::var("RAYRAG_EMBEDDING_DIMENSION")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(384);
+                let store = if let Some(index) = index {
+                    rayrag::store::ZvecStore::from_file(&collection, dimension, &index)?
+                } else {
+                    rayrag::store::ZvecStore::new(&collection, dimension)?
+                };
+                store.init()?;
+                pipeline = pipeline.with_store(store);
+            }
+
             let chunks = pipeline.process(&file).await?;
 
             println!("\n📄 Parsed: {}", file);
@@ -215,16 +282,14 @@ async fn main() -> anyhow::Result<()> {
                     chunk.content.clone()
                 };
                 println!("{}", preview);
-                if has_emb {
-                    if let Some(ref emb) = chunk.embedding {
-                        println!(
-                            "  → embedding: [{:.3}, {:.3}, ..., {:.3}] ({}-dim)",
-                            emb[0],
-                            emb[1],
-                            emb[emb.len() - 1],
-                            emb.len()
-                        );
-                    }
+                if has_emb && let Some(ref emb) = chunk.embedding {
+                    println!(
+                        "  → embedding: [{:.3}, {:.3}, ..., {:.3}] ({}-dim)",
+                        emb[0],
+                        emb[1],
+                        emb[emb.len() - 1],
+                        emb.len()
+                    );
                 }
             }
             Ok(())
@@ -240,7 +305,7 @@ async fn main() -> anyhow::Result<()> {
                     static_dir
                 );
             }
-            rayrag::server::run(port, &static_dir).await?;
+            rayrag::server::run(port, &static_dir, log_levels).await?;
             Ok(())
         }
         Commands::Search {
@@ -249,6 +314,8 @@ async fn main() -> anyhow::Result<()> {
             top_k,
             model_path,
             openai,
+            rerank,
+            rerank_url,
         } => {
             // Load or create index
             let engine = if std::path::Path::new(&index).exists() {
@@ -258,7 +325,8 @@ async fn main() -> anyhow::Result<()> {
                     "Index file not found: {}\n\
                      Build an index first:\n\
                        rayrag parse docs/*.pdf --embed --mode candle --model-path {}",
-                    index, model_path
+                    index,
+                    model_path
                 );
             };
 
@@ -292,27 +360,51 @@ async fn main() -> anyhow::Result<()> {
             };
 
             // Search
-            let results = engine.search(&query_embedding, top_k);
+            let results = engine.search(&query_embedding, if rerank { top_k * 3 } else { top_k });
 
-            println!("\n📊 Results ({}):\n", results.len());
-            for result in &results {
-                println!(
-                    "#{}. [score: {:.4}] {} | {}",
-                    result.rank + 1,
-                    result.score,
-                    result.chunk.doc_name,
-                    result.chunk.id,
-                );
-                let preview = if result.chunk.content.len() > 150 {
-                    format!("{}...", &result.chunk.content[..150])
-                } else {
-                    result.chunk.content.clone()
-                };
-                println!("   {}\n", preview);
-            }
+            // Apply reranking if requested
+            if rerank && !results.is_empty() {
+                println!("🔄 Re-ranking via {} ...", rerank_url);
 
-            if results.is_empty() {
-                println!("   (no results found)");
+                let reranker = rayrag::rerank::RemoteReranker::new(&rerank_url);
+                let documents: Vec<String> =
+                    results.iter().map(|r| r.chunk.content.clone()).collect();
+
+                match reranker.rerank(&query, &documents, top_k).await {
+                    Ok(reranked) => {
+                        let final_results = rayrag::rerank::apply_rerank(results, &reranked);
+                        println!("\n📊 Re-ranked Results ({}):\n", final_results.len());
+                        for r in &final_results {
+                            println!(
+                                "#{}. [cosine: {:.4} | rerank: {:.4} | combined: {:.4}] {} | {}",
+                                r.rank + 1,
+                                r.score,
+                                r.rerank_score,
+                                r.combined_score,
+                                r.doc_name,
+                                r.chunk_id,
+                            );
+                            let preview = if r.content.len() > 150 {
+                                format!("{}...", &r.content[..150])
+                            } else {
+                                r.content.clone()
+                            };
+                            println!("   {}\n", preview);
+                        }
+                        if final_results.is_empty() {
+                            println!("   (no results after reranking)");
+                        }
+                    }
+                    Err(e) => {
+                        println!(
+                            "⚠️  Reranker failed: {} — falling back to cosine results",
+                            e
+                        );
+                        display_results(&results);
+                    }
+                }
+            } else {
+                display_results(&results);
             }
 
             Ok(())

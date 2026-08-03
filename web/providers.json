@@ -1,0 +1,21 @@
+[
+  {
+    "id": "minimax",
+    "name": "MiniMax",
+    "api_base": "https://api.minimaxi.com/v1",
+    "models": [
+      "MiniMax-M3",
+      "MiniMax-M2"
+    ],
+    "enabled": true
+  },
+  {
+    "id": "qwen",
+    "name": "Qwen3.5",
+    "api_base": "http://127.0.0.1:8088/v1",
+    "models": [
+      "Qwen3.5-9B"
+    ],
+    "enabled": false
+  }
+]

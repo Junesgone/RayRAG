@@ -1,0 +1,19 @@
+[
+  {
+    "id": "default",
+    "name": "Default Agent",
+    "description": "Built-in RAG agent",
+    "owner_id": "",
+    "permission": "team",
+    "kb_ids": [],
+    "prompt_template": "You are a helpful assistant. Use the context to answer questions.",
+    "dsl": {},
+    "canvas_category": "agent",
+    "canvas_type": "",
+    "tags": [],
+    "avatar": "",
+    "built_in": true,
+    "created_at": 0,
+    "updated_at": 0
+  }
+]

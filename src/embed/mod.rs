@@ -31,6 +31,9 @@ pub trait Embedder: Send + Sync {
     }
 }
 
+/// Shared runtime embedder used by the HTTP server.
+pub type SharedEmbedder = Arc<dyn Embedder>;
+
 /// Hybrid embedder: tries cloud API first, falls back to local Candle.
 pub struct HybridEmbedder {
     primary: Arc<dyn Embedder>,
@@ -73,11 +76,7 @@ impl Embedder for HybridEmbedder {
 
 /// Convenience: create an OpenAI embedder pointing to MiniMax (your RAGFlow setup).
 pub fn minimax_embedder(api_key: &str) -> OpenAIEmbedder {
-    OpenAIEmbedder::new(
-        "https://api.minimaxi.com/v1",
-        api_key,
-        "MiniMax-M3",
-    )
+    OpenAIEmbedder::new("https://api.minimaxi.com/v1", api_key, "MiniMax-M3")
 }
 
 /// Convenience: create an OpenAI-compatible embedder for any endpoint.
@@ -90,7 +89,10 @@ pub fn openai_compatible_embedder(api_base: &str, api_key: &str, model: &str) ->
 /// ⚠️  This WILL download the model from HuggingFace (with mirror fallback).
 ///     Only call this from the UI download trigger, never from background/pipeline code.
 ///     For pipeline use, prefer `local_embedder(path)` instead.
-#[deprecated(since = "0.1.0", note = "Use local_embedder() instead — models should be downloaded explicitly via UI")]
+#[deprecated(
+    since = "0.1.0",
+    note = "Use local_embedder() instead — models should be downloaded explicitly via UI"
+)]
 pub async fn default_embedder() -> Result<Box<dyn Embedder>> {
     let embedder = CandleEmbedder::load(CandleConfig::mini()).await?;
     Ok(Box::new(embedder))
@@ -106,7 +108,10 @@ pub async fn local_embedder(path: &str) -> Result<Box<dyn Embedder>> {
 ///
 /// ⚠️  The fallback Candle model WILL be downloaded from HuggingFace.
 ///     Only call from UI paths, never from background pipelines.
-#[deprecated(since = "0.1.0", note = "Use local_embedder() for pipeline code; models should be pre-downloaded via UI")]
+#[deprecated(
+    since = "0.1.0",
+    note = "Use local_embedder() for pipeline code; models should be pre-downloaded via UI"
+)]
 pub async fn hybrid_embedder(minimax_api_key: &str) -> Result<HybridEmbedder> {
     let cloud = Box::new(minimax_embedder(minimax_api_key));
     // Note: auto-downloads if model not cached — UI path only

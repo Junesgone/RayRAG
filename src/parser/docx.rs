@@ -3,9 +3,10 @@
 //! Extracts text from Word documents including paragraphs, tables,
 //! headers, and footers.
 
-use crate::parser::{new_document, Parse};
+use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
 
+#[derive(Default)]
 pub struct DocxParser;
 
 impl DocxParser {
@@ -25,8 +26,9 @@ impl DocxParser {
                     text.push('\n');
                 }
                 docx_rs::DocumentChild::Table(t) => {
+                    text.push_str("\n<!--TABLE_START-->\n");
                     text.push_str(&table_to_text(t));
-                    text.push('\n');
+                    text.push_str("\n<!--TABLE_END-->\n");
                 }
                 _ => {}
             }

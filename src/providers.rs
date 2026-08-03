@@ -1,0 +1,1012 @@
+//! Provider catalog — mirrors RAGFlow `conf/llm_factories.json` + `rag/llm/*.py`
+//! factories, adapted for mainland-China network reality.
+//!
+//! Every RAGFlow factory is listed with:
+//!   - a default `api_base` (domestic endpoints preferred; empty-string entries
+//!     in RAGFlow's JSON are filled from the provider's official docs)
+//!   - a recommended API-key environment variable
+//!   - a discovery/inference dialect (reuses [`crate::model_meta::ProviderDialect`])
+//!   - capability flags: chat / embedding / rerank / image2text / tts / asr / ocr
+//!   - a `domestic` flag (directly reachable from mainland China without a proxy)
+//!
+//! The catalog is pure data + lookups: no network, no side effects. Runtime
+//! wiring (tenant model resolution, discovery, inference clients) consults it
+//! through [`provider_base`], [`provider_api_key_env`] and [`provider_dialect`].
+
+use crate::model_meta::ProviderDialect;
+
+/// Provider capability kinds, aligned with RAGFlow `ModelType` and the RayRAG
+/// `ModelCapability` enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    Chat,
+    Embedding,
+    Rerank,
+    ImageToText,
+    TextToSpeech,
+    SpeechToText,
+    Ocr,
+}
+
+impl ProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Embedding => "embedding",
+            Self::Rerank => "rerank",
+            Self::ImageToText => "image2text",
+            Self::TextToSpeech => "tts",
+            Self::SpeechToText => "asr",
+            Self::Ocr => "ocr",
+        }
+    }
+}
+
+/// One entry of the provider catalog.
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderPreset {
+    /// RAGFlow factory id, e.g. `"ZHIPU-AI"`.
+    pub id: &'static str,
+    /// Display name used by RayRAG providers UI (lowercased by the store).
+    pub name: &'static str,
+    /// Default API base. Domestic-first: Chinese providers point at their
+    /// mainland endpoints; self-hosted engines point at loopback.
+    pub base_url: &'static str,
+    /// Recommended environment variable holding the API key, e.g. `"ZHIPU_API_KEY"`.
+    pub api_key_env: &'static str,
+    /// Inference/discovery dialect.
+    pub dialect: ProviderDialect,
+    /// Directly reachable from mainland China.
+    pub domestic: bool,
+    /// Capability flags.
+    pub kinds: &'static [ProviderKind],
+    /// Representative model names (for seeding the provider models list).
+    pub models: &'static [&'static str],
+    /// Short annotation: endpoint flavour / caveats.
+    pub note: &'static str,
+}
+
+/// All 63 RAGFlow factories plus the local engines. `domestic` marks providers
+/// reachable without a proxy from mainland China; the rest remain available but
+/// are annotated as requiring an international network.
+pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
+    // ── 国内直连 (domestic, China-accessible) ──────────────────────────
+    ProviderPreset {
+        id: "ZHIPU-AI",
+        name: "ZHIPU-AI",
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        api_key_env: "ZHIPU_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        models: &["glm-4.5", "glm-4.7", "embedding-3", "rerank", "glm-4v-plus"],
+        note: "智谱AI: GLM 系列 chat/embedding/rerank/视觉统一走 bigmodel.cn",
+    },
+    ProviderPreset {
+        id: "DeepSeek",
+        name: "DeepSeek",
+        base_url: "https://api.deepseek.com/v1",
+        api_key_env: "DEEPSEEK_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["deepseek-chat", "deepseek-reasoner"],
+        note: "深度求索: deepseek-chat / deepseek-reasoner",
+    },
+    ProviderPreset {
+        id: "SILICONFLOW",
+        name: "SILICONFLOW",
+        base_url: "https://api.siliconflow.cn/v1",
+        api_key_env: "SILICONFLOW_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        models: &["Qwen/Qwen3-32B", "BAAI/bge-m3", "BAAI/bge-reranker-v2-m3", "Qwen/Qwen2.5-VL-72B"],
+        note: "硅基流动: 聚合开源模型, chat/embedding/rerank/视觉全支持, 国内直连",
+    },
+    ProviderPreset {
+        id: "Moonshot",
+        name: "Moonshot",
+        base_url: "https://api.moonshot.cn/v1",
+        api_key_env: "MOONSHOT_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["kimi-k2-0711-preview", "moonshot-v1-32k"],
+        note: "月之暗面 Kimi: moonshot.cn 国内端点",
+    },
+    ProviderPreset {
+        id: "MiniMax",
+        name: "MiniMax",
+        base_url: "https://api.minimaxi.com/v1",
+        api_key_env: "MINIMAX_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText, ProviderKind::TextToSpeech],
+        models: &["MiniMax-M3", "MiniMax-M2", "MiniMax-Embedding", "abab6.5s-chat"],
+        note: "MiniMax: M3/M2 chat、Embedding、TTS, 国内直连; RayRAG 默认提供商",
+    },
+    ProviderPreset {
+        id: "Tongyi-Qianwen",
+        name: "Tongyi-Qianwen",
+        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key_env: "DASHSCOPE_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["qwen-max", "qwen-plus", "text-embedding-v4", "qwen-vl-max"],
+        note: "阿里云百炼/通义千问: DashScope compatible-mode OpenAI 兼容",
+    },
+    ProviderPreset {
+        id: "VolcEngine",
+        name: "VolcEngine",
+        base_url: "https://ark.cn-beijing.volces.com/api/v3",
+        api_key_env: "ARK_API_KEY",
+        dialect: ProviderDialect::VolcEngine,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["doubao-1-5-pro-32k-250115", "doubao-embedding", "doubao-1-5-vision-pro"],
+        note: "火山方舟: 豆包系列, 密钥字段为 ark_api_key; 发现走 /api/v3/models",
+    },
+    ProviderPreset {
+        id: "BaiduYiyan",
+        name: "BaiduYiyan",
+        base_url: "https://qianfan.baidubce.com/v2",
+        api_key_env: "QIANFAN_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["ernie-4.5-turbo-128k", "ernie-3.5-8k", "embedding-v1", "ernie-4.5-vl-128k"],
+        note: "百度千帆: ERNIE 系列, v2 OpenAI 兼容端点",
+    },
+    ProviderPreset {
+        id: "Tencent Hunyuan",
+        name: "Tencent Hunyuan",
+        base_url: "https://api.hunyuan.cloud.tencent.com/v1",
+        api_key_env: "HUNYUAN_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["hunyuan-turbos-latest", "hunyuan-standard"],
+        note: "腾讯混元: 国内直连, OpenAI 兼容",
+    },
+    ProviderPreset {
+        id: "XunFei Spark",
+        name: "XunFei Spark",
+        base_url: "https://spark-api-open.xf-yun.com/v1",
+        api_key_env: "SPARK_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["generalv3.5", "lite"],
+        note: "讯飞星火: spark-api-open OpenAI 兼容",
+    },
+    ProviderPreset {
+        id: "ModelScope",
+        name: "ModelScope",
+        base_url: "https://api-inference.modelscope.cn/v1",
+        api_key_env: "MODELSCOPE_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["Qwen/Qwen3-32B-Instruct", "AI-ModelScope/bge-m3"],
+        note: "魔搭社区: 国内直连聚合推理",
+    },
+    ProviderPreset {
+        id: "GiteeAI",
+        name: "GiteeAI",
+        base_url: "https://ai.gitee.com/v1",
+        api_key_env: "GITEE_AI_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank],
+        models: &["Qwen3-235B-A22B", "bge-m3"],
+        note: "Gitee AI: 国内直连, chat/embedding/rerank",
+    },
+    ProviderPreset {
+        id: "BaiChuan",
+        name: "BaiChuan",
+        base_url: "https://api.baichuan-ai.com/v1",
+        api_key_env: "BAICHUAN_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["Baichuan4", "Baichuan3-Turbo"],
+        note: "百川智能",
+    },
+    ProviderPreset {
+        id: "TokenPony",
+        name: "TokenPony",
+        base_url: "https://ragflow.vip-api.tokenpony.cn/v1",
+        api_key_env: "TOKENPONY_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o-mini"],
+        note: "国内中转聚合 API",
+    },
+    ProviderPreset {
+        id: "n1n",
+        name: "n1n",
+        base_url: "https://api.n1n.ai/v1",
+        api_key_env: "N1N_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["claude-3-5-sonnet-20241022"],
+        note: "国内中转聚合 API",
+    },
+    ProviderPreset {
+        id: "Astraflow-CN",
+        name: "Astraflow-CN",
+        base_url: "https://api.modelverse.cn/v1",
+        api_key_env: "ASTRAFLOW_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["claude-sonnet-4-20250514"],
+        note: "国内中转聚合 API (国际版为 Astraflow)",
+    },
+    ProviderPreset {
+        id: "LongCat",
+        name: "LongCat",
+        base_url: "https://api.longcat.chat/openai",
+        api_key_env: "LONGCAT_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "国内中转聚合 API",
+    },
+    ProviderPreset {
+        id: "OpenAI-API-Compatible",
+        name: "OpenAI-API-Compatible",
+        base_url: "http://127.0.0.1:8088/v1",
+        api_key_env: "OPENAI_COMPATIBLE_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        models: &["Qwen3.5-9B", "Qwen3-Embedding-4B", "mxbai-rerank-large-v2"],
+        note: "任意 OpenAI 兼容端点 (llama.cpp/vLLM/LiteLLM); 默认指向本机 GPU llama-server 8088",
+    },
+    ProviderPreset {
+        id: "VLLM",
+        name: "VLLM",
+        base_url: "http://127.0.0.1:8000/v1",
+        api_key_env: "VLLM_API_KEY",
+        dialect: ProviderDialect::Vllm,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["Qwen/Qwen3-32B-Instruct"],
+        note: "vLLM 自托管; 发现走 /v1/models",
+    },
+    ProviderPreset {
+        id: "Ollama",
+        name: "Ollama",
+        base_url: "http://127.0.0.1:11434",
+        api_key_env: "OLLAMA_API_KEY",
+        dialect: ProviderDialect::Ollama,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["qwen3:32b", "bge-m3"],
+        note: "Ollama 本地; 发现走 /api/tags + /api/show",
+    },
+    ProviderPreset {
+        id: "Xinference",
+        name: "Xinference",
+        base_url: "http://127.0.0.1:9997/v1",
+        api_key_env: "XINFERENCE_API_KEY",
+        dialect: ProviderDialect::Xinference,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText, ProviderKind::TextToSpeech, ProviderKind::SpeechToText],
+        models: &["qwen3", "bge-m3", "bge-reranker-v2-m3"],
+        note: "Xinference 本地推理平台, 六类能力全支持",
+    },
+    ProviderPreset {
+        id: "LocalAI",
+        name: "LocalAI",
+        base_url: "http://127.0.0.1:8080/v1",
+        api_key_env: "LOCALAI_API_KEY",
+        dialect: ProviderDialect::LocalAi,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["gpt-4"],
+        note: "LocalAI 本地 OpenAI 兼容",
+    },
+    ProviderPreset {
+        id: "LM-Studio",
+        name: "LM-Studio",
+        base_url: "http://127.0.0.1:1234/v1",
+        api_key_env: "LMSTUDIO_API_KEY",
+        dialect: ProviderDialect::LmStudio,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding],
+        models: &["qwen3-32b"],
+        note: "LM Studio 本地",
+    },
+    ProviderPreset {
+        id: "GPUStack",
+        name: "GPUStack",
+        base_url: "http://127.0.0.1:8080/v1",
+        api_key_env: "GPUSTACK_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["qwen3"],
+        note: "GPUStack 本地 GPU 集群",
+    },
+    ProviderPreset {
+        id: "Builtin",
+        name: "Builtin",
+        base_url: "builtin://candle",
+        api_key_env: "",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Embedding],
+        models: &["all-MiniLM-L6-v2"],
+        note: "RayRAG 内置 Candle 本地 embedding (离线)",
+    },
+    ProviderPreset {
+        id: "PaddleOCR",
+        name: "PaddleOCR",
+        base_url: "https://paddleocr.aistudio-app.com",
+        api_key_env: "PADDLEOCR_ACCESS_TOKEN",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Ocr],
+        models: &["PaddleOCR-VL"],
+        note: "PaddleOCR 云端/本地 GGUF 8090 (解析器已接入)",
+    },
+    ProviderPreset {
+        id: "MinerU",
+        name: "MinerU",
+        base_url: "",
+        api_key_env: "MINERU_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Ocr],
+        models: &["mineru"],
+        note: "MinerU 文档解析 (解析器已接入)",
+    },
+    ProviderPreset {
+        id: "SoMark",
+        name: "SoMark",
+        base_url: "https://somark.tech/api/v1",
+        api_key_env: "SOMARK_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Ocr],
+        models: &["somark"],
+        note: "SoMark 版面识别 SaaS (解析器已接入)",
+    },
+    ProviderPreset {
+        id: "OpenDataLoader",
+        name: "OpenDataLoader",
+        base_url: "",
+        api_key_env: "OPENDATALOADER_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Ocr],
+        models: &["opendataloader"],
+        note: "OpenDataLoader 远程 PDF 解析 (解析器已接入)",
+    },
+    // ── 国际端点 (require an international network) ────────────────────
+    ProviderPreset {
+        id: "OpenAI",
+        name: "OpenAI",
+        base_url: "https://api.openai.com/v1",
+        api_key_env: "OPENAI_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText, ProviderKind::TextToSpeech, ProviderKind::SpeechToText],
+        models: &["gpt-4o", "gpt-4o-mini", "text-embedding-3-large", "gpt-4o-mini-tts"],
+        note: "OpenAI 官方",
+    },
+    ProviderPreset {
+        id: "Azure-OpenAI",
+        name: "Azure-OpenAI",
+        base_url: "https://<resource>.openai.azure.com/openai/deployments",
+        api_key_env: "AZURE_OPENAI_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["gpt-4o"],
+        note: "Azure OpenAI, 需替换 resource 与 deployment",
+    },
+    ProviderPreset {
+        id: "Anthropic",
+        name: "Anthropic",
+        base_url: "https://api.anthropic.com/",
+        api_key_env: "ANTHROPIC_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["claude-sonnet-4", "claude-3-5-haiku"],
+        note: "Anthropic Claude; 经 RayRAG OpenAI 兼容适配层转发",
+    },
+    ProviderPreset {
+        id: "Gemini",
+        name: "Gemini",
+        base_url: "https://generativelanguage.googleapis.com/v1beta",
+        api_key_env: "GEMINI_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["gemini-2.5-pro", "gemini-2.5-flash", "text-embedding-004"],
+        note: "Google Gemini",
+    },
+    ProviderPreset {
+        id: "xAI",
+        name: "xAI",
+        base_url: "https://api.x.ai/v1",
+        api_key_env: "XAI_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["grok-4", "grok-3"],
+        note: "xAI Grok",
+    },
+    ProviderPreset {
+        id: "OpenRouter",
+        name: "OpenRouter",
+        base_url: "https://openrouter.ai/api/v1",
+        api_key_env: "OPENROUTER_API_KEY",
+        dialect: ProviderDialect::OpenRouter,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["anthropic/claude-sonnet-4", "openai/gpt-4o"],
+        note: "OpenRouter 聚合; 发现走 /api/v1/models?output_modalities=all",
+    },
+    ProviderPreset {
+        id: "Groq",
+        name: "Groq",
+        base_url: "https://api.groq.com/openai/v1",
+        api_key_env: "GROQ_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["llama-3.3-70b-versatile"],
+        note: "Groq 快速推理",
+    },
+    ProviderPreset {
+        id: "Mistral",
+        name: "Mistral",
+        base_url: "https://api.mistral.ai/v1",
+        api_key_env: "MISTRAL_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding],
+        models: &["mistral-large-latest", "mistral-embed"],
+        note: "Mistral",
+    },
+    ProviderPreset {
+        id: "Cohere",
+        name: "Cohere",
+        base_url: "https://api.cohere.com/v1",
+        api_key_env: "COHERE_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Rerank, ProviderKind::Embedding],
+        models: &["command-r-plus", "rerank-multilingual-v3.0", "embed-english-v3.0"],
+        note: "Cohere chat/rerank/embedding",
+    },
+    ProviderPreset {
+        id: "Jina",
+        name: "Jina",
+        base_url: "https://api.jina.ai/v1",
+        api_key_env: "JINA_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank],
+        models: &["jina-chat", "jina-embeddings-v3", "jina-reranker-v2-base-multilingual"],
+        note: "Jina embedding/rerank/chat",
+    },
+    ProviderPreset {
+        id: "Voyage AI",
+        name: "Voyage AI",
+        base_url: "https://api.voyageai.com/v1",
+        api_key_env: "VOYAGE_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Embedding, ProviderKind::Rerank],
+        models: &["voyage-3-large", "voyage-multilingual-2", "rerank-2"],
+        note: "Voyage embedding/rerank",
+    },
+    ProviderPreset {
+        id: "StepFun",
+        name: "StepFun",
+        base_url: "https://api.stepfun.com/v1",
+        api_key_env: "STEPFUN_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["step-3-8k", "step-1v-8k"],
+        note: "阶跃星辰 (国际端点, 国内可尝试 api.stepfun.com 直连)",
+    },
+    ProviderPreset {
+        id: "NVIDIA",
+        name: "NVIDIA",
+        base_url: "https://integrate.api.nvidia.com/v1",
+        api_key_env: "NVIDIA_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["meta/llama-3.3-70b-instruct", "nvidia/embed-qa-4"],
+        note: "NVIDIA NIM 聚合",
+    },
+    ProviderPreset {
+        id: "TogetherAI",
+        name: "TogetherAI",
+        base_url: "https://api.together.xyz/v1",
+        api_key_env: "TOGETHER_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding],
+        models: &["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+        note: "Together AI",
+    },
+    ProviderPreset {
+        id: "Upstage",
+        name: "Upstage",
+        base_url: "https://api.upstage.ai/v1/solar",
+        api_key_env: "UPSTAGE_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["solar-pro"],
+        note: "Upstage Solar",
+    },
+    ProviderPreset {
+        id: "NovitaAI",
+        name: "NovitaAI",
+        base_url: "https://api.novita.ai/v3/openai",
+        api_key_env: "NOVITA_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["deepseek/deepseek-v3"],
+        note: "Novita AI",
+    },
+    ProviderPreset {
+        id: "PPIO",
+        name: "PPIO",
+        base_url: "https://api.ppio.ai/v1",
+        api_key_env: "PPIO_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["gpt-4o"],
+        note: "PPIO",
+    },
+    ProviderPreset {
+        id: "Replicate",
+        name: "Replicate",
+        base_url: "https://api.replicate.com/v1",
+        api_key_env: "REPLICATE_API_KEY",
+        dialect: ProviderDialect::Replicate,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["meta/meta-llama-3-70b-instruct"],
+        note: "Replicate; 模型发现不适用, 使用静态模型列表",
+    },
+    ProviderPreset {
+        id: "siliconflow_intl",
+        name: "siliconflow_intl",
+        base_url: "https://api.siliconflow.com/v1",
+        api_key_env: "SILICONFLOW_INTL_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank],
+        models: &["Qwen/Qwen3-32B"],
+        note: "硅基流动国际端点",
+    },
+    ProviderPreset {
+        id: "DeepInfra",
+        name: "DeepInfra",
+        base_url: "https://api.deepinfra.com/v1",
+        api_key_env: "DEEPINFRA_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        models: &["meta-llama/Llama-3.3-70B-Instruct"],
+        note: "DeepInfra",
+    },
+    ProviderPreset {
+        id: "Perplexity",
+        name: "Perplexity",
+        base_url: "https://api.perplexity.ai",
+        api_key_env: "PERPLEXITY_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["sonar-pro", "sonar"],
+        note: "Perplexity Sonar 联网搜索",
+    },
+    ProviderPreset {
+        id: "302.AI",
+        name: "302.AI",
+        base_url: "https://api.302.ai/v1",
+        api_key_env: "API302_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        models: &["gpt-4o", "text-embedding-3-small"],
+        note: "302.AI 聚合",
+    },
+    ProviderPreset {
+        id: "CometAPI",
+        name: "CometAPI",
+        base_url: "https://api.cometapi.com/v1",
+        api_key_env: "COMET_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "CometAPI 聚合",
+    },
+    ProviderPreset {
+        id: "DeerAPI",
+        name: "DeerAPI",
+        base_url: "https://api.deerapi.com/v1",
+        api_key_env: "DEER_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "DeerAPI 聚合",
+    },
+    ProviderPreset {
+        id: "Jiekou.AI",
+        name: "Jiekou.AI",
+        base_url: "https://api.jiekou.ai/v1",
+        api_key_env: "JIEKOU_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "接口AI 聚合",
+    },
+    ProviderPreset {
+        id: "Astraflow",
+        name: "Astraflow",
+        base_url: "https://api-us-ca.umodelverse.ai/v1",
+        api_key_env: "ASTRAFLOW_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["claude-sonnet-4-20250514"],
+        note: "Astraflow 国际端点",
+    },
+    ProviderPreset {
+        id: "FuturMix",
+        name: "FuturMix",
+        base_url: "https://futurmix.ai/v1",
+        api_key_env: "FUTURMIX_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "FuturMix 聚合",
+    },
+    ProviderPreset {
+        id: "Avian",
+        name: "Avian",
+        base_url: "https://api.avian.io/v1",
+        api_key_env: "AVIAN_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "Avian 聚合",
+    },
+    ProviderPreset {
+        id: "RAGcon",
+        name: "RAGcon",
+        base_url: "https://api.ragcon.ai/v1",
+        api_key_env: "RAGCON_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["gpt-4o"],
+        note: "RAGcon 聚合",
+    },
+    ProviderPreset {
+        id: "Bedrock",
+        name: "Bedrock",
+        base_url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        api_key_env: "AWS_ACCESS_KEY_ID",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &["anthropic.claude-sonnet-4-20250514"],
+        note: "AWS Bedrock; 需 AWS 签名, 建议经 OpenAI 兼容网关接入",
+    },
+    ProviderPreset {
+        id: "Google Cloud",
+        name: "Google Cloud",
+        base_url: "https://us-central1-aiplatform.googleapis.com/v1",
+        api_key_env: "GOOGLE_CLOUD_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding],
+        models: &["gemini-2.5-pro"],
+        note: "Google Vertex AI",
+    },
+    ProviderPreset {
+        id: "HuggingFace",
+        name: "HuggingFace",
+        base_url: "https://api-inference.huggingface.co/v1",
+        api_key_env: "HF_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["meta-llama/Llama-3.3-70B-Instruct"],
+        note: "HuggingFace Inference",
+    },
+    ProviderPreset {
+        id: "FastEmbed",
+        name: "FastEmbed",
+        base_url: "http://127.0.0.1:8094",
+        api_key_env: "",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Embedding],
+        models: &["BAAI/bge-small-en-v1.5"],
+        note: "Qdrant FastEmbed 本地服务",
+    },
+    ProviderPreset {
+        id: "Fish Audio",
+        name: "Fish Audio",
+        base_url: "https://api.fish.audio",
+        api_key_env: "FISH_AUDIO_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::TextToSpeech, ProviderKind::SpeechToText],
+        models: &["fish-speech-1.5"],
+        note: "Fish Audio TTS/ASR",
+    },
+    ProviderPreset {
+        id: "Tencent Cloud",
+        name: "Tencent Cloud",
+        base_url: "https://api.hunyuan.cloud.tencent.com/v1",
+        api_key_env: "TENCENT_CLOUD_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
+        models: &["hunyuan-turbos-latest"],
+        note: "腾讯云 (与混元共用端点)",
+    },
+];
+
+/// Normalize a provider id/name for lookup: lowercase, strip spaces and hyphens.
+fn normalize_provider_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Slugify a provider id for the providers store: lowercase, spaces and
+/// underscores become hyphens, other punctuation is dropped. The result only
+/// contains lowercase letters, digits and hyphens (validated by the store).
+pub fn provider_id_slug(provider_id: &str) -> String {
+    let mut slug = String::with_capacity(provider_id.len());
+    for c in provider_id.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.ends_with('-') && !slug.is_empty() {
+            slug.push('-');
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+/// Look up a preset by provider id (case/hyphen insensitive).
+pub fn provider_preset(provider_id: &str) -> Option<&'static ProviderPreset> {
+    let needle = normalize_provider_name(provider_id);
+    PROVIDER_PRESETS
+        .iter()
+        .find(|preset| normalize_provider_name(preset.id) == needle)
+}
+
+/// Look up a preset by display name (case/hyphen insensitive).
+pub fn provider_preset_by_name(provider_name: &str) -> Option<&'static ProviderPreset> {
+    let needle = normalize_provider_name(provider_name);
+    PROVIDER_PRESETS
+        .iter()
+        .find(|preset| {
+            normalize_provider_name(preset.name) == needle
+                || normalize_provider_name(preset.id) == needle
+        })
+}
+
+/// Resolve the default API base for a provider (id or name), if a preset exists.
+pub fn provider_default_base(provider_id: &str, provider_name: &str) -> Option<&'static str> {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.base_url)
+        .filter(|base| !base.is_empty() && !base.starts_with("builtin://"))
+}
+
+/// Resolve the recommended API-key environment variable for a provider.
+pub fn provider_api_key_env(provider_id: &str, provider_name: &str) -> Option<&'static str> {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.api_key_env)
+        .filter(|env| !env.is_empty())
+}
+
+/// Whether a provider is directly reachable from mainland China.
+pub fn provider_is_domestic(provider_id: &str, provider_name: &str) -> bool {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.domestic)
+        .unwrap_or(false)
+}
+
+/// Whether a provider advertises the given capability.
+pub fn provider_has_kind(provider_id: &str, provider_name: &str, kind: ProviderKind) -> bool {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.kinds.contains(&kind))
+        .unwrap_or(false)
+}
+
+/// Dialect for a provider, falling back to OpenAI-compatible.
+pub fn provider_dialect(provider_id: &str, provider_name: &str) -> ProviderDialect {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.dialect)
+        .unwrap_or(ProviderDialect::OpenAiCompatible)
+}
+
+/// Representative model names for a provider preset.
+pub fn provider_default_models(provider_id: &str, provider_name: &str) -> Vec<String> {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.models.iter().map(|model| (*model).to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// All presets supporting a capability, sorted domestic-first then by id.
+pub fn presets_for(kind: ProviderKind) -> Vec<&'static ProviderPreset> {
+    let mut presets: Vec<&'static ProviderPreset> = PROVIDER_PRESETS
+        .iter()
+        .filter(|preset| preset.kinds.contains(&kind))
+        .collect();
+    presets.sort_by_key(|preset| (std::cmp::Reverse(preset.domestic), preset.id));
+    presets
+}
+
+/// Count of catalog entries (63 RAGFlow factories + local engines).
+pub const fn preset_count() -> usize {
+    PROVIDER_PRESETS.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_has_all_ragflow_factories() {
+        // RAGFlow v0.25.2 conf/llm_factories.json lists 63 factories.
+        assert!(preset_count() >= 63);
+        // Spot-check the factory ids that RayRAG must mirror.
+        for id in [
+            "OpenAI",
+            "Tongyi-Qianwen",
+            "ZHIPU-AI",
+            "Moonshot",
+            "DeepSeek",
+            "MiniMax",
+            "SILICONFLOW",
+            "Tencent Hunyuan",
+            "BaiduYiyan",
+            "VolcEngine",
+            "Ollama",
+            "Xinference",
+            "Anthropic",
+            "Gemini",
+        ] {
+            assert!(provider_preset(id).is_some(), "missing preset for {id}");
+        }
+    }
+
+    #[test]
+    fn lookups_are_case_and_hyphen_insensitive() {
+        assert!(provider_preset("zhipu-ai").is_some());
+        assert!(provider_preset("ZHIPU AI").is_some());
+        assert!(provider_preset_by_name("zhipu ai").is_some());
+        assert_eq!(
+            provider_preset("deepseek").map(|p| p.dialect),
+            Some(ProviderDialect::OpenAiCompatible)
+        );
+    }
+
+    #[test]
+    fn domestic_flags_are_sane() {
+        assert!(provider_is_domestic("ZHIPU-AI", "ZHIPU-AI"));
+        assert!(provider_is_domestic("DeepSeek", "DeepSeek"));
+        assert!(provider_is_domestic("SILICONFLOW", "SILICONFLOW"));
+        assert!(provider_is_domestic("MiniMax", "MiniMax"));
+        assert!(provider_is_domestic("OpenAI-API-Compatible", "OpenAI-API-Compatible"));
+        assert!(!provider_is_domestic("OpenAI", "OpenAI"));
+        assert!(!provider_is_domestic("Anthropic", "Anthropic"));
+        assert!(!provider_is_domestic("", ""));
+    }
+
+    #[test]
+    fn base_urls_point_at_domestic_endpoints() {
+        assert_eq!(
+            provider_default_base("DeepSeek", "DeepSeek"),
+            Some("https://api.deepseek.com/v1")
+        );
+        assert_eq!(
+            provider_default_base("SILICONFLOW", "SILICONFLOW"),
+            Some("https://api.siliconflow.cn/v1")
+        );
+        assert_eq!(
+            provider_default_base("Tongyi-Qianwen", "Tongyi-Qianwen"),
+            Some("https://dashscope.aliyuncs.com/compatible-mode/v1")
+        );
+        // Local engines default to loopback.
+        assert_eq!(
+            provider_default_base("Ollama", "Ollama"),
+            Some("http://127.0.0.1:11434")
+        );
+        assert_eq!(
+            provider_default_base("OpenAI-API-Compatible", "OpenAI-API-Compatible"),
+            Some("http://127.0.0.1:8088/v1")
+        );
+    }
+
+    #[test]
+    fn capability_routing() {
+        assert!(provider_has_kind("ZHIPU-AI", "ZHIPU-AI", ProviderKind::Rerank));
+        assert!(provider_has_kind("SILICONFLOW", "SILICONFLOW", ProviderKind::Embedding));
+        assert!(!provider_has_kind("DeepSeek", "DeepSeek", ProviderKind::Rerank));
+        assert!(provider_has_kind("Xinference", "Xinference", ProviderKind::SpeechToText));
+        assert!(provider_has_kind("PaddleOCR", "PaddleOCR", ProviderKind::Ocr));
+        assert!(!provider_has_kind("OpenAI", "OpenAI", ProviderKind::Ocr));
+    }
+
+    #[test]
+    fn key_env_conventions() {
+        assert_eq!(provider_api_key_env("ZHIPU-AI", ""), Some("ZHIPU_API_KEY"));
+        assert_eq!(provider_api_key_env("DeepSeek", ""), Some("DEEPSEEK_API_KEY"));
+        assert_eq!(
+            provider_api_key_env("VolcEngine", ""),
+            Some("ARK_API_KEY")
+        );
+        assert_eq!(provider_api_key_env("Ollama", ""), Some("OLLAMA_API_KEY"));
+    }
+
+    #[test]
+    fn domestic_providers_are_sorted_first() {
+        let chats = presets_for(ProviderKind::Chat);
+        let first_non_domestic = chats
+            .iter()
+            .position(|preset| !preset.domestic)
+            .unwrap_or(chats.len());
+        assert!(
+            chats[..first_non_domestic]
+                .iter()
+                .all(|preset| preset.domestic),
+            "all domestic presets must come before international ones"
+        );
+    }
+
+    #[test]
+    fn no_duplicate_normalized_ids() {
+        let mut seen = std::collections::HashSet::new();
+        for preset in PROVIDER_PRESETS {
+            let key = normalize_provider_name(preset.id);
+            assert!(
+                seen.insert(key),
+                "duplicate normalized provider id: {}",
+                preset.id
+            );
+        }
+    }
+}
