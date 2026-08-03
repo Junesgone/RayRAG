@@ -34,6 +34,7 @@ pub mod chunk_feedback;
 pub mod document_writer;
 pub mod duckduckgo;
 pub mod eastmoney;
+pub mod email;
 pub mod embed;
 pub mod generation_params;
 pub mod github;
