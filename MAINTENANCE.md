@@ -10,11 +10,38 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（579 passed / 0 failed / 25 ignored，2026-08-03 复核；+8 KGSearch 图检索单测）；`postgres-backend,zvec-backend` 双 feature 通过（557 passed / 0 failed / 25 ignored；+4 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（586 passed / 0 failed / 25 ignored，2026-08-03 复核；+7 GraphExtractor 实体抽取单测）；`postgres-backend,zvec-backend` 双 feature 通过（593 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 Graph 实体抽取：对标 rag/graphrag/general/graph_extractor.py + graph_prompt.py
+
+- RAGFlow GraphExtractor 是 GraphRAG 索引侧实体/关系抽取：每 chunk 一次
+  LLM 抽取 + gleaning 循环（CONTINUE 追加漏检实体、LOOP 问 Y/N 是否继续）→
+  记录分割 → 实体/关系解析。
+- **`GraphExtractor`（src/graphrag.rs）**：
+  - `process_single_content`：渲染 GRAPH_EXTRACTION_PROMPT → LLM chat →
+    gleaning 循环（max_gleanings=3 默认）→ token 计数
+  - `parse_extraction_records`：按 record/completion 分隔符分割 →
+    括号体提取 → `_entities_and_relations`（实体类型过滤 lowercase +
+    关系权重解析 + src/tgt 排序）
+  - `handle_single_entity_extraction` / `handle_single_relationship_extraction`
+    （utils.py 移植）：实体需 ≥4 属性且首属性 `"entity"`；关系需 ≥5 且
+    `"relationship"`，权重 is_float_regex 校验
+  - `split_string_by_multi_markers` / `is_float_regex`（utils.py 补移植）
+- **graph_prompt.py（123 行）**：GRAPH_EXTRACTION_PROMPT（3 示例全文）、
+  CONTINUE_PROMPT、LOOP_PROMPT、SUMMARIZE_DESCRIPTIONS_PROMPT 全部内嵌。
+- 常量：DEFAULT_TUPLE_DELIMITER=`<|>`、DEFAULT_RECORD_DELIMITER=`##`、
+  DEFAULT_COMPLETION_DELIMITER=`<|COMPLETE|>`。
+- gap：chat_limiter 并发、has_canceled、tiktoken cl100k logit-bias 循环参数、
+  callback 进度（运行时门控）。
+- 测试：**586 passed / 0 failed / 25 ignored**（+7 GraphExtractor 单测：
+  记录解析/类型过滤/垃圾跳过/多分隔符/浮点/实体+关系解析器/prompt 渲染）；
+  双 feature **593 passed**（586+7 PG 单测）。
+- 矩阵：graph_extractor.py → src/graphrag.rs；graph_prompt.py → src/graphrag.rs；
+  utils.py 补 4 个函数。
 
 ## 2026-08-03 KG 图检索：对标 rag/graphrag/search.py + query_analyze_prompt.py
 

@@ -1088,6 +1088,389 @@ impl KgSearch {
     }
 }
 
+// ── Graph Extraction ─────────────────────────────────────────────
+// Mirrors rag/graphrag/general/graph_extractor.py (150 lines) +
+// graph_prompt.py (123 lines) + utils.py's handle_single_entity_extraction /
+// handle_single_relationship_extraction / split_string_by_multi_markers /
+// is_float_regex. The upstream class runs one LLM pass per chunk with a
+// "gleaning" loop (CONTINUE_PROMPT to append missed entities, LOOP_PROMPT
+// to decide whether to keep going), then splits records and parses
+// entities/relationships.
+
+pub const DEFAULT_TUPLE_DELIMITER: &str = "<|>";
+pub const DEFAULT_RECORD_DELIMITER: &str = "##";
+pub const DEFAULT_COMPLETION_DELIMITER: &str = "<|COMPLETE|>";
+
+/// GRAPH_EXTRACTION_PROMPT — verbatim from graph_prompt.py (GraphRAG, MIT).
+pub const GRAPH_EXTRACTION_PROMPT: &str = r#"-Goal-
+Given a text document that is potentially relevant to this activity and a list of entity types, identify all entities of those types from the text and all relationships among the identified entities.
+
+-Steps-
+1. Identify all entities. For each identified entity, extract the following information:
+- entity_name: Name of the entity, capitalized, in language of 'Text'
+- entity_type: One of the following types: [{entity_types}]
+- entity_description: Comprehensive description of the entity's attributes and activities in language of 'Text'
+Format each entity as ("entity"{tuple_delimiter}<entity_name>{tuple_delimiter}<entity_type>{tuple_delimiter}<entity_description>
+
+2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
+For each pair of related entities, extract the following information:
+- source_entity: name of the source entity, as identified in step 1
+- target_entity: name of the target entity, as identified in step 1
+- relationship_description: explanation as to why you think the source entity and the target entity are related to each other in language of 'Text'
+- relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
+ Format each relationship as ("relationship"{tuple_delimiter}<source_entity>{tuple_delimiter}<target_entity>{tuple_delimiter}<relationship_description>{tuple_delimiter}<relationship_strength>)
+
+3. Return output as a single list of all the entities and relationships identified in steps 1 and 2. Use **{record_delimiter}** as the list delimiter.
+
+4. When finished, output {completion_delimiter}
+
+######################
+-Examples-
+######################
+Example 1:
+
+Entity_types: [person, technology, mission, organization, location]
+Text:
+while Alex clenched his jaw, the buzz of frustration dull against the backdrop of Taylor's authoritarian certainty. It was this competitive undercurrent that kept him alert, the sense that his and Jordan's shared commitment to discovery was an unspoken rebellion against Cruz's narrowing vision of control and order.
+
+Then Taylor did something unexpected. They paused beside Jordan and, for a moment, observed the device with something akin to reverence. "If this tech can be understood..." Taylor said, their voice quieter, "It could change the game for us. For all of us."
+
+The underlying dismissal earlier seemed to falter, replaced by a glimpse of reluctant respect for the gravity of what lay in their hands. Jordan looked up, and for a fleeting heartbeat, their eyes locked with Taylor's, a wordless clash of wills softening into an uneasy truce.
+
+It was a small transformation, barely perceptible, but one that Alex noted with an inward nod. They had all been brought here by different paths
+################
+Output:
+("entity"{tuple_delimiter}"Alex"{tuple_delimiter}"person"{tuple_delimiter}"Alex is a character who experiences frustration and is observant of the dynamics among other characters."){record_delimiter}
+("entity"{tuple_delimiter}"Taylor"{tuple_delimiter}"person"{tuple_delimiter}"Taylor is portrayed with authoritarian certainty and shows a moment of reverence towards a device, indicating a change in perspective."){record_delimiter}
+("entity"{tuple_delimiter}"Jordan"{tuple_delimiter}"person"{tuple_delimiter}"Jordan shares a commitment to discovery and has a significant interaction with Taylor regarding a device."){record_delimiter}
+("entity"{tuple_delimiter}"Cruz"{tuple_delimiter}"person"{tuple_delimiter}"Cruz is associated with a vision of control and order, influencing the dynamics among other characters."){record_delimiter}
+("entity"{tuple_delimiter}"The Device"{tuple_delimiter}"technology"{tuple_delimiter}"The Device is central to the story, with potential game-changing implications, and is revered by Taylor."){record_delimiter}
+("relationship"{tuple_delimiter}"Alex"{tuple_delimiter}"Taylor"{tuple_delimiter}"Alex is affected by Taylor's authoritarian certainty and observes changes in Taylor's attitude towards the device."{tuple_delimiter}7){record_delimiter}
+("relationship"{tuple_delimiter}"Alex"{tuple_delimiter}"Jordan"{tuple_delimiter}"Alex and Jordan share a commitment to discovery, which contrasts with Cruz's vision."{tuple_delimiter}6){record_delimiter}
+("relationship"{tuple_delimiter}"Taylor"{tuple_delimiter}"Jordan"{tuple_delimiter}"Taylor and Jordan interact directly regarding the device, leading to a moment of mutual respect and an uneasy truce."{tuple_delimiter}8){record_delimiter}
+("relationship"{tuple_delimiter}"Jordan"{tuple_delimiter}"Cruz"{tuple_delimiter}"Jordan's commitment to discovery is in rebellion against Cruz's vision of control and order."{tuple_delimiter}5){record_delimiter}
+("relationship"{tuple_delimiter}"Taylor"{tuple_delimiter}"The Device"{tuple_delimiter}"Taylor shows reverence towards the device, indicating its importance and potential impact."{tuple_delimiter}9){completion_delimiter}
+#############################
+Example 2:
+
+Entity_types: [person, technology, mission, organization, location]
+Text:
+They were no longer mere operatives; they had become guardians of a threshold, keepers of a message from a realm beyond stars and stripes. This elevation in their mission could not be shackled by regulations and established protocols—it demanded a new perspective, a new resolve.
+
+Tension threaded through the dialogue of beeps and static as communications with Washington buzzed in the background. The team stood, a portentous air enveloping them. It was clear that the decisions they made in the ensuing hours could redefine humanity's place in the cosmos or condemn them to ignorance and potential peril.
+
+Their connection to the stars solidified, the group moved to address the crystallizing warning, shifting from passive recipients to active participants. Mercer's latter instincts gained precedence— the team's mandate had evolved, no longer solely to observe and report but to interact and prepare. A metamorphosis had begun, and Operation: Dulce hummed with the newfound frequency of their daring, a tone set not by the earthly
+#############
+Output:
+("entity"{tuple_delimiter}"Washington"{tuple_delimiter}"location"{tuple_delimiter}"Washington is a location where communications are being received, indicating its importance in the decision-making process."){record_delimiter}
+("entity"{tuple_delimiter}"Operation: Dulce"{tuple_delimiter}"mission"{tuple_delimiter}"Operation: Dulce is described as a mission that has evolved to interact and prepare, indicating a significant shift in objectives and activities."){record_delimiter}
+("entity"{tuple_delimiter}"The team"{tuple_delimiter}"organization"{tuple_delimiter}"The team is portrayed as a group of individuals who have transitioned from passive observers to active participants in a mission, showing a dynamic change in their role."){record_delimiter}
+("relationship"{tuple_delimiter}"The team"{tuple_delimiter}"Washington"{tuple_delimiter}"The team receives communications from Washington, which influences their decision-making process."{tuple_delimiter}7){record_delimiter}
+("relationship"{tuple_delimiter}"The team"{tuple_delimiter}"Operation: Dulce"{tuple_delimiter}"The team is directly involved in Operation: Dulce, executing its evolved objectives and activities."{tuple_delimiter}9){completion_delimiter}
+#############################
+Example 3:
+
+Entity_types: [person, role, technology, organization, event, location, concept]
+Text:
+their voice slicing through the buzz of activity. "Control may be an illusion when facing an intelligence that literally writes its own rules," they stated stoically, casting a watchful eye over the flurry of data.
+
+
+"It's like it's learning to communicate," offered Sam Rivera from a nearby interface, their youthful energy boding a mix of awe and anxiety. "This gives talking to strangers' a whole new meaning."
+
+Alex surveyed his team—each face a study in concentration, determination, and not a small measure of trepidation. "This might well be our first contact," he acknowledged, "And we need to be ready for whatever answers back."
+
+Together, they stood on the edge of the unknown, forging humanity's response to a message from the heavens. The ensuing silence was palpable—a collective introspection about their role in this grand cosmic play, one that could rewrite human history.
+
+The encrypted dialogue continued to unfold, its intricate patterns showing an almost uncanny anticipation
+#############
+Output:
+("entity"{tuple_delimiter}"Sam Rivera"{tuple_delimiter}"person"{tuple_delimiter}"Sam Rivera is a member of a team working on communicating with an unknown intelligence, showing a mix of awe and anxiety."){record_delimiter}
+("entity"{tuple_delimiter}"Alex"{tuple_delimiter}"person"{tuple_delimiter}"Alex is the leader of a team attempting first contact with an unknown intelligence, acknowledging the significance of their task."){record_delimiter}
+("entity"{tuple_delimiter}"Control"{tuple_delimiter}"concept"{tuple_delimiter}"Control refers to the ability to manage or govern, which is challenged by an intelligence that writes its own rules."){record_delimiter}
+("entity"{tuple_delimiter}"Intelligence"{tuple_delimiter}"concept"{tuple_delimiter}"Intelligence here refers to an unknown entity capable of writing its own rules and learning to communicate."){record_delimiter}
+("entity"{tuple_delimiter}"First Contact"{tuple_delimiter}"event"{tuple_delimiter}"First Contact is the potential initial communication between humanity and an unknown intelligence."){record_delimiter}
+("entity"{tuple_delimiter}"Humanity's Response"{tuple_delimiter}"event"{tuple_delimiter}"Humanity's Response is the collective action taken by Alex's team in response to a message from an unknown intelligence."){record_delimiter}
+("relationship"{tuple_delimiter}"Sam Rivera"{tuple_delimiter}"Intelligence"{tuple_delimiter}"Sam Rivera is directly involved in the process of learning to communicate with the unknown intelligence."{tuple_delimiter}9){record_delimiter}
+("relationship"{tuple_delimiter}"Alex"{tuple_delimiter}"First Contact"{tuple_delimiter}"Alex leads the team that might be making the First Contact with the unknown intelligence."{tuple_delimiter}10){record_delimiter}
+("relationship"{tuple_delimiter}"Alex"{tuple_delimiter}"Humanity's Response"{tuple_delimiter}"Alex and his team are the key figures in Humanity's Response to the unknown intelligence."{tuple_delimiter}8){record_delimiter}
+("relationship"{tuple_delimiter}"Control"{tuple_delimiter}"Intelligence"{tuple_delimiter}"The concept of Control is challenged by the Intelligence that writes its own rules."{tuple_delimiter}7){completion_delimiter}
+#############################
+-Real Data-
+######################
+Entity_types: {entity_types}
+Text: {input_text}
+######################
+Output:"#;
+
+/// CONTINUE_PROMPT — append missed entities after the first pass.
+pub const CONTINUE_PROMPT: &str = "MANY entities were missed in the last extraction.  Add them below using the same format:\n";
+
+/// LOOP_PROMPT — ask whether more entities remain (Y/N).
+pub const LOOP_PROMPT: &str = "It appears some entities may have still been missed. Answer Y if there are still entities that need to be added, or N if there are none. Please answer with a single letter Y or N.\n";
+
+/// SUMMARIZE_DESCRIPTIONS_PROMPT — merge per-chunk descriptions of the same
+/// entity into one comprehensive description.
+pub const SUMMARIZE_DESCRIPTIONS_PROMPT: &str = r#"
+You are a helpful assistant responsible for generating a comprehensive summary of the data provided below.
+Given one or two entities, and a list of descriptions, all related to the same entity or group of entities.
+Please concatenate all of these into a single, comprehensive description. Make sure to include information collected from all the descriptions.
+If the provided descriptions are contradictory, please resolve the contradictions and provide a single, coherent summary.
+Make sure it is written in third person, and include the entity names so we the have full context.
+Use {language} as output language.
+
+#######
+-Data-
+Entities: {entity_name}
+Description List: {description_list}
+#######
+"#;
+
+/// An extracted entity record — mirrors handle_single_entity_extraction.
+#[derive(Debug, Clone)]
+pub struct KgExtractedNode {
+    pub entity_name: String,
+    pub entity_type: String,
+    pub description: String,
+    pub source_id: String,
+}
+
+/// An extracted relationship record — mirrors
+/// handle_single_relationship_extraction.
+#[derive(Debug, Clone)]
+pub struct KgExtractedEdge {
+    pub src_id: String,
+    pub tgt_id: String,
+    pub weight: f64,
+    pub description: String,
+    pub keywords: String,
+    pub source_id: String,
+}
+
+/// split_string_by_multi_markers — mirrors rag/graphrag/utils.py.
+pub fn split_string_by_multi_markers(content: &str, markers: &[&str]) -> Vec<String> {
+    if markers.is_empty() {
+        return if content.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![content.trim().to_string()]
+        };
+    }
+    let mut results = vec![content.to_string()];
+    for marker in markers {
+        let mut next = Vec::new();
+        for part in results {
+            next.extend(part.split(marker).map(|s| s.trim().to_string()));
+        }
+        results = next;
+    }
+    results.retain(|s| !s.is_empty());
+    results
+}
+
+/// is_float_regex — mirrors rag/graphrag/utils.py.
+pub fn is_float_regex(value: &str) -> bool {
+    let v = value.trim();
+    !v.is_empty()
+        && v.chars().all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.'))
+        && v.chars().any(|c| c.is_ascii_digit())
+}
+
+/// handle_single_entity_extraction — mirrors rag/graphrag/utils.py: a record
+/// is an entity iff it has ≥4 attributes and the first is `"entity"`.
+pub fn handle_single_entity_extraction(
+    record_attributes: &[String],
+    chunk_key: &str,
+) -> Option<KgExtractedNode> {
+    if record_attributes.len() < 4 || record_attributes[0] != "\"entity\"" {
+        return None;
+    }
+    let entity_name = clean_str(&record_attributes[1].to_uppercase());
+    if entity_name.trim().is_empty() {
+        return None;
+    }
+    let entity_type = clean_str(&record_attributes[2].to_uppercase());
+    let description = clean_str(&record_attributes[3]);
+    Some(KgExtractedNode {
+        entity_name: entity_name.to_uppercase(),
+        entity_type: entity_type.to_uppercase(),
+        description,
+        source_id: chunk_key.to_string(),
+    })
+}
+
+/// handle_single_relationship_extraction — mirrors rag/graphrag/utils.py.
+pub fn handle_single_relationship_extraction(
+    record_attributes: &[String],
+    chunk_key: &str,
+) -> Option<KgExtractedEdge> {
+    if record_attributes.len() < 5 || record_attributes[0] != "\"relationship\"" {
+        return None;
+    }
+    let source = clean_str(&record_attributes[1].to_uppercase());
+    let target = clean_str(&record_attributes[2].to_uppercase());
+    let description = clean_str(&record_attributes[3]);
+    let keywords = clean_str(&record_attributes[4]);
+    let weight = if is_float_regex(record_attributes.last()?) {
+        record_attributes
+            .last()?
+            .trim()
+            .parse::<f64>()
+            .unwrap_or(1.0)
+    } else {
+        1.0
+    };
+    let (src_id, tgt_id) = if source <= target {
+        (source, target)
+    } else {
+        (target, source)
+    };
+    Some(KgExtractedEdge {
+        src_id: src_id.to_uppercase(),
+        tgt_id: tgt_id.to_uppercase(),
+        weight,
+        description,
+        keywords,
+        source_id: chunk_key.to_string(),
+    })
+}
+
+/// Parse raw LLM output into (entities, relationships) — mirrors
+/// `GraphExtractor._process_single_content`'s record split + extractor.py's
+/// `_entities_and_relations`. `entity_types` filters nodes (lowercased);
+/// relations pass through.
+pub fn parse_extraction_records(
+    results: &str,
+    entity_types: &[String],
+    chunk_key: &str,
+) -> (Vec<KgExtractedNode>, Vec<KgExtractedEdge>) {
+    let records = split_string_by_multi_markers(
+        results,
+        &[DEFAULT_RECORD_DELIMITER, DEFAULT_COMPLETION_DELIMITER],
+    );
+    let mut rcds = Vec::new();
+    for record in records {
+        // extract the parenthesized body: `("entity"<|>... )`
+        let Some(open) = record.find('(') else { continue };
+        let Some(close) = record.rfind(')') else { continue };
+        if close <= open {
+            continue;
+        }
+        rcds.push(record[open + 1..close].to_string());
+    }
+    let ent_types: Vec<String> = entity_types.iter().map(|t| t.to_lowercase()).collect();
+    let mut nodes: Vec<KgExtractedNode> = Vec::new();
+    let mut edges: Vec<KgExtractedEdge> = Vec::new();
+    for record in rcds {
+        let attrs = split_string_by_multi_markers(&record, &[DEFAULT_TUPLE_DELIMITER]);
+        if let Some(node) = handle_single_entity_extraction(&attrs, chunk_key) {
+            if ent_types.is_empty() || ent_types.contains(&node.entity_type.to_lowercase()) {
+                nodes.push(node);
+            }
+            continue;
+        }
+        if let Some(edge) = handle_single_relationship_extraction(&attrs, chunk_key) {
+            edges.push(edge);
+        }
+    }
+    (nodes, edges)
+}
+
+/// A chunk's extraction result.
+#[derive(Debug, Default)]
+pub struct GraphExtractionResult {
+    pub nodes: Vec<KgExtractedNode>,
+    pub edges: Vec<KgExtractedEdge>,
+    pub token_count: usize,
+}
+
+/// GraphExtractor — mirrors GraphExtractor._process_single_content: one LLM
+/// pass per chunk + gleaning loop (CONTINUE/LOOP prompts), then record
+/// parsing. `max_gleanings` defaults to 3 (ENTITY_EXTRACTION_MAX_GLEANINGS).
+pub struct GraphExtractor {
+    pub max_gleanings: usize,
+}
+
+impl Default for GraphExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GraphExtractor {
+    pub fn new() -> Self {
+        Self {
+            max_gleanings: 3,
+        }
+    }
+
+    /// Render the extraction prompt for one chunk.
+    pub fn render_prompt(
+        &self,
+        content: &str,
+        entity_types: &[String],
+        language: &str,
+    ) -> String {
+        let mut vars = HashMap::new();
+        vars.insert("tuple_delimiter".to_string(), DEFAULT_TUPLE_DELIMITER.to_string());
+        vars.insert("record_delimiter".to_string(), DEFAULT_RECORD_DELIMITER.to_string());
+        vars.insert("completion_delimiter".to_string(), DEFAULT_COMPLETION_DELIMITER.to_string());
+        vars.insert("entity_types".to_string(), entity_types.join(","));
+        vars.insert("input_text".to_string(), content.to_string());
+        vars.insert("language".to_string(), language.to_string());
+        perform_variable_replacements(GRAPH_EXTRACTION_PROMPT, &vars)
+    }
+
+    /// Process a single chunk: initial LLM pass + gleanings.
+    pub async fn process_single_content(
+        &self,
+        chunk_key: &str,
+        content: &str,
+        entity_types: &[String],
+        llm: &LlmClient,
+        language: &str,
+    ) -> Result<GraphExtractionResult> {
+        let hint_prompt = self.render_prompt(content, entity_types, language);
+        let system = crate::llm::ChatMessage::new("system", hint_prompt.clone());
+        let mut history = vec![
+            system,
+            crate::llm::ChatMessage::new("user", "Output:"),
+        ];
+        let response = llm.chat(&history).await?;
+        let mut token_count = hint_prompt.chars().count() + response.chars().count();
+        let mut results = response.clone();
+
+        // Gleaning loop: keep asking for missed entities, stop on N or cap.
+        for i in 0..self.max_gleanings {
+            history.push(crate::llm::ChatMessage::new("user", CONTINUE_PROMPT));
+            let response = llm.chat(&history).await?;
+            token_count += history
+                .iter()
+                .map(|m| m.content.chars().count())
+                .sum::<usize>()
+                + response.chars().count();
+            results.push_str(&response);
+
+            if i >= self.max_gleanings - 1 {
+                break;
+            }
+            history.push(crate::llm::ChatMessage::new("assistant", response));
+            history.push(crate::llm::ChatMessage::new("user", LOOP_PROMPT));
+            let continuation = llm.chat(&history).await?;
+            if !continuation.trim().eq_ignore_ascii_case("y") {
+                break;
+            }
+            history.push(crate::llm::ChatMessage::new("assistant", "Y"));
+        }
+
+        let (nodes, edges) = parse_extraction_records(&results, entity_types, chunk_key);
+        Ok(GraphExtractionResult {
+            nodes,
+            edges,
+            token_count,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1324,5 +1707,108 @@ mod tests {
         let obj = pool.as_object().expect("object pool");
         assert!(obj.contains_key("Person"));
         assert!(obj.contains_key("Organization"));
+    }
+
+    // ── graph extraction ──────────────────────────────────────────
+
+    const SAMPLE_OUTPUT: &str = r#"("entity"<|>"Alex"<|>"person"<|>"Alex is a character.")##("entity"<|>"The Device"<|>"technology"<|>"Central device.")##("relationship"<|>"Alex"<|>"The Device"<|>"Alex interacts with the device."<|>7)<|COMPLETE|>"#;
+
+    #[test]
+    fn parse_extraction_records_extracts_entities_and_edges() {
+        let types = vec!["person".to_string(), "technology".to_string()];
+        let (nodes, edges) = parse_extraction_records(SAMPLE_OUTPUT, &types, "chunk-1");
+        assert_eq!(nodes.len(), 2, "2 entities");
+        assert_eq!(edges.len(), 1, "1 relationship");
+        let alex = nodes.iter().find(|n| n.entity_name == "ALEX").unwrap();
+        assert_eq!(alex.entity_type, "PERSON");
+        assert_eq!(alex.source_id, "chunk-1");
+        let edge = &edges[0];
+        // sorted pair: Alex < The Device
+        assert_eq!(edge.src_id, "ALEX");
+        assert_eq!(edge.tgt_id, "THE DEVICE");
+        assert_eq!(edge.weight, 7.0);
+    }
+
+    #[test]
+    fn parse_extraction_records_filters_by_type() {
+        let types = vec!["person".to_string()]; // technology excluded
+        let (nodes, _) = parse_extraction_records(SAMPLE_OUTPUT, &types, "c");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].entity_name, "ALEX");
+    }
+
+    #[test]
+    fn parse_extraction_records_skips_garbage() {
+        let out = "no parens here\n##(\"entity\"<|>\"\"<|>\"person\"<|>\"empty name\")##(\"entity\"";
+        let (nodes, edges) = parse_extraction_records(out, &["person".to_string()], "c");
+        assert!(nodes.is_empty(), "empty name entity skipped");
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn split_markers_handles_empty_and_multiple() {
+        assert!(split_string_by_multi_markers("", &["##"]).is_empty());
+        assert!(split_string_by_multi_markers("   ", &[]).is_empty());
+        let parts = split_string_by_multi_markers("a##b<|COMPLETE|>c", &["##", "<|COMPLETE|>"]);
+        assert_eq!(parts, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn is_float_regex_matches_numbers() {
+        assert!(is_float_regex("7"));
+        assert!(is_float_regex("-3.5"));
+        assert!(is_float_regex("+0.25"));
+        assert!(is_float_regex("10."));
+        assert!(!is_float_regex("abc"));
+        assert!(!is_float_regex(""));
+        assert!(!is_float_regex("1e5"));
+    }
+
+    #[test]
+    fn handle_entity_and_relationship_parsers() {
+        let ent = handle_single_entity_extraction(
+            &["\"entity\"".into(), "  name  ".into(), "person".into(), "desc".into()],
+            "k",
+        )
+        .unwrap();
+        assert_eq!(ent.entity_name, "NAME");
+        assert_eq!(ent.entity_type, "PERSON");
+        // wrong first attr → None
+        assert!(handle_single_entity_extraction(
+            &["\"relationship\"".into(), "a".into(), "b".into(), "c".into()],
+            "k",
+        )
+        .is_none());
+        // relationship parser
+        let rel = handle_single_relationship_extraction(
+            &[
+                "\"relationship\"".into(),
+                "Zeta".into(),
+                "Alpha".into(),
+                "desc".into(),
+                "kw".into(),
+                "4.5".into(),
+            ],
+            "k",
+        )
+        .unwrap();
+        assert_eq!(rel.src_id, "ALPHA");
+        assert_eq!(rel.tgt_id, "ZETA");
+        assert_eq!(rel.weight, 4.5);
+    }
+
+    #[test]
+    fn render_graph_extraction_prompt_substitutes_vars() {
+        let ex = GraphExtractor::new();
+        let rendered = ex.render_prompt(
+            "Some text about 中山市.",
+            &["person".to_string(), "organization".to_string()],
+            "Chinese",
+        );
+        assert!(rendered.contains("Some text about 中山市."));
+        assert!(rendered.contains("person,organization"));
+        assert!(rendered.contains("<|>"));
+        assert!(!rendered.contains("{input_text}"));
+        assert!(!rendered.contains("{entity_types}"));
     }
 }
