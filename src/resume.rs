@@ -1490,13 +1490,297 @@ impl DegreeEntity {
     }
 }
 
+/// School entity — full port of
+/// `deepdoc/parser/resume/entities/schools.py`.
+///
+/// Data files (`res/schools.csv`, `res/good_sch.json`,
+/// `res/school.rank.csv`) are embedded verbatim via `include_str!`.
+pub struct SchoolEntity;
+
+/// One row of `schools.csv` (14 columns + `rank` from school.rank.csv).
+#[derive(Debug, Clone, Default)]
+pub struct SchoolRow {
+    pub id: i64,
+    pub r#type: i64,
+    pub parent_id: i64,
+    pub name_cn: String,
+    pub name_en: String,
+    pub alias: String,
+    pub is_abroad: i64,
+    pub is_world_known: i64,
+    pub school_type: String,
+    pub is_double_first: i64,
+    pub education_type: String,
+    pub province: String,
+    pub city: String,
+    pub is_985: i64,
+    pub rank: i64,
+}
+
+/// Embed the three data files verbatim.
+const SCHOOLS_CSV: &str = include_str!("data/resume/schools.csv");
+const GOOD_SCH_JSON: &str = include_str!("data/resume/good_sch.json");
+const SCHOOL_RANK_CSV: &str = include_str!("data/resume/school.rank.csv");
+
+/// Parse `schools.csv` (tab-separated, header row) into rows.
+fn parse_schools_csv() -> Vec<SchoolRow> {
+    let mut rows = Vec::new();
+    let mut lines = SCHOOLS_CSV.lines();
+    let _header = lines.next(); // skip header
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 14 {
+            continue;
+        }
+        let num = |s: &str| s.trim().parse::<i64>().unwrap_or(0);
+        let str_clean = |s: &str| s.trim().to_string();
+        rows.push(SchoolRow {
+            id: num(cols[0]),
+            r#type: num(cols[1]),
+            parent_id: num(cols[2]),
+            name_cn: str_clean(cols[3]),
+            // schools.py:27 — name_en lowercased + stripped at load.
+            name_en: cols[4].trim().to_lowercase(),
+            alias: str_clean(cols[5]),
+            is_abroad: num(cols[6]),
+            is_world_known: num(cols[7]),
+            school_type: cols[8].to_string(),
+            is_double_first: num(cols[9]),
+            education_type: cols[10].to_string(),
+            province: cols[11].to_string(),
+            city: cols[12].to_string(),
+            is_985: num(cols[13]),
+            rank: 1_000_000,
+        });
+    }
+    rows
+}
+
+/// `loadRank` — schools.py:33-50: apply `school.rank.csv` (name,rank)
+/// onto rows matching name_cn or name_en.
+fn load_rank(rows: &mut [SchoolRow]) {
+    for line in SCHOOL_RANK_CSV.lines() {
+        let line = line.trim_end_matches('\n');
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let nm = parts[0].trim();
+        let rk: i64 = match parts[1].trim().parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        for row in rows.iter_mut() {
+            if row.name_cn == nm || row.name_en == nm {
+                row.rank = rk;
+            }
+        }
+    }
+}
+
+/// `GOOD_SCH` — schools.py:28-30: JSON list with `[,. &（）()]+` stripped.
+fn good_schools() -> std::collections::HashSet<String> {
+    let v: serde_json::Value = serde_json::from_str(GOOD_SCH_JSON).unwrap_or(serde_json::Value::Null);
+    let arr = v.as_array().cloned().unwrap_or_default();
+    let re = regex::Regex::new(r"[,. &（）()]+").unwrap();
+    arr.iter()
+        .filter_map(|x| x.as_str())
+        .map(|c| re.replace_all(c, "").into_owned())
+        .collect()
+}
+
+/// `split` — schools.py:53-65: whitespace tokenization that glues an
+/// alphabetic token onto a previous token ending in a letter.
+pub fn split(txt: &str) -> Vec<String> {
+    let norm = regex::Regex::new(r"[ \t]+").unwrap().replace_all(txt, " ");
+    let mut tks: Vec<String> = Vec::new();
+    let re_alpha_end = regex::Regex::new(r".*[a-zA-Z]$").unwrap();
+    let re_alpha_start = regex::Regex::new(r"[a-zA-Z]").unwrap();
+    for t in norm.split_whitespace() {
+        if !tks.is_empty()
+            && re_alpha_end.is_match(&tks[tks.len() - 1])
+            && re_alpha_start.is_match(t)
+        {
+            let last = tks.pop().unwrap_or_default();
+            tks.push(format!("{last} {t}"));
+        } else {
+            tks.push(t.to_string());
+        }
+    }
+    tks
+}
+
+/// `select` — schools.py:68-85: exact match on name_cn/name_en/alias after
+/// normalization; returns the first hit as a JSON object (pandas
+/// `to_json(orient="records")[0]` shape).
+pub fn select(nm: &str) -> Option<serde_json::Value> {
+    if nm.is_empty() {
+        return None;
+    }
+    let mut nm = nm.to_string();
+    if nm.starts_with('[') {
+        // list input → first element (schools.py:72-74)
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&nm) {
+            if let Some(first) = v.as_array().and_then(|a| a.first()) {
+                nm = first.as_str().unwrap_or("").to_string();
+            }
+        }
+    }
+    nm = split(&nm).first().cloned().unwrap_or_default();
+    nm = nm.to_lowercase().trim().to_string();
+    // strip parenthesized content
+    let re_paren = regex::Regex::new(r"[(（][^()（）]+[)）]").unwrap();
+    nm = re_paren.replace_all(&nm, "").into_owned();
+    // strip leading "the " / separators / country prefixes
+    let re_strip = regex::Regex::new(r"(^the |[,.&（）();；·]+|^(英国|美国|瑞士))").unwrap();
+    nm = re_strip.replace_all(&nm, "").into_owned();
+    // "大学...学院" → "大学"
+    let re_uni = regex::Regex::new(r"大学.*学院").unwrap();
+    nm = re_uni.replace_all(&nm, "大学").into_owned();
+    if nm.is_empty() {
+        return None;
+    }
+
+    let mut rows = parse_schools_csv();
+    load_rank(&mut rows);
+    // alias match: nm in set(alias.split("+"))
+    for row in &rows {
+        let hit_alias = row
+            .alias
+            .split('+')
+            .any(|a| a == nm);
+        if row.name_cn == nm || row.name_en == nm || hit_alias {
+            return Some(serde_json::json!({
+                "id": row.id,
+                "type": row.r#type,
+                "parent_id": row.parent_id,
+                "name_cn": row.name_cn,
+                "name_en": row.name_en,
+                "alias": row.alias,
+                "is_abroad": row.is_abroad,
+                "is_world_known": row.is_world_known,
+                "school_type": row.school_type,
+                "is_double_first": row.is_double_first,
+                "education_type": row.education_type,
+                "province": row.province,
+                "city": row.city,
+                "is_985": row.is_985,
+                "rank": row.rank,
+            }));
+        }
+    }
+    None
+}
+
+/// `is_good` — schools.py:88-92: normalized name membership in GOOD_SCH.
+pub fn is_good(nm: &str) -> bool {
+    let lowered = nm.to_lowercase();
+    let re_paren = regex::Regex::new(r"[(（][^()（）]+[)）]").unwrap();
+    let nm = re_paren.replace_all(lowered.as_str(), "");
+    let re_strip = regex::Regex::new(r"[''`‘’“”,. &（）();；]+").unwrap();
+    let nm = re_strip.replace_all(nm.as_ref(), "");
+    good_schools().contains(nm.as_ref())
+}
+
+/// Cache for the parsed table (schools.py loads once at module import).
+pub struct SchoolTable {
+    rows: Vec<SchoolRow>,
+}
+
+impl SchoolTable {
+    pub fn new() -> Self {
+        let mut rows = parse_schools_csv();
+        load_rank(&mut rows);
+        Self { rows }
+    }
+
+    /// `select` with a prebuilt table (avoids reparsing per call).
+    pub fn select(&self, nm: &str) -> Option<serde_json::Value> {
+        let mut nm = nm.to_string();
+        if nm.starts_with('[') {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&nm) {
+                if let Some(first) = v.as_array().and_then(|a| a.first()) {
+                    nm = first.as_str().unwrap_or("").to_string();
+                }
+            }
+        }
+        nm = split(&nm).first().cloned().unwrap_or_default();
+        nm = nm.to_lowercase().trim().to_string();
+        let re_paren = regex::Regex::new(r"[(（][^()（）]+[)）]").unwrap();
+        nm = re_paren.replace_all(&nm, "").into_owned();
+        let re_strip = regex::Regex::new(r"(^the |[,.&（）();；·]+|^(英国|美国|瑞士))").unwrap();
+        nm = re_strip.replace_all(&nm, "").into_owned();
+        let re_uni = regex::Regex::new(r"大学.*学院").unwrap();
+        nm = re_uni.replace_all(&nm, "大学").into_owned();
+        if nm.is_empty() {
+            return None;
+        }
+        for row in &self.rows {
+            let hit_alias = row.alias.split('+').any(|a| a == nm);
+            if row.name_cn == nm || row.name_en == nm || hit_alias {
+                return Some(serde_json::json!({
+                    "id": row.id, "type": row.r#type, "parent_id": row.parent_id,
+                    "name_cn": row.name_cn, "name_en": row.name_en, "alias": row.alias,
+                    "is_abroad": row.is_abroad, "is_world_known": row.is_world_known,
+                    "school_type": row.school_type, "is_double_first": row.is_double_first,
+                    "education_type": row.education_type, "province": row.province,
+                    "city": row.city, "is_985": row.is_985, "rank": row.rank,
+                }));
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn school_entity_split_and_select() {
+        // split — schools.py:53-65.
+        assert_eq!(split("New York University"), vec!["New York University"]);
+        assert_eq!(split("美国 斯坦福大学"), vec!["美国", "斯坦福大学"]);
+
+        // select by name_cn (schools.csv has 清华大学 etc).
+        let v = select("清华大学").expect("清华 should be in schools.csv");
+        assert_eq!(v["name_cn"], "清华大学");
+        assert!(v["rank"].as_i64().unwrap_or(0) > 0);
+        assert_eq!(v["is_985"], 1);
+
+        // select by name_en (case-insensitive) — Tsinghua's name_en is
+        // empty in schools.csv (its English name lives in rank aliases),
+        // so use a school with a real name_en column instead.
+        let v2 = select("University of East London").expect("en name should match");
+        assert_eq!(v2["name_cn"], "东伦敦大学");
+
+        // Unknown → None.
+        assert!(select("不存在的学校XYZ").is_none());
+        // Tsinghua's English name is not in name_en → None (Python parity).
+        assert!(select("Tsinghua University").is_none());
+    }
+
+    #[test]
+    fn school_entity_is_good_and_table_cache() {
+        // is_good — schools.py:88-92.
+        assert!(is_good("清华大学"));
+        assert!(is_good("中国科技大学"));
+        assert!(!is_good("某职业技术学院"));
+
+        // Cached table select matches free function.
+        let tbl = SchoolTable::new();
+        let v = tbl.select("北京大学").expect("北大 should match");
+        assert_eq!(v["name_cn"], "北京大学");
+    }
+
+    #[test]
     fn degree_entity_maps_ids_and_names() {
-        // get_name — degrees.py:37-38.
         assert_eq!(DegreeEntity::get_name("1"), "本科");
         assert_eq!(DegreeEntity::get_name("2"), "硕士");
         assert_eq!(DegreeEntity::get_name("3"), "博士");
