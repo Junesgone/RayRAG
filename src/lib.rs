@@ -69,6 +69,7 @@ pub mod qa;
 pub mod pubmed;
 pub mod qweather;
 pub mod raptor;
+pub mod tag;
 pub mod rerank;
 pub mod runtime;
 pub mod search;
