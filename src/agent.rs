@@ -21338,7 +21338,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(runtime.outputs["invoke"]["result"], "Hello\nWorld");
+        // RAGFlow html_parser semantics: h1 gets a markdown # prefix,
+        // <script> is stripped, <p> text is kept.
+        assert_eq!(runtime.outputs["invoke"]["result"], "# Hello\nWorld");
         let requests = network.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
