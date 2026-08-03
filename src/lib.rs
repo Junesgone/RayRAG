@@ -61,6 +61,7 @@ pub mod hypergraph;
 pub mod merge;
 pub mod dialog;
 pub mod parser;
+pub mod paper;
 pub mod persistence;
 pub mod pipeline;
 pub mod prompts;

@@ -10,11 +10,29 @@
 - **源文件**：86 个 .rs / 75,000+ 行 Rust
 - **API 路由**：当前 `server.rs` 有 117 个 `.route(...)` 注册点
 - **Web 页面**：15 个（纯 Rust SSR，RAGFlow 设计对齐）
-- **编译状态**：✅ 默认 feature 测试通过（617 passed / 0 failed / 25 ignored，2026-08-03 复核；+7 tag 解析单测）；`postgres-backend,zvec-backend` 双 feature 通过（624 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
+- **编译状态**：✅ 默认 feature 测试通过（625 passed / 0 failed / 25 ignored，2026-08-03 复核；+8 paper 单测）；`postgres-backend,zvec-backend` 双 feature 通过（632 passed / 0 failed / 25 ignored；+7 为 PG 死锁重试单测，仅 postgres-backend 编译）。25 个 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试（含 gpu_merge_pair_judges_duplicate_and_merges、gpu_hypergraph_extraction_entities_then_relations、gpu_tree_template_execute_builds_trees_over_http、gpu_raptor_llm_summary_loop、gpu_pdf_outline_extraction_live、live_eastmoney_news 等）。**GPU 四模型客户端兼容闭环**（2026-08-03）：8088 chat（Qwen3.5-9B，reasoning_content 以 `<think>` 前缀保留；同端口 VisionClient 视觉描述，mmproj 视觉投影）、8888 embed（Qwen3-Embedding-4B，双形态解析，2560 维）、8081 rerank（mxbai-rerank-large-v2，`RAYRAG_TEST_RERANKER_KEY` 认证，中文文档排序正确）；8090 OCR（PaddleOCR-VL-1.6-GGUF）此前已验证。**postgres 18.4 实连 round-trip 通过**（rayrag-postgres-1 容器 :55432）；**zvec 原生冒烟通过**（native_collection，ZVEC_LIB_DIR=~/.local/lib/zvec/0.5.1，LD_LIBRARY_PATH 需同设）。百度系 live 对自动化请求偶发"百度安全验证"风控，连接器已返回明确错误并优雅 skip；Bing/腾讯财经/东方财富 live 在线通过。cargo 已配置 rsproxy 国内镜像（~/.cargo/config.toml）。**rag/llm/ 8 模型文件客户端全覆盖**（chat/embedding/rerank/ocr/cv/seq2txt/tts + __init__）
 - **创建日期**：2026-07-10
 - **Rust 版本**：宿主 cargo/rustc 1.97.0；Docker builder 固定 `rust:1.97.1-bookworm`
 
 ---
+
+## 2026-08-03 Paper 章节结构解析：对标 rag/app/paper.py + rag/nlp/__init__.py
+
+- RAGFlow 论文解析（chunk()）：abstract 整块切分；正文按标题层级分组。
+- **新增 `src/paper.rs`**：
+  - `BULLET_PATTERN`：5 类标题样式族（中文章/节/条/编、数字编号、
+    中文数字、英文 PART/Chapter/Section/Article、markdown # 标题）
+  - `not_bullet` / `not_title`：伪编号行与超长/带标点标题拒绝
+  - `bullets_category`：选命中最多的标题样式族
+  - `title_frequency`：每节层级 + 最高频层级作 pivot
+  - `group_sections`：层级 <= pivot 且与前节不同 → 新 section id；
+    同 id 文本合并为一个 chunk（对齐 paper.py:232-254）
+  - `abstract_chunk`：abstract 整块 + important_kwd
+- gap：Pdf 布局识别（DeepDOC/Plain Text/MinerU）、vision 图表解析、
+  tokenize_table、add_positions、attach_media_context（parser 模块集成层）。
+- 测试：**625 passed / 0 failed / 25 ignored**（+8 paper 单测）；双 feature
+  **632 passed**（625+7 PG 单测）。
+- 矩阵：paper.py 行更新为详细移植说明。
 
 ## 2026-08-03 Tag 数据集解析：对标 rag/app/tag.py
 
