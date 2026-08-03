@@ -54,6 +54,7 @@ pub mod logging;
 pub mod metrics;
 pub mod model_meta;
 pub mod naming;
+pub mod naive;
 pub mod nlp;
 pub mod nlp_enhanced;
 pub mod ocr;
