@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器内 GPU LLM 实连验证
+
+- compose LLM_API_BASE=http://192.168.3.6:8088 LLM_MODEL=Qwen3.5-9B-Q4_K_M.gguf 重建容器
+- /api/v1/completions（需 kb_ids 可访问 + state.llm 已配置）返回 Qwen 生成文本 → 容器→GPU LLM 链路 ✓
+- 注意：chat_completion 是纯对话（无知识库检索，直接 llm.chat）；RAG 对话走 agent/canvas 流程；检索用 /api/v1/retrieval
+- 容器内三链路全部实连：embedding（8888）✓ / LLM（8088）✓ / 混合检索（vector+term）✓
 ## 2026-08-04 容器内 GPU embedding + 混合检索端到端验证
 
 - compose 新增 EMBED_API_BASE/EMBED_API_KEY/EMBED_MODEL/RERANK_*/LLM_API_* 透传（commit 4484d5b）
