@@ -1651,6 +1651,27 @@ async fn export_conversation(
         .into_response()
 }
 
+async fn rename_conversation(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(conversation_id): axum::extract::Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
+        return api_error(StatusCode::BAD_REQUEST, "name is required");
+    };
+    match state.conversations.rename_for(&conversation_id, &auth.user_id, name) {
+        Ok(Some(_)) => Json(ApiResponse {
+            code: 0,
+            message: "Renamed".into(),
+            data: None,
+        })
+        .into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "Conversation not found"),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
 async fn delete_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2228,7 +2249,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::chunks::get_chunk).patch(crate::api::chunks::update_chunk),
         )
         .route("/api/v1/retrieval", post(retrieval))
-        .route("/api/v1/conversations/{conversation_id}", axum::routing::delete(delete_conversation))
+        .route(
+            "/api/v1/conversations/{conversation_id}",
+            axum::routing::delete(delete_conversation).patch(rename_conversation),
+        )
         .route(
             "/api/v1/conversations/{conversation_id}/clear",
             axum::routing::post(clear_conversation),

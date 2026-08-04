@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 30 轮：chat 会话重命名
+
+- `server.rs`：PATCH /api/v1/conversations/{id}（rename_for 已存在，补 handler+路由）
+- `web.rs`：会话卡片 ✏️ Rename（prompt → PATCH → loadChats）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器回归终验（UI 第 26-29 轮）
 
 - 重建镜像 → 容器实测：
