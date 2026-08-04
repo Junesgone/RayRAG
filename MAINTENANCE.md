@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器 SSE 流式终验 + 推理模型注意事项
+
+- 容器实测 `/api/v1/chat/completions` stream=true：`"content":"你好"` + [DONE]——**流式端到端通过**
+- 注意：Qwen3.5-9B 为推理模型——先输出 ~9000 帧 `reasoning_content`（每帧 0.3s，思考约 45min 级），content 帧在思考结束后才出现；且 llama-server 单请求串行，并发 stream 请求会排队（测出空流是并发干扰，非代码 bug）
+- 非流式/流式均正确（LlmClient::new 无总超时，可长时间思考）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 打字机效果（chat 页 SSE 消费）
 
 - `web.rs` sendMsg：fetch stream:true → ReadableStream + TextDecoder 逐行解析 `data:` 帧 → delta.content 逐步渲染（打字机效果）→ 结束后渲染操作按钮
