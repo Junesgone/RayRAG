@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器终验（图谱 query/注入）
+
+- 重建镜像 → 容器实测：
+  - POST /datasets/{id}/graphrag/query → code 0（nodes/context 结构正确；新容器无图时返回空）
+  - RAG 对话 code 0 + 基于知识库回答（图谱注入路径执行，context 空时无害跳过）
+  - 页面 6 项抽查全 200
 ## 2026-08-04 图谱上下文注入 RAG 对话
 
 - `features.rs` generate_chat_answer：检索上下文后追加 `context_for_query` 图谱上下文（最多 4 条）——GraphRAG 增强 RAG 回答（对齐 RAGFlow GraphRAG 检索）
