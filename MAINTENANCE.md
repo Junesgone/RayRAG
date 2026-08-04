@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 上传性能终验（NO_FSYNC 生效）
+
+- 容器实测：5 文档上传 53s（原始）→ 64s（增量 upsert 无效）→ **37s（NO_FSYNC=1）**
+- 剩余瓶颈：zvec flush（库内部持久化 fsync，向量一致性保证）——容器 overlay 慢，宿主部署无此问题；不跳过
+- 结论：容器部署建议 RAYRAG_NO_FSYNC=1（compose 已默认）；纯 Linux 宿主部署保持默认 fsync
 ## 2026-08-04 上传性能：容器 overlay fsync 瓶颈 + RAYRAG_NO_FSYNC
 
 - 实测：5 文档上传容器 53-64s——Saved 每文档 ~10s
