@@ -439,7 +439,7 @@ pub async fn chat_complete(
                     let _ = tx.blocking_send(Ok(Event::default().data(event.to_string())));
                 })
             };
-            let _ = generate_chat_answer(
+            let generated = generate_chat_answer(
                 &state2,
                 &auth2,
                 ChatGenerationRequest {
@@ -453,6 +453,23 @@ pub async fn chat_complete(
                 Some(on_chunk),
             )
             .await;
+            if let Ok(generated) = generated {
+                let refs: Vec<serde_json::Value> = generated
+                    .references
+                    .iter()
+                    .map(|reference| {
+                        serde_json::json!({
+                            "chunk_id": reference.id,
+                            "kb_id": reference.kb_id,
+                            "score": reference.similarity,
+                            "content": reference.content.chars().take(120).collect::<String>(),
+                        })
+                    })
+                    .collect();
+                let _ = tx.blocking_send(Ok(Event::default().data(
+                    serde_json::json!({"object": "chat.completion.references", "references": refs}).to_string(),
+                )));
+            }
             let done = serde_json::json!({
                 "id": id2,
                 "object": "chat.completion.chunk",

@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 流式 UI：思考占位 + 引用帧
+
+- `features.rs`：SSE 流结束前发 `chat.completion.references` 帧（chunk_id/kb_id/score/content 前 120 字符）
+- `web.rs` sendMsg：首帧前显示 `🤔 思考中…`（推理模型思考期反馈）；首 content 帧清除占位；references 帧渲染引用卡片
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器 SSE 流式终验 + 推理模型注意事项
 
 - 容器实测 `/api/v1/chat/completions` stream=true：`"content":"你好"` + [DONE]——**流式端到端通过**
