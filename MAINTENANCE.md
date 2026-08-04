@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 16 轮：搜索导出 + 上传轮询
+
+- `web.rs` search_page：结果保存到 lastResults + **⬇ Export MD** 按钮（生成 Markdown 下载，含分数/来源）
+- `web.rs` dataset_page：uploadDoc 后每 3s 轮询文档状态直到无 running（RAGFlow 解析进度动画对应）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器终验（UI 第 11-15 轮 + graphrag/配置 API）
 
 - 镜像重建 → 容器复测：
