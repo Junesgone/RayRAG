@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器内 rerank 实连（三链路闭环）
+
+- **8081 重启改绑 0.0.0.0**（原 127.0.0.1 容器不可达）：kill 旧进程 → `llama-server ... --host 0.0.0.0 --port 8081 --api-key mxbai-rerank-key --reranking`；局域网 /rerank 调用验证通过
+- 容器配 RERANK_API_BASE=http://192.168.3.6:8081 + RERANK_API_KEY + RERANK_MODEL → 重建
+- retrieval rerank=true 实测：score 0.965（向量）→ **0.7（reranker 重排分数）**——容器→GPU rerank 生效
+- **GPU 三链路全部容器实连闭环**：embedding（8888）+ LLM（8088）+ rerank（8081）
 ## 2026-08-04 UI 对标 RAGFlow 第 19 轮：登录页注册 + cookie 会话
 
 - `web.rs` login_page：Register/Login 切换（昵称/邮箱/密码 → /api/v1/user/register → 自动登录）；**登录成功写 cookie**（rayrag_token, 24h）——修复浏览器导航到 protected 页时无认证的问题
