@@ -16,6 +16,15 @@
 
 ---
 
+## 2026-08-04 GPU 实连测试全通过（8/8）+ rerank 服务修复
+
+- **8081 rerank 服务修复**：原 llama-server 缺 `--reranking` 参数（API 返回 501），且 SIGTERM 无法终止（llama-server 忽略），`kill -9` 后以 `--reranking` 参数重启（`/home/junesgone/models/mxbai-rerank-large-v2.Q4_K_M.gguf`，api-key `mxbai-rerank-key`）；中文排序验证正确（RAGFlow 文档 -0.47 > 无关文本 -2.09）
+- **GPU 8/8 实连测试通过**（env：LLM_BASE=8088 Qwen3.5-9B、EMBEDDING_BASE=8888 Qwen3-Embedding-4B、RERANKER_BASE=8081 + KEY、VISION_BASE=8088 同端口、PDF_OUTLINE=/tmp/outline_test.pdf）：categorize+embedding+rerank、vision 图像描述 ×2、PDF 大纲提取、merge 重复判断、raptor 摘要、hypergraph 实体抽取、tree template HTTP
+- 全量测试 **805 passed / 0 failed / 26 ignored**（基线保持）
+- **注意**：重跑 gpu_ 组必须补 `RAYRAG_TEST_VISION_BASE`/`RAYRAG_TEST_PDF_OUTLINE`，缺了会 NotPresent/失败
+
+---
+
 ## 2026-08-04 国内网络替代工具闭环：baike + translate（DeepL/Wikipedia 替代）
 
 - **`src/baike.rs`**（百度百科，Wikipedia 国内替代，2 单测）：免 key 直连 `BaikeLemmaCardApi` JSON 端点，处理 lemmaId 重定向、HTML 描述清洗、`search()` top_n 聚合；输出复用 wikipedia 的 {title, link, snippet} 模式
