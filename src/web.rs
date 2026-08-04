@@ -341,8 +341,8 @@ pub async fn dataset_page(
     b.push_str("<script>var kbId='");
     b.push_str(&id);
     b.push_str("';function showTab(n){for(var i=0;i<5;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
-    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(d=>{var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var h='<table><thead><tr><th>Name</th><th>Chunks</th><th>Status</th><th>Actions</th></tr></thead><tbody>';docs.forEach(function(d){h+='<tr><td><strong>'+d.name+'</strong></td><td>'+d.chunk_count+'</td><td><span class=\"badge '+(d.run==='DONE'?'bs':'bw')+'\">'+(d.run||'ready')+'</span></td><td><button class=\"btn btn-d btn-sm\" onclick=\"delDoc(\\''+d.id+'\\')\">Del</button></td></tr>'});document.getElementById('dl').innerHTML=h+'</tbody></table>'})};");
-    b.push_str("function uploadDoc(){var f=document.getElementById('fi').files[0];if(!f)return;var fd=new FormData();fd.append('file',f,f.name);fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(loadDocs)};function delDoc(did){if(!confirm('Delete?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+did,{method:'DELETE'}).then(loadDocs)};");
+    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(d=>{var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var h='<table><thead><tr><th>Name</th><th>Chunks</th><th>Status</th><th>Actions</th></tr></thead><tbody>';docs.forEach(function(d){h+='<tr><td><strong>'+d.name+'</strong></td><td>'+d.chunk_count+'</td><td><span class=\"badge '+(d.run==='DONE'?'bs':'bw')+'\">'+(d.run||'ready')+'</span></td><td><a class=\"btn btn-o btn-sm\" href=\"/documents/'+kbId+'/'+d.id+'\">View</a><button class=\"btn btn-p btn-sm\" onclick=\"reparseDoc(\\''+d.id+'\\')\">Parse</button><button class=\"btn btn-d btn-sm\" onclick=\"delDoc(\\''+d.id+'\\')\">Del</button></td></tr>'});document.getElementById('dl').innerHTML=h+'</tbody></table>'})};");
+    b.push_str("function reparseDoc(did){if(!confirm('Reparse?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+did+'/reparse',{method:'POST'}).then(loadDocs)};function uploadDoc(){var f=document.getElementById('fi').files[0];if(!f)return;var fd=new FormData();fd.append('file',f,f.name);fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(loadDocs)};function delDoc(did){if(!confirm('Delete?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+did,{method:'DELETE'}).then(loadDocs)};");
     b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q)return;var k=parseInt(document.getElementById('testK').value);var r=document.getElementById('testRerank').checked;document.getElementById('testResults').innerHTML='<p style=color:var(--tm)>Searching...</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,top_k:k})}).then(r=>r.json()).then(d=>{var items=d.data.chunks||d.data.results||[];var h='';items.forEach(function(c,i){c=c.chunk||c;h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+(c.similarity||c.score||0).toFixed(4)+'</span><div class=rc>'+(c.content||'').substring(0,300)+'</div><div class=rm>'+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm)>No results</p>'})};");
     b.push_str("function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building...</p>';setTimeout(function(){document.getElementById('graphResult').textContent='Entities:\\n  • RayRAG (Product)\\n  • Rust (Technology)\\n  • RAGFlow (Product)\\n  • Embedding (Concept)\\n\\nRelations:\\n  • RayRAG → IMPLEMENTED_IN → Rust\\n  • RayRAG → INSPIRED_BY → RAGFlow\\n  • Embedding → USED_BY → RayRAG'},1500)};function saveConfig(){alert('Configuration saved!')};function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};loadDocs()</script>");
     Html(layout(&name, &b, zh))
@@ -611,6 +611,38 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     let zh = detect_lang(req.headers());
     let b = "<div class='auth-card card'><h1 style='text-align:center;margin-bottom:24px'>🐠 RayRAG</h1><input id='email' autocomplete='username' placeholder='Email'><input id='password' type='password' autocomplete='current-password' placeholder='Password'><button class='btn btn-p' onclick='login()' style='width:100%;margin-top:8px'>Login</button><div id='error' style='color:var(--d);margin-top:8px;font-size:13px'></div></div><script>function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(localStorage.setItem('rayrag_token',d.data.access_token),location.href='/dashboard'):document.getElementById('error').textContent=d.message})}</script>";
     Html(layout(t("Login", zh), b, zh))
+}
+
+pub async fn document_page(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((kb_id, doc_id)): axum::extract::Path<(String, String)>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let mut b = String::new();
+    b.push_str("<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap'><a class='btn btn-o' href='/dataset/");
+    b.push_str(&kb_id);
+    b.push_str("'>← ");
+    b.push_str(t("Back to Dataset", zh));
+    b.push_str("</a><h1 style='margin:0;flex:1' id='docTitle'>📄 ...</h1><button class='btn btn-o' onclick='reparse()'>");
+    b.push_str(t("Reparse", zh));
+    b.push_str("</button><button class='btn btn-d' onclick='delDoc()'>");
+    b.push_str(t("Delete", zh));
+    b.push_str("</button></div>");
+    b.push_str("<div class='st' style='margin-top:16px'><div class='sc'><span class='lbl'>");
+    b.push_str(t("Chunks", zh));
+    b.push_str("</span><span class='val' id='docChunks'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='docStatus' style='font-size:15px'>-</span></div></div>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Chunks", zh));
+    b.push_str(" <span id='cTotal' style='font-size:13px;color:var(--tm)'></span></h2><div id='cl'>");
+    b.push_str(t("Loading...", zh));
+    b.push_str("</div></div>");
+    b.push_str("<script>var kbId='");
+    b.push_str(&kb_id);
+    b.push_str("';var docId='");
+    b.push_str(&doc_id);
+    b.push_str("';function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';chunks.forEach(function(c,i){h+=\"<div class='ri'><span class='rs'>#\"+(i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div></div>\"});document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};loadChunks()</script>");
+    Html(layout("Document", &b, zh))
 }
 
 pub async fn skills_page(

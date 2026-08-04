@@ -1886,6 +1886,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/search", get(crate::web::search_page))
         .route("/providers", get(crate::web::providers_page))
         .route("/skills", get(crate::web::skills_page))
+        .route("/documents/{kb_id}/{doc_id}", get(crate::web::document_page))
         .route("/settings", get(crate::web::settings_page))
         .route("/api-docs", get(crate::web::api_docs))
         .route("/status", get(crate::web::status_page))

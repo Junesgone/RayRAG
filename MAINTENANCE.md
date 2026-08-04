@@ -1,5 +1,14 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 2 轮：文档查看器
+
+- `web.rs`：新增 `document_page`（/documents/{kb_id}/{doc_id}）——RAGFlow document-viewer 对应
+  - 头部：返回数据集 / Reparse / Delete 按钮 + 文档标题（JS 从 chunks API data.doc 填充）
+  - 统计卡：Chunks 数 / 状态（JS 填充）
+  - chunk 列表：序号 / 位置 / token 数 / 内容预览（fetch chunks API）
+- `dataset_page` 文档行按钮补全：**View**（→ document_viewer）+ **Parse**（重解析）+ Del（RAGFlow 文档行操作层级）
+- `server.rs`：注册 /documents/{kb_id}/{doc_id}
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 1 轮：Skills 页面 + 主导航补全
 
 - `runtime.rs`：导出 `component_catalog()`（COMPONENT_REGISTRY 51 组件 name+category）
