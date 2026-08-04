@@ -84,6 +84,7 @@ pub mod qweather;
 pub mod raptor;
 pub mod tag;
 pub mod rerank;
+pub mod sandbox;
 pub mod runtime;
 pub mod search;
 pub mod searxng;

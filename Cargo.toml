@@ -99,6 +99,7 @@ rand = "0.9"
 base64 = "0.22"
 md-5 = "0.11.0"
 lettre = { version = "0.11.23", features = ["smtp-transport", "rustls-tls", "builder"] }
+tempfile = "3.27.0"
 
 [[bin]]
 name = "rayrag"

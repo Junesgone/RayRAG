@@ -6828,17 +6828,46 @@ async fn execute_code_exec_with_provider(
             arguments = map.clone();
         }
     }
-    let client = SandboxClient::default();
-    let request = CodeRequest {
-        language,
-        code,
-        arguments,
-    };
-    match client.run(&request).await {
-        Ok(result) => Ok(process_result(&result)),
-        Err(error) => {
-            let message = format!("**ERROR**: {error}");
-            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+    let provider = std::env::var("RAYRAG_SANDBOX_PROVIDER").unwrap_or_default();
+    if provider.eq_ignore_ascii_case("local") {
+        // 本地沙箱（对齐 RAGFlow LocalProvider）：无外部服务依赖
+        let sandbox = crate::sandbox::LocalSandbox::default();
+        match sandbox.execute(&code, &language, &arguments).await {
+            Ok(execution) => {
+                let mut metadata = Map::new();
+                if let Some(structured) = &execution.structured {
+                    metadata.insert("result_present".into(), Value::Bool(true));
+                    metadata.insert(
+                        "result_value".into(),
+                        structured.get("value").cloned().unwrap_or(Value::Null),
+                    );
+                }
+                let result = crate::code_exec::SandboxResult {
+                    stdout: execution.stdout,
+                    stderr: Some(execution.stderr),
+                    artifacts: vec![],
+                    metadata,
+                };
+                Ok(process_result(&result))
+            }
+            Err(error) => {
+                let message = format!("**ERROR**: {error}");
+                Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+            }
+        }
+    } else {
+        let client = SandboxClient::default();
+        let request = CodeRequest {
+            language,
+            code,
+            arguments,
+        };
+        match client.run(&request).await {
+            Ok(result) => Ok(process_result(&result)),
+            Err(error) => {
+                let message = format!("**ERROR**: {error}");
+                Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+            }
         }
     }
 }

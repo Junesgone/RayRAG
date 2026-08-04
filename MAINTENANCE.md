@@ -1,5 +1,16 @@
 # RayRAG 运维台账
 
+## 2026-08-04 本地代码沙箱（LocalProvider 替代）+ code_exec 本地接线
+
+- 新增 `src/sandbox.rs`：RAGFlow `agent/sandbox/providers/local.py` + `result_protocol.py` 的 Rust 实现
+  - Python/JS wrapper：`main(**args)` → `__RAGFLOW_RESULT__:` base64 JSON 结构化结果（**Python 侧必须用 True 而非 true**——曾因 json.dumps 收到小写 true 报 NameError）
+  - 临时实例目录（tempfile）+ env 隔离（HOME/TMPDIR/MPLBACKEND=Agg/PYTHONUNBUFFERED）
+  - 单 bash -c 包裹 ulimit 资源限制（CPU+1s/内存 MB/文件大小/FD=64，对齐 preexec_fn RLIMIT）
+  - tokio 进程组（process_group(0)）+ kill_on_drop + timeout → 超时整组杀（对齐 killpg）
+  - 结构化结果提取：stdout 中标记行移除并解析（对齐 extract_structured_result）
+  - 测试 8 个（真实 python 执行/普通输出保留/超时杀/错误 stderr/不支持语言/提取/规范化/输出限制）
+- 接线：code_exec 支持 `RAYRAG_SANDBOX_PROVIDER=local`（默认 HTTP 9385）；local 结果映射 metadata.result_present/result_value
+- 测试基线：**844 passed / 0 failed / 26 ignored**（+8）
 ## 2026-08-04 tcadp 解析器（腾讯云 LKEAP 文档重构）
 
 - 新增 `src/parser/tcadp.rs`：RAGFlow `deepdoc/parser/tcadp_parser.py` 的 Rust 实现
