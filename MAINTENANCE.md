@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 覆盖矩阵终检
+
+- `docs/ragflow-v0.26.4-coverage.md`（固定快照，4441 文件）：**unmapped = 0**（无映射缺口）
+- aligned 83 + partial 1561 + replaced 74 + reference 2724；核心对齐（aligned/replaced）157 文件
+- agent/tools 23/23、parser 16/16、vision、api/apps、GraphRAG 均已在矩阵中 ✓
+- ragflow-coverage bin 已不在代码库（README 引用为历史命令），矩阵为固定快照无需重跑
 ## 2026-08-04 UI 第 40 轮：dataset 配置 embedding 模型切换
 
 - `web.rs` dataset_page：配置表新增 Embedding Model 下拉（providers 源 provider:model）→ saveConfig 带 embedding_model（update_dataset 已支持 + 换模型校验）
