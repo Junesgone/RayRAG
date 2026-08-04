@@ -87,26 +87,32 @@ impl RAGFlowDocxParser {
     }
 
     /// `blockType` — docx_parser.py:81-109.
+    /// 静态预编译正则（避免每格重复编译；并行下消除偶发编译失败）。
     fn block_type(b: &str) -> &'static str {
-        let patterns: &[(&str, &str)] = &[
-            (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
-            (r"^(20|19)[0-9]{2}年$", "Dt"),
-            (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}月*$", "Dt"),
-            (r"^[0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
-            (r"^第*[一二三四1-4]季度$", "Dt"),
-            (r"^(20|19)[0-9]{2}年*[一二三四1-4]季度$", "Dt"),
-            (r"^(20|19)[0-9]{2}[ABCDE]$", "DT"),
-            (r"^[0-9.,+%/ -]+$", "Nu"),
-            (r"^[0-9A-Z/\._~-]+$", "Ca"),
-            (r"^[A-Z]*[a-z' -]+$", "En"),
-            (r"^[0-9.,+-]+[0-9A-Za-z/$￥%<>（）()' -]+$", "NE"),
-            (r"^.{1}$", "Sg"),
-        ];
-        for (pat, name) in patterns {
-            if let Ok(re) = regex::Regex::new(pat) {
-                if re.is_match(b) {
-                    return name;
-                }
+        use std::sync::OnceLock;
+        static PATTERNS: OnceLock<Vec<(regex::Regex, &'static str)>> = OnceLock::new();
+        let patterns = PATTERNS.get_or_init(|| {
+            let raw: &[(&str, &str)] = &[
+                (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
+                (r"^(20|19)[0-9]{2}年$", "Dt"),
+                (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}月*$", "Dt"),
+                (r"^[0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
+                (r"^第*[一二三四1-4]季度$", "Dt"),
+                (r"^(20|19)[0-9]{2}年*[一二三四1-4]季度$", "Dt"),
+                (r"^(20|19)[0-9]{2}[ABCDE]$", "DT"),
+                (r"^[0-9.,+%/ -]+$", "Nu"),
+                (r"^[0-9A-Z/\._~-]+$", "Ca"),
+                (r"^[A-Z]*[a-z' -]+$", "En"),
+                (r"^[0-9.,+-]+[0-9A-Za-z/$￥%<>（）()' -]+$", "NE"),
+                (r"^.{1}$", "Sg"),
+            ];
+            raw.iter()
+                .filter_map(|(pat, name)| regex::Regex::new(pat).ok().map(|re| (re, *name)))
+                .collect()
+        });
+        for (re, name) in patterns {
+            if re.is_match(b) {
+                return *name;
             }
         }
         // Token fallback approximating rag_tokenizer: whitespace words for

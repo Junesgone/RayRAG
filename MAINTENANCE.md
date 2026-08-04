@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 docx 并行偶发修复：block_type 正则静态缓存
+
+- 根因：`block_type` 每格调用都重新编译 11 个正则（`regex::Regex::new`），并行高负载下偶发编译失败（if let Ok 静默跳过）→ 分类漂移 → compose_table 测试断言失败
+- 修复：OnceLock 静态预编译缓存（首次初始化后零编译）；顺带显著降低表格解析 CPU 开销
+- 验证：连续 2 次全量 **844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器内 OCR 实连（四链路全闭环）
 
 - **8097 确认为 PaddleOCR GPU Proxy**（paddleocr_gpu_proxy.py；18090 是另一 Web 应用）；`POST /ocr {"image":b64}` JSON 格式（非 multipart），与 RayRAG ocr.rs legacy 客户端完全匹配
