@@ -1520,6 +1520,70 @@ async fn admin_reset_password(
 }
 
 
+async fn query_graphrag(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(dataset_id): axum::extract::Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(StatusCode::NOT_FOUND, "Knowledge base not found");
+    }
+    let snapshot = state.graphs.snapshot();
+    let Some(graph) = snapshot.kb_graphs.get(&dataset_id) else {
+        return Json(ApiResponse {
+            code: 0,
+            message: "No graph built yet".into(),
+            data: Some(serde_json::json!({
+                "nodes": 0,
+                "edges": 0,
+                "node_list": [],
+                "context": [],
+            })),
+        })
+        .into_response();
+    };
+    let question = body
+        .get("question")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let names = graph.node_names();
+    let edges = names
+        .iter()
+        .map(|name| graph.degree(name))
+        .sum::<usize>()
+        / 2;
+    let node_list: Vec<serde_json::Value> = names
+        .iter()
+        .take(200)
+        .map(|name| {
+            serde_json::json!({
+                "name": name,
+                "type": "entity",
+                "degree": graph.degree(name),
+            })
+        })
+        .collect();
+    let context = if question.trim().is_empty() {
+        Vec::<String>::new()
+    } else {
+        state
+            .graphs
+            .context_for_query(&[dataset_id.clone()], question)
+    };
+    Json(ApiResponse {
+        code: 0,
+        message: "ok".into(),
+        data: Some(serde_json::json!({
+            "nodes": graph.node_count(),
+            "edges": edges,
+            "node_list": node_list,
+            "context": context,
+        })),
+    })
+    .into_response()
+}
+
 async fn build_graphrag(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2295,6 +2359,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/datasets/{dataset_id}/graphrag/build",
             axum::routing::post(build_graphrag),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/graphrag/query",
+            axum::routing::post(query_graphrag),
         )
         .route(
             "/api/v1/admin/users/{user_id}",

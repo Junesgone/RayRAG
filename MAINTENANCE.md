@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 graphrag query API + 容器持久化验证
+
+- `server.rs`：POST /api/v1/datasets/{id}/graphrag/query——返回图谱节点/边/context（context_for_query 图谱上下文）；无图时返回空结构
+- 容器验证：build → graphrag.json 42→115 字节（kb_graphs 条目）→ **重启后保留** ✓（持久化闭环）
 ## 2026-08-04 KB 删除清理图谱资产
 
 - `server.rs` delete_dataset：删除前清理 GraphStore kb_graphs[kb_id] + 对应 checkpoints（避免孤儿图谱数据）
