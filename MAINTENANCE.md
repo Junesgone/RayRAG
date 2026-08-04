@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器多格式解析验证：xlsx 表格
+
+- 上传 test_table.xlsx（3 行 3 列表格）→ Parsed → Chunked: 1 → Embedded: 1
+- 检索实测 chunk 内容：`| 姓名 | 数值 | 备注 | / | 张三 | 100 | ok |...`——**Markdown 表格格式**（RAGFlow 表格解析风格一致）
+- 容器内已实测格式：txt / png(OCR) / pdf / xlsx
 ## 2026-08-04 UI 第 21 轮：搜索页多数据集选择
 
 - `web.rs` search_page：KB 多选 chips（fetch /api/v1/datasets → checkbox）+ runSearch 收集 kb_ids（勾 All 时不传 → 服务端默认全可访问；勾具体 KB 时传数组）
