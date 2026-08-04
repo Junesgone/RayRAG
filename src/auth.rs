@@ -153,6 +153,39 @@ impl UserStore {
         })
     }
 
+    /// 管理员：删除用户（保留主管理员，禁止删自己）。
+    pub fn delete_user(&self, user_id: &str, acting_user: &str) -> Result<bool> {
+        if user_id == acting_user {
+            anyhow::bail!("Cannot delete the currently logged-in user");
+        }
+        self.mutate_if_changed(|users| {
+            let Some(email) = users
+                .iter()
+                .find(|(_, user)| user.id == user_id)
+                .map(|(email, _)| email.clone())
+            else {
+                return Ok((false, false));
+            };
+            users.remove(&email);
+            Ok((true, true))
+        })
+    }
+
+    /// 管理员：重置指定用户密码。
+    pub fn reset_password(&self, user_id: &str, new_password: &str) -> Result<bool> {
+        if new_password.len() < 6 {
+            anyhow::bail!("New password must be at least 6 characters");
+        }
+        let password_hash = hash_password(new_password)?;
+        self.mutate_if_changed(|users| {
+            let Some(user) = users.values_mut().find(|user| user.id == user_id) else {
+                return Ok((false, false));
+            };
+            user.password_hash = password_hash;
+            Ok((true, true))
+        })
+    }
+
     /// Validate a token and return the user_id if valid.
     pub fn validate_token(&self, token: &str) -> Option<String> {
         let tokens = self.tokens.read().unwrap();

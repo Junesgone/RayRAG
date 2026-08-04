@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 10 轮：Admin 用户管理
+
+- `auth.rs`：`UserStore::delete_user`（禁删自己）+ `reset_password`（管理员重置）
+- `server.rs`：DELETE /api/v1/admin/users/{id} + PATCH /api/v1/admin/users/{id}/password（is_admin 校验）
+- `web.rs` admin_page：Users 卡片（姓名/邮箱/角色 + Reset PW / Del 按钮）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 9 轮：chunk 内联编辑
 
 - `web.rs` document_page：chunk 列表每行加 **Edit** 按钮 → 模态编辑 content → PATCH /api/v1/datasets/{kb}/documents/{doc}/chunks/{id}（对齐 RAGFlow chunk 编辑）

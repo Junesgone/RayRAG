@@ -614,6 +614,19 @@ pub async fn admin_page(
     );
     b.push_str(&tr);
     b.push_str("</tbody></table></div>");
+    let users = state.users.list_users();
+    let mut ur = String::new();
+    for user in &users {
+        ur.push_str(&format!(
+            "<tr><td style='font-weight:500'>{}</td><td class='co'>{}</td><td><span class='badge {}'>{}</span></td><td><button class='btn btn-o btn-sm' onclick='resetPw(\"{}\")'>Reset PW</button> <button class='btn btn-d btn-sm' onclick='delUser(\"{}\")'>Del</button></td></tr>",
+            user.nickname, user.email, if user.role == "admin" { "bs" } else { "bw" }, if user.role == "admin" { "admin" } else { "user" }, user.id, user.id
+        ));
+    }
+    b.push_str("<div class='card'><h2>Users (");
+    b.push_str(&users.len().to_string());
+    b.push_str(")</h2><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th style='width:200px'>Actions</th></tr></thead><tbody>");
+    b.push_str(&ur);
+    b.push_str("</tbody></table></div><script>function resetPw(id){var n=prompt('New password (min 6 chars):');if(!n)return;fetch('/api/v1/admin/users/'+id+'/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function delUser(id){if(!confirm('Delete this user?'))return;fetch('/api/v1/admin/users/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script>");
     Html(layout(t("Admin", zh), &b, zh))
 }
 

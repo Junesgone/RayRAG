@@ -1453,6 +1453,39 @@ pub(crate) fn delete_document_data(
 
 
 
+
+async fn admin_delete_user(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(user_id): axum::extract::Path<String>,
+) -> Response {
+    if !auth.is_admin {
+        return Json(serde_json::json!({ "code": 403, "message": "Admin required" })).into_response();
+    }
+    match state.users.delete_user(&user_id, &auth.user_id) {
+        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response(),
+        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response(),
+    }
+}
+
+async fn admin_reset_password(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(user_id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if !auth.is_admin {
+        return Json(serde_json::json!({ "code": 403, "message": "Admin required" })).into_response();
+    }
+    let new_password = body.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
+    match state.users.reset_password(&user_id, new_password) {
+        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response(),
+        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response(),
+    }
+}
+
 async fn change_password(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2008,6 +2041,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/retrieval", post(retrieval))
         .route("/api/v1/conversations/{conversation_id}", axum::routing::delete(delete_conversation))
         .route("/api/v1/user/password", axum::routing::patch(change_password))
+        .route(
+            "/api/v1/admin/users/{user_id}",
+            axum::routing::delete(admin_delete_user),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}/password",
+            axum::routing::patch(admin_reset_password),
+        )
         .route("/api/v1/search", post(crate::api::search::weighted_search))
         .route(
             "/api/v1/dify/retrieval",
