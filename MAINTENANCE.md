@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 25 轮：文档批量删除
+
+- `web.rs` document_page：行 checkbox + 表头全选（docSelAll）+ 🗑 Batch Delete（串行 DELETE + 确认）——对齐 RAGFlow 文档多选删除
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 24 轮：创建 KB 高级选项
 
 - `web.rs` dataset_page：createKb 支持 embedding_model/permission 下拉（create_dataset API 已支持字段）；补空名校验
