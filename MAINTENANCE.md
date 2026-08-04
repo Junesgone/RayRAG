@@ -1,5 +1,13 @@
 # RayRAG 运维台账
 
+## 2026-08-04 最终容器终验（UI 38-40 + SearXNG + 性能）
+
+- 重建镜像 → 容器实测：
+  - 14 页面全 200
+  - files 搜索（fileQ/fileFilter）✓；dataset embdSel ✓；chat 模型选择器（/chat/{id}）✓
+  - SEARXNG_URL 注入容器（agent searxng 工具可用）
+  - RAYRAG_NO_FSYNC=1 生效（compose 默认）
+  - healthz: postgres/zvec healthy
 ## 2026-08-04 SearXNG 自托管接入验证
 
 - Docker 部署 SearXNG（docker.m.daocloud.io/searxng/searxng，端口 18888，容器 rayrag-searxng）
