@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 27 轮：文档重命名
+
+- `document.rs`：DocStore::rename（校验非空，storage_name 不变）；`rename_doc` handler（PATCH /api/v1/datasets/{id}/documents/{did}，kb_manageable 校验）
+- `web.rs`：文档行 ✏️ Rename 按钮（prompt → PATCH）
+- 教训：Rust b.push_str JS 字符串内嵌引号需 `\"`（python 里写 `\\"`），裸 `"` 会截断字符串（7 errors）——git checkout 重做
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 26 轮：数据集清空
 
 - `web.rs` dataset_page：🗑 Clear All 按钮（确认 + 循环 DELETE 全部文档，保留数据集）

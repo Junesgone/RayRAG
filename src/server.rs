@@ -2190,7 +2190,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/datasets/{id}/documents/{did}",
-            get(crate::api::document::get_doc).delete(crate::api::document::delete_doc),
+            get(crate::api::document::get_doc)
+                .delete(crate::api::document::delete_doc)
+                .patch(crate::api::document::rename_doc),
         )
         .route(
             "/api/v1/datasets/{id}/documents/{did}/reparse",

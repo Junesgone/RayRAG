@@ -119,6 +119,21 @@ impl DocStore {
         self.update_parse_result(id, run, progress, msg, None)
     }
 
+    /// Rename a document (display name only; storage name unchanged).
+    pub fn rename(&self, id: &str, new_name: &str) -> anyhow::Result<bool> {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            anyhow::bail!("Document name cannot be empty");
+        }
+        self.mutate_if_changed(|docs| {
+            let Some(d) = docs.get_mut(id) else {
+                return Ok((false, false));
+            };
+            d.name = new_name.to_string();
+            Ok((true, true))
+        })
+    }
+
     pub fn update_parse_result(
         &self,
         id: &str,
@@ -322,6 +337,29 @@ pub async fn reparse_doc(
 }
 
 /// DELETE /api/v1/datasets/{kb_id}/documents/{doc_id} — delete doc
+/// PATCH /api/v1/datasets/{id}/documents/{did} — rename a document.
+pub async fn rename_doc(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((kb_id, doc_id)): Path<(String, String)>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if !kb_manageable(&state, &kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
+        return Json(serde_json::json!({ "code": 400, "message": "name is required" }));
+    };
+    if state.docs.get(&doc_id).filter(|doc| doc.kb_id == kb_id).is_none() {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    match state.docs.rename(&doc_id, name) {
+        Ok(true) => Json(serde_json::json!({ "code": 0, "message": "Renamed" })),
+        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "Not found" })),
+        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })),
+    }
+}
+
 pub async fn delete_doc(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
