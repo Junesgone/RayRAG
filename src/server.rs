@@ -2345,6 +2345,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/models", get(crate::api::openai_proxy::list_models))
         .route("/api/v1/embeddings", post(crate::api::openai_proxy::embeddings))
+        .route("/api/v1/rerank", post(crate::api::openai_proxy::rerank))
         .route(
             "/api/v1/providers",
             get(crate::api::features::list_providers),

@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 OpenAI 兼容 rerank 端点（POST /api/v1/rerank）
+
+- `openai_proxy.rs`：rerank handler——Jina 风格 `{"query","documents"}` → `{"object":"rerank","results":[{"index","relevance_score"}]}`；未配置 503
+- 注意：`/api/v1/reranker` 是配置端点（GET/PUT），POST 会 405——调用端点应为 /api/v1/rerank
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 embeddings 端点 fallback 修复
 
 - `openai_proxy.rs`：resolve(Embedding) 返回 None 时（租户模型表为空，容器只有 env embedder）→ fallback `state.embedder`（EMBED_API_BASE 配置的 OpenAI 兼容 embedder）

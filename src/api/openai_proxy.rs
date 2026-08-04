@@ -244,6 +244,65 @@ pub async fn embeddings(
     .into_response()
 }
 
+/// POST /api/v1/rerank — OpenAI/Jina-compatible rerank endpoint.
+pub async fn rerank(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let query = body.get("query").and_then(|value| value.as_str()).unwrap_or("");
+    let documents: Vec<String> = body
+        .get("documents")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if query.trim().is_empty() || documents.is_empty() {
+        return Json(serde_json::json!({
+            "error": {"message": "query and documents are required", "type": "invalid_request_error", "code": 400}
+        }))
+        .into_response();
+    }
+    let reranker = match state.reranker.current() {
+        Some(reranker) => reranker,
+        None => {
+            return Json(serde_json::json!({
+                "error": {"message": "Reranker is not configured", "type": "server_error", "code": 503}
+            }))
+            .into_response();
+        }
+    };
+    match reranker.rerank(query, &documents, documents.len()).await {
+        Ok(scores) => {
+            let results: Vec<serde_json::Value> = scores
+                .iter()
+                .enumerate()
+                .map(|(index, score)| {
+                    serde_json::json!({"index": index, "relevance_score": score})
+                })
+                .collect();
+            let model = body
+                .get("model")
+                .and_then(|value| value.as_str())
+                .unwrap_or("rerank");
+            Json(serde_json::json!({
+                "object": "rerank",
+                "model": model,
+                "results": results,
+                "usage": {"total_tokens": 0},
+            }))
+            .into_response()
+        }
+        Err(error) => Json(serde_json::json!({
+            "error": {"message": error.to_string(), "type": "api_error", "code": 502}
+        }))
+        .into_response(),
+    }
+}
+
 pub async fn list_models() -> impl IntoResponse {
     Json(OpenAiModelList {
         object: "list".into(),
