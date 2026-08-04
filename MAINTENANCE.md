@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 40 轮：dataset 配置 embedding 模型切换
+
+- `web.rs` dataset_page：配置表新增 Embedding Model 下拉（providers 源 provider:model）→ saveConfig 带 embedding_model（update_dataset 已支持 + 换模型校验）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 39 轮：chat 模型选择器
 
 - `web.rs` chat_detail_page：模型下拉（从 /api/v1/providers 拉 provider:model 复合 selector）→ sendMsg 带 chat_model——对齐 RAGFlow 对话模型切换
