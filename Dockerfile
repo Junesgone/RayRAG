@@ -28,6 +28,18 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
+# 容器内 cargo 国内镜像源（宿主 ~/.cargo/config.toml 不会进入构建上下文）
+# git 依赖（如 huggingface/candle）直连 GitHub 会卡死 → 走 xget 加速镜像
+RUN mkdir -p /usr/local/cargo && printf '%s\n' \
+    '[source.crates-io]' \
+    'replace-with = "rsproxy-sparse"' \
+    '[source.rsproxy-sparse]' \
+    'registry = "sparse+https://rsproxy.cn/index/"' \
+    '[registries.rsproxy]' \
+    'index = "https://rsproxy.cn/crates.io-index"' \
+    '[net]' \
+    'git-fetch-with-cli = true' > /usr/local/cargo/config.toml \
+ && git config --global url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 
