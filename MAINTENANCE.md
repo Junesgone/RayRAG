@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 37 轮：搜索分页
+
+- `web.rs` search_page：请求带 page（后端已支持）+ 结果分页控件（Prev/Next + Page X/Y + total）——对齐 RAGFlow 检索翻页
+- 注意：runSearch(q) 带参（lastQuery 供 searchPage 复用）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 36 轮：文档 chunk 分页浏览
 
 - `web.rs` document_page：loadChunks 分页（每页 20，Prev/Next + 页码指示 + 总数）——对齐 RAGFlow document-viewer 分页
