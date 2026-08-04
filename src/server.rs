@@ -2119,6 +2119,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/files", get(crate::web::files_page))
 
         .route("/agents", get(crate::web::agents_page))
+        .route("/agents/{agent_id}", get(crate::web::agent_detail_page))
         .route("/memories", get(crate::web::memories_page))
         .route("/admin", get(crate::web::admin_page))
         .route("/login", get(crate::web::login_page))

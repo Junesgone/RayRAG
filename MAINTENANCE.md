@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 17 轮：Agent 详情页（画布简版）
+
+- `web.rs`：`agent_detail_page`（/agents/{id}）——agent 元数据（ID/KBs/状态）+ Canvas DSL JSON 只读视图 + Run/Ask（completions API）+ Delete
+- `server.rs`：/agents/{agent_id} 路由
+- 补齐 agents 列表 Edit 按钮的目标页（原跳转 404）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 16 轮：搜索导出 + 上传轮询
 
 - `web.rs` search_page：结果保存到 lastResults + **⬇ Export MD** 按钮（生成 Markdown 下载，含分数/来源）

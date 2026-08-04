@@ -512,6 +512,33 @@ pub async fn search_page(
     Html(layout(t("Search", zh), &b, zh))
 }
 
+pub async fn agent_detail_page(
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let mut b = String::new();
+    b.push_str("<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap'><a class='btn btn-o' href='/agents'>← ");
+    b.push_str(t("Back to Agents", zh));
+    b.push_str("</a><h1 style='margin:0;flex:1' id='agentTitle'>🤖 ...</h1><button class='btn btn-p' onclick='runAgent()'>▶ ");
+    b.push_str(t("Run", zh));
+    b.push_str("</button><button class='btn btn-d' onclick='delAgent()'>");
+    b.push_str(t("Delete", zh));
+    b.push_str("</button></div>");
+    b.push_str("<div class='st' style='margin-top:16px'><div class='sc'><span class='lbl'>ID</span><span class='val' id='agentId' style='font-size:13px'>-</span></div><div class='sc'><span class='lbl'>KBs</span><span class='val' id='agentKbs'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='agentStatus' style='font-size:15px'>-</span></div></div>");
+    b.push_str("<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px'><div class='card'><h2>");
+    b.push_str(t("Canvas DSL", zh));
+    b.push_str("</h2><pre id='agentDsl' style='background:var(--bg);padding:16px;border-radius:var(--r);font-size:12px;overflow:auto;max-height:480px;white-space:pre-wrap'>Loading...</pre></div><div class='card'><h2>");
+    b.push_str(t("Test", zh));
+    b.push_str("</h2><input id='aq2' placeholder='Ask...' style='width:100%'><button class='btn btn-p' style='margin-top:8px;width:100%' onclick='askAgent()'>");
+    b.push_str(t("Ask", zh));
+    b.push_str("</button><div id='aa2' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:120px;white-space:pre-wrap;line-height:1.6;font-size:13px'></div></div></div>");
+    b.push_str("<script>var aid='");
+    b.push_str(&agent_id);
+    b.push_str("';function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2)})};function runAgent(){document.getElementById('aa2').textContent='Running agent...';fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{document.getElementById('aa2').textContent=d.data?d.data.answer:JSON.stringify(d)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa2').textContent=d.data?d.data.answer:JSON.stringify(d)})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};loadAgent()</script>");
+    Html(layout("Agent", &b, zh))
+}
+
 pub async fn agents_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
