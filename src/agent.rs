@@ -7,6 +7,7 @@
 
 use crate::arxiv::{ArxivClient, ArxivPaper, ArxivProvider, ArxivSearchRequest, ArxivSortBy};
 use crate::baidu::{BaiduClient, BaiduProvider, BaiduSearchRequest};
+use crate::baike::{BaikeArticle, BaikeClient, BaikeProvider, BaikeSearchRequest};
 use crate::baidu_scholar::{BaiduScholarClient, BaiduScholarProvider, BaiduScholarRequest};
 use crate::bing::{BingClient, BingProvider, BingSearchRequest};
 use crate::bocha::{BochaClient, BochaProvider, BochaSearchRequest};
@@ -1592,6 +1593,9 @@ impl AgentWorkflow {
             }
             if node.component_name.eq_ignore_ascii_case("wikipedia") {
                 validate_wikipedia_params(node)?;
+            }
+            if node.component_name.eq_ignore_ascii_case("baike") {
+                validate_baike_params(node)?;
             }
             if node.component_name.eq_ignore_ascii_case("google") {
                 validate_google_params(node)?;
@@ -4521,6 +4525,10 @@ async fn execute_canvas_agent_tool_with_providers(
             validate_wikipedia_params(&child)?;
             execute_agent_wikipedia_with_timeout(runtime, &child, providers.wikipedia).await?;
         }
+        "baike" => {
+            validate_baike_params(&child)?;
+            execute_baike_with_provider(runtime, &child, &BaikeClient::default()).await?;
+        }
         "google" => {
             validate_google_params(&child)?;
             execute_agent_google_with_timeout(runtime, &child, providers.google).await?;
@@ -4633,6 +4641,7 @@ async fn execute_canvas_agent_tool_with_providers(
         let provider = match child.component_name.to_ascii_lowercase().as_str() {
             "duckduckgo" => "DuckDuckGo",
             "wikipedia" => "Wikipedia",
+            "baike" => "百度百科 Baike",
             "google" => "Google",
             "googlescholar" => "GoogleScholar",
             "github" => "GitHub",
@@ -5169,6 +5178,10 @@ async fn execute_node(
         }
         "searxng" => {
             execute_searxng_with_provider(runtime, node, &SearxngClient::default()).await?;
+            Ok(None)
+        }
+        "baike" => {
+            execute_baike_with_provider(runtime, node, &BaikeClient::default()).await?;
             Ok(None)
         }
         "invoke" => {
@@ -7638,6 +7651,71 @@ async fn execute_searxng_with_provider(
         runtime,
         node,
         last_error.unwrap_or_else(|| "SearXNG failed without an error".into()),
+    );
+    Ok(())
+}
+
+async fn execute_baike_with_provider(
+    runtime: &mut CanvasRuntime,
+    node: &CanvasNode,
+    provider: &dyn BaikeProvider,
+) -> Result<()> {
+    let query = resolve_tavily_string(runtime, node, "query", "sys.query")?;
+    if query.is_empty() {
+        runtime.outputs.insert(
+            node.id.clone(),
+            Map::from_iter([("formalized_content".into(), Value::String(String::new()))]),
+        );
+        return Ok(());
+    }
+    let request = BaikeSearchRequest {
+        query,
+        top_n: bing_top_n(node)?,
+    };
+    let delay = bing_retry_delay(node)?;
+    let mut last_error = None;
+    for _ in 0..bing_attempts(node) {
+        if runtime.cancel_flag {
+            set_domestic_search_error(runtime, node, "Task has been canceled".into());
+            return Ok(());
+        }
+        match provider.search(&request).await {
+            Ok(articles) => {
+                let rows: Vec<Value> = articles
+                    .iter()
+                    .map(|article: &BaikeArticle| {
+                        serde_json::json!({
+                            "title": article.title,
+                            "link": article.url,
+                            "snippet": article.snippet
+                        })
+                    })
+                    .collect();
+                match domestic_search_outputs(&rows, "BaiduBaike") {
+                    Ok((outputs, references, chunks, doc_aggs)) => {
+                        runtime
+                            .retrieval
+                            .insert("chunks".into(), Value::Array(chunks));
+                        runtime
+                            .retrieval
+                            .insert("doc_aggs".into(), Value::Array(doc_aggs));
+                        append_web_references(runtime, references);
+                        runtime.outputs.insert(node.id.clone(), outputs);
+                        return Ok(());
+                    }
+                    Err(error) => last_error = Some(error.to_string()),
+                }
+            }
+            Err(error) => last_error = Some(error.to_string()),
+        }
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+    }
+    set_domestic_search_error(
+        runtime,
+        node,
+        last_error.unwrap_or_else(|| "BaiduBaike failed without an error".into()),
     );
     Ok(())
 }
@@ -12991,6 +13069,11 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_baike_params(node: &CanvasNode) -> Result<()> {
+    validate_domestic_search_params(node, "Baike")?;
+    Ok(())
+}
 
 fn validate_domestic_search_params(node: &CanvasNode, provider_label: &str) -> Result<()> {
     for field in ["query", "channel", "topic", "description", "function_name"] {

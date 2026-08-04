@@ -235,6 +235,30 @@ const WIKIPEDIA_OUTPUTS: &[(&str, &str)] = &[
     ("doc_aggs", "Wikipedia-result document aggregations"),
     ("_ERROR", "Terminal Wikipedia request error"),
 ];
+const BAIKE_INPUTS: &[(&str, &str)] = &[
+    (
+        "query",
+        "Specific Baidu Baike subject or Canvas selector; defaults to sys.query",
+    ),
+    ("top_n", "Positive result limit; defaults to 10"),
+    (
+        "max_retries",
+        "Additional outer search attempts after an error",
+    ),
+    ("delay_after_error", "Non-negative retry delay in seconds"),
+];
+const BAIKE_OUTPUTS: &[(&str, &str)] = &[
+    (
+        "formalized_content",
+        "RAGFlow kb_prompt-style Baidu Baike summaries",
+    ),
+    (
+        "json",
+        "Go-compatible results envelope of title/snippet/url rows",
+    ),
+    ("doc_aggs", "Baidu Baike-result document aggregations"),
+    ("_ERROR", "Terminal Baidu Baike request error"),
+];
 const GOOGLE_INPUTS: &[(&str, &str)] = &[
     (
         "q",
@@ -956,6 +980,12 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         category: ComponentCategory::Agent,
         inputs: WIKIPEDIA_INPUTS,
         outputs: WIKIPEDIA_OUTPUTS,
+    },
+    StaticComponentDescriptor {
+        name: "baike",
+        category: ComponentCategory::Agent,
+        inputs: BAIKE_INPUTS,
+        outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
         name: "switch",

@@ -26,6 +26,7 @@ pub mod arxiv;
 pub mod auth;
 pub mod baidu;
 pub mod baidu_scholar;
+pub mod baike;
 pub mod bing;
 pub mod bocha;
 pub mod book;
