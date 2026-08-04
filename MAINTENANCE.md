@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 embeddings 端点 fallback 修复
+
+- `openai_proxy.rs`：resolve(Embedding) 返回 None 时（租户模型表为空，容器只有 env embedder）→ fallback `state.embedder`（EMBED_API_BASE 配置的 OpenAI 兼容 embedder）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 流式 UI：思考占位 + 引用帧
 
 - `features.rs`：SSE 流结束前发 `chat.completion.references` 帧（chunk_id/kb_id/score/content 前 120 字符）

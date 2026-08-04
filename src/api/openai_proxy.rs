@@ -208,7 +208,9 @@ pub async fn embeddings(
         )
         .ok()
         .flatten();
-    let embedder = resolved.map(|model| model.embedder());
+    let embedder = resolved
+        .map(|model| model.embedder())
+        .or_else(|| state.embedder.clone());
     let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
     let vectors = match embedder {
         Some(embedder) => match embedder.embed(&text_refs).await {
