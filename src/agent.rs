@@ -30,6 +30,7 @@ use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
 use crate::translate::{BaiduTranslateClient, TranslateRequest};
 use crate::akshare::{AkShareClient, AkShareRequest};
+use crate::tushare::{TuShareClient, TuShareRequest};
 use crate::crawler::{CrawlerClient, CrawlerRequest};
 use crate::tencent_finance::{
     TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
@@ -5108,6 +5109,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), news);
             Ok(None)
         }
+        "tushare" => {
+            validate_tushare_params(node)?;
+            let news = execute_tushare_with_provider(node, input, &TuShareClient::default()).await?;
+            runtime.outputs.insert(node.id.clone(), news);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6770,6 +6777,83 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+async fn execute_tushare_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+    client: &TuShareClient,
+) -> Result<Map<String, Value>> {
+    let mut content = String::new();
+    if let Some(input_content) = input.inputs.get("content") {
+        content = match input_content {
+            Value::String(value) => value.clone(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join(","),
+            other => other.to_string(),
+        };
+    }
+    if content.trim().is_empty() {
+        content = input.question.to_string();
+    }
+    let token = node
+        .params
+        .get("token")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| std::env::var("TUSHARE_TOKEN").unwrap_or_default());
+    let src = node
+        .params
+        .get("src")
+        .and_then(Value::as_str)
+        .unwrap_or("eastmoney")
+        .to_string();
+    let start_date = node
+        .params
+        .get("start_date")
+        .and_then(Value::as_str)
+        .unwrap_or("2024-01-01 09:00:00")
+        .to_string();
+    let end_date = node
+        .params
+        .get("end_date")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let end_date = if end_date.is_empty() {
+        time::OffsetDateTime::now_utc()
+            .format(
+                &time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+                    .expect("static time format"),
+            )
+            .unwrap_or_default()
+    } else {
+        end_date
+    };
+    let keyword = node
+        .params
+        .get("keyword")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let request = TuShareRequest {
+        token,
+        src,
+        start_date,
+        end_date,
+        keyword,
+    };
+    match client.news(&request).await {
+        Ok(markdown) => Ok(Map::from_iter([("content".into(), Value::String(markdown))])),
+        Err(error) => {
+            let message = format!("**ERROR**: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
 }
 
 async fn execute_akshare_with_provider(
@@ -13228,6 +13312,19 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_tushare_params(node: &CanvasNode) -> Result<()> {
+    for field in ["token", "src", "start_date", "end_date", "keyword"] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| !value.is_string())
+        {
+            bail!("TuShare '{}' {field} must be a string", node.id);
+        }
+    }
+    Ok(())
+}
 
 fn validate_akshare_params(node: &CanvasNode) -> Result<()> {
     if let Some(value) = node.params.get("top_n")

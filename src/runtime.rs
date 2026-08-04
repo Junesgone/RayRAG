@@ -988,6 +988,19 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
+        name: "tushare",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("content", "Keyword or stock symbol (array items joined with ',')"),
+            ("token", "TuShare API token (falls back to env TUSHARE_TOKEN)"),
+            ("src", "News source: sina/wallstreetcn/10jqka/eastmoney/yuncaijing/fenghuang/jinrongjie"),
+            ("start_date", "Range start, format %Y-%m-%d %H:%M:%S"),
+            ("end_date", "Range end, defaults to now"),
+            ("keyword", "Case-insensitive content filter"),
+        ],
+        outputs: &[("content", "Markdown news table")],
+    },
+    StaticComponentDescriptor {
         name: "akshare",
         category: ComponentCategory::Agent,
         inputs: &[

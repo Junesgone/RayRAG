@@ -96,6 +96,7 @@ pub mod tavily;
 pub mod tencent_finance;
 pub mod tools_bench_flow;
 pub mod translate;
+pub mod tushare;
 pub mod web;
 pub mod wikipedia;
 pub mod yahoo_finance;

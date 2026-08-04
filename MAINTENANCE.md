@@ -1,5 +1,15 @@
 # RayRAG 运维台账
 
+## 2026-08-04 tushare 连接器（快讯 API）
+
+- 新增 `src/tushare.rs`：RAGFlow `tushare.py` 的 Rust 实现
+  - POST api.tushare.pro `news` 接口；token 从节点参数读，空则回退 env TUSHARE_TOKEN
+  - src 七源枚举校验（sina/wallstreetcn/10jqka/eastmoney/yuncaijing/fenghuang/jinrongjie）
+  - keyword 大小写不敏感过滤 + markdown 表格渲染（对齐上游 df.to_markdown）
+  - end_date 空时用当前 UTC 时间（time crate；项目无 chrono，now_local 需 local-offset feature 未启用）
+  - 测试 3 个（mock 过滤渲染 + 缺 token 拒绝 + 非法源拒绝）
+- 接线：agent.rs tushare 分支 + validate_tushare_params + runtime.rs 描述符
+- 测试基线：**817 passed / 0 failed / 26 ignored**（+3）
 ## 2026-08-04 akshare 连接器（东财个股新闻）
 
 - 新增 `src/akshare.rs`：RAGFlow `akshare.py`（ak.stock_news_em）的 Rust 实现
