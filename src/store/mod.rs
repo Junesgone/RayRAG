@@ -291,8 +291,27 @@ impl OnlineVectorMirror {
             .filter(|chunk| !current_ids.contains(chunk.id.as_str()))
             .map(|chunk| chunk.id.as_str())
             .collect();
-        collection.delete(&removed)?;
-        collection.upsert(current)?;
+        if !removed.is_empty() {
+            collection.delete(&removed)?;
+        }
+        // 仅 upsert 新增或内容/向量变更的 chunk（避免全量重写）
+        let before_ids: HashSet<_> = previous.iter().map(|chunk| chunk.id.as_str()).collect();
+        let changed: Vec<&IndexedChunk> = current
+            .iter()
+            .filter(|chunk| {
+                !before_ids.contains(chunk.id.as_str())
+                    || previous
+                        .iter()
+                        .find(|before| before.id == chunk.id)
+                        .map(|before| {
+                            before.content != chunk.content || before.embedding != chunk.embedding
+                        })
+                        .unwrap_or(true)
+            })
+            .collect();
+        if !changed.is_empty() {
+            collection.upsert(&changed)?;
+        }
         collection.flush()
     }
 

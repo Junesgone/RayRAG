@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 zvec 增量 upsert 优化（上传性能）
+
+- 基准：5 文档批量上传 53s（~10.6s/文档）——日志显示 Parsed→Embedded 0.4s 但 Saved ~9.6s
+- 根因：replace_collection 已增量删除但 **upsert 全量**（每次上传重写整个 KB 集合）
+- 修复：仅 upsert 新增/内容或向量变更的 chunk（id + content/embedding diff）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器回归终验（UI 第 33-37 轮）
 
 - 重建镜像 → 容器实测：
