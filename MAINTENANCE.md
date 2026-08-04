@@ -1,5 +1,19 @@
 # RayRAG 运维台账
 
+## 2026-08-04 code_exec 连接器（沙箱契约客户端）
+
+- 新增 `src/code_exec.rs`：RAGFlow `code_exec.py` 的 Rust 实现（688 行上游 → 契约全移植）
+  - HTTP 沙箱客户端：POST {RAYRAG_SANDBOX_HOST}/run（默认 127.0.0.1:9385），对齐 code_req/响应结构
+  - **契约层**（上游纯函数全移植）：
+    - infer_actual_type（Null/Boolean/Number/String/Object/Array<T> 递归推断）
+    - normalize/validate_expected_type（Array<T> 嵌套展开校验）
+    - select_business_output（保留键排除后恰好一个业务输出 + 名称校验）
+    - render_canonical_content（排序键 2 空格缩进 JSON）
+    - artifact 附件段落（image/pdf/csv/json/html 类型规范化 + base64 解码）
+  - stderr-only → _ERROR；stdout fallback 反序列化；actual_type 输出
+  - 测试 8 个（类型推断/嵌套类型/业务输出/排序 JSON/附件/stderr/组合渲染）
+- 接线：agent.rs code_exec 分支（lang/script/arguments）+ validate_code_exec_params + runtime.rs 描述符
+- 测试基线：**828 passed / 0 failed / 26 ignored**（+8）
 ## 2026-08-04 docker compose 全栈运行时验证通过
 
 - **postgres:18.4 实跑**：容器 rayrag-postgres-1（Up healthy），宿主端口 **55432**（5432 被主机占用；RAGFlow 占用 9380-9384）

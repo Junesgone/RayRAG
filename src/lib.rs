@@ -33,6 +33,7 @@ pub mod bocha;
 pub mod book;
 pub mod chunk;
 pub mod chunk_feedback;
+pub mod code_exec;
 pub mod crawler;
 pub mod document_writer;
 pub mod duckduckgo;

@@ -988,6 +988,16 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
+        name: "code_exec",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("script", "Code to execute (falls back to input script)"),
+            ("lang", "Language: python3 (default)"),
+            ("arguments", "Object of named arguments passed to the sandbox"),
+        ],
+        outputs: &[("content", "Canonical execution result"), ("actual_type", "Inferred result type")],
+    },
+    StaticComponentDescriptor {
         name: "exesql",
         category: ComponentCategory::Agent,
         inputs: &[

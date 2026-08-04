@@ -31,6 +31,7 @@ use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySe
 use crate::translate::{BaiduTranslateClient, TranslateRequest};
 use crate::akshare::{AkShareClient, AkShareRequest};
 use crate::tushare::{TuShareClient, TuShareRequest};
+use crate::code_exec::{CodeRequest, process_result, SandboxClient};
 use crate::crawler::{CrawlerClient, CrawlerRequest};
 use crate::email::{EmailClient, EmailConfig, EmailRequest};
 use crate::exesql::{execute_sql, ExeSqlConfig};
@@ -5129,6 +5130,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), result);
             Ok(None)
         }
+        "code_exec" => {
+            validate_code_exec_params(node)?;
+            let result = execute_code_exec_with_provider(node, input).await?;
+            runtime.outputs.insert(node.id.clone(), result);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6791,6 +6798,49 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+async fn execute_code_exec_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+) -> Result<Map<String, Value>> {
+    let language = node
+        .params
+        .get("lang")
+        .and_then(Value::as_str)
+        .unwrap_or("python3")
+        .to_string();
+    let code = node
+        .params
+        .get("script")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+        .or_else(|| input.inputs.get("script").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_default();
+    if code.trim().is_empty() {
+        let message = "**ERROR**: CodeExec script must not be empty";
+        return Ok(Map::from_iter([("_ERROR".into(), Value::String(message.into()))]));
+    }
+    let mut arguments = Map::new();
+    if let Some(raw) = node.params.get("arguments") {
+        if let Value::Object(map) = raw {
+            arguments = map.clone();
+        }
+    }
+    let client = SandboxClient::default();
+    let request = CodeRequest {
+        language,
+        code,
+        arguments,
+    };
+    match client.run(&request).await {
+        Ok(result) => Ok(process_result(&result)),
+        Err(error) => {
+            let message = format!("**ERROR**: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
 }
 
 async fn execute_exesql_with_provider(
@@ -13406,6 +13456,26 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_code_exec_params(node: &CanvasNode) -> Result<()> {
+    for field in ["lang", "script"] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| !value.is_string())
+        {
+            bail!("CodeExec '{}' {field} must be a string", node.id);
+        }
+    }
+    if node
+        .params
+        .get("arguments")
+        .is_some_and(|value| !value.is_object())
+    {
+        bail!("CodeExec '{}' arguments must be an object", node.id);
+    }
+    Ok(())
+}
 
 fn validate_exesql_params(node: &CanvasNode) -> Result<()> {
     for field in [
