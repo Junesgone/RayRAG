@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 29 轮：agents 搜索
+
+- `web.rs` agents_page：搜索框（agentQ → agentFilter 前端过滤 data-name）+ tbody id
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 28 轮：admin 用户搜索
 
 - `web.rs` admin_page：Users 卡片搜索框（userQ oninput → userFilter 前端过滤 data-name/data-email）
