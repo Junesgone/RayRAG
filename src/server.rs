@@ -475,6 +475,15 @@ async fn delete_dataset(
             return api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
         }
     }
+    // 清理该数据集的图谱资产
+    let mut snapshot = state.graphs.snapshot();
+    snapshot.kb_graphs.remove(&dataset_id);
+    snapshot
+        .checkpoints
+        .retain(|_, checkpoint| checkpoint.kb_id != dataset_id);
+    if let Err(error) = state.graphs.replace_snapshot(snapshot) {
+        tracing::warn!(%error, "Failed to persist graph cleanup");
+    }
     match state.kbs.delete(&dataset_id) {
         Ok(true) => Json(ApiResponse {
             code: 0,

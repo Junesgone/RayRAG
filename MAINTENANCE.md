@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 KB 删除清理图谱资产
+
+- `server.rs` delete_dataset：删除前清理 GraphStore kb_graphs[kb_id] + 对应 checkpoints（避免孤儿图谱数据）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 知识图谱持久化修复
 
 - `server.rs` build_graphrag：此前只返回统计不落盘（graphrag.json 恒空）——现在将 EntityGraph 合并进 GraphStore.kb_graphs + replace_snapshot（重启后保留，支持图谱查询上下文）
