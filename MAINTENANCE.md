@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 7 轮：Settings 页修改密码
+
+- `auth.rs`：`UserStore::change_password(user_id, current, new)`（校验当前密码 + mutate 更新哈希，新密码 ≥6 位）
+- `server.rs`：PATCH /api/v1/user/password handler
+- `web.rs` settings_page：Change Password 卡片（当前/新密码输入 + 更新按钮 + 结果提示）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 修复：providers 页 500 根因
 
 - 根因：`require_api_auth` 中间件只保护 /api/v1/ 路径（`!starts_with("/api/v1/")` 直接跳过），网页路由从不注入 AuthContext；providers_page 错误要求 `Extension<AuthContext>` → 未登录/登录访问都 500

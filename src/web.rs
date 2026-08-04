@@ -756,7 +756,18 @@ pub async fn settings_page(req: axum::http::Request<axum::body::Body>) -> impl I
     b.push_str(t("Settings", zh));
     b.push_str("</h1><div class='card'><h2>System</h2><table><tr><td>Version</td><td class='co'>v");
     b.push_str(env!("CARGO_PKG_VERSION"));
-    b.push_str("</td></tr><tr><td>Language</td><td>Rust</td></tr><tr><td>Parsers</td><td>17</td></tr><tr><td>API</td><td>29</td></tr></table></div><div class='card'><h2>API Keys</h2><p style='color:var(--tm);margin-bottom:12px'>Generate.</p><button class='btn btn-p' onclick='genKey()'>Generate</button><div id='ak' style='margin-top:12px;background:var(--bg);padding:12px;border-radius:var(--r);font-family:monospace;font-size:13px;display:none'></div></div><script>function genKey(){fetch('/api/v1/system/new_api_key',{method:'POST'}).then(r=>r.json()).then(d=>{var e=document.getElementById('ak');e.style.display='block';e.textContent=d.data.api_key})}</script>");
+    b.push_str("</td></tr><tr><td>Language</td><td>Rust</td></tr><tr><td>Parsers</td><td>17</td></tr><tr><td>API</td><td>29</td></tr></table></div>" );
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Change Password", zh));
+    b.push_str("</h2><div style='display:grid;gap:8px;max-width:360px'><input id='curPw' type='password' placeholder='");
+    b.push_str(t("Current Password", zh));
+    b.push_str("'><input id='newPw' type='password' placeholder='");
+    b.push_str(t("New Password (min 6 chars)", zh));
+    b.push_str("'><button class='btn btn-p' onclick='changePw()'>");
+    b.push_str(t("Update Password", zh));
+    b.push_str("</button><p id='pwMsg' style='font-size:12px;color:var(--tm)'></p></div></div>");
+    b.push_str("<div class='card'><h2>API Keys</h2><p style='color:var(--tm);margin-bottom:12px'>Generate.</p><button class='btn btn-p' onclick='genKey()'>Generate</button><div id='ak' style='margin-top:12px;background:var(--bg);padding:12px;border-radius:var(--r);font-family:monospace;font-size:13px;display:none'></div></div>");
+    b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function genKey(){fetch('/api/v1/system/new_api_key',{method:'POST'}).then(r=>r.json()).then(d=>{var e=document.getElementById('ak');e.style.display='block';e.textContent=d.data.api_key})}</script>");
     Html(layout(t("Settings", zh), &b, zh))
 }
 

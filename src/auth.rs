@@ -128,6 +128,31 @@ impl UserStore {
         Ok(Some(token))
     }
 
+    /// 修改密码（校验当前密码后更新哈希）。
+    pub fn change_password(&self, user_id: &str, current: &str, new_password: &str) -> Result<()> {
+        if new_password.len() < 6 {
+            anyhow::bail!("New password must be at least 6 characters");
+        }
+        let email = {
+            let users = self.users.read().unwrap();
+            let Some(user) = users.values().find(|user| user.id == user_id) else {
+                anyhow::bail!("User not found");
+            };
+            match verify_password(current, &user.password_hash) {
+                PasswordVerification::Valid { .. } => user.email.clone(),
+                PasswordVerification::Invalid => anyhow::bail!("Current password is incorrect"),
+            }
+        };
+        let password_hash = hash_password(new_password)?;
+        self.mutate_if_changed(|users| {
+            let Some(user) = users.get_mut(&email) else {
+                return Ok(((), false));
+            };
+            user.password_hash = password_hash;
+            Ok(((), true))
+        })
+    }
+
     /// Validate a token and return the user_id if valid.
     pub fn validate_token(&self, token: &str) -> Option<String> {
         let tokens = self.tokens.read().unwrap();

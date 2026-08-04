@@ -1452,6 +1452,20 @@ pub(crate) fn delete_document_data(
 // ── Search ─────────────────────────────────────────────────────
 
 
+
+async fn change_password(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let current = body.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
+    let new_password = body.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
+    match state.users.change_password(&auth.user_id, current, new_password) {
+        Ok(()) => Json(serde_json::json!({ "code": 0, "message": "ok" })).into_response(),
+        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response(),
+    }
+}
+
 async fn delete_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -1993,6 +2007,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/retrieval", post(retrieval))
         .route("/api/v1/conversations/{conversation_id}", axum::routing::delete(delete_conversation))
+        .route("/api/v1/user/password", axum::routing::patch(change_password))
         .route("/api/v1/search", post(crate::api::search::weighted_search))
         .route(
             "/api/v1/dify/retrieval",
