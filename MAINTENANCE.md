@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-05 UI 第 44 轮：sync 目标 KB 选择器
+
+- `web.rs` datasources_page：Sources 卡片加 KB 下拉（loadKbs 填充 /api/v1/datasets）——Sync 请求带 ?kb_id= 入库；空值仅预览
+- 测试基线：**851 passed / 0 failed / 26 ignored**
 ## 2026-08-05 数据源 sync 入 KB pipeline
 
 - `sync_data_source` 支持 `?kb_id=<dataset id>`：ConnectorDoc → 写 uploads/{doc_id}.{ext} → register_document_upload（标准解析管线：parse→chunk→embed→index）——返回 count/ingested/skipped
