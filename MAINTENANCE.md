@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器多格式解析验证：pptx
+
+- 上传 test_deck.pptx（标题+正文 1 页）→ Parsed → Chunked: 1 → Embedded: 1
+- 检索 chunk：`<!-- Slide 1 --> RayRAG PPTX Test / Rust 知识库系统演示 / 支持向量检索`——**幻灯片结构保留**（RAGFlow 风格）
+- 容器已实测格式：**txt / png(OCR) / pdf / xlsx / pptx**
 ## 2026-08-04 容器多格式解析验证：xlsx 表格
 
 - 上传 test_table.xlsx（3 行 3 列表格）→ Parsed → Chunked: 1 → Embedded: 1
