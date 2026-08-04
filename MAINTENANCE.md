@@ -16,6 +16,16 @@
 
 ---
 
+## 2026-08-04 国内网络替代工具闭环：baike + translate（DeepL/Wikipedia 替代）
+
+- **`src/baike.rs`**（百度百科，Wikipedia 国内替代，2 单测）：免 key 直连 `BaikeLemmaCardApi` JSON 端点，处理 lemmaId 重定向、HTML 描述清洗、`search()` top_n 聚合；输出复用 wikipedia 的 {title, link, snippet} 模式
+- **`src/translate.rs`**（百度翻译，DeepL 国内替代，3 单测）：双提供方——开放平台 API（`BAIDU_TRANSLATE_APPID`+`BAIDU_TRANSLATE_KEY`，MD5 签名，新依赖 md-5）+ 免 key `fanyi.baidu.com/sug` 端点 fallback；deepl 风格语言码（ZH/EN-GB/JA…）自动映射百度码；支持数组输入逐行翻译
+- **接线**：agent.rs `execute_node` 新增 `translate` 分支（读 input.inputs["content"] / question，输出 content）；baike 走 canvas agent 工具分发链（校验 + 分发 + 显示名 "百度百科 Baike"）；runtime.rs 静态描述符
+- **修复链**：`&mut Url: IntoUrl` → `.get(url.clone())` → E0716 临时值悬垂 → 先 `let mut endpoint = self.endpoint.clone()`；md-5 v0.11 const-generic Array 无 `{:x}` → `hex::encode(hasher.finalize())`
+- 全量测试 **805 passed / 0 failed / 26 ignored**（+3）；RAGFlow 23 个内置工具网络类全部有对应 Rust 实现（deepl→translate、wikipedia→baike、googlescholar→baidu_scholar、akshare/tushare/yahoo→eastmoney+tencent_finance+jin10；wencai.py 上游为空 stub 无移植价值）
+
+---
+
 ## 2026-08-03 Schools 实体移植：对标 deepdoc/parser/resume/entities/schools.py
 
 - **`src/resume.rs`** 新增 `SchoolEntity` + `SchoolRow` + `SchoolTable`（schools.py:17-92 全量移植，2 单测）：
