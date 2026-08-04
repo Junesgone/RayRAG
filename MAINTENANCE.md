@@ -1,5 +1,15 @@
 # RayRAG 运维台账
 
+## 2026-08-04 exesql 连接器（PostgreSQL 版）+ 决策：不使用 mysql
+
+- 新增 `src/exesql.rs`：RAGFlow `exesql.py` 的 Rust 实现（**仅 postgres**）
+  - **Boss 决策：RayRAG 不使用 mysql**（mysql crate 已 cargo remove），db_type 仅支持 postgres，其他类型明确报错
+  - postgres crate（postgres-backend feature 门控；无 feature 时占位函数返回明确错误）
+  - 安全拒止对齐上游：拒绝 host=ragflow-mysql 或 password=infini_rag_flow 的 rag_flow 数据库
+  - max_records 截断（默认 1024）；JSON 结果（Json 类型优先，回落 String/Null）
+  - 测试 5 个（空 SQL/缺配置/rag_flow 拒止/mysql 拒绝/env 回退）
+- 接线：agent.rs exesql 分支 + validate_exesql_params + runtime.rs 描述符
+- 测试基线：**820 passed / 0 failed / 26 ignored**（+5）
 ## 2026-08-04 email 连接器（SMTP 发送）
 
 - 新增 `src/email.rs`：RAGFlow `email.py` 的 Rust 实现

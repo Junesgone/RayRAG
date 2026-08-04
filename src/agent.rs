@@ -33,6 +33,7 @@ use crate::akshare::{AkShareClient, AkShareRequest};
 use crate::tushare::{TuShareClient, TuShareRequest};
 use crate::crawler::{CrawlerClient, CrawlerRequest};
 use crate::email::{EmailClient, EmailConfig, EmailRequest};
+use crate::exesql::{execute_sql, ExeSqlConfig};
 use crate::tencent_finance::{
     TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
 };
@@ -5122,6 +5123,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), result);
             Ok(None)
         }
+        "exesql" => {
+            validate_exesql_params(node)?;
+            let result = execute_exesql_with_provider(node, input).await?;
+            runtime.outputs.insert(node.id.clone(), result);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6784,6 +6791,35 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+async fn execute_exesql_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+) -> Result<Map<String, Value>> {
+    let mut sql = String::new();
+    if let Some(content) = input.inputs.get("sql") {
+        sql = match content {
+            Value::String(value) => value.clone(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join(";"),
+            other => other.to_string(),
+        };
+    }
+    if sql.trim().is_empty() {
+        sql = input.question.to_string();
+    }
+    let config = ExeSqlConfig::from_params_and_env(&node.params);
+    match execute_sql(&config, &sql).await {
+        Ok(rows) => Ok(Map::from_iter([("result".into(), Value::String(rows))])),
+        Err(error) => {
+            let message = format!("**ERROR**: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
 }
 
 fn execute_email_with_provider(
@@ -13370,6 +13406,35 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_exesql_params(node: &CanvasNode) -> Result<()> {
+    for field in [
+        "db_type",
+        "database",
+        "username",
+        "host",
+        "password",
+        "sql",
+    ] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| !value.is_string())
+        {
+            bail!("ExeSQL '{}' {field} must be a string", node.id);
+        }
+    }
+    for field in ["port", "max_records"] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| value.as_u64().is_none())
+        {
+            bail!("ExeSQL '{}' {field} must be a positive integer", node.id);
+        }
+    }
+    Ok(())
+}
 
 fn validate_email_params(node: &CanvasNode) -> Result<()> {
     for field in [

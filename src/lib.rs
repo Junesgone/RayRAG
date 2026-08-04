@@ -39,6 +39,7 @@ pub mod duckduckgo;
 pub mod eastmoney;
 pub mod email;
 pub mod embed;
+pub mod exesql;
 pub mod generation_params;
 pub mod github;
 pub mod google;

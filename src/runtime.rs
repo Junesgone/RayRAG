@@ -988,6 +988,21 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
+        name: "exesql",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("sql", "SQL to execute (defaults to sys.query)"),
+            ("db_type", "postgres (only supported type)"),
+            ("database", "Database name"),
+            ("username", "Database username"),
+            ("host", "Database host"),
+            ("port", "Database port (default 5432)"),
+            ("password", "Database password"),
+            ("max_records", "Max result rows (default 1024)"),
+        ],
+        outputs: &[("result", "JSON array of result rows")],
+    },
+    StaticComponentDescriptor {
         name: "email",
         category: ComponentCategory::Agent,
         inputs: &[
