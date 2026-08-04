@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器终验：全部 UI 页面 + admin API
+
+- 镜像重建（含 UI 第 7-10 轮）→ 容器复测：
+  - 14 页面全 200（dashboard/kbs/search/chat/agents/memories/files/skills/providers/settings/admin/status/api-docs/login）
+  - admin API：重置密码 code 0；删除自己 400（护栏）；重置后登录正常
+  - 注册默认禁用（403 Registration is disabled，环境开关）
+  - admin 用户 id 为 UUID（非 1）
 ## 2026-08-04 UI 对标 RAGFlow 第 10 轮：Admin 用户管理
 
 - `auth.rs`：`UserStore::delete_user`（禁删自己）+ `reset_password`（管理员重置）
