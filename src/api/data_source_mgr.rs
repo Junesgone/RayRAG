@@ -3,7 +3,7 @@
 
 use crate::data_source::{GitLabConnector, SourceOptions};
 use anyhow::{bail, Context, Result};
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -205,7 +205,9 @@ pub async fn delete_data_source(
 
 pub async fn sync_data_source(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
+    Extension(auth): Extension<crate::server::AuthContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let store = state
         .data_sources
@@ -230,6 +232,56 @@ pub async fn sync_data_source(
         .fetch(&options)
         .await
         .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?;
+
+    // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
+    // Each connector doc is written as a text file and routed through the
+    // standard upload pipeline (parse -> chunk -> embed -> index).
+    let mut ingested = 0_usize;
+    let mut skipped = Vec::new();
+    if let Some(kb_id) = query.get("kb_id").filter(|value| !value.is_empty()) {
+        if !crate::server::kb_manageable(&state, kb_id, &auth) {
+            return Err((StatusCode::NOT_FOUND, "knowledge base not found".into()));
+        }
+        let upload_dir = std::path::Path::new(&state.static_dir).join("../uploads");
+        std::fs::create_dir_all(&upload_dir)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        for doc in &docs {
+            let doc_id = uuid::Uuid::new_v4().to_string();
+            let ext = if doc.extension.is_empty() {
+                ".md"
+            } else {
+                &doc.extension
+            };
+            let file_name = format!("{doc_id}{ext}");
+            let path = upload_dir.join(&file_name);
+            if std::fs::write(&path, doc.blob.as_bytes()).is_err() {
+                skipped.push(doc.semantic_identifier.clone());
+                continue;
+            }
+            let upload = crate::server::PersistedUpload {
+                name: doc.semantic_identifier.clone(),
+                storage_name: file_name,
+                path,
+                size: doc.blob.len(),
+                content_hash: crate::server::server_xxh3_hash(doc.blob.as_bytes()),
+                cleanup_on_drop: false,
+            };
+            match crate::server::register_document_upload(
+                state.clone(),
+                &auth.user_id,
+                kb_id,
+                doc_id,
+                upload,
+            ) {
+                Ok(_) => ingested += 1,
+                Err(error) => {
+                    tracing::warn!("data source: ingest {} failed: {error:#}", doc.semantic_identifier);
+                    skipped.push(doc.semantic_identifier.clone());
+                }
+            }
+        }
+    }
+
     let preview: Vec<serde_json::Value> = docs
         .iter()
         .take(10)
@@ -245,7 +297,7 @@ pub async fn sync_data_source(
         .collect();
     Ok(Json(serde_json::json!({
         "code": 0,
-        "data": { "count": docs.len(), "preview": preview }
+        "data": { "count": docs.len(), "ingested": ingested, "skipped": skipped, "preview": preview }
     })))
 }
 

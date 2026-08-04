@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-05 数据源 sync 入 KB pipeline
+
+- `sync_data_source` 支持 `?kb_id=<dataset id>`：ConnectorDoc → 写 uploads/{doc_id}.{ext} → register_document_upload（标准解析管线：parse→chunk→embed→index）——返回 count/ingested/skipped
+- 辅助暴露：server_xxh3_hash（xxh3 128 位，与上传一致）、register_document_upload、PersistedUpload.cleanup_on_drop pub(crate)
+- 测试基线：**851 passed / 0 failed / 26 ignored**
 ## 2026-08-05 UI 第 43 轮：数据源页
 
 - `web.rs` datasources_page：🔗 nav + 配置表单（name/url/token/target + Issues/MRs checkbox）+ 列表（token 脱敏）+ Sync（预览表格）+ Del

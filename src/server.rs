@@ -640,13 +640,19 @@ fn safe_upload_name(name: &str) -> anyhow::Result<String> {
     Ok(name.to_string())
 }
 
+pub(crate) fn server_xxh3_hash(bytes: &[u8]) -> String {
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    hasher.update(bytes);
+    format!("{:032x}", hasher.digest128())
+}
+
 pub(crate) struct PersistedUpload {
     pub(crate) name: String,
     pub(crate) storage_name: String,
     pub(crate) path: PathBuf,
     pub(crate) size: usize,
     pub(crate) content_hash: String,
-    cleanup_on_drop: bool,
+    pub(crate) cleanup_on_drop: bool,
 }
 
 impl PersistedUpload {
@@ -861,7 +867,7 @@ async fn upload_document(
         .into_response()
 }
 
-fn register_document_upload(
+pub(crate) fn register_document_upload(
     state: Arc<AppState>,
     owner_id: &str,
     dataset_id: &str,
