@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 12 轮：Chat 详情清空/导出
+
+- `llm.rs`：`ConvStore::clear_messages`
+- `server.rs`：POST /api/v1/conversations/{id}/clear + GET /api/v1/conversations/{id}/export（Markdown 导出）
+- `web.rs` chat_detail_page：侧栏 Back 旁 **Export**（下载 .md）+ **Clear**（清空会话）按钮
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 11 轮：Files 页查看/删除
 
 - `file_mgr.rs`：`delete_file`（记录+物理文件删除，owner/admin 校验）+ `download_file`（mime 由 parser::mime_from_extension）

@@ -829,6 +829,17 @@ impl ConvStore {
     }
 
     /// Add a message to a conversation.
+    /// 清空会话消息。
+    pub fn clear_messages(&self, id: &str) -> Result<bool> {
+        self.mutate_if_changed(|conversations| {
+            let Some(conversation) = conversations.get_mut(id) else {
+                return Ok((false, false));
+            };
+            conversation.messages.clear();
+            Ok((true, true))
+        })
+    }
+
     pub fn add_message(&self, id: &str, role: &str, content: &str) -> Result<()> {
         self.mutate_if_changed(|convs| {
             let Some(conv) = convs.get_mut(id) else {

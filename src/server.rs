@@ -1499,6 +1499,44 @@ async fn change_password(
     }
 }
 
+
+async fn clear_conversation(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(conversation_id): axum::extract::Path<String>,
+) -> Response {
+    if state.conversations.get_for(&conversation_id, &auth.user_id).is_none() {
+        return Json(serde_json::json!({ "code": 404, "message": "Conversation not found" })).into_response();
+    }
+    match state.conversations.clear_messages(&conversation_id) {
+        Ok(_) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response(),
+    }
+}
+
+async fn export_conversation(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(conversation_id): axum::extract::Path<String>,
+) -> Response {
+    let Some(conversation) = state.conversations.get_for(&conversation_id, &auth.user_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "Conversation not found" })).into_response();
+    };
+    let mut markdown = format!("# {}\n\n", conversation.name);
+    for message in &conversation.messages {
+        let role = if message.role == "user" { "**User**" } else { "**Assistant**" };
+        markdown.push_str(&format!("{role}: {}\n\n", message.content));
+    }
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/markdown; charset=utf-8",
+        )],
+        markdown,
+    )
+        .into_response()
+}
+
 async fn delete_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2040,6 +2078,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/retrieval", post(retrieval))
         .route("/api/v1/conversations/{conversation_id}", axum::routing::delete(delete_conversation))
+        .route(
+            "/api/v1/conversations/{conversation_id}/clear",
+            axum::routing::post(clear_conversation),
+        )
+        .route(
+            "/api/v1/conversations/{conversation_id}/export",
+            axum::routing::get(export_conversation),
+        )
         .route("/api/v1/user/password", axum::routing::patch(change_password))
         .route(
             "/api/v1/admin/users/{user_id}",

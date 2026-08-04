@@ -427,12 +427,17 @@ pub async fn chat_detail_page(
     let mut b = String::new();
     b.push_str("<div style='display:flex;gap:16px;min-height:550px'>");
     // Left sidebar: back + conversation info + settings
-    b.push_str("<div class='card' style='width:240px;flex-shrink:0'><a href='/chat' style='font-size:13px;color:var(--p);text-decoration:none'>← Back</a><h3 style='margin-top:12px'>");
+    b.push_str("<div class='card' style='width:240px;flex-shrink:0'><div style='display:flex;gap:8px'><a href='/chat' style='font-size:13px;color:var(--p);text-decoration:none'>← Back</a><a class='btn btn-o btn-sm' style='font-size:11px;padding:2px 8px' href='/api/v1/conversations/");
+    b.push_str(&id);
+    b.push_str("/export' target='_blank'>Export</a><button class='btn btn-d btn-sm' style='font-size:11px;padding:2px 8px' onclick='clearConv()'>Clear</button></div><h3 style='margin-top:12px'>");
     b.push_str(&name);
     b.push_str("</h3><p style='font-size:11px;color:var(--tm)'>ID: ");
     b.push_str(&id[..8]);
     b.push_str("...</p>");
     // Settings panel (RAGFlow-style)
+    b.push_str("<script>function clearConv(){if(!confirm('Clear all messages?'))return;fetch('/api/v1/conversations/'+document.getElementById('convId').value+'/clear',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script><input type='hidden' id='convId' value='");
+    b.push_str(&id);
+    b.push_str("'>");
     b.push_str("<div style='margin-top:20px;border-top:1px solid var(--bd);padding-top:16px'><h3 style='font-size:13px;margin-bottom:8px'>Chat Settings</h3>");
     b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>Model</label><select id='chatModel'><option>MiniMax-M3</option><option>Qwen3.5-9B</option><option>GPT-4</option></select>");
     b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>Temperature</label><input type='range' min='0' max='2' step='0.1' value='0.7' id='chatTemp' style='padding:0'><span id='tempVal' style='font-size:11px;color:var(--tm)'>0.7</span>");
