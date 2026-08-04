@@ -1894,6 +1894,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/chat/{id}", get(crate::web::chat_detail_page))
         .route("/dataset/{id}", get(crate::web::dataset_page))
         .route("/files", get(crate::web::files_page))
+
         .route("/agents", get(crate::web::agents_page))
         .route("/memories", get(crate::web::memories_page))
         .route("/admin", get(crate::web::admin_page))

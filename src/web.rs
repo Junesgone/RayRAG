@@ -515,15 +515,24 @@ pub async fn agents_page(
     let agents = state.agents.list();
     let mut rows = String::new();
     for a in &agents {
-        rows.push_str(&format!("<tr><td style='font-weight:500'>{}</td><td style='color:var(--t2)'>{}</td><td class='co'>{}</td><td><button class='btn btn-p btn-sm' onclick=\"testA('{}')\">Test</button></td></tr>",a.name,a.description,a.kb_ids.join(", "),a.id));
+        rows.push_str(&format!("<tr><td style='font-weight:500'>{}</td><td style='color:var(--t2)'>{}</td><td class='co'>{}</td><td><button class='btn btn-p btn-sm' onclick=\"testA('{}')\">Test</button> <button class='btn btn-o btn-sm' onclick=\"editA('{}')\">Edit</button> <button class='btn btn-o btn-sm' onclick=\"dupA('{}')\">Copy</button> <button class='btn btn-d btn-sm' onclick=\"delA('{}')\">Del</button></td></tr>",a.name,a.description,a.kb_ids.join(", "),a.id,a.id,a.id,a.id));
     }
     let mut b = String::new();
-    b.push_str("<h1>🤖 ");
+    b.push_str("<div style='display:flex;align-items:center;gap:12px'><h1 style='flex:1;margin:0'>🤖 ");
     b.push_str(t("Agents", zh));
-    b.push_str("</h1><div class='card'><table><thead><tr><th>Name</th><th>Description</th><th>KBs</th><th></th></tr></thead><tbody>");
+    b.push_str("</h1><button class='btn btn-p' onclick='showCreate()'>+ ");
+    b.push_str(t("New Agent", zh));
+    b.push_str("</button></div><div class='card'><table><thead><tr><th>Name</th><th>Description</th><th>KBs</th><th style='width:240px'>Actions</th></tr></thead><tbody>");
     b.push_str(&rows);
     b.push_str("</tbody></table></div>");
-    b.push_str("<div class='card'><h2>Test Agent</h2><input id='aq' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='askA()'>Ask</button><div id='aa' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>var aid='default';function testA(id){aid=id};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
+    b.push_str("<div class='modal-overlay' id='createModal'><div class='modal'><h2>");
+    b.push_str(t("New Agent", zh));
+    b.push_str("</h2><input id='aname' placeholder='Name'><textarea id='adesc' placeholder='Description' style='margin-top:8px;min-height:60px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createA()'>");
+    b.push_str(t("Create", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='document.getElementById(\"createModal\").classList.remove(\"show\")'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='card'><h2>Test Agent</h2><input id='aq' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='askA()'>Ask</button><div id='aa' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(function(){location.reload()})};function editA(id){window.location.href='/agents/'+id};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[]})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
     Html(layout(t("Agents", zh), &b, zh))
 }
 

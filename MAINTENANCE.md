@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 3 轮：Agents 页操作按钮
+
+- `web.rs` agents_page：+ New Agent 按钮（弹窗：名称/描述 → POST /api/v1/agents）；行按钮 Test / **Edit**（→ /agents/{id}）/ **Copy**（Duplicate：GET 原 agent → POST 副本）/ **Del**（DELETE）
+- 教训：agents API 路由**已存在**（2104 区，含 tags/PUT update）——新增路由前先 grep 确认，重复注册报 "Overlapping method route"
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 2 轮：文档查看器
 
 - `web.rs`：新增 `document_page`（/documents/{kb_id}/{doc_id}）——RAGFlow document-viewer 对应
