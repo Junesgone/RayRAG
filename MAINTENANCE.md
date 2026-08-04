@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 32 轮：API docs 扩充
+
+- `web.rs` api_docs：8 → 45+ 端点（Auth/Users、Knowledge Bases、Search & Chat、OpenAI-Compatible、Files & Memories、Agents & System 分组表）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器终验（图谱 query/注入）
 
 - 重建镜像 → 容器实测：
