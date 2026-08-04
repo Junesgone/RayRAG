@@ -1,5 +1,16 @@
 # RayRAG 运维台账
 
+## 2026-08-04 docker compose 全栈运行时验证通过
+
+- **postgres:18.4 实跑**：容器 rayrag-postgres-1（Up healthy），宿主端口 **55432**（5432 被主机占用；RAGFlow 占用 9380-9384）
+- **rayrag:local 服务实跑**：rayrag-rayrag-1（Up healthy），`serve --port 8080`，宿主 9390
+- healthz：`{"status":"healthy","postgres":"healthy","zvec":"healthy","errors":[]}`
+  - postgres 连接 ✓（compose 内网 postgres:5432；REQUIRED_VERSION 18.4 匹配 ✓）
+  - **zvec 后端初始化 ✓**（RAYRAG_VECTOR_BACKEND=zvec，卷 rayrag-zvec-data）
+- 启动命令（密码变量必需）：
+  `RAYRAG_POSTGRES_PORT=55432 RAYRAG_POSTGRES_PASSWORD=... RAYRAG_ADMIN_PASSWORD=... RAYRAG_PORT=9390 docker compose up -d --no-build`
+- 注意：不带 RAYRAG_POSTGRES_PORT 会 Recreate postgres 并撞主机 5432 端口（address already in use）
+- Embedding disabled 为预期（未配 EMBED_API_BASE，需要时指 GPU 8088 端点）
 ## 2026-08-04 exesql 连接器（PostgreSQL 版）+ 决策：不使用 mysql
 
 - 新增 `src/exesql.rs`：RAGFlow `exesql.py` 的 Rust 实现（**仅 postgres**）
