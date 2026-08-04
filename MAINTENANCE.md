@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 模板字段修复 + RAG 模板容器实测
+
+- 修正：Retrieval 输出字段是 `formalized_content`（非 result）——agentTemplates 3 处引用更新
+- 容器实测（RAG 问答模板）：Begin→Retrieval→Message 全链路——检索 4 chunks（embed_test.txt/test_deck.pptx/ocr_test.png）+ Reference 1-3 进回答（1131 字符）✓
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 42 轮：Agent 模板库
 
 - `web.rs` agents_page：🧩 Templates 按钮 + 3 个预设工作流（RAG 问答 / 网络搜索 / RAG 对话）——prompt 选择 + 命名后一键创建（components 格式 DSL）
