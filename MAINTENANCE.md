@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 24 轮：创建 KB 高级选项
+
+- `web.rs` dataset_page：createKb 支持 embedding_model/permission 下拉（create_dataset API 已支持字段）；补空名校验
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 23 轮：批量上传
 
 - `web.rs` dataset_page：`<input multiple>` + uploadDoc 顺序串行上传多文件（按钮禁用防重复 + 完成后 loadDocs/pollParse）
