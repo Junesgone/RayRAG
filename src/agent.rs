@@ -28,6 +28,7 @@ use crate::pubmed::{PubMedArticle, PubMedClient, PubMedProvider, PubMedSearchReq
 use crate::qweather::{QWeatherClient, QWeatherProvider, QWeatherRequest, QWeatherType};
 use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
+use crate::translate::{BaiduTranslateClient, TranslateRequest};
 use crate::tencent_finance::{
     TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
 };
@@ -5088,6 +5089,11 @@ async fn execute_node(
         "categorize" => execute_categorize(runtime, node, llm, input)
             .await
             .map(Some),
+        "translate" => {
+            let translated = execute_translate_with_provider(node, input, &BaiduTranslateClient::default()).await?;
+            runtime.outputs.insert(node.id.clone(), translated);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6750,6 +6756,57 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+async fn execute_translate_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+    client: &BaiduTranslateClient,
+) -> Result<Map<String, Value>> {
+    let mut text = String::new();
+    if let Some(content) = input.inputs.get("content") {
+        text = match content {
+            Value::String(s) => s.clone(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            other => other.to_string(),
+        };
+    }
+    if text.trim().is_empty() {
+        text = input.question.to_string();
+    }
+    if text.trim().is_empty() {
+        if let Some(query) = node.params.get("query").and_then(Value::as_str) {
+            text = query.to_string();
+        }
+    }
+    let source_lang = node
+        .params
+        .get("source_lang")
+        .and_then(Value::as_str)
+        .unwrap_or("auto")
+        .to_string();
+    let target_lang = node
+        .params
+        .get("target_lang")
+        .and_then(Value::as_str)
+        .unwrap_or("EN")
+        .to_string();
+    let request = TranslateRequest {
+        text,
+        source_lang,
+        target_lang,
+    };
+    match client.translate(&request).await {
+        Ok(translated) => Ok(Map::from_iter([("content".into(), Value::String(translated))])),
+        Err(error) => {
+            let message = format!("Translate error: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
 }
 
 async fn execute_categorize(
