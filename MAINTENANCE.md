@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 打字机效果（chat 页 SSE 消费）
+
+- `web.rs` sendMsg：fetch stream:true → ReadableStream + TextDecoder 逐行解析 `data:` 帧 → delta.content 逐步渲染（打字机效果）→ 结束后渲染操作按钮
+- 会话消息仍持久化（服务端 append_exchange）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 Chat 端点 SSE 流式（打字机效果后端）
 
 - `llm.rs`：`rag_chat_stream`（检索上下文 + history 组装 + chat_stream 逐块）
