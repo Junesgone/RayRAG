@@ -1,5 +1,13 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器回归终验（UI 第 33-37 轮）
+
+- 重建镜像 → 容器实测：
+  - 14 页面全 200（启动约 30s：zvec 加载后 healthz healthy）
+  - dashboard：Recent Chats + Docs/Chats 统计 ✓
+  - search：searchPage/sPage 分页 ✓
+  - document 页：chunkPage/renderPage/cPageSize 分页 ✓
+  - dataset 页：Clear All/renameDoc ✓
 ## 2026-08-04 UI 第 37 轮：搜索分页
 
 - `web.rs` search_page：请求带 page（后端已支持）+ 结果分页控件（Prev/Next + Page X/Y + total）——对齐 RAGFlow 检索翻页
