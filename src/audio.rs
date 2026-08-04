@@ -54,6 +54,28 @@ pub struct AsrClient {
     client: reqwest::Client,
 }
 
+/// Build an optional ASR client from environment (`RAYRAG_ASR_API_BASE` +
+/// `RAYRAG_ASR_API_KEY` + `RAYRAG_ASR_MODEL`). Returns `Ok(None)` when the
+/// base URL is unset (audio parsing falls back to metadata placeholders).
+pub fn asr_from_env() -> Result<Option<AsrClient>> {
+    let Some(api_base) = std::env::var("RAYRAG_ASR_API_BASE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let api_key = std::env::var("RAYRAG_ASR_API_KEY").unwrap_or_default();
+    let model = std::env::var("RAYRAG_ASR_MODEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "whisper-1".to_string());
+    Ok(Some(AsrClient::new(AudioConfig {
+        api_base,
+        api_key,
+        model,
+    })))
+}
+
 impl AsrClient {
     pub fn new(config: AudioConfig) -> Self {
         let client = reqwest::Client::builder()

@@ -28,6 +28,7 @@ pub struct Pipeline {
     opendataloader: Option<crate::parser::opendataloader::OpenDataLoaderClient>,
     mineru: Option<crate::parser::mineru::MinerUClient>,
     somark: Option<crate::parser::somark::SoMarkClient>,
+    stt: Option<crate::audio::AsrClient>,
 }
 
 impl Pipeline {
@@ -42,6 +43,7 @@ impl Pipeline {
             opendataloader: None,
             mineru: None,
             somark: None,
+            stt: None,
         }
     }
 
@@ -120,12 +122,19 @@ impl Pipeline {
         Ok(self)
     }
 
+    /// Resolve the optional ASR (speech-to-text) client from environment.
+    pub fn with_asr_from_env(mut self) -> Result<Self> {
+        self.stt = crate::audio::asr_from_env()?;
+        Ok(self)
+    }
+
     /// Resolve all optional HTTP-backed document providers from environment.
     pub fn with_document_parsers_from_env(self) -> Result<Self> {
         self.with_ocr_from_env()?
             .with_opendataloader_from_env()?
             .with_mineru_from_env()?
-            .with_somark_from_env()
+            .with_somark_from_env()?
+            .with_asr_from_env()
     }
 
     /// Run the full pipeline on a file: parse → chunk → embed → store.
@@ -261,6 +270,29 @@ impl Pipeline {
             return Ok(parser::new_document(name, content, mime, data.len()));
         }
 
+        // 音频：配置 ASR 时转录（OpenAI 兼容 /audio/transcriptions），否则落到元数据占位
+        if (mime.starts_with("audio/") || mime == "application/ogg") && self.stt.is_some() {
+            if let Some(stt) = &self.stt {
+                match stt.transcribe(data, name).await {
+                    Ok(transcription) => {
+                        if !transcription.text.trim().is_empty() {
+                            return Ok(parser::new_document(
+                                name,
+                                format!(
+                                    "<!--AUDIO_START-->\n{}\n<!--AUDIO_END-->\n",
+                                    transcription.text.trim()
+                                ),
+                                mime,
+                                data.len(),
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "ASR transcription failed; falling back to metadata");
+                    }
+                }
+            }
+        }
         let parser = parser::get_parser(mime)
             .ok_or_else(|| anyhow::anyhow!("No parser for MIME: {}", mime))?;
         parser.parse(name, data)

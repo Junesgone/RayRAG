@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 音频转录接线（对标 RAGFlow whisper）
+
+- `audio.rs`：`asr_from_env()`（RAYRAG_ASR_API_BASE/KEY/MODEL → AsrClient；未配置 → None）
+- `pipeline/mod.rs`：Pipeline.stt 字段 + with_asr_from_env + parse_document 音频分支（audio/* 或 ogg → 配置时调 OpenAI 兼容 /audio/transcriptions → `<!--AUDIO_START-->` 转录文本；未配置/失败 → 回落 AudioParser 元数据占位）
+- 国内 ASR 兼容：SiliconFlow 等 OpenAI 兼容端点直接可用
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 22 轮：Knowledge Graph 环形可视化
 
 - `web.rs` dataset_page buildGraph：文本输出 → **SVG 环形图**（中心 KB 节点 + 实体按 degree 半径成环 + 连线 + 标签），对齐 RAGFlow 图谱可视化
