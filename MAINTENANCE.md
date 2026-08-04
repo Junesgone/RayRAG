@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 35 轮：dashboard 最近会话
+
+- `web.rs` dashboard：Recent Chats 卡片（最近 5 会话 + 最后消息预览，点击跳转）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 34 轮：dashboard 统计增强
 
 - `web.rs` dashboard：统计卡片新增 Docs（文档总数）/ Chats（会话数）——KBs/Chunks/Docs/Chats/Embedder/LLM 六卡片

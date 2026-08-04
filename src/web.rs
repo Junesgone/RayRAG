@@ -143,7 +143,8 @@ pub async fn dashboard(
     let kbs = state.kbs.list();
     let chunks = state.engine.read().unwrap().len();
     let docs_count: usize = state.docs.list_all().len();
-    let conv_count = state.conversations.list().len();
+    let convs = state.conversations.list();
+    let conv_count = convs.len();
     let emb = if state.embedder.is_some() {
         "✅"
     } else {
@@ -193,6 +194,25 @@ pub async fn dashboard(
     b.push_str("</a> <a class='btn btn-o' href='/chat'>");
     b.push_str(t("New Chat", zh));
     b.push_str("</a></div>");
+    b.push_str("<div class='card'><h2>Recent Chats</h2>");
+    if convs.is_empty() {
+        b.push_str("<p style='color:var(--tm)'>No conversations yet.</p>");
+    } else {
+        for c in convs.iter().rev().take(5) {
+            let preview: String = c
+                .messages
+                .last()
+                .map(|m| m.content.chars().take(60).collect())
+                .unwrap_or_default();
+            b.push_str(&format!(
+                "<div style='padding:8px 0;border-bottom:1px solid var(--bd)'><a href='/chat/{}' style='color:var(--p);text-decoration:none;font-weight:600'>{}</a><p style='margin:2px 0 0;color:var(--tm);font-size:12px'>{}</p></div>",
+                c.id,
+                c.name.chars().take(40).collect::<String>(),
+                preview
+            ));
+        }
+    }
+    b.push_str("</div>");
     Html(layout(t("Dashboard", zh), &b, zh))
 }
 
