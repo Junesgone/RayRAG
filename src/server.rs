@@ -2319,7 +2319,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/langfuse",
             get(crate::api::system::get_langfuse).post(crate::api::system::update_langfuse),
         )
-        .fallback_service(ServeDir::new(sd).precompressed_gzip().precompressed_br())
+        .fallback_service(ServeDir::new(sd).precompressed_gzip().precompressed_br().not_found_service(axum::routing::get(crate::web::not_found_page)))
         .layer(DefaultBodyLimit::max(
             max_upload_bytes()
                 .saturating_mul(MAX_DOCUMENTS_PER_UPLOAD)

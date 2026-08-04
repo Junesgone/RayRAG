@@ -749,6 +749,19 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+pub async fn not_found_page() -> impl IntoResponse {
+    let zh = false;
+    let mut b = String::new();
+    b.push_str("<div style='text-align:center;padding:80px 20px'><div style='font-size:72px;font-weight:800;color:var(--p)'>404</div><h1 style='margin:12px 0'>");
+    b.push_str(t("Page not found", zh));
+    b.push_str("</h1><p style='color:var(--tm);margin-bottom:24px'>");
+    b.push_str(t("The page you requested does not exist or has been moved.", zh));
+    b.push_str("</p><a class='btn btn-p' href='/dashboard'>← ");
+    b.push_str(t("Back to Dashboard", zh));
+    b.push_str("</a></div>");
+    Html(layout("404", &b, zh))
+}
+
 pub async fn settings_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let mut b = String::new();

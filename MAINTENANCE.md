@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 8 轮：404 页面
+
+- `web.rs`：`not_found_page`（404 大标题 + 返回首页按钮，对齐 RAGFlow 404.tsx）
+- `server.rs`：ServeDir fallback 挂 `not_found_service`（静态文件未命中 → 404 页面）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 7 轮：Settings 页修改密码
 
 - `auth.rs`：`UserStore::change_password(user_id, current, new)`（校验当前密码 + mutate 更新哈希，新密码 ≥6 位）
