@@ -653,15 +653,15 @@ pub async fn admin_page(
     let mut ur = String::new();
     for user in &users {
         ur.push_str(&format!(
-            "<tr><td style='font-weight:500'>{}</td><td class='co'>{}</td><td><span class='badge {}'>{}</span></td><td><button class='btn btn-o btn-sm' onclick='resetPw(\"{}\")'>Reset PW</button> <button class='btn btn-d btn-sm' onclick='delUser(\"{}\")'>Del</button></td></tr>",
-            user.nickname, user.email, if user.role == "admin" { "bs" } else { "bw" }, if user.role == "admin" { "admin" } else { "user" }, user.id, user.id
+            "<tr data-name={} data-email={}><td style='font-weight:500'>{}</td><td class='co'>{}</td><td><span class='badge {}'>{}</span></td><td><button class='btn btn-o btn-sm' onclick='resetPw(\"{}\")'>Reset PW</button> <button class='btn btn-d btn-sm' onclick='delUser(\"{}\")'>Del</button></td></tr>",
+            user.nickname.to_lowercase(), user.email.to_lowercase(), user.nickname, user.email, if user.role == "admin" { "bs" } else { "bw" }, if user.role == "admin" { "admin" } else { "user" }, user.id, user.id
         ));
     }
     b.push_str("<div class='card'><h2>Users (");
     b.push_str(&users.len().to_string());
-    b.push_str(")</h2><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th style='width:200px'>Actions</th></tr></thead><tbody>");
+    b.push_str(")</h2><input id='userQ' placeholder='Search users...' oninput='userFilter()' style='max-width:260px;margin-bottom:8px'><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th style='width:200px'>Actions</th></tr></thead><tbody id='userTb'>");
     b.push_str(&ur);
-    b.push_str("</tbody></table></div><script>function resetPw(id){var n=prompt('New password (min 6 chars):');if(!n)return;fetch('/api/v1/admin/users/'+id+'/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function delUser(id){if(!confirm('Delete this user?'))return;fetch('/api/v1/admin/users/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script>");
+    b.push_str("</tbody></table></div><script>function userFilter(){var q=(document.getElementById('userQ').value||'').toLowerCase();document.querySelectorAll('#userTb tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';var e=tr.getAttribute('data-email')||'';tr.style.display=(!q||m.indexOf(q)>=0||e.indexOf(q)>=0)?'':'none')})};function resetPw(id){var n=prompt('New password (min 6 chars):');if(!n)return;fetch('/api/v1/admin/users/'+id+'/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function delUser(id){if(!confirm('Delete this user?'))return;fetch('/api/v1/admin/users/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script>");
     Html(layout(t("Admin", zh), &b, zh))
 }
 

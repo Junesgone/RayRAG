@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 28 轮：admin 用户搜索
+
+- `web.rs` admin_page：Users 卡片搜索框（userQ oninput → userFilter 前端过滤 data-name/data-email）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 27 轮：文档重命名
 
 - `document.rs`：DocStore::rename（校验非空，storage_name 不变）；`rename_doc` handler（PATCH /api/v1/datasets/{id}/documents/{did}，kb_manageable 校验）
