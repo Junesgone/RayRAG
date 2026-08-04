@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 9 轮：chunk 内联编辑
+
+- `web.rs` document_page：chunk 列表每行加 **Edit** 按钮 → 模态编辑 content → PATCH /api/v1/datasets/{kb}/documents/{doc}/chunks/{id}（对齐 RAGFlow chunk 编辑）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 8 轮：404 页面
 
 - `web.rs`：`not_found_page`（404 大标题 + 返回首页按钮，对齐 RAGFlow 404.tsx）
