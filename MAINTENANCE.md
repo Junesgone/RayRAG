@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 14 轮：Knowledge Graph Build 真实接入
+
+- `server.rs`：POST /api/v1/datasets/{id}/graphrag/build —— 收集 KB chunks → 按文档分组 → graphrag_index::run_doc_pipeline（LLM 实体抽取）→ graph_merge 聚合 → 返回 nodes/edges/documents/entities/node_list
+- `web.rs` dataset_page：buildGraph 从 setTimeout 假数据改为真实 POST + 结果渲染（节点/边/文档数 + Top 节点列表）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 13 轮：Dataset 配置真实保存
 
 - `kb.rs`：`update_config` 增加 parser_config 参数（chunk_method/size/overlap/delimiter/parser_type/raptor/graphrag → parser_config JSON 持久化）

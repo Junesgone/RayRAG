@@ -1508,6 +1508,96 @@ async fn admin_reset_password(
     }
 }
 
+
+async fn build_graphrag(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(dataset_id): axum::extract::Path<String>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(StatusCode::NOT_FOUND, "Knowledge base not found");
+    }
+    let Some(llm) = state.llm.clone() else {
+        return api_error(StatusCode::BAD_REQUEST, "LLM is not configured");
+    };
+    let chunks: Vec<crate::search::IndexedChunk> = state
+        .engine
+        .read()
+        .unwrap()
+        .to_vec()
+        .into_iter()
+        .filter(|chunk| chunk.metadata.get("kb_id").map(String::as_str) == Some(dataset_id.as_str()))
+        .collect();
+    if chunks.is_empty() {
+        return api_error(StatusCode::BAD_REQUEST, "No chunks in this knowledge base");
+    }
+    let entity_types: Vec<String> = ["organization", "person", "location", "event", "concept"]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    let mut by_doc: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for chunk in &chunks {
+        let doc_id = chunk
+            .metadata
+            .get("doc_id")
+            .cloned()
+            .unwrap_or_else(|| chunk.doc_name.clone());
+        by_doc.entry(doc_id).or_default().push(chunk.content.clone());
+    }
+    let mut graph = crate::graphrag_enhanced::EntityGraph::new();
+    let mut doc_count = 0usize;
+    let mut entity_count = 0usize;
+    for (doc_id, contents) in &by_doc {
+        match crate::graphrag_index::run_doc_pipeline(
+            &llm,
+            doc_id,
+            contents,
+            &entity_types,
+            "Chinese",
+        )
+        .await
+        {
+            Ok((doc_graph, ents)) => {
+                crate::graphrag_index::graph_merge(&mut graph, &doc_graph);
+                doc_count += 1;
+                entity_count += ents;
+            }
+            Err(error) => {
+                tracing::warn!(doc_id, error = %error, "graphrag pipeline failed for document");
+            }
+        }
+    }
+    let nodes = graph.node_count();
+    let names = graph.node_names();
+    let edges = names
+        .iter()
+        .map(|name| graph.degree(name))
+        .sum::<usize>()
+        / 2;
+    let node_list: Vec<serde_json::Value> = names
+        .into_iter()
+        .take(200)
+        .map(|name| {
+            serde_json::json!({
+                "name": name,
+                "type": "entity",
+                "degree": graph.degree(&name),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "nodes": nodes,
+            "edges": edges,
+            "documents": doc_count,
+            "entities": entity_count,
+            "node_list": node_list,
+        }
+    }))
+    .into_response()
+}
+
 async fn change_password(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2109,6 +2199,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::get(export_conversation),
         )
         .route("/api/v1/user/password", axum::routing::patch(change_password))
+        .route(
+            "/api/v1/datasets/{dataset_id}/graphrag/build",
+            axum::routing::post(build_graphrag),
+        )
         .route(
             "/api/v1/admin/users/{user_id}",
             axum::routing::delete(admin_delete_user),
