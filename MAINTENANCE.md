@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 18 轮：Agent Canvas 拓扑可视化
+
+- `web.rs` agent_detail_page：Canvas 卡片 + JS `renderTopology(dsl)`——解析 nodes/edges/position → 动态 SVG（带箭头连线 + 节点圆角矩形 + 标签），对齐 RAGFlow 画布只读视图
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 17 轮：Agent 详情页（画布简版）
 
 - `web.rs`：`agent_detail_page`（/agents/{id}）——agent 元数据（ID/KBs/状态）+ Canvas DSL JSON 只读视图 + Run/Ask（completions API）+ Delete
