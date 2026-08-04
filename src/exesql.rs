@@ -88,7 +88,7 @@ async fn execute_postgres(config: &ExeSqlConfig, sql: &str) -> Result<String> {
         let mut object = Map::new();
         for (index, column) in row.columns().iter().enumerate() {
             let value: Value = match row.try_get::<_, postgres::types::Json<Value>>(index) {
-                Ok(Json(value)) => value,
+                Ok(postgres::types::Json(value)) => value,
                 Err(_) => match row.try_get::<_, String>(index) {
                     Ok(text) => Value::String(text),
                     Err(_) => Value::Null,
