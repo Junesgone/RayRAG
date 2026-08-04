@@ -1,5 +1,13 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 41 轮：Agent DSL 编辑器 + 画布端到端验证
+
+- `web.rs` agent_detail_page：Canvas DSL 卡片加 ✏️ Edit（JSON textarea）+ 💾 Save（PUT /api/v1/agents/{id}）——用户可粘贴 RAGFlow DSL 建工作流
+- **关键发现**：画布执行器只认 `components` 表（RAGFlow v0.26.4 标准格式）——`graph.nodes` 顶层格式不执行（fallback 到 prompt_template）
+- 容器端到端验证（components 格式）：
+  - 失败路径：SearXNG 无效 URL → 回答 `SearXNG request failed`（错误传播 ✓）
+  - 成功路径：cn.bing 真实结果（URL/标题/内容）进回答（2412 字符）✓
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 全部 11 个工具错误函数统一传播修复
 
 - 同模式缺陷：set_tavily_error/set_wikipedia_error/set_google_error/set_google_scholar_error/set_github_error/set_yahoo_finance_error/set_arxiv_error/set_pubmed_error/set_duckduckgo_error/set_invoke_error 均只写 _ERROR（9 个通用 + invoke 单独）+ domestic（已修）
