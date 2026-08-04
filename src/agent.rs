@@ -29,6 +29,7 @@ use crate::qweather::{QWeatherClient, QWeatherProvider, QWeatherRequest, QWeathe
 use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
 use crate::translate::{BaiduTranslateClient, TranslateRequest};
+use crate::crawler::{CrawlerClient, CrawlerRequest};
 use crate::tencent_finance::{
     TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
 };
@@ -5094,6 +5095,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), translated);
             Ok(None)
         }
+        "crawler" => {
+            validate_crawler_params(node)?;
+            let crawled = execute_crawler_with_provider(node, input, &CrawlerClient::default()).await?;
+            runtime.outputs.insert(node.id.clone(), crawled);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6756,6 +6763,56 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+async fn execute_crawler_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+    client: &CrawlerClient,
+) -> Result<Map<String, Value>> {
+    let mut url = String::new();
+    if let Some(content) = input.inputs.get("content") {
+        url = match content {
+            Value::String(value) => value.clone(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join(" - "),
+            other => other.to_string(),
+        };
+    }
+    if url.trim().is_empty() {
+        url = input.question.to_string();
+    }
+    if url.trim().is_empty() {
+        if let Some(query) = node.params.get("query").and_then(Value::as_str) {
+            url = query.to_string();
+        }
+    }
+    let extract_type = node
+        .params
+        .get("extract_type")
+        .and_then(Value::as_str)
+        .unwrap_or("markdown")
+        .to_string();
+    let proxy = node
+        .params
+        .get("proxy")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let request = CrawlerRequest {
+        url,
+        extract_type,
+        proxy,
+    };
+    match client.fetch(&request).await {
+        Ok(extracted) => Ok(Map::from_iter([("content".into(), Value::String(extracted))])),
+        Err(error) => {
+            let message = format!("An unexpected error occurred: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
 }
 
 async fn execute_translate_with_provider(
@@ -13126,6 +13183,28 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_crawler_params(node: &CanvasNode) -> Result<()> {
+    if let Some(value) = node.params.get("extract_type")
+        && let Some(extract_type) = value.as_str()
+        && !matches!(extract_type, "html" | "markdown" | "content")
+    {
+        bail!(
+            "Crawler '{}' extract_type must be one of html/markdown/content",
+            node.id
+        );
+    }
+    for field in ["proxy", "query"] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| !value.is_string())
+        {
+            bail!("Crawler '{}' {field} must be a string", node.id);
+        }
+    }
+    Ok(())
+}
 
 fn validate_baike_params(node: &CanvasNode) -> Result<()> {
     validate_domestic_search_params(node, "Baike")?;

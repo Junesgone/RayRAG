@@ -32,6 +32,7 @@ pub mod bocha;
 pub mod book;
 pub mod chunk;
 pub mod chunk_feedback;
+pub mod crawler;
 pub mod document_writer;
 pub mod duckduckgo;
 pub mod eastmoney;

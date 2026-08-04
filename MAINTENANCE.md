@@ -1,5 +1,15 @@
 # RayRAG 运维台账
 
+## 2026-08-04 crawler 连接器（crawl4ai 替代）
+
+- 新增 `src/crawler.rs`：RAGFlow `crawler.py` 的 Rust 实现
+  - SSRF 防护（scheme 白名单 + DNS 解析后公网 IP 校验，拒绝私网/回环/链路本地）
+  - `extract_type` 三模式：html（清洗，跳 script/style/svg/head 子树）/ markdown（scraper DOM→MD：标题/链接/加粗/代码块/图片）/ content（纯文本）
+  - 输入对齐上游：content 数组以 " - " 连接，空则退回 query 参数
+  - 测试 5 个（转换 ×3 + SSRF 拒绝 ×2），其中网络 mock 测试因 SSRF 拒绝 127.0.0.1 而删除（防护由拒绝测试覆盖）
+- 接线：`src/agent.rs` crawler 分支 + `validate_crawler_params`（extract_type 枚举校验）+ `src/runtime.rs` 描述符
+- 测试基线：**810 passed / 0 failed / 26 ignored**（+5）
+- 提交：tools: add crawler canvas tool
 ## 项目信息
 
 - **名称**：RayRAG

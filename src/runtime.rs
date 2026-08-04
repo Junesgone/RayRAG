@@ -988,6 +988,17 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
+        name: "crawler",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("content", "URL to crawl (array items joined with ' - ')"),
+            ("query", "URL fallback when content is empty"),
+            ("extract_type", "html | markdown | content"),
+            ("proxy", "Optional HTTP proxy URL"),
+        ],
+        outputs: &[("content", "Extracted page content")],
+    },
+    StaticComponentDescriptor {
         name: "switch",
         category: ComponentCategory::Agent,
         inputs: NO_FIELDS,
