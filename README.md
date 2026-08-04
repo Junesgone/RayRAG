@@ -616,6 +616,36 @@ feature 时静默回退。下载源均可通过 `.env` 的 `DEBIAN_MIRROR`、
 同理，若设置了 `RAYRAG_POSTGRES_URL`，二进制必须包含 `postgres-backend` feature；
 配置与编译能力不匹配时启动即失败，避免误以为状态已镜像到 PostgreSQL。
 
+## UI 与 OpenAI 兼容层
+
+- ✅ 16 页面 Rust 手写 UI（dashboard/kbs/search/chat/agents/memories/files/skills/
+  providers/settings/admin/status/api-docs/login/404 + dataset/document-viewer），
+  全面对标 RAGFlow 页面层级，每个功能均有真实交互按钮（批量上传/删除/清空/重命名、
+  chunk 分页编辑、会话管理、知识图谱环形可视化、搜索多 KB 过滤、模型选择器）
+- ✅ OpenAI 兼容端点：`POST /api/v1/chat/completions`（含 SSE 流式）、
+  `GET /api/v1/models`、`POST /api/v1/embeddings`、`POST /api/v1/rerank`——
+  LangChain/OpenWebUI 等外部生态可直接接入
+- ✅ 聊天 SSE 流式（打字机效果 + 推理模型思考占位 + 引用卡片）
+- ✅ SearXNG 自托管接入（`SEARXNG_URL`，cn.bing 引擎国内网络适配）
+- ✅ 容器性能开关：`RAYRAG_NO_FSYNC=1`（overlay 文件系统上传提速 30%）
+
+## 快速开始
+
+```bash
+# 纯 Linux（宿主机）
+cargo build --release --features postgres-backend,zvec-backend
+RAYRAG_PORT=9390 RAYRAG_ADMIN_PASSWORD=xxx ./target/release/rayrag
+
+# 纯 Docker
+RAYRAG_FEATURES=postgres-backend,zvec-backend \
+RAYRAG_POSTGRES_PASSWORD=xxx RAYRAG_ADMIN_PASSWORD=xxx \
+docker compose up -d --build
+# 浏览器打开 http://<host>:9390 （默认 admin@rayrag.local / 上面设置的密码）
+```
+
+GPU 四链路（embedding/LLM/rerank/OCR）通过环境变量注入：
+`EMBED_API_BASE`/`LLM_API_BASE`/`RERANK_API_BASE`/`RAYRAG_OCR_BASE_URL`。
+
 ## 依赖
 
 - [zvec-rust](https://github.com/zvec-ai/zvec-rust) — 阿里 zvec 向量数据库 Rust 绑定
