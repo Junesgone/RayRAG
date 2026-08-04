@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 19 轮：登录页注册 + cookie 会话
+
+- `web.rs` login_page：Register/Login 切换（昵称/邮箱/密码 → /api/v1/user/register → 自动登录）；**登录成功写 cookie**（rayrag_token, 24h）——修复浏览器导航到 protected 页时无认证的问题
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 18 轮：Agent Canvas 拓扑可视化
 
 - `web.rs` agent_detail_page：Canvas 卡片 + JS `renderTopology(dsl)`——解析 nodes/edges/position → 动态 SVG（带箭头连线 + 节点圆角矩形 + 标签），对齐 RAGFlow 画布只读视图
