@@ -988,6 +988,22 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
+        name: "email",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("to_email", "Target email address"),
+            ("cc_email", "Comma-split additional recipients"),
+            ("subject", "Email subject"),
+            ("content", "Email body (HTML)"),
+            ("smtp_server", "SMTP server (falls back to env EMAIL_SMTP_SERVER)"),
+            ("smtp_port", "SMTP port (default 465)"),
+            ("email", "Sender email (env EMAIL_SENDER)"),
+            ("password", "Authorization code (env EMAIL_SMTP_PASSWORD)"),
+            ("sender_name", "Display name (env EMAIL_SENDER_NAME)"),
+        ],
+        outputs: &[("success", "Whether the email was sent")],
+    },
+    StaticComponentDescriptor {
         name: "tushare",
         category: ComponentCategory::Agent,
         inputs: &[

@@ -32,6 +32,7 @@ use crate::translate::{BaiduTranslateClient, TranslateRequest};
 use crate::akshare::{AkShareClient, AkShareRequest};
 use crate::tushare::{TuShareClient, TuShareRequest};
 use crate::crawler::{CrawlerClient, CrawlerRequest};
+use crate::email::{EmailClient, EmailConfig, EmailRequest};
 use crate::tencent_finance::{
     TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
 };
@@ -5115,6 +5116,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), news);
             Ok(None)
         }
+        "email" => {
+            validate_email_params(node)?;
+            let result = execute_email_with_provider(node, input, &EmailClient)?;
+            runtime.outputs.insert(node.id.clone(), result);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6777,6 +6784,57 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+fn execute_email_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+    client: &EmailClient,
+) -> Result<Map<String, Value>> {
+    let to_email = input
+        .inputs
+        .get("to_email")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_default();
+    let config = EmailConfig::from_params_and_env(&node.params);
+    let request = EmailRequest {
+        to_email,
+        cc_email: node
+            .params
+            .get("cc_email")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        content: node
+            .params
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        subject: node
+            .params
+            .get("subject")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    };
+    match client.send(&config, &request) {
+        Ok((success, message)) => {
+            let mut outputs = Map::from_iter([("success".into(), Value::Bool(success))]);
+            if !success {
+                outputs.insert("_ERROR".into(), Value::String(message));
+            }
+            Ok(outputs)
+        }
+        Err(error) => {
+            let message = format!("**ERROR**: {error}");
+            Ok(Map::from_iter([
+                ("success".into(), Value::Bool(false)),
+                ("_ERROR".into(), Value::String(message)),
+            ]))
+        }
+    }
 }
 
 async fn execute_tushare_with_provider(
@@ -13312,6 +13370,29 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_email_params(node: &CanvasNode) -> Result<()> {
+    for field in [
+        "smtp_server",
+        "smtp_port",
+        "email",
+        "smtp_username",
+        "password",
+        "sender_name",
+        "to_email",
+        "cc_email",
+        "subject",
+    ] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| !value.is_string())
+        {
+            bail!("Email '{}' {field} must be a string", node.id);
+        }
+    }
+    Ok(())
+}
 
 fn validate_tushare_params(node: &CanvasNode) -> Result<()> {
     for field in ["token", "src", "start_date", "end_date", "keyword"] {

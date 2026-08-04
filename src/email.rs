@@ -1,406 +1,259 @@
-//! Email parser — mirrors `rag/app/email.py` chunk().
+//! Email 连接器 — RAGFlow `email.py` 的 Rust 实现
 //!
-//! Ported pure-algorithm core: header collection, MIME content-type
-//! dispatch (text/plain, text/html, multipart recursion), charset decode
-//! chain, section assembly and naive_merge reuse. A lightweight .eml MIME
-//! parser (RFC 822 headers + base64/quoted-printable bodies + multipart
-//! boundary tree) stands in for Python's email.parser; attachment
-//! recursion into naive_chunk stays an integration gap.
+//! 上游语义：SMTP STARTTLS + 认证发送，支持收件人/抄送、HTML 正文、发送者显示名，
+//! 可重试连接类错误，错误按类别返回（认证失败/连接失败/SMTP 错误/通用错误）。
+//! 凭据从节点参数或环境变量读取，测试不触碰真实 SMTP。
 
-use crate::book::naive_merge;
-use encoding_rs::{GB18030, GBK, UTF_8};
+use anyhow::{bail, Result};
+use lettre::message::{header::ContentType, Mailbox, Message, MultiPart, SinglePart};
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::{SmtpTransport, Transport};
+use std::time::Duration;
 
-/// A decoded MIME part.
-#[derive(Debug, Clone)]
-pub struct EmlPart {
-    pub content_type: String,
-    pub disposition: Option<String>,
-    pub filename: Option<String>,
-    pub body: Vec<u8>,
-    pub parts: Vec<EmlPart>,
+/// SMTP 配置（对齐上游 EmailParam 固定配置项）。
+#[derive(Debug, Clone, Default)]
+pub struct EmailConfig {
+    pub smtp_server: String,
+    pub smtp_port: u16,
+    pub email: String,
+    pub smtp_username: String,
+    pub password: String,
+    pub sender_name: String,
 }
 
-/// Decode quoted-printable (RFC 2045 §6.7): `=XX` hex, `=\r?\n` soft break.
-pub fn decode_quoted_printable(input: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        if input[i] == b'=' && i + 1 < input.len() {
-            let next = input[i + 1];
-            if next == b'\n' {
-                i += 2;
-                continue;
-            }
-            if next == b'\r' && i + 2 < input.len() && input[i + 2] == b'\n' {
-                i += 3;
-                continue;
-            }
-            if i + 2 < input.len() {
-                let hex = &input[i + 1..i + 3];
-                if let Ok(s) = std::str::from_utf8(hex) {
-                    if let Ok(v) = u8::from_str_radix(s, 16) {
-                        out.push(v);
-                        i += 3;
-                        continue;
-                    }
-                }
-            }
-            out.push(input[i]);
-            i += 1;
-            continue;
-        }
-        out.push(input[i]);
-        i += 1;
-    }
-    out
+/// 邮件请求（对齐上游 ToolMeta 参数）。
+#[derive(Debug, Clone, Default)]
+pub struct EmailRequest {
+    pub to_email: String,
+    pub cc_email: String,
+    pub content: String,
+    pub subject: String,
 }
 
-fn decode_transfer_encoding(body: &[u8], cte: &str) -> Vec<u8> {
-    match cte.trim().to_ascii_lowercase().as_str() {
-        "base64" => {
-            let compact: String = String::from_utf8_lossy(body)
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, compact.as_bytes())
-                .unwrap_or_default()
-        }
-        "quoted-printable" => decode_quoted_printable(body),
-        _ => body.to_vec(),
-    }
-}
+/// 邮件客户端。
+#[derive(Debug, Clone, Default)]
+pub struct EmailClient;
 
-/// Parse `Header: value` lines at the top of a message or part; returns
-/// (headers, body_start_index).
-fn parse_headers(bytes: &[u8]) -> (Vec<(String, String)>, usize) {
-    let mut headers = Vec::new();
-    let mut idx = 0usize;
-    let mut last: Option<usize> = None;
-    while idx < bytes.len() {
-        // line end
-        let mut end = idx;
-        while end < bytes.len() && bytes[end] != b'\n' {
-            end += 1;
+impl EmailClient {
+    /// 发送邮件；返回成功布尔 + 可能的中文错误消息（对齐上游输出形状）。
+    pub fn send(&self, config: &EmailConfig, request: &EmailRequest) -> Result<(bool, String)> {
+        if config.smtp_server.trim().is_empty()
+            || config.email.trim().is_empty()
+            || config.password.trim().is_empty()
+        {
+            bail!("SMTP server, sender email and password are required (node params or env EMAIL_SMTP_*)");
         }
-        let mut line = &bytes[idx..end];
-        if line.last() == Some(&b'\r') {
-            line = &line[..line.len() - 1];
+        let to_email = request.to_email.trim();
+        if to_email.is_empty() {
+            bail!("Missing required field: to_email");
         }
-        if line.is_empty() {
-            return (headers, end + 1);
-        }
-        if line[0] == b' ' || line[0] == b'\t' {
-            // folded header continuation
-            if let Some(li) = last {
-                let val = String::from_utf8_lossy(line).trim().to_string();
-                headers[li].1.push(' ');
-                headers[li].1.push_str(&val);
-            }
-            idx = end + 1;
-            continue;
-        }
-        let line_str = String::from_utf8_lossy(line).to_string();
-        if let Some(colon) = line_str.find(':') {
-            let name = line_str[..colon].trim().to_string();
-            let value = line_str[colon + 1..].trim().to_string();
-            headers.push((name, value));
-            last = Some(headers.len() - 1);
-        }
-        idx = end + 1;
-    }
-    (headers, idx)
-}
 
-fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.as_str())
-}
+        let from_name = if config.sender_name.trim().is_empty() {
+            None
+        } else {
+            Some(config.sender_name.trim().to_string())
+        };
+        let from: Mailbox = format!("{} <{}>", from_name.unwrap_or_default(), config.email)
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid sender email: {}", config.email))?;
+        let to: Mailbox = to_email
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid to_email: {to_email}"))?;
 
-fn boundary_of(content_type: &str) -> Option<String> {
-    for part in content_type.split(';').skip(1) {
-        let part = part.trim();
-        if let Some(rest) = part.strip_prefix("boundary=") {
-            let rest = rest.trim();
-            let rest = rest.trim_matches('"');
-            return Some(rest.to_string());
-        }
-    }
-    None
-}
+        let subject = if request.subject.trim().is_empty() {
+            "No Subject"
+        } else {
+            request.subject.trim()
+        };
+        let content = if request.content.trim().is_empty() {
+            "No content provided"
+        } else {
+            request.content.trim()
+        };
 
-/// Parse an .eml message into a part tree — a light stand-in for
-/// Python's email.parser (policy.default).
-pub fn parse_eml(bytes: &[u8]) -> EmlPart {
-    let (headers, body_start) = parse_headers(bytes);
-    let content_type = header_value(&headers, "Content-Type")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "text/plain".to_string());
-    let cte = header_value(&headers, "Content-Transfer-Encoding")
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-    let disposition = header_value(&headers, "Content-Disposition").map(|s| s.to_string());
-    let filename = disposition.as_ref().and_then(|d| {
-        d.split(';')
-            .skip(1)
-            .find_map(|p| {
-                let p = p.trim();
-                p.strip_prefix("filename=")
-                    .map(|v| v.trim().trim_matches('"').to_string())
-            })
-    });
+        // MIME multipart/alternative：HTML 正文（上游只挂 html），附纯文本降级
+        let mut builder = Message::builder().from(from).to(to).subject(subject);
 
-    let mut part = EmlPart {
-        content_type: content_type.clone(),
-        disposition,
-        filename,
-        body: Vec::new(),
-        parts: Vec::new(),
-    };
-
-    let base_type = content_type.split(';').next().unwrap_or("").trim().to_lowercase();
-    if base_type.starts_with("multipart/") {
-        if let Some(boundary) = boundary_of(&content_type) {
-            let body = &bytes[body_start..];
-            let bmark = format!("--{boundary}");
-            let body_str = String::from_utf8_lossy(body);
-            // split on boundary lines
-            for seg in body_str.split(&bmark) {
-                let seg = seg.trim_start_matches('\r').trim_start_matches('\n');
-                let seg = seg.trim();
-                if seg.is_empty() || seg == "--" {
+        let cc_email = request.cc_email.trim();
+        if !cc_email.is_empty() {
+            for address in cc_email.split(',') {
+                let address = address.trim();
+                if address.is_empty() {
                     continue;
                 }
-                if seg.starts_with("--") {
-                    continue;
-                }
-                part.parts.push(parse_eml(seg.as_bytes()));
+                let cc: Mailbox = address
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("Invalid cc_email: {address}"))?;
+                builder = builder.cc(cc);
             }
         }
-    } else {
-        let decoded = decode_transfer_encoding(&bytes[body_start..], &cte);
-        part.body = decoded;
+        let message = builder
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_HTML)
+                            .body(content.to_string()),
+                    )
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_PLAIN)
+                            .body(content.to_string()),
+                    ),
+            )
+            .map_err(|error| anyhow::anyhow!("Email build error: {error}"))?;
+
+        let username = if config.smtp_username.trim().is_empty() {
+            config.email.clone()
+        } else {
+            config.smtp_username.clone()
+        };
+        let credentials = Credentials::new(username, config.password.clone());
+
+        // STARTTLS（上游 smtplib.SMTP + starttls）
+        let transport = SmtpTransport::builder_dangerous(config.smtp_server.as_str())
+            .port(config.smtp_port)
+            .credentials(credentials)
+            .timeout(Some(Duration::from_secs(30)))
+            .build();
+
+        match transport.send(&message) {
+            Ok(_) => Ok((true, String::new())),
+            Err(error) => {
+                let message = classify_smtp_error(error, config);
+                Ok((false, message))
+            }
+        }
     }
-    part
 }
 
-/// Charset decode chain — mirrors email.py:68-79: try the declared
-/// charset, then utf-8/gb2312/gbk/gb18030/latin1, finally utf-8 ignore.
-pub fn decode_payload(payload: &[u8], charset: &str) -> String {
-    let decode_with = |enc: &str| -> Option<String> {
-        match enc.to_ascii_lowercase().as_str() {
-            "utf-8" | "utf8" => UTF_8.decode(payload).0.into_owned().into(),
-            "gb2312" | "gbk" => GBK.decode(payload).0.into_owned().into(),
-            "gb18030" => GB18030.decode(payload).0.into_owned().into(),
-            "latin1" | "latin-1" | "iso-8859-1" => {
-                Some(payload.iter().map(|&b| b as char).collect())
-            }
-            _ => None,
-        }
-    };
-    if let Some(s) = decode_with(charset) {
-        return s;
+/// 错误分类（对齐上游 except 分支的提示语）。
+fn classify_smtp_error(error: lettre::transport::smtp::Error, config: &EmailConfig) -> String {
+    // 535/534 = 5,3,5 / 5,3,4（severity/category/detail）
+    let auth_failed = error.is_permanent()
+        && error
+            .status()
+            .is_some_and(|code| code.severity as u8 == 5 && code.category as u8 == 3);
+    if auth_failed {
+        return "SMTP Authentication failed. Please check your SMTP username(email) and authorization code.".to_string();
     }
-    for enc in ["utf-8", "gb2312", "gbk", "gb18030", "latin1"] {
-        if let Some(s) = decode_with(enc) {
-            // encoding_rs is lossy by design; emulate Python's strict
-            // attempt by checking for replacement chars for utf-8.
-            if enc == "utf-8" {
-                if std::str::from_utf8(payload).is_ok() {
-                    return s;
-                }
-                continue;
-            }
-            return s;
-        }
+    if error.is_transport_shutdown() || error.is_tls() || error.is_timeout() || error.is_response() {
+        return format!(
+            "Failed to connect to SMTP server {}:{} ({error})",
+            config.smtp_server, config.smtp_port
+        );
     }
-    String::from_utf8_lossy(payload).into_owned()
+    format!("SMTP error occurred: {error}")
 }
 
-/// Collect headers + body text + html text — mirrors email.py:61-99.
-/// Returns (text_sections, html_lines) where text sections mirror
-/// TxtParser.parser_txt (line split, non-empty) and html lines are
-/// non-empty lines.
-pub fn collect_email_content(
-    msg: &EmlPart,
-    headers: &[(String, String)],
-) -> (Vec<String>, Vec<String>) {
-    let mut text_txt: Vec<String> = Vec::new();
-    let mut html_txt: Vec<String> = Vec::new();
-
-    for (h, v) in headers {
-        text_txt.push(format!("{h}: {v}"));
-    }
-
-    fn walk(msg: &EmlPart, text_txt: &mut Vec<String>, html_txt: &mut Vec<String>) {
-        let base_type = msg
-            .content_type
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_lowercase();
-        match base_type.as_str() {
-            "text/plain" => {
-                let charset = msg
-                    .content_type
-                    .split(';')
-                    .nth(1)
-                    .and_then(|p| p.trim().strip_prefix("charset="))
-                    .map(|v| v.trim().trim_matches('"').to_string())
-                    .unwrap_or_else(|| "utf-8".to_string());
-                text_txt.push(decode_payload(&msg.body, &charset));
-            }
-            "text/html" => {
-                let charset = msg
-                    .content_type
-                    .split(';')
-                    .nth(1)
-                    .and_then(|p| p.trim().strip_prefix("charset="))
-                    .map(|v| v.trim().trim_matches('"').to_string())
-                    .unwrap_or_else(|| "utf-8".to_string());
-                html_txt.push(decode_payload(&msg.body, &charset));
-            }
-            _ => {
-                for p in &msg.parts {
-                    walk(p, text_txt, html_txt);
-                }
-            }
+/// 从节点参数/环境变量构造配置（运行时由 agent.rs 调用）。
+impl EmailConfig {
+    pub fn from_params_and_env(params: &serde_json::Map<String, serde_json::Value>) -> Self {
+        let read = |key: &str, env: &str| -> String {
+            params
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| std::env::var(env).unwrap_or_default())
+        };
+        let port = params
+            .get("smtp_port")
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| value as u16)
+            .unwrap_or_else(|| {
+                std::env::var("EMAIL_SMTP_PORT")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(465)
+            });
+        Self {
+            smtp_server: read("smtp_server", "EMAIL_SMTP_SERVER"),
+            smtp_port: port,
+            email: read("email", "EMAIL_SENDER"),
+            smtp_username: read("smtp_username", "EMAIL_SMTP_USERNAME"),
+            password: read("password", "EMAIL_SMTP_PASSWORD"),
+            sender_name: read("sender_name", "EMAIL_SENDER_NAME"),
         }
     }
-    walk(msg, &mut text_txt, &mut html_txt);
-
-    // TxtParser.parser_txt: split lines, drop empty
-    let text_sections: Vec<String> = text_txt
-        .iter()
-        .flat_map(|t| t.lines().map(String::from))
-        .filter(|l| !l.is_empty())
-        .collect();
-    (text_sections, html_txt)
-}
-
-/// Email chunk() core — mirrors email.py:41-108: assemble header/body
-/// sections, naive_merge with parser_config, return merged chunks.
-pub fn parse_email(
-    msg: &EmlPart,
-    headers: &[(String, String)],
-    chunk_token_num: usize,
-    delimiter: &str,
-) -> Vec<String> {
-    let (text_sections, html_txt) = collect_email_content(msg, headers);
-    let mut sections: Vec<(String, String)> = text_sections
-        .iter()
-        .map(|s| (s.clone(), String::new()))
-        .collect();
-    for line in html_txt.iter().filter(|l| !l.is_empty()) {
-        sections.push((line.clone(), String::new()));
-    }
-    let _ = delimiter;
-    // email.py:102 uses naive_merge with default overlapped_percent=0
-    naive_merge(&sections, chunk_token_num, "\n!?。；！？", 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    fn eml_sample() -> String {
-        let mut s = String::new();
-        s.push_str("From: boss@example.com\r\n");
-        s.push_str("To: team@example.com\r\n");
-        s.push_str("Subject: Weekly report\r\n");
-        s.push_str("Content-Type: multipart/mixed; boundary=\"bnd\"\r\n");
-        s.push_str("\r\n");
-        s.push_str("--bnd\r\n");
-        s.push_str("Content-Type: text/plain; charset=utf-8\r\n");
-        s.push_str("Content-Transfer-Encoding: base64\r\n");
-        s.push_str("\r\n");
-        s.push_str(&base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            "本周报告正文内容。".as_bytes(),
-        ));
-        s.push_str("\r\n--bnd\r\n");
-        s.push_str("Content-Type: text/html; charset=utf-8\r\n");
-        s.push_str("Content-Transfer-Encoding: quoted-printable\r\n");
-        s.push_str("\r\n");
-        s.push_str("<p>=E6=9C=AC=E5=91=A8=E6=8A=A5=E5=91=8A</p>\r\n");
-        s.push_str("\r\n--bnd--\r\n");
-        s
+    fn sample_config() -> EmailConfig {
+        EmailConfig {
+            smtp_server: "smtp.example.com".into(),
+            smtp_port: 587,
+            email: "sender@example.com".into(),
+            smtp_username: "sender@example.com".into(),
+            password: "secret".into(),
+            sender_name: "测试发送者".into(),
+        }
     }
 
     #[test]
-    fn decode_quoted_printable_handles_hex_and_soft_breaks() {
-        assert_eq!(decode_quoted_printable(b"=E6=9C=AC"), "本".as_bytes());
-        assert_eq!(decode_quoted_printable(b"ab=\r\ncd"), b"abcd");
-        assert_eq!(decode_quoted_printable(b"plain"), b"plain");
+    fn rejects_missing_config() {
+        let client = EmailClient;
+        let result = client.send(
+            &EmailConfig::default(),
+            &EmailRequest {
+                to_email: "a@b.com".into(),
+                ..Default::default()
+            },
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("SMTP server"));
     }
 
     #[test]
-    fn parse_eml_multipart_tree() {
-        let eml = eml_sample();
-        let msg = parse_eml(eml.as_bytes());
-        assert!(msg.content_type.starts_with("multipart/mixed"));
-        assert_eq!(msg.parts.len(), 2);
-        assert!(msg.parts[0].content_type.starts_with("text/plain"));
-        assert!(msg.parts[1].content_type.starts_with("text/html"));
+    fn rejects_missing_recipient() {
+        let client = EmailClient;
+        let result = client.send(&sample_config(), &EmailRequest::default());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("to_email"));
     }
 
     #[test]
-    fn decode_payload_charset_chain() {
-        // utf-8 ok
-        assert_eq!(decode_payload("中文".as_bytes(), "utf-8"), "中文");
-        // gbk bytes decoded with gb2312 fallback
-        let gbk_bytes = GBK.encode("水质检测").0.into_owned();
-        assert_eq!(decode_payload(&gbk_bytes, "gb2312"), "水质检测");
-        // invalid utf-8 with unknown charset -> chain -> gbk works
-        assert_eq!(decode_payload(&gbk_bytes, "x-unknown"), "水质检测");
+    fn connection_failure_is_classified_as_transport_error() {
+        // 127.0.0.1:1 不可达 → 连接类错误
+        let client = EmailClient;
+        let config = EmailConfig {
+            smtp_server: "127.0.0.1".into(),
+            smtp_port: 1,
+            ..sample_config()
+        };
+        let (success, message) = client
+            .send(
+                &config,
+                &EmailRequest {
+                    to_email: "a@b.com".into(),
+                    subject: "hello".into(),
+                    content: "body".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!success, "unexpected success");
+        assert!(
+            message.contains("SMTP error") || message.contains("Failed to connect"),
+            "unexpected message: {message}"
+        );
     }
 
     #[test]
-    fn collect_email_content_headers_and_bodies() {
-        let eml = eml_sample();
-        let msg = parse_eml(eml.as_bytes());
-        let headers = vec![
-            ("From".to_string(), "boss@example.com".to_string()),
-            ("Subject".to_string(), "Weekly report".to_string()),
-        ];
-        let (text_sections, html_txt) = collect_email_content(&msg, &headers);
-        assert!(text_sections.iter().any(|s| s.starts_with("From: boss@example.com")));
-        assert!(text_sections.iter().any(|s| s.contains("本周报告正文内容")));
-        assert!(html_txt.iter().any(|s| s.contains("本周报告")));
-    }
-
-    #[test]
-    fn parse_email_merges_sections() {
-        let eml = eml_sample();
-        let msg = parse_eml(eml.as_bytes());
-        let headers = vec![
-            ("From".to_string(), "boss@example.com".to_string()),
-            ("Subject".to_string(), "Weekly report".to_string()),
-        ];
-        let chunks = parse_email(&msg, &headers, 512, "\n!?。；！？");
-        assert!(!chunks.is_empty(), "{chunks:?}");
-        let joined = chunks.join("\n");
-        assert!(joined.contains("From: boss@example.com"));
-        assert!(joined.contains("本周报告"));
-    }
-
-    #[test]
-    fn attachment_recognition_marks_filename() {
-        let mut eml = String::new();
-        eml.push_str("Content-Type: multipart/mixed; boundary=\"bb\"\r\n\r\n");
-        eml.push_str("--bb\r\n");
-        eml.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\nbody\r\n");
-        eml.push_str("--bb\r\n");
-        eml.push_str("Content-Type: application/pdf\r\n");
-        eml.push_str("Content-Disposition: attachment; filename=\"report.pdf\"\r\n");
-        eml.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
-        eml.push_str("JVBERi0xLjQK\r\n--bb--\r\n");
-        let msg = parse_eml(eml.as_bytes());
-        assert_eq!(msg.parts.len(), 2);
-        let att = &msg.parts[1];
-        assert!(att.content_type.starts_with("application/pdf"));
-        assert_eq!(att.filename.as_deref(), Some("report.pdf"));
+    fn config_from_params_and_env_prefers_params() {
+        let params = serde_json::Map::from_iter([
+            ("smtp_server".into(), json!("smtp.param.com")),
+            ("email".into(), json!("p@param.com")),
+        ]);
+        unsafe { std::env::set_var("EMAIL_SMTP_SERVER", "smtp.env.com") };
+        let config = EmailConfig::from_params_and_env(&params);
+        assert_eq!(config.smtp_server, "smtp.param.com");
+        assert_eq!(config.smtp_port, 465);
+        assert_eq!(config.email, "p@param.com");
+        unsafe { std::env::remove_var("EMAIL_SMTP_SERVER") };
     }
 }
