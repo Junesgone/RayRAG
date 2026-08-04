@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 38 轮：files 搜索
+
+- `web.rs` files_page：搜索框（fileQ → fileFilter 过滤 #fl tr data-name）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 上传性能终验（NO_FSYNC 生效）
 
 - 容器实测：5 文档上传 53s（原始）→ 64s（增量 upsert 无效）→ **37s（NO_FSYNC=1）**
