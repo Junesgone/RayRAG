@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 42 轮：Agent 模板库
+
+- `web.rs` agents_page：🧩 Templates 按钮 + 3 个预设工作流（RAG 问答 / 网络搜索 / RAG 对话）——prompt 选择 + 命名后一键创建（components 格式 DSL）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 41 轮：Agent DSL 编辑器 + 画布端到端验证
 
 - `web.rs` agent_detail_page：Canvas DSL 卡片加 ✏️ Edit（JSON textarea）+ 💾 Save（PUT /api/v1/agents/{id}）——用户可粘贴 RAGFlow DSL 建工作流
