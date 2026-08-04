@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 最终容器终验（模板修复进镜像）
+
+- 重建镜像 → 容器实测：
+  - 14 页面全 200
+  - agents 页 Templates 按钮 + agentTemplates（4 处）就位；kbs 页无残留（0）
+  - RAG 模板 API 建 agent + 检索跑通（此前已实测 Reference 1-3）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 模板字段修复 + RAG 模板容器实测
 
 - 修正：Retrieval 输出字段是 `formalized_content`（非 result）——agentTemplates 3 处引用更新
