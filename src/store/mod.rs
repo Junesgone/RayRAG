@@ -296,7 +296,7 @@ impl OnlineVectorMirror {
         }
         // 仅 upsert 新增或内容/向量变更的 chunk（避免全量重写）
         let before_ids: HashSet<_> = previous.iter().map(|chunk| chunk.id.as_str()).collect();
-        let changed: Vec<&IndexedChunk> = current
+        let changed: Vec<IndexedChunk> = current
             .iter()
             .filter(|chunk| {
                 !before_ids.contains(chunk.id.as_str())
@@ -308,6 +308,7 @@ impl OnlineVectorMirror {
                         })
                         .unwrap_or(true)
             })
+            .cloned()
             .collect();
         if !changed.is_empty() {
             collection.upsert(&changed)?;
