@@ -368,7 +368,7 @@ pub async fn chat_page(
             .last()
             .map(|m| m.content.chars().take(80).collect::<String>())
             .unwrap_or_else(|| "No messages".into());
-        cards.push_str(&format!("<div class='chat-card' onclick=\"location.href='/chat/{}'\"><div style='display:flex;align-items:center;gap:12px'><div class='av' style='width:40px;height:40px;font-size:16px'>{}</div><div><h3 style='font-size:15px'>{}</h3><p style='font-size:12px;color:var(--tm)'>{} msgs</p></div></div><p style='font-size:13px;color:var(--t2);margin-top:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{}</p></div>", c.id, initial, c.name.chars().take(30).collect::<String>(), c.messages.len(), preview));
+        cards.push_str(&format!("<div class='chat-card' onclick=\"location.href='/chat/{}'\"><div style='display:flex;align-items:center;gap:12px'><div class='av' style='width:40px;height:40px;font-size:16px'>{}</div><div><h3 style='font-size:15px'>{}</h3><p style='font-size:12px;color:var(--tm)'>{} msgs</p></div></div><p style='font-size:13px;color:var(--t2);margin-top:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{}</p><button class='btn btn-d btn-sm' style='margin-top:8px' onclick='event.stopPropagation();delConv('{}')'>Del</button></div>", c.id, initial, c.name.chars().take(30).collect::<String>(), c.messages.len(), preview, c.id));
     }
     if convs.is_empty() {
         cards="<p style='color:var(--tm);text-align:center;padding:40px;grid-column:1/-1'>No conversations yet.</p>".into();
@@ -385,7 +385,7 @@ pub async fn chat_page(
     b.push_str(&cards);
     b.push_str("</div>");
     b.push_str("<div class='modal-overlay' id='newChatModal'><div class='modal'><h2>New Chat</h2><p style='color:var(--tm);margin-bottom:16px'>Start a new conversation with RayRAG.</p><div style='display:flex;gap:8px'><button class='btn btn-p' onclick='createChat()'>Create & Start</button><button class='btn btn-o' onclick='document.getElementById(\"newChatModal\").classList.remove(\"show\")'>Cancel</button></div></div></div>");
-    b.push_str("<script>function newChat(){document.getElementById('newChatModal').classList.add('show')};function createChat(){fetch('/api/v1/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'New Chat'})}).then(r=>r.json()).then(d=>{var id=d.data?d.data.id:d.id;location.href='/chat/'+id})}</script>");
+    b.push_str("<script>function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})};function newChat(){document.getElementById('newChatModal').classList.add('show')};function createChat(){fetch('/api/v1/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'New Chat'})}).then(r=>r.json()).then(d=>{var id=d.data?d.data.id:d.id;location.href='/chat/'+id})}</script>");
     Html(layout(t("Chat", zh), &b, zh))
 }
 

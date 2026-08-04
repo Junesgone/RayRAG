@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 4 轮：Chat 会话删除
+
+- `server.rs`：新增 `delete_conversation` handler（ConvStore::delete_for）+ 路由 DELETE /api/v1/conversations/{id}
+- `web.rs` chat_page：会话卡片加 Del 按钮（event.stopPropagation 防跳转）+ delConv() JS
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 3 轮：Agents 页操作按钮
 
 - `web.rs` agents_page：+ New Agent 按钮（弹窗：名称/描述 → POST /api/v1/agents）；行按钮 Test / **Edit**（→ /agents/{id}）/ **Copy**（Duplicate：GET 原 agent → POST 副本）/ **Del**（DELETE）

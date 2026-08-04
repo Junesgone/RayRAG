@@ -1451,6 +1451,19 @@ pub(crate) fn delete_document_data(
 
 // ── Search ─────────────────────────────────────────────────────
 
+
+async fn delete_conversation(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(conversation_id): axum::extract::Path<String>,
+) -> Response {
+    match state.conversations.delete_for(&conversation_id, &auth.user_id) {
+        Ok(true) => Json(serde_json::json!({ "code": 0, "message": "ok" })).into_response(),
+        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "Conversation not found" })).into_response(),
+        Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response(),
+    }
+}
+
 async fn retrieval(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -1966,6 +1979,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::chunks::get_chunk).patch(crate::api::chunks::update_chunk),
         )
         .route("/api/v1/retrieval", post(retrieval))
+        .route("/api/v1/conversations/{conversation_id}", axum::routing::delete(delete_conversation))
         .route("/api/v1/search", post(crate::api::search::weighted_search))
         .route(
             "/api/v1/dify/retrieval",
