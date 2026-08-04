@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 36 轮：文档 chunk 分页浏览
+
+- `web.rs` document_page：loadChunks 分页（每页 20，Prev/Next + 页码指示 + 总数）——对齐 RAGFlow document-viewer 分页
+- 教训：JS 字符串转义——Rust b.push_str 内 JS 转义引号必须 `\\"`（2 反斜杠），python 替换时同样 2 反斜杠；插错 1 反斜杠 → Rust 字符串截断（E0425）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 docx 偶发根因修复：HashMap tie-break
 
 - 真正根因（静态正则缓存只是缓解）：`type_counts.into_iter().max_by_key` 在类型计数 tie 时依赖 **HashMap 迭代序**（如 {Nu:2, Ot:2, St:2}）→ max_type 不确定 → 数字行被当表头 → 断言失败
