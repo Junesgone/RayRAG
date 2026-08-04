@@ -61,6 +61,7 @@ pub struct AppState {
     pub docs: Arc<crate::api::document::DocStore>,
     pub document_metadata: Arc<crate::api::document_metadata::DocumentMetadataStore>,
     pub files: Arc<crate::api::file_mgr::FileStore>,
+    pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub providers: Arc<crate::api::features::ProviderStore>,
     pub tenant_models: Arc<crate::api::tenant_models::TenantModelStore>,
     pub memories: Arc<crate::api::features::MemoryStore>,
@@ -2460,6 +2461,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::get(crate::api::file_mgr::download_file),
         )
         .route(
+            "/api/v1/data_sources",
+            get(crate::api::data_source_mgr::list_data_sources)
+                .post(crate::api::data_source_mgr::create_data_source),
+        )
+        .route(
+            "/api/v1/data_sources/{id}",
+            axum::routing::delete(crate::api::data_source_mgr::delete_data_source),
+        )
+        .route(
+            "/api/v1/data_sources/{id}/sync",
+            post(crate::api::data_source_mgr::sync_data_source),
+        )
+        .route(
             "/api/v1/files/upload",
             post(crate::api::file_mgr::upload_file),
         )
@@ -2748,6 +2762,9 @@ pub async fn run(
         "{}/../uploads/",
         static_dir
     ))?);
+    let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
+        &format!("{}/../uploads/", static_dir),
+    )?));
 
     let llm = std::env::var("LLM_API_KEY")
         .ok()
@@ -2830,6 +2847,7 @@ pub async fn run(
         docs,
         document_metadata,
         files,
+        data_sources,
         providers,
         tenant_models,
         memories: Arc::new(crate::api::features::MemoryStore::new(&memories_path)?),
@@ -2967,6 +2985,7 @@ mod tests {
                 crate::api::file_mgr::FileStore::new(root.join("uploads").to_str().unwrap())
                     .unwrap(),
             ),
+            data_sources: None,
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
@@ -3119,6 +3138,7 @@ mod tests {
                 crate::api::file_mgr::FileStore::new(root.join("uploads").to_str().unwrap())
                     .unwrap(),
             ),
+            data_sources: None,
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),

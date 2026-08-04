@@ -1,5 +1,13 @@
 # RayRAG 运维台账
 
+## 2026-08-05 数据源 API（GitLab 配置/同步）
+
+- `src/api/data_source_mgr.rs`：DataSourceStore（data_sources.json 持久化 + 读写锁 + 保存锁）+ 4 handler
+  - GET/POST /api/v1/data_sources（创建/列表，token 脱敏显示 ***）
+  - DELETE /api/v1/data_sources/{id}
+  - POST /api/v1/data_sources/{id}/sync（GitLab 拉取 → 文档数 + 预览前 10）
+- server.rs：AppState.data_sources + 路由 + 初始化；chrono 依赖
+- 测试基线：**851 passed / 0 failed / 26 ignored**（+3：store 往返/脱敏/重启恢复/默认值）
 ## 2026-08-05 data_source 连接器 MVP：GitLab
 
 - `src/data_source/mod.rs`：DocumentSource 枚举 + ConnectorDoc（镜像 RAGFlow Document 字段：blob/semantic_identifier/extension/metadata）+ SourceOptions + Connector trait 骨架

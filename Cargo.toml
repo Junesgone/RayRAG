@@ -87,6 +87,7 @@ image = "0.25"
 # File utilities
 mime_guess = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["clock"] }
 
 # Auth (user system)
 argon2 = "0.5"
