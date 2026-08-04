@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 15 轮：Status 页 Refresh/Copy
+
+- `web.rs` status_page：↻ Refresh（重载检查）+ 📋 Copy Report（复制检查表到剪贴板）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 14 轮：Knowledge Graph Build 真实接入
 
 - `server.rs`：POST /api/v1/datasets/{id}/graphrag/build —— 收集 KB chunks → 按文档分组 → graphrag_index::run_doc_pipeline（LLM 实体抽取）→ graph_merge 聚合 → 返回 nodes/edges/documents/entities/node_list

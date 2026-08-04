@@ -842,6 +842,10 @@ pub async fn status_page(req: axum::http::Request<axum::body::Body>) -> impl Int
     b.push_str(&pct.to_string());
     b.push_str("%</span></div></div><div class='card'><table><thead><tr><th>Module</th><th>Status</th></tr></thead><tbody>");
     b.push_str(&rows);
-    b.push_str("</tbody></table></div>");
+    b.push_str("</tbody></table></div><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='location.reload()'>↻ ");
+    b.push_str(t("Refresh", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='copyReport()'>📋 ");
+    b.push_str(t("Copy Report", zh));
+    b.push_str("</button></div><script>function copyReport(){var rows='';document.querySelectorAll('.card table tbody tr').forEach(function(tr){rows+=tr.textContent.replace(/\\s+/g,' ').trim()+'\\n'});navigator.clipboard.writeText(rows).then(function(){alert('Report copied!')})}</script>");
     Html(layout("Status", &b, zh))
 }
