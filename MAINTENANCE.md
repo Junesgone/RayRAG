@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器回归终验（UI 第 23-25 轮）
+
+- 重建镜像 → 容器实测：
+  - 14 页面全 200
+  - kbs 页：kbEmbd/kbPerm 创建下拉 ✓
+  - dataset 页（/dataset/{id}）：Batch Delete 按钮 + docCk checkbox + docSelAll 全选 + multiple 批量上传 ✓
 ## 2026-08-04 UI 第 25 轮：文档批量删除
 
 - `web.rs` document_page：行 checkbox + 表头全选（docSelAll）+ 🗑 Batch Delete（串行 DELETE + 确认）——对齐 RAGFlow 文档多选删除
