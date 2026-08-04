@@ -1,5 +1,16 @@
 # RayRAG 运维台账
 
+## 2026-08-04 email 连接器（SMTP 发送）
+
+- 新增 `src/email.rs`：RAGFlow `email.py` 的 Rust 实现
+  - lettre 0.11（rustls-tls）：SmtpTransport STARTTLS + 认证 + MIME multipart/alternative（HTML+纯文本）
+  - 支持收件人/抄送（逗号分隔）/主题/正文；发送者显示名（RFC2047 自动编码）
+  - 凭据从节点参数或 env 读取（EMAIL_SMTP_SERVER/EMAIL_SENDER/EMAIL_SMTP_PASSWORD/EMAIL_SMTP_USERNAME/EMAIL_SENDER_NAME/EMAIL_SMTP_PORT），默认端口 465
+  - 错误分类对齐上游：认证失败（5,3,x 永久错误）/连接失败（transport/tls/timeout）/SMTP 错误
+  - lettre 0.11 陷阱：SmtpError 是 struct（非 enum），用 is_permanent/is_transport_shutdown/is_tls/is_timeout + status()；Code 字段为 severity/category/detail 枚举；MessageBuilder::cc() 返回 Self 无 Result
+  - 测试 4 个（缺配置/缺收件人/连接失败分类/env 回退；不触碰真实 SMTP）
+- 接线：agent.rs email 分支 + validate_email_params + runtime.rs 描述符
+- 测试基线：**815 passed / 0 failed / 26 ignored**
 ## 2026-08-04 tushare 连接器（快讯 API）
 
 - 新增 `src/tushare.rs`：RAGFlow `tushare.py` 的 Rust 实现
