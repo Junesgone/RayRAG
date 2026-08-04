@@ -16,6 +16,15 @@
 
 ---
 
+## 2026-08-04 Docker 纯环境构建打通（rayrag:local）+ 容器内镜像源修复
+
+- **问题链**：① Dockerfile 无容器内 cargo 镜像 → 直连 crates.io 卡死（cargo 0% CPU 十余分钟）；② rsproxy 只代理 crates.io，`huggingface/candle` git 依赖直连 GitHub 再卡死；③ xget.xi-xu.me 对 candle 返回 429 限流
+- **修复**（Dockerfile builder 阶段）：写 `/usr/local/cargo/config.toml`（rsproxy-sparse 替换 crates-io）+ `git config url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"`（候选镜像 ghfast.top/gh-proxy.com/ghproxy.net 均可用，gitclone.com 502）
+- **验证**：candle 经 ghfast 15 秒拉取成功；`RAYRAG_POSTGRES_PASSWORD=build-only RAYRAG_ADMIN_PASSWORD=build-only docker compose build rayrag` → **rayrag:local 构建成功**（postgres-backend,zvec-backend 双 feature，含 /opt/zvec/lib/libzvec_c_api.so）；`docker run rayrag:local rayrag` CLI 正常响应
+- 宿主机双 feature `cargo check` 通过（与 Docker 构建并行验证）
+
+---
+
 ## 2026-08-04 GPU 实连测试全通过（8/8）+ rerank 服务修复
 
 - **8081 rerank 服务修复**：原 llama-server 缺 `--reranking` 参数（API 返回 501），且 SIGTERM 无法终止（llama-server 忽略），`kill -9` 后以 `--reranking` 参数重启（`/home/junesgone/models/mxbai-rerank-large-v2.Q4_K_M.gguf`，api-key `mxbai-rerank-key`）；中文排序验证正确（RAGFlow 文档 -0.47 > 无关文本 -2.09）
