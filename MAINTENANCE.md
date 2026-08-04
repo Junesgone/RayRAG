@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器终验：OpenAI 兼容全集 4/4 + rerank 格式
+
+- 重建镜像（含 rerank 格式修复）→ 容器实测：
+  - POST /api/v1/rerank → `{"object":"rerank","results":[{"index":0,"relevance_score":-0.474},...]}`——**Jina 标准格式**，语义排序正确（知识库相关文档排第一）
+  - healthz：postgres/zvec 全 healthy
+- OpenAI 兼容全集：models / embeddings / chat(流式+非流式) / rerank 全部容器实测通过
 ## 2026-08-04 rerank 端点格式修复
 
 - 坑：Reranker trait 返回 `Vec<(usize, f32)>`（index,score 对）——handler 曾误用 enumerate 包成 [index, score] 数组
