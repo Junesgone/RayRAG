@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器终验（UI 第 11-15 轮 + graphrag/配置 API）
+
+- 镜像重建 → 容器复测：
+  - 页面回归：dashboard/files/chat/status/settings/admin 全 200
+  - dataset 配置保存：PUT chunk_method/size/overlap → code 0 Updated（parser_config 持久化）
+  - graphrag build：POST /datasets/{id}/graphrag/build → code 0（LLM 实体抽取执行，documents=1；nodes=0 为实体-文本匹配的既有行为，对齐上游）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 15 轮：Status 页 Refresh/Copy
 
 - `web.rs` status_page：↻ Refresh（重载检查）+ 📋 Copy Report（复制检查表到剪贴板）
