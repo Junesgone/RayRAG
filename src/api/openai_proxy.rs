@@ -1,7 +1,7 @@
 //! OpenAI-compatible API proxy — exposes `/v1/chat/completions`.
 //! Enables RayRAG to be used as a drop-in replacement for any OpenAI client.
 
-use axum::{Extension, Json, extract::State, response::IntoResponse};
+use axum::{Extension, Json, extract::State, response::{IntoResponse, Response}};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -142,6 +142,68 @@ pub async fn chat_completions(
 }
 
 /// GET /v1/models — list available models
+/// POST /api/v1/embeddings — OpenAI-compatible embedding endpoint.
+pub async fn embeddings(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let input = body.get("input").cloned().unwrap_or(serde_json::Value::Null);
+    let texts: Vec<String> = match &input {
+        serde_json::Value::String(text) => vec![text.clone()],
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_string))
+            .collect(),
+        _ => return Json(serde_json::json!({"error":{"message":"input must be a string or array","type":"invalid_request_error","code":400}})).into_response(),
+    };
+    if texts.is_empty() {
+        return Json(serde_json::json!({"error":{"message":"input is empty","type":"invalid_request_error","code":400}})).into_response();
+    }
+    let resolved = state
+        .tenant_models
+        .resolve(
+            &state.providers,
+            &auth.user_id,
+            crate::api::tenant_models::ModelCapability::Embedding,
+            body.get("model").and_then(|value| value.as_str()),
+        )
+        .ok()
+        .flatten();
+    let embedder = resolved.map(|model| model.embedder());
+    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let vectors = match embedder {
+        Some(embedder) => match embedder.embed(&text_refs).await {
+            Ok(vectors) => vectors,
+            Err(error) => {
+                return Json(serde_json::json!({"error":{"message":error.to_string(),"type":"api_error","code":500}})).into_response();
+            }
+        },
+        None => {
+            return Json(serde_json::json!({"error":{"message":"No embedding model configured","type":"api_error","code":503}})).into_response();
+        }
+    };
+    let model = body.get("model").and_then(|value| value.as_str()).unwrap_or("default");
+    let data: Vec<serde_json::Value> = vectors
+        .iter()
+        .enumerate()
+        .map(|(index, vector)| {
+            serde_json::json!({
+                "object": "embedding",
+                "index": index,
+                "embedding": vector,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "object": "list",
+        "data": data,
+        "model": model,
+        "usage": {"prompt_tokens": 0, "total_tokens": 0},
+    }))
+    .into_response()
+}
+
 pub async fn list_models() -> impl IntoResponse {
     Json(OpenAiModelList {
         object: "list".into(),

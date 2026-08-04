@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 OpenAI 兼容 /api/v1/embeddings 端点
+
+- `openai_proxy.rs`：`embeddings` handler——input（string/array）→ tenant_models.resolve(Embedding) → embed → OpenAI 格式响应（object/list + data[{object,index,embedding}] + model + usage）
+- `server.rs`：POST /api/v1/embeddings 路由
+- OpenAI 兼容端点全集：/api/v1/chat/completions + /api/v1/models + /api/v1/embeddings + /api/v1/reranker
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 ASR 透传 + 上传格式提示
 
 - `docker-compose.yml`：透传 RAYRAG_ASR_API_BASE/KEY/MODEL（容器音频转录可用）
