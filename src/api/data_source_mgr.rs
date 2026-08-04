@@ -1,7 +1,7 @@
 //! Data source manager — configures and syncs external connectors
 //! (GitLab MVP). Mirrors RAGFlow's connector admin surface.
 
-use crate::data_source::{GitLabConnector, SourceOptions};
+use crate::data_source::{BlobConnector, GitLabConnector, SourceOptions};
 use anyhow::{bail, Context, Result};
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
@@ -169,8 +169,8 @@ pub async fn create_data_source(
     if name.is_empty() || url.is_empty() || target.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "name/url/target are required".into()));
     }
-    if body.kind != "gitlab" {
-        return Err((StatusCode::BAD_REQUEST, "only gitlab is supported".into()));
+    if body.kind != "gitlab" && body.kind != "blob" {
+        return Err((StatusCode::BAD_REQUEST, "only gitlab/blob are supported".into()));
     }
     let id = uuid::Uuid::new_v4().to_string();
     let record = DataSourceRecord {
@@ -216,9 +216,6 @@ pub async fn sync_data_source(
     let record = store
         .get(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
-    if record.kind != "gitlab" {
-        return Err((StatusCode::BAD_REQUEST, "only gitlab sync is supported".into()));
-    }
     let options = SourceOptions {
         url: record.url,
         token: record.token,
@@ -227,11 +224,18 @@ pub async fn sync_data_source(
         include_merge_requests: record.include_merge_requests,
         max_items: record.max_items,
     };
-    let connector = GitLabConnector::new();
-    let docs = connector
-        .fetch(&options)
-        .await
-        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?;
+    let docs = match record.kind.as_str() {
+        "gitlab" => GitLabConnector::new()
+            .fetch(&options)
+            .await,
+        "blob" => BlobConnector::new()
+            .fetch(&options)
+            .await,
+        other => {
+            return Err((StatusCode::BAD_REQUEST, format!("unsupported source kind: {other}")));
+        }
+    }
+    .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?;
 
     // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
     // Each connector doc is written as a text file and routed through the

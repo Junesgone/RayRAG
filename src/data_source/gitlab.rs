@@ -338,7 +338,8 @@ mod tests {
     fn source_roundtrip() {
         assert_eq!(DocumentSource::from_str("gitlab"), Some(DocumentSource::GitLab));
         assert_eq!(DocumentSource::GitLab.as_str(), "gitlab");
-        assert_eq!(DocumentSource::from_str("blob"), None);
+        assert_eq!(DocumentSource::from_str("blob"), Some(DocumentSource::Blob));
+        assert_eq!(DocumentSource::from_str("unknown"), None);
     }
 
     #[test]

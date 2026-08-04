@@ -10,18 +10,21 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentSource {
     GitLab,
+    Blob,
 }
 
 impl DocumentSource {
     pub fn as_str(&self) -> &'static str {
         match self {
             DocumentSource::GitLab => "gitlab",
+            DocumentSource::Blob => "blob",
         }
     }
 
     pub fn from_str(value: &str) -> Option<Self> {
         match value {
             "gitlab" => Some(DocumentSource::GitLab),
+            "blob" => Some(DocumentSource::Blob),
             _ => None,
         }
     }
@@ -69,3 +72,5 @@ pub struct SourceOptions {
 
 pub mod gitlab;
 pub use gitlab::GitLabConnector;
+pub mod blob;
+pub use blob::BlobConnector;

@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-05 data_source 连接器：Azure Blob（SAS）
+
+- `src/data_source/blob.rs`：Azure Blob REST（SAS token 认证免签名）——list containers（target 空时）/ list blobs / download → ConnectorDoc（container/blob metadata）；XML 解析免依赖（parse_xml_names）
+- mod.rs Blob 枚举；API create/sync 支持 kind=blob（match 分发）
+- 5 新测试（XML 解析×2/枚举/缺 SAS/缺 URL）
+- 测试基线：**856 passed / 0 failed / 26 ignored**
 ## 2026-08-05 UI 第 44 轮：sync 目标 KB 选择器
 
 - `web.rs` datasources_page：Sources 卡片加 KB 下拉（loadKbs 填充 /api/v1/datasets）——Sync 请求带 ?kb_id= 入库；空值仅预览
