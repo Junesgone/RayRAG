@@ -1,5 +1,14 @@
 # RayRAG 运维台账
 
+## 2026-08-04 国内直连端点推荐文档
+
+- 新增 `docs/providers-cn.md`：中国大陆网络适配的模型端点推荐
+  - Embedding：硅基流动（BAAI/bge-m3、Qwen3-Embedding-4B/8B）、通义（text-embedding-v3/v4）、智谱（embedding-3）、GiteeAI
+  - Rerank：硅基流动（bge-reranker-v2-m3）、通义（gte-rerank-v2、qwen3-rerank）、GiteeAI（Qwen3-Reranker）
+  - 视觉：硅基流动 Qwen2.5-VL、通义 qwen3-vl、智谱 glm-4.5v、月之暗面 vision
+  - 本机 GPU llama.cpp 端点优先（8088/8888/8081，已实测 8/8）
+  - 外网工具国内替代对照表
+- 提供商目录确认：`llm_factories.json` 63 提供商 / 942 模型 / 6 类型（chat 660 / embedding 133 / image2text 83 / rerank 35 / tts 13 / speech2text 18）
 ## 2026-08-04 code_exec 连接器（沙箱契约客户端）
 
 - 新增 `src/code_exec.rs`：RAGFlow `code_exec.py` 的 Rust 实现（688 行上游 → 契约全移植）
