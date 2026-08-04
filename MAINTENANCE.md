@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 22 轮：Knowledge Graph 环形可视化
+
+- `web.rs` dataset_page buildGraph：文本输出 → **SVG 环形图**（中心 KB 节点 + 实体按 degree 半径成环 + 连线 + 标签），对齐 RAGFlow 图谱可视化
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器多格式解析验证：pptx
 
 - 上传 test_deck.pptx（标题+正文 1 页）→ Parsed → Chunked: 1 → Embedded: 1
