@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-05 容器终验修复：datasources 页 500
+
+- 根因：datasources_page 多了 `Extension<String>`（tenant_id）——全局无此 layer → 500 Missing request extension（files_page 无此参数故 200）
+- 修复：移除该参数（detect_lang 用 Request headers）
+- 测试基线：**856 passed / 0 failed / 26 ignored**
 ## 2026-08-05 data_source 连接器：Azure Blob（SAS）
 
 - `src/data_source/blob.rs`：Azure Blob REST（SAS token 认证免签名）——list containers（target 空时）/ list blobs / download → ConnectorDoc（container/blob metadata）；XML 解析免依赖（parse_xml_names）

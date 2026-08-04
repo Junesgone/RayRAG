@@ -606,10 +606,8 @@ var aid='default';function testA(id){aid=id};function showCreate(){document.getE
 }
 
 pub async fn datasources_page(
-    axum::Extension(tenant_id): axum::Extension<String>,
     req: axum::http::Request<axum::body::Body>,
 ) -> Result<axum::response::Html<String>, axum::response::Response> {
-    let _ = tenant_id;
     let zh = crate::web::detect_lang(req.headers());
     let mut b = format!("<h1>🔗 {}</h1>", if zh { "数据源（Data Sources）" } else { "Data Sources" });
     b.push_str("<div class='card'><h2>");
