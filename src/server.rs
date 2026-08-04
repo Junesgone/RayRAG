@@ -410,6 +410,8 @@ async fn update_dataset(
         "raptor_depth",
         "graphrag_enabled",
         "entity_types",
+        "layout_recognize",
+        "ocr_enabled",
     ] {
         if let Some(value) = body.get(key) {
             config.insert(key.into(), value.clone());

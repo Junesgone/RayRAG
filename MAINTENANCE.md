@@ -1,5 +1,13 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器内 OCR 实连（四链路全闭环）
+
+- **8097 确认为 PaddleOCR GPU Proxy**（paddleocr_gpu_proxy.py；18090 是另一 Web 应用）；`POST /ocr {"image":b64}` JSON 格式（非 multipart），与 RayRAG ocr.rs legacy 客户端完全匹配
+- `server.rs` update_dataset 白名单扩展：layout_recognize / ocr_enabled
+- 容器配 RAYRAG_OCR_PROVIDER=proxy + RAYRAG_OCR_BASE_URL=http://192.168.3.6:8097 → KB 配 layout_recognize=paddleocr（**值必须是 "paddleocr"，非 "PaddleOCRLayout"**，见 is_paddleocr_layout）→ 重解析图片
+- **实测：图片 chunk 含 `[DOCUMENT_LAYOUT: PaddleOCR] RayRAGOCRTest2026`**——容器→GPU OCR 生效
+- **GPU 四链路全部容器实连闭环**：embedding 8888 / LLM 8088 / rerank 8081 / OCR 8097
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器内 rerank 实连（三链路闭环）
 
 - **8081 重启改绑 0.0.0.0**（原 127.0.0.1 容器不可达）：kill 旧进程 → `llama-server ... --host 0.0.0.0 --port 8081 --api-key mxbai-rerank-key --reranking`；局域网 /rerank 调用验证通过
