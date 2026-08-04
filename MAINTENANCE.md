@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-05 data_source 连接器 MVP：GitLab
+
+- `src/data_source/mod.rs`：DocumentSource 枚举 + ConnectorDoc（镜像 RAGFlow Document 字段：blob/semantic_identifier/extension/metadata）+ SourceOptions + Connector trait 骨架
+- `src/data_source/gitlab.rs`：GitLab REST 连接器（PRIVATE-TOKEN 认证）——项目文件（recursive tree + raw 拉取）/ Issues / MergeRequests → ConnectorDoc（镜像 gitlab_connector.py 的 _convert_code/_convert_issue/_convert_mr）
+- 本地 urlencoding（免依赖）+ 4 单测（source 枚举/doc 渲染/缺 URL/缺 target）
+- 测试基线：**848 passed / 0 failed / 26 ignored**（+4）
+- 后续：blob 连接器、sync 入 KB API、UI 数据源页
 ## 2026-08-05 运维监控脚本
 
 - `scripts/health-check.sh`：一键检查容器（rayrag/postgres/SearXNG）+ healthz + 14 页面 + GPU 四链路（embedding/LLM/rerank 带 key/SearXNG）

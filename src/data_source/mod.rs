@@ -1,0 +1,71 @@
+//! External data source connectors — mirrors RAGFlow `common/data_source/`.
+//!
+//! MVP: GitLab connector (token auth). Blob/Box/etc. are follow-ups.
+//! The connector fetches external content and converts it into connector
+//! documents that can be synced into a knowledge base.
+
+use std::collections::HashMap;
+
+/// RAGFlow-aligned document source enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentSource {
+    GitLab,
+}
+
+impl DocumentSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DocumentSource::GitLab => "gitlab",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "gitlab" => Some(DocumentSource::GitLab),
+            _ => None,
+        }
+    }
+}
+
+/// A connector-produced document (mirrors RAGFlow `Document` fields used by
+/// connector runners: blob/semantic_identifier/extension/metadata).
+#[derive(Debug, Clone)]
+pub struct ConnectorDoc {
+    pub id: String,
+    pub blob: String,
+    pub source: DocumentSource,
+    pub semantic_identifier: String,
+    pub extension: String,
+    pub doc_updated_at: String,
+    pub size_bytes: usize,
+    pub metadata: HashMap<String, String>,
+}
+
+impl ConnectorDoc {
+    /// Render a RAGFlow-style text blob (used for preview / ingestion).
+    pub fn to_markdown(&self) -> String {
+        format!(
+            "# {}\n\n{}",
+            self.semantic_identifier, self.blob
+        )
+    }
+}
+
+/// Shared fetch options for connectors.
+#[derive(Debug, Clone, Default)]
+pub struct SourceOptions {
+    /// Base URL of the source (e.g. https://gitlab.com).
+    pub url: String,
+    /// Auth token (e.g. GitLab personal access token).
+    pub token: String,
+    /// Optional project id / owner+repo.
+    pub target: String,
+    /// Whether to include issues and merge requests (gitlab).
+    pub include_issues: bool,
+    pub include_merge_requests: bool,
+    /// Max files to fetch (safety bound).
+    pub max_items: usize,
+}
+
+pub mod gitlab;
+pub use gitlab::GitLabConnector;
