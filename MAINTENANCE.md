@@ -1,5 +1,14 @@
 # RayRAG 运维台账
 
+## 2026-08-04 docker 双 feature 镜像重建 + 全链路复测
+
+- **教训**：直接 `docker build` 不传 ARG 时 RAYRAG_FEATURES 取 Dockerfile 默认 `postgres-backend`，容器启动即崩（zvec requires zvec-backend）。**必须用 `docker compose build`（自动带 `postgres-backend,zvec-backend`）** 或显式 `--build-arg RAYRAG_FEATURES=postgres-backend,zvec-backend`
+- zvec 预编译资产：xget.xi-xu.me 主镜像恢复（429 限流已过）；fallback GitHub 直连
+- 重建成功：rayrag:local 275MB（zvec-backend+postgres-backend）；容器复测：
+  - healthz 全 healthy（postgres/zvec/embedder enabled）✓
+  - 检索 score=0.967（GPU embedding 向量）✓
+  - completions 生成文本（GPU LLM）✓
+- 新代码 code_exec/sandbox/tcadp 已随镜像发布
 ## 2026-08-04 容器内 GPU LLM 实连验证
 
 - compose LLM_API_BASE=http://192.168.3.6:8088 LLM_MODEL=Qwen3.5-9B-Q4_K_M.gguf 重建容器
