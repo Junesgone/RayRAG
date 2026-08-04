@@ -4637,13 +4637,8 @@ async fn execute_canvas_agent_tool_with_providers(
             call.function.name
         )
     })?;
-    if let Some(content) = outputs
-        .get("formalized_content")
-        .and_then(Value::as_str)
-        .filter(|content| !content.is_empty())
-    {
-        return Ok(content.to_owned());
-    }
+    // 错误优先：Agent 工具返回必须带 provider 前缀（Python 工具对齐），
+    // 即使 formalized_content 也被写入错误文本（供画布 answer 节点使用）。
     if let Some(error) = outputs.get("_ERROR").and_then(Value::as_str) {
         let provider = match child.component_name.to_ascii_lowercase().as_str() {
             "duckduckgo" => "DuckDuckGo",
@@ -4667,6 +4662,13 @@ async fn execute_canvas_agent_tool_with_providers(
             _ => "Tavily",
         };
         return Ok(format!("{provider} error: {error}"));
+    }
+    if let Some(content) = outputs
+        .get("formalized_content")
+        .and_then(Value::as_str)
+        .filter(|content| !content.is_empty())
+    {
+        return Ok(content.to_owned());
     }
     if let Some(report) = outputs.get("report").and_then(Value::as_str) {
         return Ok(report.to_owned());
@@ -6023,9 +6025,16 @@ async fn execute_invoke_with_network(
 }
 
 fn set_invoke_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: impl Into<String>) {
+    let error_string = error.into();
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error.into()))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error_string.clone())),
+            (
+                "formalized_content".into(),
+                Value::String(format!("[Tool error] {error_string}")),
+            ),
+        ]),
     );
 }
 
@@ -7532,12 +7541,11 @@ fn domestic_search_outputs(results: &[Value], provider_label: &str) -> Result<Ta
 fn set_domestic_search_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     // 错误必须写入 formalized_content，让下游 answer 节点感知工具失败，
     // 而不是拿到空内容后由 LLM 自由发挥。
-    let message = format!("[Search error] {error}");
     runtime.outputs.insert(
         node.id.clone(),
         Map::from_iter([
-            ("_ERROR".into(), Value::String(error)),
-            ("formalized_content".into(), Value::String(message)),
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error)),
         ]),
     );
 }
@@ -9623,63 +9631,90 @@ fn append_web_references(runtime: &mut CanvasRuntime, references: Vec<ChunkRefer
 fn set_wikipedia_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_google_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_google_scholar_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_github_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_yahoo_finance_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_arxiv_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_pubmed_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_duckduckgo_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 
 fn set_tavily_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
     );
 }
 

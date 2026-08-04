@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 全部 11 个工具错误函数统一传播修复
+
+- 同模式缺陷：set_tavily_error/set_wikipedia_error/set_google_error/set_google_scholar_error/set_github_error/set_yahoo_finance_error/set_arxiv_error/set_pubmed_error/set_duckduckgo_error/set_invoke_error 均只写 _ERROR（9 个通用 + invoke 单独）+ domestic（已修）
+- 修复：全部同时写 formalized_content（错误原文）——画布 answer 感知工具失败
+- **关键**：Agent 工具 response 构造（execute_canvas_agent_tool_with_providers）**_ERROR 优先**（`{provider} error: {error}` Python 对齐，7 个测试保护）+ formalized_content 次之（成功路径）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 agent 工具错误传播修复
 
 - 发现：searxng 节点失败时回答"搜索功能已就绪"（LLM 自由发挥）——`set_domestic_search_error` 只设 `_ERROR`，formalized_content 为空
