@@ -564,7 +564,7 @@ pub async fn memories_page(
             .last()
             .map(|m| m.content.chars().take(60).collect())
             .unwrap_or_default();
-        rows.push_str(&format!("<tr><td style='font-weight:500'>{}</td><td>{} msgs</td><td style='color:var(--tm);max-width:300px;overflow:hidden'>{}</td></tr>",c.name.chars().take(40).collect::<String>(),msgs,p));
+        rows.push_str(&format!("<tr><td style='font-weight:500'>{}</td><td>{} msgs</td><td style='color:var(--tm);max-width:300px;overflow:hidden'>{}</td><td><a class='btn btn-o btn-sm' href='/chat/{}'>View</a> <button class='btn btn-d btn-sm' onclick=\"delConv('{}')\">Del</button></td></tr>",c.name.chars().take(40).collect::<String>(),msgs,p,c.id,c.id));
     }
     let mut b = String::new();
     b.push_str("<h1>🧠 ");
@@ -572,10 +572,11 @@ pub async fn memories_page(
     b.push_str("</h1><div class='card'><h2>Memory (");
     b.push_str(&convs.len().to_string());
     b.push_str(
-        ")</h2><table><thead><tr><th>Name</th><th>Messages</th><th>Last</th></tr></thead><tbody>",
+        ")</h2><table><thead><tr><th>Name</th><th>Messages</th><th>Last</th><th></th></tr></thead><tbody>",
     );
     b.push_str(&rows);
     b.push_str("</tbody></table></div>");
+    b.push_str("<script>function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})}</script>");
     Html(layout(t("Memories", zh), &b, zh))
 }
 

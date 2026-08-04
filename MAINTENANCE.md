@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 5 轮：Memories 页操作按钮
+
+- `web.rs` memories_page：行按钮 View（→ /chat/{id}）+ Del（DELETE conversations API）+ 页面内 delConv JS
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 4 轮：Chat 会话删除
 
 - `server.rs`：新增 `delete_conversation` handler（ConvStore::delete_for）+ 路由 DELETE /api/v1/conversations/{id}
