@@ -2268,6 +2268,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/chat", get(crate::web::chat_page))
         .route("/chat/{id}", get(crate::web::chat_detail_page))
         .route("/dataset/{id}", get(crate::web::dataset_page))
+        .route("/datasources", get(crate::web::datasources_page))
         .route("/files", get(crate::web::files_page))
 
         .route("/agents", get(crate::web::agents_page))

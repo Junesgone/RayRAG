@@ -102,6 +102,8 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str(ag);
     h.push_str("</a><a href='/memories'>");
     h.push_str(mm);
+    h.push_str("</a><a href='/datasources'>");
+    h.push_str("🔗");
     h.push_str("</a><a href='/files'>");
     h.push_str(fl);
     h.push_str("</a><a href='/skills'>");
@@ -601,6 +603,31 @@ pub async fn agents_page(
 function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:'Created from template: '+t.name,dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
 var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(function(){location.reload()})};function editA(id){window.location.href='/agents/'+id};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
     Html(layout(t("Agents", zh), &b, zh))
+}
+
+pub async fn datasources_page(
+    axum::Extension(tenant_id): axum::Extension<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Result<axum::response::Html<String>, axum::response::Response> {
+    let _ = tenant_id;
+    let zh = crate::web::detect_lang(req.headers());
+    let mut b = format!("<h1>🔗 {}</h1>", if zh { "数据源（Data Sources）" } else { "Data Sources" });
+    b.push_str("<div class='card'><h2>");
+    b.push_str(if zh { "新建 GitLab 数据源" } else { "Add GitLab Source" });
+    b.push_str("</h2><div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px'>");
+    b.push_str("<input id='dsName' placeholder='Name'><input id='dsUrl' placeholder='https://gitlab.com'><input id='dsToken' type='password' placeholder='Private token'><input id='dsTarget' placeholder='Project id or owner/repo'>");
+    b.push_str("</div><label><input type='checkbox' id='dsIssues'> Issues</label> <label><input type='checkbox' id='dsMRs'> Merge Requests</label> ");
+    b.push_str("<button class='btn btn-p' onclick='addDs()'>+ Add</button></div>");
+    b.push_str("<div class='card'><h2>Sources</h2><div id='dsList'>Loading...</div></div>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(if zh { "同步预览" } else { "Sync Preview" });
+    b.push_str("</h2><div id='dsPreview' style='color:var(--t2)'>Select a source and click Sync.</div></div><script>");
+    // JS 全部单引号：拼接用单引号字符串，属性用单引号，无任何双引号字符
+    b.push_str("function loadDs(){fetch('/api/v1/data_sources').then(function(r){return r.json()}).then(function(d){var list=d.data||[];var h='<table><tr><th>Name</th><th>Type</th><th>URL</th><th>Target</th><th>Token</th><th></th></tr>';list.forEach(function(x){h=h+'<tr><td>'+x.name+'</td><td>'+x.type+'</td><td>'+(x.url||'')+'</td><td>'+(x.target||'')+'</td><td>'+(x.token||'')+'</td><td><button class=btn-p onclick=syncDs(\'\"+x.id+\"\')>Sync</button> <button class=btn-d onclick=delDs(\'\"+x.id+\"\')>Del</button></td></tr>';});document.getElementById('dsList').innerHTML=h+'</table>';});}");
+    b.push_str("function addDs(){var n=document.getElementById('dsName').value;var u=document.getElementById('dsUrl').value;var t=document.getElementById('dsToken').value;var g=document.getElementById('dsTarget').value;if(!n||!u||!g){alert('Name/URL/Target required');return;}var body={name:n,type:'gitlab',url:u,token:t,target:g,include_issues:document.getElementById('dsIssues').checked,include_merge_requests:document.getElementById('dsMRs').checked};fetch('/api/v1/data_sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(d.code===0){loadDs();document.getElementById('dsName').value='';document.getElementById('dsUrl').value='';document.getElementById('dsToken').value='';document.getElementById('dsTarget').value='';}else{alert(d.message||'create failed');}});}");
+    b.push_str("function syncDs(id){document.getElementById('dsPreview').textContent='Syncing...';fetch('/api/v1/data_sources/'+id+'/sync',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){var x=d.data||{};var h='<b>'+x.count+' docs</b><table><tr><th>Title</th><th>Ext</th><th>Size</th><th>Type</th></tr>';(x.preview||[]).forEach(function(p){h=h+'<tr><td>'+(p.title||'')+'</td><td>'+(p.extension||'')+'</td><td>'+(p.size_bytes||0)+'</td><td>'+(p.type||'')+'</td></tr>';});document.getElementById('dsPreview').innerHTML=h+'</table>';}else{document.getElementById('dsPreview').textContent='Sync failed: '+(d.message||'unknown');}});}");
+    b.push_str("function delDs(id){if(!confirm('Delete this data source?'))return;fetch('/api/v1/data_sources/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){loadDs();}else{alert(d.message||'delete failed');}});}loadDs();</script>");
+    Ok(axum::response::Html(b))
 }
 
 pub async fn files_page(

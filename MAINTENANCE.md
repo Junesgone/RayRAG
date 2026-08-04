@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-05 UI 第 43 轮：数据源页
+
+- `web.rs` datasources_page：🔗 nav + 配置表单（name/url/token/target + Issues/MRs checkbox）+ 列表（token 脱敏）+ Sync（预览表格）+ Del
+- 路由 /datasources
+- **转义教训（本轮重灾）**：python 写入 Rust 字符串内嵌 JS——所有 JS 双引号必须 Rust `\"`（python 写 `\\\"` 4 反斜杠）——裸引号直接闭合 Rust 字符串；JS 改用全单引号策略后仅剩 push_str 边界 + syncDs 参数转义；函数签名需带 Request 拿 detect_lang（无 is_zh 函数）
+- 测试基线：**851 passed / 0 failed / 26 ignored**
 ## 2026-08-05 数据源 API（GitLab 配置/同步）
 
 - `src/api/data_source_mgr.rs`：DataSourceStore（data_sources.json 持久化 + 读写锁 + 保存锁）+ 4 handler
