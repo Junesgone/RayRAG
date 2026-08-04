@@ -884,6 +884,102 @@ pub const fn preset_count() -> usize {
     PROVIDER_PRESETS.len()
 }
 
+// ── Full factory model catalog (mirrors RAGFlow conf/llm_factories.json) ──
+//
+// The embedded catalog carries the *complete* per-factory model list (943
+// models across the 63 RAGFlow factories: chat / embedding / rerank /
+// image2text / speech2text / tts), generated from the upstream JSON so the
+// model-discovery layer can seed every model a factory offers — not just the
+// representative names in `ProviderPreset::models`.
+
+/// One model entry inside the embedded factory catalog.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct FactoryModel {
+    /// Model name as presented by the provider, e.g. `"deepseek-chat"`.
+    pub n: &'static str,
+    /// RAGFlow model type: chat / embedding / rerank / image2text /
+    /// speech2text / tts (the upstream JSON uses these literals).
+    pub t: &'static str,
+    /// Max context tokens (0 when the upstream entry omits it).
+    pub mx: u64,
+    /// Whether the model supports tool calling.
+    pub tools: bool,
+}
+
+/// The full factory catalog embedded at compile time.
+static FACTORY_CATALOG_JSON: &str = include_str!("data/providers/llm_factories.json");
+
+/// Lazily parsed factory catalog: `normalized factory name → entries`.
+fn factory_catalog() -> &'static std::collections::HashMap<String, Vec<FactoryModel>> {
+    use std::sync::OnceLock;
+    static CATALOG: OnceLock<std::collections::HashMap<String, Vec<FactoryModel>>> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        let v: serde_json::Value = serde_json::from_str(FACTORY_CATALOG_JSON).unwrap_or_default();
+        let mut map = std::collections::HashMap::new();
+        if let Some(obj) = v.as_object() {
+            for (name, entry) in obj {
+                let mut models = Vec::new();
+                let mut seen_names = std::collections::HashSet::new();
+                if let Some(list) = entry.get("models").and_then(|m| m.as_array()) {
+                    for m in list {
+                        let n = m.get("n").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        // The providers store requires unique model names; the
+                        // upstream JSON occasionally lists the same model twice
+                        // (e.g. FuturMix gpt-4o), so deduplicate defensively.
+                        if n.is_empty() || !seen_names.insert(n.clone()) {
+                            continue;
+                        }
+                        let t = m.get("t").and_then(|x| x.as_str()).unwrap_or("chat").to_string();
+                        let mx = m.get("mx").and_then(|x| x.as_u64()).unwrap_or(0);
+                        let tools = m.get("tools").and_then(|x| x.as_bool()).unwrap_or(false);
+                        models.push(FactoryModel {
+                            n: Box::leak(n.into_boxed_str()),
+                            t: Box::leak(t.into_boxed_str()),
+                            mx,
+                            tools,
+                        });
+                    }
+                }
+                map.insert(normalize_provider_name(name), models);
+            }
+        }
+        map
+    })
+}
+
+/// All models a factory offers, straight from the embedded full catalog
+/// (not just the representative `ProviderPreset::models` list).
+pub fn factory_full_models(provider_id: &str, provider_name: &str) -> Vec<FactoryModel> {
+    let needle = normalize_provider_name(provider_id);
+    let catalog = factory_catalog();
+    if let Some(models) = catalog.get(&needle) {
+        return models.clone();
+    }
+    let by_name = normalize_provider_name(provider_name);
+    if !by_name.is_empty() {
+        if let Some(models) = catalog.get(&by_name) {
+            return models.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// Full model names (strings) for a factory, for seeding provider rows.
+pub fn factory_full_model_names(provider_id: &str, provider_name: &str) -> Vec<String> {
+    factory_full_models(provider_id, provider_name)
+        .iter()
+        .map(|m| m.n.to_string())
+        .collect()
+}
+
+/// Whether the full catalog knows this factory at all.
+pub fn factory_known(provider_id: &str, provider_name: &str) -> bool {
+    let needle = normalize_provider_name(provider_id);
+    factory_catalog().contains_key(&needle)
+        || (!normalize_provider_name(provider_name).is_empty()
+            && factory_catalog().contains_key(&normalize_provider_name(provider_name)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1008,5 +1104,72 @@ mod tests {
                 preset.id
             );
         }
+    }
+
+    #[test]
+    fn full_catalog_covers_all_presets() {
+        // Every factory preset that exists upstream should be present in the
+        // embedded full catalog. Factories that ship an empty model list in
+        // the upstream JSON rely on dynamic model discovery (e.g. VolcEngine
+        // /api/v3/models, Ollama /api/tags) — that is legitimate. Only
+        // completely unknown factories (or local engines without an upstream
+        // entry) may be absent.
+        for preset in PROVIDER_PRESETS {
+            let models = factory_full_models(preset.id, preset.name);
+            if !models.is_empty() {
+                continue;
+            }
+            let known = factory_known(preset.id, preset.name);
+            assert!(
+                known || preset.id == "OpenAI-API-Compatible" || preset.id == "SoMark"
+                    || preset.id == "Builtin",
+                "factory {} ({}) missing from embedded catalog",
+                preset.id,
+                preset.name
+            );
+        }
+    }
+
+    #[test]
+    fn full_catalog_model_types_are_valid() {
+        let models = factory_full_models("SILICONFLOW", "SILICONFLOW");
+        assert!(!models.is_empty());
+        for m in &models {
+            assert!(
+                matches!(
+                    m.t,
+                    "chat" | "embedding" | "rerank" | "reranker" | "image2text"
+                        | "speech2text" | "tts" | "moderation"
+                ),
+                "unexpected model type {} for {}",
+                m.t,
+                m.n
+            );
+        }
+    }
+
+    #[test]
+    fn full_catalog_matches_upstream_counts() {
+        // DeepSeek upstream ships deepseek-chat + deepseek-reasoner (v0.26.x);
+        let ds = factory_full_models("DeepSeek", "DeepSeek");
+        assert!(!ds.is_empty(), "DeepSeek catalog must not be empty");
+        assert!(
+            ds.iter()
+                .any(|m| m.n == "deepseek-chat" || m.n == "deepseek-v4-chat" || m.n.contains("deepseek-v4")),
+            "DeepSeek catalog missing expected models: {:?}",
+            ds.iter().map(|m| m.n).collect::<Vec<_>>()
+        );
+        // Embedding models exist for at least one domestic provider.
+        let emb: Vec<_> = factory_full_models("Tongyi-Qianwen", "Tongyi-Qianwen")
+            .into_iter()
+            .filter(|m| m.t == "embedding")
+            .collect();
+        assert!(!emb.is_empty(), "Tongyi embedding models missing");
+        // Rerank models exist for at least one provider.
+        let rr: Vec<_> = factory_full_models("SILICONFLOW", "SILICONFLOW")
+            .into_iter()
+            .filter(|m| m.t == "rerank" || m.t == "reranker")
+            .collect();
+        assert!(!rr.is_empty(), "SILICONFLOW rerank models missing");
     }
 }

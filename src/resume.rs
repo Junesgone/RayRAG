@@ -1810,6 +1810,47 @@ pub fn str_q2b(s: &str) -> String {
         .collect()
 }
 
+/// Industry entity — full port of
+/// `deepdoc/parser/resume/entities/industries.py` (TBL + get_names).
+///
+/// The 677-entry TBL table is embedded as JSON (`industries_tbl.json`,
+/// extracted from the Python literal at build time).
+pub struct IndustryEntity;
+
+/// Embed the industries TBL (id → name/parent).
+const INDUSTRIES_TBL_JSON: &str = include_str!("data/resume/industries_tbl.json");
+
+/// Load the industries table as `id → (name, parent)`.
+fn industries_tbl() -> std::collections::HashMap<String, (String, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(INDUSTRIES_TBL_JSON).unwrap_or(serde_json::Value::Null);
+    let mut out = std::collections::HashMap::new();
+    if let Some(obj) = v.as_object() {
+        for (id, entry) in obj {
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let parent = entry.get("parent").and_then(Value::as_str).unwrap_or("").to_string();
+            out.insert(id.clone(), (name, parent));
+        }
+    }
+    out
+}
+
+/// `get_names` — industries.py:698-708: id → name + ancestor chain.
+/// Unknown ids return an empty vector (Python `if not d: return []`).
+pub fn industry_names(id: &str) -> Vec<String> {
+    let tbl = industries_tbl();
+    let mut nms = Vec::new();
+    let mut cur = tbl.get(id).cloned();
+    while let Some((name, parent)) = cur {
+        nms.push(name);
+        if parent.is_empty() || parent == "0" {
+            break;
+        }
+        cur = tbl.get(&parent).cloned();
+    }
+    nms
+}
+
 /// Common traditional→simplified character map covering company-name
 /// vocabulary (approximation of `tradi2simp`; full table lives in the
 /// compiled infinity.rag_tokenizer extension).
@@ -2049,6 +2090,31 @@ pub fn corp_tag(nm: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn industry_entity_names_and_ancestors() {
+        // industries.py __main__ example: get_names("1119").
+        let names = industry_names("1119");
+        assert!(!names.is_empty());
+        // First element is the leaf industry itself.
+        assert_eq!(names[0], "牙科及医疗器械");
+        // Ancestors chain upward toward a root ("0" terminates the walk).
+        assert!(names.iter().any(|n| n == "医疗服务"));
+        assert!(names.iter().any(|n| n == "医药"));
+        // The chain terminates at a root entry (parent "0").
+        let last = names.last().unwrap();
+        assert_eq!(last, "医药");
+
+        // Unknown id → empty (Python `if not d: return []`).
+        assert!(industry_names("999999").is_empty());
+
+        // Root industry (parent "0") returns only itself.
+        assert_eq!(industry_names("1"), vec!["IT/通信/电子"]);
+
+        // 人工智能 (1130) is a child of 互联网 (2).
+        let ai = industry_names("1130");
+        assert_eq!(ai, vec!["人工智能", "互联网"]);
+    }
 
     #[test]
     fn school_entity_split_and_select() {

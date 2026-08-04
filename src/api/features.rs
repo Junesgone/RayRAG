@@ -889,7 +889,17 @@ fn default_providers() -> Vec<Provider> {
                 preset.name,
                 preset.base_url,
             ),
-            models: preset.models.iter().map(|model| (*model).to_string()).collect(),
+            models: {
+                // Prefer the embedded full factory catalog (all 943 models
+                // from conf/llm_factories.json); fall back to the preset's
+                // representative names when the factory is absent.
+                let full = crate::providers::factory_full_model_names(preset.id, preset.name);
+                if !full.is_empty() {
+                    full
+                } else {
+                    preset.models.iter().map(|model| (*model).to_string()).collect()
+                }
+            },
             enabled: false,
             api_key: None,
         })
