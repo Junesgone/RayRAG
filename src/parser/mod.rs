@@ -19,6 +19,7 @@ pub mod pdfbox;
 pub mod ppt;
 pub mod resume;
 pub mod somark;
+pub mod tcadp;
 pub mod txt;
 
 use crate::{Document, Result};

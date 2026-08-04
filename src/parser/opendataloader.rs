@@ -495,30 +495,6 @@ fn extract_toml(data: &[u8]) -> String {
     text
 }
 
-// ── TCADP ───────────────────────────────────────────────────────
-
-/// TCADP (Tencent Cloud Application Development Platform) parser.
-/// Placeholder — TCADP format is proprietary. For now, treats input as JSON/text.
-#[derive(Default)]
-pub struct TcadpParser;
-
-impl TcadpParser {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Parse for TcadpParser {
-    fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
-        let content = String::from_utf8_lossy(data).to_string();
-        Ok(new_document(
-            name,
-            content,
-            "application/octet-stream",
-            data.len(),
-        ))
-    }
-}
 
 #[cfg(test)]
 mod tests {

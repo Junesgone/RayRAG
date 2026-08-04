@@ -1,5 +1,17 @@
 # RayRAG 运维台账
 
+## 2026-08-04 tcadp 解析器（腾讯云 LKEAP 文档重构）
+
+- 新增 `src/parser/tcadp.rs`：RAGFlow `deepdoc/parser/tcadp_parser.py` 的 Rust 实现
+  - **TC3-HMAC-SHA256 签名**（腾讯云 API v3：canonical request → string to sign → 三层 HMAC）
+  - POST lkeap.tencentcloudapi.com ReconstructDocument（SSE 流式）；Progress==100 → DocumentRecognizeResultUrl
+  - 结果 zip **安全解压**（拒绝对称加密/符号链接/绝对路径/.. 穿越，对齐上游防御）→ 收集 .json/.md
+  - 渲染 sections（text/table/image 类型前缀）；扩展名→FileType 映射（PDF/PNG/JPG/TIFF/WORD/PPT/EXCEL）
+  - 凭据：TENCENT_SECRET_ID/TENCENT_SECRET_KEY/TENCENT_REGION（默认 ap-guangzhou）
+  - Parse trait 同步降级（原始文本）+ `parse_with_config` async 云端全流程（对齐 mineru 模式）
+  - 删除 opendataloader.rs 的 placeholder TcadpParser
+  - 测试 8 个（FileType 映射/公历日期/SSE 解析/zip 安全解压与穿越拒绝/配置/签名头）
+- 测试基线：**836 passed / 0 failed / 26 ignored**（+8）
 ## 2026-08-04 国内直连端点推荐文档
 
 - 新增 `docs/providers-cn.md`：中国大陆网络适配的模型端点推荐
