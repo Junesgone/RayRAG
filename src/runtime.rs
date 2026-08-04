@@ -661,6 +661,14 @@ const DOC_GENERATOR_OUTPUTS: &[(&str, &str)] = &[
     ("preview_url", "RAGFlow-compatible attachment preview path"),
     ("created", "RFC3339 document generation timestamp"),
 ];
+/// 导出组件目录（供 /skills 页面展示：name + category）。
+pub fn component_catalog() -> Vec<(&'static str, &'static str)> {
+    COMPONENT_REGISTRY
+        .iter()
+        .map(|descriptor| (descriptor.name, descriptor.category.as_str()))
+        .collect()
+}
+
 const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
     StaticComponentDescriptor {
         name: "agent",

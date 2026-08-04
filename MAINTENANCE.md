@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 1 轮：Skills 页面 + 主导航补全
+
+- `runtime.rs`：导出 `component_catalog()`（COMPONENT_REGISTRY 51 组件 name+category）
+- `web.rs`：新增 `skills_page`（/skills）——按 category（agent/ingestion/shared）分组卡片 + "Use in Agent" 按钮 + Open Agents 入口
+- `layout()` 主导航补 RAGFlow 对应按钮：**Skills** + **Providers**（原仅 Dashboard/KBs/Search/Chat/Agents/Memories/Files）
+- `server.rs`：注册 /skills 路由
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 docker 双 feature 镜像重建 + 全链路复测
 
 - **教训**：直接 `docker build` 不传 ARG 时 RAYRAG_FEATURES 取 Dockerfile 默认 `postgres-backend`，容器启动即崩（zvec requires zvec-backend）。**必须用 `docker compose build`（自动带 `postgres-backend,zvec-backend`）** 或显式 `--build-arg RAYRAG_FEATURES=postgres-backend,zvec-backend`

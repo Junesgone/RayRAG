@@ -73,6 +73,8 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     let ag = t("Agents", zh);
     let mm = t("Memories", zh);
     let fl = t("Files", zh);
+    let sk = t("Skills", zh);
+    let pr = t("Providers", zh);
     let st = t("Settings", zh);
     let ad = t("Admin", zh);
     let sc = t("Status", zh);
@@ -102,6 +104,10 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str(mm);
     h.push_str("</a><a href='/files'>");
     h.push_str(fl);
+    h.push_str("</a><a href='/skills'>");
+    h.push_str(&sk);
+    h.push_str("</a><a href='/providers'>");
+    h.push_str(&pr);
     h.push_str("</a></nav>");
     h.push_str("<div class='hr'><button onclick='toggleTheme()' title='Theme'>🌓</button><button onclick='toggleLang()' title='Language'>");
     h.push_str(lb);
@@ -605,6 +611,47 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     let zh = detect_lang(req.headers());
     let b = "<div class='auth-card card'><h1 style='text-align:center;margin-bottom:24px'>🐠 RayRAG</h1><input id='email' autocomplete='username' placeholder='Email'><input id='password' type='password' autocomplete='current-password' placeholder='Password'><button class='btn btn-p' onclick='login()' style='width:100%;margin-top:8px'>Login</button><div id='error' style='color:var(--d);margin-top:8px;font-size:13px'></div></div><script>function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(localStorage.setItem('rayrag_token',d.data.access_token),location.href='/dashboard'):document.getElementById('error').textContent=d.message})}</script>";
     Html(layout(t("Login", zh), b, zh))
+}
+
+pub async fn skills_page(
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let catalog = crate::runtime::component_catalog();
+    let mut by_category: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (name, category) in &catalog {
+        by_category.entry(category).or_default().push(name);
+    }
+    let mut b = String::new();
+    b.push_str("<h1>");
+    b.push_str(t("Skills", zh));
+    b.push_str("</h1><p style='color:var(--tm)'>");
+    b.push_str(t(
+        "Available canvas components and built-in tools. Open an Agent to compose them into a workflow.",
+        zh,
+    ));
+    b.push_str("</p><div class='card'><h2>");
+    b.push_str(t("Component Catalog", zh));
+    b.push_str(" <span style='font-size:13px;color:var(--tm)'>");
+    b.push_str(&catalog.len().to_string());
+    b.push_str("</span></h2>");
+    for (category, names) in &by_category {
+        b.push_str("<h3 style='margin-top:18px;text-transform:capitalize'>");
+        b.push_str(category);
+        b.push_str("</h3><div class='kb-grid'>");
+        for name in names {
+            let initial = name.chars().next().unwrap_or('C').to_uppercase().collect::<String>();
+            b.push_str(&format!(
+                "<div class='kb-card'><div class='av-lg'>{initial}</div><h3>{name}</h3><p style='color:var(--tm);font-size:12px'>{}</p><a class='btn btn-o' style='margin-top:8px;font-size:12px;padding:4px 10px' href='/agents'>Use in Agent →</a></div>",
+                t("canvas component", zh)
+            ));
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</div><a class='btn btn-p' href='/agents' style='margin-top:16px'>");
+    b.push_str(t("Open Agents", zh));
+    b.push_str("</a>");
+    Html(layout(t("Skills", zh), &b, zh))
 }
 
 pub async fn providers_page(
