@@ -29,6 +29,7 @@ use crate::qweather::{QWeatherClient, QWeatherProvider, QWeatherRequest, QWeathe
 use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
 use crate::translate::{BaiduTranslateClient, TranslateRequest};
+use crate::akshare::{AkShareClient, AkShareRequest};
 use crate::crawler::{CrawlerClient, CrawlerRequest};
 use crate::tencent_finance::{
     TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
@@ -5101,6 +5102,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), crawled);
             Ok(None)
         }
+        "akshare" => {
+            validate_akshare_params(node)?;
+            let news = execute_akshare_with_provider(node, input, &AkShareClient::default()).await?;
+            runtime.outputs.insert(node.id.clone(), news);
+            Ok(None)
+        }
         "retrieval" => {
             execute_retrieval(runtime, node, input).await?;
             Ok(None)
@@ -6763,6 +6770,44 @@ fn record_provider_usage(runtime: &mut CanvasRuntime, usage: Option<TokenUsage>)
         );
     }
     runtime.provider_calls += 1;
+}
+
+async fn execute_akshare_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+    client: &AkShareClient,
+) -> Result<Map<String, Value>> {
+    let mut symbol = String::new();
+    if let Some(content) = input.inputs.get("content") {
+        symbol = match content {
+            Value::String(value) => value.clone(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join(","),
+            other => other.to_string(),
+        };
+    }
+    if symbol.trim().is_empty() {
+        symbol = input.question.to_string();
+    }
+    let top_n = node
+        .params
+        .get("top_n")
+        .and_then(Value::as_u64)
+        .unwrap_or(10) as usize;
+    let request = AkShareRequest { symbol, top_n };
+    match client.stock_news_em(&request).await {
+        Ok(news) => {
+            let content = AkShareClient::render_markdown(&news);
+            Ok(Map::from_iter([("content".into(), Value::String(content))]))
+        }
+        Err(error) => {
+            let message = format!("**ERROR**: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
 }
 
 async fn execute_crawler_with_provider(
@@ -13183,6 +13228,15 @@ fn duckduckgo_retry_delay(node: &CanvasNode) -> Result<Duration> {
 }
 
 // -- Domestic search tools (Bing/Baidu/Bocha/TencentFinance/BaiduScholar) --
+
+fn validate_akshare_params(node: &CanvasNode) -> Result<()> {
+    if let Some(value) = node.params.get("top_n")
+        && value.as_u64().is_none()
+    {
+        bail!("AkShare '{}' top_n must be a positive integer", node.id);
+    }
+    Ok(())
+}
 
 fn validate_crawler_params(node: &CanvasNode) -> Result<()> {
     if let Some(value) = node.params.get("extract_type")

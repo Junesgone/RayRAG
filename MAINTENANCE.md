@@ -1,5 +1,14 @@
 # RayRAG 运维台账
 
+## 2026-08-04 akshare 连接器（东财个股新闻）
+
+- 新增 `src/akshare.rs`：RAGFlow `akshare.py`（ak.stock_news_em）的 Rust 实现
+  - 直连东方财富 search-api-web 搜索接口（实测可用：JSON 直接作 param，非 base64）
+  - 解析 cmsArticleWebOld：标题/链接/内容/时间/来源，strip `<em>` 高亮
+  - 输出 Markdown 列表（对齐上游 DataFrame 行格式），top_n 默认 10
+  - 域名固定 → 无 SSRF 面；测试 4 个（mock 解析 + 空 symbol 拒绝 + 工具函数）
+- 接线：agent.rs akshare 分支 + validate_akshare_params + runtime.rs 描述符
+- 测试基线：**814 passed / 0 failed / 26 ignored**（+4）
 ## 2026-08-04 crawler 连接器（crawl4ai 替代）
 
 - 新增 `src/crawler.rs`：RAGFlow `crawler.py` 的 Rust 实现

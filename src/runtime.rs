@@ -988,6 +988,15 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: BAIKE_OUTPUTS,
     },
     StaticComponentDescriptor {
+        name: "akshare",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("content", "Stock symbol or keyword (array items joined with ',')"),
+            ("top_n", "Max news items (default 10)"),
+        ],
+        outputs: &[("content", "Markdown news list")],
+    },
+    StaticComponentDescriptor {
         name: "crawler",
         category: ComponentCategory::Agent,
         inputs: &[

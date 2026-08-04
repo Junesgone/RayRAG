@@ -19,6 +19,7 @@ pub use search::SearchEngine;
 
 pub mod advanced_rag;
 pub mod agent;
+pub mod akshare;
 pub mod agent_checkpoint;
 pub mod api;
 pub mod app_parsers;
