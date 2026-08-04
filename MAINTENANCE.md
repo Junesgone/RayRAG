@@ -1,5 +1,15 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器内 GPU embedding + 混合检索端到端验证
+
+- compose 新增 EMBED_API_BASE/EMBED_API_KEY/EMBED_MODEL/RERANK_*/LLM_API_* 透传（commit 4484d5b）
+- 容器 → 宿主 GPU 实连：EMBED_API_BASE=http://192.168.3.6:8888（llama.cpp 绑定 0.0.0.0，容器可访问；8081 rerank 绑定 127.0.0.1 容器不可达，需时改绑定）
+- 端到端链路（全部在 docker 容器内完成）：
+  1. login（admin@rayrag.local / RAYRAG_ADMIN_PASSWORD）→ 创建 dataset
+  2. 上传 txt → pipeline: Parsed → Chunked → **Embedded: 1 vectors**（容器→GPU 真实调用）
+  3. /api/v1/retrieval（kb_ids 字段，非 dataset_ids）：score=0.971, vector=0.903, term=1.0 ✓
+- 注意：/api/v1/retrieval 用 `kb_ids`（数组）；登录路由 /api/v1/auth/login（非 /user/login）
+- 测试数据：dataset gpu-embed-test（保留作冒烟样例）
 ## 2026-08-04 本地代码沙箱（LocalProvider 替代）+ code_exec 本地接线
 
 - 新增 `src/sandbox.rs`：RAGFlow `agent/sandbox/providers/local.py` + `result_protocol.py` 的 Rust 实现
