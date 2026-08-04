@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 26 轮：数据集清空
+
+- `web.rs` dataset_page：🗑 Clear All 按钮（确认 + 循环 DELETE 全部文档，保留数据集）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器回归终验（UI 第 23-25 轮）
 
 - 重建镜像 → 容器实测：
