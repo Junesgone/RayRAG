@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 模板全集容器实测（3/3）
+
+- 网络搜索模板：Begin→SearXNG（SEARXNG_URL env）→Message——cn.bing 真实结果（百度等 URL）进回答（1928 字符）✓
+- 模板全集：RAG 问答 ✓（Reference 1-3）/ 网络搜索 ✓ / RAG 对话（同路径组件）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 最终容器终验（模板修复进镜像）
 
 - 重建镜像 → 容器实测：
