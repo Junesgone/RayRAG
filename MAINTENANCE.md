@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 图谱上下文注入 RAG 对话
+
+- `features.rs` generate_chat_answer：检索上下文后追加 `context_for_query` 图谱上下文（最多 4 条）——GraphRAG 增强 RAG 回答（对齐 RAGFlow GraphRAG 检索）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 graphrag query API + 容器持久化验证
 
 - `server.rs`：POST /api/v1/datasets/{id}/graphrag/query——返回图谱节点/边/context（context_for_query 图谱上下文）；无图时返回空结构

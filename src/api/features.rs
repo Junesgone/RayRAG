@@ -695,10 +695,17 @@ async fn generate_chat_answer(
             Err(_) => Vec::new(),
         }
     };
-    let contexts: Vec<String> = search_results
+    let mut contexts: Vec<String> = search_results
         .iter()
         .map(|result| result.chunk.content.clone())
         .collect();
+    // 知识图谱上下文注入（若该数据集已构建图谱）
+    if !kb_ids.is_empty() {
+        let graph_context = state.graphs.context_for_query(kb_ids, question);
+        if !graph_context.is_empty() {
+            contexts.extend(graph_context.into_iter().take(4));
+        }
+    }
     let references: Vec<crate::llm::ChunkReference> = search_results
         .iter()
         .map(|result| crate::llm::ChunkReference {
