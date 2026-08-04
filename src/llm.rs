@@ -322,6 +322,75 @@ impl LlmClient {
     /// Passing an empty tool list deliberately omits `tools` and `tool_choice`;
     /// Agent uses that shape for the fixed max-round fallback request while
     /// preserving prior assistant/tool messages.
+    /// 流式聊天（OpenAI 兼容 stream=true）。逐块回调 `on_chunk`，返回完整文本。
+    pub async fn chat_stream<F>(
+        &self,
+        messages: &[ChatMessage],
+        patch: crate::generation_params::GenerationParamsPatch,
+        mut on_chunk: F,
+    ) -> Result<String>
+    where
+        F: FnMut(&str),
+    {
+        let mut body = serde_json::json!({
+            "model": self.config.model,
+            "messages": messages
+                .iter()
+                .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
+                .collect::<Vec<_>>(),
+            "stream": true,
+        });
+        let generation = self.config.generation.merged(patch);
+        body["max_tokens"] = serde_json::json!(generation.max_tokens);
+        body["temperature"] = serde_json::json!(generation.temperature);
+        body["top_p"] = serde_json::json!(generation.top_p);
+        let mut request = self
+            .client
+            .post(format!("{}/chat/completions", self.config.api_base))
+            .json(&body);
+        if !self.config.api_key.is_empty() {
+            request = request.bearer_auth(&self.config.api_key);
+        }
+        let mut response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("LLM stream error ({}): {}", status, text);
+        }
+        let mut full = String::new();
+        let mut stream = response.bytes_stream();
+        use futures_util::StreamExt;
+        let mut buffer = String::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            // 逐行解析 SSE
+            while let Some(newline) = buffer.find('\n') {
+                let line: String = buffer.drain(..=newline).collect();
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some(data) = line.strip_prefix("data:") {
+                    let data = data.trim();
+                    if data == "[DONE]" {
+                        break;
+                    }
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(delta) = value
+                            .pointer("/choices/0/delta/content")
+                            .and_then(|content| content.as_str())
+                        {
+                            full.push_str(delta);
+                            on_chunk(delta);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(full)
+    }
+
     pub async fn tool_chat_completion_with_generation(
         &self,
         messages: &[ToolChatMessage],

@@ -78,6 +78,7 @@ tokenizers = { version = "0.21", default-features = false, features = ["fancy-re
 # HTTP client (for rare fallback cases)
 reqwest = { version = "0.12", features = ["json", "stream", "multipart", "cookies", "gzip"] }
 futures-util = "0.3"
+tokio-stream = "0.1"
 encoding_rs = "0.8" # GBK decoding for Tencent Finance quotes
 
 # Image processing (optional, for OCR)

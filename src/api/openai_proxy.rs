@@ -102,6 +102,44 @@ pub async fn chat_completions(
         .map(|m| ChatMessage::new(m.role.clone(), m.content.clone()))
         .collect();
 
+    if body.stream {
+        use axum::response::sse::{Event, KeepAlive, Sse};
+        use futures_util::stream::Stream;
+        use std::convert::Infallible;
+        use std::pin::Pin;
+        let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
+        let llm2 = llm.clone();
+        let msgs2 = messages.clone();
+        let gen2 = body.generation;
+        let id2 = id.clone();
+        tokio::spawn(async move {
+            let full = match llm2.chat_stream(&msgs2, gen2, |_| {}).await {
+                Ok(text) => text,
+                Err(error) => {
+                    let _ = tx.send(Ok(Event::default().event("error").data(error.to_string()))).await;
+                    return;
+                }
+            };
+            let chunk = serde_json::json!({
+                "id": id2,
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"role": "assistant", "content": full}, "finish_reason": null}],
+            });
+            let _ = tx.send(Ok(Event::default().data(chunk.to_string()))).await;
+            let done = serde_json::json!({
+                "id": id2,
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            });
+            let _ = tx.send(Ok(Event::default().data(done.to_string()))).await;
+            let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
+        });
+        return Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+            .keep_alive(KeepAlive::default())
+            .into_response();
+    }
+
     let completion = match llm
         .chat_completion_with_generation(&messages, body.generation)
         .await

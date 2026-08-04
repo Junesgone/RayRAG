@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 OpenAI 兼容流式输出（SSE）
+
+- `llm.rs`：`chat_stream`——stream=true 请求 + bytes_stream 逐行解析 SSE（`data: {...}` delta.content / `[DONE]`）+ 逐块回调
+- `openai_proxy.rs`：chat_completions stream=true → `axum::response::sse::Sse`（tokio channel + KeepAlive）→ chat.completion.chunk 帧 + [DONE]
+- `Cargo.toml`：tokio-stream 依赖（axum 0.8 Sse 默认可用，无需 sse feature）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 OpenAI 兼容 /api/v1/embeddings 端点
 
 - `openai_proxy.rs`：`embeddings` handler——input（string/array）→ tenant_models.resolve(Embedding) → embed → OpenAI 格式响应（object/list + data[{object,index,embedding}] + model + usage）
