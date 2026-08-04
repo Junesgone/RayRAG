@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 20 轮：rerank 结果标记
+
+- `web.rs` search_page：rerank=true 时结果行显示 `&middot; reranked` 徽标（区分重排分数来源）
+- 确认：chat 详情页 sendMsg 走 /api/v1/chats/{id}/completions（generate_chat_answer 已有完整 RAG 上下文）——UI 无缺口
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 chat_completion RAG 上下文注入（核心缺口修复）
 
 - `server.rs` chat_completion：原只做 kb 权限校验 + 纯 LLM 对话（欢迎语，无上下文）→ 新增 `hybrid_search_kbs` 检索（top_k 默认 4）+ RAG prompt 组装（"请基于以下知识库内容回答…"）+ references 返回
