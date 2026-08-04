@@ -398,7 +398,29 @@ async fn update_dataset(
         .get("embd_id")
         .or_else(|| body.get("embedding_model"))
         .and_then(|value| value.as_str());
-    if permission.is_none() && requested_embedding.is_none() {
+    // 解析 chunk/解析器配置 → parser_config JSON
+    let mut config = serde_json::Map::new();
+    for key in [
+        "chunk_method",
+        "chunk_size",
+        "overlap",
+        "delimiter",
+        "parser_type",
+        "raptor_enabled",
+        "raptor_depth",
+        "graphrag_enabled",
+        "entity_types",
+    ] {
+        if let Some(value) = body.get(key) {
+            config.insert(key.into(), value.clone());
+        }
+    }
+    let parser_config = if config.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(config).to_string())
+    };
+    if permission.is_none() && requested_embedding.is_none() && parser_config.is_none() {
         return api_error(
             StatusCode::BAD_REQUEST,
             "permission or embedding_model is required",
@@ -425,7 +447,7 @@ async fn update_dataset(
     };
     match state
         .kbs
-        .update_config(&dataset_id, permission, embd_id.as_deref())
+        .update_config(&dataset_id, permission, embd_id.as_deref(), parser_config.as_deref())
     {
         Ok(Some(kb)) => Json(ApiResponse {
             code: 0,

@@ -410,7 +410,7 @@ impl KbStore {
     }
 
     pub fn update_permission(&self, id: &str, permission: &str) -> Result<Option<KnowledgeBase>> {
-        self.update_config(id, Some(permission), None)
+        self.update_config(id, Some(permission), None, None)
     }
 
     pub fn update_config(
@@ -418,6 +418,7 @@ impl KbStore {
         id: &str,
         permission: Option<&str>,
         embd_id: Option<&str>,
+        parser_config: Option<&str>,
     ) -> Result<Option<KnowledgeBase>> {
         if let Some(permission) = permission {
             validate_permission(permission)?;
@@ -431,7 +432,8 @@ impl KbStore {
             };
             let permission_changed = permission.is_some_and(|value| kb.permission != value);
             let embedding_changed = embd_id.is_some_and(|value| kb.embd_id != value);
-            if !permission_changed && !embedding_changed {
+            let config_changed = parser_config.is_some_and(|value| kb.parser_config != value);
+            if !permission_changed && !embedding_changed && !config_changed {
                 return Ok((Some(kb.clone()), false));
             }
             if let Some(permission) = permission {
@@ -439,6 +441,9 @@ impl KbStore {
             }
             if let Some(embd_id) = embd_id {
                 kb.embd_id = embd_id.into();
+            }
+            if let Some(parser_config) = parser_config {
+                kb.parser_config = parser_config.into();
             }
             kb.updated_at = now_ms();
             Ok((Some(kb.clone()), true))
@@ -712,7 +717,7 @@ mod tests {
         assert_eq!(kb.embd_id, "local/primary/embed-a");
 
         let updated = store
-            .update_config(&kb.id, Some("team"), Some("local/primary/embed-b"))
+            .update_config(&kb.id, Some("team"), Some("local/primary/embed-b"), None)
             .unwrap()
             .unwrap();
         assert_eq!(updated.permission, "team");

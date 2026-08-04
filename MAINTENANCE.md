@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 13 轮：Dataset 配置真实保存
+
+- `kb.rs`：`update_config` 增加 parser_config 参数（chunk_method/size/overlap/delimiter/parser_type/raptor/graphrag → parser_config JSON 持久化）
+- `server.rs` update_dataset：解析 chunk 配置字段 → parser_config
+- `web.rs` dataset_page：saveConfig 从 alert 占位改为真实 PUT（收集 chunkMethod/chunkSize/overlap/raptor/graphrag 配置）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 12 轮：Chat 详情清空/导出
 
 - `llm.rs`：`ConvStore::clear_messages`
