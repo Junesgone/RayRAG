@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 认证兜底：protected 页面 cookie 支持
+
+- `server.rs` require_api_auth：Authorization Bearer 之外，增加 cookie `rayrag_token` 兜底（页面导航访问 protected 页如 /providers 时不再 500）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 对标 RAGFlow 第 5 轮：Memories 页操作按钮
 
 - `web.rs` memories_page：行按钮 View（→ /chat/{id}）+ Del（DELETE conversations API）+ 页面内 delConv JS

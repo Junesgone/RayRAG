@@ -1748,9 +1748,22 @@ async fn require_api_auth(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split_once(' '))
         .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer") && !token.is_empty())
-        .map(|(_, token)| token);
+        .map(|(_, token)| token.to_string())
+        .or_else(|| {
+            // 页面导航兜底：cookie rayrag_token（登录后由前端注入）
+            request
+                .headers()
+                .get(axum::http::header::COOKIE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    value.split(';').find_map(|part| {
+                        let part = part.trim();
+                        part.strip_prefix("rayrag_token=").map(str::to_string)
+                    })
+                })
+        });
 
-    if let Some(user_id) = token.and_then(|token| state.users.validate_token(token)) {
+    if let Some(user_id) = token.as_deref().and_then(|token| state.users.validate_token(token)) {
         let is_admin = state.users.is_admin(&user_id);
         let mut request = request;
         request
