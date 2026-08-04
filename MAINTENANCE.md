@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 上传性能：容器 overlay fsync 瓶颈 + RAYRAG_NO_FSYNC
+
+- 实测：5 文档上传容器 53-64s——Saved 每文档 ~10s
+- 根因链：增量 upsert 优化无效 → 定位为 **persistence::atomic_write 的 fsync**（容器 overlay 文件系统 fsync ~10s/次）
+- 修复：`RAYRAG_NO_FSYNC=1` 跳过 file.sync_all + sync_parent（崩溃最多丢最后快照，JSON 可重建；默认保留安全 fsync）
+- 使用：compose env RAYRAG_NO_FSYNC=1（容器部署建议）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 zvec 增量 upsert 优化（上传性能）
 
 - 基准：5 文档批量上传 53s（~10.6s/文档）——日志显示 Parsed→Embedded 0.4s 但 Saved ~9.6s

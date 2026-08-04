@@ -56,10 +56,16 @@ fn atomic_write_local(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     let result = (|| -> anyhow::Result<()> {
         let mut file = OpenOptions::new().create_new(true).write(true).open(&tmp)?;
         file.write_all(data)?;
-        file.sync_all()?;
+        // 容器 overlay 文件系统上 fsync 极慢（~10s/次）。RAYRAG_NO_FSYNC=1
+        // 跳过 fsync 换取吞吐（崩溃时最多丢最后一次快照，JSON 可重建）。
+        if std::env::var("RAYRAG_NO_FSYNC").is_err() {
+            file.sync_all()?;
+        }
         drop(file);
         std::fs::rename(&tmp, path)?;
-        sync_parent(path)?;
+        if std::env::var("RAYRAG_NO_FSYNC").is_err() {
+            sync_parent(path)?;
+        }
         Ok(())
     })();
     if result.is_err() {
