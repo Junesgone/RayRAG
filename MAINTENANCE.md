@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 ASR 透传 + 上传格式提示
+
+- `docker-compose.yml`：透传 RAYRAG_ASR_API_BASE/KEY/MODEL（容器音频转录可用）
+- `web.rs` dataset_page：上传区格式提示补 PNG/JPG(OCR)、MP3/WAV(ASR)
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 音频转录接线（对标 RAGFlow whisper）
 
 - `audio.rs`：`asr_from_env()`（RAYRAG_ASR_API_BASE/KEY/MODEL → AsrClient；未配置 → None）

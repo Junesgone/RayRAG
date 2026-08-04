@@ -293,7 +293,7 @@ pub async fn dataset_page(
     b.push_str(t("Upload", zh));
     b.push_str("</h2><input type='file' id='fi' style='max-width:400px'><button class='btn btn-p' onclick='uploadDoc()' style='margin-left:8px'>");
     b.push_str(t("Upload", zh));
-    b.push_str("</button><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT</p></div><div class='card'><h2>");
+    b.push_str("</button><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT, PNG/JPG(OCR), MP3/WAV(ASR)</p></div><div class='card'><h2>");
     b.push_str(t("Documents", zh));
     b.push_str(" <span id='docCount' style='font-size:13px;color:var(--tm)'></span></h2><div id='dl'>Loading...</div></div></div>");
     // Tab 1: Overview
