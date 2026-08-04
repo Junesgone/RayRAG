@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 21 轮：搜索页多数据集选择
+
+- `web.rs` search_page：KB 多选 chips（fetch /api/v1/datasets → checkbox）+ runSearch 收集 kb_ids（勾 All 时不传 → 服务端默认全可访问；勾具体 KB 时传数组）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 20 轮：rerank 结果标记
 
 - `web.rs` search_page：rerank=true 时结果行显示 `&middot; reranked` 徽标（区分重排分数来源）
