@@ -142,6 +142,11 @@ impl RAGFlowDocxParser {
         "Ot"
     }
 
+    /// 数字类型排序权：非数字（表头倾向）优先。
+    fn num_rank(cell_type: &str) -> u8 {
+        if cell_type == "Nu" { 1 } else { 0 }
+    }
+
     /// `__compose_table_content` — docx_parser.py:79-160.
     pub fn compose_table_content(df: &[Vec<String>]) -> Vec<String> {
         if df.len() < 2 {
@@ -158,7 +163,15 @@ impl RAGFlowDocxParser {
                 *type_counts.entry(Self::block_type(&cell)).or_insert(0) += 1;
             }
         }
-        let Some((max_type, _)) = type_counts.into_iter().max_by_key(|&(_, c)| c) else {
+        // HashMap 迭代序不定：tie 时用确定性规则（非数字类型优先，保证表头判定的稳定性）
+        let majority = |counts: HashMap<&'static str, usize>| {
+            counts.into_iter().max_by(|(a_type, a_count), (b_type, b_count)| {
+                b_count
+                    .cmp(a_count)
+                    .then_with(|| Self::num_rank(a_type).cmp(&Self::num_rank(b_type)))
+            })
+        };
+        let Some((max_type, _)) = majority(type_counts) else {
             return Vec::new();
         };
 
@@ -170,7 +183,11 @@ impl RAGFlowDocxParser {
                     let cell = df[r].get(j).cloned().unwrap_or_default();
                     *row_counts.entry(Self::block_type(&cell)).or_insert(0) += 1;
                 }
-                let Some((row_type, _)) = row_counts.into_iter().max_by_key(|&(_, c)| c) else {
+                let Some((row_type, _)) = row_counts.into_iter().max_by(|(a_type, a_count), (b_type, b_count)| {
+                    b_count
+                        .cmp(a_count)
+                        .then_with(|| Self::num_rank(a_type).cmp(&Self::num_rank(b_type)))
+                }) else {
                     continue;
                 };
                 if row_type != max_type {

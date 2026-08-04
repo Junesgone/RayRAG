@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 docx 偶发根因修复：HashMap tie-break
+
+- 真正根因（静态正则缓存只是缓解）：`type_counts.into_iter().max_by_key` 在类型计数 tie 时依赖 **HashMap 迭代序**（如 {Nu:2, Ot:2, St:2}）→ max_type 不确定 → 数字行被当表头 → 断言失败
+- 修复：`max_by` + 确定性 tie-break（非数字类型优先）+ `Self::num_rank`（闭包内须 Self:: 前缀，裸调 E0425）
+- 全量连续 2 次 **844 passed / 0 failed**（消除长期 flaky）
 ## 2026-08-04 UI 第 36 轮：检索关键词高亮
 
 - `web.rs` search_page：hl() 高亮函数（正则转义 + <mark> 包裹），测试面板结果渲染应用
