@@ -1900,12 +1900,46 @@ async fn chat_completion(
             return api_error(StatusCode::SERVICE_UNAVAILABLE, "No LLM");
         }
     };
-    let msgs = vec![crate::llm::ChatMessage::new("user", q)];
+    // RAG：混合检索知识库 → 注入上下文
+    let top_k = b
+        .get("top_k")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4)
+        .clamp(1, 20) as usize;
+    let hits = state.engine.read().unwrap().hybrid_search_kbs(
+        crate::search::HybridSearchQuery {
+            query: q,
+            query_embedding: None,
+            kb_ids: &kb_ids,
+            top_k,
+            vector_weight: 0.5,
+            doc_ids: None,
+            rank_feature: None,
+        },
+    );
+    let mut context = String::new();
+    let mut references = Vec::new();
+    for (i, hit) in hits.iter().take(4).enumerate() {
+        context.push_str(&format!("[{i}] {}\n", hit.chunk.content));
+        references.push(serde_json::json!({
+            "chunk_id": hit.chunk.id,
+            "doc_name": hit.chunk.doc_name,
+            "score": hit.score,
+        }));
+    }
+    let prompt = if context.trim().is_empty() {
+        q.to_string()
+    } else {
+        format!(
+            "请基于以下知识库内容回答问题。若内容不足以回答，请说明。\n\n知识库内容：\n{context}\n问题：{q}"
+        )
+    };
+    let msgs = vec![crate::llm::ChatMessage::new("user", &prompt)];
     match llm.chat(&msgs).await {
         Ok(a) => Json(ApiResponse {
             code: 0,
             message: "ok".into(),
-            data: Some(serde_json::json!({"answer":a,"reference":[]})),
+            data: Some(serde_json::json!({"answer":a,"reference":references})),
         })
         .into_response(),
         Err(e) => Json(ApiResponse {

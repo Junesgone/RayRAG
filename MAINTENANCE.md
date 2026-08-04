@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 chat_completion RAG 上下文注入（核心缺口修复）
+
+- `server.rs` chat_completion：原只做 kb 权限校验 + 纯 LLM 对话（欢迎语，无上下文）→ 新增 `hybrid_search_kbs` 检索（top_k 默认 4）+ RAG prompt 组装（"请基于以下知识库内容回答…"）+ references 返回
+- 坑：handler 读 `question` 字段（非 OpenAI messages）
+- 容器实测：question="RayRAG 是什么" → **回答基于知识库内容**（"RayRAG 是 Rust 实现的知识库系统…对标 RAGFlow"）+ refs:1
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 docx 并行偶发修复：block_type 正则静态缓存
 
 - 根因：`block_type` 每格调用都重新编译 11 个正则（`regex::Regex::new`），并行高负载下偶发编译失败（if let Ok 静默跳过）→ 分类漂移 → compose_table 测试断言失败
