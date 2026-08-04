@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 对标 RAGFlow 第 11 轮：Files 页查看/删除
+
+- `file_mgr.rs`：`delete_file`（记录+物理文件删除，owner/admin 校验）+ `download_file`（mime 由 parser::mime_from_extension）
+- `server.rs`：DELETE /api/v1/files/{id} + GET /api/v1/files/{id}/download
+- `web.rs` files_page：行按钮 View（下载预览）+ Del
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器终验：全部 UI 页面 + admin API
 
 - 镜像重建（含 UI 第 7-10 轮）→ 容器复测：

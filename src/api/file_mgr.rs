@@ -148,6 +148,72 @@ pub async fn list_files(
     }))
 }
 
+/// DELETE /api/v1/files/{id} — 删除文件记录 + 物理文件。
+pub async fn delete_file(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Response {
+    let record = state
+        .files
+        .list_for(&auth.user_id, auth.is_admin, "root")
+        .into_iter()
+        .find(|record| record.id == file_id);
+    let Some(record) = record else {
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" })).into_response();
+    };
+    let extension = std::path::Path::new(&record.name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let physical = std::path::Path::new(&state.files.data_dir).join(if extension.is_empty() {
+        file_id.clone()
+    } else {
+        format!("{file_id}.{extension}")
+    });
+    if physical.exists() {
+        let _ = std::fs::remove_file(&physical);
+    }
+    match state.files.remove(&file_id) {
+        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        _ => Json(serde_json::json!({ "code": 404, "message": "File not found" })).into_response(),
+    }
+}
+
+/// GET /api/v1/files/{id}/download — 下载文件内容。
+pub async fn download_file(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Response {
+    let record = state
+        .files
+        .list_for(&auth.user_id, auth.is_admin, "root")
+        .into_iter()
+        .find(|record| record.id == file_id);
+    let Some(record) = record else {
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" })).into_response();
+    };
+    let extension = std::path::Path::new(&record.name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let physical = std::path::Path::new(&state.files.data_dir).join(if extension.is_empty() {
+        file_id.clone()
+    } else {
+        format!("{file_id}.{extension}")
+    });
+    match tokio::fs::read(&physical).await {
+        Ok(bytes) => {
+            let mime = crate::parser::mime_from_extension(&extension).unwrap_or("application/octet-stream");
+            ([(axum::http::header::CONTENT_TYPE, mime)], bytes).into_response()
+        }
+        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content not found" })).into_response(),
+    }
+}
+
 /// POST /api/v1/files/upload — upload one validated multipart file.
 pub async fn upload_file(
     State(state): State<std::sync::Arc<AppState>>,

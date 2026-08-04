@@ -2129,6 +2129,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/files", get(crate::api::file_mgr::list_files))
         .route(
+            "/api/v1/files/{file_id}",
+            axum::routing::delete(crate::api::file_mgr::delete_file),
+        )
+        .route(
+            "/api/v1/files/{file_id}/download",
+            axum::routing::get(crate::api::file_mgr::download_file),
+        )
+        .route(
             "/api/v1/files/upload",
             post(crate::api::file_mgr::upload_file),
         )
