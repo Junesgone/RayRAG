@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 23 轮：批量上传
+
+- `web.rs` dataset_page：`<input multiple>` + uploadDoc 顺序串行上传多文件（按钮禁用防重复 + 完成后 loadDocs/pollParse）
+- 教训：正则替换大 JS 函数曾误删后续代码（`.*?\n}` 匹配到字符串内换行）——**必须括号配平提取**；已 git checkout 恢复重做
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 容器终验：OpenAI 兼容全集 4/4 + rerank 格式
 
 - 重建镜像（含 rerank 格式修复）→ 容器实测：
