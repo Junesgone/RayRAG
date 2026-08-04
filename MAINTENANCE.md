@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 39 轮：chat 模型选择器
+
+- `web.rs` chat_detail_page：模型下拉（从 /api/v1/providers 拉 provider:model 复合 selector）→ sendMsg 带 chat_model——对齐 RAGFlow 对话模型切换
+- 注意：/api/v1/models 的 rayrag-v1 不是有效 tenant selector（resolve 会 400）——必须用 providers 源
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 38 轮：files 搜索
 
 - `web.rs` files_page：搜索框（fileQ → fileFilter 过滤 #fl tr data-name）
