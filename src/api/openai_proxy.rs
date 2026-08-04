@@ -279,7 +279,6 @@ pub async fn rerank(
         Ok(scores) => {
             let results: Vec<serde_json::Value> = scores
                 .iter()
-                .enumerate()
                 .map(|(index, score)| {
                     serde_json::json!({"index": index, "relevance_score": score})
                 })

@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 rerank 端点格式修复
+
+- 坑：Reranker trait 返回 `Vec<(usize, f32)>`（index,score 对）——handler 曾误用 enumerate 包成 [index, score] 数组
+- 修复：直接 map (index, score) → `{"index": i, "relevance_score": s}`（Jina 格式）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 OpenAI 兼容 rerank 端点（POST /api/v1/rerank）
 
 - `openai_proxy.rs`：rerank handler——Jina 风格 `{"query","documents"}` → `{"object":"rerank","results":[{"index","relevance_score"}]}`；未配置 503
