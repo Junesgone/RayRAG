@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 31 轮：memories 清空全部
+
+- `features.rs`：MemoryStore::clear_all_owned（按 owner 批量删除，返回数量）
+- `server.rs`：DELETE /api/v1/memories/clear handler
+- `web.rs` memories_page：🗑 Clear All（确认 → clear → reload）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 30 轮：chat 会话重命名
 
 - `server.rs`：PATCH /api/v1/conversations/{id}（rename_for 已存在，补 handler+路由）

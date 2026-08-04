@@ -610,8 +610,8 @@ pub async fn memories_page(
         ")</h2><table><thead><tr><th>Name</th><th>Messages</th><th>Last</th><th></th></tr></thead><tbody>",
     );
     b.push_str(&rows);
-    b.push_str("</tbody></table></div>");
-    b.push_str("<script>function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})}</script>");
+    b.push_str("</tbody></table><button class='btn btn-d' style='margin-top:12px' onclick='clearAllMem()'>🗑 Clear All</button></div>");
+    b.push_str("<script>function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})};function clearAllMem(){if(!confirm('Delete ALL conversations?'))return;fetch('/api/v1/memories/clear',{method:'DELETE'}).then(function(){location.reload()})}</script>");
     Html(layout(t("Memories", zh), &b, zh))
 }
 

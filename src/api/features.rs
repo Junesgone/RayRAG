@@ -1606,6 +1606,21 @@ impl MemoryStore {
         })
     }
 
+    /// Delete every memory owned by `owner_id`. Returns the number removed.
+    pub fn clear_all_owned(&self, owner_id: &str) -> anyhow::Result<usize> {
+        self.mutate_if_changed(|entries| {
+            let removable: Vec<String> = entries
+                .iter()
+                .filter(|(_, entry)| entry.tenant_id == owner_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &removable {
+                entries.remove(id);
+            }
+            Ok((removable.len(), !removable.is_empty()))
+        })
+    }
+
     fn mutate<T>(
         &self,
         mutation: impl FnOnce(&mut HashMap<String, MemoryEntry>) -> anyhow::Result<T>,

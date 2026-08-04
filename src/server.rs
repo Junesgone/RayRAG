@@ -1651,6 +1651,21 @@ async fn export_conversation(
         .into_response()
 }
 
+async fn clear_memories(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    match state.memories.clear_all_owned(&auth.user_id) {
+        Ok(count) => Json(ApiResponse {
+            code: 0,
+            message: format!("Cleared {} memories", count),
+            data: Some(serde_json::json!({"deleted": count})),
+        })
+        .into_response(),
+        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
 async fn rename_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2496,6 +2511,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/memories",
             get(crate::api::features::list_memories).post(crate::api::features::create_memory),
+        )
+        .route(
+            "/api/v1/memories/clear",
+            axum::routing::delete(crate::server::clear_memories),
         )
         .route(
             "/api/v1/memories/{memory_id}",
