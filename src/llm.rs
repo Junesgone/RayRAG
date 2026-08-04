@@ -513,6 +513,44 @@ impl LlmClient {
         self.chat_completion_with_generation(&messages, patch).await
     }
 
+    /// RAG 流式版本：检索上下文 + 历史组装后以 SSE 逐块输出。
+    pub async fn rag_chat_stream<F>(
+        &self,
+        question: &str,
+        contexts: &[String],
+        history: &[ChatMessage],
+        patch: GenerationParamsPatch,
+        mut on_chunk: F,
+    ) -> Result<String>
+    where
+        F: FnMut(&str),
+    {
+        let context_text = if contexts.is_empty() {
+            String::new()
+        } else {
+            let mut context = String::from("Relevant document context:\n\n");
+            for (index, value) in contexts.iter().enumerate() {
+                context.push_str(&format!("[{}] {}\n\n", index + 1, value));
+            }
+            context
+        };
+        let mut messages = vec![ChatMessage::new(
+            "system",
+            format!(
+                "{}\n\n{}If the context does not contain the answer, say 'I don't have enough information to answer this question.'.",
+                self.config.system_prompt, context_text
+            ),
+        )];
+        let recent = if history.len() > 10 {
+            &history[history.len() - 10..]
+        } else {
+            history
+        };
+        messages.extend(recent.iter().cloned());
+        messages.push(ChatMessage::new("user", question));
+        self.chat_stream(&messages, patch, on_chunk).await
+    }
+
     /// Backward-compatible content-only RAG adapter.
     pub async fn rag_chat(
         &self,

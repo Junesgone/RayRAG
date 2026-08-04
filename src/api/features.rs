@@ -144,6 +144,8 @@ pub struct ChatRequest {
     pub tenant_id: Option<String>,
     #[serde(flatten)]
     pub generation: crate::generation_params::GenerationParamsPatch,
+    #[serde(default)]
+    pub stream: bool,
 }
 
 #[derive(Deserialize)]
@@ -411,6 +413,59 @@ pub async fn chat_complete(
     }
 
     let started_at = std::time::Instant::now();
+    if body.stream {
+        use axum::response::sse::{Event, KeepAlive, Sse};
+        use std::convert::Infallible;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
+        let state2 = state.clone();
+        let auth2 = auth.clone();
+        let question2 = body.question.clone();
+        let kb_ids2 = kb_ids.clone();
+        let chat_model2 = chat_model.clone();
+        let embedding_model2 = embedding_model.clone();
+        let history2 = history.messages.clone();
+        let gen2 = body.generation;
+        let id2 = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+        tokio::spawn(async move {
+            let id3 = id2.clone();
+            let on_chunk: Arc<dyn Fn(&str) + Send + Sync> = {
+                let tx = tx.clone();
+                Arc::new(move |chunk: &str| {
+                    let event = serde_json::json!({
+                        "id": id3.clone(),
+                        "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": null}],
+                    });
+                    let _ = tx.blocking_send(Ok(Event::default().data(event.to_string())));
+                })
+            };
+            let _ = generate_chat_answer(
+                &state2,
+                &auth2,
+                ChatGenerationRequest {
+                    question: &question2,
+                    kb_ids: &kb_ids2,
+                    chat_model: chat_model2.as_deref(),
+                    embedding_model: embedding_model2.as_deref(),
+                    history: &history2,
+                    generation: gen2,
+                },
+                Some(on_chunk),
+            )
+            .await;
+            let done = serde_json::json!({
+                "id": id2,
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            });
+            let _ = tx.blocking_send(Ok(Event::default().data(done.to_string())));
+            let _ = tx.blocking_send(Ok(Event::default().data("[DONE]")));
+        });
+        return Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+            .keep_alive(KeepAlive::default())
+            .into_response();
+    }
+
     let generated = match generate_chat_answer(
         &state,
         &auth,
@@ -422,6 +477,7 @@ pub async fn chat_complete(
             history: &history.messages,
             generation: body.generation,
         },
+        None,
     )
     .await
     {
@@ -527,6 +583,7 @@ async fn regenerate_owned_message(
             history: &target.history,
             generation: crate::generation_params::GenerationParamsPatch::default(),
         },
+        None,
     )
     .await
     {
@@ -573,6 +630,7 @@ async fn generate_chat_answer(
     state: &AppState,
     auth: &AuthContext,
     request: ChatGenerationRequest<'_>,
+    on_chunk: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> anyhow::Result<GeneratedChatAnswer> {
     let ChatGenerationRequest {
         question,
@@ -652,6 +710,20 @@ async fn generate_chat_answer(
         )?
         .map(|model| model.llm_client());
     let completion = if let Some(llm) = tenant_llm.as_ref().or(state.llm.as_deref()) {
+        if let Some(on_chunk) = on_chunk {
+            let text = llm
+                .rag_chat_stream(question, &contexts, history, generation, move |chunk| on_chunk(chunk))
+                .await?;
+            return Ok(GeneratedChatAnswer {
+                answer: text,
+                citations: references
+                    .iter()
+                    .map(|reference| reference.content.clone())
+                    .collect(),
+                references,
+                usage: None,
+            });
+        }
         llm.rag_chat_completion_with_generation(question, &contexts, history, generation)
             .await
             .unwrap_or_else(|error| crate::llm::ChatCompletion {

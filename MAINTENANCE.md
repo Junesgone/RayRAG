@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 Chat 端点 SSE 流式（打字机效果后端）
+
+- `llm.rs`：`rag_chat_stream`（检索上下文 + history 组装 + chat_stream 逐块）
+- `features.rs`：`generate_chat_answer` 加 `on_chunk` 回调参数（stream 时走 rag_chat_stream）；`chat_complete` 支持 `stream: true` → Sse（chat.completion.chunk 帧 + stop + [DONE]）
+- ChatRequest 加 stream 字段
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 OpenAI 兼容流式输出（SSE）
 
 - `llm.rs`：`chat_stream`——stream=true 请求 + bytes_stream 逐行解析 SSE（`data: {...}` delta.content / `[DONE]`）+ 逐块回调
