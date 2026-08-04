@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 36 轮：检索关键词高亮
+
+- `web.rs` search_page：hl() 高亮函数（正则转义 + <mark> 包裹），测试面板结果渲染应用
+- 教训：JS 正则字符类 `\]` 在 Rust 字符串需 `\\]`（python 里 `\\`）——unknown character escape
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 35 轮：dashboard 最近会话
 
 - `web.rs` dashboard：Recent Chats 卡片（最近 5 会话 + 最后消息预览，点击跳转）
