@@ -1576,6 +1576,12 @@ async fn build_graphrag(
         .map(|name| graph.degree(name))
         .sum::<usize>()
         / 2;
+    // 持久化：合并到 GraphStore 的 kb_graphs（重启后保留）
+    let mut snapshot = state.graphs.snapshot();
+    snapshot.kb_graphs.insert(dataset_id.clone(), graph.clone());
+    if let Err(error) = state.graphs.replace_snapshot(snapshot) {
+        tracing::warn!(%error, "Failed to persist graphrag snapshot");
+    }
     let node_list: Vec<serde_json::Value> = names
         .into_iter()
         .take(200)

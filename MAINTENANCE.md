@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 知识图谱持久化修复
+
+- `server.rs` build_graphrag：此前只返回统计不落盘（graphrag.json 恒空）——现在将 EntityGraph 合并进 GraphStore.kb_graphs + replace_snapshot（重启后保留，支持图谱查询上下文）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 31 轮：memories 清空全部
 
 - `features.rs`：MemoryStore::clear_all_owned（按 owner 批量删除，返回数量）
