@@ -1738,6 +1738,314 @@ impl SchoolTable {
     }
 }
 
+/// Region entity — full port of
+/// `deepdoc/parser/resume/entities/regions.py` (TBL + NM_SET + isName).
+///
+/// The 739-entry TBL table is embedded as JSON (`regions_tbl.json`,
+/// extracted from the Python literal at build time).
+pub struct RegionEntity;
+
+/// Embed the regions TBL (id → name/parent).
+const REGIONS_TBL_JSON: &str = include_str!("data/resume/regions_tbl.json");
+
+/// Load the regions table as `id → (name, parent)`.
+fn regions_tbl() -> std::collections::HashMap<String, (String, String)> {
+    let v: serde_json::Value = serde_json::from_str(REGIONS_TBL_JSON).unwrap_or(serde_json::Value::Null);
+    let mut out = std::collections::HashMap::new();
+    if let Some(obj) = v.as_object() {
+        for (id, entry) in obj {
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let parent = entry.get("parent").and_then(Value::as_str).unwrap_or("").to_string();
+            out.insert(id.clone(), (name, parent));
+        }
+    }
+    out
+}
+
+/// `NM_SET` — regions.py:761: the set of all region names.
+fn nm_set() -> std::collections::HashSet<String> {
+    regions_tbl().into_values().map(|(n, _)| n).collect()
+}
+
+/// `isName` — regions.py:782-789.
+pub fn is_name(nm: &str) -> bool {
+    let set = nm_set();
+    if set.contains(nm) {
+        return true;
+    }
+    if set.contains(&format!("{nm}市")) {
+        return true;
+    }
+    let stripped = regex::Regex::new(r"(省|(回族|壮族|维吾尔)*自治区)$")
+        .unwrap()
+        .replace_all(nm, "")
+        .into_owned();
+    set.contains(&stripped)
+}
+
+/// `get_names` — regions.py:768-778: id → name + ancestor chain.
+pub fn get_names(id: &str) -> Vec<String> {
+    let tbl = regions_tbl();
+    let mut nms = Vec::new();
+    let mut cur = tbl.get(id).cloned();
+    while let Some((name, parent)) = cur {
+        nms.push(name);
+        if parent.is_empty() {
+            break;
+        }
+        cur = tbl.get(&parent).cloned();
+    }
+    nms
+}
+
+/// `_strQ2B` — full-width → half-width (standard Unicode block mapping;
+/// mirrors infinity.rag_tokenizer._strQ2B).
+pub fn str_q2b(s: &str) -> String {
+    s.chars()
+        .map(|c| match c as u32 {
+            0x3000 => ' ',
+            0xFF01..=0xFF5E => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .collect()
+}
+
+/// Common traditional→simplified character map covering company-name
+/// vocabulary (approximation of `tradi2simp`; full table lives in the
+/// compiled infinity.rag_tokenizer extension).
+const TRADI2SIMP: &[(char, char)] = &[
+    ('發', '发'), ('財', '财'), ('團', '团'), ('體', '体'), ('會', '会'), ('國', '国'),
+    ('學', '学'), ('華', '华'), ('東', '东'), ('業', '业'), ('產', '产'), ('訊', '讯'),
+    ('網', '网'), ('營', '营'), ('銷', '销'), ('廣', '广'), ('區', '区'), ('機', '机'),
+    ('構', '构'), ('門', '门'), ('開', '开'), ('關', '关'), ('聯', '联'), ('萬', '万'),
+    ('與', '与'), ('為', '为'), ('將', '将'), ('來', '来'), ('電', '电'), ('視', '视'),
+    ('話', '话'), ('計', '计'), ('劃', '划'), ('設', '设'), ('說', '说'),
+    ('論', '论'), ('證', '证'), ('實', '实'), ('驗', '验'), ('資', '资'), ('質', '质'),
+    ('運', '运'), ('輸', '输'), ('轉', '转'), ('軟', '软'), ('件', '件'), ('硬', '硬'),
+    ('顯', '显'), ('示', '示'), ('驅', '驱'), ('動', '动'), ('態', '态'), ('數', '数'),
+    ('據', '据'), ('庫', '库'), ('導', '导'), ('航', '航'), ('醫', '医'), ('藥', '药'),
+    ('農', '农'), ('銀', '银'), ('行', '行'), ('幣', '币'), ('價', '价'),
+    ('錢', '钱'), ('賬', '账'), ('戶', '户'), ('證', '证'), ('券', '券'), ('險', '险'),
+    ('買', '买'), ('賣', '卖'), ('購', '购'), ('貨', '货'), ('車', '车'), ('飛', '飞'),
+    ('機', '机'), ('場', '场'), ('橋', '桥'), ('樓', '楼'), ('築', '筑'), ('龍', '龙'),
+    ('鳳', '凤'), ('鳥', '鸟'), ('魚', '鱼'), ('馬', '马'), ('門', '门'),
+    ('風', '风'), ('雲', '云'), ('雪', '雪'), ('電', '电'), ('燈', '灯'), ('火', '火'),
+    ('水', '水'), ('陸', '陆'), ('海', '海'), ('洋', '洋'), ('島', '岛'), ('灣', '湾'),
+    ('港', '港'), ('澳', '澳'), ('台', '台'), ('廣', '广'), ('州', '州'),
+    ('深', '深'), ('圳', '圳'), ('佛', '佛'), ('山', '山'), ('東', '东'), ('莞', '莞'),
+    ('惠', '惠'), ('珠', '珠'), ('汕', '汕'), ('頭', '头'),
+    ('北', '北'), ('高', '高'), ('雄', '雄'),
+    ('新', '新'), ('竹', '竹'), ('桃', '桃'), ('園', '园'), ('蘭', '兰'), ('花', '花'),
+    ('蓮', '莲'), ('金', '金'), ('祖', '祖'), ('澎', '澎'),
+    ('湖', '湖'), ('綠', '绿'), ('嶼', '屿'),
+];
+
+/// `tradi2simp` — approximate traditional→simplified using the map above.
+pub fn tradi2simp(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            TRADI2SIMP
+                .iter()
+                .find(|(t, _)| *t == c)
+                .map(|(_, s2)| *s2)
+                .unwrap_or(c)
+        })
+        .collect()
+}
+
+/// `corpNorm` helper tokenizer approximation — splits CJK runs per
+/// character and keeps Latin tokens whole (rag_tokenizer equivalent).
+fn tokenize_corp(nm: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut lat = String::new();
+    for c in nm.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == ',' || c == '+' {
+            lat.push(c);
+        } else {
+            if !lat.is_empty() {
+                out.push(std::mem::take(&mut lat));
+            }
+            if !c.is_whitespace() {
+                out.push(c.to_string());
+            }
+        }
+    }
+    if !lat.is_empty() {
+        out.push(lat);
+    }
+    out
+}
+
+/// `CorporationEntity` — full port of
+/// `deepdoc/parser/resume/entities/corporations.py`.
+pub struct CorporationEntity;
+
+const CORP_BAIKE_CSV: &str = include_str!("data/resume/corp_baike_len.csv");
+const CORP_TKS_JSON: &str = include_str!("data/resume/corp.tks.freq.json");
+const GOOD_CORP_JSON: &str = include_str!("data/resume/good_corp.json");
+const CORP_TAG_JSON: &str = include_str!("data/resume/corp_tag.json");
+
+/// `baike` — corporations.py:40-46: cid → baike length (default 0).
+pub fn baike(cid: &str, default_v: i64) -> i64 {
+    for line in CORP_BAIKE_CSV.lines().skip(1) {
+        let mut cols = line.split('\t');
+        let id = cols.next().unwrap_or("").trim();
+        if id == cid {
+            if let Some(len) = cols.next().and_then(|v| v.trim().parse::<i64>().ok()) {
+                return len;
+            }
+        }
+    }
+    default_v
+}
+
+/// `CORP_TKS` — the token-frequency list (token dictionary).
+fn corp_tks() -> std::collections::HashSet<String> {
+    let v: serde_json::Value = serde_json::from_str(CORP_TKS_JSON).unwrap_or(serde_json::Value::Null);
+    v.as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// `rmNoise` — corporations.py:88-91.
+pub fn rm_noise(n: &str) -> String {
+    let re_paren = regex::Regex::new(r"[(（][^()（）]+[)）]").unwrap();
+    let n = re_paren.replace_all(n, "");
+    let re_sep = regex::Regex::new(r"[,. &（）()]+").unwrap();
+    re_sep.replace_all(&n, "").into_owned()
+}
+
+/// `corpNorm` — corporations.py:49-85 (approximate; tradi2simp and
+/// tokenization are approximated per the notes above).
+pub fn corp_norm(nm: &str, add_region: bool) -> String {
+    if nm.is_empty() {
+        return String::new();
+    }
+    // tradi2simp(strQ2B(nm)).lower()
+    let mut nm = tradi2simp(&str_q2b(nm)).to_lowercase();
+    // &amp; → &
+    nm = nm.replace("&amp;", "&");
+    // strip separators
+    let re_sep = regex::Regex::new("[()（）+'\"\t *\\【】-]+").unwrap();
+    nm = re_sep.replace_all(&nm, " ").into_owned();
+    // strip suffixes (case-insensitive)
+    let re_suffix = regex::Regex::new(r"(?i)([—-]+.*| +co\..*|corp\..*| +inc\..*| +ltd.*)").unwrap();
+    nm = re_suffix.replace_all(&nm, "").into_owned();
+    let re_suffix2 = regex::Regex::new(r"(?i)(计算机|技术|(技术|科技|网络)*有限公司|公司|有限|研发中心|中国|总部)$").unwrap();
+    nm = re_suffix2.replace_all(&nm, "").into_owned();
+    // length guard
+    if nm.chars().count() < 5 && !is_name(&nm.chars().take(2).collect::<String>()) {
+        return nm;
+    }
+    // tokenize and filter regions + CORP_TKS
+    let tks = tokenize_corp(&nm);
+    let reg: Vec<String> = tks
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| is_name(t) && !(t.as_str() == "中国" && *i == 0))
+        .map(|(_, t)| t.clone())
+        .collect();
+    let tks_set = corp_tks();
+    let mut out = String::new();
+    for t in &tks {
+        if is_name(t) || tks_set.contains(t) {
+            continue;
+        }
+        let re_alpha = regex::Regex::new(r"[0-9a-zA-Z,.]").unwrap();
+        if re_alpha.is_match(t) && re_alpha.is_match(&out.chars().last().map(|c| c.to_string()).unwrap_or_default()) {
+            out.push(' ');
+        }
+        out.push_str(t);
+    }
+    // boundary trimming
+    let r1 = regex::Regex::new(r"^([^a-z0-9 \(\)&]{2,})[a-z ]{4,}$").unwrap();
+    if let Some(caps) = r1.captures(out.trim()) {
+        out = caps.get(1).unwrap().as_str().to_string();
+    }
+    let r2 = regex::Regex::new(r"^([a-z ]{3,})[^a-z0-9 \(\)&]{2,}$").unwrap();
+    if let Some(caps) = r2.captures(out.trim()) {
+        out = caps.get(1).unwrap().as_str().to_string();
+    }
+    let region_suffix = if add_region && !reg.is_empty() {
+        format!("({})", reg[0])
+    } else {
+        String::new()
+    };
+    format!("{}{}", out.trim(), region_suffix)
+}
+
+/// `GOOD_CORP` — corporations.py:94: normalized good-company set.
+fn good_corp_set() -> std::collections::HashSet<String> {
+    let v: serde_json::Value = serde_json::from_str(GOOD_CORP_JSON).unwrap_or(serde_json::Value::Null);
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(|c| corp_norm(&rm_noise(c), false))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `CORP_TAG` — corporations.py:95-99: normalized name → tags.
+fn corp_tag_map() -> std::collections::HashMap<String, Vec<String>> {
+    let v: serde_json::Value = serde_json::from_str(CORP_TAG_JSON).unwrap_or(serde_json::Value::Null);
+    let mut out = std::collections::HashMap::new();
+    if let Some(obj) = v.as_object() {
+        for (c, tags) in obj {
+            let cc = corp_norm(&rm_noise(c), false);
+            if cc.is_empty() {
+                continue;
+            }
+            let t = tags
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            out.insert(cc, t);
+        }
+    }
+    out
+}
+
+/// `is_good` — corporations.py:102-114 (renamed `corp_is_good` to avoid
+/// collision with the schools.py entity which also defines `is_good`).
+pub fn corp_is_good(nm: &str) -> bool {
+    if nm.contains("外派") {
+        return false;
+    }
+    let nm = corp_norm(&rm_noise(nm), false);
+    for n in good_corp_set() {
+        let re_alpha_end = regex::Regex::new(r"[0-9a-zA-Z]+$").unwrap();
+        if re_alpha_end.is_match(&n) {
+            if n == nm {
+                return true;
+            }
+        } else if nm.contains(&n) {
+            return true;
+        }
+    }
+    false
+}
+
+/// `corp_tag` — corporations.py:117-129.
+pub fn corp_tag(nm: &str) -> Vec<String> {
+    let nm = corp_norm(&rm_noise(nm), false);
+    let re_alpha = regex::Regex::new(r"[0-9a-zA-Z., ]+$").unwrap();
+    for (n, tags) in corp_tag_map() {
+        if re_alpha.is_match(&n) {
+            if n == nm {
+                return tags;
+            }
+        } else if nm.contains(&n) {
+            if n.chars().count() < 3 && nm.chars().count() / n.chars().count().max(1) >= 2 {
+                continue;
+            }
+            return tags;
+        }
+    }
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
