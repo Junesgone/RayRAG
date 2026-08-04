@@ -142,6 +142,8 @@ pub async fn dashboard(
     let zh = detect_lang(req.headers());
     let kbs = state.kbs.list();
     let chunks = state.engine.read().unwrap().len();
+    let docs_count: usize = state.docs.list_all().len();
+    let conv_count = state.conversations.list().len();
     let emb = if state.embedder.is_some() {
         "✅"
     } else {
@@ -170,6 +172,10 @@ pub async fn dashboard(
     b.push_str(&kbs.len().to_string());
     b.push_str("</span></div><div class='sc'><span class='lbl'>Chunks</span><span class='val'>");
     b.push_str(&chunks.to_string());
+    b.push_str("</span></div><div class='sc'><span class='lbl'>Docs</span><span class='val'>");
+    b.push_str(&docs_count.to_string());
+    b.push_str("</span></div><div class='sc'><span class='lbl'>Chats</span><span class='val'>");
+    b.push_str(&conv_count.to_string());
     b.push_str("</span></div><div class='sc'><span class='lbl'>Embedder</span><span class='val' style='font-size:20px'>");
     b.push_str(emb);
     b.push_str("</span></div><div class='sc'><span class='lbl'>LLM</span><span class='val' style='font-size:20px'>");

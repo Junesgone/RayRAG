@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 第 34 轮：dashboard 统计增强
+
+- `web.rs` dashboard：统计卡片新增 Docs（文档总数）/ Chats（会话数）——KBs/Chunks/Docs/Chats/Embedder/LLM 六卡片
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 33 轮：图谱上下文展示
 
 - `web.rs` search_page：结果区下方渲染 `🔗 Graph Context` 卡片（graph_context 数组，区分图来源与向量引用）
