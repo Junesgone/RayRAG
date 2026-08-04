@@ -1,5 +1,11 @@
 # RayRAG 运维台账
 
+## 2026-08-04 UI 修复：providers 页 500 根因
+
+- 根因：`require_api_auth` 中间件只保护 /api/v1/ 路径（`!starts_with("/api/v1/")` 直接跳过），网页路由从不注入 AuthContext；providers_page 错误要求 `Extension<AuthContext>` → 未登录/登录访问都 500
+- 修复：providers_page 移除 Extension 依赖（页面展示全局 providers + reranker 配置区，无需用户上下文）
+- 附带：require_api_auth 增加 cookie `rayrag_token` 兜底（API 的浏览器 cookie 访问可用）
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 认证兜底：protected 页面 cookie 支持
 
 - `server.rs` require_api_auth：Authorization Bearer 之外，增加 cookie `rayrag_token` 兜底（页面导航访问 protected 页如 /providers 时不再 500）

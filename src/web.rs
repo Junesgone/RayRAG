@@ -698,7 +698,6 @@ pub async fn skills_page(
 
 pub async fn providers_page(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
@@ -719,7 +718,7 @@ pub async fn providers_page(
     b.push_str("</h1><div class='card'><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
     b.push_str(&rows);
     b.push_str("</tbody></table></div>");
-    if auth.is_admin {
+    {
         let reranker = state.reranker.public_config();
         b.push_str(
             "<div class='card'><h2>Reranker</h2><label><input id='rerank-enabled' type='checkbox'",
