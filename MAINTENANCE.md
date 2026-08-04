@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 容器回归终验（UI 第 26-29 轮）
+
+- 重建镜像 → 容器实测：
+  - 14 页面全 200
+  - agents 页：agentQ/agentFilter/agentTb 搜索就位 ✓
+  - admin 页：userQ/userFilter/userTb 搜索就位 ✓
+  - dataset 页：Clear All + renameDoc（✏️ 重命名）就位 ✓
 ## 2026-08-04 UI 第 29 轮：agents 搜索
 
 - `web.rs` agents_page：搜索框（agentQ → agentFilter 前端过滤 data-name）+ tbody id
