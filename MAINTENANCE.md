@@ -1,5 +1,12 @@
 # RayRAG 运维台账
 
+## 2026-08-04 SearXNG 自托管接入验证
+
+- Docker 部署 SearXNG（docker.m.daocloud.io/searxng/searxng，端口 18888，容器 rayrag-searxng）
+- 中国网络适配：默认引擎（brave/ddg/wikipedia）全 timeout → **启用 bing 引擎 + cn.bing.com base_url**（settings.yml: disabled false + base_url）→ JSON 200 + 10 条结果
+- 配置要点：`search.formats` 加 json（默认仅 html 返回 403）；SEARXNG_SECRET 随机
+- RayRAG 客户端格式匹配（/search?q=&format=json）；compose 透传 SEARXNG_URL
+- 用法：`SEARXNG_URL=http://192.168.3.6:18888`（agent searxng 工具 / SEARXNG_URL env）
 ## 2026-08-04 覆盖矩阵终检
 
 - `docs/ragflow-v0.26.4-coverage.md`（固定快照，4441 文件）：**unmapped = 0**（无映射缺口）
