@@ -1,5 +1,9 @@
 # RayRAG 运维台账
 
+## 2026-08-05 运维监控脚本
+
+- `scripts/health-check.sh`：一键检查容器（rayrag/postgres/SearXNG）+ healthz + 14 页面 + GPU 四链路（embedding/LLM/rerank 带 key/SearXNG）
+- 实测全绿（rerank 需 Bearer mxbai-rerank-key）
 ## 2026-08-04 模板全集容器实测（3/3）
 
 - 网络搜索模板：Begin→SearXNG（SEARXNG_URL env）→Message——cn.bing 真实结果（百度等 URL）进回答（1928 字符）✓
