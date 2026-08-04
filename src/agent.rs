@@ -7530,9 +7530,15 @@ fn domestic_search_outputs(results: &[Value], provider_label: &str) -> Result<Ta
 }
 
 fn set_domestic_search_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
+    // 错误必须写入 formalized_content，让下游 answer 节点感知工具失败，
+    // 而不是拿到空内容后由 LLM 自由发挥。
+    let message = format!("[Search error] {error}");
     runtime.outputs.insert(
         node.id.clone(),
-        Map::from_iter([("_ERROR".into(), Value::String(error))]),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error)),
+            ("formalized_content".into(), Value::String(message)),
+        ]),
     );
 }
 

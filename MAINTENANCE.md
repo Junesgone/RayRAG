@@ -1,5 +1,10 @@
 # RayRAG 运维台账
 
+## 2026-08-04 agent 工具错误传播修复
+
+- 发现：searxng 节点失败时回答"搜索功能已就绪"（LLM 自由发挥）——`set_domestic_search_error` 只设 `_ERROR`，formalized_content 为空
+- 修复：错误同时写入 formalized_content（`[Search error] ...`）——下游 answer 感知工具失败
+- 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 最终容器终验（UI 38-40 + SearXNG + 性能）
 
 - 重建镜像 → 容器实测：
