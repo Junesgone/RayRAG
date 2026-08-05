@@ -1,3 +1,8 @@
+## 2026-08-05 v0.2.0 容器验证
+
+- 部署成功：容器 healthy、healthz 200、7 页面全 200
+- 已提交 05e6b35（v0.2.0：prompts 全量 + utils + 解析器行为）
+
 ## 2026-08-05 v0.2.0：prompts 全量 + utils 服务层 + 解析器行为
 
 - prompts.rs +1390：26 常量（resume 双语/TOC 管线/vision describe/related_question）
