@@ -91,6 +91,7 @@ pub mod qa;
 pub mod qweather;
 pub mod raptor;
 pub mod rerank;
+pub mod resources;
 pub mod resume;
 pub mod runtime;
 pub mod sandbox;

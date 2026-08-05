@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.2.2] — 2026-08-05
+
+### Added
+
+- **api/common**（`src/api/common.rs`）：ApiError/ApiErrorKind（400/403/404/409/500
+  信封输出 `{"code","message"}`）、ok_json、base64、TeamPermission 检查。
+- **运行时配置**（`src/api/runtime_config.rs`）：RwLock 热更新（init/get/get_env/
+  set_env/load_config_manager/set_service_db，对齐 reload_config_base）。
+- **联合服务**：memory_message（消息记忆读写）/tenant_model（租户模型绑定）/
+  user_account 语义补入 api 层。
+- **dialog.rs**：is_aggregate_sql/is_row_count_question/add_kb_filter（UUID 注入
+  防护 + RAGFlow 两处怪癖忠实复刻）。
+- **工具契约核对**（`src/runtime.rs` +278 / `src/agent.rs` +34）：17/19 工具已对齐；
+  JIN10_INPUTS 补 7 参数、QWEATHER 补 web_apikey、retrieval 补 15 输入 4 输出、
+  **wencai 别名**（canvas component_name=WenCai 此前匹配失败）。
+- **资源加载器**（`src/resources.rs` 新建）：ner.json（235KB）+ synonym.json
+  （268KB）磁盘加载（RAYRAG_RES_PATH 环境解析、缺失降级空表、值→键镜像）；
+  CvModel 页面转写 prompt + figure 描述调用流补全。
+
 ## [0.2.1] — 2026-08-05
 
 ### Added

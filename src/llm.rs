@@ -2326,6 +2326,31 @@ pub struct OpenAiCvModel {
     lang: String,
 }
 
+/// `vision_llm_describe_prompt.md` — default PDF page transcription prompt
+/// used by RAGFlow `cv_model.Base.describe` (GptV4 family). The
+/// `deepdoc/vision` local-ONNX recognizers only produce raw text runs; this
+/// LLM prompt is what turns a rendered page image into clean Markdown, and
+/// is the CvModel counterpart of the same constant in `crate::vision`.
+pub const VISION_LLM_DESCRIBE_PROMPT: &str = r#"## INSTRUCTION
+Transcribe the content from the provided PDF page image into clean Markdown format.
+
+- Only output the content transcribed from the image.
+- Do NOT output this instruction or any other explanation.
+- If the content is missing or you do not understand the input, return an empty string.
+
+## RULES
+1. Do NOT generate examples, demonstrations, or templates.
+2. Do NOT output any extra text such as 'Example', 'Example Output', or similar.
+3. Do NOT generate any tables, headings, or content that is not explicitly present in the image.
+4. Transcribe content word-for-word. Do NOT modify, translate, or omit any content.
+5. Do NOT explain Markdown or mention that you are using Markdown.
+6. Do NOT wrap the output in ```markdown or ``` blocks.
+7. Only apply Markdown structure to headings, paragraphs, lists, and tables, strictly based on the layout of the image. Do NOT create tables unless an actual table exists in the image.
+8. Preserve the original language, information, and order exactly as shown in the image.
+
+> If you do not detect valid content in the image, return an empty string.
+"#;
+
 impl OpenAiCvModel {
     pub fn new(client: LlmClient, lang: &str) -> Self {
         Self {
@@ -2344,6 +2369,47 @@ impl OpenAiCvModel {
                 }}
             ]
         }])
+    }
+
+    /// Describe an image as a rendered document page — RAGFlow
+    /// `cv_model.Base.describe` semantics with the full
+    /// `vision_llm_describe_prompt.md` transcription prompt (the
+    /// `deepdoc/vision` layout/OCR recognizers already extracted the text
+    /// runs; this is the page-level Markdown pass).
+    pub async fn describe_page(&self, image: &[u8]) -> Result<String> {
+        self.describe_with_prompt(image, VISION_LLM_DESCRIBE_PROMPT)
+            .await
+    }
+
+    /// Describe a figure (chart / screenshot) — RAGFlow
+    /// `vision_llm_figure_describe_prompt.md`, the CvModel-side entry of
+    /// the `deepdoc/vision` figure semantics (the figure parser routes
+    /// cropped `figure` layout blocks through this prompt).
+    pub async fn describe_figure(&self, image: &[u8]) -> Result<String> {
+        let prompt = crate::parser::figure::figure_describe_prompt();
+        self.describe_with_prompt(image, &prompt).await
+    }
+
+    /// Describe a figure with surrounding document context — RAGFlow
+    /// `vision_llm_figure_describe_prompt_with_context.md`. Context is only
+    /// used to disambiguate terms visible in the image; when both sides are
+    /// empty this falls back to the plain figure prompt, mirroring
+    /// `figure_parser.py VisionFigureParser.process`.
+    pub async fn describe_figure_with_context(
+        &self,
+        image: &[u8],
+        context_above: &str,
+        context_below: &str,
+    ) -> Result<String> {
+        let prompt = if context_above.is_empty() && context_below.is_empty() {
+            crate::parser::figure::figure_describe_prompt()
+        } else {
+            crate::parser::figure::figure_describe_prompt_with_context(
+                context_above,
+                context_below,
+            )
+        };
+        self.describe_with_prompt(image, &prompt).await
     }
 }
 
@@ -2747,6 +2813,127 @@ mod model_factory_tests {
             msgs[0]["content"][1]["image_url"]["url"],
             "data:image/png;base64,QUJD"
         );
+    }
+
+    #[test]
+    fn vision_describe_prompt_constant_is_ragflow_pdf_transcription() {
+        // Port of `vision_llm_describe_prompt.md` — the default prompt of
+        // RAGFlow `cv_model.Base.describe` (GptV4 family).
+        assert!(VISION_LLM_DESCRIBE_PROMPT.contains("PDF page image"));
+        assert!(VISION_LLM_DESCRIBE_PROMPT.contains("clean Markdown"));
+        assert!(VISION_LLM_DESCRIBE_PROMPT.contains("return an empty string"));
+    }
+
+    #[tokio::test]
+    async fn describe_figure_with_context_replaces_placeholders_and_falls_back() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        // Mock server that records the text prompt of the vision request.
+        let prompts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = prompts.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Json<serde_json::Value>| {
+                let captured = captured.clone();
+                async move {
+                    let text = body["messages"][0]["content"][0]["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    captured.lock().await.push(text);
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "figure text"}}],
+                        "usage": {"total_tokens": 7}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: "k".into(),
+            model: "gpt-4o".into(),
+            ..LlmConfig::default()
+        });
+        let cv = OpenAiCvModel::new(client, "Chinese");
+
+        // With context: the with-context prompt with placeholders replaced.
+        let out = cv
+            .describe_figure_with_context(b"img", "上文", "下文")
+            .await
+            .unwrap();
+        assert_eq!(out, "figure text");
+        let sent = prompts.lock().await;
+        let with_context = &sent[0];
+        assert!(with_context.contains("{{ context_above }}") == false);
+        assert!(with_context.contains("上文"));
+        assert!(with_context.contains("下文"));
+        assert!(with_context.contains("expert visual data analyst"));
+        drop(sent);
+
+        // Without context: the plain figure prompt, no placeholders left.
+        let _ = cv
+            .describe_figure_with_context(b"img", "", "")
+            .await
+            .unwrap();
+        let sent = prompts.lock().await;
+        let plain = &sent[1];
+        assert!(!plain.contains("{{ context_above }}"));
+        assert!(plain.contains("## ROLE"));
+        assert!(!plain.contains("上文"));
+    }
+
+    #[tokio::test]
+    async fn describe_page_uses_full_transcription_prompt() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let prompts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = prompts.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Json<serde_json::Value>| {
+                let captured = captured.clone();
+                async move {
+                    let text = body["messages"][0]["content"][0]["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    captured.lock().await.push(text);
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "transcribed page"}}],
+                        "usage": {"total_tokens": 9}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: "k".into(),
+            model: "gpt-4o".into(),
+            ..LlmConfig::default()
+        });
+        let cv = OpenAiCvModel::new(client, "Chinese");
+        let out = cv.describe_page(b"page-image").await.unwrap();
+        assert_eq!(out, "transcribed page");
+        let sent = prompts.lock().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0], VISION_LLM_DESCRIBE_PROMPT);
+        // Image part still travels as an image_url data URL.
     }
 
     #[test]

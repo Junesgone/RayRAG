@@ -1,3 +1,12 @@
+## 2026-08-05 v0.2.2：common/热配置/工具契约/资源加载
+
+- api/common.rs：ApiError 信封 + TeamPermission；runtime_config.rs 热更新
+- dialog.rs：use_sql 语义（is_aggregate_sql/add_kb_filter）
+- runtime.rs：jin10/qweather/retrieval 参数补全 + wencai 别名
+- resources.rs：ner/synonym.json 加载器（env 路径 + 降级）
+- 测试基线：**1076 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 200 → **166**
+
 ## 2026-08-05 v0.2.1 容器验证
 
 - 部署成功：容器 healthy、healthz 200、6 页面全 200；admin/version 路由已注册（401=需认证）

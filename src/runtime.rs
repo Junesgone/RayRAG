@@ -582,6 +582,31 @@ const JIN10_INPUTS: &[(&str, &str)] = &[
         "query",
         "Jin10 filter keyword or Canvas selector; defaults to sys.query",
     ),
+    (
+        "secret_key",
+        "Jin10 open-data secret key; JIN10_SECRET_KEY is the fallback",
+    ),
+    (
+        "flash_type",
+        "Flash category 1..=5 (RAGFlow flash_type; defaults to 1)",
+    ),
+    (
+        "calendar_type",
+        "Calendar category: cj/qh/hk/us (defaults to cj)",
+    ),
+    (
+        "calendar_datatype",
+        "Calendar datatype: data/event/holiday (defaults to data)",
+    ),
+    (
+        "symbols_type",
+        "Symbols type: GOODS/FOREX/FUTURE/CRYPTO (defaults to GOODS)",
+    ),
+    (
+        "symbols_datatype",
+        "Symbols datatype: symbols/quotes (defaults to symbols)",
+    ),
+    ("filter", "Jin10 exclude filter (flash/news)"),
     ("top_n", "Positive result limit; defaults to 10"),
     (
         "max_retries",
@@ -595,12 +620,17 @@ const JIN10_OUTPUTS: &[(&str, &str)] = &[
         "RAGFlow-style Jin10 finance references (title/snippet)",
     ),
     ("json", "Go-compatible results envelope with Jin10 rows"),
+    ("doc_aggs", "Jin10-result document aggregations"),
     ("_ERROR", "Terminal Jin10 request or parsing error"),
 ];
 const QWEATHER_INPUTS: &[(&str, &str)] = &[
     (
         "location",
         "QWeather city name or Canvas selector; defaults to sys.query",
+    ),
+    (
+        "web_apikey",
+        "QWeather Web API key; QWEATHER_API_KEY is the fallback",
     ),
     (
         "type",
@@ -625,6 +655,7 @@ const QWEATHER_OUTPUTS: &[(&str, &str)] = &[
         "RAGFlow-style QWeather references (title/snippet)",
     ),
     ("json", "Go-compatible results envelope with QWeather rows"),
+    ("doc_aggs", "QWeather-result document aggregations"),
     ("_ERROR", "Terminal QWeather request or parsing error"),
 ];
 const SEARXNG_INPUTS: &[(&str, &str)] = &[
@@ -1089,8 +1120,59 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
     StaticComponentDescriptor {
         name: "retrieval",
         category: ComponentCategory::Agent,
-        inputs: NO_FIELDS,
-        outputs: NO_FIELDS,
+        inputs: &[
+            (
+                "query",
+                "Dataset search keywords or Canvas selector; defaults to sys.query",
+            ),
+            ("empty_response", "Fallback content when no chunk matches"),
+            (
+                "dataset_ids",
+                "Dataset ids or Canvas variable references (kb_ids is the deprecated alias)",
+            ),
+            ("kb_ids", "Deprecated alias of dataset_ids"),
+            (
+                "similarity_threshold",
+                "Vector similarity cutoff between 0 and 1; defaults to 0.2",
+            ),
+            (
+                "keywords_similarity_weight",
+                "Keyword/vector weight between 0 and 1; defaults to 0.5",
+            ),
+            ("top_n", "Positive result limit; defaults to 8"),
+            ("top_k", "Positive candidate cap; defaults to 1024"),
+            ("rerank_id", "Optional rerank model id"),
+            ("meta_data_filter", "Manual metadata filter object"),
+            (
+                "retrieval_from",
+                "dataset (only supported source; other values fail closed)",
+            ),
+            (
+                "memory_ids",
+                "Memory retrieval ids; non-empty values fail closed",
+            ),
+            (
+                "use_kg",
+                "Knowledge-graph mode; true fails closed",
+            ),
+            (
+                "toc_enhance",
+                "TOC enhancement; true fails closed",
+            ),
+            (
+                "cross_languages",
+                "Cross-language expansion ids; non-empty values fail closed",
+            ),
+        ],
+        outputs: &[
+            (
+                "formalized_content",
+                "RAGFlow kb_prompt-style retrieval references",
+            ),
+            ("json", "Retrieved chunks"),
+            ("doc_aggs", "Retrieval document aggregations"),
+            ("_ERROR", "Terminal retrieval or configuration error"),
+        ],
     },
     StaticComponentDescriptor {
         name: "stringtransform",
@@ -1231,6 +1313,28 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
     },
     StaticComponentDescriptor {
         name: "iwencai",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            (
+                "query",
+                "The question/conditions to select stocks (defaults to sys.query)",
+            ),
+            ("top_n", "Max result rows (default 10)"),
+            (
+                "query_type",
+                "stock/zhishu/fund/hkstock/usstock/threeboard/conbond/insurance/futures/lccp/foreign_exchange",
+            ),
+            ("cookie", "Optional iwencai session cookie"),
+        ],
+        outputs: &[(
+            "formalized_content",
+            "Markdown tables rendered from the iwencai answer",
+        )],
+    },
+    StaticComponentDescriptor {
+        // RAGFlow canvas component_name is `WenCai`; keep the lowercase
+        // `wencai` alias registered so saved canvases validate and dispatch.
+        name: "wencai",
         category: ComponentCategory::Agent,
         inputs: &[
             (
@@ -2175,5 +2279,175 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["content"]
         );
+    }
+
+    #[test]
+    fn jin10_descriptor_matches_jin10_py_contract() {
+        assert!(is_supported_agent_component("jin10"));
+        let all = component_descriptors(&[]);
+        let jin10 = all
+            .iter()
+            .find(|descriptor| descriptor.name == "jin10")
+            .unwrap();
+        assert_eq!(jin10.category, "agent");
+        // RAGFlow Jin10Param canvas fields (secret_key via env fallback) plus
+        // the shared DSL retry fields must all be documented.
+        assert_eq!(
+            jin10
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "calendar_datatype",
+                "calendar_type",
+                "delay_after_error",
+                "filter",
+                "flash_type",
+                "max_retries",
+                "query",
+                "secret_key",
+                "symbols_datatype",
+                "symbols_type",
+                "top_n",
+                "type"
+            ]
+        );
+        assert_eq!(
+            jin10
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+    }
+
+    #[test]
+    fn qweather_descriptor_matches_qweather_py_contract() {
+        assert!(is_supported_agent_component("qweather"));
+        let all = component_descriptors(&[]);
+        let qweather = all
+            .iter()
+            .find(|descriptor| descriptor.name == "qweather")
+            .unwrap();
+        assert_eq!(qweather.category, "agent");
+        // RAGFlow QWeatherParam: web_apikey, lang, type, user_type (paid),
+        // time_period plus the shared DSL retry fields.
+        assert_eq!(
+            qweather
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "delay_after_error",
+                "lang",
+                "location",
+                "max_retries",
+                "paid",
+                "time_period",
+                "top_n",
+                "type",
+                "web_apikey"
+            ]
+        );
+        assert_eq!(
+            qweather
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+    }
+
+    #[test]
+    fn retrieval_descriptor_exposes_ragflow_retrieval_params() {
+        assert!(is_supported_agent_component("retrieval"));
+        let all = component_descriptors(&[]);
+        let retrieval = all
+            .iter()
+            .find(|descriptor| descriptor.name == "retrieval")
+            .unwrap();
+        assert_eq!(retrieval.category, "agent");
+        // RAGFlow RetrievalParam fields exercised by the Rust executor and
+        // validator, including the fail-closed unsupported modes.
+        assert_eq!(
+            retrieval
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "cross_languages",
+                "dataset_ids",
+                "empty_response",
+                "kb_ids",
+                "keywords_similarity_weight",
+                "memory_ids",
+                "meta_data_filter",
+                "query",
+                "rerank_id",
+                "retrieval_from",
+                "similarity_threshold",
+                "toc_enhance",
+                "top_k",
+                "top_n",
+                "use_kg"
+            ]
+        );
+        assert_eq!(
+            retrieval
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+    }
+
+    #[test]
+    fn ragflow_agent_tools_package_is_fully_registered() {
+        // Every non-base module of RAGFlow agent/tools/ must be reachable as
+        // an Agent component (tavily maps to tavilysearch + tavilyextract,
+        // deepl maps to translate, wencai maps to iwencai).
+        for name in [
+            "akshare",
+            "arxiv",
+            "code_exec",
+            "crawler",
+            "duckduckgo",
+            "email",
+            "exesql",
+            "github",
+            "google",
+            "googlescholar",
+            "jin10",
+            "pubmed",
+            "qweather",
+            "retrieval",
+            "searxng",
+            "tavilysearch",
+            "tavilyextract",
+            "tushare",
+            "iwencai",
+            "wencai",
+            "wikipedia",
+            "yahoofinance",
+            "translate",
+        ] {
+            assert!(
+                is_supported_agent_component(name),
+                "RAGFlow tool module must be registered: {name}"
+            );
+        }
+        assert!(is_supported_agent_component("SearXNG"));
+        assert!(is_supported_agent_component("QWeather"));
+        assert!(is_supported_agent_component("Jin10"));
+        assert!(is_supported_agent_component("Retrieval"));
+        assert!(is_supported_agent_component("TavilySearch"));
+        assert!(is_supported_agent_component("WenCai"));
+        assert!(is_supported_agent_component("YahooFinance"));
     }
 }

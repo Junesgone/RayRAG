@@ -159,6 +159,161 @@ fn regex_replace_all(pattern: &str, input: &str, replacement: &str) -> String {
         .unwrap_or_else(|_| input.to_string())
 }
 
+// ── use_sql helpers (appended) ─────────────────────────────────────────────
+//
+// Ports of `DialogService.use_sql` pure helpers from RAGFlow
+// `api/db/services/dialog_service.py`: aggregate-SQL detection, row-count
+// question detection and the kb_id WHERE-clause injection guard.
+
+/// `use_sql.is_aggregate_sql` — true when the SQL contains an aggregate
+/// function (COUNT, SUM, AVG, MAX, MIN, DISTINCT).
+pub fn is_aggregate_sql(sql_text: &str) -> bool {
+    AGGREGATE_PATTERN.is_match(&sql_text.to_ascii_lowercase())
+}
+
+/// `use_sql.is_row_count_question` — true when the question asks for a total
+/// row count of a dataset/table/spreadsheet/excel.
+pub fn is_row_count_question(q: &str) -> bool {
+    let q = q.to_ascii_lowercase();
+    if !ROW_COUNT_PATTERN.is_match(&q) {
+        return false;
+    }
+    ROW_COUNT_TARGET_PATTERN.is_match(&q)
+}
+
+/// `use_sql.add_kb_filter` — inject a validated `kb_id` WHERE filter for
+/// ES/OpenSearch engines (Infinity encodes the KB in the table name, so it is
+/// a no-op there — callers skip it). Every `kb_id` is validated as a canonical
+/// UUID before interpolation to prevent SQL injection, raising RAGFlow's
+/// `"Invalid kb_id format: {value!r}"` as an `ApiError` (HTTP 400).
+pub fn add_kb_filter(sql: &str, kb_ids: &[String]) -> Result<String, crate::api::common::ApiError> {
+    if kb_ids.is_empty() {
+        return Ok(sql.to_string());
+    }
+    for kid in kb_ids {
+        if uuid::Uuid::parse_str(kid).is_err() {
+            return Err(crate::api::common::ApiError::admin(format!(
+                "Invalid kb_id format: {kid:?}"
+            )));
+        }
+    }
+    let kb_filter = if kb_ids.len() == 1 {
+        format!("kb_id = '{}'", kb_ids[0])
+    } else {
+        let alternatives = kb_ids
+            .iter()
+            .map(|kid| format!("kb_id = '{kid}'"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        format!("({alternatives})")
+    };
+    let lower = sql.to_ascii_lowercase();
+    let mut out = sql.to_string();
+    if !lower.contains("where ") {
+        // RAGFlow splits the *lowercased* SQL on "order by", so the head and
+        // tail keep lowercase in this branch (a faithful quirk of
+        // `use_sql.add_kb_filter`).
+        if let Some(order_index) = lower.find("order by") {
+            let head = &lower[..order_index];
+            let tail = &lower[order_index + "order by".len()..];
+            out = format!("{head} WHERE {kb_filter}  order by {tail}");
+        } else {
+            out = format!("{out} WHERE {kb_filter}");
+        }
+    } else if !lower.contains("kb_id =") && !lower.contains("kb_id=") {
+        // re.sub(r"\bwhere\b ", f"where {kb_filter} and ", sql, IGNORECASE):
+        // the matched token is replaced by a lowercase "where" clause.
+        out = WHERE_RE
+            .replace(&out, format!("where {kb_filter} and "))
+            .to_string();
+    }
+    Ok(out)
+}
+
+static AGGREGATE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(count|sum|avg|max|min|distinct)\s*\(").unwrap());
+static ROW_COUNT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\bhow many rows\b|\bnumber of rows\b|\brow count\b").unwrap()
+});
+static ROW_COUNT_TARGET_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bdataset\b|\btable\b|\bspreadsheet\b|\bexcel\b").unwrap());
+static WHERE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bwhere\b ").unwrap());
+
+#[cfg(test)]
+mod use_sql_tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_sql_detection() {
+        assert!(is_aggregate_sql("SELECT COUNT(*) FROM t"));
+        assert!(is_aggregate_sql("select count(*) from t"));
+        assert!(is_aggregate_sql("SELECT SUM(amount) FROM t"));
+        assert!(is_aggregate_sql("SELECT DISTINCT(name) FROM t"));
+        assert!(!is_aggregate_sql("SELECT name FROM t WHERE id = 1"));
+        assert!(!is_aggregate_sql(""));
+    }
+
+    #[test]
+    fn row_count_question_detection() {
+        assert!(is_row_count_question("How many rows are in the dataset?"));
+        assert!(is_row_count_question("number of rows in the excel file"));
+        assert!(!is_row_count_question("how many rows in the chart"));
+        assert!(!is_row_count_question("row count of my query"));
+    }
+
+    #[test]
+    fn add_kb_filter_injects_validated_where_clause() {
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1",
+            &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM ragflow_t1 WHERE kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6'"
+        );
+        // Multiple KBs become an OR group.
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1",
+            &[
+                "3fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+                "4fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+            ],
+        )
+        .unwrap();
+        assert!(sql.contains("WHERE (kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6' OR kb_id = '4fa85f64-5717-4562-b3fc-2c963f66afa6')"));
+        // Existing WHERE is preserved and ANDed (RAGFlow's re.sub replaces the
+        // token with a lowercase "where" clause).
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1 WHERE doc_id = 'x'",
+            &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
+        )
+        .unwrap();
+        assert!(sql.contains("where kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6' and doc_id = 'x'"));
+        // Non-UUID kb_id is rejected with the RAGFlow guard message.
+        let err = add_kb_filter("SELECT 1", &["not-a-uuid".into()]).unwrap_err();
+        assert_eq!(err.code, 400);
+        assert!(err.message.contains("Invalid kb_id format"));
+        // Empty kb list is a no-op.
+        assert_eq!(add_kb_filter("SELECT 1", &[]).unwrap(), "SELECT 1");
+    }
+
+    #[test]
+    fn add_kb_filter_respects_order_by_position() {
+        // RAGFlow lowercases the SQL in this branch (it splits the lowercased
+        // string), including the doubled spaces around the injected clause.
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1 ORDER BY created_at DESC",
+            &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "select * from ragflow_t1  WHERE kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6'  order by  created_at desc"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

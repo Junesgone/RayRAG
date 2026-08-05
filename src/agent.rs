@@ -5114,7 +5114,7 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), news);
             Ok(None)
         }
-        "iwencai" => {
+        "wencai" | "iwencai" => {
             validate_wencai_params(node)?;
             let result =
                 execute_wencai_with_provider(node, input, &wencai::WenCaiClient::default()).await?;
@@ -7902,9 +7902,21 @@ async fn execute_jin10_with_provider(
     node: &CanvasNode,
     provider: &dyn Jin10Provider,
 ) -> Result<()> {
-    let secret_key = std::env::var("JIN10_SECRET_KEY").unwrap_or_default();
+    let secret_key = node
+        .params
+        .get("secret_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| std::env::var("JIN10_SECRET_KEY").ok())
+        .unwrap_or_default();
     if secret_key.is_empty() {
-        set_domestic_search_error(runtime, node, "JIN10_SECRET_KEY is not configured".into());
+        set_domestic_search_error(
+            runtime,
+            node,
+            "JIN10_SECRET_KEY is not configured (set the env var or the node secret_key)".into(),
+        );
         return Ok(());
     }
     let r#type = match node.params.get("type").and_then(Value::as_str) {
@@ -8012,9 +8024,21 @@ async fn execute_qweather_with_provider(
     node: &CanvasNode,
     provider: &dyn QWeatherProvider,
 ) -> Result<()> {
-    let api_key = std::env::var("QWEATHER_API_KEY").unwrap_or_default();
+    let api_key = node
+        .params
+        .get("web_apikey")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| std::env::var("QWEATHER_API_KEY").ok())
+        .unwrap_or_default();
     if api_key.is_empty() {
-        set_domestic_search_error(runtime, node, "QWEATHER_API_KEY is not configured".into());
+        set_domestic_search_error(
+            runtime,
+            node,
+            "QWEATHER_API_KEY is not configured (set the env var or the node web_apikey)".into(),
+        );
         return Ok(());
     }
     let location = match node.params.get("location").and_then(Value::as_str) {
