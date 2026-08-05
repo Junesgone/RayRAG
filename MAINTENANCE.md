@@ -1,3 +1,9 @@
+## 2026-08-05 v0.3.1 容器验证
+
+- 部署成功：容器 healthy、healthz 200、5 页面抽查全 200
+- /agents showTemplates 已渲染；agent 详情页按钮视有无 agent 而定
+- 已提交 1d8f80d（v0.3.1：12 按钮补齐）
+
 ## 2026-08-05 v0.3.1：按钮 diff 核对补齐
 
 - deleg_c9865d52 单 agent 又 1800s 超时（反复 cargo check 排队）；产出落盘
