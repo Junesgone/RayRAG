@@ -1,3 +1,14 @@
+## 2026-08-05 v0.3.1 reranker 修复 + 延迟基准
+
+- 根因：8081 mxbai-rerank 手工进程绑 127.0.0.1（容器内 172.29.0.1 不可达）
+  → 502 Reranker request failed
+- 修复：启动 systemd llama-rerank.service（bge-reranker-v2-m3 @8899 绑 0.0.0.0），
+  .env RERANK_API_BASE 8081→8899、RERANK_MODEL mxbai→bge-reranker-v2-m3，重建容器
+- 验证：rerank 检索 code 0、score 1.0；三个 GPU 模型链路全部打通
+- 延迟基准（rerank 检索 5 次）：86-102ms 均值 92ms
+- 教训：手工启动的 llama-server 易绑回 127.0.0.1；优先用 systemd 服务
+  （llama-rerank.service bge@8899 / llama-embed.service / LLM@8088 已绑 0.0.0.0）
+
 ## 2026-08-05 v0.3.1 容器验证
 
 - 部署成功：容器 healthy、healthz 200、5 页面抽查全 200
