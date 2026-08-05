@@ -1,3 +1,9 @@
+## 2026-08-05 v0.3.0 容器验证
+
+- 部署成功：容器 healthy、healthz 200、11 页面全 200
+- /kbs 按钮抽查：新建知识库/kbSearch/toggleKbMenu 均渲染（zh 默认）
+- 已提交 d7111ae（v0.3.0：UI 按钮对齐）
+
 ## 2026-08-05 v0.3.0：UI 页面按钮对齐 RAGFlow
 
 - 批次 deleg_9d323be8 三子 agent 全部 1800s 超时（web.rs 大文件 + 编译排队）
