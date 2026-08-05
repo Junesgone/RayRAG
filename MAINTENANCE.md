@@ -1,3 +1,8 @@
+## 2026-08-05 v0.1.7 容器验证
+
+- 部署成功：容器 healthy、healthz 200、核心页面 200
+- 已提交 565c788（v0.1.7：QA prompts + graph NER + 组件契约）
+
 ## 2026-08-05 v0.1.7：QA prompts + graph NER + 组件契约
 
 - prompts.rs +1194：18 个 RAG 问答阶段 prompt（citation/reflect/multi-queries 等）
