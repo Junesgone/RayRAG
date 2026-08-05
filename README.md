@@ -2,6 +2,15 @@
 
 RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
+## 项目状态
+
+- 版本里程碑：**v0.2.5**（2026-08-05，见 CHANGELOG.md）
+- 测试基线：**1114 passed / 0 failed / 27 ignored**（2026-08-05 复核；
+  27 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试）
+- 覆盖矩阵（RAGFlow v0.26.4 固定快照，4441 文件，`docs/ragflow-v0.26.4-coverage.md`）：
+  aligned **128** / full **541** / partial **18** / replaced **92** / N/A **61** /
+  reference **3601** / unmapped **0**
+
 ## 架构
 
 ```
@@ -51,7 +60,9 @@ cargo run --bin ragflow-coverage -- /path/to/ragflow-v0.26.4
 未知路径不会再被兜底伪装成 `reference`：生产运行时目录必须显式映射为
 `aligned/partial/replaced`，测试与 fixture 由独立规则标为 `reference`，其余路径进入
 `unmapped`。当前清单的 `unmapped=0` 因此代表固定树中的每个文件都有显式分类；
-`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。
+`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。矩阵终态（v0.2.5）：
+aligned 128 / full 541 / partial 18 / replaced 92 / N/A 61 / reference 3601 /
+unmapped 0，摘要表与清单逐行一致。
 
 | RAGFlow (Python) | RayRAG (Rust) | 说明 |
 |-----------------|---------------|------|

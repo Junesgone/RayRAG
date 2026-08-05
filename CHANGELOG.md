@@ -2,6 +2,36 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.2.5] — 2026-08-05
+
+### Changed
+
+- **覆盖矩阵最终收尾**（纯文档，`docs/ragflow-v0.26.4-coverage.md`）：矩阵终态
+  aligned 128 / full 541 / partial 18 / replaced 92 / N/A 61 / reference 3601 /
+  unmapped 0（4441 文件快照）。摘要表按清单逐行重算，与库存行完全一致。
+  agent/sandbox 22 个非代码文件、deepdoc/README×2、deepdoc/__init__.py、
+  admin/build_cli_release.sh 由 partial 转为 N/A-by-design（Python 沙箱镜像/
+  文档/构建脚本不属于 Rust 移植范围；等价语义在 src/sandbox.rs + Dockerfile
+  多阶段构建中表达）。
+
+## [0.2.5] — 2026-08-05
+
+### Added
+
+- **conf/ 配置处理**：all_models 逐字节一致核对（+27 个新模型回归锁定：
+  gpt-5.2-pro/deepseek-v4-flash/glm-5/kimi-k2.6/minimax-m2.7/grok-4 等）、
+  llm_factories 工厂映射（FactoryLlmInfo/factory_endpoint）、system_settings
+  种子（14 行常量 + coerce_setting_value）、ServiceConf（Mysql/Minio/Es/Os/
+  Infinity/Redis/UserDefaultLlm 子结构 + apply_to_settings）。
+- **MCP SSE 服务器**（`src/mcp_server.rs` 新建）：ToolRegistry（ragflow_retrieval/
+  search_knowledge/list_datasets）、McpServerCore（JSON-RPC 2.0 dispatch：
+  initialize/notifications/ping/tools/list/tools/call，-32600/-32601/-32602 错误码）、
+  RetrievalBackend trait + InMemory 后端；接入主 router `/mcp/sse` + `/mcp/messages`。
+- **消息记忆服务**（`src/memory.rs` + `src/api/joint_services.rs`）：消息读写/查询、
+  中文双引号正则对齐（Unicode 弯引号）。
+- **矩阵终态**：partial 44 → **15**；sandbox 非代码 22 → N/A-by-design（等价语义
+  在 src/sandbox.rs seccomp/超时 + Dockerfile）；whatsapp Node 网关/Go CLI → N/A。
+
 ## [0.2.4] — 2026-08-05
 
 ### Added

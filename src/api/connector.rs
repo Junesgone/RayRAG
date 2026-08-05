@@ -169,3 +169,45 @@ pub async fn toggle_plugin(
     }
     Json(serde_json::json!({"code":0,"message":format!("Plugin {} toggled",id)})).into_response()
 }
+
+// ── MCP SSE Server surface (mcp/server/server.py) ─────────────────────────
+
+/// GET /api/v1/mcp/server — capability info of the embedded MCP SSE server:
+/// protocol version, transports and endpoints.
+pub async fn mcp_server_info() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "name": crate::mcp_server::SERVER_NAME,
+            "version": crate::mcp_server::SERVER_VERSION,
+            "protocolVersion": crate::mcp_client::PROTOCOL_VERSION,
+            "transports": ["sse", "streamable-http"],
+            "endpoints": {
+                "sse": "/sse",
+                "messages": "/messages/",
+            },
+        }
+    }))
+}
+
+/// GET /api/v1/mcp/tools/full — the full MCP tool registry served by the
+/// SSE server (includes `ragflow_retrieval` from mcp/server/server.py).
+pub async fn mcp_tools_full() -> impl IntoResponse {
+    let registry = crate::mcp_server::ToolRegistry::default();
+    Json(serde_json::json!({
+        "code": 0,
+        "data": McpServer {
+            name: crate::mcp_server::SERVER_NAME.into(),
+            version: crate::mcp_server::SERVER_VERSION.into(),
+            tools: registry
+                .list()
+                .iter()
+                .map(|tool| McpTool {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.input_schema.clone(),
+                })
+                .collect::<Vec<_>>(),
+        }
+    }))
+}

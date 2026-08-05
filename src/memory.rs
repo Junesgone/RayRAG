@@ -288,3 +288,384 @@ mod tests {
         assert!(aggregate_by_field(&[], "tags").is_empty());
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// memory/services/query.py — MsgTextQuery.
+//
+// Builds the doc-store text-match expression and keyword list used to search
+// memory messages. The English and Chinese branches mirror query.py:
+// normalization (add-space EN/ZH → lowercase → full-width→half-width →
+// trad→simp → punctuation collapse → rmWWW), term weighting, synonym
+// expansion and phrase/proximity operators, all rendered as a boosted query
+// string over the `content` field.
+// ═══════════════════════════════════════════════════════════════════════════
+
+use crate::nlp::{
+    SynonymDict, TermWeightComputer, add_space_between_eng_zh, is_chinese,
+    rag_fine_grained_tokenize, rag_tokenize, rm_www, str_q2b, sub_special_char, tradi2simp,
+};
+
+/// `common/doc_store/doc_store_base.py::MatchTextExpr` — a text match
+/// expression over `fields` with a boost and per-query options.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchTextExpr {
+    pub fields: Vec<String>,
+    pub query: String,
+    pub boost: u32,
+    pub options: MatchTextOptions,
+}
+
+/// The `options` dict of `MatchTextExpr`
+/// (`{"minimum_should_match": …, "original_query": …}`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MatchTextOptions {
+    pub minimum_should_match: Option<f64>,
+    pub original_query: Option<String>,
+}
+
+/// `memory/services/query.py::MsgTextQuery` — `question(txt, min_match)`
+/// returns `(Option<MatchTextExpr>, keywords)`.
+pub struct MsgTextQuery {
+    tw: TermWeightComputer,
+    syn: SynonymDict,
+    query_fields: Vec<String>,
+}
+
+impl Default for MsgTextQuery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MsgTextQuery {
+    pub fn new() -> Self {
+        Self {
+            tw: TermWeightComputer::new(),
+            syn: SynonymDict::new(),
+            query_fields: vec!["content".to_string()],
+        }
+    }
+
+    /// `question(txt, min_match=0.6)` — the query.py entry point.
+    pub fn question(&self, txt: &str, min_match: f64) -> (Option<MatchTextExpr>, Vec<String>) {
+        let original_query = txt.to_string();
+        let mut normalized = add_space_between_eng_zh(txt);
+        normalized = normalized.to_lowercase();
+        normalized = str_q2b(&normalized);
+        normalized = tradi2simp(&normalized);
+        let collapse = Regex::new(r"[ :|\r\n\t,，。？?/`!！&^%%()\[\]{}<>]+")
+            .expect("collapse regex is valid");
+        normalized = collapse
+            .replace_all(&normalized, " ")
+            .trim()
+            .to_string();
+        let otxt = normalized.clone();
+        let cleaned = rm_www(&normalized);
+
+        if !is_chinese(&cleaned) {
+            self.question_english(&cleaned, &otxt, &original_query)
+        } else {
+            self.question_chinese(&cleaned, &otxt, min_match, &original_query)
+        }
+    }
+
+    /// query.py English branch: `tokenize → weights → synonym expansion →
+    /// `(term)^weight` terms + bigram phrases.
+    fn question_english(
+        &self,
+        txt: &str,
+        otxt: &str,
+        original_query: &str,
+    ) -> (Option<MatchTextExpr>, Vec<String>) {
+        let txt = rm_www(txt);
+        let tokens: Vec<String> = rag_tokenize(&txt)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let mut keywords: Vec<String> = tokens.iter().filter(|t| !t.is_empty()).cloned().collect();
+
+        let strip_quotes = Regex::new(r#"[ \\\"'^]"#).expect("strip regex is valid");
+        let single_alpha = Regex::new(r"^[a-z0-9]$").expect("single-alpha regex is valid");
+        let sign = Regex::new(r"^[+-]").expect("sign regex is valid");
+
+        let mut tks_w: Vec<(String, f64)> = self
+            .tw
+            .weights(&tokens, false)
+            .into_iter()
+            .map(|(tk, w)| (strip_quotes.replace_all(&tk, "").into_owned(), w))
+            .filter(|(tk, _)| !tk.is_empty())
+            .map(|(tk, w)| (single_alpha.replace_all(&tk, "").into_owned(), w))
+            .filter(|(tk, _)| !tk.is_empty())
+            .map(|(tk, w)| (sign.replace_all(&tk, "").into_owned(), w))
+            .filter(|(tk, _)| !tk.is_empty())
+            .map(|(tk, w)| (tk.trim().to_string(), w))
+            .filter(|(tk, _)| !tk.trim().is_empty())
+            .collect();
+
+        // Synonym pass: `syn = lookup(tk)` → strip quotes → extend keywords;
+        // each term's synonyms become `"syn"^w/4` fragments.
+        let mut syns: Vec<String> = Vec::new();
+        for (tk, w) in tks_w.iter().take(256) {
+            let syn = self.syn.lookup(tk, 256);
+            let cleaned: Vec<String> = rag_tokenize(&syn.join(" "))
+                .split_whitespace()
+                .map(|s| s.replace('\'', ""))
+                .collect();
+            keywords.extend(cleaned.iter().cloned());
+            let fragments: Vec<String> = cleaned
+                .iter()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| format!("\"{s}\"^{:.4}", w / 4.0))
+                .collect();
+            syns.push(fragments.join(" "));
+        }
+
+        // `(tk^w syn)` terms; skip tokens starting with `.^+()-`.
+        let mut q: Vec<String> = Vec::new();
+        for ((tk, w), syn) in tks_w.iter().zip(syns.iter()) {
+            let starts_bad = tk
+                .chars()
+                .next()
+                .is_some_and(|c| ".^+()-".contains(c));
+            if !tk.is_empty() && !starts_bad {
+                q.push(format!("({}^{:.4} {})", tk, w, syn));
+            }
+        }
+        // Bigram phrases: `"left right"^max(w)*2`.
+        for i in 1..tks_w.len() {
+            let left = tks_w[i - 1].0.trim();
+            let right = tks_w[i].0.trim();
+            if left.is_empty() || right.is_empty() {
+                continue;
+            }
+            q.push(format!(
+                "\"{} {}\"^{:.4}",
+                tks_w[i - 1].0,
+                tks_w[i].0,
+                tks_w[i - 1].1.max(tks_w[i].1) * 2.0
+            ));
+        }
+        if q.is_empty() {
+            q.push(txt.to_string());
+        }
+        let query = q.join(" ");
+        (
+            Some(MatchTextExpr {
+                fields: self.query_fields.clone(),
+                query,
+                boost: 100,
+                options: MatchTextOptions {
+                    minimum_should_match: None,
+                    original_query: Some(original_query.to_string()),
+                },
+            }),
+            keywords,
+        )
+    }
+
+    /// query.py Chinese branch: per `tw.split` term, weighted
+    /// `(term)^weight` groups with synonym OR-expansions, fine-grained
+    /// character tokens and `"phrase"~2` proximity operators.
+    fn question_chinese(
+        &self,
+        txt: &str,
+        otxt: &str,
+        min_match: f64,
+        original_query: &str,
+    ) -> (Option<MatchTextExpr>, Vec<String>) {
+        let cleaned = rm_www(txt);
+        let clean_sm = Regex::new(
+            r#"[ ,\./;'\[\]\\`~!@#$%^&*()=+_<>?:\"{}|，。；‘’【】、！￥……（）——《》？：""-]+"#,
+        )
+        .expect("fine-grained cleanup regex is valid");
+        let strip_quotes = Regex::new(r#"[ \\\"']+"#).expect("strip regex is valid");
+        let ascii_only = Regex::new(r"^[0-9a-z.+#_*-]+$").expect("ascii regex is valid");
+
+        let mut qs: Vec<String> = Vec::new();
+        let mut keywords: Vec<String> = Vec::new();
+
+        for term in self.tw.split(&cleaned).into_iter().take(256) {
+            if term.is_empty() {
+                continue;
+            }
+            keywords.push(term.clone());
+            let twts = self.tw.weights(&[term.clone()], false);
+            let syns = self.syn.lookup(&term, 32);
+            if !syns.is_empty() && keywords.len() < 32 {
+                keywords.extend(syns.iter().cloned());
+            }
+
+            let mut sorted = twts.clone();
+            sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let mut tms: Vec<(String, f64)> = Vec::new();
+            for (tk, w) in sorted {
+                // Fine-grained tokens only for non-ASCII tokens ≥ 3 chars.
+                let needs_fine = tk.chars().count() >= 3 && !ascii_only.is_match(&tk);
+                let sm: Vec<String> = if needs_fine {
+                    rag_fine_grained_tokenize(&tk)
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let sm: Vec<String> = sm
+                    .iter()
+                    .map(|m| clean_sm.replace_all(m, "").into_owned())
+                    .filter(|m| m.chars().count() > 1)
+                    .map(|m| sub_special_char(&m))
+                    .filter(|m| m.chars().count() > 1)
+                    .collect();
+
+                if keywords.len() < 32 {
+                    keywords.push(strip_quotes.replace_all(&tk, "").into_owned());
+                    keywords.extend(sm.iter().cloned());
+                }
+
+                let mut tk_syns: Vec<String> = self
+                    .syn
+                    .lookup(&tk, 32)
+                    .iter()
+                    .map(|s| sub_special_char(s))
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if keywords.len() < 32 {
+                    keywords.extend(tk_syns.iter().cloned());
+                }
+                let tk_syns: Vec<String> = tk_syns
+                    .iter()
+                    .map(|s| rag_fine_grained_tokenize(s))
+                    .map(|s| {
+                        if s.contains(' ') {
+                            format!("\"{s}\"")
+                        } else {
+                            s
+                        }
+                    })
+                    .collect();
+                if keywords.len() >= 32 {
+                    break;
+                }
+
+                let mut expr = sub_special_char(&tk);
+                if expr.contains(' ') {
+                    expr = format!("\"{expr}\"");
+                }
+                if !tk_syns.is_empty() {
+                    expr = format!("({expr} OR ({}))^0.2", tk_syns.join(" "));
+                }
+                if !sm.is_empty() {
+                    expr = format!(
+                        "{expr} OR \"{}\" OR (\"{}\"~2)^0.5",
+                        sm.join(" "),
+                        sm.join(" ")
+                    );
+                }
+                if !expr.trim().is_empty() {
+                    tms.push((expr, w));
+                }
+            }
+
+            let mut tms_str = tms
+                .iter()
+                .map(|(t, w)| format!("({t})^{w}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if twts.len() > 1 {
+                tms_str.push_str(&format!(" (\"{}\"~2)^1.5", rag_tokenize(&term)));
+            }
+            let syns_str = syns
+                .iter()
+                .map(|s| format!("\"{}\"", rag_tokenize(&sub_special_char(s))))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            if !syns_str.is_empty() && !tms_str.is_empty() {
+                tms_str = format!("({tms_str})^5 OR ({syns_str})^0.7");
+            }
+            qs.push(tms_str);
+        }
+
+        if qs.is_empty() {
+            return (None, keywords);
+        }
+        let mut query = qs
+            .iter()
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("({t})"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        if query.is_empty() {
+            query = otxt.to_string();
+        }
+        (
+            Some(MatchTextExpr {
+                fields: self.query_fields.clone(),
+                query,
+                boost: 100,
+                options: MatchTextOptions {
+                    minimum_should_match: Some(min_match),
+                    original_query: Some(original_query.to_string()),
+                },
+            }),
+            keywords,
+        )
+    }
+}
+
+#[cfg(test)]
+mod msg_text_query_tests {
+    use super::*;
+
+    #[test]
+    fn english_question_builds_boosted_terms_and_keywords() {
+        let query = MsgTextQuery::new();
+        let (expr, keywords) = query.question("What is RAG retrieval?", 0.6);
+        let expr = expr.expect("english branch yields an expression");
+        assert_eq!(expr.fields, vec!["content"]);
+        assert_eq!(expr.boost, 100);
+        assert!(expr.query.contains("^"));
+        assert!(expr.query.contains("rag"));
+        assert!(expr.options.original_query.as_deref() == Some("What is RAG retrieval?"));
+        assert!(expr.options.minimum_should_match.is_none());
+        // Keywords come from the tokenizer; the question words are dropped
+        // by rmWWW but the substantive term survives.
+        assert!(keywords.iter().any(|kw| kw == "rag"));
+    }
+
+    #[test]
+    fn chinese_question_builds_minimum_should_match_expression() {
+        let query = MsgTextQuery::new();
+        let (expr, keywords) = query.question("数据库性能优化方案", 0.6);
+        let expr = expr.expect("chinese branch yields an expression");
+        assert_eq!(expr.fields, vec!["content"]);
+        assert_eq!(expr.options.minimum_should_match, Some(0.6));
+        assert!(expr.options.original_query.as_deref() == Some("数据库性能优化方案"));
+        assert!(!expr.query.is_empty());
+        assert!(!keywords.is_empty());
+        // English input stays on the English branch; the Chinese branch
+        // option is only set for Chinese queries.
+        let (expr, _) = query.question("Tell me about databases", 0.6);
+        assert!(expr.unwrap().options.minimum_should_match.is_none());
+    }
+
+    #[test]
+    fn empty_input_yields_no_expression_but_keywords() {
+        let query = MsgTextQuery::new();
+        let (expr, keywords) = query.question("", 0.6);
+        // An empty question normalizes to nothing; the branches may still
+        // return keywords, but no match expression is required for empty
+        // text after cleanup.
+        assert!(keywords.is_empty() || expr.is_none());
+    }
+
+    #[test]
+    fn normalization_applies_fullwidth_and_fillers() {
+        let query = MsgTextQuery::new();
+        // Full-width letters are converted to half-width before tokenizing.
+        let (expr, keywords) = query.question("ＲＡＧ ｓｅａｒｃｈ", 0.6);
+        let expr = expr.expect("normalized input yields an expression");
+        assert!(expr.query.contains("rag"));
+        assert!(keywords.iter().any(|kw| kw.eq_ignore_ascii_case("rag")));
+    }
+}

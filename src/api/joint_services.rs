@@ -1886,3 +1886,319 @@ mod init_data_tests {
         assert!(sync_log_prune_plan(&logs[..99], "c1", "kb").is_empty());
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// memory/services/messages.py — remaining MessageService semantics.
+//
+// The `MemoryMessageService` above already ports insert / query / delete /
+// size accounting / FIFO eviction. This section fills the gaps:
+// `index_name`, `update_message`, `delete_message` (by condition),
+// `list_message` (raw-only, paginated, with extract grouping),
+// `get_by_message_id` and `get_recent_messages`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `messages.py::MessageService.index_name` — one message index per user.
+pub fn message_index_name(uid: &str) -> String {
+    format!("memory_{uid}")
+}
+
+/// Condition accepted by `update_message` / `delete_message`
+/// (`msgStoreConn.update(condition, …)`); `None` fields match everything.
+#[derive(Debug, Clone, Default)]
+pub struct MessageCondition {
+    pub memory_id: Option<String>,
+    pub message_id: Option<i64>,
+    pub agent_id: Option<String>,
+    pub session_id: Option<String>,
+    pub status: Option<bool>,
+}
+
+impl MessageCondition {
+    pub fn matches(&self, message: &MemoryMessage) -> bool {
+        self.memory_id.as_ref().is_none_or(|value| value == &message.memory_id)
+            && self.message_id.is_none_or(|value| value == message.message_id)
+            && self.agent_id.as_ref().is_none_or(|value| value == &message.agent_id)
+            && self.session_id.as_ref().is_none_or(|value| value == &message.session_id)
+            && self.status.is_none_or(|value| value == message.status)
+    }
+}
+
+/// Field updates accepted by `update_message`; the `status` bool↔0/1
+/// coercion of messages.py is native in Rust.
+#[derive(Debug, Clone, Default)]
+pub struct MessageUpdate {
+    pub status: Option<bool>,
+    pub valid_at: Option<String>,
+    pub invalid_at: Option<String>,
+    pub forget_at: Option<String>,
+    pub content: Option<String>,
+}
+
+impl MemoryMessageService {
+    /// `MessageService.update_message(condition, update_dict)` — update every
+    /// message matching the condition. Returns the number of rows changed.
+    pub fn update_messages(&self, condition: &MessageCondition, update: &MessageUpdate) -> usize {
+        let mut updated = 0usize;
+        {
+            let mut all = self.messages.write().expect("message store lock poisoned");
+            for message in all.iter_mut() {
+                if !condition.matches(message) {
+                    continue;
+                }
+                if let Some(status) = update.status {
+                    message.status = status;
+                }
+                if let Some(valid_at) = &update.valid_at {
+                    message.valid_at = valid_at.clone();
+                }
+                if let Some(invalid_at) = &update.invalid_at {
+                    message.invalid_at = Some(invalid_at.clone());
+                }
+                if let Some(forget_at) = &update.forget_at {
+                    message.forget_at = Some(forget_at.clone());
+                }
+                if let Some(content) = &update.content {
+                    message.content = content.clone();
+                }
+                updated += 1;
+            }
+        }
+        if updated > 0 {
+            let _ = self.persist();
+        }
+        updated
+    }
+
+    /// `MessageService.delete_message(condition)` — remove every message
+    /// matching the condition. Returns the number of rows deleted.
+    pub fn delete_messages_by_condition(&self, condition: &MessageCondition) -> usize {
+        let ids: Vec<i64> = self
+            .messages
+            .read()
+            .expect("message store lock poisoned")
+            .iter()
+            .filter(|message| condition.matches(message))
+            .map(|message| message.message_id)
+            .collect();
+        self.delete_messages(&ids)
+    }
+
+    /// `MessageService.get_by_message_id` — the document id is
+    /// `"{memory_id}_{message_id}"`; returns `None` when absent.
+    pub fn get_by_message_id(&self, memory_id: &str, message_id: i64) -> Option<MemoryMessage> {
+        self.messages
+            .read()
+            .expect("message store lock poisoned")
+            .iter()
+            .find(|message| message.memory_id == memory_id && message.message_id == message_id)
+            .cloned()
+    }
+
+    /// `MessageService.list_message` — raw messages (`message_type ==
+    /// "raw"`) of one memory, optionally filtered by `agent_ids` and by a
+    /// session keyword (`keywords` maps to `session_id`), ordered by
+    /// `valid_at` descending and paginated. Returns `(page, total_count)`.
+    pub fn list_message(
+        &self,
+        memory_id: &str,
+        agent_ids: &[String],
+        keywords: Option<&str>,
+        page: usize,
+        page_size: usize,
+    ) -> (Vec<MemoryMessage>, usize) {
+        let mut matching: Vec<MemoryMessage> = self
+            .messages
+            .read()
+            .expect("message store lock poisoned")
+            .iter()
+            .filter(|message| message.memory_id == memory_id)
+            .filter(|message| message.message_type == "raw")
+            .filter(|message| agent_ids.is_empty() || agent_ids.contains(&message.agent_id))
+            .filter(|message| keywords.is_none_or(|kw| message.session_id.contains(kw)))
+            .cloned()
+            .collect();
+        matching.sort_by(|left, right| right.valid_at.cmp(&left.valid_at));
+        let total_count = matching.len();
+        let start = page.saturating_sub(1) * page_size;
+        let page_rows = matching.into_iter().skip(start).take(page_size).collect();
+        (page_rows, total_count)
+    }
+
+    /// `MessageService.get_recent_messages` — the most recent messages of an
+    /// agent+session across memories, `valid_at` descending, capped at
+    /// `limit`.
+    pub fn recent_messages(
+        &self,
+        memory_ids: &[String],
+        agent_id: &str,
+        session_id: &str,
+        limit: usize,
+    ) -> Vec<MemoryMessage> {
+        self.query(memory_ids, Some(agent_id), Some(session_id), None, None, Some(limit))
+    }
+}
+
+/// `MessageService.list_message` — group extracted messages by their
+/// `source_id` (the raw message they were extracted from) so each raw
+/// message can be returned with its `extract` list.
+pub fn group_extract_by_source(
+    messages: &[MemoryMessage],
+) -> std::collections::BTreeMap<i64, Vec<MemoryMessage>> {
+    let mut grouped: std::collections::BTreeMap<i64, Vec<MemoryMessage>> =
+        std::collections::BTreeMap::new();
+    for message in messages {
+        if message.source_id > 0 {
+            grouped
+                .entry(message.source_id)
+                .or_default()
+                .push(message.clone());
+        }
+    }
+    grouped
+}
+
+#[cfg(test)]
+mod message_service_extra_tests {
+    use super::*;
+
+    fn message(message_id: i64, memory_id: &str, valid_at: &str, content: &str) -> MemoryMessage {
+        MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory_id.into(),
+            user_id: "u1".into(),
+            agent_id: "a1".into(),
+            session_id: "s1".into(),
+            content: content.into(),
+            valid_at: valid_at.into(),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            content_embed: vec![0.1, 0.2],
+        }
+    }
+
+    #[test]
+    fn update_message_applies_status_and_timestamps_by_condition() {
+        let service = MemoryMessageService::in_memory();
+        let first = message(1, "m1", "2026-08-01 00:00:00", "hello");
+        let second = MemoryMessage {
+            message_id: 2,
+            agent_id: "a2".into(),
+            ..message(0, "m1", "2026-08-02 00:00:00", "world")
+        };
+        service.insert_messages(vec![first, second]).unwrap();
+
+        // Forget only agent a1's messages.
+        let updated = service.update_messages(
+            &MessageCondition {
+                agent_id: Some("a1".into()),
+                ..Default::default()
+            },
+            &MessageUpdate {
+                status: Some(false),
+                forget_at: Some("2026-08-10 00:00:00".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(updated, 1);
+        let row = service.get_by_message_id("m1", 1).unwrap();
+        assert!(!row.status);
+        assert_eq!(row.forget_at.as_deref(), Some("2026-08-10 00:00:00"));
+        let untouched = service.get_by_message_id("m1", 2).unwrap();
+        assert!(untouched.status);
+
+        // message_id condition + content rewrite.
+        let updated = service.update_messages(
+            &MessageCondition {
+                message_id: Some(2),
+                ..Default::default()
+            },
+            &MessageUpdate {
+                content: Some("updated".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(updated, 1);
+        assert_eq!(service.get_by_message_id("m1", 2).unwrap().content, "updated");
+    }
+
+    #[test]
+    fn list_message_filters_raw_paginates_and_groups_extracts() {
+        let service = MemoryMessageService::in_memory();
+        let mut rows = vec![
+            message(1, "m1", "2026-08-01 00:00:00", "first"),
+            message(2, "m1", "2026-08-02 00:00:00", "second"),
+            message(3, "m1", "2026-08-03 00:00:00", "third"),
+        ];
+        // One extracted (semantic) message derived from raw message 1.
+        rows.push(MemoryMessage {
+            message_id: 4,
+            message_type: "semantic".into(),
+            source_id: 1,
+            content: "extracted".into(),
+            ..message(0, "m1", "2026-08-03 12:00:00", "ignored")
+        });
+        service.insert_messages(rows).unwrap();
+
+        let (page, total) = service.list_message("m1", &[], None, 1, 2);
+        assert_eq!(total, 3); // semantic rows are excluded
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].message_id, 3); // valid_at desc
+        assert_eq!(page[1].message_id, 2);
+
+        let (page, total) = service.list_message("m1", &[], None, 2, 2);
+        assert_eq!(total, 3);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].message_id, 1);
+
+        // keywords maps to the session_id filter.
+        let (page, total) = service.list_message("m1", &[], Some("s1"), 1, 50);
+        assert_eq!(total, 3);
+        let (page, total) = service.list_message("m1", &[], Some("nope"), 1, 50);
+        assert_eq!(total, 0);
+        assert!(page.is_empty());
+
+        // Extract grouping: semantic message 4 derives from raw message 1.
+        let all = service.query(&["m1".into()], None, None, None, None, None);
+        let grouped = group_extract_by_source(&all);
+        assert_eq!(grouped[&1].len(), 1);
+        assert_eq!(grouped[&1][0].message_id, 4);
+        assert!(!grouped.contains_key(&2));
+    }
+
+    #[test]
+    fn delete_by_condition_and_recent_messages_match_ragflow_semantics() {
+        let service = MemoryMessageService::in_memory();
+        let mut rows = vec![
+            message(1, "m1", "2026-08-01 00:00:00", "old"),
+            message(2, "m1", "2026-08-02 00:00:00", "mid"),
+            message(3, "m1", "2026-08-03 00:00:00", "new"),
+        ];
+        rows.push(MemoryMessage {
+            message_id: 4,
+            agent_id: "a2".into(),
+            ..message(0, "m1", "2026-08-04 00:00:00", "other-agent")
+        });
+        service.insert_messages(rows).unwrap();
+
+        // get_recent_messages: agent + session filter, newest first, capped.
+        let recent = service.recent_messages(&["m1".into()], "a1", "s1", 2);
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].message_id, 3);
+        assert_eq!(recent[1].message_id, 2);
+
+        // delete_message(condition): drop agent a2's rows.
+        let deleted = service.delete_messages_by_condition(&MessageCondition {
+            agent_id: Some("a2".into()),
+            ..Default::default()
+        });
+        assert_eq!(deleted, 1);
+        assert!(service.get_by_message_id("m1", 4).is_none());
+        assert!(service.get_by_message_id("m1", 1).is_some());
+
+        // index_name mirrors messages.py.
+        assert_eq!(message_index_name("u1"), "memory_u1");
+    }
+}

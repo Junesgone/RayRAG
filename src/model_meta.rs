@@ -908,6 +908,96 @@ pub fn provider_catalog_summary() -> Vec<(String, String, usize)> {
         .collect()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RAGFlow conf/ coverage — llm_factories.json factory mapping.
+//
+// RAGFlow keeps two overlapping catalogs under `conf/`:
+//   - `conf/models/<factory>.json`  — the "all models" catalog (name / url
+//     regions / url_suffix / models[{name, max_tokens, model_types}]).
+//     These 20 files are embedded verbatim in [`PROVIDER_MODEL_FIXTURES`].
+//   - `conf/llm_factories.json`     — `{"factory_llm_infos": [...]}`, the
+//     factory registry used by `common/settings.py` to build
+//     `FACTORY_LLM_INFOS` / `LLM_FACTORIES` (factory name → endpoint +
+//     hoisted `llm` model rows stamped with `fid`).
+//
+// The fixtures below rebuild the `factory_llm_infos` shape from the embedded
+// conf/models catalog: every factory exposes its default endpoint and its
+// model list with `llm_name` / `model_type` / `max_tokens` / `is_tools`.
+// Per-model `is_tools` nuances of llm_factories.json are approximated by
+// `model_types.contains("chat")` — the conf/models catalog does not carry a
+// per-model tools flag. The DB-level `init_llm_factory()` normalization of
+// llm_factories.json lives in `api::joint_services` (LlmFactoryRecord /
+// `normalize_factory_llm_infos`).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One model row of the factory mapping (llm_factories.json `llm` entry).
+#[derive(Debug, Clone, Serialize)]
+pub struct FactoryModelInfo {
+    pub llm_name: String,
+    /// Canonical capability: `chat` / `embedding` / `rerank` / `image2text`
+    /// / `speech2text` / `tts` / `ocr` (normalized like [`ModelInfo`]).
+    pub model_type: String,
+    pub max_tokens: u64,
+    /// True when the model carries the `chat` capability (best-effort
+    /// approximation of llm_factories.json `is_tools`).
+    pub is_tools: bool,
+}
+
+/// One factory mapping row (llm_factories.json `factory_llm_infos` entry):
+/// factory name → default endpoint + model list.
+#[derive(Debug, Clone, Serialize)]
+pub struct FactoryLlmInfo {
+    pub name: String,
+    /// Default endpoint: fixture `url.default` wins, then the provider
+    /// catalog preset base, then the empty string (self-hosted engines).
+    pub url: String,
+    pub llm: Vec<FactoryModelInfo>,
+}
+
+/// Rebuild the `factory_llm_infos` mapping for every embedded fixture.
+pub fn factory_llm_infos() -> Vec<FactoryLlmInfo> {
+    provider_model_catalog()
+        .into_iter()
+        .map(|provider| FactoryLlmInfo {
+            name: provider.name,
+            url: factory_endpoint(&provider.factory).unwrap_or_default(),
+            llm: provider
+                .models
+                .iter()
+                .map(|model| FactoryModelInfo {
+                    llm_name: model.name.clone(),
+                    model_type: model
+                        .model_types
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "chat".to_string()),
+                    max_tokens: model.max_tokens,
+                    is_tools: model.model_types.iter().any(|t| t == "chat"),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Default endpoint for a factory key (e.g. `"deepseek"`):
+/// fixture `url.default` → provider-catalog preset base → `None`.
+pub fn factory_endpoint(factory: &str) -> Option<String> {
+    provider_model_catalog()
+        .into_iter()
+        .find(|provider| provider.factory == factory)
+        .and_then(|provider| provider.url.get("default").cloned())
+        .or_else(|| crate::providers::provider_default_base(factory, factory).map(str::to_owned))
+}
+
+/// `(factory, default endpoint, static model count)` — compact summary of the
+/// llm_factories.json mapping for the providers page / diagnostics.
+pub fn factory_mapping_summary() -> Vec<(String, String, usize)> {
+    factory_llm_infos()
+        .into_iter()
+        .map(|info| (info.name, info.url, info.llm.len()))
+        .collect()
+}
+
 fn parse_provider_models(factory: &str, raw: &str) -> Option<ProviderModels> {
     let value: Value = serde_json::from_str(raw).ok()?;
     let name = fixture_str(&value, &["name", "Name"])
@@ -1276,5 +1366,96 @@ mod tests {
             Some("volcengine")
         );
         assert_eq!(resolve_model_factory("unknown", "Nope").as_deref(), None);
+    }
+
+    #[test]
+    fn conf_models_catalog_covers_newest_ragflow_models() {
+        // Spot-check models added in recent RAGFlow conf/models catalogs —
+        // regression guard: when conf/models/*.json grows, the embedded
+        // fixtures must be refreshed (they are currently verbatim copies).
+        let catalog = provider_model_catalog();
+        let has = |factory: &str, model: &str| {
+            catalog
+                .iter()
+                .find(|p| p.factory == factory)
+                .is_some_and(|p| p.models.iter().any(|m| m.name == model))
+        };
+        assert!(has("openai", "gpt-5.2-pro"));
+        assert!(has("openai", "gpt-5.2"));
+        assert!(has("openai", "whisper-1"));
+        assert!(has("openai", "tts-1"));
+        assert!(has("deepseek", "deepseek-v4-flash"));
+        assert!(has("deepseek", "deepseek-v4-pro"));
+        assert!(has("zhipu-ai", "glm-5"));
+        assert!(has("zhipu-ai", "glm-5-turbo"));
+        assert!(has("zhipu-ai", "embedding-3"));
+        assert!(has("zhipu-ai", "glm-asr-2512"));
+        assert!(has("zhipu-ai", "glm-tts"));
+        assert!(has("zhipu-ai", "glm-ocr"));
+        assert!(has("zhipu-ai", "rerank"));
+        assert!(has("moonshot", "kimi-k2.6"));
+        assert!(has("minimax", "minimax-m2.7"));
+        assert!(has("xai", "grok-4"));
+        assert!(has("volcengine", "doubao-seed-2-0-pro-260215"));
+        assert!(has("volcengine", "doubao-embedding-vision-251215"));
+        assert!(has("aliyun", "qwen-flash"));
+        assert!(has("aliyun", "text-embedding-v4"));
+        assert!(has("baidu", "ernie-5.0"));
+        assert!(has("cohere", "rerank-v4.0-pro"));
+        assert!(has("cohere", "embed-v4.0"));
+        assert!(has("gitee", "BAAI/bge-m3"));
+        assert!(has("nvidia", "nvidia/nv-embedqa-mistral-7b-v2"));
+        assert!(has("huggingface", "openai/gpt-oss-120b:fastest"));
+        // The nvidia catalog is the largest fixture (46 models).
+        let nvidia = catalog.iter().find(|p| p.factory == "nvidia").unwrap();
+        assert!(nvidia.models.len() >= 46);
+    }
+
+    #[test]
+    fn factory_llm_infos_maps_factory_to_endpoint_and_models() {
+        let infos = factory_llm_infos();
+        assert_eq!(infos.len(), 20);
+        // Every factory carries a default endpoint (fixture url or preset).
+        assert!(
+            infos.iter().all(|info| !info.url.is_empty()),
+            "every factory mapping must resolve a default endpoint"
+        );
+        // OpenAI: chat models are tools-capable, embeddings are not.
+        let openai = infos.iter().find(|info| info.name == "OpenAI").unwrap();
+        let gpt = openai
+            .llm
+            .iter()
+            .find(|m| m.llm_name == "gpt-5.2-pro")
+            .unwrap();
+        assert_eq!(gpt.model_type, "chat");
+        assert!(gpt.is_tools);
+        assert_eq!(gpt.max_tokens, 400000);
+        let embedding = openai
+            .llm
+            .iter()
+            .find(|m| m.llm_name == "text-embedding-3-large")
+            .unwrap();
+        assert_eq!(embedding.model_type, "embedding");
+        assert!(!embedding.is_tools);
+        // Zhipu keeps a rerank row with an empty max_tokens default (8192).
+        let zhipu = infos.iter().find(|info| info.name == "ZHIPU-AI").unwrap();
+        let rerank = zhipu.llm.iter().find(|m| m.llm_name == "rerank").unwrap();
+        assert_eq!(rerank.model_type, "rerank");
+        assert_eq!(rerank.max_tokens, 8192);
+        // Endpoints come from the fixture url.default.
+        assert_eq!(
+            factory_endpoint("deepseek").as_deref(),
+            Some("https://api.deepseek.com")
+        );
+        assert_eq!(
+            factory_endpoint("openai").as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        // Summary rows are (factory, endpoint, model count).
+        let summary = factory_mapping_summary();
+        assert_eq!(summary.len(), 20);
+        let (name, url, count) = summary.iter().find(|(n, _, _)| n == "Nvidia").unwrap();
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1");
+        assert!(*count >= 46);
     }
 }

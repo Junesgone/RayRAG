@@ -71,6 +71,7 @@ pub mod logging;
 pub mod manual;
 pub mod memory;
 pub mod mcp_client;
+pub mod mcp_server;
 pub mod merge;
 pub mod metrics;
 pub mod model_meta;

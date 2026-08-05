@@ -3,10 +3,11 @@
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{
         DefaultBodyLimit, Extension, Multipart, Path, Query, Request, State, multipart::Field,
     },
-    http::{Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -2894,6 +2895,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Chat channel inbound endpoints (webhook / feishu event callbacks).
         // New routes only; existing route behavior is unchanged.
         .merge(crate::channels::channel_router())
+        // MCP SSE server (mcp/server/server.py port): /mcp/sse + /mcp/messages.
+        // 闭包捕获 state，不依赖 router state 类型，可直接挂到 Router<Arc<AppState>>。
+        .route(
+            "/mcp/sse",
+            get({
+                let st = std::sync::Arc::new(crate::mcp_server::McpSseState::default());
+                move |headers: HeaderMap| crate::mcp_server::sse_handler(st.clone(), headers)
+            }),
+        )
+        .route(
+            "/mcp/messages",
+            post({
+                let st = std::sync::Arc::new(crate::mcp_server::McpSseState::default());
+                move |headers: HeaderMap,
+                      params: Query<std::collections::HashMap<String, String>>,
+                      body: Body| {
+                    crate::mcp_server::post_message(st.clone(), headers, params, body)
+                }
+            }),
+        )
         .fallback_service(
             ServeDir::new(sd)
                 .precompressed_gzip()

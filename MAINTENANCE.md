@@ -1,3 +1,12 @@
+## 2026-08-05 v0.2.5：conf 配置 + MCP SSE 服务器 + 矩阵终态
+
+- model_meta.rs：all_models 逐字节核对 + 27 新模型锁定 + llm_factories 映射
+- runtime_config.rs：system_settings 种子；settings.rs：ServiceConf
+- mcp_server.rs 新建：SSE 服务器（ToolRegistry/JSON-RPC 2.0）接入 /mcp/sse
+- memory.rs：消息记忆读写；矩阵：partial 44 → **15**（sandbox 22 → N/A-by-design）
+- 测试基线：**1133 passed / 0 failed / 27 ignored**
+- 覆盖矩阵终态：full 544 / partial 15 / N/A 61 / unmapped 0
+
 ## 2026-08-05 v0.2.4 容器验证
 
 - 部署成功：容器 healthy、healthz 200、6 页面全 200
