@@ -1,3 +1,10 @@
+## 2026-08-05 v0.2.5 容器验证
+
+- 部署成功：容器 healthy、healthz 200、6 页面全 200
+- MCP SSE 服务器验证：/mcp/sse 200（长连接正常）；/mcp/messages 按协议拒绝
+  无 session_id（"Missing session_id"）与未知会话（"Unknown session"）——语义正确
+- 已提交 428d181（v0.2.5：conf 配置/MCP SSE/矩阵终态）
+
 ## 2026-08-05 v0.2.5：conf 配置 + MCP SSE 服务器 + 矩阵终态
 
 - model_meta.rs：all_models 逐字节核对 + 27 新模型锁定 + llm_factories 映射
