@@ -27,6 +27,11 @@ impl PromptTemplate {
         }
         result
     }
+
+    /// Raw template content (no substitution).
+    pub fn content(&self) -> &str {
+        &self.content
+    }
 }
 
 /// Built-in prompt templates (matching RAGFlow's 47 prompts).
@@ -206,6 +211,41 @@ impl PromptLibrary {
         PromptTemplate::new(KEYWORD_EXTRACTION_PROMPT)
     }
 
+    /// LightRAG fail response (no-context fallback answer).
+    pub fn lightrag_fail_response() -> PromptTemplate {
+        PromptTemplate::new(LIGHTRAG_FAIL_RESPONSE)
+    }
+
+    /// LightRAG default output language.
+    pub fn lightrag_default_language() -> PromptTemplate {
+        PromptTemplate::new(LIGHTRAG_DEFAULT_LANGUAGE)
+    }
+
+    /// LightRAG default tuple delimiter.
+    pub fn lightrag_default_tuple_delimiter() -> PromptTemplate {
+        PromptTemplate::new(LIGHTRAG_DEFAULT_TUPLE_DELIMITER)
+    }
+
+    /// LightRAG default record delimiter.
+    pub fn lightrag_default_record_delimiter() -> PromptTemplate {
+        PromptTemplate::new(LIGHTRAG_DEFAULT_RECORD_DELIMITER)
+    }
+
+    /// LightRAG default completion delimiter.
+    pub fn lightrag_default_completion_delimiter() -> PromptTemplate {
+        PromptTemplate::new(LIGHTRAG_DEFAULT_COMPLETION_DELIMITER)
+    }
+
+    /// LightRAG default entity types (comma-joined for prompt rendering).
+    pub fn lightrag_default_entity_types() -> PromptTemplate {
+        PromptTemplate::new(&LIGHTRAG_DEFAULT_ENTITY_TYPES.join(", "))
+    }
+
+    /// LightRAG default user prompt.
+    pub fn lightrag_default_user_prompt() -> PromptTemplate {
+        PromptTemplate::new(LIGHTRAG_DEFAULT_USER_PROMPT)
+    }
+
     /// Get template by name.
     pub fn get(name: &str) -> Option<PromptTemplate> {
         match name {
@@ -235,6 +275,13 @@ impl PromptLibrary {
             "naive_rag_response" => Some(Self::naive_rag_response()),
             "question_proposal" => Some(Self::question_proposal()),
             "keyword_extraction" => Some(Self::keyword_extraction()),
+            "lightrag_fail_response" => Some(Self::lightrag_fail_response()),
+            "lightrag_default_language" => Some(Self::lightrag_default_language()),
+            "lightrag_default_tuple_delimiter" => Some(Self::lightrag_default_tuple_delimiter()),
+            "lightrag_default_record_delimiter" => Some(Self::lightrag_default_record_delimiter()),
+            "lightrag_default_completion_delimiter" => Some(Self::lightrag_default_completion_delimiter()),
+            "lightrag_default_entity_types" => Some(Self::lightrag_default_entity_types()),
+            "lightrag_default_user_prompt" => Some(Self::lightrag_default_user_prompt()),
             _ => None,
         }
     }
@@ -268,6 +315,13 @@ impl PromptLibrary {
             "naive_rag_response",
             "question_proposal",
             "keyword_extraction",
+            "lightrag_fail_response",
+            "lightrag_default_language",
+            "lightrag_default_tuple_delimiter",
+            "lightrag_default_record_delimiter",
+            "lightrag_default_completion_delimiter",
+            "lightrag_default_entity_types",
+            "lightrag_default_user_prompt",
         ]
     }
 }
@@ -1068,6 +1122,25 @@ Extract the most important keywords/phrases of a given piece of text content.
 {content}
 "#;
 
+// ── LightRAG default constants (rag/graphrag/light/graph_prompt.py) ──
+
+/// `PROMPTS["DEFAULT_LANGUAGE"]` — default output language for LightRAG prompts.
+pub const LIGHTRAG_DEFAULT_LANGUAGE: &str = "English";
+/// `PROMPTS["DEFAULT_TUPLE_DELIMITER"]` — tuple field delimiter.
+pub const LIGHTRAG_DEFAULT_TUPLE_DELIMITER: &str = "<|>";
+/// `PROMPTS["DEFAULT_RECORD_DELIMITER"]` — record delimiter.
+pub const LIGHTRAG_DEFAULT_RECORD_DELIMITER: &str = "##";
+/// `PROMPTS["DEFAULT_COMPLETION_DELIMITER"]` — extraction completion marker.
+pub const LIGHTRAG_DEFAULT_COMPLETION_DELIMITER: &str = "<|COMPLETE|>";
+/// `PROMPTS["DEFAULT_ENTITY_TYPES"]` — default entity type vocabulary.
+pub const LIGHTRAG_DEFAULT_ENTITY_TYPES: [&str; 5] =
+    ["organization", "person", "geo", "event", "category"];
+/// `PROMPTS["DEFAULT_USER_PROMPT"]` — default user prompt placeholder.
+pub const LIGHTRAG_DEFAULT_USER_PROMPT: &str = "n/a";
+/// `PROMPTS["fail_response"]` — fallback answer when no context is retrieved.
+pub const LIGHTRAG_FAIL_RESPONSE: &str =
+    "Sorry, I'm not able to provide an answer to that question.[no-context]";
+
 // ── Fallback LLM ────────────────────────────────────────────────
 
 /// Multi-LLM client with fallback strategy.
@@ -1284,6 +1357,49 @@ mod tests {
             "keyword_extraction",
         ] {
             assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+        }
+    }
+
+    #[test]
+    fn test_lightrag_defaults_registered() {
+        // Constants mirror rag/graphrag/light/graph_prompt.py PROMPTS defaults.
+        assert_eq!(PromptLibrary::lightrag_default_language().content(), "English");
+        assert_eq!(
+            PromptLibrary::lightrag_default_tuple_delimiter().content(),
+            "<|>"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_default_record_delimiter().content(),
+            "##"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_default_completion_delimiter().content(),
+            "<|COMPLETE|>"
+        );
+        assert_eq!(PromptLibrary::lightrag_default_user_prompt().content(), "n/a");
+        assert_eq!(
+            PromptLibrary::lightrag_fail_response().content(),
+            "Sorry, I'm not able to provide an answer to that question.[no-context]"
+        );
+        assert_eq!(LIGHTRAG_DEFAULT_ENTITY_TYPES, ["organization", "person", "geo", "event", "category"]);
+        let types_tmpl = PromptLibrary::lightrag_default_entity_types();
+        let types = types_tmpl.content();
+        assert!(types.contains("organization") && types.contains("category"));
+        assert!(!types.contains('['));
+
+        // Every new entry is resolvable via get() and listed by list().
+        let listed = PromptLibrary::list();
+        for name in [
+            "lightrag_fail_response",
+            "lightrag_default_language",
+            "lightrag_default_tuple_delimiter",
+            "lightrag_default_record_delimiter",
+            "lightrag_default_completion_delimiter",
+            "lightrag_default_entity_types",
+            "lightrag_default_user_prompt",
+        ] {
+            assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+            assert!(listed.contains(&name), "not listed: {name}");
         }
     }
 }

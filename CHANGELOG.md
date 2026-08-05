@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.5] — 2026-08-05
+
+### Added
+
+- **Provider Model Catalog**（`src/model_meta.rs` + `src/api/fixtures/models/*.json`）：
+  RAGFlow conf/models 全部 20 家厂商 / **157 个静态模型**种子化（include_str! 内嵌）；
+  `list_models_for` / `resolve_model_factory`（zhipu→zhipu-ai、qwen→aliyun 别名）/
+  `provider_models_payload`；providers 页面新增 Model Catalog 卡片 + 点击弹窗
+  （模型名 + 能力 badge：chat/embedding/rerank/image2text/thinking）。
+- **沙箱 executor_manager 契约补齐**（`src/sandbox.rs` +1031 行）：
+  SupportLanguage/ResultStatus/ResourceLimitType/UnauthorizedAccessType/RuntimeErrorType
+  枚举、失败协议（exit code + stderr 分类）、运行时环境约定（容器池/镜像/run 参数/
+  bundle）、artifact 契约、安全校验契约。
+- **GraphRAG 管线补齐**（`src/structure_compile.rs` +321 行、`src/prompts.rs` +116 行）：
+  phase_markers 阶段标记（PHASE_RESOLUTION/PHASE_COMMUNITY、`graphrag:phase:{kb}:{phase}`
+  键格式、7d TTL）、实体消解确定性门控（levenshtein/2gram 数字差/字符集重叠、
+  entity_resolution_candidates 分组排序、parse_resolution_results）、light graph
+  默认常量（LIGHTRAG_DEFAULT_LANGUAGE/TUPLE_DELIMITER/ENTITY_TYPES/FAIL_RESPONSE）。
+
+### Fixed
+
+- 子 agent 并发期间 prompts.rs 临时借用 E0716（I 已修，测试全绿）。
+
 ## [0.1.4] — 2026-08-05
 
 ### Added

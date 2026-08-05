@@ -999,10 +999,24 @@ pub async fn providers_page(
     let providers = state.providers.list();
     let mut rows = String::new();
     for p in &providers {
+        let factory = crate::model_meta::resolve_model_factory(&p.id, &p.name);
+        let click = match &factory {
+            Some(factory) => format!(
+                " style='cursor:pointer' data-factory='{}' onclick='showProviderModels(this)'",
+                html_escape(factory)
+            ),
+            None => String::new(),
+        };
         rows.push_str(&format!(
-            "<tr><td>{} {}</td><td class='co'>{}</td><td>{}</td></tr>",
+            "<tr{}><td>{} {}{}</td><td class='co'>{}</td><td>{}</td></tr>",
+            click,
             if p.enabled { "🟢" } else { "⚫" },
             p.name,
+            if factory.is_some() {
+                " <span style='font-size:11px;color:var(--tm)'>📦 catalog</span>"
+            } else {
+                ""
+            },
             p.api_base,
             p.models.join(", ")
         ));
@@ -1012,7 +1026,36 @@ pub async fn providers_page(
     b.push_str(t("Providers", zh));
     b.push_str("</h1><div class='card'><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
     b.push_str(&rows);
-    b.push_str("</tbody></table></div>");
+    b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
+    b.push_str(t(
+        "Click a provider row to browse its seeded model catalog (RAGFlow conf/models).",
+        zh,
+    ));
+    b.push_str("</p></div>");
+    {
+        let summary = crate::model_meta::provider_catalog_summary();
+        let total: usize = summary.iter().map(|(_, _, count)| count).sum();
+        b.push_str("<div class='card'><h2>");
+        b.push_str(t("Model Catalog", zh));
+        b.push_str(" <span style='font-size:13px;color:var(--tm)'>");
+        b.push_str(&summary.len().to_string());
+        b.push_str(" ");
+        b.push_str(t("providers", zh));
+        b.push_str(" · ");
+        b.push_str(&total.to_string());
+        b.push_str(" ");
+        b.push_str(t("models", zh));
+        b.push_str("</span></h2><div class='kb-grid'>");
+        for (factory, name, count) in &summary {
+            b.push_str(&format!(
+                "<div class='kb-card' data-factory='{}' onclick='showProviderModels(this)' style='cursor:pointer'><h3>{}</h3><p style='color:var(--tm);font-size:12px'>{count} {}</p></div>",
+                html_escape(factory),
+                html_escape(name),
+                t("models", zh)
+            ));
+        }
+        b.push_str("</div></div>");
+    }
     {
         let reranker = state.reranker.public_config();
         b.push_str(
@@ -1032,6 +1075,15 @@ pub async fn providers_page(
         b.push_str("'></label><label style='display:block;margin:12px 0'><input id='rerank-clear' type='checkbox'> Clear saved API key</label><button class='btn btn-p' onclick='saveReranker()'>Save</button><span id='rerank-status' style='margin-left:10px;color:var(--tm)'></span></div><script>function saveReranker(){var s=document.getElementById('rerank-status');fetch('/api/v1/reranker',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('rerank-enabled').checked,api_base:document.getElementById('rerank-base').value,api_key:document.getElementById('rerank-key').value||null,clear_api_key:document.getElementById('rerank-clear').checked})}).then(async r=>({ok:r.ok,data:await r.json()})).then(x=>{s.textContent=x.ok?'Saved':(x.data.message||'Failed')})}</script>");
     }
     b.push_str("<div class='card'><h2>RAG Chat Test</h2><input id='q' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='chat()'>Ask</button><div id='answer' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>function chat(){var q=document.getElementById('q').value;fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('answer').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
+    b.push_str("<div class='modal-overlay' id='modelModal' onclick='if(event.target===this)this.classList.remove(\"show\")'><div class='modal' style='max-width:720px'><h2 id='modelModalTitle'>");
+    b.push_str(t("Models", zh));
+    b.push_str("</h2><div id='modelModalBody' style='max-height:60vh;overflow:auto;margin-top:12px'></div><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-o' onclick='document.getElementById(\"modelModal\").classList.remove(\"show\")'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div><script>var providerModels=");
+    b.push_str(&crate::model_meta::provider_models_payload().to_string());
+    b.push_str(";function showProviderModels(el){var f=el.getAttribute('data-factory');var p=providerModels[f];if(!p)return;document.getElementById('modelModalTitle').textContent=p.name+' ('+f+')';var h='';if(!p.models||!p.models.length){h='<p style=color:var(--tm)>");
+    b.push_str(t("No static model list (models are discovered at runtime).", zh));
+    b.push_str("</p>'}else{p.models.forEach(function(m){var tags=(m.t||[]).map(function(x){return '<span class=badge bs>'+x+'</span>'}).join(' ');h+='<div style=padding:8px 0;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;flex-wrap:wrap><span style=font-weight:500>'+m.n+'</span>'+tags+'</div>'})}document.getElementById('modelModalBody').innerHTML=h;document.getElementById('modelModal').classList.add('show')}</script>");
     Html(layout(t("Providers", zh), &b, zh))
 }
 

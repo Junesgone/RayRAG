@@ -1351,6 +1351,234 @@ pub const DEFAULT_DISAMBIGUATE_SYSTEM: &str =
     "You are a named-entity resolution assistant. Return only JSON.";
 
 // ---------------------------------------------------------------------------
+// GraphRAG phase-completion markers (rag/graphrag/phase_markers.py)
+// ---------------------------------------------------------------------------
+
+/// Phase marker: entity resolution has completed for a KB.
+pub const PHASE_RESOLUTION: &str = "resolution_done";
+/// Phase marker: community summarization has completed for a KB.
+pub const PHASE_COMMUNITY: &str = "community_done";
+/// All known phase markers, in pipeline order.
+pub const ALL_PHASES: [&str; 2] = [PHASE_RESOLUTION, PHASE_COMMUNITY];
+/// Marker TTL: 7 days — well above any single GraphRAG run; keeps stale
+/// markers self-pruning if an invalidation path is missed.
+pub const PHASE_MARKER_DEFAULT_TTL_SECONDS: u64 = 7 * 24 * 3600;
+/// Redis key prefix: markers live under `graphrag:phase:{kb_id}:{phase}`.
+pub const PHASE_MARKER_PREFIX: &str = "graphrag:phase:";
+
+/// Build the marker key for `(kb_id, phase)` — KB-scoped (not task-scoped)
+/// so markers survive task cancellation and a new task on resume.
+pub fn phase_marker_key(kb_id: &str, phase: &str) -> String {
+    format!("{PHASE_MARKER_PREFIX}{kb_id}:{phase}")
+}
+
+// ---------------------------------------------------------------------------
+// GraphRAG entity resolution (rag/graphrag/entity_resolution.py)
+// ---------------------------------------------------------------------------
+
+/// `DEFAULT_RECORD_DELIMITER` — record delimiter in the resolution output.
+pub const DEFAULT_RECORD_DELIMITER: &str = "##";
+/// `DEFAULT_ENTITY_INDEX_DELIMITER` — entity-index delimiter: `<|>1<|>`.
+pub const DEFAULT_ENTITY_INDEX_DELIMITER: &str = "<|>";
+/// `DEFAULT_RESOLUTION_RESULT_DELIMITER` — verdict delimiter: `&&yes&&`.
+pub const DEFAULT_RESOLUTION_RESULT_DELIMITER: &str = "&&";
+/// Candidate pairs sent to the LLM per batch.
+pub const RESOLUTION_BATCH_SIZE: usize = 100;
+/// Max concurrent LLM resolution tasks.
+pub const RESOLUTION_MAX_CONCURRENT_TASKS: usize = 5;
+/// NER label skip-list (`ner/graph_extractor.py` `_SKIP_SPACY_LABELS`).
+pub const NER_SKIP_SPACY_LABELS: [&str; 2] = ["ORDINAL", "CARDINAL"];
+
+/// Port of `rag/nlp.is_english` (single-string form): >80% of the non-empty
+/// characters must be ASCII letters/digits or the punctuation set
+/// `` `.,':;/"?<>!()- ``.
+pub fn text_is_english(s: &str) -> bool {
+    let kept: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
+    if kept.is_empty() {
+        return false;
+    }
+    let eng = kept
+        .iter()
+        .filter(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(
+                    c,
+                    '`' | '.'
+                        | ','
+                        | ':'
+                        | '\''
+                        | ';'
+                        | '/'
+                        | '"'
+                        | '?'
+                        | '<'
+                        | '>'
+                        | '!'
+                        | '('
+                        | ')'
+                        | '-'
+                )
+        })
+        .count();
+    (eng as f64 / kept.len() as f64) > 0.8
+}
+
+/// Classic Levenshtein edit distance (stands in for `editdistance.eval`).
+pub fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// `_has_digit_in_2gram_diff`: the symmetric difference of the two 2-gram
+/// sets contains a digram with a digit (names likely differ in a numeric
+/// field, so they should not be resolution candidates).
+pub fn has_digit_in_2gram_diff(a: &str, b: &str) -> bool {
+    fn to_2gram_set(s: &str) -> HashSet<String> {
+        let chars: Vec<char> = s.chars().collect();
+        (0..chars.len().saturating_sub(1))
+            .map(|i| chars[i..i + 2].iter().collect())
+            .collect()
+    }
+    let set_a = to_2gram_set(a);
+    let set_b = to_2gram_set(b);
+    set_a
+        .symmetric_difference(&set_b)
+        .any(|pair| pair.chars().any(|c| c.is_numeric()))
+}
+
+/// `is_similarity`: deterministic name-similarity gate used to build the
+/// entity-resolution candidate pairs (entity_resolution.py).
+///
+/// * digit-bearing 2-gram diff → not similar;
+/// * both English → Levenshtein ≤ min(len)/2;
+/// * otherwise → character-set overlap: >1 common chars when max set < 4,
+///   else overlap / max_set ≥ 0.8.
+pub fn entity_name_similarity(a: &str, b: &str) -> bool {
+    if has_digit_in_2gram_diff(a, b) {
+        return false;
+    }
+    if text_is_english(a) && text_is_english(b) {
+        return levenshtein_distance(a, b)
+            <= a.chars().count().min(b.chars().count()) / 2;
+    }
+    let set_a: HashSet<char> = a.chars().collect();
+    let set_b: HashSet<char> = b.chars().collect();
+    let max_l = set_a.len().max(set_b.len());
+    let overlap = set_a.intersection(&set_b).count();
+    if max_l < 4 {
+        return overlap > 1;
+    }
+    (overlap as f64 / max_l as f64) >= 0.8
+}
+
+/// `__call__` candidate generation: group node names by `entity_type`
+/// (default `-`), then take unordered pairs within a group where at least
+/// one endpoint belongs to `subgraph_nodes` and `entity_name_similarity`
+/// holds.  Returns `(a, b)` name pairs, ordered by (entity_type, node order).
+pub fn entity_resolution_candidates(
+    nodes: &[(String, Option<&str>)],
+    subgraph_nodes: &HashSet<String>,
+) -> Vec<(String, String)> {
+    let mut types: Vec<&str> = nodes
+        .iter()
+        .map(|(_, t)| t.unwrap_or("-"))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    types.sort_unstable();
+    let mut clusters: Vec<(String, Vec<String>)> = types
+        .into_iter()
+        .map(|t| (t.to_string(), Vec::new()))
+        .collect();
+    for (name, etype) in nodes {
+        let key = etype.unwrap_or("-");
+        if let Some((_, group)) = clusters.iter_mut().find(|(k, _)| k == key) {
+            group.push(name.clone());
+        }
+    }
+    let mut pairs = Vec::new();
+    for (_, group) in clusters {
+        for i in 0..group.len() {
+            for j in (i + 1)..group.len() {
+                let (a, b) = (&group[i], &group[j]);
+                if (subgraph_nodes.contains(a) || subgraph_nodes.contains(b))
+                    && entity_name_similarity(a, b)
+                {
+                    pairs.push((a.clone(), b.clone()));
+                }
+            }
+        }
+    }
+    pairs
+}
+
+/// `_process_results`: parse the LLM resolution output into the 1-based
+/// candidate-pair indices whose verdict is `yes`.  Records are split on
+/// `record_delimiter`; each record is scanned for `<entity_index_delimiter>
+/// <digits> <entity_index_delimiter>` and `<resolution_result_delimiter>
+/// <letters> <resolution_result_delimiter>`; indices above `records_length`
+/// are dropped (mirrors `re.search` semantics).
+pub fn parse_resolution_results(
+    results: &str,
+    records_length: usize,
+    record_delimiter: &str,
+    entity_index_delimiter: &str,
+    resolution_result_delimiter: &str,
+) -> Vec<usize> {
+    let re_int = regex::Regex::new(&format!(
+        r"{}(\d+){}",
+        regex::escape(entity_index_delimiter),
+        regex::escape(entity_index_delimiter)
+    ))
+    .expect("valid entity-index regex");
+    let re_bool = regex::Regex::new(&format!(
+        r"{}([a-zA-Z]+){}",
+        regex::escape(resolution_result_delimiter),
+        regex::escape(resolution_result_delimiter)
+    ))
+    .expect("valid resolution-result regex");
+
+    let mut ans = Vec::new();
+    for record in results.split(record_delimiter) {
+        let record = record.trim();
+        let res_int: usize = re_int
+            .captures(record)
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
+        if res_int == 0 || res_int > records_length {
+            continue;
+        }
+        let res_bool = re_bool
+            .captures(record)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_ascii_lowercase())
+            .unwrap_or_default();
+        if !res_bool.is_empty() && res_bool == "yes" {
+            ans.push(res_int);
+        }
+    }
+    ans
+}
+
+// ---------------------------------------------------------------------------
 // Store abstraction (ES I/O wrappers in RayRAG terms)
 // ---------------------------------------------------------------------------
 
@@ -2878,5 +3106,98 @@ mod tests {
             assert_eq!(rebuilt.to_entity_kwd, base.to_entity_kwd);
             assert_eq!(rebuilt.source_chunk_ids, vec!["c1", "c2"]);
         });
+    }
+
+    #[test]
+    fn phase_marker_constants_and_key_format() {
+        assert_eq!(PHASE_RESOLUTION, "resolution_done");
+        assert_eq!(PHASE_COMMUNITY, "community_done");
+        assert_eq!(ALL_PHASES, [PHASE_RESOLUTION, PHASE_COMMUNITY]);
+        assert_eq!(PHASE_MARKER_DEFAULT_TTL_SECONDS, 7 * 24 * 3600);
+        assert_eq!(
+            phase_marker_key("kb-1", PHASE_RESOLUTION),
+            "graphrag:phase:kb-1:resolution_done"
+        );
+        assert_eq!(
+            phase_marker_key("kb-1", PHASE_COMMUNITY),
+            "graphrag:phase:kb-1:community_done"
+        );
+        // KB-scoped: distinct KBs never collide.
+        assert_ne!(
+            phase_marker_key("kb-1", PHASE_RESOLUTION),
+            phase_marker_key("kb-2", PHASE_RESOLUTION)
+        );
+        assert_eq!(NER_SKIP_SPACY_LABELS, ["ORDINAL", "CARDINAL"]);
+    }
+
+    #[test]
+    fn entity_name_similarity_matches_ragflow_gate() {
+        // English edit-distance gate: distance <= min(len)//2.
+        assert!(entity_name_similarity("Acme", "Acme"));
+        assert!(entity_name_similarity("Apple", "apple")); // distance 1 <= 2
+        assert!(entity_name_similarity("abc", "abd")); // distance 1 <= 1
+        assert!(!entity_name_similarity("Acme", "Zenith")); // distance > 2
+        assert!(!entity_name_similarity("computer", "phone")); // distance > 2
+        // Digit-bearing 2-gram symmetric difference short-circuits to false.
+        assert!(!entity_name_similarity("version2", "version3"));
+        assert!(!entity_name_similarity("iPhone 15", "iPhone 16"));
+        // Non-English character-set overlap path.
+        assert!(entity_name_similarity("北京", "北京市")); // max set 3 < 4, overlap 2 > 1
+        assert!(!entity_name_similarity("北京", "上海")); // overlap 0
+        assert!(entity_name_similarity("阿里巴巴", "阿里巴巴"));
+        assert!(!entity_name_similarity("阿里巴巴", "阿里巴巴集团")); // 3/5 = 0.6 < 0.8
+        // is_english / levenshtein primitives.
+        assert!(text_is_english("hello world"));
+        assert!(!text_is_english("你好"));
+        assert!(!text_is_english("hello你好")); // 5/7 < 0.8
+        assert_eq!(levenshtein_distance("kitten", "sitting"), 3);
+        assert_eq!(levenshtein_distance("", "abc"), 3);
+    }
+
+    #[test]
+    fn entity_resolution_candidates_and_result_parsing() {
+        let nodes = vec![
+            ("Apple".to_string(), Some("org")),
+            ("apple".to_string(), Some("org")),
+            ("Microsoft".to_string(), Some("org")),
+            ("北京".to_string(), Some("geo")),
+            ("北京市".to_string(), Some("geo")),
+            ("上海".to_string(), Some("geo")),
+        ];
+        let subgraph: HashSet<String> = ["Apple".into(), "北京".into()].into_iter().collect();
+        let pairs = entity_resolution_candidates(&nodes, &subgraph);
+        // Same-type unordered pairs, at least one endpoint in the subgraph,
+        // passing the similarity gate.  Entity types iterate in sorted order
+        // ("geo" < "org"), matching RAGFlow's sorted entity_types dict.
+        assert_eq!(
+            pairs,
+            vec![
+                ("北京".to_string(), "北京市".to_string()),
+                ("Apple".to_string(), "apple".to_string()),
+            ]
+        );
+
+        // _process_results: only in-range "yes" records survive.
+        let output = "(For question <|>1<|>, &&no&&, different.)##\
+                      (For question <|>2<|>, &&yes&&, same.)##\
+                      (For question <|>3<|>, &&Yes&&, same.)##\
+                      (For question <|>99<|>, &&yes&&, out of range.)";
+        let indices = parse_resolution_results(
+            output,
+            3,
+            DEFAULT_RECORD_DELIMITER,
+            DEFAULT_ENTITY_INDEX_DELIMITER,
+            DEFAULT_RESOLUTION_RESULT_DELIMITER,
+        );
+        assert_eq!(indices, vec![2, 3]);
+        // Malformed / empty output yields no merges.
+        assert!(parse_resolution_results(
+            "no delimiters here",
+            5,
+            "##",
+            "<|>",
+            "&&"
+        )
+        .is_empty());
     }
 }

@@ -735,6 +735,244 @@ fn deduplicate_capabilities(capabilities: &mut Vec<ModelCapability>) {
     });
 }
 
+// ── Provider model catalog (seeded from RAGFlow conf/models/*.json) ────────
+//
+// The 20 provider fixtures under `src/api/fixtures/models/` mirror RAGFlow's
+// `conf/models/<factory>.json` verbatim (name / url{default,singapore,us,global}
+// / url_suffix{chat,embedding,rerank,...} / models / features). They are embedded
+// at compile time and exposed for the providers page model browser and for
+// callers that need the static catalog of a factory without a live API call.
+
+/// One model entry from a provider catalog fixture.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelInfo {
+    pub name: String,
+    pub max_tokens: u64,
+    /// Canonical capability tags: `chat` / `embedding` / `rerank` /
+    /// `image2text` / `speech2text` / `tts` / `ocr` (RAGFlow's `vision` and
+    /// `asr` are normalized onto the RayRAG capability names).
+    pub model_types: Vec<String>,
+    /// True when the fixture marks this model as thinking-capable.
+    pub thinking: bool,
+}
+
+/// A seeded provider catalog fixture (mirrors RAGFlow conf/models/<factory>.json).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderModels {
+    /// Fixture key, e.g. `"deepseek"`, `"openai"`, `"zhipu-ai"`.
+    pub factory: String,
+    /// Display name, e.g. `"DeepSeek"`.
+    pub name: String,
+    /// Region -> base URL (`default` / `singapore` / `us` / `global` ...).
+    pub url: BTreeMap<String, String>,
+    /// Endpoint kind -> URL suffix (`chat` / `embedding` / `rerank` / ...).
+    pub url_suffix: BTreeMap<String, String>,
+    /// Seeded model list (empty for dynamic providers such as Ollama/vLLM).
+    pub models: Vec<ModelInfo>,
+    /// Free-form `features` object preserved verbatim from the fixture.
+    pub features: Option<Value>,
+}
+
+/// All 20 RAGFlow provider fixtures, embedded at compile time.
+const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
+    ("aliyun", include_str!("api/fixtures/models/aliyun.json")),
+    ("baidu", include_str!("api/fixtures/models/baidu.json")),
+    ("cohere", include_str!("api/fixtures/models/cohere.json")),
+    ("deepseek", include_str!("api/fixtures/models/deepseek.json")),
+    ("fishaudio", include_str!("api/fixtures/models/fishaudio.json")),
+    ("gitee", include_str!("api/fixtures/models/gitee.json")),
+    ("google", include_str!("api/fixtures/models/google.json")),
+    ("huggingface", include_str!("api/fixtures/models/huggingface.json")),
+    ("lmstudio", include_str!("api/fixtures/models/lmstudio.json")),
+    ("minimax", include_str!("api/fixtures/models/minimax.json")),
+    ("moonshot", include_str!("api/fixtures/models/moonshot.json")),
+    ("nvidia", include_str!("api/fixtures/models/nvidia.json")),
+    ("ollama", include_str!("api/fixtures/models/ollama.json")),
+    ("openai", include_str!("api/fixtures/models/openai.json")),
+    ("openrouter", include_str!("api/fixtures/models/openrouter.json")),
+    ("siliconflow", include_str!("api/fixtures/models/siliconflow.json")),
+    ("vllm", include_str!("api/fixtures/models/vllm.json")),
+    ("volcengine", include_str!("api/fixtures/models/volcengine.json")),
+    ("xai", include_str!("api/fixtures/models/xai.json")),
+    ("zhipu-ai", include_str!("api/fixtures/models/zhipu-ai.json")),
+];
+
+/// Parse every embedded fixture into a `ProviderModels` entry.
+pub fn provider_model_catalog() -> Vec<ProviderModels> {
+    PROVIDER_MODEL_FIXTURES
+        .iter()
+        .filter_map(|(factory, raw)| parse_provider_models(factory, raw))
+        .collect()
+}
+
+/// Static model list for a factory key (e.g. `"deepseek"`, `"zhipu-ai"`).
+///
+/// Returns an empty vector when the factory is unknown or carries no static
+/// model list (dynamic providers like Ollama/vLLM discover models at runtime).
+pub fn list_models_for(factory: &str) -> Vec<ModelInfo> {
+    provider_model_catalog()
+        .into_iter()
+        .find(|provider| provider.factory == factory)
+        .map(|provider| provider.models)
+        .unwrap_or_default()
+}
+
+/// Resolve a RayRAG provider (id + display name) onto a catalog fixture key.
+pub fn resolve_model_factory(provider_id: &str, provider_name: &str) -> Option<String> {
+    let normalized_id = normalize_provider_name(provider_id);
+    let normalized_name = normalize_provider_name(provider_name);
+    let aliases: &[(&str, &str)] = &[
+        ("zhipu", "zhipu-ai"),
+        ("zhipuai", "zhipu-ai"),
+        ("bigmodel", "zhipu-ai"),
+        ("qwen", "aliyun"),
+        ("dashscope", "aliyun"),
+        ("kimi", "moonshot"),
+        ("doubao", "volcengine"),
+        ("ark", "volcengine"),
+        ("grok", "xai"),
+        ("gemini", "google"),
+        ("qianfan", "baidu"),
+    ];
+    for (needle, factory) in aliases {
+        if normalized_id == *needle || normalized_name == *needle {
+            return Some((*factory).to_string());
+        }
+    }
+    for (factory, _) in PROVIDER_MODEL_FIXTURES {
+        let key = normalize_provider_name(factory);
+        if normalized_id == key || normalized_name == key {
+            return Some((*factory).to_string());
+        }
+    }
+    None
+}
+
+/// Compact payload for the providers page model browser:
+/// `{ "<factory>": {"name": "...", "models": [{"n": "...", "t": ["chat", ...]}]} }`.
+pub fn provider_models_payload() -> Value {
+    let mut catalog = serde_json::Map::new();
+    for provider in provider_model_catalog() {
+        let models = provider
+            .models
+            .iter()
+            .map(|model| {
+                let mut tags = model.model_types.clone();
+                if model.thinking && !tags.iter().any(|tag| tag == "thinking") {
+                    tags.push("thinking".to_string());
+                }
+                serde_json::json!({ "n": model.name, "t": tags })
+            })
+            .collect::<Vec<_>>();
+        catalog.insert(
+            provider.factory.clone(),
+            serde_json::json!({ "name": provider.name, "models": models }),
+        );
+    }
+    Value::Object(catalog)
+}
+
+/// `(factory, display name, static model count)` for every seeded provider.
+pub fn provider_catalog_summary() -> Vec<(String, String, usize)> {
+    provider_model_catalog()
+        .into_iter()
+        .map(|provider| (provider.factory, provider.name, provider.models.len()))
+        .collect()
+}
+
+fn parse_provider_models(factory: &str, raw: &str) -> Option<ProviderModels> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let name = fixture_str(&value, &["name", "Name"])
+        .unwrap_or(factory)
+        .to_string();
+    let url = fixture_object(&value, &["url"])
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(region, url)| {
+                    url.as_str()
+                        .map(|url| (region.clone(), url.to_string()))
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let url_suffix = fixture_object(&value, &["url_suffix", "url-suffix"])
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(kind, suffix)| {
+                    suffix
+                        .as_str()
+                        .map(|suffix| (kind.clone(), suffix.to_string()))
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let models = value
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_model_info)
+        .collect();
+    let features = value.get("features").cloned();
+    Some(ProviderModels {
+        factory: factory.to_string(),
+        name,
+        url,
+        url_suffix,
+        models,
+        features,
+    })
+}
+
+fn parse_model_info(model: &Value) -> Option<ModelInfo> {
+    let name = fixture_str(model, &["name", "Name"])?.to_string();
+    let max_tokens = model
+        .get("max_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+    let model_types = model
+        .get("model_types")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(normalize_model_type)
+        .collect::<Vec<_>>();
+    let thinking = model
+        .pointer("/thinking/default_value")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Some(ModelInfo {
+        name,
+        max_tokens,
+        model_types,
+        thinking,
+    })
+}
+
+/// Map RAGFlow model_type labels onto RayRAG capability names.
+fn normalize_model_type(raw: &str) -> String {
+    match raw {
+        "vision" | "image2text" | "image_to_text" => "image2text".to_string(),
+        "asr" | "speech2text" | "speech_to_text" => "speech2text".to_string(),
+        "tts" | "text_to_speech" => "tts".to_string(),
+        "embedding" | "embeddings" => "embedding".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn fixture_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+}
+
+fn fixture_object<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a serde_json::Map<String, Value>> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_object))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -952,5 +1190,41 @@ mod tests {
             .as_str(),
             "https://ark.cn-beijing.volces.com/api/v3/models"
         );
+    }
+
+    #[test]
+    fn seeded_provider_catalog_covers_all_ragflow_fixtures() {
+        let catalog = provider_model_catalog();
+        // All 20 RAGFlow conf/models fixtures parse into catalog entries.
+        assert_eq!(catalog.len(), 20);
+        let total_models: usize = catalog.iter().map(|p| p.models.len()).sum();
+        assert!(total_models > 150, "expected 150+ seeded models, got {total_models}");
+        // Multi-region URL maps survive (aliyun: default/singapore/us).
+        let aliyun = catalog.iter().find(|p| p.factory == "aliyun").unwrap();
+        assert!(aliyun.url.contains_key("singapore"));
+        assert!(aliyun.url.contains_key("us"));
+        assert!(aliyun.url_suffix.contains_key("rerank"));
+        // Heterogeneous fixtures parse leniently (baidu "Name", huggingface "url-suffix").
+        let baidu = catalog.iter().find(|p| p.factory == "baidu").unwrap();
+        assert_eq!(baidu.name, "Baidu");
+        assert!(!baidu.models.is_empty());
+        let hf = catalog.iter().find(|p| p.factory == "huggingface").unwrap();
+        assert_eq!(hf.name, "HuggingFace");
+        assert_eq!(hf.models.len(), 1);
+        // Dynamic providers carry an empty static list.
+        assert!(catalog.iter().find(|p| p.factory == "ollama").unwrap().models.is_empty());
+        // list_models_for resolves by factory key; vision/asr normalize onto RayRAG names.
+        assert_eq!(list_models_for("deepseek").len(), 2);
+        let moonshot = list_models_for("moonshot");
+        assert!(moonshot.iter().any(|m| m.model_types.contains(&"image2text".to_string())));
+        assert!(moonshot.iter().any(|m| m.thinking));
+        // Provider id/name resolution maps aliases onto fixtures.
+        assert_eq!(
+            resolve_model_factory("zhipu-ai", "Zhipu AI").as_deref(),
+            Some("zhipu-ai")
+        );
+        assert_eq!(resolve_model_factory("qwen", "Aliyun").as_deref(), Some("aliyun"));
+        assert_eq!(resolve_model_factory("volcengine", "VolcEngine").as_deref(), Some("volcengine"));
+        assert_eq!(resolve_model_factory("unknown", "Nope").as_deref(), None);
     }
 }

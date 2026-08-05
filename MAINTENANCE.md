@@ -1,3 +1,11 @@
+## 2026-08-05 v0.1.5：模型目录 + 沙箱契约 + graphrag 阶段标记
+
+- Provider Model Catalog：20 厂商/157 模型种子化（fixtures + providers 页 modal）
+- sandbox.rs +1031 行：executor_manager 枚举/失败协议/运行时约定/artifact/安全契约
+- structure_compile.rs +321 行：phase markers + 实体消解确定性门控；prompts.rs +116 行 light 常量
+- 测试基线：**931 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 596 → **507**
+
 ## 2026-08-05 v0.1.4 容器验证：模板库 28 个确认
 
 - 部署后 agents 页面仅 3 内置模板（22KB）→ 根因：web.rs 的 tpls 变量构建后未 b.push_str(&tpls)

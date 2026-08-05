@@ -5,8 +5,21 @@
 //!   - 临时实例目录作 cwd + env 隔离（HOME/TMPDIR/MPLBACKEND/PYTHONUNBUFFERED）
 //!   - 超时 kill（进程组）+ 输出大小上限 + 最大内存/CPU 软限制（ulimit 命令）
 //!   - 结构化结果提取：从 stdout 移除标记行并解析（对齐 extract_structured_result）
+//!
+//! 远程契约层（executor_manager 对齐，全部只新增、不改动既有 pub API）：
+//!   - 枚举：SupportLanguage / ResultStatus / ResourceLimitType /
+//!     UnauthorizedAccessType / RuntimeErrorType（对齐 models/enums.py）
+//!   - 失败协议：负值退出码约定（exit_codes）、classify_execution_failure /
+//!     classify_stderr_failure（对齐 execution.py analyze_error_result）、
+//!     安全分析 analyze_code_security（对齐 handlers.py 的 -999 分支）
+//!   - 运行时环境约定：容器池命名 / 基础镜像 / 容器创建参数（gVisor runsc、
+//!     tmpfs、--user nobody、--memory、seccomp）/ 执行命令（docker exec …
+//!     timeout N python -I -B runner.py）/ 超时字符串解析 / 执行包布局
+//!     （main.py|js + runner.py|js + args.json + artifacts/）
+//!   - artifact 收集契约：允许扩展名 → MIME、数量/大小上限、文件名净化
 
 use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::time::Duration;
 use tokio::process::Command;
@@ -236,6 +249,755 @@ fn shell_quote(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 契约层（新增，对齐 RAGFlow agent/sandbox 远程契约；不改动既有 pub API）
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────── 枚举（对齐 models/enums.py） ───────────────────────────
+
+/// 支持的沙箱语言（对齐 `SupportLanguage`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SupportLanguage {
+    Python,
+    Nodejs,
+}
+
+impl SupportLanguage {
+    /// 上游字符串值 `"python"`。
+    pub const PYTHON: &'static str = "python";
+    /// 上游字符串值 `"nodejs"`。
+    pub const NODEJS: &'static str = "nodejs";
+
+    /// 规范字符串值（对齐 SupportLanguage 枚举值）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Python => Self::PYTHON,
+            Self::Nodejs => Self::NODEJS,
+        }
+    }
+
+    /// 解析语言标识（容忍 python3/py/javascript/js/node 别名，对齐
+    /// `SelfManagedProvider._normalize_language` 与 `LocalProvider._normalize_language`）。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "python" | "python3" | "py" | "python3.11" | "python3.12" => Some(Self::Python),
+            "nodejs" | "javascript" | "js" | "node" => Some(Self::Nodejs),
+            _ => None,
+        }
+    }
+}
+
+/// 执行结果状态（对齐 `ResultStatus`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultStatus {
+    Success,
+    ProgramError,
+    ResourceLimitExceeded,
+    UnauthorizedAccess,
+    RuntimeError,
+    ProgramRunnerError,
+}
+
+impl ResultStatus {
+    /// 规范字符串值（对齐 ResultStatus 枚举值）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::ProgramError => "program_error",
+            Self::ResourceLimitExceeded => "resource_limit_exceeded",
+            Self::UnauthorizedAccess => "unauthorized_access",
+            Self::RuntimeError => "runtime_error",
+            Self::ProgramRunnerError => "program_runner_error",
+        }
+    }
+
+    /// 从上游字符串值解析（大小写不敏感）。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "success" => Some(Self::Success),
+            "program_error" => Some(Self::ProgramError),
+            "resource_limit_exceeded" => Some(Self::ResourceLimitExceeded),
+            "unauthorized_access" => Some(Self::UnauthorizedAccess),
+            "runtime_error" => Some(Self::RuntimeError),
+            "program_runner_error" => Some(Self::ProgramRunnerError),
+            _ => None,
+        }
+    }
+}
+
+/// 资源限制类型（对齐 `ResourceLimitType`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceLimitType {
+    Time,
+    Memory,
+    Output,
+}
+
+impl ResourceLimitType {
+    /// 规范字符串值（对齐 ResourceLimitType 枚举值）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Time => "time",
+            Self::Memory => "memory",
+            Self::Output => "output",
+        }
+    }
+}
+
+/// 未授权访问类型（对齐 `UnauthorizedAccessType`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnauthorizedAccessType {
+    DisallowedSyscall,
+    FileAccess,
+    NetworkAccess,
+}
+
+impl UnauthorizedAccessType {
+    /// 规范字符串值（对齐 UnauthorizedAccessType 枚举值）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::DisallowedSyscall => "disallowed_syscall",
+            Self::FileAccess => "file_access",
+            Self::NetworkAccess => "network_access",
+        }
+    }
+}
+
+/// 运行时错误类型（对齐 `RuntimeErrorType`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeErrorType {
+    Signalled,
+    NonzeroExit,
+}
+
+impl RuntimeErrorType {
+    /// 规范字符串值（对齐 RuntimeErrorType 枚举值）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Signalled => "signalled",
+            Self::NonzeroExit => "nonzero_exit",
+        }
+    }
+}
+
+// ─────────────────────────── 失败协议（退出码 + stderr 分类） ───────────────────────────
+
+/// 退出码约定（对齐 executor_manager：0 成功；负值编码失败类别）。
+///
+/// 注：上游 result_protocol.py 未定义 `FAILED` / `SANDBOX_RESULT_FILE` 常量；
+/// 实际的失败协议是 `ResultStatus` 枚举 + 负值退出码 + stderr 关键字分类
+/// （execution.py / handlers.py / limiter.py）。
+pub mod exit_codes {
+    /// 成功（returncode == 0）。
+    pub const SUCCESS: i64 = 0;
+    /// 代码未通过安全检查（handlers.py：status=program_runner_error,
+    /// detail="Code is unsafe", stderr="Line {lineno}: {issue}"）。
+    pub const UNSAFE_CODE: i64 = -999;
+    /// 请求限流（limiter.py：5/second，status=program_runner_error,
+    /// detail=stderr="Too many requests, please try again later"）。
+    pub const RATE_LIMITED: i64 = -429;
+    /// GNU `timeout` 触发（容器内 `timeout N python -I -B runner.py` 返回 124；
+    /// 结果侧记为 -124，status=resource_limit_exceeded, type=time）。
+    pub const TIMEOUT: i64 = -124;
+    /// OOM kill（容器被 --memory 限制杀死，docker 返回 137；结果侧记为 -137，
+    /// status=resource_limit_exceeded, type=memory）。
+    pub const OUT_OF_MEMORY: i64 = -137;
+    /// 容器池繁忙（execution.py：status=program_runner_error,
+    /// stderr="Container pool is busy", detail="no_available_container"）。
+    pub const POOL_BUSY: i64 = -10;
+    /// 内部异常（execution.py：status=program_runner_error, detail="internal_error"）。
+    pub const INTERNAL_ERROR: i64 = -3;
+    /// 异步超时 kill 后（execution.py TimeoutError 分支：pkill -9 后
+    /// status=resource_limit_exceeded, type=time）。
+    pub const TIMEOUT_AFTER_KILL: i64 = -1;
+}
+
+/// 失败分类结果（对齐 CodeExecutionResult 的错误字段子集）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FailureClassification {
+    pub status: ResultStatus,
+    pub resource_limit_type: Option<ResourceLimitType>,
+    pub unauthorized_access_type: Option<UnauthorizedAccessType>,
+    pub runtime_error_type: Option<RuntimeErrorType>,
+}
+
+impl Default for FailureClassification {
+    fn default() -> Self {
+        Self {
+            status: ResultStatus::ProgramError,
+            resource_limit_type: None,
+            unauthorized_access_type: None,
+            runtime_error_type: None,
+        }
+    }
+}
+
+/// 按退出码 + stderr 分类执行失败（对齐 execution.py execute_code 的非零分支 +
+/// analyze_error_result）。
+///
+/// 上游映射：
+///   - returncode 124 → resource_limit_exceeded / time（exit_code 记为 -124）
+///   - returncode 137 → resource_limit_exceeded / memory（exit_code 记为 -137）
+///   - stderr 含 "Permission denied"      → unauthorized_access / file_access
+///   - stderr 含 "Operation not permitted"→ unauthorized_access / disallowed_syscall
+///   - stderr 含 "MemoryError"            → resource_limit_exceeded / memory
+///   - 其他                               → program_error / nonzero_exit
+pub fn classify_execution_failure(exit_code: i64, stderr: &str) -> FailureClassification {
+    match exit_code {
+        124 => FailureClassification {
+            status: ResultStatus::ResourceLimitExceeded,
+            resource_limit_type: Some(ResourceLimitType::Time),
+            ..Default::default()
+        },
+        137 => FailureClassification {
+            status: ResultStatus::ResourceLimitExceeded,
+            resource_limit_type: Some(ResourceLimitType::Memory),
+            ..Default::default()
+        },
+        _ => classify_stderr_failure(stderr),
+    }
+}
+
+/// 按 stderr 关键字分类（对齐 analyze_error_result 的字符串分支）。
+pub fn classify_stderr_failure(stderr: &str) -> FailureClassification {
+    if stderr.contains("Permission denied") {
+        FailureClassification {
+            status: ResultStatus::UnauthorizedAccess,
+            unauthorized_access_type: Some(UnauthorizedAccessType::FileAccess),
+            ..Default::default()
+        }
+    } else if stderr.contains("Operation not permitted") {
+        FailureClassification {
+            status: ResultStatus::UnauthorizedAccess,
+            unauthorized_access_type: Some(UnauthorizedAccessType::DisallowedSyscall),
+            ..Default::default()
+        }
+    } else if stderr.contains("MemoryError") {
+        FailureClassification {
+            status: ResultStatus::ResourceLimitExceeded,
+            resource_limit_type: Some(ResourceLimitType::Memory),
+            ..Default::default()
+        }
+    } else {
+        FailureClassification {
+            status: ResultStatus::ProgramError,
+            runtime_error_type: Some(RuntimeErrorType::NonzeroExit),
+            ..Default::default()
+        }
+    }
+}
+
+/// 安全分析 issue 列表渲染（对齐 handlers.py：`"\n".join([f"Line {lineno}: {issue}" ...])`）。
+pub fn format_security_issues(issues: &[(String, i64)]) -> String {
+    issues
+        .iter()
+        .map(|(issue, lineno)| format!("Line {lineno}: {issue}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// ─────────────────────────── 运行时环境约定（providers/ + executor_manager 镜像语义） ───────────────────────────
+
+/// 默认执行超时秒数（对齐 config.py `SANDBOX_TIMEOUT` 默认 "10s"）。
+pub const DEFAULT_SANDBOX_TIMEOUT_SECONDS: u64 = 10;
+/// 默认容器内存上限（对齐 container.py 默认 "256m"）。
+pub const DEFAULT_SANDBOX_MAX_MEMORY: &str = "256m";
+/// gVisor 运行时（对齐 container.py `--runtime=runsc`）。
+pub const SANDBOX_CONTAINER_RUNTIME: &str = "runsc";
+/// 容器内工作区 tmpfs（对齐 container.py `/workspace:rw,exec,size=100M,uid=65534,gid=65534`）。
+pub const SANDBOX_WORKSPACE_TMPFS: &str = "/workspace:rw,exec,size=100M,uid=65534,gid=65534";
+/// 容器内 /tmp tmpfs（对齐 container.py `/tmp:rw,exec,size=50M`）。
+pub const SANDBOX_TMP_TMPFS: &str = "/tmp:rw,exec,size=50M";
+/// 容器运行用户（对齐 container.py `--user nobody`）。
+pub const SANDBOX_CONTAINER_USER: &str = "nobody";
+/// Python 基础镜像默认名（对齐 `SANDBOX_BASE_PYTHON_IMAGE` 默认值）。
+pub const DEFAULT_PYTHON_SANDBOX_IMAGE: &str = "sandbox-base-python:latest";
+/// Node.js 基础镜像默认名（对齐 `SANDBOX_BASE_NODEJS_IMAGE` 默认值）。
+pub const DEFAULT_NODEJS_SANDBOX_IMAGE: &str = "sandbox-base-nodejs:latest";
+/// 结构化结果标记前缀（对齐 RESULT_MARKER_PREFIX，与既有常量一致）。
+const RESULT_MARKER: &str = "__RAGFLOW_RESULT__:";
+
+/// 解析超时字符串为秒（对齐 util.py parse_timeout_duration）。
+///
+/// 支持 "90s"、"2m"、"1m30s"（s/m 大小写不敏感）；非法或 0 → 返回默认值。
+pub fn parse_timeout_duration(timeout: &str, default_seconds: u64) -> u64 {
+    let trimmed = timeout.trim().to_lowercase();
+    let pattern = regex::Regex::new(r"^(?:(\d+)m)?(?:(\d+)s)?$").expect("static regex");
+    let captures = match pattern.captures(&trimmed) {
+        Some(captures) if captures.get(1).is_some() || captures.get(2).is_some() => captures,
+        _ => return default_seconds,
+    };
+    let minutes: u64 = captures
+        .get(1)
+        .and_then(|group| group.as_str().parse().ok())
+        .unwrap_or(0);
+    let seconds: u64 = captures
+        .get(2)
+        .and_then(|group| group.as_str().parse().ok())
+        .unwrap_or(0);
+    let total = minutes * 60 + seconds;
+    if total > 0 {
+        total
+    } else {
+        default_seconds
+    }
+}
+
+/// 格式化秒数为上游风格字符串（对齐 util.py format_timeout_duration）。
+pub fn format_timeout_duration(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    let remaining = seconds % 60;
+    if remaining == 0 {
+        format!("{minutes}m")
+    } else {
+        format!("{minutes}m{remaining}s")
+    }
+}
+
+/// 校验 Docker 内存限制字符串（对齐 util.py is_valid_memory_limit：`[1-9]\d*(b|k|m|g)`）。
+pub fn is_valid_memory_limit(memory: &str) -> bool {
+    let pattern = regex::Regex::new(r"^[1-9]\d*(b|k|m|g)$").expect("static regex");
+    pattern.is_match(memory.trim().to_lowercase().as_str())
+}
+
+/// 容器池命名（对齐 container.py：`sandbox_python_{i}` / `sandbox_nodejs_{i}`）。
+pub fn container_pool_name(language: &str, index: usize) -> String {
+    let normalized = SupportLanguage::parse(language)
+        .map(|lang| lang.as_str())
+        .unwrap_or(language);
+    format!("sandbox_{normalized}_{index}")
+}
+
+/// 语言 → 基础镜像（对齐 container.py：SANDBOX_BASE_PYTHON_IMAGE /
+/// SANDBOX_BASE_NODEJS_IMAGE 环境变量覆盖，默认 sandbox-base-{lang}:latest）。
+pub fn sandbox_base_image_from_env(language: &str) -> String {
+    match SupportLanguage::parse(language) {
+        Some(SupportLanguage::Python) => std::env::var("SANDBOX_BASE_PYTHON_IMAGE")
+            .unwrap_or_else(|_| DEFAULT_PYTHON_SANDBOX_IMAGE.to_string()),
+        Some(SupportLanguage::Nodejs) => std::env::var("SANDBOX_BASE_NODEJS_IMAGE")
+            .unwrap_or_else(|_| DEFAULT_NODEJS_SANDBOX_IMAGE.to_string()),
+        None => format!("sandbox-base-{language}:latest"),
+    }
+}
+
+/// 构建容器创建参数（对齐 container.py create_container）。
+///
+/// 语义：gVisor runsc + 只读根文件系统 + /workspace 与 /tmp tmpfs +
+/// `--user nobody` + `--workdir /workspace` + 内存上限（默认 256m，可用
+/// SANDBOX_MAX_MEMORY 覆盖）+ 可选 seccomp profile。
+pub fn build_container_create_args(
+    name: &str,
+    language: &str,
+    image: &str,
+    max_memory: Option<&str>,
+    enable_seccomp: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "docker".to_string(),
+        "run".to_string(),
+        "-d".to_string(),
+        format!("--runtime={SANDBOX_CONTAINER_RUNTIME}"),
+        "--name".to_string(),
+        name.to_string(),
+        "--read-only".to_string(),
+        "--tmpfs".to_string(),
+        SANDBOX_WORKSPACE_TMPFS.to_string(),
+        "--tmpfs".to_string(),
+        SANDBOX_TMP_TMPFS.to_string(),
+        "--user".to_string(),
+        SANDBOX_CONTAINER_USER.to_string(),
+        "--workdir".to_string(),
+        "/workspace".to_string(),
+    ];
+    let memory = max_memory
+        .filter(|value| is_valid_memory_limit(value))
+        .unwrap_or(DEFAULT_SANDBOX_MAX_MEMORY);
+    args.extend(["--memory".to_string(), memory.to_string()]);
+    if enable_seccomp {
+        args.extend([
+            "--security-opt".to_string(),
+            "seccomp=/app/seccomp-profile-default.json".to_string(),
+        ]);
+    }
+    args.push(image.to_string());
+    args
+}
+
+/// 构建容器内执行命令（对齐 execution.py _build_container_run_args）。
+///
+/// python：`docker exec --workdir /workspace/{task_id} {container} timeout {N} python -I -B {runner}`
+/// nodejs：同上但无 `-I -B`。
+pub fn build_container_run_args(
+    language: &str,
+    task_id: &str,
+    container: &str,
+    timeout_seconds: u64,
+    runner: &str,
+) -> Vec<String> {
+    let mut args = vec![
+        "docker".to_string(),
+        "exec".to_string(),
+        "--workdir".to_string(),
+        format!("/workspace/{task_id}"),
+        container.to_string(),
+        "timeout".to_string(),
+        timeout_seconds.to_string(),
+        SupportLanguage::parse(language)
+            .map(|lang| lang.as_str())
+            .unwrap_or(language)
+            .to_string(),
+    ];
+    if SupportLanguage::parse(language) == Some(SupportLanguage::Python) {
+        args.extend(["-I".to_string(), "-B".to_string()]);
+    }
+    args.push(runner.to_string());
+    args
+}
+
+/// Node.js 兼容导出追加（对齐 handlers.py：NODEJS 时 `code += "\n\nmodule.exports = { main };"`）。
+pub fn append_nodejs_module_export(code: &str) -> String {
+    format!("{code}\n\nmodule.exports = {{ main }};")
+}
+
+/// 执行包（对齐 execution.py _build_execution_bundle 产物）。
+#[derive(Debug, Clone)]
+pub struct ExecutionBundle {
+    pub code_name: String,
+    pub code_bytes: Vec<u8>,
+    pub runner_name: String,
+    pub runner_source: String,
+    pub args_name: String,
+    pub args_source: String,
+}
+
+/// 构建执行包（对齐 _build_execution_bundle：main.py|js + runner.py|js + args.json）。
+pub fn build_execution_bundle(
+    language: &str,
+    code_bytes: &[u8],
+    arguments: &Map<String, Value>,
+) -> Result<ExecutionBundle> {
+    let args_source = serde_json::to_string(arguments)?;
+    match SupportLanguage::parse(language) {
+        Some(SupportLanguage::Python) => Ok(ExecutionBundle {
+            code_name: "main.py".to_string(),
+            code_bytes: code_bytes.to_vec(),
+            runner_name: "runner.py".to_string(),
+            runner_source: PYTHON_RUNNER_SOURCE.to_string(),
+            args_name: "args.json".to_string(),
+            args_source,
+        }),
+        Some(SupportLanguage::Nodejs) => Ok(ExecutionBundle {
+            code_name: "main.js".to_string(),
+            code_bytes: code_bytes.to_vec(),
+            runner_name: "runner.js".to_string(),
+            runner_source: NODEJS_RUNNER_SOURCE.to_string(),
+            args_name: "args.json".to_string(),
+            args_source,
+        }),
+        None => bail!("Unsupported language for sandbox execution: {language}"),
+    }
+}
+
+/// Python runner 模板（对齐 execution.py 的 runner_source；`-I` 隔离模式不加载
+/// 脚本目录，故先 `sys.path.insert(0, dirname(__file__))` 再 `from main import main`）。
+const PYTHON_RUNNER_SOURCE: &str = r#"import base64
+import json
+import os
+import sys
+
+os.makedirs(os.path.join(os.getcwd(), "artifacts"), exist_ok=True)
+
+sys.path.insert(0, os.path.dirname(__file__))
+from main import main
+
+RESULT_MARKER_PREFIX = "__RAGFLOW_RESULT__:"
+
+
+def emit_result(value):
+    payload = json.dumps(
+        {
+            "present": True,
+            "value": value,
+            "type": "json",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    print(RESULT_MARKER_PREFIX + base64.b64encode(payload.encode("utf-8")).decode("ascii"))
+
+
+if __name__ == "__main__":
+    with open(os.path.join(os.path.dirname(__file__), "args.json"), encoding="utf-8") as f:
+        args = json.load(f)
+    result = main(**args)
+    emit_result(result)
+"#;
+
+/// Node.js runner 模板（对齐 execution.py 的 runner.js：读 args.json、require main.js、
+/// 支持 promise 结果，标记行输出结构化结果）。
+const NODEJS_RUNNER_SOURCE: &str = r#"const fs = require('fs');
+const path = require('path');
+
+const args = JSON.parse(fs.readFileSync(path.join(__dirname, 'args.json'), 'utf8'));
+const mainPath = path.join(__dirname, 'main.js');
+const RESULT_MARKER_PREFIX = '__RAGFLOW_RESULT__:';
+
+function isPromise(value) {
+    return Boolean(value && typeof value.then === 'function');
+}
+
+function emitResult(value) {
+    if (typeof value === 'undefined') {
+        console.error('Error: main() must return a value. Use null for an empty result.');
+        process.exit(1);
+    }
+
+    const payload = JSON.stringify({ present: true, value, type: 'json' });
+    if (typeof payload === 'undefined') {
+        console.error('Error: main() returned a non-JSON-serializable value.');
+        process.exit(1);
+    }
+
+    console.log(RESULT_MARKER_PREFIX + Buffer.from(payload, 'utf8').toString('base64'));
+}
+
+if (fs.existsSync(mainPath)) {
+    const mod = require(mainPath);
+    const main = typeof mod === 'function' ? mod : mod.main;
+
+    if (typeof main !== 'function') {
+        console.error('Error: main is not a function');
+        process.exit(1);
+    }
+
+    if (typeof args === 'object' && args !== null) {
+        try {
+            const result = Promise.resolve(main(args));
+            if (isPromise(result)) {
+                result.then(output => {
+                    emitResult(output);
+                }).catch(err => {
+                    console.error('Error in async main function:', err);
+                    process.exit(1);
+                });
+            } else {
+                emitResult(result);
+            }
+        } catch (err) {
+            console.error('Error when executing main:', err);
+            process.exit(1);
+        }
+    } else {
+        console.error('Error: args is not a valid object:', args);
+        process.exit(1);
+    }
+} else {
+    console.error('main.js not found in the current directory');
+    process.exit(1);
+}
+"#;
+
+// ─────────────────────────── artifact 收集契约 ───────────────────────────
+
+/// 允许的 artifact 扩展名 → MIME 类型（对齐 execution.py ALLOWED_ARTIFACT_EXTENSIONS）。
+pub const ALLOWED_ARTIFACT_EXTENSIONS: &[(&str, &str)] = &[
+    (".png", "image/png"),
+    (".jpg", "image/jpeg"),
+    (".jpeg", "image/jpeg"),
+    (".svg", "image/svg+xml"),
+    (".pdf", "application/pdf"),
+    (".csv", "text/csv"),
+    (".json", "application/json"),
+    (".html", "text/html"),
+];
+
+/// 单次执行最大 artifact 数量（对齐 MAX_ARTIFACT_COUNT = 10）。
+pub const MAX_ARTIFACT_COUNT: usize = 10;
+/// 单个 artifact 最大字节数（对齐 MAX_ARTIFACT_SIZE = 10MB）。
+pub const MAX_ARTIFACT_SIZE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// artifact 条目（对齐 schemas.py ArtifactItem）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactItem {
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+    pub content_b64: String,
+}
+
+/// 扩展名 → MIME 类型（小写扩展名匹配，对齐 ALLOWED_ARTIFACT_EXTENSIONS）。
+pub fn mime_type_for_artifact(name: &str) -> Option<&'static str> {
+    let ext = name
+        .rsplit('.')
+        .next()
+        .map(|ext| format!(".{}", ext.to_lowercase()))
+        .unwrap_or_default();
+    ALLOWED_ARTIFACT_EXTENSIONS
+        .iter()
+        .find(|(allowed, _)| *allowed == ext)
+        .map(|(_, mime)| *mime)
+}
+
+/// artifact 文件名净化校验（对齐 execution.py：拒绝 `/`、`\`、`..`、点开头）。
+pub fn artifact_name_is_safe(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.starts_with('.')
+}
+
+// ─────────────────────────── 安全分析（对齐 handlers.py / services/security.py） ───────────────────────────
+
+/// Python 危险导入根模块（对齐 SecurePythonAnalyzer.DANGEROUS_IMPORTS）。
+pub const DANGEROUS_PYTHON_IMPORTS: &[&str] = &[
+    "os",
+    "subprocess",
+    "sys",
+    "shutil",
+    "socket",
+    "ctypes",
+    "pickle",
+    "threading",
+    "multiprocessing",
+    "asyncio",
+    "http.client",
+    "ftplib",
+    "telnetlib",
+    "builtins",
+];
+
+/// Python 危险调用名（对齐 SecurePythonAnalyzer.DANGEROUS_CALLS 核心集合）。
+pub const DANGEROUS_PYTHON_CALLS: &[&str] = &[
+    "eval",
+    "exec",
+    "open",
+    "__import__",
+    "compile",
+    "input",
+    "system",
+    "popen",
+    "remove",
+    "rename",
+    "rmdir",
+    "chdir",
+    "chmod",
+    "chown",
+    "getattr",
+    "setattr",
+    "globals",
+    "locals",
+];
+
+/// Node.js 危险模式（对齐 SecureJavaScriptAnalyzer.DANGEROUS_PATTERNS）。
+pub const DANGEROUS_NODEJS_PATTERNS: &[(&str, &str)] = &[
+    (r#"require\s*\(\s*['"]child_process['"]\s*\)"#, "Require: child_process"),
+    (r#"require\s*\(\s*['"]fs['"]\s*\)"#, "Require: fs"),
+    (r#"require\s*\(\s*['"]worker_threads['"]\s*\)"#, "Require: worker_threads"),
+    (r#"\beval\s*\("#, "Call: eval"),
+    (r#"\bFunction\s*\("#, "Call: Function"),
+    (r#"\bprocess\s*\.\s*binding\s*\("#, "Call: process.binding"),
+];
+
+/// 代码安全检查（对齐 analyze_code_security）。
+///
+/// 返回 `(is_safe, issues)`，issues 为 `(描述, 行号)` 列表。行级扫描启发式镜像
+/// 上游 AST / 正则分析：Python 覆盖危险 import / from-import / 裸调用 /
+/// 危险模块属性访问；Node.js 覆盖 require(child_process|fs|worker_threads)、
+/// eval(、Function(、process.binding(。重复的 (描述, 行号) 会去重。
+pub fn analyze_code_security(code: &str, language: &str) -> (bool, Vec<(String, i64)>) {
+    let issues = match SupportLanguage::parse(language) {
+        Some(SupportLanguage::Python) => analyze_python_security(code),
+        Some(SupportLanguage::Nodejs) => analyze_nodejs_security(code),
+        None => vec![(
+            format!("Unsupported language for security analysis: {language}"),
+            -1,
+        )],
+    };
+    (issues.is_empty(), issues)
+}
+
+/// Python 行级安全扫描（启发式，对齐 SecurePythonAnalyzer 的 issue 文案）。
+fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
+    let import_pattern =
+        regex::Regex::new(r"(?m)^\s*(?:import\s+([A-Za-z_][A-Za-z0-9_.]*)|from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import)")
+            .expect("static regex");
+    let call_alternation = DANGEROUS_PYTHON_CALLS.join("|");
+    let call_pattern = regex::Regex::new(&format!(r"\b(?:{call_alternation})\s*\("))
+        .expect("static regex");
+    let import_alternation = DANGEROUS_PYTHON_IMPORTS.join("|");
+    let attribute_pattern = regex::Regex::new(&format!(
+        r"\b(?:{import_alternation})\.[A-Za-z_][A-Za-z0-9_]*"
+    ))
+    .expect("static regex");
+
+    let mut issues: Vec<(String, i64)> = Vec::new();
+    let mut record = |description: String, line: i64, issues: &mut Vec<(String, i64)>| {
+        if !issues.iter().any(|(existing, lineno)| {
+            *existing == description && *lineno == line
+        }) {
+            issues.push((description, line));
+        }
+    };
+
+    for captures in import_pattern.captures_iter(code) {
+        if let Some(module) = captures.get(1) {
+            let root = module.as_str().split('.').next().unwrap_or("");
+            if DANGEROUS_PYTHON_IMPORTS.contains(&root) {
+                let line = code[..module.start()].matches('\n').count() as i64 + 1;
+                record(format!("Import: {}", module.as_str()), line, &mut issues);
+            }
+        }
+        if let Some(module) = captures.get(2) {
+            let root = module.as_str().split('.').next().unwrap_or("");
+            if DANGEROUS_PYTHON_IMPORTS.contains(&root) {
+                let line = code[..module.start()].matches('\n').count() as i64 + 1;
+                record(format!("From Import: {}", module.as_str()), line, &mut issues);
+            }
+        }
+    }
+    for captures in call_pattern.captures_iter(code) {
+        let call = captures.get(0).expect("whole match");
+        let name = call
+            .as_str()
+            .trim_end_matches('(')
+            .trim()
+            .split('.')
+            .last()
+            .unwrap_or("")
+            .to_string();
+        let line = code[..call.start()].matches('\n').count() as i64 + 1;
+        record(format!("Call: {name}"), line, &mut issues);
+    }
+    for captures in attribute_pattern.captures_iter(code) {
+        let matched = captures.get(0).expect("whole match");
+        let line = code[..matched.start()].matches('\n').count() as i64 + 1;
+        record(format!("Attribute Access: {}", matched.as_str()), line, &mut issues);
+    }
+    issues
+}
+
+/// Node.js 正则安全扫描（对齐 SecureJavaScriptAnalyzer.analyze）。
+fn analyze_nodejs_security(code: &str) -> Vec<(String, i64)> {
+    let mut issues: Vec<(String, i64)> = Vec::new();
+    for (pattern, description) in DANGEROUS_NODEJS_PATTERNS {
+        let regex = regex::Regex::new(pattern).expect("static regex");
+        for matched in regex.find_iter(code) {
+            let line = code[..matched.start()].matches('\n').count() as i64 + 1;
+            if !issues
+                .iter()
+                .any(|(existing, lineno)| *existing == *description && *lineno == line)
+            {
+                issues.push((description.to_string(), line));
+            }
+        }
+    }
+    issues
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +1079,274 @@ mod tests {
     fn output_size_validation() {
         assert!(validate_output_size("a", "b", 10).is_ok());
         assert!(validate_output_size(&"x".repeat(100), "", 10).is_err());
+    }
+
+    // ── 契约层测试（executor_manager 远程契约） ──────────────────────────
+
+    #[test]
+    fn enums_and_exit_codes_match_executor_manager() {
+        // 枚举字符串值（对齐 models/enums.py）
+        assert_eq!(SupportLanguage::Python.as_str(), "python");
+        assert_eq!(SupportLanguage::Nodejs.as_str(), "nodejs");
+        assert_eq!(SupportLanguage::parse("python3"), Some(SupportLanguage::Python));
+        assert_eq!(SupportLanguage::parse("javascript"), Some(SupportLanguage::Nodejs));
+        assert_eq!(SupportLanguage::parse("ruby"), None);
+        assert_eq!(ResultStatus::Success.as_str(), "success");
+        assert_eq!(ResultStatus::ProgramError.as_str(), "program_error");
+        assert_eq!(ResultStatus::ResourceLimitExceeded.as_str(), "resource_limit_exceeded");
+        assert_eq!(ResultStatus::UnauthorizedAccess.as_str(), "unauthorized_access");
+        assert_eq!(ResultStatus::RuntimeError.as_str(), "runtime_error");
+        assert_eq!(ResultStatus::ProgramRunnerError.as_str(), "program_runner_error");
+        assert_eq!(
+            ResultStatus::parse("RESOURCE_LIMIT_EXCEEDED"),
+            Some(ResultStatus::ResourceLimitExceeded)
+        );
+        assert_eq!(ResultStatus::parse("bogus"), None);
+        assert_eq!(ResourceLimitType::Time.as_str(), "time");
+        assert_eq!(ResourceLimitType::Memory.as_str(), "memory");
+        assert_eq!(ResourceLimitType::Output.as_str(), "output");
+        assert_eq!(UnauthorizedAccessType::DisallowedSyscall.as_str(), "disallowed_syscall");
+        assert_eq!(UnauthorizedAccessType::FileAccess.as_str(), "file_access");
+        assert_eq!(UnauthorizedAccessType::NetworkAccess.as_str(), "network_access");
+        assert_eq!(RuntimeErrorType::Signalled.as_str(), "signalled");
+        assert_eq!(RuntimeErrorType::NonzeroExit.as_str(), "nonzero_exit");
+        // 负值退出码约定（对齐 execution.py / handlers.py / limiter.py）
+        assert_eq!(exit_codes::SUCCESS, 0);
+        assert_eq!(exit_codes::UNSAFE_CODE, -999);
+        assert_eq!(exit_codes::RATE_LIMITED, -429);
+        assert_eq!(exit_codes::TIMEOUT, -124);
+        assert_eq!(exit_codes::OUT_OF_MEMORY, -137);
+        assert_eq!(exit_codes::POOL_BUSY, -10);
+        assert_eq!(exit_codes::INTERNAL_ERROR, -3);
+        assert_eq!(exit_codes::TIMEOUT_AFTER_KILL, -1);
+    }
+
+    #[test]
+    fn classify_execution_failure_matches_executor_manager() {
+        // returncode 124 → resource_limit_exceeded / time
+        let failure = classify_execution_failure(124, "");
+        assert_eq!(failure.status, ResultStatus::ResourceLimitExceeded);
+        assert_eq!(failure.resource_limit_type, Some(ResourceLimitType::Time));
+        assert_eq!(failure.unauthorized_access_type, None);
+        // returncode 137 → resource_limit_exceeded / memory
+        let failure = classify_execution_failure(137, "");
+        assert_eq!(failure.status, ResultStatus::ResourceLimitExceeded);
+        assert_eq!(failure.resource_limit_type, Some(ResourceLimitType::Memory));
+        // "Permission denied" → unauthorized_access / file_access
+        let failure = classify_execution_failure(1, "open('/etc/passwd'): Permission denied");
+        assert_eq!(failure.status, ResultStatus::UnauthorizedAccess);
+        assert_eq!(
+            failure.unauthorized_access_type,
+            Some(UnauthorizedAccessType::FileAccess)
+        );
+        // "Operation not permitted" → unauthorized_access / disallowed_syscall
+        let failure = classify_execution_failure(1, "socket(): Operation not permitted");
+        assert_eq!(
+            failure.unauthorized_access_type,
+            Some(UnauthorizedAccessType::DisallowedSyscall)
+        );
+        // "MemoryError" → resource_limit_exceeded / memory
+        let failure = classify_execution_failure(1, "MemoryError: out of memory");
+        assert_eq!(failure.status, ResultStatus::ResourceLimitExceeded);
+        assert_eq!(failure.resource_limit_type, Some(ResourceLimitType::Memory));
+        // 其他 → program_error / nonzero_exit
+        let failure = classify_execution_failure(2, "Traceback: boom");
+        assert_eq!(failure.status, ResultStatus::ProgramError);
+        assert_eq!(failure.runtime_error_type, Some(RuntimeErrorType::NonzeroExit));
+    }
+
+    #[test]
+    fn timeout_duration_parsing_and_formatting() {
+        // 对齐 util.py parse_timeout_duration
+        assert_eq!(parse_timeout_duration("90s", 10), 90);
+        assert_eq!(parse_timeout_duration("2m", 10), 120);
+        assert_eq!(parse_timeout_duration("1m30s", 10), 90);
+        assert_eq!(parse_timeout_duration("1M30S", 10), 90);
+        assert_eq!(parse_timeout_duration("bogus", 10), 10);
+        assert_eq!(parse_timeout_duration("", 10), 10);
+        assert_eq!(parse_timeout_duration("0s", 10), 10);
+        // 对齐 util.py format_timeout_duration
+        assert_eq!(format_timeout_duration(59), "59s");
+        assert_eq!(format_timeout_duration(90), "1m30s");
+        assert_eq!(format_timeout_duration(120), "2m");
+        // 对齐 util.py is_valid_memory_limit
+        assert!(is_valid_memory_limit("256m"));
+        assert!(is_valid_memory_limit("1g"));
+        assert!(is_valid_memory_limit("512M"));
+        assert!(!is_valid_memory_limit("0m"));
+        assert!(!is_valid_memory_limit("256"));
+        assert!(!is_valid_memory_limit(""));
+    }
+
+    #[test]
+    fn runtime_env_container_contract() {
+        // 容器池命名（对齐 container.py）
+        assert_eq!(container_pool_name("python", 0), "sandbox_python_0");
+        assert_eq!(container_pool_name("nodejs", 2), "sandbox_nodejs_2");
+        assert_eq!(container_pool_name("javascript", 1), "sandbox_nodejs_1");
+        // python 执行命令：timeout + -I -B（对齐 _build_container_run_args）
+        let args = build_container_run_args("python", "task-1", "sandbox_python_0", 10, "runner.py");
+        assert_eq!(
+            args,
+            [
+                "docker", "exec", "--workdir", "/workspace/task-1", "sandbox_python_0",
+                "timeout", "10", "python", "-I", "-B", "runner.py",
+            ]
+        );
+        // nodejs 执行命令：无 -I -B
+        let args = build_container_run_args("nodejs", "task-1", "sandbox_nodejs_0", 10, "runner.js");
+        assert_eq!(
+            args,
+            [
+                "docker", "exec", "--workdir", "/workspace/task-1", "sandbox_nodejs_0",
+                "timeout", "10", "nodejs", "runner.js",
+            ]
+        );
+        // 容器创建参数（对齐 create_container：runsc/read-only/tmpfs/user/memory/seccomp）
+        let args = build_container_create_args(
+            "sandbox_python_0",
+            "python",
+            "sandbox-base-python:latest",
+            Some("512m"),
+            true,
+        );
+        assert_eq!(args[0], "docker");
+        assert!(args.iter().any(|arg| arg == "--runtime=runsc"));
+        assert!(args.iter().any(|arg| arg == "--read-only"));
+        assert!(args.iter().any(|arg| arg == "--tmpfs"));
+        assert!(args.iter().any(|arg| arg == "/workspace:rw,exec,size=100M,uid=65534,gid=65534"));
+        assert!(args.iter().any(|arg| arg == "/tmp:rw,exec,size=50M"));
+        assert!(args.iter().any(|arg| arg == "--user"));
+        assert!(args.iter().any(|arg| arg == "nobody"));
+        assert!(args.iter().any(|arg| arg == "--memory"));
+        assert!(args.iter().any(|arg| arg == "512m"));
+        assert!(args.iter().any(|arg| arg == "seccomp=/app/seccomp-profile-default.json"));
+        assert!(args.iter().any(|arg| arg == "sandbox-base-python:latest"));
+        // 非法内存值回退默认 256m
+        let args = build_container_create_args(
+            "sandbox_python_0",
+            "python",
+            "img",
+            Some("oops"),
+            false,
+        );
+        assert!(args.iter().any(|arg| arg == "256m"));
+        assert!(!args.iter().any(|arg| arg.contains("seccomp")));
+        // nodejs module.exports 追加（对齐 handlers.py）
+        assert_eq!(
+            append_nodejs_module_export("function main() {}"),
+            "function main() {}\n\nmodule.exports = { main };"
+        );
+        // 基础镜像默认值（对齐 SANDBOX_BASE_*_IMAGE 默认）
+        assert_eq!(sandbox_base_image_from_env("python"), "sandbox-base-python:latest");
+        assert_eq!(sandbox_base_image_from_env("nodejs"), "sandbox-base-nodejs:latest");
+    }
+
+    #[test]
+    fn artifact_contract_mime_and_sanitize() {
+        // MIME 映射（对齐 ALLOWED_ARTIFACT_EXTENSIONS）
+        assert_eq!(mime_type_for_artifact("a.png"), Some("image/png"));
+        assert_eq!(mime_type_for_artifact("a.JPG"), Some("image/jpeg"));
+        assert_eq!(mime_type_for_artifact("a.svg"), Some("image/svg+xml"));
+        assert_eq!(mime_type_for_artifact("a.pdf"), Some("application/pdf"));
+        assert_eq!(mime_type_for_artifact("a.csv"), Some("text/csv"));
+        assert_eq!(mime_type_for_artifact("a.json"), Some("application/json"));
+        assert_eq!(mime_type_for_artifact("a.html"), Some("text/html"));
+        assert_eq!(mime_type_for_artifact("a.exe"), None);
+        assert_eq!(mime_type_for_artifact("noext"), None);
+        // 文件名净化（对齐 execution.py：拒绝 /、\、..、点开头）
+        assert!(artifact_name_is_safe("chart.csv"));
+        assert!(!artifact_name_is_safe("../evil.csv"));
+        assert!(!artifact_name_is_safe("a/b.csv"));
+        assert!(!artifact_name_is_safe("a\\b.csv"));
+        assert!(!artifact_name_is_safe(".hidden"));
+        assert!(!artifact_name_is_safe(""));
+        // 常量
+        assert_eq!(MAX_ARTIFACT_COUNT, 10);
+        assert_eq!(MAX_ARTIFACT_SIZE_BYTES, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn execution_bundle_builds_runner_and_args() {
+        // python 包布局（对齐 _build_execution_bundle）
+        let bundle = build_execution_bundle(
+            "python",
+            b"def main():\n    return 1\n",
+            &Map::from_iter([("x".into(), json!(1))]),
+        )
+        .unwrap();
+        assert_eq!(bundle.code_name, "main.py");
+        assert_eq!(bundle.runner_name, "runner.py");
+        assert_eq!(bundle.args_name, "args.json");
+        assert_eq!(bundle.args_source, "{\"x\":1}");
+        assert!(bundle.runner_source.contains("from main import main"));
+        assert!(bundle.runner_source.contains("main(**args)"));
+        assert!(bundle.runner_source.contains("__RAGFLOW_RESULT__:"));
+        assert!(bundle.runner_source.contains("artifacts"));
+        // nodejs 包布局
+        let bundle = build_execution_bundle(
+            "nodejs",
+            b"function main() {}",
+            &Map::new(),
+        )
+        .unwrap();
+        assert_eq!(bundle.code_name, "main.js");
+        assert_eq!(bundle.runner_name, "runner.js");
+        assert!(bundle.runner_source.contains("require(mainPath)"));
+        assert!(bundle.runner_source.contains("__RAGFLOW_RESULT__:"));
+        // 不支持的语言 → Err
+        assert!(build_execution_bundle("ruby", b"x", &Map::new()).is_err());
+    }
+
+    #[test]
+    fn security_analysis_flags_dangerous_code() {
+        // python 危险 import（对齐 SecurePythonAnalyzer）
+        let (safe, issues) = analyze_code_security("import os\nx = 1\n", "python");
+        assert!(!safe);
+        assert!(issues.iter().any(|(description, line)| {
+            description == "Import: os" && *line == 1
+        }));
+        let (safe, issues) = analyze_code_security(
+            "import json\nfrom subprocess import run\n",
+            "python",
+        );
+        assert!(!safe);
+        assert!(issues.iter().any(|(description, line)| {
+            description == "From Import: subprocess" && *line == 2
+        }));
+        // python 危险调用 + 属性访问
+        let (safe, issues) = analyze_code_security("def main():\n    return eval('1+1')\n", "python");
+        assert!(!safe);
+        assert!(issues.iter().any(|(description, line)| {
+            description == "Call: eval" && *line == 2
+        }));
+        let (safe, _) = analyze_code_security("def main():\n    return os.path.join('a', 'b')\n", "python");
+        assert!(!safe);
+        // 干净代码 → safe
+        let (safe, issues) = analyze_code_security(
+            "def main():\n    return {'ok': True}\n",
+            "python",
+        );
+        assert!(safe);
+        assert!(issues.is_empty());
+        // nodejs require（对齐 SecureJavaScriptAnalyzer）
+        let (safe, issues) =
+            analyze_code_security("const { exec } = require('child_process');\n", "nodejs");
+        assert!(!safe);
+        assert!(issues.iter().any(|(description, _)| description == "Require: child_process"));
+        let (safe, issues) = analyze_code_security("process.binding('natives');\n", "nodejs");
+        assert!(!safe);
+        assert!(issues.iter().any(|(description, _)| description == "Call: process.binding"));
+        let (safe, _) = analyze_code_security("function main() { return 1; }\n", "nodejs");
+        assert!(safe);
+        // 不支持的语言 → unsafe（对齐 analyze_code_security 默认分支）
+        let (safe, _) = analyze_code_security("x", "ruby");
+        assert!(!safe);
+        // issue 渲染（对齐 handlers.py："Line {lineno}: {issue}" 换行连接）
+        let formatted = format_security_issues(&[
+            ("Import: os".to_string(), 1),
+            ("Call: eval".to_string(), 3),
+        ]);
+        assert_eq!(formatted, "Line 1: Import: os\nLine 3: Call: eval");
     }
 }
