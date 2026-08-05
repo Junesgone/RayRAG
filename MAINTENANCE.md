@@ -1,3 +1,32 @@
+## 2026-08-05 v0.2.4 容器验证
+
+- 部署成功：容器 healthy、healthz 200、6 页面全 200
+- 已提交 857a78c（v0.2.4：common 工具层/settings/benchmark/矩阵收尾）
+
+## 2026-08-05 覆盖矩阵最终收尾（v0.2.5，纯文档）
+
+- **矩阵终态**（docs/ragflow-v0.26.4-coverage.md，固定 v0.26.4 快照 4441 文件）：
+  aligned **128** / full **541** / partial **18** / replaced **92** / N/A **61** /
+  reference **3601** / unmapped **0**（行数：46487 / 245606 / 50105 / 37286 /
+  10262 / 908046 / 0；摘要表已按清单逐行重算，与库存行完全一致）
+- agent/sandbox 22 个非代码文件 partial → **N/A-by-design**（.env.example/Makefile/
+  README.md/asserts svg/docker-compose.yml/executor_manager Dockerfile+requirements+
+  seccomp json/pyproject.toml/sandbox_base_image 两套镜像文件/sandbox_spec.md/
+  scripts 5 个 shell/uv.lock）：等价语义已在 src/sandbox.rs 的 seccomp profile、
+  --user nobody、tmpfs、--memory + RLIMIT_AS 资源限制、GNU timeout 124/137 退出码
+  分类 + Dockerfile 多阶段构建中表达；Python 沙箱镜像不属于 Rust 移植范围
+- deepdoc/README.md、deepdoc/README_tr.md partial → **N/A**（文档；运行时已移植
+  src/parser/、src/ocr.rs、src/app_parsers.rs）；deepdoc/__init__.py partial →
+  **N/A**（Python 包标记，仅许可头 + beartype 装饰，无运行时语义）
+- admin/build_cli_release.sh partial → **N/A-by-design**（Python CLI 构建/发布脚本；
+  RayRAG 的 Rust CLI 由 src/main.rs 经 cargo 构建，发布由 CI/发布脚本承担）
+- 核对（AK 本轮补代码，矩阵暂保持 partial、理由已注明）：api/db/__init__.py
+  （FileType/UserTenantRole/TenantPermission 已移植，SerializedType 等常量组未移植）、
+  mcp/server/server.py（MCP 客户端已移植，独立 SSE server 与 RAGFlowConnector
+  工具面未完成）、memory/services/messages.py + query.py（配置生命周期已移植，
+  抽取/摄取/召回运行时未完成）；AK 补全后需将对应行同步为 full
+- 纯文档操作，未跑 cargo check；git 尚未提交（等父 agent 统一提交）
+
 ## 2026-08-05 v0.2.4：common 工具层 + settings + benchmark + 矩阵收尾
 
 - common.rs ~1800：常量表/文本/时间/浮点/crypto(AES-PBKDF2)/ssrf/校验
