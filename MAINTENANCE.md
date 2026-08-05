@@ -1,3 +1,8 @@
+## 2026-08-05 v0.1.6 容器验证
+
+- 部署成功：容器 healthy、healthz 200、核心页面 200（/kbs /agents /providers /skills）
+- 已提交 16e349a（v0.1.6：translate + extractor + title continuity）
+
 ## 2026-08-05 v0.1.6：translate 工具 + KeyTerm 提取器
 
 - translate（deepl 契约）：百度翻译 VIP 签名 + sug 免 key 降级；descriptor 注册 runtime
