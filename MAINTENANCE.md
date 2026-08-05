@@ -1,5 +1,14 @@
 # RayRAG 运维台账
 
+## 2026-08-05 v0.1.3 容器部署验证
+
+- 镜像重建成功（rayrag:local，含 Token/Title Chunker + iwencai + KB 详情页 + structure_compile 修复）
+- 部署坑（记录防复发）：
+  - compose 需 .env 提供 RAYRAG_POSTGRES_PASSWORD / RAYRAG_ADMIN_PASSWORD
+  - 宿主机系统 postgres15 占 5432 → RAYRAG_POSTGRES_PORT=55432（容器内仍连 postgres:5432）
+  - 9380 被真 RAGFlow 容器(docker-ragflow-cpu-1)占用 → RAYRAG_PORT=9390
+- 验证：容器 healthy、healthz 200、13 页面全 200、GPU 四链路 200
+
 ## 2026-08-05 v0.1.3：Token/Title Chunker + iwencai + KB 详情页 + GPU rerank 修复
 
 - **GPU 链路修复**：8081 llama-server 缺少 `--rerank` 参数导致 /rerank 501 →
