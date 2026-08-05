@@ -1,3 +1,11 @@
+## 2026-08-05 v0.1.7：QA prompts + graph NER + 组件契约
+
+- prompts.rs +1194：18 个 RAG 问答阶段 prompt（citation/reflect/multi-queries 等）
+- structure_compile.rs +1033：graph_extractor NER 容错 + upsert 语义
+- runtime.rs：iteration/exitloop/loopitem 等 4 新增 + 4 扩展组件 descriptor
+- 测试基线：**954 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 502 → **442**
+
 ## 2026-08-05 v0.1.6 容器验证
 
 - 部署成功：容器 healthy、healthz 200、核心页面 200（/kbs /agents /providers /skills）

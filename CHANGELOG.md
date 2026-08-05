@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.7] — 2026-08-05
+
+### Added
+
+- **RAG 问答阶段 prompts**（`src/prompts.rs` +1194 行）：18 个 RAGFLOW_* 常量
+  （citation/citation_plus/full_question/multi_queries_gen/next_step/reflect/
+  rank_memory/content_tagging/cross_languages×2/analyze_task×2/ask_summary/
+  assign_toc_levels/keyword/question_prompt/meta_data/meta_filter），注册
+  PromptLibrary get()/list()。
+- **graph_extractor NER 语义**（`src/structure_compile.rs` +1033 行）：实体/关系
+  JSON 解析容错（LLM 非严格输出提取/修复）、upsert 语义（if not exists）、
+  general/light extractor 剩余常量。
+- **组件参数契约**（`src/runtime.rs`）：新增 iteration/iterationitem/exitloop/
+  loopitem descriptor；扩展 categorize/listoperations/docsgenerator/excelprocessor
+  参数（对齐 RAGFlow Param schema 的 camelCase 语义）。
+
 ## [0.1.6] — 2026-08-05
 
 ### Added

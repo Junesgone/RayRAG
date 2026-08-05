@@ -2841,9 +2841,1042 @@ pub async fn validate_and_correct_chain(
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// GraphRAG entity/relation alignment
+// (rag/graphrag/general/graph_extractor.py + general/extractor.py +
+//  rag/graphrag/utils.py + rag/graphrag/ner/graph_extractor.py)
+//
+// Pure-function ports of the record-parsing half of the LLM graph
+// extractor: tolerant JSON repair (the `json_repair` behaviour RAGFlow
+// applies to LLM JSON output), the tuple-delimited `("entity"<|>...)`
+// record format with per-record fault tolerance, and the
+// `_merge_nodes` / `_merge_edges` merge semantics.  Also carries the
+// graphrag constants that were missing from this module.
+// ---------------------------------------------------------------------------
+
+/// `DEFAULT_ENTITY_TYPES` — extractor.py default when none configured.
+pub const DEFAULT_ENTITY_TYPES: [&str; 5] =
+    ["organization", "person", "geo", "event", "category"];
+
+/// `ENTITY_EXTRACTION_MAX_GLEANINGS` — extractor.py:47.
+pub const ENTITY_EXTRACTION_MAX_GLEANINGS: usize = 2;
+
+/// `MAX_CONCURRENT_PROCESS_AND_EXTRACT_CHUNK` — extractor.py:48.
+pub const MAX_CONCURRENT_PROCESS_AND_EXTRACT_CHUNK: usize = 10;
+
+/// `GRAPHRAG_MAX_ERRORS` — extractor.py `__call__` per-chunk error budget.
+pub const GRAPHRAG_MAX_ERRORS: usize = 3;
+
+/// `_handle_entity_relation_summary` truncation budget (extractor.py:353).
+pub const ENTITY_SUMMARY_MAX_TOKENS: usize = 512;
+
+/// `_handle_entity_relation_summary` — descriptions lists longer than this
+/// are sent to the LLM for summarisation (extractor.py:356).
+pub const ENTITY_SUMMARY_DESCRIPTION_LIST_LIMIT: usize = 12;
+
+/// `GRAPH_FIELD_SEP` — utils.py:36, separator for joined descriptions.
+pub const GRAPH_FIELD_SEP: &str = "<SEP>";
+
+/// `DEFAULT_RECORD_DELIMITER` — defined above in the entity-resolution
+/// section (line ~1465); shared by the tuple-record parsing here.
+/// `DEFAULT_TUPLE_DELIMITER` — graph_prompt.py:21.
+pub const DEFAULT_TUPLE_DELIMITER: &str = "<|>";
+/// `DEFAULT_COMPLETION_DELIMITER` — graph_prompt.py:23.
+pub const DEFAULT_COMPLETION_DELIMITER: &str = "<|COMPLETE|>";
+
+/// `SPACY_TO_APP_ENTITY_TYPE` — ner/graph_extractor.py:86.
+pub const SPACY_TO_APP_ENTITY_TYPE: [(&str, &str); 15] = [
+    ("PERSON", "person"),
+    ("ORG", "organization"),
+    ("GPE", "geo"),
+    ("LOC", "geo"),
+    ("FAC", "geo"),
+    ("EVENT", "event"),
+    ("PRODUCT", "category"),
+    ("WORK_OF_ART", "category"),
+    ("LAW", "category"),
+    ("LANGUAGE", "category"),
+    ("NORP", "category"),
+    ("MONEY", "category"),
+    ("QUANTITY", "category"),
+    ("TIME", "event"),
+    ("DATE", "event"),
+];
+
+/// `SPACY_TO_APP_ENTITY_TYPE.get(label, "category")` — labels not listed
+/// fall through to `"category"`.
+pub fn spacy_to_app_entity_type(label: &str) -> &'static str {
+    SPACY_TO_APP_ENTITY_TYPE
+        .iter()
+        .find(|(k, _)| *k == label)
+        .map(|(_, v)| *v)
+        .unwrap_or("category")
+}
+
+/// `_has_uppercase` — ner/graph_extractor.py:113.
+pub fn has_uppercase(text: &str) -> bool {
+    text.chars().any(|c| c.is_uppercase())
+}
+
+/// `_replace_word` — ner/graph_extractor.py:117 (MGranRAG): normalise
+/// spaces around hyphens and apostrophes.
+pub fn replace_word(word: &str) -> String {
+    word.replace(" - ", "-")
+        .replace(" -", "-")
+        .replace("- ", "-")
+        .replace(" 's", "'s")
+        .replace(" 'S", "'S")
+}
+
+/// Minimal HTML entity unescape (`&amp; &lt; &gt; &quot; &#39; &nbsp;`) —
+/// mirrors Python `html.unescape` for the entities the LLM paths produce.
+fn unescape_html_entities(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+        let Some(semicolon) = rest.find(';') else {
+            out.push_str(rest);
+            return out;
+        };
+        let entity = &rest[..=semicolon];
+        let replacement = match entity {
+            "&amp;" => "&",
+            "&lt;" => "<",
+            "&gt;" => ">",
+            "&quot;" => "\"",
+            "&#39;" => "'",
+            "&nbsp;" => " ",
+            _ => entity,
+        };
+        out.push_str(replacement);
+        rest = &rest[semicolon + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `clean_str` — utils.py:145: HTML-unescape, strip, drop control
+/// characters (0x00-0x1f, 0x7f-0x9f) and stray double quotes.
+pub fn clean_str(input: &str) -> String {
+    unescape_html_entities(input.trim())
+        .chars()
+        .filter(|c| {
+            let cp = *c as u32;
+            !(cp <= 0x1f || (0x7f..=0x9f).contains(&cp)) && *c != '"'
+        })
+        .collect()
+}
+
+/// `split_string_by_multi_markers` — utils.py:356: split on any of the
+/// markers (regex-escaped, joined with `|`), dropping empty pieces.
+pub fn split_string_by_multi_markers(content: &str, markers: &[&str]) -> Vec<String> {
+    if markers.is_empty() {
+        let t = content.trim();
+        return if t.is_empty() {
+            Vec::new()
+        } else {
+            vec![t.to_string()]
+        };
+    }
+    let pattern = markers
+        .iter()
+        .map(|m| regex::escape(m))
+        .collect::<Vec<_>>()
+        .join("|");
+    let re = regex::Regex::new(&pattern).expect("valid marker regex");
+    re.split(content)
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .collect()
+}
+
+static FLOAT_LITERAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+/// `is_float_regex` — utils.py:364: `^[-+]?[0-9]*\.?[0-9]+$`.
+pub fn is_float_regex(value: &str) -> bool {
+    FLOAT_LITERAL_RE
+        .get_or_init(|| regex::Regex::new(r"^[-+]?[0-9]*\.?[0-9]+$").expect("float literal regex"))
+        .is_match(value)
+}
+
+/// `_process_single_content` record split (graph_extractor.py:136): split
+/// the raw LLM output on (record_delimiter, completion_delimiter), then
+/// keep only the parenthesised payload of each record via
+/// `re.search(r"\((.*)\)")`.  Records without a parenthesised body are
+/// dropped — this is the primary fault-tolerance gate for non-JSON
+/// (tuple-delimited) LLM output.
+pub fn parse_tuple_records(
+    raw: &str,
+    record_delimiter: &str,
+    completion_delimiter: &str,
+) -> Vec<String> {
+    let paren_re = regex::Regex::new(r"\((.*)\)").expect("paren capture regex");
+    split_string_by_multi_markers(raw, &[record_delimiter, completion_delimiter])
+        .into_iter()
+        .filter_map(|record| {
+            paren_re
+                .captures(&record)
+                .map(|c| c.get(1).expect("capture 1").as_str().to_string())
+        })
+        .collect()
+}
+
+/// `handle_single_entity_extraction` — utils.py:307.  Accepts both the
+/// canonical quoted tag `"entity"` and the bare `entity` (LLM tolerance).
+/// Fields are `clean_str`-ed; the name and type are uppercased; records
+/// with fewer than 4 attributes or an empty name are dropped.
+pub fn handle_single_entity_extraction(
+    record_attributes: &[String],
+    chunk_key: &str,
+) -> Option<Value> {
+    if record_attributes.len() < 4 {
+        return None;
+    }
+    let tag = record_attributes[0].trim();
+    if tag != "\"entity\"" && tag != "entity" {
+        return None;
+    }
+    let entity_name = clean_str(&record_attributes[1].to_uppercase());
+    if entity_name.trim().is_empty() {
+        return None;
+    }
+    let entity_type = clean_str(&record_attributes[2].to_uppercase());
+    let entity_description = clean_str(&record_attributes[3]);
+    Some(json!({
+        "entity_name": entity_name.to_uppercase(),
+        "entity_type": entity_type.to_uppercase(),
+        "description": entity_description,
+        "source_id": chunk_key,
+    }))
+}
+
+/// `handle_single_relationship_extraction` — utils.py:328.  Accepts both
+/// `"relationship"` and `relationship` tags.  Needs ≥5 attributes; the
+/// strength is the last attribute parsed as a float when it matches
+/// `is_float_regex`, otherwise the default `1.0`; `src_id`/`tgt_id` are
+/// the sorted-uppercased endpoint pair.
+pub fn handle_single_relationship_extraction(
+    record_attributes: &[String],
+    chunk_key: &str,
+) -> Option<Value> {
+    if record_attributes.len() < 5 {
+        return None;
+    }
+    let tag = record_attributes[0].trim();
+    if tag != "\"relationship\"" && tag != "relationship" {
+        return None;
+    }
+    let source = clean_str(&record_attributes[1].to_uppercase());
+    let target = clean_str(&record_attributes[2].to_uppercase());
+    let edge_description = clean_str(&record_attributes[3]);
+    let edge_keywords = clean_str(&record_attributes[4]);
+    let last = record_attributes.last().expect("len >= 5");
+    let weight = if is_float_regex(last) {
+        last.trim().parse::<f64>().unwrap_or(1.0)
+    } else {
+        1.0
+    };
+    let (src, tgt) = if source <= target {
+        (source, target)
+    } else {
+        (target, source)
+    };
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    Some(json!({
+        "src_id": src.to_uppercase(),
+        "tgt_id": tgt.to_uppercase(),
+        "weight": weight,
+        "description": edge_description,
+        "keywords": edge_keywords,
+        "source_id": chunk_key,
+        "metadata": { "created_at": created_at },
+    }))
+}
+
+/// `_entities_and_relations` — extractor.py:114: dispatch each record to
+/// the entity/relation handlers.  Entity types must be in the lowercased
+/// allow-list; nodes are deduplicated by `entity_name` (first occurrence
+/// wins, mirroring the `ent_records` dict); every valid edge record is
+/// kept (merging happens downstream, `_merge_edges`).
+pub fn entities_and_relations(
+    records: &[String],
+    tuple_delimiter: &str,
+    entity_types: &[&str],
+    chunk_key: &str,
+) -> (Vec<Value>, Vec<Value>) {
+    let allowed: HashSet<String> = entity_types.iter().map(|t| t.to_lowercase()).collect();
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut seen_nodes: HashSet<String> = HashSet::new();
+    let mut edges: Vec<Value> = Vec::new();
+    for record in records {
+        let attrs = split_string_by_multi_markers(record, &[tuple_delimiter]);
+        if let Some(entity) = handle_single_entity_extraction(&attrs, chunk_key) {
+            let etype = entity
+                .get("entity_type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            if allowed.contains(&etype) {
+                let name = entity
+                    .get("entity_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if seen_nodes.insert(name) {
+                    nodes.push(entity);
+                }
+            }
+            continue;
+        }
+        if let Some(relation) = handle_single_relationship_extraction(&attrs, chunk_key) {
+            edges.push(relation);
+        }
+    }
+    (nodes, edges)
+}
+
+/// Full mirror of the record-parsing half of graph_extractor.py
+/// `_process_single_content` + `_entities_and_relations`: raw LLM output →
+/// `(nodes, edges)`.  Uses `DEFAULT_ENTITY_TYPES` when `entity_types` is
+/// empty (`entity_types or DEFAULT_ENTITY_TYPES`, extractor.py:62).
+pub fn extract_entity_relations_from_output(
+    raw_output: &str,
+    entity_types: &[&str],
+    chunk_key: &str,
+) -> (Vec<Value>, Vec<Value>) {
+    let types: Vec<&str> = if entity_types.is_empty() {
+        DEFAULT_ENTITY_TYPES.to_vec()
+    } else {
+        entity_types.to_vec()
+    };
+    let records = parse_tuple_records(
+        raw_output,
+        DEFAULT_RECORD_DELIMITER,
+        DEFAULT_COMPLETION_DELIMITER,
+    );
+    entities_and_relations(&records, DEFAULT_TUPLE_DELIMITER, &types, chunk_key)
+}
+
+/// `_merge_nodes` majority type: most frequent value; ties resolved to the
+/// first-seen value (Python `sorted(Counter(...), key=count, reverse=True)`
+/// is stable).
+pub fn most_common_value(values: &[String]) -> Option<String> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for v in values {
+        if !counts.contains_key(v) {
+            order.push(v.clone());
+        }
+        *counts.entry(v.clone()).or_insert(0) += 1;
+    }
+    let mut best: Option<(&String, usize)> = None;
+    for name in &order {
+        let c = counts[name];
+        if best.map(|(_, bc)| c > bc).unwrap_or(true) {
+            best = Some((name, c));
+        }
+    }
+    best.map(|(n, _)| n.clone())
+}
+
+/// `flat_uniq_list` — utils.py:717: collect `item[key]` (a string or a
+/// list of strings) across items, deduplicated and sorted for determinism
+/// (RAGFlow returns an unordered set).
+pub fn flat_uniq_list(items: &[Value], key: &str) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        match item.get(key) {
+            Some(Value::String(s)) => {
+                if !s.is_empty() && seen.insert(s.clone()) {
+                    out.push(s.clone());
+                }
+            }
+            Some(Value::Array(arr)) => {
+                for v in arr {
+                    if let Some(s) = v.as_str() {
+                        if !s.is_empty() && seen.insert(s.to_string()) {
+                            out.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `_merge_nodes` — extractor.py:270: majority entity type, `<SEP>`-joined
+/// sorted-unique descriptions, flat-unique source ids, name kept from the
+/// group key.
+pub fn merge_entity_records(records: &[Value]) -> Option<Value> {
+    if records.is_empty() {
+        return None;
+    }
+    let types: Vec<String> = records
+        .iter()
+        .filter_map(|r| r.get("entity_type").and_then(Value::as_str).map(String::from))
+        .collect();
+    let entity_type = most_common_value(&types).unwrap_or_else(|| "UNKNOWN".to_string());
+    let mut descs: Vec<String> = records
+        .iter()
+        .filter_map(|r| r.get("description").and_then(Value::as_str).map(String::from))
+        .collect();
+    descs.sort();
+    descs.dedup();
+    let description = descs.join(GRAPH_FIELD_SEP);
+    let source_id = flat_uniq_list(records, "source_id");
+    let entity_name = records[0]
+        .get("entity_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some(json!({
+        "entity_type": entity_type,
+        "description": description,
+        "source_id": source_id,
+        "entity_name": entity_name,
+    }))
+}
+
+/// `_merge_edges` — extractor.py:292: summed weight, `<SEP>`-joined
+/// sorted-unique descriptions, flat-unique keywords and source ids.
+pub fn merge_relation_records(records: &[Value]) -> Option<Value> {
+    if records.is_empty() {
+        return None;
+    }
+    let weight: f64 = records
+        .iter()
+        .filter_map(|r| r.get("weight").and_then(Value::as_f64))
+        .sum();
+    let mut descs: Vec<String> = records
+        .iter()
+        .filter_map(|r| r.get("description").and_then(Value::as_str).map(String::from))
+        .collect();
+    descs.sort();
+    descs.dedup();
+    let description = descs.join(GRAPH_FIELD_SEP);
+    let keywords = flat_uniq_list(records, "keywords");
+    let source_id = flat_uniq_list(records, "source_id");
+    let src_id = records[0]
+        .get("src_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let tgt_id = records[0]
+        .get("tgt_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some(json!({
+        "src_id": src_id,
+        "tgt_id": tgt_id,
+        "description": description,
+        "keywords": keywords,
+        "weight": weight,
+        "source_id": source_id,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Non-strict JSON repair (the `json_repair` behaviour RAGFlow applies to
+// LLM JSON output: chat_model.py / prompts.py / graphrag/search.py all
+// parse LLM replies with `json_repair.loads`).
+// ---------------------------------------------------------------------------
+
+/// Find the first balanced `{...}` / `[...]` region of `input`.  Returns
+/// `(region, unbalanced)` where `unbalanced` is true when the region runs
+/// to the end of the input without closing (a truncation that
+/// `balance_closers` can repair).
+fn first_balanced_region(input: &str) -> Option<(String, bool)> {
+    let start = input.find(['{', '['])?;
+    let mut depth: i64 = 0;
+    let mut in_string = false;
+    let mut quote: char = '"';
+    let mut escaped = false;
+    for (i, c) in input[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == quote {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                in_string = true;
+                quote = c;
+            }
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    let end = start + i + c.len_utf8();
+                    return Some((input[start..end].to_string(), false));
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((input[start..].to_string(), depth > 0))
+}
+
+/// Convert single-quoted strings to double-quoted ones (outside existing
+/// double-quoted strings); `\'` (invalid in JSON) is unescaped.
+fn single_quotes_to_double(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_double {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_single {
+            if c == '\\' && i + 1 < chars.len() {
+                let next = chars[i + 1];
+                if next == '\'' {
+                    out.push('\'');
+                } else {
+                    out.push('\\');
+                    out.push(next);
+                }
+                i += 2;
+                continue;
+            }
+            if c == '\'' {
+                out.push('"');
+                in_single = false;
+            } else if c == '"' {
+                out.push('\\');
+                out.push('"');
+            } else {
+                out.push(c);
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' => {
+                in_double = true;
+                out.push(c);
+            }
+            '\'' => {
+                in_single = true;
+                out.push('"');
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Drop commas that trail a `}` / `]` (outside strings).
+fn remove_trailing_commas(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+                i = j;
+                continue;
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Quote unquoted JSON keys (`key:` → `"key":`, outside strings).
+fn quote_unquoted_keys(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '{' || c == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            let key_start = j;
+            if j < chars.len() && (chars[j].is_ascii_alphabetic() || chars[j] == '_' || chars[j] == '$')
+            {
+                j += 1;
+                while j < chars.len()
+                    && (chars[j].is_ascii_alphanumeric() || chars[j] == '_' || chars[j] == '$')
+                {
+                    j += 1;
+                }
+                let key_end = j;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == ':' {
+                    out.push(c);
+                    for k in (i + 1)..key_start {
+                        out.push(chars[k]);
+                    }
+                    out.push('"');
+                    for k in key_start..key_end {
+                        out.push(chars[k]);
+                    }
+                    out.push('"');
+                    for k in key_end..=j {
+                        out.push(chars[k]);
+                    }
+                    i = j + 1;
+                    continue;
+                }
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Quote bare word values (`name: John Smith` → `"John Smith"`), leaving
+/// `true` / `false` / `null` and numeric literals untouched.
+fn quote_bare_values(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ':' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            let val_start = j;
+            if j < chars.len() && (chars[j].is_ascii_alphabetic() || chars[j] == '_') {
+                let mut k = j;
+                while k < chars.len() && !matches!(chars[k], ',' | '}' | ']') {
+                    if matches!(chars[k], '{' | '[' | '"') {
+                        break;
+                    }
+                    k += 1;
+                }
+                let word: String = chars[val_start..k].iter().collect();
+                let word = word.trim();
+                if !word.is_empty()
+                    && word != "true"
+                    && word != "false"
+                    && word != "null"
+                    && !is_float_regex(word)
+                {
+                    out.push(c);
+                    for x in (i + 1)..val_start {
+                        out.push(chars[x]);
+                    }
+                    out.push('"');
+                    out.push_str(word);
+                    out.push('"');
+                    i = k;
+                    continue;
+                }
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Append the missing closing brackets so the region balances (truncation
+/// recovery: `{"items": [{"name": "A"` → `{"items": [{"name": "A"}]}`).
+fn balance_closers(input: &str) -> String {
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in input.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '}' | ']' => {
+                if stack.last() == Some(&c) {
+                    stack.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = input.to_string();
+    while let Some(closer) = stack.pop() {
+        out.push(closer);
+    }
+    out
+}
+
+/// Apply the syntactic repair passes to a JSON region.
+fn repair_json_syntax(region: &str, unbalanced: bool) -> String {
+    let step1 = single_quotes_to_double(region);
+    let step2 = remove_trailing_commas(&step1);
+    let step3 = quote_unquoted_keys(&step2);
+    let step4 = quote_bare_values(&step3);
+    if unbalanced {
+        balance_closers(&step4)
+    } else {
+        step4
+    }
+}
+
+/// Best-effort repair + parse of a non-strict JSON reply, mirroring the
+/// `json_repair` behaviour RAGFlow applies to LLM JSON output.  Tolerates
+/// markdown fences, surrounding prose, single-quoted strings, unquoted
+/// keys, bare word values, trailing commas, control characters, and
+/// truncated objects.  Returns `None` when no JSON value can be recovered.
+pub fn repair_json_text(reply: &str) -> Option<Value> {
+    // Strip fences, then drop control characters (0x00-0x1f, 0x7f-0x9f).
+    let trimmed = reply.trim();
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed);
+    let body = body.strip_suffix("```").unwrap_or(body);
+    let cleaned: String = body
+        .chars()
+        .filter(|c| {
+            let cp = *c as u32;
+            !(cp <= 0x1f || (0x7f..=0x9f).contains(&cp))
+        })
+        .collect();
+    let cleaned = cleaned.trim();
+
+    let (region, unbalanced) = first_balanced_region(cleaned)?;
+    let repaired = repair_json_syntax(&region, unbalanced);
+
+    if let Ok(v) = serde_json::from_str::<Value>(&repaired) {
+        return Some(v);
+    }
+    // Trailing-prose / truncation fallback: walk closing brackets from the
+    // end and try every prefix ending at one (cheap for typical replies).
+    let bytes = repaired.as_bytes();
+    for (idx, _) in repaired.char_indices().rev() {
+        let c = bytes[idx];
+        if c == b'}' || c == b']' {
+            if let Ok(v) = serde_json::from_str::<Value>(&repaired[..=idx]) {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Strict parse first, then the tolerant repair path.
+pub fn parse_json_lenient(reply: &str) -> Option<Value> {
+    if let Ok(v) = serde_json::from_str::<Value>(reply.trim()) {
+        return Some(v);
+    }
+    repair_json_text(reply)
+}
+
+/// RAGFlow `es_upsert_one` exact-id semantics: when a row with the same
+/// stable id already exists it is replaced (update), otherwise it is
+/// inserted.  This is the explicit "if not exists" check that keeps
+/// idempotent re-runs (same chunk → same stable row id) from duplicating
+/// rows, independent of the KNN-similarity merge path in `es_dedup_one`.
+pub async fn upsert_row_by_id(
+    store: &dyn CompileStore,
+    kb_id: &str,
+    row: &CompiledRow,
+) -> Result<PersistOutcome> {
+    if store.get(kb_id, &row.id).await?.is_some() {
+        let fields = serde_json::to_value(row)?;
+        store.update(kb_id, &row.id, &fields).await?;
+        Ok(PersistOutcome::Updated)
+    } else {
+        store.insert(kb_id, std::slice::from_ref(row)).await?;
+        Ok(PersistOutcome::Inserted)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod graphrag_extractor_alignment {
+        use super::*;
+
+        #[test]
+        fn repair_json_text_recovers_non_strict_json() {
+            // single quotes + trailing commas + unquoted keys + bare value
+            let v = repair_json_text(
+                "{'items': [{'name': 'Alice', type: person, 'aliases': ['A',],}]}",
+            )
+            .unwrap();
+            let items = v.get("items").and_then(Value::as_array).unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0]["name"], "Alice");
+            assert_eq!(items[0]["type"], "person");
+            assert_eq!(items[0]["aliases"], json!(["A"]));
+            // markdown fence + surrounding prose
+            let v2 = repair_json_text(
+                "Here you go:\n```json\n{\"items\": [{\"name\": \"Bob\"}]}\n```\nHope this helps",
+            )
+            .unwrap();
+            assert_eq!(v2["items"][0]["name"], "Bob");
+            // truncated object: missing closers are re-balanced
+            let v3 = repair_json_text("{\"items\": [{\"name\": \"Carol\"}").unwrap();
+            assert_eq!(v3["items"][0]["name"], "Carol");
+            // bare multi-word value
+            let v4 = repair_json_text("{items: [{name: John Smith, age: 30}]}").unwrap();
+            assert_eq!(v4["items"][0]["name"], "John Smith");
+            assert_eq!(v4["items"][0]["age"], 30);
+            // strict JSON passes through parse_json_lenient untouched
+            let v5 = parse_json_lenient("{\"a\": 1}").unwrap();
+            assert_eq!(v5["a"], 1);
+            // garbage → None
+            assert!(repair_json_text("no json here").is_none());
+        }
+
+        #[test]
+        fn parse_tuple_records_and_entities_and_relations_mirror_graph_extractor() {
+            let raw = concat!(
+                "(\"entity\"<|>\"Alice\"<|>\"person\"<|>\"Alice is a person.\")##",
+                "(\"entity\"<|>\"Acme\"<|>\"organization\"<|>\"A company.\")##",
+                "(\"entity\"<|>\"Dodge\"<|>\"vehicle\"<|>\"A car.\")##",
+                "(\"relationship\"<|>\"Alice\"<|>\"Acme\"<|>\"works at\"<|>7)##",
+                "(\"relationship\"<|>\"Acme\"<|>\"Alice\"<|>\"works at\"<|>notanumber)##",
+                "this record has no parentheses at all##",
+                "(\"relationship\"<|>\"Alice\"<|>\"Acme\"<|>\"late\"<|>2.5)<|COMPLETE|>"
+            );
+            let records =
+                parse_tuple_records(raw, DEFAULT_RECORD_DELIMITER, DEFAULT_COMPLETION_DELIMITER);
+            assert_eq!(records.len(), 6); // paren-less record dropped
+            let (nodes, edges) = entities_and_relations(
+                &records,
+                DEFAULT_TUPLE_DELIMITER,
+                &["person", "organization"],
+                "chunk-1",
+            );
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0]["entity_name"], "ALICE");
+            assert_eq!(nodes[0]["entity_type"], "PERSON");
+            assert_eq!(nodes[0]["source_id"], "chunk-1");
+            // "vehicle" type filtered out; all 3 relation records kept
+            assert_eq!(edges.len(), 3);
+            let w: Vec<f64> = edges.iter().filter_map(|e| e["weight"].as_f64()).collect();
+            assert!(w.contains(&7.0));
+            assert!(w.contains(&1.0)); // non-numeric strength → default 1.0
+            assert!(w.contains(&2.5));
+            // src/tgt are the sorted-uppercased pair
+            assert_eq!(edges[0]["src_id"], "ACME");
+            assert_eq!(edges[0]["tgt_id"], "ALICE");
+            // empty allow-list → DEFAULT_ENTITY_TYPES (still filters vehicle)
+            let (n2, _) = extract_entity_relations_from_output(raw, &[], "chunk-1");
+            assert_eq!(n2.len(), 2);
+        }
+
+        #[test]
+        fn merge_entity_and_relation_records_mirror_extractor() {
+            let ents = vec![
+                json!({"entity_name": "ALICE", "entity_type": "PERSON", "description": "b desc", "source_id": "c1"}),
+                json!({"entity_name": "ALICE", "entity_type": "PERSON", "description": "a desc", "source_id": "c2"}),
+                json!({"entity_name": "ALICE", "entity_type": "CATEGORY", "description": "a desc", "source_id": "c2"}),
+            ];
+            let merged = merge_entity_records(&ents).unwrap();
+            assert_eq!(merged["entity_type"], "PERSON"); // majority type
+            assert_eq!(merged["description"], format!("a desc{GRAPH_FIELD_SEP}b desc"));
+            assert_eq!(merged["source_id"], json!(["c1", "c2"]));
+            assert_eq!(merged["entity_name"], "ALICE");
+
+            let rels = vec![
+                json!({"src_id": "A", "tgt_id": "B", "weight": 2.0, "description": "d2", "keywords": "k1", "source_id": "c1"}),
+                json!({"src_id": "A", "tgt_id": "B", "weight": 3.5, "description": "d1", "keywords": ["k1", "k2"], "source_id": "c2"}),
+            ];
+            let edge = merge_relation_records(&rels).unwrap();
+            assert_eq!(edge["weight"], 5.5);
+            assert_eq!(edge["description"], format!("d1{GRAPH_FIELD_SEP}d2"));
+            assert_eq!(edge["keywords"], json!(["k1", "k2"]));
+            assert_eq!(edge["source_id"], json!(["c1", "c2"]));
+            assert_eq!(
+                most_common_value(&["a".into(), "b".into(), "a".into()]),
+                Some("a".into())
+            );
+            assert_eq!(flat_uniq_list(&rels, "keywords"), vec!["k1".to_string(), "k2".to_string()]);
+            assert!(merge_entity_records(&[]).is_none());
+            assert!(merge_relation_records(&[]).is_none());
+        }
+
+        #[test]
+        fn spacy_mapping_and_keyword_normalization_constants() {
+            assert_eq!(spacy_to_app_entity_type("PERSON"), "person");
+            assert_eq!(spacy_to_app_entity_type("ORG"), "organization");
+            assert_eq!(spacy_to_app_entity_type("GPE"), "geo");
+            assert_eq!(spacy_to_app_entity_type("LOC"), "geo");
+            assert_eq!(spacy_to_app_entity_type("EVENT"), "event");
+            assert_eq!(spacy_to_app_entity_type("QUANTITY"), "category");
+            assert_eq!(spacy_to_app_entity_type("NOT_A_LABEL"), "category");
+            assert!(has_uppercase("Hello"));
+            assert!(!has_uppercase("hello"));
+            assert_eq!(replace_word("New - York"), "New-York");
+            assert_eq!(replace_word("cat 's"), "cat's");
+            assert_eq!(replace_word("A - B"), "A-B");
+            // missing graphrag constants now present
+            assert_eq!(MAX_CONCURRENT_PROCESS_AND_EXTRACT_CHUNK, 10);
+            assert_eq!(GRAPHRAG_MAX_ERRORS, 3);
+            assert_eq!(ENTITY_SUMMARY_MAX_TOKENS, 512);
+            assert_eq!(ENTITY_SUMMARY_DESCRIPTION_LIST_LIMIT, 12);
+            assert_eq!(ENTITY_EXTRACTION_MAX_GLEANINGS, 2);
+            assert_eq!(GRAPH_FIELD_SEP, "<SEP>");
+            assert_eq!(DEFAULT_TUPLE_DELIMITER, "<|>");
+            assert_eq!(DEFAULT_RECORD_DELIMITER, "##");
+            assert_eq!(DEFAULT_COMPLETION_DELIMITER, "<|COMPLETE|>");
+            assert!(DEFAULT_ENTITY_TYPES.contains(&"person"));
+            assert!(is_float_regex("7"));
+            assert!(is_float_regex("-3.5"));
+            assert!(is_float_regex("10.5"));
+            assert!(!is_float_regex("10.")); // regex requires a trailing digit
+            assert!(!is_float_regex("abc"));
+        }
+
+        #[tokio::test]
+        async fn upsert_row_by_id_implements_if_not_exists_semantics() {
+            let store = MemoryCompileStore::default();
+            let row = to_es_doc(
+                &json!({"name": "A", "description": "desc"}),
+                "hypergraph",
+                "doc-1",
+                &["c1".to_string()],
+                vec![],
+                "entity",
+                None,
+                None,
+                None,
+                None,
+            );
+            assert_eq!(
+                upsert_row_by_id(&store, "kb-1", &row).await.unwrap(),
+                PersistOutcome::Inserted
+            );
+            // same stable id → update, not a second row
+            assert_eq!(
+                upsert_row_by_id(&store, "kb-1", &row).await.unwrap(),
+                PersistOutcome::Updated
+            );
+            let rows = store.search("kb-1", &CompileFilter::default(), 100).await.unwrap();
+            assert_eq!(rows.len(), 1);
+            // different kb → independent insert
+            assert_eq!(
+                upsert_row_by_id(&store, "kb-2", &row).await.unwrap(),
+                PersistOutcome::Inserted
+            );
+            let rows = store.search("kb-2", &CompileFilter::default(), 100).await.unwrap();
+            assert_eq!(rows.len(), 1);
+        }
+    }
 
     fn sample_config() -> Value {
         json!({
