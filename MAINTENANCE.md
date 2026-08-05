@@ -1,3 +1,8 @@
+## 2026-08-05 v0.2.1 容器验证
+
+- 部署成功：容器 healthy、healthz 200、6 页面全 200；admin/version 路由已注册（401=需认证）
+- 已提交 d93190b（v0.2.1：远程沙箱+插件+NLP/LLM 工厂+doc_store）
+
 ## 2026-08-05 v0.2.1：远程沙箱 + 插件 + NLP/LLM 工厂 + doc_store
 
 - sandbox.rs +456 远程契约；plugin.rs 插件机制（LLM 工具插件）
