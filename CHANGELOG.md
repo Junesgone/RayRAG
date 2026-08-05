@@ -2,6 +2,28 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.4] — 2026-08-05
+
+### Added
+
+- **RAGFlow 25 个 Agent 工作流模板种子化**（`src/agent_templates.rs` + `src/api/fixtures/agent_templates/*.json`）：
+  include_str! 编译期嵌入（零转义风险），agents 页面模板库 3 → **28**（web_search_assistant、
+  deep_research、text2sql_data_expert、trip_planner、ingestion_pipeline_* 系列等）。
+- **GraphRAG prompts 移植**（`src/prompts.rs`，18 个常量 + PromptLibrary 方法）：
+  GRAPH_EXTRACTION_PROMPT/CONTINUE/LOOP、GRAPH_SUMMARIZE_DESCRIPTIONS_PROMPT、
+  GRAPH_COMMUNITY_REPORT_PROMPT、ENTITY_EXTRACTION_PROMPT 系列、KEYWORDS_EXTRACTION_PROMPT、
+  LIGHTRAG_RESPONSE_PROMPT、NAIVE_RAG_RESPONSE_PROMPT、QUERY_KEYWORDS_EXTRACTION_PROMPT、
+  MINIRAG_QUERY2KWD_PROMPT、ENTITY_RESOLUTION_PROMPT、MIND_MAP_EXTRACTION_PROMPT、
+  QUESTION_PROPOSAL_PROMPT、KEYWORD_EXTRACTION_PROMPT。
+- **paddleocr_layout 补齐**（`src/parser/paddleocr_layout.rs`，66 行 stub → 完整 layout 流程）：
+  blocks→bbox→position tags、parse_methods、extract_positions（对齐 paddleocr_parser.py）。
+- **figure.rs 补齐**：figure-describe prompts + 上下文感知 describe helper（对齐 figure_parser.py/picture.py）。
+
+### Fixed
+
+- `exact_dedup_by_key` canonical 名称保留组内首现（对齐 RAGFlow 语义，而非频次最高）。
+- `parse_run_response` 缺省 result 时始终注入 result_present=false / result_value=null / result_type=json。
+
 ## [0.1.3] — 2026-08-05
 
 ### Added

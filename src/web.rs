@@ -759,15 +759,30 @@ pub async fn agents_page(
     b.push_str(t("New Agent", zh));
     b.push_str("</h2><input id='aname' placeholder='Name'><textarea id='adesc' placeholder='Description' style='margin-top:8px;min-height:60px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createA()'>");
     b.push_str(t("Create", zh));
-    b.push_str("</button><button class='btn btn-o' onclick='document.getElementById(\"createModal\").classList.remove(\"show\")'>");
+    b.push_str("</button><button class='btn btn-o' onclick='showTemplates()'>From Template</button><button class='btn btn-o' onclick='document.getElementById(\"createModal\").classList.remove(\"show\")'>");
     b.push_str(t("Cancel", zh));
     b.push_str("</button></div></div></div>");
     b.push_str("<div class='card'><h2>Test Agent</h2><input id='aq' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='askA()'>Ask</button><div id='aa' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>var agentTemplates={
 'rag':{'name':'RAG 问答','dsl':{'components':{'begin':{'obj':{'component_name':'Begin','params':{}},'downstream':['ret'],'upstream':[]},'ret':{'obj':{'component_name':'Retrieval','params':{'query':'{{sys.query}}','top_k':4}},'downstream':['ans'],'upstream':['begin']},'ans':{'obj':{'component_name':'Message','params':{'content':['{{ret@formalized_content}}']}},'downstream':[],'upstream':['ret']}}}},
 'search':{'name':'网络搜索','dsl':{'components':{'begin':{'obj':{'component_name':'Begin','params':{}},'downstream':['sx'],'upstream':[]},'sx':{'obj':{'component_name':'SearXNG','params':{'query':'{{sys.query}}'}},'downstream':['ans'],'upstream':['begin']},'ans':{'obj':{'component_name':'Message','params':{'content':['{{sx@formalized_content}}']}},'downstream':[],'upstream':['sx']}}}},
 'ragchat':{'name':'RAG 对话','dsl':{'components':{'begin':{'obj':{'component_name':'Begin','params':{}},'downstream':['ret'],'upstream':[]},'ret':{'obj':{'component_name':'Retrieval','params':{'query':'{{sys.query}}','top_k':4}},'downstream':['llm'],'upstream':['begin']},'llm':{'obj':{'component_name':'Generate','params':{'query':'{{ret@formalized_content}}'}},'downstream':['ans'],'upstream':['ret']},'ans':{'obj':{'component_name':'Message','params':{'content':['{{llm@content}}']}},'downstream':[],'upstream':['llm']}}}}
-};
-function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:'Created from template: '+t.name,dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
+");
+    // Append the 25 seeded RAGFlow workflow templates (src/agent_templates.rs)
+    // to the 3 built-in templates above, for 28 total in the agents page.
+    let mut tpls = String::new();
+    for (slug, name, desc, dsl) in crate::agent_templates::AGENT_TEMPLATES {
+        let name_j = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
+        let desc_j = serde_json::to_string(desc).unwrap_or_else(|_| "\"\"".to_string());
+        // `</` would close the <script> tag in the rendered HTML; `<\/` is a
+        // no-op escape valid in both JS and JSON, so the DSL round-trips.
+        let dsl_j = dsl.replace("</", "<\\/");
+        tpls.push_str(&format!(
+            ",'{}':{{'name':{},'description':{},'dsl':{}}}",
+            slug, name_j, desc_j, dsl_j
+        ));
+    }
+    b.push_str("};
+function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:(t.description?t.description:'Created from template: '+t.name),dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
 var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(function(){location.reload()})};function editA(id){window.location.href='/agents/'+id};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
     Html(layout(t("Agents", zh), &b, zh))
 }

@@ -28,6 +28,26 @@ struct OcrResponse {
     full_text: String,
 }
 
+/// A single layout block from PaddleOCR `layoutParsingResults` — mirrors
+/// `paddleocr_parser.py` `parsing_res_list` items. Bboxes are normalized
+/// (corners swapped so left≤right and top≤bottom, see `_normalize_bbox`).
+#[derive(Debug, Clone)]
+pub struct PaddleLayoutBlock {
+    /// 1-based page index (upstream uses `page_idx + 1` in position tags).
+    pub page: u32,
+    /// Block label (`block_label`), e.g. `text`, `table`, `figure`, `title`,
+    /// or the fallback markers `markdown` / `ocr` introduced by RayRAG when
+    /// the corresponding upstream fallback branch produced the block.
+    pub label: String,
+    /// Block content with `<img .../>` tags stripped (mirrors
+    /// `_remove_images_from_markdown`).
+    pub content: String,
+    pub left: f64,
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+}
+
 #[derive(Clone)]
 enum OcrBackend {
     LegacyProxy { base_url: String },
@@ -271,6 +291,45 @@ impl OcrClient {
         file_name: &str,
         data: &[u8],
     ) -> Result<String> {
+        let body = self.paddleocr_submit_and_fetch(config, file_name, data).await?;
+        parse_paddleocr_jsonl(&body)
+    }
+
+    /// True when the client is backed by the RAGFlow PaddleOCR async API
+    /// (the only backend able to produce layout-parsing results).
+    pub fn is_paddleocr(&self) -> bool {
+        matches!(self.backend, OcrBackend::PaddleOcr(_))
+    }
+
+    /// Run PaddleOCR with layout recognition and return structured blocks
+    /// (page / label / normalized bbox / image-stripped content) parsed from
+    /// `layoutParsingResults` — the input of the layout parser's section
+    /// renderer. Requires the RAGFlow PaddleOCR backend.
+    pub async fn paddleocr_layout_file(
+        &self,
+        file_name: &str,
+        data: &[u8],
+    ) -> Result<Vec<PaddleLayoutBlock>> {
+        match &self.backend {
+            OcrBackend::PaddleOcr(config) => {
+                let body = self.paddleocr_submit_and_fetch(config, file_name, data).await?;
+                parse_paddleocr_blocks(&body)
+            }
+            OcrBackend::LegacyProxy { .. } => anyhow::bail!(
+                "[PaddleOCR] layout parsing requires the RAGFlow PaddleOCR backend \
+                 (RAYRAG_OCR_PROVIDER=paddleocr)"
+            ),
+        }
+    }
+
+    /// Shared RAGFlow PaddleOCR wire flow: submit the file as multipart,
+    /// poll `/jobs/{id}` until `done`, then fetch the JSONL result body.
+    async fn paddleocr_submit_and_fetch(
+        &self,
+        config: &PaddleOcrConfig,
+        file_name: &str,
+        data: &[u8],
+    ) -> Result<String> {
         config.validate()?;
         if data.is_empty() {
             anyhow::bail!("[PaddleOCR] file content is empty");
@@ -376,7 +435,7 @@ impl OcrClient {
         if !status.is_success() {
             anyhow::bail!("[PaddleOCR] failed to fetch result: HTTP {status} {body}");
         }
-        parse_paddleocr_jsonl(&body)
+        Ok(body)
     }
 }
 
@@ -425,61 +484,146 @@ fn paddleocr_optional_payload(algorithm: &str) -> Value {
     payload
 }
 
-fn parse_paddleocr_jsonl(body: &str) -> Result<String> {
+/// Normalize a block bbox: coerce to floats and ensure left≤right, top≤bottom
+/// (mirrors `paddleocr_parser.py _normalize_bbox`). Malformed boxes collapse
+/// to `(0, 0, 0, 0)` like the upstream `len(bbox) < 4` branch.
+fn normalize_bbox(bbox: &Value) -> (f64, f64, f64, f64) {
+    let items = match bbox {
+        Value::Array(items) => items,
+        _ => return (0.0, 0.0, 0.0, 0.0),
+    };
+    if items.len() < 4 {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    let number = |value: &Value| value.as_f64().unwrap_or(0.0);
+    let (mut left, mut top, mut right, mut bottom) = (
+        number(&items[0]),
+        number(&items[1]),
+        number(&items[2]),
+        number(&items[3]),
+    );
+    if left > right {
+        std::mem::swap(&mut left, &mut right);
+    }
+    if top > bottom {
+        std::mem::swap(&mut top, &mut bottom);
+    }
+    (left, top, right, bottom)
+}
+
+/// Parse PaddleOCR JSONL into structured layout blocks, preserving page
+/// index, block label, and bounding box — the input contract of
+/// `paddleocr_parser.py _transfer_to_sections`.
+///
+/// Fallback chain matches upstream exactly, in document order:
+///   1. `layoutParsingResults[].prunedResult.parsing_res_list[]` blocks
+///      (with `<img>` tags stripped and bboxes normalized); blocks with empty
+///      content after stripping are dropped.
+///   2. that page's `markdown.text` when no block survived (label `markdown`).
+///   3. `ocrResults[].prunedResult.rec_texts` as a last-resort source
+///      (label `ocr`).
+pub fn parse_paddleocr_blocks(body: &str) -> Result<Vec<PaddleLayoutBlock>> {
     let image_pattern = regex::Regex::new(r"(?is)<div[^>]*>\s*<img[^>]*/?>\s*</div>|<img[^>]*/?>")?;
-    let mut layout_texts = Vec::new();
-    let mut ocr_texts = Vec::new();
+    let mut blocks = Vec::new();
     for line in body.lines().map(str::trim).filter(|line| !line.is_empty()) {
         let value = serde_json::from_str::<Value>(line)
             .map_err(|error| anyhow::anyhow!("[PaddleOCR] result JSONL parse error: {error}"))?;
         let result = value.get("result").unwrap_or(&Value::Null);
         if let Some(layouts) = result.get("layoutParsingResults").and_then(Value::as_array) {
-            for layout in layouts {
-                let before = layout_texts.len();
-                if let Some(blocks) = layout
+            for (page_idx, layout) in layouts.iter().enumerate() {
+                let mut found = false;
+                if let Some(parsing_list) = layout
                     .pointer("/prunedResult/parsing_res_list")
                     .and_then(Value::as_array)
                 {
-                    for block in blocks {
-                        if let Some(content) = block.get("block_content").and_then(Value::as_str) {
-                            let content = image_pattern.replace_all(content, "");
-                            let content = content.trim();
-                            if !content.is_empty() {
-                                layout_texts.push(content.to_owned());
-                            }
+                    for block in parsing_list {
+                        let raw = block
+                            .get("block_content")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let content = image_pattern.replace_all(raw, "").trim().to_owned();
+                        if content.is_empty() {
+                            continue;
                         }
+                        let label = block
+                            .get("block_label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned();
+                        let (left, top, right, bottom) =
+                            normalize_bbox(block.get("block_bbox").unwrap_or(&Value::Null));
+                        blocks.push(PaddleLayoutBlock {
+                            page: page_idx as u32 + 1,
+                            label,
+                            content,
+                            left,
+                            top,
+                            right,
+                            bottom,
+                        });
+                        found = true;
                     }
                 }
-                if layout_texts.len() == before
+                if !found
                     && let Some(markdown) = layout.pointer("/markdown/text").and_then(Value::as_str)
                 {
-                    let markdown = image_pattern.replace_all(markdown, "");
-                    let markdown = markdown.trim();
+                    let markdown = image_pattern.replace_all(markdown, "").trim().to_owned();
                     if !markdown.is_empty() {
-                        layout_texts.push(markdown.to_owned());
+                        blocks.push(PaddleLayoutBlock {
+                            page: page_idx as u32 + 1,
+                            label: "markdown".to_owned(),
+                            content: markdown,
+                            left: 0.0,
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 0.0,
+                        });
                     }
                 }
             }
         }
         if let Some(results) = result.get("ocrResults").and_then(Value::as_array) {
-            for result in results {
-                if let Some(texts) = result
+            for (page_idx, ocr_result) in results.iter().enumerate() {
+                if let Some(texts) = ocr_result
                     .pointer("/prunedResult/rec_texts")
                     .and_then(Value::as_array)
                 {
-                    ocr_texts.extend(
-                        texts
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::trim)
-                            .filter(|text| !text.is_empty())
-                            .map(str::to_owned),
-                    );
+                    for text in texts
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                    {
+                        blocks.push(PaddleLayoutBlock {
+                            page: page_idx as u32 + 1,
+                            label: "ocr".to_owned(),
+                            content: text.to_owned(),
+                            left: 0.0,
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 0.0,
+                        });
+                    }
                 }
             }
         }
     }
+    Ok(blocks)
+}
+
+fn parse_paddleocr_jsonl(body: &str) -> Result<String> {
+    let blocks = parse_paddleocr_blocks(body)?;
+    let layout_texts: Vec<&str> = blocks
+        .iter()
+        .filter(|block| block.label != "ocr")
+        .map(|block| block.content.as_str())
+        .collect();
     if layout_texts.is_empty() {
+        let ocr_texts: Vec<&str> = blocks
+            .iter()
+            .filter(|block| block.label == "ocr")
+            .map(|block| block.content.as_str())
+            .collect();
         Ok(ocr_texts.join("\n"))
     } else {
         Ok(layout_texts.join("\n"))

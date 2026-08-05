@@ -162,6 +162,199 @@ pub fn clean_markdown_block(text: &str) -> String {
     trimmed.to_owned()
 }
 
+/// `vision_llm_figure_describe_prompt` — figure-specific vision prompt
+/// (port of RAGFlow `rag/prompts/vision_llm_figure_describe_prompt.md`).
+pub fn figure_describe_prompt() -> String {
+    FIGURE_DESCRIBE_PROMPT.to_owned()
+}
+
+/// `vision_llm_figure_describe_prompt_with_context` — figure prompt with
+/// surrounding document context (port of
+/// `rag/prompts/vision_llm_figure_describe_prompt_with_context.md`).
+/// Context is used only to disambiguate terms visible in the image.
+pub fn figure_describe_prompt_with_context(context_above: &str, context_below: &str) -> String {
+    FIGURE_DESCRIBE_PROMPT_WITH_CONTEXT
+        .replace("{{ context_above }}", context_above)
+        .replace("{{ context_below }}", context_below)
+}
+
+/// Describe a figure with optional surrounding document context — mirrors
+/// `VisionFigureParser.process` in `figure_parser.py`: the with-context
+/// prompt is used when either context side is non-empty, otherwise the
+/// default figure prompt; both go through `picture.vision_llm_chunk`.
+pub fn describe_figure_with_context_sync(
+    vision: &VisionClient,
+    image_bytes: &[u8],
+    mime: &str,
+    context_above: &str,
+    context_below: &str,
+) -> Result<String> {
+    let prompt = if context_above.is_empty() && context_below.is_empty() {
+        figure_describe_prompt()
+    } else {
+        figure_describe_prompt_with_context(context_above, context_below)
+    };
+    vision_llm_chunk_sync(vision, image_bytes, mime, Some(&prompt))
+}
+
+/// Port of `rag/prompts/vision_llm_figure_describe_prompt.md`.
+const FIGURE_DESCRIBE_PROMPT: &str = r#"## ROLE
+
+You are an expert visual data analyst.
+
+## GOAL
+
+Analyze the image and produce a textual representation strictly based on what is visible in the image.
+
+## DECISION RULE (CRITICAL)
+
+First, determine whether the image contains an explicit visual data representation with enumerable data units forming a coherent dataset.
+
+Enumerable data units are clearly separable, repeatable elements intended for comparison, measurement, or aggregation, such as:
+
+- rows or columns in a table
+- individual bars in a bar chart
+- identifiable data points or series in a line graph
+- labeled segments in a pie chart
+
+The mere presence of numbers, icons, UI elements, or labels does NOT qualify unless they together form such a dataset.
+
+## TASKS
+
+1. Inspect the image and determine which output mode applies based on the decision rule.
+2. Follow the output rules strictly.
+3. Include only content that is explicitly visible in the image.
+4. Do not infer intent, functionality, process logic, or meaning beyond what is visually or textually shown.
+
+## OUTPUT RULES (STRICT)
+
+- Produce output in **exactly one** of the two modes defined below.
+- Do NOT mention, label, or reference the modes in the output.
+- Do NOT combine content from both modes.
+- Do NOT explain or justify the choice of mode.
+- Do NOT add any headings, titles, or commentary beyond what the mode requires.
+
+---
+
+## MODE 1: STRUCTURED VISUAL DATA OUTPUT
+
+(Use only if the image contains enumerable data units forming a coherent dataset.)
+
+Output **only** the following fields, in list form.
+Do NOT add free-form paragraphs or additional sections.
+
+- Visual Type:
+- Title:
+- Axes / Legends / Labels:
+- Data Points:
+- Captions / Annotations:
+
+---
+
+## MODE 2: GENERAL FIGURE CONTENT
+
+(Use only if the image does NOT contain enumerable data units.)
+
+Write the content directly, starting from the first sentence.
+Do NOT add any introductory labels, titles, headings, or prefixes.
+
+Requirements:
+
+- Describe visible regions and components in a stable order (e.g., top-to-bottom, left-to-right).
+- Explicitly name interface elements or visual objects exactly as they appear (e.g., tabs, panels, buttons, icons, input fields).
+- Transcribe all visible text verbatim; do not paraphrase, summarize, or reinterpret labels.
+- Describe spatial grouping, containment, and alignment of elements.
+- Do NOT interpret intent, behavior, workflows, gameplay rules, or processes.
+- Do NOT describe the figure as a chart, diagram, process, phase, or sequence unless such words explicitly appear in the image text.
+- Avoid narrative or stylistic language unless it is a dominant and functional visual element.
+
+Use concise, information-dense sentences.
+Do not use bullet lists or structured fields in this mode."#;
+
+/// Port of `rag/prompts/vision_llm_figure_describe_prompt_with_context.md`.
+const FIGURE_DESCRIBE_PROMPT_WITH_CONTEXT: &str = r#"## ROLE
+
+You are an expert visual data analyst.
+
+## GOAL
+
+Analyze the image and produce a textual representation strictly based on what is visible in the image.
+Surrounding context may be used only for minimal clarification or disambiguation of terms that appear in the image, not as a source of new information.
+
+## CONTEXT (ABOVE)
+
+{{ context_above }}
+
+## CONTEXT (BELOW)
+
+{{ context_below }}
+
+## DECISION RULE (CRITICAL)
+
+First, determine whether the image contains an explicit visual data representation with enumerable data units forming a coherent dataset.
+
+Enumerable data units are clearly separable, repeatable elements intended for comparison, measurement, or aggregation, such as:
+
+- rows or columns in a table
+- individual bars in a bar chart
+- identifiable data points or series in a line graph
+- labeled segments in a pie chart
+
+The mere presence of numbers, icons, UI elements, or labels does NOT qualify unless they together form such a dataset.
+
+## TASKS
+
+1. Inspect the image and determine which output mode applies based on the decision rule.
+2. Use surrounding context only to disambiguate terms that appear in the image.
+3. Follow the output rules strictly.
+4. Include only content that is explicitly visible in the image.
+5. Do not infer intent, functionality, process logic, or meaning beyond what is visually or textually shown.
+
+## OUTPUT RULES (STRICT)
+
+- Produce output in **exactly one** of the two modes defined below.
+- Do NOT mention, label, or reference the modes in the output.
+- Do NOT combine content from both modes.
+- Do NOT explain or justify the choice of mode.
+- Do NOT add any headings, titles, or commentary beyond what the mode requires.
+
+---
+
+## MODE 1: STRUCTURED VISUAL DATA OUTPUT
+
+(Use only if the image contains enumerable data units forming a coherent dataset.)
+
+Output **only** the following fields, in list form.
+Do NOT add free-form paragraphs or additional sections.
+
+- Visual Type:
+- Title:
+- Axes / Legends / Labels:
+- Data Points:
+- Captions / Annotations:
+
+---
+
+## MODE 2: GENERAL FIGURE CONTENT
+
+(Use only if the image does NOT contain enumerable data units.)
+
+Write the content directly, starting from the first sentence.
+Do NOT add any introductory labels, titles, headings, or prefixes.
+
+Requirements:
+
+- Describe visible regions and components in a stable order (e.g., top-to-bottom, left-to-right).
+- Explicitly name interface elements or visual objects exactly as they appear (e.g., tabs, panels, buttons, icons, input fields).
+- Transcribe all visible text verbatim; do not paraphrase, summarize, or reinterpret labels.
+- Describe spatial grouping, containment, and alignment of elements.
+- Do NOT interpret intent, behavior, workflows, gameplay rules, or processes.
+- Do NOT describe the figure as a chart, diagram, process, phase, or sequence unless such words explicitly appear in the image text.
+- Avoid narrative or stylistic language unless it is a dominant and functional visual element.
+
+Use concise, information-dense sentences.
+Do not use bullet lists or structured fields in this mode."#;
+
 /// Detect (width, height) from image magic bytes; None for unknown formats.
 fn detect_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     if data.len() >= 24 && data[0] == 0x89 && data[1] == b'P' && data[2] == b'N' && data[3] == b'G'

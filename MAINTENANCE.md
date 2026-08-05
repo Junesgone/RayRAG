@@ -1,3 +1,12 @@
+## 2026-08-05 v0.1.4：Agent 模板种子化 + GraphRAG prompts + layout 解析补齐
+
+- 25 个 RAGFlow agent 工作流模板种子化（include_str! fixtures），agents 页面模板库 3→28
+- 18 个 graphrag prompt 常量移植到 src/prompts.rs（entity/community/keywords/query 系列）
+- paddleocr_layout.rs 66 行 stub → 完整 layout 流程（blocks→bbox→position tags）
+- exact_dedup_by_key 修复：canonical 名保留首现（对齐 RAGFlow）
+- 测试基线：**919 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 623 → **596**
+
 # RayRAG 运维台账
 
 ## 2026-08-05 v0.1.3 容器部署验证

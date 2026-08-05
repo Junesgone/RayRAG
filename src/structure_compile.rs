@@ -1044,18 +1044,12 @@ pub fn exact_dedup_by_key(
 
     let mut canonical: Vec<Value> = Vec::new();
     for ((norm, type_val), group) in groups {
-        let mut name_counts: HashMap<String, usize> = HashMap::new();
-        for it in &group {
-            if let Some(n) = it.get(name_key).and_then(Value::as_str) {
-                if !n.is_empty() {
-                    *name_counts.entry(n.to_string()).or_insert(0) += 1;
-                }
-            }
-        }
-        let best = name_counts
-            .iter()
-            .max_by_key(|(_, count)| **count)
-            .map(|(name, _)| name.clone())
+        // canonical 名称 = 组内首个出现的名称（对齐 RAGFlow 保留首现语义）
+        let best = group
+            .first()
+            .and_then(|it| it.get(name_key))
+            .and_then(Value::as_str)
+            .map(str::to_string)
             .unwrap_or_default();
 
         let mut aliases: HashSet<String> = HashSet::new();
