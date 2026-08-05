@@ -1,3 +1,13 @@
+## 2026-08-05 v0.3.0 端到端冒烟验证（GPU 链路）
+
+- 登录 /api/v1/auth/login（注意：非 /api/v1/user/login）→ token
+- 建 KB → 上传 smoke.txt → 入队解析（UNSTARTED→chunk）
+- 检索 /api/v1/retrieval（参数 kb_ids 非 dataset_ids）→ score 0.975
+  （embedding 0.916 + 全文 1.0，GPU embedding 生效）
+- 对话 /api/v1/chat/completions（OpenAI 兼容：model+messages+kb_ids）
+  → Qwen3.5-9B 生成完整回答，GPU LLM 链路生效
+- 端到端：登录→建KB→上传→解析→检索→对话 全部通过
+
 ## 2026-08-05 v0.3.0 容器验证
 
 - 部署成功：容器 healthy、healthz 200、11 页面全 200
