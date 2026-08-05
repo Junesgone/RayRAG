@@ -4,16 +4,25 @@
 
 mod naive;
 mod position;
-mod tokenizer;
+mod title;
+mod token;
+pub mod tokenizer;
+pub use tokenizer::token_count;
 
 pub use naive::NaiveChunker;
-pub use tokenizer::token_count;
+pub use title::TitleChunker;
+pub use token::TokenChunker;
 
 use crate::{Chunk, Document, ParserConfig, Result};
 use uuid::Uuid;
 
 /// Internal parser-to-chunker signal matching RAGFlow's `if pdf_parser` branch.
 pub(crate) const RAGFLOW_POSITION_TAGS_METADATA: &str = "_rayrag_ragflow_position_tags";
+
+/// Transient PDF outline metadata attached by pdf.rs (JSON array of
+/// `{title, depth, page}`); consumed by TitleChunker and popped by the
+/// chunk builder before persistence.
+pub(crate) const OUTLINE_METADATA: &str = "__outline__";
 
 /// Chunking strategy trait.
 pub trait ChunkStrategy: Send + Sync {
@@ -24,6 +33,16 @@ pub trait ChunkStrategy: Send + Sync {
 /// Get the default chunking strategy (naive token-based).
 pub fn default_chunker() -> Box<dyn ChunkStrategy> {
     Box::new(NaiveChunker::new())
+}
+
+/// Select a chunking strategy from `config.chunk_method`
+/// (naive | token | title; unknown methods fall back to naive).
+pub fn chunker_for(config: &ParserConfig) -> Box<dyn ChunkStrategy> {
+    match config.chunk_method.as_str() {
+        "token" => Box::new(TokenChunker::new()),
+        "title" => Box::new(TitleChunker::new()),
+        _ => Box::new(NaiveChunker::new()),
+    }
 }
 
 /// Estimate token count using a simple heuristic:

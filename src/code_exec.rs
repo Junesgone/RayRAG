@@ -6,9 +6,17 @@
 //!   3. 业务输出选择（保留键排除后必须恰好一个）
 //!   4. canonical content 渲染（String 原样，Object/Array → 排序缩进 JSON）
 //!   5. artifact 附件段落（image/pdf/csv/json/html 类型规范化）
-//! 沙箱服务地址由 RAYRAG_SANDBOX_HOST 配置（默认 127.0.0.1:9385，可指向 Docker 沙箱）。
+//! 沙箱服务地址由 RAYRAG_EXECUTOR_MANAGER_URL（优先）或 RAYRAG_SANDBOX_HOST 配置
+//! （默认 http://127.0.0.1:9385，即 RAGFlow executor_manager 服务）；请求契约对齐
+//! RAGFlow `agent/sandbox/providers/self_managed.py`：
+//!   - POST /run 请求体 {code_b64, language, arguments}（code 需 base64 编码）
+//!   - 响应体 CodeExecutionResult：status/stdout/stderr/exit_code/detail/
+//!     time_used_ms/memory_used_kb/artifacts/result{present,value,type}
+//!   - GET /healthz 健康检查；单次执行超时由 RAYRAG_SANDBOX_TIMEOUT 配置（默认 30s）。
+//! /run 为同步接口（executor_manager 内部维护容器池），无需轮询/创建实例。
 
 use anyhow::{bail, Result};
+use base64::Engine;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -26,13 +34,23 @@ const SYSTEM_OUTPUT_KEYS: &[&str] = &[
     "_elapsed_time",
 ];
 
-/// 沙箱执行结果（对齐 :9385/run 响应体）。
+/// 沙箱执行结果（对齐 executor_manager CodeExecutionResult 响应体）。
 #[derive(Debug, Clone, Default)]
 pub struct SandboxResult {
     pub stdout: String,
     pub stderr: Option<String>,
+    /// 进程退出码（默认 0）。
+    pub exit_code: i64,
+    /// 执行状态（success/program_error/resource_limit_exceeded/...）。
+    pub status: Option<String>,
+    /// 附加错误详情。
+    pub detail: Option<String>,
+    /// 执行耗时毫秒。
+    pub time_used_ms: Option<f64>,
+    /// 内存占用 KB。
+    pub memory_used_kb: Option<f64>,
     pub artifacts: Vec<Value>,
-    /// 结构化结果元数据（result_present / result_value）。
+    /// 结构化结果元数据（result_present / result_value / result_type）。
     pub metadata: Map<String, Value>,
 }
 
@@ -44,60 +62,146 @@ pub struct CodeRequest {
     pub arguments: Map<String, Value>,
 }
 
-/// 沙箱客户端。
+/// 沙箱客户端（executor_manager 远程客户端）。
 #[derive(Debug, Clone)]
 pub struct SandboxClient {
     base_url: String,
     http: reqwest::Client,
+    /// 单次 /run 请求超时（对齐 RAGFlow timeout 配置，默认 30s）。
+    timeout: Duration,
 }
 
 impl Default for SandboxClient {
     fn default() -> Self {
-        let host = std::env::var("RAYRAG_SANDBOX_HOST")
+        // executor_manager_url 配置优先，其次旧环境变量 RAYRAG_SANDBOX_HOST
+        let url = std::env::var("RAYRAG_EXECUTOR_MANAGER_URL")
+            .or_else(|_| std::env::var("RAYRAG_SANDBOX_HOST"))
             .unwrap_or_else(|_| "http://127.0.0.1:9385".to_string());
-        Self::new(&host)
+        Self::new(&url)
     }
 }
 
 impl SandboxClient {
     pub fn new(base_url: &str) -> Self {
+        let timeout_secs = std::env::var("RAYRAG_SANDBOX_TIMEOUT")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(30);
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10 * 60))
                 .build()
                 .expect("sandbox http client"),
+            timeout: Duration::from_secs(timeout_secs),
         }
     }
 
-    /// 调用沙箱执行代码（对齐上游 POST :9385/run）。
+    /// 健康检查（对齐上游 GET /healthz）。
+    pub async fn health_check(&self) -> bool {
+        match self
+            .http
+            .get(format!("{}/healthz", self.base_url))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        }
+    }
+
+    /// 调用沙箱执行代码（对齐 executor_manager POST /run 契约）。
     pub async fn run(&self, request: &CodeRequest) -> Result<SandboxResult> {
+        // code 需 base64 编码，语言需规范化为 python/nodejs（对齐 CodeExecutionRequest）
+        let code_b64 = base64::engine::general_purpose::STANDARD.encode(request.code.as_bytes());
         let payload = json!({
-            "code": request.code,
-            "lang": request.language,
+            "code_b64": code_b64,
+            "language": normalize_sandbox_language(&request.language),
             "arguments": request.arguments,
         });
         let response = self
             .http
             .post(format!("{}/run", self.base_url))
+            .timeout(self.timeout)
             .json(&payload)
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("Exception executing code: {error}"))?;
+            .map_err(|error| {
+                if error.is_timeout() {
+                    anyhow::anyhow!(
+                        "Sandbox execution timed out after {} seconds",
+                        self.timeout.as_secs()
+                    )
+                } else {
+                    anyhow::anyhow!("Exception executing code: {error}")
+                }
+            })?;
         if !response.status().is_success() {
             bail!("Sandbox HTTP {}", response.status());
         }
         let body: Value = response.json().await?;
-        Ok(SandboxResult {
-            stdout: body.get("stdout").and_then(Value::as_str).unwrap_or("").to_string(),
-            stderr: body.get("stderr").and_then(Value::as_str).map(str::to_string),
-            artifacts: body
-                .get("artifacts")
-                .and_then(Value::as_array)
+        Ok(parse_run_response(&body))
+    }
+}
+
+/// 语言规范化（对齐 SelfManagedProvider._normalize_language：python/python3 → python，
+/// javascript/nodejs → nodejs）。
+pub fn normalize_sandbox_language(language: &str) -> String {
+    let low = language.trim().to_lowercase();
+    match low.as_str() {
+        "python3" | "py" | "python3.11" | "python3.12" => "python".to_string(),
+        "javascript" | "js" | "node" => "nodejs".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 解析 /run 响应体（对齐 CodeExecutionResult + result 结构化字段）。
+pub fn parse_run_response(body: &Value) -> SandboxResult {
+    let mut metadata = Map::new();
+    if let Some(result) = body.get("result") {
+        metadata.insert(
+            "result_present".into(),
+            result
+                .get("present")
                 .cloned()
-                .unwrap_or_default(),
-            metadata: Map::new(),
-        })
+                .unwrap_or(Value::Bool(false)),
+        );
+        metadata.insert(
+            "result_value".into(),
+            result.get("value").cloned().unwrap_or(Value::Null),
+        );
+        metadata.insert(
+            "result_type".into(),
+            result
+                .get("type")
+                .cloned()
+                .unwrap_or_else(|| Value::String("json".into())),
+        );
+    } else {
+        // 缺省 result → 无结构化结果
+        metadata.insert("result_present".into(), Value::Bool(false));
+        metadata.insert("result_value".into(), Value::Null);
+        metadata.insert("result_type".into(), Value::String("json".into()));
+    }
+    SandboxResult {
+        stdout: body
+            .get("stdout")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        stderr: body.get("stderr").and_then(Value::as_str).map(str::to_string),
+        exit_code: body.get("exit_code").and_then(Value::as_i64).unwrap_or(0),
+        status: body.get("status").and_then(Value::as_str).map(str::to_string),
+        detail: body.get("detail").and_then(Value::as_str).map(str::to_string),
+        time_used_ms: body.get("time_used_ms").and_then(Value::as_f64),
+        memory_used_kb: body.get("memory_used_kb").and_then(Value::as_f64),
+        artifacts: body
+            .get("artifacts")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        metadata,
     }
 }
 
@@ -463,6 +567,7 @@ mod tests {
             stderr: Some("Traceback: boom".into()),
             artifacts: vec![],
             metadata: Map::new(),
+            ..Default::default()
         };
         let outputs = process_result(&result);
         assert!(outputs.get("_ERROR").unwrap().as_str().unwrap().contains("boom"));
@@ -479,6 +584,7 @@ mod tests {
                 "mime_type": "text/csv",
             })],
             metadata: Map::new(),
+            ..Default::default()
         };
         let outputs = process_result(&result);
         let content = outputs.get("content").unwrap().as_str().unwrap();
@@ -486,5 +592,133 @@ mod tests {
         assert!(content.contains("attachment_count: 1"));
         assert!(content.contains("attachment_1 (csv): chart.csv"));
         assert_eq!(outputs.get("actual_type").unwrap().as_str().unwrap(), "Object");
+    }
+
+    // ── executor_manager 远程客户端契约测试（mock，不发真实网络） ──────────
+
+    #[test]
+    fn sandbox_language_normalization_matches_executor_manager() {
+        assert_eq!(normalize_sandbox_language("python3"), "python");
+        assert_eq!(normalize_sandbox_language("python3.12"), "python");
+        assert_eq!(normalize_sandbox_language("javascript"), "nodejs");
+        assert_eq!(normalize_sandbox_language("node"), "nodejs");
+        assert_eq!(normalize_sandbox_language("bash"), "bash");
+    }
+
+    #[test]
+    fn run_response_parses_full_executor_manager_contract() {
+        let body = json!({
+            "status": "success",
+            "stdout": "hello\n",
+            "stderr": "",
+            "exit_code": 0,
+            "detail": null,
+            "time_used_ms": 123.4,
+            "memory_used_kb": 5120.0,
+            "artifacts": [ { "name": "a.png", "mime_type": "image/png", "size": 10, "content_b64": "eA==" } ],
+            "result": { "present": true, "value": { "answer": 42 }, "type": "json" }
+        });
+        let result = parse_run_response(&body);
+        assert_eq!(result.stdout, "hello\n");
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.status.as_deref(), Some("success"));
+        assert_eq!(result.time_used_ms, Some(123.4));
+        assert_eq!(result.memory_used_kb, Some(5120.0));
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.metadata["result_present"], json!(true));
+        assert_eq!(result.metadata["result_value"]["answer"], json!(42));
+        assert_eq!(result.metadata["result_type"], json!("json"));
+        // 结构化结果可直接驱动 process_result（select_business_output 挑出 answer）
+        let outputs = process_result(&result);
+        assert!(outputs["content"].as_str().unwrap().contains("42"));
+    }
+
+    #[test]
+    fn run_response_defaults_missing_fields() {
+        let body = json!({ "stdout": "x" });
+        let result = parse_run_response(&body);
+        assert_eq!(result.exit_code, 0);
+        assert!(result.status.is_none());
+        assert!(result.detail.is_none());
+        assert!(result.time_used_ms.is_none());
+        assert_eq!(
+            result.metadata.get("result_present").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(result.metadata.get("result_value"), Some(&Value::Null));
+    }
+
+    #[tokio::test]
+    async fn run_sends_code_b64_language_and_arguments() {
+        use axum::{routing::post, Json, Router};
+        let app = Router::new().route("/run", post(|body: Json<Value>| async move {
+            // 请求契约：code_b64 + language + arguments（对齐 CodeExecutionRequest）
+            assert!(body["code_b64"].as_str().unwrap().starts_with("ZGVmIG1haW4"));
+            assert_eq!(body["language"], "python");
+            assert_eq!(body["arguments"]["x"], 1);
+            Json(json!({
+                "status": "success",
+                "stdout": "\n__RAGFLOW_RESULT__:eyJwcmVzZW50Ijp0cnVlLCJ2YWx1ZSI6MTMsInR5cGUiOiJqc29uIn0=",
+                "stderr": "",
+                "exit_code": 0,
+                "result": { "present": true, "value": 13, "type": "json" }
+            }))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = SandboxClient::new(&format!("http://{addr}"));
+        let result = client
+            .run(&CodeRequest {
+                language: "python3".into(),
+                code: "def main():\n    return 13\n".into(),
+                arguments: Map::from_iter([("x".into(), json!(1))]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.metadata["result_value"], json!(13));
+        assert_eq!(result.status.as_deref(), Some("success"));
+    }
+
+    #[tokio::test]
+    async fn run_surfaces_http_errors() {
+        use axum::{routing::post, Router};
+        let app =
+            Router::new().route("/run", post(|| async { axum::http::StatusCode::BAD_REQUEST }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = SandboxClient::new(&format!("http://{addr}"));
+        let error = client
+            .run(&CodeRequest {
+                language: "python".into(),
+                code: "x".into(),
+                arguments: Map::new(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Sandbox HTTP 400"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn health_check_hits_healthz() {
+        use axum::{routing::get, Router};
+        let app = Router::new().route("/healthz", get(|| async { "{\"status\":\"ok\"}" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = SandboxClient::new(&format!("http://{addr}"));
+        assert!(client.health_check().await);
+        // 未监听端口 → false
+        let dead = SandboxClient::new("http://127.0.0.1:1");
+        assert!(!dead.health_check().await);
     }
 }

@@ -67,6 +67,7 @@ pub mod vision;
 pub mod audio;
 pub mod storage;
 pub mod hypergraph;
+pub mod structure_compile;
 pub mod manual;
 pub mod merge;
 pub mod dialog;
@@ -224,6 +225,30 @@ pub struct ParserConfig {
     /// Graph extraction mode retained in artifact metadata.
     #[serde(alias = "graphMethod")]
     pub graphrag_method: String,
+    /// Chunking method: naive | token | title (RAGFlow chunk_method).
+    #[serde(alias = "chunkMethod")]
+    pub chunk_method: String,
+    /// Token chunker delimiter mode: token_size | delimiter | one.
+    #[serde(alias = "delimiterMode")]
+    pub delimiter_mode: String,
+    /// Token chunker delimiters (backtick-wrapped patterns compiled as regex).
+    #[serde(alias = "delimiters")]
+    pub delimiters: Vec<String>,
+    /// Token chunker children delimiters (split text chunks, attach parent as `mom`).
+    #[serde(alias = "childrenDelimiters")]
+    pub children_delimiters: Vec<String>,
+    /// Title chunker levels (each string is one regex family; simplification of
+    /// RAGFlow's nested regex groups).
+    #[serde(alias = "titleLevels")]
+    pub title_levels: Vec<String>,
+    /// Title chunker target hierarchy number (1-based, clamped to levels len).
+    pub hierarchy: Option<usize>,
+    /// Title chunker: include heading text in each chunk.
+    #[serde(alias = "includeHeadingContent")]
+    pub include_heading_content: bool,
+    /// Title chunker: prepend root chunk text to all later chunks, drop root.
+    #[serde(alias = "rootChunkAsHeading")]
+    pub root_chunk_as_heading: bool,
 }
 
 impl Default for ParserConfig {
@@ -262,6 +287,14 @@ impl Default for ParserConfig {
             graphrag_enabled: false,
             graphrag_entity_types: Vec::new(),
             graphrag_method: "light".to_string(),
+            chunk_method: "naive".to_string(),
+            delimiter_mode: "token_size".to_string(),
+            delimiters: Vec::new(),
+            children_delimiters: Vec::new(),
+            title_levels: Vec::new(),
+            hierarchy: None,
+            include_heading_content: false,
+            root_chunk_as_heading: false,
         }
     }
 }

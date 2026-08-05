@@ -5,6 +5,11 @@
 //! the first node runs, so RayRAG never presents a prompt-only fallback as a
 //! successful visual workflow execution.
 
+// 同花顺问财（iwencai）工具：RAGFlow `agent/tools/wencai.py`（pywencai）的 Rust 实现。
+// 由于 lib.rs 不可改动，模块以 #[path] 挂在 agent 模块下，文件仍位于 src/wencai.rs。
+#[path = "wencai.rs"]
+pub(crate) mod wencai;
+
 use crate::arxiv::{ArxivClient, ArxivPaper, ArxivProvider, ArxivSearchRequest, ArxivSortBy};
 use crate::baidu::{BaiduClient, BaiduProvider, BaiduSearchRequest};
 use crate::baike::{BaikeArticle, BaikeClient, BaikeProvider, BaikeSearchRequest};
@@ -5120,6 +5125,12 @@ async fn execute_node(
             runtime.outputs.insert(node.id.clone(), news);
             Ok(None)
         }
+        "iwencai" => {
+            validate_wencai_params(node)?;
+            let result = execute_wencai_with_provider(node, input, &wencai::WenCaiClient::default()).await?;
+            runtime.outputs.insert(node.id.clone(), result);
+            Ok(None)
+        }
         "email" => {
             validate_email_params(node)?;
             let result = execute_email_with_provider(node, input, &EmailClient)?;
@@ -6839,7 +6850,8 @@ async fn execute_code_exec_with_provider(
     }
     let provider = std::env::var("RAYRAG_SANDBOX_PROVIDER").unwrap_or_default();
     if provider.eq_ignore_ascii_case("local") {
-        // 本地沙箱（对齐 RAGFlow LocalProvider）：无外部服务依赖
+        // 本地沙箱（对齐 RAGFlow LocalProvider）：无外部服务依赖；
+        // 本地执行不可用（缺解释器/语言不支持）时回退到远程 executor_manager（local→remote 回退）
         let sandbox = crate::sandbox::LocalSandbox::default();
         match sandbox.execute(&code, &language, &arguments).await {
             Ok(execution) => {
@@ -6854,24 +6866,27 @@ async fn execute_code_exec_with_provider(
                 let result = crate::code_exec::SandboxResult {
                     stdout: execution.stdout,
                     stderr: Some(execution.stderr),
+                    exit_code: 0,
+                    status: None,
+                    detail: None,
+                    time_used_ms: None,
+                    memory_used_kb: None,
                     artifacts: vec![],
                     metadata,
                 };
                 Ok(process_result(&result))
             }
-            Err(error) => {
-                let message = format!("**ERROR**: {error}");
-                Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
-            }
+            Err(local_error) => match run_remote_sandbox(&code, &language, &arguments).await {
+                Ok(result) => Ok(process_result(&result)),
+                Err(remote_error) => {
+                    let message =
+                        format!("**ERROR**: {local_error}; remote fallback: {remote_error}");
+                    Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+                }
+            },
         }
     } else {
-        let client = SandboxClient::default();
-        let request = CodeRequest {
-            language,
-            code,
-            arguments,
-        };
-        match client.run(&request).await {
+        match run_remote_sandbox(&code, &language, &arguments).await {
             Ok(result) => Ok(process_result(&result)),
             Err(error) => {
                 let message = format!("**ERROR**: {error}");
@@ -6879,6 +6894,21 @@ async fn execute_code_exec_with_provider(
             }
         }
     }
+}
+
+/// 通过 executor_manager 远程沙箱执行代码（对齐 RAGFlow SelfManagedProvider）。
+async fn run_remote_sandbox(
+    code: &str,
+    language: &str,
+    arguments: &Map<String, Value>,
+) -> Result<crate::code_exec::SandboxResult> {
+    let client = SandboxClient::default();
+    let request = CodeRequest {
+        language: language.to_string(),
+        code: code.to_string(),
+        arguments: arguments.clone(),
+    };
+    client.run(&request).await
 }
 
 async fn execute_exesql_with_provider(
@@ -7031,6 +7061,71 @@ async fn execute_tushare_with_provider(
     };
     match client.news(&request).await {
         Ok(markdown) => Ok(Map::from_iter([("content".into(), Value::String(markdown))])),
+        Err(error) => {
+            let message = format!("**ERROR**: {error}");
+            Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
+        }
+    }
+}
+
+/// 执行同花顺问财（iwencai）组件：query 必填（节点参数 > 上游输入 > sys.query），
+/// top_n 默认 10，query_type 默认 stock；输出 key 为 formalized_content（对齐
+/// RAGFlow ToolBase 的标准工具输出），错误前缀 **ERROR**。
+async fn execute_wencai_with_provider(
+    node: &CanvasNode,
+    input: &WorkflowRunInput<'_>,
+    client: &wencai::WenCaiClient,
+) -> Result<Map<String, Value>> {
+    let mut query = node
+        .params
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if query.trim().is_empty() {
+        if let Some(input_query) = input.inputs.get("query") {
+            query = match input_query {
+                Value::String(value) => value.clone(),
+                Value::Array(items) => items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                other => other.to_string(),
+            };
+        }
+    }
+    if query.trim().is_empty() {
+        query = input.question.to_string();
+    }
+    let top_n = node
+        .params
+        .get("top_n")
+        .and_then(Value::as_u64)
+        .unwrap_or(10) as usize;
+    let query_type = node
+        .params
+        .get("query_type")
+        .and_then(Value::as_str)
+        .unwrap_or("stock")
+        .to_string();
+    let cookie = node
+        .params
+        .get("cookie")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let request = wencai::WenCaiRequest {
+        query,
+        top_n,
+        query_type,
+        cookie,
+    };
+    match client.search(&request).await {
+        Ok(markdown) => Ok(Map::from_iter([(
+            "formalized_content".into(),
+            Value::String(markdown),
+        )])),
         Err(error) => {
             let message = format!("**ERROR**: {error}");
             Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
@@ -13617,6 +13712,24 @@ fn validate_akshare_params(node: &CanvasNode) -> Result<()> {
         && value.as_u64().is_none()
     {
         bail!("AkShare '{}' top_n must be a positive integer", node.id);
+    }
+    Ok(())
+}
+
+fn validate_wencai_params(node: &CanvasNode) -> Result<()> {
+    for field in ["query", "query_type", "cookie"] {
+        if node
+            .params
+            .get(field)
+            .is_some_and(|value| !value.is_string())
+        {
+            bail!("WenCai '{}' {field} must be a string", node.id);
+        }
+    }
+    if let Some(value) = node.params.get("top_n")
+        && value.as_u64().is_none()
+    {
+        bail!("WenCai '{}' top_n must be a positive integer", node.id);
     }
     Ok(())
 }

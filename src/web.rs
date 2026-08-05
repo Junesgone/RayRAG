@@ -49,11 +49,29 @@ fn t(k: &str, zh: bool) -> &str {
         "Rerank" => "重排序",
         "Top K" => "返回数量",
         "Threshold" => "相似度阈值",
-        "Vector Weight" => "向量权重",
         "Name" => "名称",
         "Description" => "描述",
         "Created" => "创建时间",
         "Size" => "大小",
+        "Reparse" => "重新解析",
+        "Parse Status" => "解析状态",
+        "Chunks" => "块数",
+        "Updated" => "更新时间",
+        "Chunk Method" => "分块方法",
+        "Chunk Token Num" => "分块 Token 数",
+        "Delimiters" => "分隔符",
+        "Auto Keywords" => "自动关键词",
+        "Auto Questions" => "自动问题",
+        "Enable Children Chunks" => "父子分块（enable_children）",
+        "Enable RAPTOR" => "启用 RAPTOR（递归摘要）",
+        "Enable GraphRAG" => "启用 GraphRAG（实体抽取）",
+        "Back to KBs" => "返回知识库",
+        "Test Query" => "测试查询",
+        "Question" => "查询问题",
+        "Results" => "检索结果",
+        "Similarity Threshold" => "相似度阈值",
+        "Vector Weight" => "向量权重",
+        "No documents yet" => "暂无文档",
         _ => k,
     }
 }
@@ -233,7 +251,7 @@ pub async fn kbs_page(
             .unwrap_or('K')
             .to_uppercase()
             .collect::<String>();
-        cards.push_str(&format!("<div class='kb-card' onclick=\"location.href='/dataset/{}'\"><div class='more' onclick='event.stopPropagation();showKbMenu(event,\"{}\",\"{}\")'>⋯</div><div class='av-lg'>{}</div><h3>{}</h3><p>{} files · {} chunks</p><p style='margin-top:4px'>{}</p></div>", kb.id, kb.id, kb.name.replace("'","\\'"), initial, kb.name, kb.doc_count, kb.chunk_count, if kb.description.is_empty(){"-"}else{&kb.description}));
+        cards.push_str(&format!("<div class='kb-card' onclick=\"location.href='/kbs/{}'\"><div class='more' onclick='event.stopPropagation();showKbMenu(event,\"{}\",\"{}\")'>⋯</div><div class='av-lg'>{}</div><h3>{}</h3><p>{} files · {} chunks</p><p style='margin-top:4px'>{}</p></div>", kb.id, kb.id, kb.name.replace("'", "\\'"), initial, kb.name, kb.doc_count, kb.chunk_count, if kb.description.is_empty(){"-"}else{&kb.description}));
     }
     if kbs.is_empty() {
         cards="<p style='color:var(--tm);text-align:center;padding:40px;grid-column:1/-1'>No knowledge bases yet. Click \"New KB\" to create one.</p>".into();
@@ -263,6 +281,155 @@ pub async fn kbs_page(
     b.push_str("<div class='modal-overlay' id='renameModal'><div class='modal'><h2>Rename</h2><input id='rnName'><input id='rnDesc' style='margin-top:8px'><input type='hidden' id='rnId'><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='renameKb()'>Save</button><button class='btn btn-o' onclick='document.getElementById(\"renameModal\").classList.remove(\"show\")'>Cancel</button></div></div></div>");
     b.push_str("<script>function agentFilter(){var q=(document.getElementById('agentQ').value||'').toLowerCase();document.querySelectorAll('#agentTb tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';tr.style.display=(!q||m.indexOf(q)>=0)?'':'none')})}document.getElementById('createModal').classList.add('show')};function hideCreate(){document.getElementById('createModal').classList.remove('show')};async function createKb(){var n=document.getElementById('kbName').value;if(!n)return;var d=document.getElementById('kbDesc').value;var em=document.getElementById('kbEmbd');var p=document.getElementById('kbPerm');var body={name:n,description:d,dsl:{}};if(em&&em.value)body.embedding_model=em.value;if(p&&p.value)body.permission=p.value;await fetch('/api/v1/datasets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});location.reload()};function showKbMenu(e,id,name){e.stopPropagation();if(confirm('Rename or delete \"'+name+'\"?\\nOK=Rename, Cancel=Delete')){document.getElementById('rnId').value=id;document.getElementById('rnName').value=name;document.getElementById('renameModal').classList.add('show')}else{if(confirm('Delete \"'+name+'\"?')){fetch('/api/v1/datasets/'+id,{method:'DELETE'}).then(()=>location.reload())}}};function renameKb(){var id=document.getElementById('rnId').value;var n=document.getElementById('rnName').value;var d=document.getElementById('rnDesc').value;fetch('/api/v1/datasets/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(()=>location.reload())}</script>");
     Html(layout(t("Knowledge Bases", zh), &b, zh))
+}
+
+pub async fn kb_detail_page(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let kb = state.kbs.get(&id);
+    let name = kb.as_ref().map(|k| k.name.clone()).unwrap_or_default();
+    let desc = kb.as_ref().map(|k| k.description.clone()).unwrap_or_default();
+    let docs = kb.as_ref().map(|k| k.doc_count).unwrap_or(0);
+    let chunks = kb.as_ref().map(|k| k.chunk_count).unwrap_or(0);
+    let initial = name
+        .chars()
+        .next()
+        .unwrap_or('K')
+        .to_uppercase()
+        .collect::<String>();
+    let mut b = String::new();
+    // 页头：返回按钮 + 头像 + 名称/描述 + 统计（RAGFlow 数据集详情页风格）
+    b.push_str("<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px'><a class='btn btn-o' href='/kbs'>← ");
+    b.push_str(t("Back to KBs", zh));
+    b.push_str("</a><div class='av-lg'>");
+    b.push_str(&initial);
+    b.push_str("</div><div style='flex:1'><h1 style='margin:0'>");
+    b.push_str(&name);
+    b.push_str("</h1><p style='margin:2px 0 0;color:var(--tm);font-size:13px'>");
+    b.push_str(&desc);
+    b.push_str("</p></div><div class='st' style='margin:0'><div class='sc'><span class='lbl'>");
+    b.push_str(t("Documents", zh));
+    b.push_str("</span><span class='val'>");
+    b.push_str(&docs.to_string());
+    b.push_str("</span></div><div class='sc'><span class='lbl'>");
+    b.push_str(t("Chunks", zh));
+    b.push_str("</span><span class='val'>");
+    b.push_str(&chunks.to_string());
+    b.push_str("</span></div></div></div>");
+    // Tab 导航（纯 JS 切换：文档 / 配置 / 测试）
+    b.push_str("<div class='tab-bar'><a class='active' id='nav0' onclick='showTab(0)'>📂 ");
+    b.push_str(t("Documents", zh));
+    b.push_str("</a><a id='nav1' onclick='showTab(1)'>⚙️ ");
+    b.push_str(t("Configuration", zh));
+    b.push_str("</a><a id='nav2' onclick='showTab(2)'>🧪 ");
+    b.push_str(t("Testing", zh));
+    b.push_str("</a></div>");
+    // Tab 0：文档列表 + 上传
+    b.push_str("<div id='tab0'>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Upload", zh));
+    b.push_str("</h2><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><input type='file' id='fi' multiple style='max-width:400px'><button class='btn btn-p' id='upBtn' onclick='uploadDoc()'>");
+    b.push_str(t("Upload", zh));
+    b.push_str("</button><span id='upMsg' style='font-size:12px;color:var(--tm)'></span></div><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT, PNG/JPG(OCR), MP3/WAV(ASR)</p></div>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Documents", zh));
+    b.push_str(" <span id='docCount' style='font-size:13px;color:var(--tm)'></span></h2><div id='dl' style='overflow-x:auto'>");
+    b.push_str(t("Loading...", zh));
+    b.push_str("</div></div></div>");
+    // Tab 1：配置（RAGFlow Configuration 风格表单）
+    b.push_str("<div id='tab1' style='display:none'>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Configuration", zh));
+    b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>解析与分块参数（键名对齐 RAGFlow parser_config camelCase），保存后对新上传的文档生效。</p><table style='width:100%'>");
+    b.push_str("<tr><td style='width:220px'>");
+    b.push_str(t("Chunk Method", zh));
+    b.push_str("</td><td><select id='cfgMethod'><option value='naive'>Naive（通用）</option><option value='token'>Token（令牌）</option><option value='title'>Title（标题）</option></select></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Chunk Token Num", zh));
+    b.push_str("</td><td><input type='number' id='cfgTokenNum' min='16' max='100000' value='2048' style='max-width:160px'></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Delimiters", zh));
+    b.push_str("</td><td><textarea id='cfgDelims' rows='3' style='max-width:360px' placeholder='每行一个分隔符，例如：句号、分号、空行'></textarea></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Overlap", zh));
+    b.push_str(" (%)</td><td><input type='number' id='cfgOverlap' min='0' max='50' value='5' style='max-width:160px'></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Auto Keywords", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgAutoKeywords'> ");
+    b.push_str(t("Auto Keywords", zh));
+    b.push_str("</label></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Auto Questions", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgAutoQuestions'> ");
+    b.push_str(t("Auto Questions", zh));
+    b.push_str("</label></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Enable Children Chunks", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgChildren'> ");
+    b.push_str(t("Enable Children Chunks", zh));
+    b.push_str("</label></td></tr>");
+    b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>RAPTOR（递归摘要）</h3></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Enable RAPTOR", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgRaptor'> ");
+    b.push_str(t("Enable RAPTOR", zh));
+    b.push_str("</label></td></tr>");
+    b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>GraphRAG（实体抽取）</h3></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Enable GraphRAG", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgGraph'> ");
+    b.push_str(t("Enable GraphRAG", zh));
+    b.push_str("</label></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Embedding Model", zh));
+    b.push_str("</td><td><span id='cfgEmbd' class='co'>-</span></td></tr>");
+    b.push_str("</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>");
+    b.push_str(t("Save", zh));
+    b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
+    // Tab 2：测试（检索测试面板，仿搜索页 JS）
+    b.push_str("<div id='tab2' style='display:none'>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Testing", zh));
+    b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>输入测试问题，验证本知识库的检索质量。</p><div style='display:grid;grid-template-columns:1fr 1fr;gap:16px'><div><h3>");
+    b.push_str(t("Test Query", zh));
+    b.push_str("</h3><label style='font-size:12px;display:block'>");
+    b.push_str(t("Question", zh));
+    b.push_str("</label><input id='tq' placeholder='输入测试问题…'><label style='font-size:12px;display:block;margin-top:8px'>");
+    b.push_str(t("Top K", zh));
+    b.push_str("</label><select id='tk'><option>5</option><option selected>10</option><option>20</option></select><label style='font-size:12px;display:block;margin-top:8px'>");
+    b.push_str(t("Similarity Threshold", zh));
+    b.push_str("</label><select id='tt'><option value='0.0'>0.0</option><option selected value='0.2'>0.2</option><option value='0.3'>0.3</option><option value='0.5'>0.5</option></select><label style='font-size:12px;display:block;margin-top:8px'>");
+    b.push_str(t("Vector Weight", zh));
+    b.push_str("</label><select id='tw'><option>0.3</option><option selected>0.5</option><option>0.7</option><option>1.0</option></select><label style='font-size:12px;display:block;margin-top:8px'><input type='checkbox' id='tr'> ");
+    b.push_str(t("Rerank", zh));
+    b.push_str("</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>");
+    b.push_str(t("Test", zh));
+    b.push_str("</button></div><div><h3>");
+    b.push_str(t("Results", zh));
+    b.push_str("</h3><div id='testRes' style='min-height:300px;background:var(--bg);padding:16px;border-radius:var(--r)'><p style='color:var(--tm);text-align:center;padding:40px'>");
+    b.push_str(t("Results", zh));
+    b.push_str(" 将显示在这里</p></div></div></div></div></div>");
+    // 页面 JS
+    b.push_str("<script>var kbId='");
+    b.push_str(&id);
+    b.push_str("';var pollTimer=null;function showTab(n){for(var i=0;i<3;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
+    b.push_str("function fmtSize(n){n=n||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB'};function fmtTime(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString()}catch(e){return ts}};");
+    b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
+    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';if(!docs.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';return}var h='<table><thead><tr><th>名称</th><th>解析状态</th><th>块数</th><th>大小</th><th>更新时间</th><th style=width:200px>操作</th></tr></thead><tbody>';docs.forEach(function(dd){var nm=(dd.name||'').replace(/\\\"/g,'');h+='<tr><td style=font-weight:500>'+dd.name+'</td><td>'+badge(dd.run)+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td><button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h})};");
+    b.push_str("function renameDoc(btn){var id=btn.getAttribute('data-id');var old=btn.getAttribute('data-name')||'';var nn=prompt('重命名文档：',old);if(!nn)return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(function(){loadDocs()})};");
+    b.push_str("function reparseDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('重新解析该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){loadDocs();schedulePoll()})};");
+    b.push_str("function delDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('删除该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){loadDocs()})};");
+    b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
+    b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
+    b.push_str("function loadConfig(){fetch('/api/v1/datasets/'+kbId).then(r=>r.json()).then(function(d){if(d.code!==0)return;var kb=d.data||{};var em=document.getElementById('cfgEmbd');if(em)em.textContent=kb.embd_id||'default';var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('cfgMethod').value=pc.chunk_method;var tn=parseInt(pc.chunk_token_num,10);if(!isNaN(tn)&&tn>0)document.getElementById('cfgTokenNum').value=tn;var delims=Array.isArray(pc.delimiters)?pc.delimiters:(pc.delimiter?[pc.delimiter]:[]);document.getElementById('cfgDelims').value=delims.join('\\n');var op=parseFloat(pc.overlapped_percent);if(!isNaN(op))document.getElementById('cfgOverlap').value=Math.round(op*100);document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRaptor').checked=!!(pc.raptorEn||pc.raptor_enabled);document.getElementById('cfgGraph').checked=!!(pc.graphEn||pc.graphrag_enabled)})};");
+    b.push_str("function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked};var m=document.getElementById('cfgMsg');if(m)m.textContent='保存中…';fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
+    b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var r=document.getElementById('tr').checked;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(r)body.rerank=true;document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+    b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
+    b.push_str("loadDocs();loadConfig();</script>");
+    Html(layout(&name, &b, zh))
 }
 
 pub async fn dataset_page(

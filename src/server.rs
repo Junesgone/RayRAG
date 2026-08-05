@@ -334,6 +334,26 @@ async fn list_datasets(
     })
 }
 
+/// GET /api/v1/datasets/{id} — 单个知识库详情（配置页回填用）
+async fn get_dataset(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dataset_id): Path<String>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(StatusCode::NOT_FOUND, "Knowledge base not found");
+    }
+    match state.kbs.get(&dataset_id) {
+        Some(kb) => Json(ApiResponse {
+            code: 0,
+            message: "ok".into(),
+            data: Some(serde_json::to_value(kb).unwrap_or_default()),
+        })
+        .into_response(),
+        None => api_error(StatusCode::NOT_FOUND, "Knowledge base not found"),
+    }
+}
+
 async fn create_dataset(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -400,12 +420,26 @@ async fn update_dataset(
         .or_else(|| body.get("embedding_model"))
         .and_then(|value| value.as_str());
     // 解析 chunk/解析器配置 → parser_config JSON
+    // 兼容两种传法：顶层 RAGFlow camelCase 键（前端 KB 配置页），或嵌套 parser_config 对象
     let mut config = serde_json::Map::new();
+    if let Some(nested) = body.get("parser_config").and_then(|v| v.as_object()) {
+        for (k, v) in nested {
+            config.insert(k.clone(), v.clone());
+        }
+    }
     for key in [
         "chunk_method",
         "chunk_size",
         "overlap",
         "delimiter",
+        "delimiters",
+        "chunk_token_num",
+        "overlapped_percent",
+        "auto_keywords",
+        "auto_questions",
+        "enable_children",
+        "raptorEn",
+        "graphEn",
         "parser_type",
         "raptor_enabled",
         "raptor_depth",
@@ -2264,6 +2298,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(crate::web::index))
         .route("/dashboard", get(crate::web::dashboard))
         .route("/kbs", get(crate::web::kbs_page))
+        .route("/kbs/{id}", get(crate::web::kb_detail_page))
         .route("/search", get(crate::web::search_page))
         .route("/providers", get(crate::web::providers_page))
         .route("/skills", get(crate::web::skills_page))
@@ -2305,7 +2340,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/datasets", get(list_datasets).post(create_dataset))
         .route(
             "/api/v1/datasets/{id}",
-            put(update_dataset).delete(delete_dataset),
+            get(get_dataset).put(update_dataset).delete(delete_dataset),
         )
         .route(
             "/api/v1/datasets/{id}/documents",

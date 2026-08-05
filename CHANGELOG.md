@@ -2,6 +2,42 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.3] — 2026-08-05
+
+### Added
+
+- **Token Chunker**（`src/chunk/token.rs`，对标 RAGFlow `token_chunker.py`）：
+  `one` / `token_size` / `delimiter` 三模式；反引号分隔符编译（最长优先）；
+  分隔符并入段尾（re.split capture-group 语义）；重叠率 normalize（0<p<1→×100，
+  clamp [0,90]）；children_delimiters 二次拆分（裸模式 escape，`mom` 挂父块原文）。
+- **Title Chunker**（`src/chunk/title.rs`，对标 `title_chunker/{hierarchy,group,common}.py`）：
+  hierarchy 目标层级合并、group 32/1024 token 常量合并、include_heading_content、
+  root_chunk_as_heading；标题来源优先 PDF 大纲 `__outline__` 元数据，fallback 正文
+  markdown/枚举标题行解析。
+- **iwencai 问财工具**（`src/wencai.rs`，对齐 RAGFlow `agent/tools/wencai.py`）：
+  get-robot-data 请求契约（perpage 字符串/page 整数）、xuangu_tableV1 landing
+  分页数据接口、多组件 Markdown 渲染、`agent.rs` 工具注册与 provider 执行链。
+- **沙箱 executor_manager 远程客户端**（`src/code_exec.rs`）：`parse_run_response`
+  缺省 result 元数据兜底（result_present=false / result_value=null / result_type=json）；
+  `process_result` 结构化结果优先、stderr-only 错误分支、canonical 渲染。
+- **KB 详情页路由** `/kbs/{id}` → `kb_detail_page`（文档/配置/测试/知识图谱 tab，
+  对齐 RAGFlow 数据集详情页；与旧 `/dataset/{id}` 并存）。
+
+### Changed
+
+- `Pipeline::new` 按 `config.chunk_method`（naive | token | title）选择 chunker。
+- `ParserConfig` 新增 chunk_method / delimiter_mode / delimiters /
+  children_delimiters / title_levels / hierarchy / include_heading_content /
+  root_chunk_as_heading 字段（serde alias 兼容 RAGFlow camelCase）。
+- 修复上一会话遗留 `src/structure_compile.rs` 编译错误（as_any ×2、
+  semaphore 借用、Arc 包装、downcast and_then）。
+
+### Fixed
+
+- 子 agent 半成品编译错误（wencai `Map` 类型、code_exec `base64::Engine`、
+  agent `SandboxResult` 缺字段）与测试缺陷（重复 bind listener、serde_json
+  Map Index panic、process_result 断言语义）。
+
 ## [0.1.2] — 2026-08-04
 
 ### Added

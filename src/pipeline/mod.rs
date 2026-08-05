@@ -32,11 +32,12 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    /// Create a new pipeline with default naive chunker.
+    /// Create a new pipeline, selecting the chunking strategy from
+    /// `config.chunk_method` (naive | token | title).
     pub fn new(config: ParserConfig) -> Self {
         Self {
+            chunker: chunk::chunker_for(&config),
             config,
-            chunker: chunk::default_chunker(),
             embedder: None,
             store: None,
             ocr: None,

@@ -1059,6 +1059,17 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         outputs: &[("content", "Markdown news list")],
     },
     StaticComponentDescriptor {
+        name: "iwencai",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            ("query", "The question/conditions to select stocks (defaults to sys.query)"),
+            ("top_n", "Max result rows (default 10)"),
+            ("query_type", "stock/zhishu/fund/hkstock/usstock/threeboard/conbond/insurance/futures/lccp/foreign_exchange"),
+            ("cookie", "Optional iwencai session cookie"),
+        ],
+        outputs: &[("formalized_content", "Markdown tables rendered from the iwencai answer")],
+    },
+    StaticComponentDescriptor {
         name: "crawler",
         category: ComponentCategory::Agent,
         inputs: &[

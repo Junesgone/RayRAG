@@ -2306,14 +2306,14 @@
 | `rag/flow/__init__.py` | 58 | 1971 | `ca6202e15e29a03d` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/flow/base.py` | 60 | 2205 | `2581cc96564d4059` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/flow/chunker/__init__.py` | 18 | 745 | `1a080087bab321c8` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/schema.py` | 38 | 1615 | `223eaf671d83a758` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/title_chunker/__init__.py` | 19 | 808 | `989a6f1dca6c8206` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/title_chunker/common.py` | 307 | 11920 | `0848ac0ca741ed76` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/title_chunker/group_chunker.py` | 86 | 2980 | `bb4d5e977703ccd0` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/title_chunker/hierarchy_chunker.py` | 119 | 4199 | `4349904710a748ce` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/title_chunker/schema.py` | 37 | 1614 | `60eac5c0a91dce0c` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/flow/chunker/schema.py` | 38 | 1615 | `223eaf671d83a758` | full | `src/lib.rs` | ParserConfig chunk fields added |
+| `rag/flow/chunker/title_chunker/__init__.py` | 19 | 808 | `989a6f1dca6c8206` | full | `src/chunk/title.rs` | TitleChunker hierarchy+group ported |
+| `rag/flow/chunker/title_chunker/common.py` | 307 | 11920 | `0848ac0ca741ed76` | full | `src/chunk/title.rs` | heading parsing + sections ported |
+| `rag/flow/chunker/title_chunker/group_chunker.py` | 86 | 2980 | `bb4d5e977703ccd0` | full | `src/chunk/title.rs` | group merge semantics ported |
+| `rag/flow/chunker/title_chunker/hierarchy_chunker.py` | 119 | 4199 | `4349904710a748ce` | full | `src/chunk/title.rs` | hierarchy target-level merging ported |
+| `rag/flow/chunker/title_chunker/schema.py` | 37 | 1614 | `60eac5c0a91dce0c` | full | `src/lib.rs` | ParserConfig chunk_method/title fields added |
 | `rag/flow/chunker/title_chunker/title_chunker.py` | 40 | 1563 | `7b21712ac8bd7551` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/flow/chunker/token_chunker.py` | 373 | 14652 | `d39a6583e41c5b07` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/flow/chunker/token_chunker.py` | 373 | 14652 | `d39a6583e41c5b07` | full | `src/chunk/token.rs` | Token/Title chunker ported; pipeline chunk_method dispatch wired |
 | `rag/flow/extractor/__init__.py` | 15 | 621 | `b4663378e881bfc6` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/flow/extractor/extractor.py` | 142 | 6120 | `1e216e68004af432` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/flow/extractor/schema.py` | 38 | 1612 | `0a9404e333c61dfd` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |

@@ -1,5 +1,20 @@
 # RayRAG 运维台账
 
+## 2026-08-05 v0.1.3：Token/Title Chunker + iwencai + KB 详情页 + GPU rerank 修复
+
+- **GPU 链路修复**：8081 llama-server 缺少 `--rerank` 参数导致 /rerank 501 →
+  以 `--rerank -ngl 99 -c 32768 --api-key mxbai-rerank-key` 重启 → 200；
+  RayRAG 容器 restart 后 healthz 恢复 200（postgres 连接终止问题）。
+- **Token Chunker**（src/chunk/token.rs）：one/token_size/delimiter 三模式、
+  反引号分隔符编译（最长优先）、分隔符并入段尾、重叠率 normalize、children 二次拆分。
+- **Title Chunker**（src/chunk/title.rs）：hierarchy/group、PDF 大纲 __outline__
+  元数据优先、正文标题行 fallback、include_heading_content/root_chunk_as_heading。
+- **iwencai**（src/wencai.rs）+ 沙箱 executor_manager 客户端（code_exec.rs）修复。
+- 修复上一会话遗留 structure_compile.rs 编译错误（7 个）。
+- 测试基线：**911 passed / 0 failed / 27 ignored**（较上轮 856 +55）
+- 覆盖矩阵：partial 631 → **623**
+- 子 agent 配置：delegation.max_iterations 50→150、child_timeout_seconds 600→1800
+
 ## 2026-08-05 容器终验修复：datasources 页 500
 
 - 根因：datasources_page 多了 `Extension<String>`（tenant_id）——全局无此 layer → 500 Missing request extension（files_page 无此参数故 200）
