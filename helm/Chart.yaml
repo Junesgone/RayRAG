@@ -1,0 +1,16 @@
+apiVersion: v2
+name: rayrag
+description: >-
+  RayRAG — Rust implementation of the RAGFlow API (minimal chart covering the
+  upstream helm/templates deployment semantics). Requires an external
+  PostgreSQL 18 database; see README.md for the dependency explanation.
+type: application
+version: 0.1.0
+appVersion: "0.2.2"
+# Optional dependency note (not enabled by default — bring your own PostgreSQL
+# or add the bitnami postgresql sub-chart):
+# dependencies:
+#   - name: postgresql
+#     version: "16.x.x"
+#     repository: "https://charts.bitnami.com/bitnami"
+#     condition: postgresql.enabled

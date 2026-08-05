@@ -9,6 +9,11 @@ use crate::parser;
 use crate::store::ZvecStore;
 use crate::{Chunk, ParserConfig, Result};
 
+/// `rag/flow` component data contracts — ProcessBase output map, the
+/// chunker/extractor/tokenizer upstream payload schema (+ `_check_payloads`),
+/// the pipeline progress trace, and the REST chunk contract (`ChunkDoc`).
+pub mod flow;
+
 struct SharedEmbedderAdapter(crate::embed::SharedEmbedder);
 
 #[async_trait::async_trait]

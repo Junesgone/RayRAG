@@ -2241,12 +2241,14 @@ pub fn corp_norm(nm: &str, add_region: bool) -> String {
     let mut nm = tradi2simp(&str_q2b(nm)).to_lowercase();
     // &amp; → &
     nm = nm.replace("&amp;", "&");
-    // strip separators
-    let re_sep = regex::Regex::new("[()（）+'\"\t *\\【】-]+").unwrap();
+    // strip separators; `\\\\` in the Rust literal yields `\\` in the
+    // regex, i.e. one literal backslash in the class (Python raw `\\`).
+    let re_sep = regex::Regex::new("[()（）+'\"\t *\\\\【】-]+").unwrap();
     nm = re_sep.replace_all(&nm, " ").into_owned();
-    // strip suffixes (case-insensitive)
+    // strip suffixes (case-insensitive); `[—\-]+` = literal em-dash or
+    // hyphen (Python `[—-]`: trailing `-` is literal).
     let re_suffix =
-        regex::Regex::new(r"(?i)([—-]+.*| +co\..*|corp\..*| +inc\..*| +ltd.*)").unwrap();
+        regex::Regex::new(r"(?i)([—\-]+.*| +co\..*|corp\..*| +inc\..*| +ltd.*)").unwrap();
     nm = re_suffix.replace_all(&nm, "").into_owned();
     let re_suffix2 = regex::Regex::new(
         r"(?i)(计算机|技术|(技术|科技|网络)*有限公司|公司|有限|研发中心|中国|总部)$",
@@ -2266,9 +2268,33 @@ pub fn corp_norm(nm: &str, add_region: bool) -> String {
         .map(|(_, t)| t.clone())
         .collect();
     let tks_set = corp_tks();
+    // Greedy longest-match against the CORP_TKS dictionary: jieba emits
+    // multi-char entries (集团/科技/有限/…) as single tokens, so a whole
+    // entry must be skipped as one unit even though `tokenize_corp` splits
+    // CJK runs per character.
+    let mut entries: Vec<&String> = tks_set.iter().collect();
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.chars().count()));
     let mut out = String::new();
-    for t in &tks {
+    let mut i = 0;
+    while i < tks.len() {
+        let t = &tks[i];
         if is_name(t) || tks_set.contains(t) {
+            i += 1;
+            continue;
+        }
+        let mut matched = 0;
+        for entry in &entries {
+            let n = entry.chars().count();
+            if n < 2 || i + n > tks.len() {
+                continue;
+            }
+            if tks[i..i + n].concat() == **entry {
+                matched = n;
+                break;
+            }
+        }
+        if matched > 0 {
+            i += matched;
             continue;
         }
         let re_alpha = regex::Regex::new(r"[0-9a-zA-Z,.]").unwrap();
@@ -2283,6 +2309,7 @@ pub fn corp_norm(nm: &str, add_region: bool) -> String {
             out.push(' ');
         }
         out.push_str(t);
+        i += 1;
     }
     // boundary trimming
     let r1 = regex::Regex::new(r"^([^a-z0-9 \(\)&]{2,})[a-z ]{4,}$").unwrap();

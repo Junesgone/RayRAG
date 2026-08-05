@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rayrag.fullname" . }}-config
+  labels:
+    {{- include "rayrag.labels" . | nindent 4 }}
+data:
+  # Minimal env surface; extend freely (mirrors docker-compose.yml env).
+  RAYRAG_POSTGRES_URL: {{ .Values.config.rayragPostgresUrl | quote }}
+  RAYRAG_POSTGRES_REQUIRED_VERSION: {{ .Values.config.rayragPostgresRequiredVersion | quote }}
+  RAYRAG_VECTOR_BACKEND: {{ .Values.config.rayragVectorBackend | quote }}
+  RAYRAG_ZVEC_DIR: {{ .Values.config.rayragZvecDir | quote }}
+  RAYRAG_EMBEDDING_DIMENSION: {{ .Values.config.rayragEmbeddingDimension | quote }}
+  RAYRAG_ADMIN_EMAIL: {{ .Values.config.rayragAdminEmail | quote }}
+  RAYRAG_NO_FSYNC: {{ .Values.config.rayragNoFsync | quote }}

@@ -344,8 +344,7 @@ impl MemoryMessageService {
                 self.delete_messages(&ids);
             }
         }
-        self.insert_messages(new_messages)
-            .map_err(ApiError::from)?;
+        self.insert_messages(new_messages).map_err(ApiError::from)?;
         Ok(())
     }
 
@@ -431,11 +430,7 @@ pub fn find_tenant_model_by_id<'a>(
     instances
         .iter()
         .find(|instance| instance.instance_id == tenant_model_id)
-        .ok_or_else(|| {
-            ApiError::admin(format!(
-                "Tenant Model with id {tenant_model_id} not found"
-            ))
-        })
+        .ok_or_else(|| ApiError::admin(format!("Tenant Model with id {tenant_model_id} not found")))
 }
 
 /// `get_model_config_by_type_and_name` type-compatibility check: a chat model
@@ -832,9 +827,10 @@ mod tests {
         let err = service
             .save_messages_with_budget("m1", "LRU", budget, vec![fourth])
             .unwrap_err();
-        assert!(err
-            .message
-            .contains("Memory size reached limit and cannot decide which to delete"));
+        assert!(
+            err.message
+                .contains("Memory size reached limit and cannot decide which to delete")
+        );
     }
 
     #[test]
@@ -914,10 +910,11 @@ mod tests {
         assert_eq!(plan.root_file.file_type, "folder");
         // Tenant-LLM bindings carry the new tenant id.
         assert!(!plan.tenant_llms.is_empty());
-        assert!(plan
-            .tenant_llms
-            .iter()
-            .all(|record| record.tenant_id == plan.user.id));
+        assert!(
+            plan.tenant_llms
+                .iter()
+                .all(|record| record.tenant_id == plan.user.id)
+        );
     }
 
     #[test]
@@ -959,5 +956,933 @@ mod tests {
         assert!(report.contains("- Deleted 2 dataset records."));
         assert!(report.contains("- Deleted 5 document records."));
         assert!(report.ends_with("Delete done!"));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// init_data semantics — ported from RAGFlow `api/db/init_data.py`.
+//
+// RayRAG keeps its records in JSON/Postgres stores, so these ports are the
+// *semantics*: pure decision functions plus a small seed store. Mirrored
+// behaviours:
+//
+// - `init_table()`: seed `system_settings` rows from
+//   `conf/system_settings.json`, inserting only names that are missing.
+// - `init_superuser()`: build the bootstrap user plan (user + tenant +
+//   user-tenant OWNER relation + initial tenant-LLM bindings); skip when the
+//   email already exists.
+// - `init_llm_factory()`: normalize `FACTORY_LLM_INFOS` (factory record with
+//   the `llm` list hoisted out, each model stamped with its `fid`) and apply
+//   the idempotent cleanup rules (drop `Local` / `novita.ai` / `QAnything`,
+//   migrate `QAnything`→`Youdao`, `cohere`→`Cohere`, drop the legacy
+//   `qwen-vl-max` and Moonshot `flag-embedding` rows).
+// - `fix_empty_tenant_model_id()`: group rows with a NULL tenant-model id by
+//   `(tenant_id, model_id)`, resolve each group through the tenant-LLM
+//   lookup and plan UPDATEs for knowledgebase / dialog / memory / tenant.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `api/db/init_data.py` env defaults for the bootstrap superuser.
+pub const DEFAULT_SUPERUSER_NICKNAME: &str = "admin";
+pub const DEFAULT_SUPERUSER_EMAIL: &str = "admin@ragflow.io";
+pub const DEFAULT_SUPERUSER_PASSWORD: &str = "admin";
+
+/// `SystemSettings` row (`conf/system_settings.json` record).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SystemSetting {
+    pub name: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub data_type: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub create_time: u64,
+    #[serde(default)]
+    pub update_time: u64,
+}
+
+/// `system_settings_service.py::SystemSettingsService` semantics: upsert only
+/// the settings whose `name` is not already present (RAGFlow `init_table`
+/// inserts only `to_save` records). Returns the number of rows seeded.
+pub fn seed_system_settings(
+    existing: &[SystemSetting],
+    records_from_file: &[SystemSetting],
+    now: u64,
+) -> (Vec<SystemSetting>, usize) {
+    let existing_names: std::collections::HashSet<&str> =
+        existing.iter().map(|r| r.name.as_str()).collect();
+    let mut to_save = Vec::new();
+    for mut record in records_from_file.iter().cloned() {
+        if existing_names.contains(record.name.as_str()) {
+            continue;
+        }
+        record.create_time = now;
+        record.update_time = now;
+        to_save.push(record);
+    }
+    let count = to_save.len();
+    (to_save, count)
+}
+
+/// `init_superuser()` record plan — a bootstrap user with its own tenant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuperuserSeedPlan {
+    pub user_id: String,
+    /// Base64-encoded password (`encode_to_base64`).
+    pub password: String,
+    pub nickname: String,
+    pub email: String,
+    pub is_superuser: bool,
+    pub creator: String,
+    pub status: String,
+    pub tenant_id: String,
+    pub tenant_name: String,
+    pub llm_id: String,
+    pub embd_id: String,
+    pub asr_id: String,
+    pub img2txt_id: String,
+    pub rerank_id: String,
+    pub parser_ids: String,
+}
+
+impl SuperuserSeedPlan {
+    /// Build the plan (RAGFlow `init_superuser` field assembly). The caller
+    /// decides whether to persist it — the service skips when a user with the
+    /// same email already exists.
+    pub fn build(
+        user_id: String,
+        password: String,
+        nickname: &str,
+        email: &str,
+        llm_id: &str,
+        embd_id: &str,
+        asr_id: &str,
+        img2txt_id: &str,
+        rerank_id: &str,
+        parser_ids: &str,
+    ) -> Self {
+        let tenant_id = user_id.clone();
+        Self {
+            tenant_name: format!("{nickname}‘s Kingdom"),
+            tenant_id,
+            user_id,
+            password,
+            nickname: nickname.to_owned(),
+            email: email.to_owned(),
+            is_superuser: true,
+            creator: "system".to_owned(),
+            status: "1".to_owned(),
+            llm_id: llm_id.to_owned(),
+            embd_id: embd_id.to_owned(),
+            asr_id: asr_id.to_owned(),
+            img2txt_id: img2txt_id.to_owned(),
+            rerank_id: rerank_id.to_owned(),
+            parser_ids: parser_ids.to_owned(),
+        }
+    }
+}
+
+/// One LLM factory row from `settings.FACTORY_LLM_INFOS`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmFactoryRecord {
+    pub name: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub llm: Vec<LlmRecord>,
+}
+
+/// One LLM model row inside a factory (`init_llm_factory` hoists the `llm`
+/// list out and stamps each model with its `fid`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmRecord {
+    pub llm_name: String,
+    #[serde(default)]
+    pub fid: String,
+    #[serde(default)]
+    pub model_type: String,
+    #[serde(default)]
+    pub max_tokens: Option<i64>,
+}
+
+/// `init_llm_factory()` normalization: `info.pop("llm")` — the factory record
+/// is the dict minus the `llm` key, and every model gets `fid = factory.name`.
+pub fn normalize_factory_llm_infos(
+    factories: &[LlmFactoryRecord],
+) -> (Vec<LlmFactoryRecord>, Vec<LlmRecord>) {
+    let mut factory_rows = Vec::new();
+    let mut llm_rows = Vec::new();
+    for factory in factories {
+        let mut row = factory.clone();
+        row.llm.clear();
+        factory_rows.push(row);
+        for mut llm in factory.llm.clone() {
+            // RAGFlow: `llm_info["fid"] = factory_llm_info["name"]`.
+            llm.fid = factory.name.clone();
+            llm_rows.push(llm);
+        }
+    }
+    (factory_rows, llm_rows)
+}
+
+/// Idempotent cleanup rules from `init_llm_factory()`'s tail — which
+/// (factory, model) rows are dropped and which factories are renamed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactoryCleanupPlan {
+    /// (factory_name, model_name) rows to delete.
+    pub delete_llm_rows: Vec<(String, String)>,
+    /// Factory names to delete entirely.
+    pub delete_factories: Vec<String>,
+    /// (old_factory, new_factory) renames.
+    pub rename_factories: Vec<(String, String)>,
+}
+
+/// Apply RAGFlow's fixed cleanup rules to a set of (factory, model) rows.
+pub fn apply_factory_cleanup_rules(rows: &[(String, String)]) -> FactoryCleanupPlan {
+    let mut delete_llm_rows = Vec::new();
+    let mut delete_factories = Vec::new();
+    let mut rename_factories = Vec::new();
+
+    for (factory, model) in rows {
+        match (factory.as_str(), model.as_str()) {
+            ("Local", _) | ("novita.ai", _) => {
+                delete_llm_rows.push((factory.clone(), model.clone()))
+            }
+            ("QAnything", _) => rename_factories.push(("QAnything".into(), "Youdao".into())),
+            ("cohere", _) => rename_factories.push(("cohere".into(), "Cohere".into())),
+            ("Moonshot", "flag-embedding") => {
+                delete_llm_rows.push((factory.clone(), model.clone()))
+            }
+            (_, "qwen-vl-max") => delete_llm_rows.push((factory.clone(), model.clone())),
+            _ => {}
+        }
+    }
+    // Deduplicate rename pairs; factories fully dropped are removed outright.
+    rename_factories.sort();
+    rename_factories.dedup();
+    if rows.iter().any(|(f, _)| f == "Local") {
+        delete_factories.push("Local".into());
+    }
+    if rows.iter().any(|(f, _)| f == "novita.ai") {
+        delete_factories.push("novita.ai".into());
+    }
+    if rows.iter().any(|(f, _)| f == "QAnything") {
+        delete_factories.push("QAnything".into());
+    }
+    delete_llm_rows.sort();
+    delete_llm_rows.dedup();
+    FactoryCleanupPlan {
+        delete_llm_rows,
+        delete_factories,
+        rename_factories,
+    }
+}
+
+/// A row with a NULL `tenant_{model}_id` that needs resolution
+/// (`fix_empty_tenant_model_id`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NullTenantModelRow {
+    pub id: String,
+    pub tenant_id: String,
+    pub model_id: String,
+}
+
+/// `fix_empty_tenant_model_id()` planning: group NULL-tenant-model-id rows by
+/// `(tenant_id, model_id)` and resolve each group through the tenant-LLM
+/// lookup. Returns per-row UPDATE plans `(row_id, tenant_model_id)`.
+pub fn plan_fix_empty_tenant_model_ids(
+    rows: &[NullTenantModelRow],
+    resolve_tenant_llm: impl Fn(&str, &str) -> Option<String>,
+) -> Vec<(String, String)> {
+    // Group by (tenant_id, model_id) preserving first-seen order.
+    let mut groups: Vec<(&str, &str, Vec<&str>)> = Vec::new();
+    for row in rows {
+        if let Some((_, _, ids)) = groups
+            .iter_mut()
+            .find(|(t, m, _)| *t == row.tenant_id && *m == row.model_id)
+        {
+            ids.push(row.id.as_str());
+        } else {
+            groups.push((
+                row.tenant_id.as_str(),
+                row.model_id.as_str(),
+                vec![row.id.as_str()],
+            ));
+        }
+    }
+    let mut updates = Vec::new();
+    for (tenant_id, model_id, ids) in groups {
+        if let Some(tenant_llm_id) = resolve_tenant_llm(tenant_id, model_id) {
+            for id in ids {
+                updates.push((id.to_owned(), tenant_llm_id.clone()));
+            }
+        }
+    }
+    updates
+}
+
+/// `tenant_model_id` columns fixed per table kind
+/// (`fix_empty_tenant_model_id` — kb/dialog/memory/tenant).
+pub const TENANT_MODEL_ID_COLUMNS: &[&str] = &[
+    "llm_id",
+    "embd_id",
+    "asr_id",
+    "img2txt_id",
+    "rerank_id",
+    "tts_id",
+];
+
+/// `template_utils.py::normalize_canvas_template_categories` — collect
+/// `canvas_type` + `canvas_types` into a deduplicated list; `canvas_type`
+/// becomes the first entry (or None). Pure, matches the Python exactly.
+pub fn normalize_canvas_template_categories(template: &serde_json::Value) -> serde_json::Value {
+    let mut normalized = template.clone();
+    let mut categories: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut push = |category: &str,
+                    categories: &mut Vec<String>,
+                    seen: &mut std::collections::HashSet<String>| {
+        let category = category.trim();
+        if category.is_empty() || seen.contains(category) {
+            return;
+        }
+        seen.insert(category.to_owned());
+        categories.push(category.to_owned());
+    };
+
+    if let Some(serde_json::Value::String(canvas_type)) = normalized.get("canvas_type") {
+        push(canvas_type, &mut categories, &mut seen);
+    }
+    match normalized.get("canvas_types") {
+        Some(serde_json::Value::Array(items)) => {
+            for item in items {
+                if let serde_json::Value::String(category) = item {
+                    push(category, &mut categories, &mut seen);
+                }
+            }
+        }
+        Some(serde_json::Value::String(single)) => {
+            push(single, &mut categories, &mut seen);
+        }
+        _ => {}
+    }
+    normalized["canvas_types"] = serde_json::Value::Array(
+        categories
+            .iter()
+            .map(|c| serde_json::Value::String(c.clone()))
+            .collect(),
+    );
+    normalized["canvas_type"] = categories
+        .first()
+        .map(|c| serde_json::Value::String(c.clone()))
+        .unwrap_or(serde_json::Value::Null);
+    normalized
+}
+
+/// A seeded canvas template row (`CanvasTemplateService.save` payload).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasTemplateRecord {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub canvas_type: Option<String>,
+    pub canvas_types: Vec<String>,
+    pub dsl: serde_json::Value,
+}
+
+/// Build a `CanvasTemplateRecord` from a raw template JSON, applying the
+/// `template_utils` category normalization (RAGFlow `add_graph_templates`
+/// normalizes every template file before saving).
+pub fn canvas_template_record(id: String, raw: &serde_json::Value) -> CanvasTemplateRecord {
+    let normalized = normalize_canvas_template_categories(raw);
+    CanvasTemplateRecord {
+        id,
+        title: normalized
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        description: normalized
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        canvas_type: normalized
+            .get("canvas_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        canvas_types: normalized
+            .get("canvas_types")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        dsl: normalized
+            .get("dsl")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// langfuse_service.py + mcp_server_service.py semantics.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `TenantLangfuse` row (`langfuse_service.py::TenantLangfuseService`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TenantLangfuseRecord {
+    pub tenant_id: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub secret_key: String,
+    #[serde(default)]
+    pub public_key: String,
+    #[serde(default)]
+    pub create_time: u64,
+    #[serde(default)]
+    pub update_time: u64,
+}
+
+/// `MCPServer` row (`mcp_server_service.py::MCPServerService`) — the fields
+/// exposed by `get_servers` for list display.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpServerRecord {
+    pub id: String,
+    pub name: String,
+    pub server_type: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub variables: serde_json::Value,
+    pub tenant_id: String,
+    #[serde(default)]
+    pub create_time: u64,
+    #[serde(default)]
+    pub update_time: u64,
+}
+
+/// `mcp_server_service.get_servers` semantics — filter + order + paginate a
+/// tenant's MCP server rows. Pure; mirrors the peewee query chain.
+pub fn mcp_server_get_servers(
+    servers: &[McpServerRecord],
+    tenant_id: &str,
+    id_list: Option<&[String]>,
+    keywords: Option<&str>,
+    orderby: &str,
+    desc: bool,
+    page_number: Option<usize>,
+    items_per_page: Option<usize>,
+) -> Vec<McpServerRecord> {
+    let mut rows: Vec<McpServerRecord> = servers
+        .iter()
+        .filter(|s| s.tenant_id == tenant_id)
+        .filter(|s| id_list.map_or(true, |ids| ids.iter().any(|id| id == &s.id)))
+        .filter(|s| {
+            keywords.map_or(true, |kw| {
+                s.name.to_lowercase().contains(&kw.to_lowercase())
+            })
+        })
+        .cloned()
+        .collect();
+    rows.sort_by(|a, b| {
+        let key_a = match orderby {
+            "name" => a.name.cmp(&b.name),
+            "create_time" => a.create_time.cmp(&b.create_time),
+            "update_time" => a.update_time.cmp(&b.update_time),
+            _ => a.create_time.cmp(&b.create_time),
+        };
+        if desc { key_a.reverse() } else { key_a }
+    });
+    if let (Some(page), Some(per_page)) = (page_number, items_per_page) {
+        let start = page.saturating_sub(1) * per_page;
+        rows = rows.into_iter().skip(start).take(per_page).collect();
+    }
+    rows
+}
+
+/// `get_by_name_and_tenant` semantics: name uniqueness within a tenant.
+pub fn mcp_server_exists(servers: &[McpServerRecord], name: &str, tenant_id: &str) -> bool {
+    servers
+        .iter()
+        .any(|s| s.name == name && s.tenant_id == tenant_id)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// conversation_service.py::ConversationService.get_list semantics.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `Conversation` row subset used by `get_list`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationRow {
+    pub id: String,
+    pub dialog_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub create_time: u64,
+    #[serde(default)]
+    pub update_time: u64,
+}
+
+/// `conversation_service.get_list` — filter by dialog/id/name/user, order by
+/// `orderby` asc/desc, paginate when `items_per_page > 0`.
+pub fn conversation_get_list(
+    sessions: &[ConversationRow],
+    dialog_id: &str,
+    page_number: usize,
+    items_per_page: usize,
+    orderby: &str,
+    desc: bool,
+    id: Option<&str>,
+    name: Option<&str>,
+    user_id: Option<&str>,
+) -> Vec<ConversationRow> {
+    let mut rows: Vec<ConversationRow> = sessions
+        .iter()
+        .filter(|s| s.dialog_id == dialog_id)
+        .filter(|s| id.map_or(true, |v| v == s.id))
+        .filter(|s| name.map_or(true, |v| v == s.name))
+        .filter(|s| user_id.map_or(true, |v| v == s.user_id))
+        .cloned()
+        .collect();
+    rows.sort_by(|a, b| {
+        let key = match orderby {
+            "name" => a.name.cmp(&b.name),
+            "update_time" => a.update_time.cmp(&b.update_time),
+            _ => a.create_time.cmp(&b.create_time),
+        };
+        if desc { key.reverse() } else { key }
+    });
+    if items_per_page > 0 {
+        let start = page_number.saturating_sub(1) * items_per_page;
+        rows = rows.into_iter().skip(start).take(items_per_page).collect();
+    }
+    rows
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// connector_service.py::SyncLogsService semantics.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `SyncLogs` row (`connector_service.py::SyncLogsService`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SyncLogRow {
+    pub id: String,
+    pub connector_id: String,
+    pub kb_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub poll_range_start: Option<String>,
+    #[serde(default)]
+    pub poll_range_end: Option<String>,
+    #[serde(default)]
+    pub new_docs_indexed: u64,
+    #[serde(default)]
+    pub total_docs_indexed: u64,
+    #[serde(default)]
+    pub docs_removed_from_index: u64,
+    #[serde(default)]
+    pub error_count: u64,
+    #[serde(default)]
+    pub error_msg: String,
+    #[serde(default)]
+    pub update_time: u64,
+}
+
+/// `SyncLogsService.increase_docs` — monotonic counters. The poll range
+/// advances only forward (`GREATEST(current, max_update)`); doc counters
+/// accumulate. Mirrors the Python update expression exactly.
+pub fn sync_log_increase_docs(
+    log: &mut SyncLogRow,
+    max_update: &str,
+    doc_num: u64,
+    err_msg: &str,
+    error_count: u64,
+    now: u64,
+) {
+    log.new_docs_indexed += doc_num;
+    log.total_docs_indexed += doc_num;
+    let bump = |current: &Option<String>| -> Option<String> {
+        match current {
+            Some(cur) if cur.as_str() >= max_update => Some(cur.clone()),
+            _ => Some(max_update.to_owned()),
+        }
+    };
+    log.poll_range_start = bump(&log.poll_range_start);
+    log.poll_range_end = bump(&log.poll_range_end);
+    log.error_msg.push_str(err_msg);
+    log.error_count += error_count;
+    log.update_time = now;
+}
+
+/// `SyncLogsService.increase_removed_docs` — stale-document accounting.
+pub fn sync_log_increase_removed_docs(
+    log: &mut SyncLogRow,
+    removed_count: u64,
+    err_msg: &str,
+    error_count: u64,
+    now: u64,
+) {
+    log.docs_removed_from_index += removed_count;
+    log.error_msg.push_str(err_msg);
+    log.error_count += error_count;
+    log.update_time = now;
+}
+
+/// `SyncLogsService.schedule` retention cap: keep at most 100 logs per
+/// (connector, kb); when over, prune the 70 oldest by `update_time` asc.
+/// Returns the ids to delete (empty when under the cap).
+pub fn sync_log_prune_plan(logs: &[SyncLogRow], connector_id: &str, kb_id: &str) -> Vec<String> {
+    let mut matching: Vec<&SyncLogRow> = logs
+        .iter()
+        .filter(|l| l.connector_id == connector_id && l.kb_id == kb_id)
+        .collect();
+    if matching.len() <= 100 {
+        return Vec::new();
+    }
+    matching.sort_by_key(|l| l.update_time);
+    matching.iter().take(70).map(|l| l.id.clone()).collect()
+}
+
+/// `ConnectorService.resume` status transition: a SCHEDULE request on top of
+/// a DONE task starts a fresh sync from `poll_range_end`; otherwise the
+/// existing task is re-marked with the target status.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResumeOutcome {
+    /// No task existed — schedule a fresh one.
+    ScheduleNew { connector_id: String, kb_id: String },
+    /// A DONE task exists — schedule from the recorded poll range end.
+    ScheduleFrom {
+        connector_id: String,
+        kb_id: String,
+        poll_range_end: Option<String>,
+        total_docs_indexed: u64,
+    },
+    /// Re-mark the existing task with the target status.
+    Remark { task_id: String, status: String },
+}
+
+pub fn connector_resume(
+    latest_task: Option<&SyncLogRow>,
+    connector_id: &str,
+    kb_id: &str,
+    status: &str,
+) -> ResumeOutcome {
+    // TaskStatus (common/constants.py): DONE = "3", SCHEDULE = "5".
+    const SCHEDULE: &str = "5";
+    const DONE: &str = "3";
+    match latest_task {
+        None if status == SCHEDULE => ResumeOutcome::ScheduleNew {
+            connector_id: connector_id.to_owned(),
+            kb_id: kb_id.to_owned(),
+        },
+        Some(task) if task.status == DONE && status == SCHEDULE => ResumeOutcome::ScheduleFrom {
+            connector_id: connector_id.to_owned(),
+            kb_id: kb_id.to_owned(),
+            poll_range_end: task.poll_range_end.clone(),
+            total_docs_indexed: task.total_docs_indexed,
+        },
+        Some(task) => ResumeOutcome::Remark {
+            task_id: task.id.clone(),
+            status: status.to_owned(),
+        },
+        None => ResumeOutcome::Remark {
+            task_id: String::new(),
+            status: status.to_owned(),
+        },
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// task_service.py semantics.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `TASK_MAX_LOG_LENGTH` env default — progress logs are trimmed to keep TEXT
+/// columns under 64 KiB.
+pub const TASK_MAX_LOG_LENGTH: usize = 3000;
+
+/// `task_service.trim_header_by_lines` — drop leading lines until the tail
+/// fits `max_length`; return the text unchanged when it already fits.
+pub fn trim_header_by_lines(text: &str, max_length: usize) -> String {
+    let len = text.chars().count();
+    if len <= max_length {
+        return text.to_owned();
+    }
+    for (i, ch) in text.char_indices() {
+        if ch == '\n' && len - text[..i].chars().count() <= max_length {
+            return text[i + 1..].to_owned();
+        }
+    }
+    text.to_owned()
+}
+
+/// `TaskService.update_progress` progress gate: a new progress value is
+/// written when (a) it is >= 1 (recovers from -1), or (b) the current value
+/// is not -1 AND (the new value is -1 or strictly greater). Mirrors the
+/// SQL WHERE clause.
+pub fn progress_should_update(current: f64, new: f64) -> bool {
+    new >= 1.0 || (current != -1.0 && (new == -1.0 || new > current))
+}
+
+/// `TaskService.get_task` retry semantics: a task is abandoned after 3
+/// attempts (`retry_count >= 3` → progress -1, returns None).
+pub fn task_attempt(retry_count: u32) -> Option<u32> {
+    if retry_count >= 3 {
+        return None;
+    }
+    Some(retry_count + 1)
+}
+
+/// `queue_tasks` page-range splitting: PDF tasks are split by
+/// `task_page_size` (default 12; 22 for the `paper` parser; unbounded for
+/// `one`/`knowledge_graph`, non-DeepDOC layout or toc extraction), Excel
+/// `table` tasks by 3000 rows, everything else gets a single task.
+/// Returns `(from_page, to_page)` ranges.
+pub fn task_page_ranges(
+    doc_type: &str,
+    parser_id: &str,
+    parser_config: &serde_json::Value,
+    total_pages: usize,
+) -> Vec<(usize, usize)> {
+    let page_size_of = |default: usize| -> usize {
+        parser_config
+            .get("task_page_size")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(default)
+    };
+    if doc_type == "pdf" {
+        let do_layout = parser_config
+            .get("layout_recognize")
+            .and_then(|v| v.as_str())
+            .unwrap_or("DeepDOC");
+        let toc = parser_config
+            .get("toc_extraction")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let page_size = if parser_id == "paper" {
+            page_size_of(22)
+        } else if matches!(parser_id, "one" | "knowledge_graph") || do_layout != "DeepDOC" || toc {
+            usize::MAX
+        } else {
+            page_size_of(12)
+        };
+        // RAGFlow default page range is (1, MAXIMUM_PAGE_NUMBER).
+        let mut ranges = Vec::new();
+        let mut start = 0usize;
+        while start < total_pages {
+            let end = start.saturating_add(page_size).min(total_pages);
+            ranges.push((start, end));
+            if end == start {
+                break;
+            }
+            start = end;
+        }
+        if ranges.is_empty() {
+            ranges.push((0, 0));
+        }
+        return ranges;
+    }
+    if parser_id == "table" {
+        let mut ranges = Vec::new();
+        let mut start = 0usize;
+        while start < total_pages {
+            let end = start.saturating_add(3000).min(total_pages);
+            ranges.push((start, end));
+            start = end;
+        }
+        if ranges.is_empty() {
+            ranges.push((0, 0));
+        }
+        return ranges;
+    }
+    vec![(0, usize::MAX)]
+}
+
+/// `reuse_prev_task_chunks` — a previous task's chunks are reused when a task
+/// with the same `from_page` and digest exists and finished (progress >= 1)
+/// with chunk ids. Returns the reused chunk ids.
+pub fn reuse_prev_task_chunks(
+    from_page: usize,
+    digest: &str,
+    prev_tasks: &[(usize, String, f64, String)],
+) -> Option<String> {
+    for (prev_from_page, prev_digest, progress, chunk_ids) in prev_tasks {
+        if *prev_from_page == from_page && prev_digest == digest {
+            if *progress >= 1.0 && !chunk_ids.is_empty() {
+                return Some(chunk_ids.clone());
+            }
+            return None;
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod init_data_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn system_settings_seed_inserts_only_missing_names() {
+        let existing = vec![SystemSetting {
+            name: "enable_whitelist".into(),
+            source: "variable".into(),
+            data_type: "bool".into(),
+            value: "true".into(),
+            create_time: 1,
+            update_time: 1,
+        }];
+        let from_file = vec![
+            SystemSetting {
+                name: "enable_whitelist".into(),
+                source: "variable".into(),
+                data_type: "bool".into(),
+                value: "true".into(),
+                create_time: 0,
+                update_time: 0,
+            },
+            SystemSetting {
+                name: "mail.server".into(),
+                source: "variable".into(),
+                data_type: "string".into(),
+                value: "".into(),
+                create_time: 0,
+                update_time: 0,
+            },
+        ];
+        let (to_save, count) = seed_system_settings(&existing, &from_file, 42);
+        assert_eq!(count, 1);
+        assert_eq!(to_save[0].name, "mail.server");
+        assert_eq!(to_save[0].create_time, 42);
+    }
+
+    #[test]
+    fn canvas_template_categories_normalize_and_dedupe() {
+        let template = json!({
+            "id": "t1",
+            "title": "Deep Research",
+            "canvas_type": "agent",
+            "canvas_types": ["agent", " agent ", "chatflow"],
+            "dsl": {"nodes": []}
+        });
+        let record = canvas_template_record("t1".into(), &template);
+        assert_eq!(record.canvas_type.as_deref(), Some("agent"));
+        assert_eq!(record.canvas_types, vec!["agent", "chatflow"]);
+        // Missing categories collapse to an empty list, canvas_type to null.
+        let bare = json!({"id": "t2", "title": "Bare"});
+        let record = canvas_template_record("t2".into(), &bare);
+        assert!(record.canvas_type.is_none());
+        assert!(record.canvas_types.is_empty());
+    }
+
+    #[test]
+    fn fix_empty_tenant_model_ids_groups_and_resolves_per_tenant() {
+        let rows = vec![
+            NullTenantModelRow {
+                id: "kb1".into(),
+                tenant_id: "t1".into(),
+                model_id: "gpt-4o".into(),
+            },
+            NullTenantModelRow {
+                id: "kb2".into(),
+                tenant_id: "t1".into(),
+                model_id: "gpt-4o".into(),
+            },
+            NullTenantModelRow {
+                id: "kb3".into(),
+                tenant_id: "t1".into(),
+                model_id: "bge-m3".into(),
+            },
+            NullTenantModelRow {
+                id: "kb4".into(),
+                tenant_id: "t2".into(),
+                model_id: "gpt-4o".into(),
+            },
+        ];
+        let resolve = |tenant: &str, model: &str| -> Option<String> {
+            match (tenant, model) {
+                ("t1", "gpt-4o") => Some("tlm-1".into()),
+                ("t2", "gpt-4o") => Some("tlm-2".into()),
+                _ => None,
+            }
+        };
+        let updates = plan_fix_empty_tenant_model_ids(&rows, resolve);
+        assert_eq!(
+            updates,
+            vec![
+                ("kb1".to_string(), "tlm-1".to_string()),
+                ("kb2".to_string(), "tlm-1".to_string()),
+                ("kb4".to_string(), "tlm-2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn sync_log_counters_are_monotonic_and_pruning_respects_the_cap() {
+        let mut log = SyncLogRow {
+            id: "task-1".into(),
+            connector_id: "c1".into(),
+            kb_id: "kb".into(),
+            status: "5".into(),
+            poll_range_start: Some("2026-08-01T00:00:00Z".into()),
+            poll_range_end: Some("2026-08-01T00:00:00Z".into()),
+            new_docs_indexed: 0,
+            total_docs_indexed: 0,
+            docs_removed_from_index: 0,
+            error_count: 0,
+            error_msg: String::new(),
+            update_time: 0,
+        };
+        // A backwards poll marker must not regress the range.
+        sync_log_increase_docs(&mut log, "2026-07-01T00:00:00Z", 5, "", 0, 10);
+        assert_eq!(
+            log.poll_range_start.as_deref(),
+            Some("2026-08-01T00:00:00Z")
+        );
+        assert_eq!(log.new_docs_indexed, 5);
+        // Forward marker advances.
+        sync_log_increase_docs(&mut log, "2026-08-02T00:00:00Z", 3, "boom", 2, 20);
+        assert_eq!(log.poll_range_end.as_deref(), Some("2026-08-02T00:00:00Z"));
+        assert_eq!(log.total_docs_indexed, 8);
+        assert_eq!(log.error_count, 2);
+
+        // Prune plan: 101 matching logs -> 70 oldest ids dropped.
+        let logs: Vec<SyncLogRow> = (0..101)
+            .map(|i| SyncLogRow {
+                id: format!("l{i}"),
+                connector_id: "c1".into(),
+                kb_id: "kb".into(),
+                status: "5".into(),
+                poll_range_start: None,
+                poll_range_end: None,
+                new_docs_indexed: 0,
+                total_docs_indexed: 0,
+                docs_removed_from_index: 0,
+                error_count: 0,
+                error_msg: String::new(),
+                update_time: i as u64,
+            })
+            .collect();
+        let prune = sync_log_prune_plan(&logs, "c1", "kb");
+        assert_eq!(prune.len(), 70);
+        assert!(prune.contains(&"l0".to_string()));
+        assert!(!prune.contains(&"l70".to_string()));
+        // Under the cap nothing is pruned.
+        assert!(sync_log_prune_plan(&logs[..99], "c1", "kb").is_empty());
     }
 }

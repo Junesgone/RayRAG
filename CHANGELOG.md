@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.2.3] — 2026-08-05
+
+### Added
+
+- **flow 组件契约**（`src/pipeline/flow.rs` ~700 行）：FromUpstream/check_payloads
+  （alias 反序列化）、OutputFormat、ComponentOutput（ProcessBase 语义）、
+  file_outputs、FlowLog/TraceEntry/ComponentTrace（trace 累积 + 加权进度）、
+  ChunkDoc（REST 契约 + From<&Chunk> 转换）。
+- **resume 实体资源修复**（`src/resume.rs`）：2 个 regex 崩溃 bug
+  （`[—-]+` 非法区间、反斜杠转义层级）+ CORP_TKS 贪心最长匹配（对齐 jieba）。
+- **服务层语义**（`src/api/joint_services.rs` +700）：seed_system_settings、
+  SuperuserSeedPlan、LLM 工厂种子/清理（novita.ai 删除/QAnything→Youdao）、
+  tenant_model 修复计划、canvas 模板规范化、langfuse/mcp_server/conversation/
+  task 服务（SyncLog 单调计数 + 100 条裁剪 + resume 状态机）。
+- **MCP 客户端**（`src/mcp_client.rs`）：SSE + Streamable HTTP 传输、
+  initialize/list_tools/call_tool。
+- **Helm chart**（`helm/` 新建）：最小可用 chart（deployment/service/configmap，
+  镜像 rayrag:local，9390→8080，外部 PG18 依赖说明）；helm lint/template 通过。
+
 ## [0.2.2] — 2026-08-05
 
 ### Added

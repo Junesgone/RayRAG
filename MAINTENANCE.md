@@ -1,3 +1,13 @@
+## 2026-08-05 v0.2.3：flow 契约 + 服务层 + MCP 客户端 + Helm
+
+- pipeline/flow.rs ~700：组件 payloads/trace/进度契约
+- resume.rs：修复 2 个 regex 崩溃 + CORP_TKS 贪心匹配
+- joint_services.rs +700：init_data 种子/LLM 工厂清理/canvas 规范化/task 状态机
+- mcp_client.rs：SSE + Streamable HTTP 客户端
+- helm/ 最小 chart（lint/template 通过）；deepdoc/server 13 行标记 N/A（版本差异）
+- 测试基线：**1092 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 166 → **105**（N/A 13）
+
 ## 2026-08-05 v0.2.2 容器验证
 
 - 部署成功：容器 healthy、healthz 200、6 页面全 200

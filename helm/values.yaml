@@ -1,0 +1,62 @@
+# Default values for the rayrag chart.
+# Image: rayrag:local (build with `docker build -t rayrag:local .` or
+# `docker compose build rayrag`), container listens on 8080 (Dockerfile CMD),
+# Service exposes port 9390 -> 8080.
+
+replicaCount: 1
+
+image:
+  repository: rayrag
+  tag: local
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  # Service port (matches the documented 9390 exposure; targetPort is the
+  # container's 8080 from the Dockerfile CMD `serve --port 8080`).
+  port: 9390
+  targetPort: 8080
+
+# PostgreSQL dependency (required). RayRAG does not bundle Elasticsearch,
+# MinIO, MySQL, OpenSearch, Redis or Infinity — its persistence is a single
+# PostgreSQL 18 database; vector search is handled in-process (zvec backend).
+# Provide the connection string via config.rayragPostgresUrl, or point it at
+# a bitnami/postgresql sub-chart / managed instance.
+postgres:
+  # host: postgres
+  # port: 5432
+  database: rayrag
+  user: rayrag
+  # password: changeme   # prefer a Kubernetes Secret; plain env is minimal-chart default
+
+config:
+  # Minimal env surface; extend freely (mirrors docker-compose.yml env).
+  rayragPostgresUrl: "postgresql://rayrag:changeme@postgres:5432/rayrag"
+  rayragPostgresRequiredVersion: "18.4"
+  rayragVectorBackend: "zvec"
+  rayragEmbeddingDimension: "384"
+  rayragAdminEmail: "admin@rayrag.local"
+  rayragNoFsync: "1"
+  rayragZvecDir: "/var/lib/rayrag/zvec"
+
+secret:
+  # Values referenced by deployment env (from config.rayragPostgresUrl unless
+  # overridden). Minimal chart keeps them in ConfigMap/plain env for parity with
+  # docker-compose; production should move passwords to a Secret.
+  rayragAdminPassword: "changeme"
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 8Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
