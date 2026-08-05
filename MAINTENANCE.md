@@ -1,3 +1,9 @@
+## 2026-08-05 v0.1.4 容器验证：模板库 28 个确认
+
+- 部署后 agents 页面仅 3 内置模板（22KB）→ 根因：web.rs 的 tpls 变量构建后未 b.push_str(&tpls)
+- 修复（a5b4edc）：补 b.push_str(&tpls) → 页面 475KB，28 模板全渲染
+- 验证：容器 healthy、healthz 200、agents 页 28 模板（deep_research/web_search_assistant/trip_planner 等抽样确认）
+
 ## 2026-08-05 v0.1.4：Agent 模板种子化 + GraphRAG prompts + layout 解析补齐
 
 - 25 个 RAGFlow agent 工作流模板种子化（include_str! fixtures），agents 页面模板库 3→28
