@@ -15,3 +15,4 @@ pub mod openai_proxy;
 pub mod search;
 pub mod system;
 pub mod tenant_models;
+pub mod utils;

@@ -347,6 +347,45 @@ fn detect_layout_type(text: &str) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Table / figure extraction — pdf_parser.py `_extract_table_figure`
+// (1206-1258), content-only subset.
+//
+// The upstream layout pass crops boxes whose label is `table` (and, when
+// images are wanted, `figure`/`image`) out of the merged reading order so
+// table-recognition and image-captioning stages can process them separately.
+// The Rust equivalent keeps the already-parsed layout blocks but returns the
+// two groups independently, each section still carrying its RAGFlow position
+// tag (`@@page\t...##`) so downstream code can crop the exact region.
+// ---------------------------------------------------------------------------
+
+/// `_extract_table_figure` content split: returns `(tables, figures)` where
+/// each `LayoutSection` keeps the original label and position tag. Blocks
+/// with empty content and blocks of any other label are dropped.
+pub fn table_figure_sections(
+    blocks: &[PaddleLayoutBlock],
+) -> (Vec<LayoutSection>, Vec<LayoutSection>) {
+    let mut tables = Vec::new();
+    let mut figures = Vec::new();
+    for block in blocks {
+        let content = block.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let section = LayoutSection {
+            content: content.to_owned(),
+            label: block.label.clone(),
+            tag: position_tag(block),
+        };
+        match block.label.to_lowercase().as_str() {
+            "table" => tables.push(section),
+            "figure" | "image" => figures.push(section),
+            _ => {}
+        }
+    }
+    (tables, figures)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,6 +431,32 @@ mod tests {
         let manual = render_sections(&blocks, ParseMethod::Manual);
         assert_eq!(manual[0].label, "title");
         assert_eq!(manual[0].content, "Chapter 1");
+    }
+
+    #[test]
+    fn table_figure_sections_split_by_label_keep_position_tags() {
+        // pdf_parser.py `_extract_table_figure` — only table/figure labels.
+        let blocks = vec![
+            block(1, "title", "Big Title", [0.0, 0.0, 200.0, 40.0]),
+            block(1, "table", "|A|B|", [20.0, 60.0, 180.0, 120.0]),
+            block(2, "figure", "chart.png", [10.0, 20.0, 110.0, 120.0]),
+            block(2, "image", "photo", [5.0, 5.0, 55.0, 55.0]),
+            block(2, "text", "tail", [0.0, 0.0, 10.0, 10.0]),
+        ];
+        let (tables, figures) = table_figure_sections(&blocks);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].label, "table");
+        assert_eq!(tables[0].content, "|A|B|");
+        // ZOOMIN = 2, integer division: left 20/2=10, right 180/2=90,
+        // top 60/2=30, bottom 120/2=60.
+        assert_eq!(tables[0].tag, "@@1\t10\t90\t30\t60##");
+        assert_eq!(figures.len(), 2);
+        assert_eq!(figures[0].label, "figure");
+        assert_eq!(figures[1].label, "image");
+        assert!(figures[0].tag.starts_with("@@2\t"));
+        // Empty-content blocks are dropped.
+        let (t, f) = table_figure_sections(&[block(1, "table", "  ", [0.0, 0.0, 1.0, 1.0])]);
+        assert!(t.is_empty() && f.is_empty());
     }
 
     #[test]

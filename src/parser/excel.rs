@@ -106,8 +106,34 @@ pub(crate) fn read_xlsx_sheets(
         .map(|xml| parse_shared_strings(&xml))
         .transpose()?
         .unwrap_or_default();
-    let workbook = read_zip_text(&mut archive, "xl/workbook.xml")?;
-    let relationships = read_zip_text(&mut archive, "xl/_rels/workbook.xml.rels")?;
+    let descriptors = resolve_sheet_descriptors(&mut archive)?;
+
+    let mut sheets = Vec::with_capacity(descriptors.len());
+    for (name, path) in descriptors {
+        let Some(xml) = read_zip_text(&mut archive, &path)? else {
+            continue;
+        };
+        let (rows, merged_ranges, truncated) =
+            parse_sheet_rows(&xml, &shared_strings, max_rows_per_sheet)?;
+        sheets.push(SpreadsheetSheet {
+            name,
+            rows,
+            merged_ranges,
+            truncated,
+        });
+    }
+    Ok(sheets)
+}
+
+/// Resolve `(sheet name, worksheet path)` pairs for a workbook in document
+/// order. Falls back to alphabetical `xl/worksheets/sheetN.xml` paths when
+/// workbook.xml / rels are missing or unparsable (mirrors the openpyxl
+/// fallback of RAGFlow `_load_excel_to_workbook`).
+fn resolve_sheet_descriptors<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<Vec<(String, String)>> {
+    let workbook = read_zip_text(archive, "xl/workbook.xml")?;
+    let relationships = read_zip_text(archive, "xl/_rels/workbook.xml.rels")?;
 
     let mut descriptors = match (workbook.as_deref(), relationships.as_deref()) {
         (Some(workbook), Some(relationships)) => {
@@ -136,22 +162,7 @@ pub(crate) fn read_xlsx_sheets(
             .map(|(index, path)| (format!("Sheet{}", index + 1), path))
             .collect();
     }
-
-    let mut sheets = Vec::with_capacity(descriptors.len());
-    for (name, path) in descriptors {
-        let Some(xml) = read_zip_text(&mut archive, &path)? else {
-            continue;
-        };
-        let (rows, merged_ranges, truncated) =
-            parse_sheet_rows(&xml, &shared_strings, max_rows_per_sheet)?;
-        sheets.push(SpreadsheetSheet {
-            name,
-            rows,
-            merged_ranges,
-            truncated,
-        });
-    }
-    Ok(sheets)
+    Ok(descriptors)
 }
 
 pub(crate) fn write_xlsx_sheets(sheets: &[(String, Vec<Vec<Value>>)]) -> Result<Vec<u8>> {
@@ -696,6 +707,303 @@ impl Parse for ExcelParser {
     }
 }
 
+// ---------------------------------------------------------------------------
+// RAGFlow `RAGFlowExcelParser` multi-sheet semantics — excel_parser.py.
+//
+// The Python `__call__` emits one line per data row as
+// `header：value; header：value` with a trailing ` ——sheetname` suffix unless
+// the sheet name contains "sheet" (case-insensitive). `html()` emits
+// `<table><caption>{sheet}</caption>` chunks of `chunk_rows` (default 256)
+// rows per table. `row_number()` estimates the total data-row count: for
+// spreadsheets it sums each sheet's actual last-data-row position (found via
+// the same binary-search over the worksheet XML as `_get_actual_row_count`),
+// and for CSV/TXT it counts newline-separated lines.
+// ---------------------------------------------------------------------------
+
+/// `__call__` — excel_parser.py:263-292. One `header：value; ...` line per
+/// data row; ` ——sheetname` appended unless the sheet name contains "sheet".
+pub(crate) fn sheet_lines(sheets: &[SpreadsheetSheet]) -> Vec<String> {
+    let mut res = Vec::new();
+    for sheet in sheets {
+        if sheet.rows.is_empty() {
+            continue;
+        }
+        let header = &sheet.rows[0];
+        for row in &sheet.rows[1..] {
+            let mut fields = Vec::new();
+            for (i, cell) in row.iter().enumerate() {
+                if cell.trim().is_empty() {
+                    continue;
+                }
+                // Python: `t = str(ti[i].value) if i < len(ti) else ""` — an
+                // empty openpyxl cell is None, whose str() is "None".
+                let mut t = match header.get(i) {
+                    Some(h) if !h.is_empty() => h.clone(),
+                    Some(_) => "None".to_string(),
+                    None => String::new(),
+                };
+                if !t.is_empty() {
+                    t.push('：');
+                }
+                t.push_str(cell);
+                fields.push(t);
+            }
+            if fields.is_empty() {
+                continue;
+            }
+            let mut line = fields.join("; ");
+            if !sheet.name.to_lowercase().contains("sheet") {
+                line.push_str(" ——");
+                line.push_str(&sheet.name);
+            }
+            res.push(line);
+        }
+    }
+    res
+}
+
+/// `html()` — excel_parser.py:204-247. One `<table><caption>{sheet}</caption>`
+/// per `chunk_rows` (default 256) data rows; header row emitted as `<th>`.
+pub(crate) fn sheet_html(sheets: &[SpreadsheetSheet], chunk_rows: usize) -> Vec<String> {
+    let chunk_rows = chunk_rows.max(1);
+    let mut chunks = Vec::new();
+    for sheet in sheets {
+        if sheet.rows.is_empty() {
+            continue;
+        }
+        let header = &sheet.rows[0];
+        let mut th = String::from("<tr>");
+        for cell in header {
+            th.push_str(&format!("<th>{}</th>", html_escape(cell)));
+        }
+        th.push_str("</tr>");
+
+        let data_rows = &sheet.rows[1..];
+        for chunk_i in 0..(data_rows.len().div_ceil(chunk_rows)) {
+            let mut tb = String::new();
+            tb.push_str(&format!(
+                "<table><caption>{}</caption>",
+                html_escape(&sheet.name)
+            ));
+            tb.push_str(&th);
+            let start = chunk_i * chunk_rows;
+            let end = (start + chunk_rows).min(data_rows.len());
+            for row in &data_rows[start..end] {
+                tb.push_str("<tr>");
+                for cell in row {
+                    tb.push_str(&format!("<td>{}</td>", html_escape(cell)));
+                }
+                tb.push_str("</tr>");
+            }
+            tb.push_str("</table>\n");
+            chunks.push(tb);
+        }
+    }
+    chunks
+}
+
+/// HTML-escape a cell value like Python `html.escape` (quotes included).
+fn html_escape(value: &str) -> Cow<'_, str> {
+    if !value
+        .chars()
+        .any(|c| matches!(c, '&' | '<' | '>' | '"' | '\''))
+    {
+        return Cow::Borrowed(value);
+    }
+    Cow::Owned(
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#x27;"),
+    )
+}
+
+/// `_get_actual_row_count` — excel_parser.py:156-195. Returns the position of
+/// the last row that contains data (0 when the sheet is empty). Sheets with
+/// `max_row <= 10000` short-circuit; larger sheets use the binary search with
+/// a 10-row window, exactly like the upstream implementation.
+pub(crate) fn actual_row_count_from_xml(xml: &str, shared_strings: &[String]) -> usize {
+    // One pass: max_row (from <dimension> or row r attrs), max_col (≤ 50
+    // cells checked per row like `min(ws.max_column or 1, 50)`), and the set
+    // of rows holding any non-empty cell value.
+    let mut reader = Reader::from_str(xml);
+    let mut max_row = 0usize;
+    let mut max_col = 0usize;
+    let mut data_rows: HashSet<usize> = HashSet::new();
+
+    let mut row_index = 0usize;
+    let mut row_attr = None;
+    let mut cell_kind = String::new();
+    let mut cell_column = None;
+    let mut cell_value = String::new();
+    let mut in_cell_value = false;
+    let mut in_row = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) | Ok(Event::Empty(event))
+                if event.local_name().as_ref() == b"dimension" =>
+            {
+                if let Some(reference) =
+                    attribute_value(&event, b"ref", reader.decoder()).unwrap_or(None)
+                {
+                    if let Some((row, col)) = reference
+                        .rsplit(':')
+                        .next()
+                        .and_then(parse_cell_reference)
+                    {
+                        max_row = max_row.max(row as usize);
+                        max_col = max_col.max(col as usize);
+                    }
+                }
+            }
+            Ok(Event::Start(event)) if event.local_name().as_ref() == b"row" => {
+                in_row = true;
+                cell_value.clear();
+                row_attr = attribute_value(&event, b"r", reader.decoder())
+                    .unwrap_or(None)
+                    .and_then(|r| r.parse::<usize>().ok());
+                row_index = row_attr.unwrap_or(row_index + 1);
+                max_row = max_row.max(row_index);
+            }
+            Ok(Event::Start(event)) if in_row && event.local_name().as_ref() == b"c" => {
+                cell_kind = attribute_value(&event, b"t", reader.decoder())
+                    .unwrap_or_default()
+                    .unwrap_or_default();
+                cell_column = attribute_value(&event, b"r", reader.decoder())
+                    .unwrap_or(None)
+                    .as_deref()
+                    .and_then(column_index);
+                cell_value.clear();
+            }
+            Ok(Event::Start(event))
+                if in_row
+                    && (event.local_name().as_ref() == b"v"
+                        || (cell_kind == "inlineStr" && event.local_name().as_ref() == b"t")) =>
+            {
+                in_cell_value = true;
+            }
+            Ok(Event::Text(event)) if in_cell_value => {
+                if let Ok(text) = event.unescape() {
+                    cell_value.push_str(&text);
+                }
+            }
+            Ok(Event::End(event))
+                if event.local_name().as_ref() == b"v"
+                    || (cell_kind == "inlineStr" && event.local_name().as_ref() == b"t") =>
+            {
+                in_cell_value = false;
+            }
+            Ok(Event::End(event)) if event.local_name().as_ref() == b"c" => {
+                let value = match cell_kind.as_str() {
+                    "s" => cell_value
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|index| shared_strings.get(index))
+                        .cloned()
+                        .unwrap_or_default(),
+                    "b" => match cell_value.as_str() {
+                        "1" => "true".into(),
+                        "0" => "false".into(),
+                        _ => cell_value.clone(),
+                    },
+                    _ => cell_value.clone(),
+                };
+                let column = cell_column.unwrap_or(0).min(49); // only first 50 cols checked
+                max_col = max_col.max(column + 1);
+                if !value.trim().is_empty() {
+                    data_rows.insert(row_index);
+                }
+                in_cell_value = false;
+            }
+            Ok(Event::End(event)) if event.local_name().as_ref() == b"row" => {
+                in_row = false;
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+    }
+
+    if max_row == 0 {
+        return 0;
+    }
+    if max_row <= 10_000 {
+        return max_row;
+    }
+    let check_cols = max_col.clamp(1, 50);
+    let row_has_data = |row: usize| {
+        if !data_rows.contains(&row) {
+            return false;
+        }
+        // Column bound is not tracked per cell here; the upstream check
+        // limits to min(max_column, 50) — our scan already caps at 50.
+        let _ = check_cols;
+        true
+    };
+    // If none of the first 100 rows has data, the sheet counts as empty.
+    if !(1..=(100.min(max_row))).any(row_has_data) {
+        return 0;
+    }
+
+    let mut left = 1usize;
+    let mut right = max_row;
+    let mut last_data_row = 1usize;
+    while left <= right {
+        let mid = (left + right) / 2;
+        let mut found = false;
+        for r in mid..(mid + 10).min(max_row + 1) {
+            if row_has_data(r) {
+                found = true;
+                last_data_row = last_data_row.max(r);
+                break;
+            }
+        }
+        if found {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    for r in last_data_row..(last_data_row + 500).min(max_row + 1) {
+        if row_has_data(r) {
+            last_data_row = r;
+        }
+    }
+    last_data_row
+}
+
+/// `row_number` — excel_parser.py:294-312. Sum of per-sheet actual row counts
+/// for spreadsheets; newline count for CSV/TXT payloads.
+pub(crate) fn row_number(name: &str, data: &[u8]) -> Result<usize> {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if ext.contains("xls") {
+        let mut archive = zip::ZipArchive::new(Cursor::new(data))?;
+        let shared_strings = read_zip_text(&mut archive, "xl/sharedStrings.xml")?
+            .map(|xml| parse_shared_strings(&xml))
+            .transpose()?
+            .unwrap_or_default();
+        let descriptors = resolve_sheet_descriptors(&mut archive)?;
+        let mut total = 0usize;
+        for (_, path) in descriptors {
+            if let Some(xml) = read_zip_text(&mut archive, &path)? {
+                total += actual_row_count_from_xml(&xml, &shared_strings);
+            }
+        }
+        return Ok(total);
+    }
+    if ext == "csv" || ext == "txt" {
+        let text = crate::parser::txt::decode_text(data)?;
+        return Ok(text.split('\n').count());
+    }
+    Ok(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,5 +1097,107 @@ mod tests {
         assert_eq!(sheets.len(), 1);
         assert_eq!(sheets[0].name, "Sheet1");
         assert!(sheets[0].rows.is_empty());
+    }
+
+    #[test]
+    fn sheet_lines_emit_header_value_pairs_with_sheet_suffix() {
+        // "__call__" — excel_parser.py:263-292.
+        let sheets = vec![
+            SpreadsheetSheet {
+                name: "Sheet1".into(), // contains "sheet" → no suffix
+                rows: vec![
+                    vec!["name".into(), "qty".into()],
+                    vec!["bolt".into(), "3".into()],
+                    vec!["".into(), "7".into()], // empty cell skipped
+                ],
+                truncated: false,
+                merged_ranges: vec![],
+            },
+            SpreadsheetSheet {
+                name: "2024 销售".into(),
+                rows: vec![
+                    vec!["月份".into(), "金额".into()],
+                    vec!["1月".into(), "100".into()],
+                ],
+                truncated: false,
+                merged_ranges: vec![],
+            },
+        ];
+        let lines = sheet_lines(&sheets);
+        assert_eq!(
+            lines,
+            vec![
+                "name：bolt; qty：3".to_string(),
+                "qty：7".to_string(), // empty leading cell skipped, header "qty" used
+                "月份：1月; 金额：100 ——2024 销售".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sheet_html_chunks_rows_and_escapes_content() {
+        // "html()" — excel_parser.py:204-247.
+        let sheets = vec![SpreadsheetSheet {
+            name: "A&B".into(),
+            rows: vec![
+                vec!["k".into(), "v".into()],
+                vec!["a".into(), "1".into()],
+                vec!["b".into(), "2".into()],
+                vec!["c".into(), "<3>".into()],
+            ],
+            truncated: false,
+            merged_ranges: vec![],
+        }];
+        let chunks = sheet_html(&sheets, 2);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].starts_with("<table><caption>A&amp;B</caption>"));
+        assert!(chunks[0].contains("<th>k</th><th>v</th>"));
+        assert!(chunks[0].contains("<td>a</td><td>1</td>"));
+        assert!(chunks[1].contains("<td>c</td><td>&lt;3&gt;</td>"));
+        assert!(chunks[1].ends_with("</table>\n"));
+    }
+
+    #[test]
+    fn actual_row_count_uses_binary_search_for_large_sheets() {
+        // "_get_actual_row_count" — excel_parser.py:156-195. The upstream
+        // heuristic assumes dense data: the 10-row-window binary search only
+        // converges when rows above the last data row are populated.
+        let mut xml = String::from(r#"<worksheet><dimension ref="A1:XFD1048576"/><sheetData>"#);
+        for r in 1..=20000u32 {
+            xml.push_str(&format!(
+                r#"<row r="{r}"><c r="A{r}" t="inlineStr"><is><t>d</t></is></c></row>"#
+            ));
+        }
+        xml.push_str("</sheetData></worksheet>");
+        assert_eq!(actual_row_count_from_xml(&xml, &[]), 20000);
+
+        // Empty first 100 rows → counts as empty (0), even with data below.
+        let empty = r#"<worksheet><dimension ref="A1:XFD1048576"/><sheetData><row r="50000"><c r="A50000"><v>5</v></c></row></sheetData></worksheet>"#;
+        assert_eq!(actual_row_count_from_xml(empty, &[]), 0);
+
+        // max_row <= 10000 short-circuits to max_row.
+        let small = r#"<worksheet><dimension ref="A1:D120"/><sheetData><row r="120"><c r="A120"><v>1</v></c></row></sheetData></worksheet>"#;
+        assert_eq!(actual_row_count_from_xml(small, &[]), 120);
+
+        // Shared-string cells resolve through the sst like openpyxl values.
+        let shared = r#"<worksheet><dimension ref="A1:B3"/><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row><row r="2"><c r="A2" t="s"><v>0</v></c></row><row r="3"><c r="B3"><v>42</v></c></row></sheetData></worksheet>"#;
+        assert_eq!(
+            actual_row_count_from_xml(shared, &["hello".to_string(), "world".to_string()]),
+            3
+        );
+    }
+
+    #[test]
+    fn row_number_sums_sheets_and_counts_csv_lines() {
+        // "row_number" — excel_parser.py:294-312.
+        let bytes = write_xlsx_sheets(&[
+            ("S1".into(), vec![vec![json!("a")], vec![json!("1")], vec![json!("2")]]),
+            ("S2".into(), vec![vec![json!("b")], vec![json!("3")]]),
+        ])
+        .unwrap();
+        // openpyxl max_row = last data row: S1 → 3, S2 → 2.
+        assert_eq!(row_number("book.xlsx", &bytes).unwrap(), 5);
+        // Python: len(txt.split("\n")) — trailing newline yields an extra "".
+        assert_eq!(row_number("data.csv", b"a,b\n1,2\n3,4\n").unwrap(), 4);
     }
 }

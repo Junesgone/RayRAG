@@ -1005,8 +1005,10 @@ mod tests {
         });
         let instances = registry.build_channels(&config).await;
         assert_eq!(instances.len(), 2);
-        assert_eq!(instances[0].account_id(), "a1");
-        assert_eq!(instances[1].account_id(), "a2");
+        // JSON map 遍历顺序不稳定 → 集合匹配，不依赖顺序。
+        let mut ids: Vec<&str> = instances.iter().map(|c| c.account_id()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["a1", "a2"]);
         let seen = seen.lock().unwrap();
         let a1 = seen.iter().find(|(id, _)| id == "a1").unwrap();
         assert_eq!(a1.1["shared_key"], "shared-value");

@@ -397,3 +397,103 @@ impl Parse for QaParser {
         ))
     }
 }
+
+// ── QA-mode dispatch (rag/app application-layer semantics) ───────
+// Mirrors RAGFlow's chat-mode selection:
+//   - `api/db/services/dialog_service.py::async_ask`:
+//       is_knowledge_graph = all(kb.parser_id == ParserType.KG)
+//       retriever = settings.kg_retriever if is_knowledge_graph else settings.retriever
+//   - `rag/advanced_rag.py` (DeepResearcher) is the "advanced" pipeline; every
+//     other parser id (naive/manual/paper/book/…) routes to the hybrid retriever.
+// The RAGFlow parser vocabulary (common/constants.py ParserType): naive, laws,
+// manual, paper, resume, book, qa, table, picture, one, audio, email, tag,
+// knowledge_graph, presentation.
+
+/// RAGFlow chat QA mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QaMode {
+    /// Hybrid retrieval → plain LLM answer (`settings.retriever`).
+    Naive,
+    /// Deep-research pipeline (`rag/advanced_rag.py` DeepResearcher).
+    Advanced,
+    /// Knowledge-graph retrieval (`settings.kg_retriever`, all KBs use ParserType.KG).
+    Graph,
+}
+
+impl QaMode {
+    /// RAGFlow-style mode name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QaMode::Naive => "naive",
+            QaMode::Advanced => "advanced",
+            QaMode::Graph => "graph",
+        }
+    }
+
+    /// True when every knowledge base uses the knowledge-graph parser.
+    pub fn is_graph_mode(parser_ids: &[&str]) -> bool {
+        !parser_ids.is_empty() && parser_ids.iter().all(|p| *p == "knowledge_graph")
+    }
+
+    /// True when any knowledge base opts into the deep-research pipeline.
+    pub fn is_advanced_mode(parser_ids: &[&str]) -> bool {
+        parser_ids.iter().any(|p| matches!(*p, "advanced" | "advanced_rag" | "deep_researcher"))
+    }
+
+    /// Resolve the QA mode for a set of KB parser ids.
+    ///
+    /// Priority mirrors RAGFlow: graph mode when *all* KBs are KG-parsed
+    /// (dialog_service.async_ask), advanced when the pipeline is explicitly
+    /// requested, otherwise naive hybrid retrieval.
+    pub fn resolve(parser_ids: &[&str]) -> QaMode {
+        if Self::is_graph_mode(parser_ids) {
+            QaMode::Graph
+        } else if Self::is_advanced_mode(parser_ids) {
+            QaMode::Advanced
+        } else {
+            QaMode::Naive
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_qa_mode_resolve_naive_default() {
+        // Mixed / non-KG parsers → naive hybrid retrieval.
+        assert_eq!(QaMode::resolve(&["naive"]), QaMode::Naive);
+        assert_eq!(QaMode::resolve(&["paper", "manual"]), QaMode::Naive);
+        assert_eq!(QaMode::resolve(&["knowledge_graph", "naive"]), QaMode::Naive);
+        assert_eq!(QaMode::resolve(&[]), QaMode::Naive);
+        assert_eq!(QaMode::Naive.as_str(), "naive");
+    }
+
+    #[test]
+    fn test_qa_mode_resolve_graph() {
+        // All KBs must be KG-parsed (RAGFlow `all(kb.parser_id == ParserType.KG)`).
+        assert_eq!(QaMode::resolve(&["knowledge_graph"]), QaMode::Graph);
+        assert_eq!(
+            QaMode::resolve(&["knowledge_graph", "knowledge_graph"]),
+            QaMode::Graph
+        );
+        assert!(QaMode::is_graph_mode(&["knowledge_graph"]));
+        assert!(!QaMode::is_graph_mode(&["knowledge_graph", "naive"]));
+        assert!(!QaMode::is_graph_mode(&[]));
+        assert_eq!(QaMode::Graph.as_str(), "graph");
+    }
+
+    #[test]
+    fn test_qa_mode_resolve_advanced() {
+        // Explicit deep-research marker wins over naive but not over all-KG graph.
+        assert_eq!(QaMode::resolve(&["advanced"]), QaMode::Advanced);
+        assert_eq!(QaMode::resolve(&["deep_researcher", "naive"]), QaMode::Advanced);
+        assert_eq!(QaMode::Advanced.as_str(), "advanced");
+        // Mixed KG + advanced is not "all KG", so the explicit marker wins.
+        assert_eq!(
+            QaMode::resolve(&["knowledge_graph", "advanced"]),
+            QaMode::Advanced
+        );
+    }
+}

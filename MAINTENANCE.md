@@ -1,3 +1,12 @@
+## 2026-08-05 v0.2.0：prompts 全量 + utils 服务层 + 解析器行为
+
+- prompts.rs +1390：26 常量（resume 双语/TOC 管线/vision describe/related_question）
+- app_parsers：naive/advanced/graph 模式分派
+- api/utils.rs ~600：FileType/sanitize_path/hash128/get_parser_config/init_dataset_defaults
+- parser：excel 多 sheet+二分行数、docx 图片提取、pdf 表格图片区域
+- 测试基线：**1003 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 331 → **261**
+
 ## 2026-08-05 v0.1.9 容器验证
 
 - 部署成功：容器 healthy、healthz 200、/datasources /kbs /agents /chat /settings 全 200

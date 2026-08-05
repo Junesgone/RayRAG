@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.2.0] — 2026-08-05
+
+### Added
+
+- **剩余 prompts 全部移植**（`src/prompts.rs` +1390 行）：26 个常量——
+  related_question、resume 系列双语（system/basic_info/education/project_exp/
+  work_exp）、structured_output/sufficiency_check/summary4memory/tool_call_summary、
+  TOC 管线（detection/extraction/continue/index/relevance×2）、vision describe 系列
+  （vision_llm_describe/figure_describe×2，Jinja 语法转 {var} 约定）。
+- **问答模式分派**（`src/app_parsers.rs`）：naive/advanced/graph 模式选择逻辑
+  （显式标记优先、全 KG 才走 graph）。
+- **api/utils 服务层**（`src/api/utils.rs` ~600 行）：FileType/filename_type
+  （扩展名逐字对齐）、sanitize_path、常量（255 限制/50MiB/100MiB）、
+  hash128（xxh3）/md5 hex、get_parser_config（chunk_method 默认 + 递归合并）、
+  init_dataset_defaults（parser_id=naive、llm_id 注入）。
+- **解析器行为补齐**：`excel.rs`（多 sheet `表头:值;` 行格式、sheet_html 分块、
+  >10000 行二分、row_number 计数）、`docx.rs`（blip rId→rels→media 图片提取）、
+  `paddleocr_layout.rs`（table/figure/image 区域分组 + 位置 tag）。
+
+### Fixed
+
+- channels 测试断言 JSON map 遍历顺序不稳定 → 集合匹配（顺序无关）。
+
 ## [0.1.9] — 2026-08-05
 
 ### Added

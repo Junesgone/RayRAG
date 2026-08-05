@@ -336,6 +336,136 @@ impl PromptLibrary {
         PromptTemplate::new(RAGFLOW_META_FILTER_PROMPT)
     }
 
+    /// RAGFlow `related_question.md` — Generate 5-10 alternative questions that broaden retrieval scope.
+    pub fn related_question() -> PromptTemplate {
+        PromptTemplate::new(RAGFLOW_RELATED_QUESTION_PROMPT)
+    }
+
+    /// RAGFlow `resume_system.md` — Resume analysis system prompt (Chinese; focus on the Chinese resume).
+    pub fn resume_system() -> PromptTemplate {
+        PromptTemplate::new(RESUME_SYSTEM_PROMPT_ZH)
+    }
+
+    /// RAGFlow `resume_system_en.md` — Resume analysis system prompt (English).
+    pub fn resume_system_en() -> PromptTemplate {
+        PromptTemplate::new(RESUME_SYSTEM_PROMPT_EN)
+    }
+
+    /// RAGFlow `resume_basic_info.md` — Extract basic info (name/age/phone/email/… ) into JSON.
+    pub fn resume_basic_info() -> PromptTemplate {
+        PromptTemplate::new(RESUME_BASIC_INFO_PROMPT_ZH)
+    }
+
+    /// RAGFlow `resume_basic_info_en.md` — English variant of the basic-info extractor.
+    pub fn resume_basic_info_en() -> PromptTemplate {
+        PromptTemplate::new(RESUME_BASIC_INFO_PROMPT_EN)
+    }
+
+    /// RAGFlow `resume_education.md` — Extract education background into JSON (school/major/degree/desc_lines).
+    pub fn resume_education() -> PromptTemplate {
+        PromptTemplate::new(RESUME_EDUCATION_PROMPT_ZH)
+    }
+
+    /// RAGFlow `resume_education_en.md` — English variant of the education extractor.
+    pub fn resume_education_en() -> PromptTemplate {
+        PromptTemplate::new(RESUME_EDUCATION_PROMPT_EN)
+    }
+
+    /// RAGFlow `resume_project_exp.md` — Extract project experience into JSON (project_name/role/desc_lines).
+    pub fn resume_project_exp() -> PromptTemplate {
+        PromptTemplate::new(RESUME_PROJECT_EXP_PROMPT_ZH)
+    }
+
+    /// RAGFlow `resume_project_exp_en.md` — English variant of the project-experience extractor.
+    pub fn resume_project_exp_en() -> PromptTemplate {
+        PromptTemplate::new(RESUME_PROJECT_EXP_PROMPT_EN)
+    }
+
+    /// RAGFlow `resume_work_exp.md` — Extract work experience into JSON (company/position/internship/desc_lines).
+    pub fn resume_work_exp() -> PromptTemplate {
+        PromptTemplate::new(RESUME_WORK_EXP_PROMPT_ZH)
+    }
+
+    /// RAGFlow `resume_work_exp_en.md` — English variant of the work-experience extractor.
+    pub fn resume_work_exp_en() -> PromptTemplate {
+        PromptTemplate::new(RESUME_WORK_EXP_PROMPT_EN)
+    }
+
+    /// RAGFlow `structured_output_prompt.md` — Force JSON output given a schema (no booleans / ints).
+    pub fn structured_output() -> PromptTemplate {
+        PromptTemplate::new(STRUCTURED_OUTPUT_PROMPT)
+    }
+
+    /// RAGFlow `sufficiency_check.md` — Judge whether retrieved docs suffice to answer a question.
+    pub fn sufficiency_check() -> PromptTemplate {
+        PromptTemplate::new(SUFFICIENCY_CHECK_PROMPT)
+    }
+
+    /// RAGFlow `summary4memory.md` — Summarize tool-call responses into memory ([Status] + [Key Outcome] + [Constraints]).
+    pub fn summary4memory() -> PromptTemplate {
+        PromptTemplate::new(SUMMARY4MEMORY_PROMPT)
+    }
+
+    /// RAGFlow `tool_call_summary.md` — Extract info relevant to the current tool call from results.
+    pub fn tool_call_summary() -> PromptTemplate {
+        PromptTemplate::new(TOOL_CALL_SUMMARY_PROMPT)
+    }
+
+    /// RAGFlow `toc_detection.md` — Detect whether a page contains a table of contents.
+    pub fn toc_detection() -> PromptTemplate {
+        PromptTemplate::new(TOC_DETECTION_PROMPT)
+    }
+
+    /// RAGFlow `toc_extraction.md` — Parse a TOC page into a JSON array of {structure, title}.
+    pub fn toc_extraction() -> PromptTemplate {
+        PromptTemplate::new(TOC_EXTRACTION_PROMPT)
+    }
+
+    /// RAGFlow `toc_extraction_continue.md` — Append a new TOC page to an existing JSON array.
+    pub fn toc_extraction_continue() -> PromptTemplate {
+        PromptTemplate::new(TOC_EXTRACTION_CONTINUE_PROMPT)
+    }
+
+    /// RAGFlow `toc_from_text_system.md` — Extract TOC headings from a chunk dict into JSON (title/chunk_id).
+    pub fn toc_from_text_system() -> PromptTemplate {
+        PromptTemplate::new(TOC_FROM_TEXT_SYSTEM_PROMPT)
+    }
+
+    /// RAGFlow `toc_from_text_user.md` — User half of the chunk-dict TOC extraction.
+    pub fn toc_from_text_user() -> PromptTemplate {
+        PromptTemplate::new(TOC_FROM_TEXT_USER_PROMPT)
+    }
+
+    /// RAGFlow `toc_index.md` — Match a titled entry against text; JSON {reasoning, exist}.
+    pub fn toc_index() -> PromptTemplate {
+        PromptTemplate::new(TOC_INDEX_PROMPT)
+    }
+
+    /// RAGFlow `toc_relevance_system.md` — Score TOC entries (5/3/1/0/-1) against a query, hierarchical traversal.
+    pub fn toc_relevance_system() -> PromptTemplate {
+        PromptTemplate::new(TOC_RELEVANCE_SYSTEM_PROMPT)
+    }
+
+    /// RAGFlow `toc_relevance_user.md` — User half of the TOC relevance scoring.
+    pub fn toc_relevance_user() -> PromptTemplate {
+        PromptTemplate::new(TOC_RELEVANCE_USER_PROMPT)
+    }
+
+    /// RAGFlow `vision_llm_describe_prompt.md` — Transcribe a PDF page image into clean Markdown.
+    pub fn vision_llm_describe() -> PromptTemplate {
+        PromptTemplate::new(VISION_LLM_DESCRIBE_PROMPT)
+    }
+
+    /// RAGFlow `vision_llm_figure_describe_prompt.md` — Describe a figure image (structured data vs general content).
+    pub fn vision_llm_figure_describe() -> PromptTemplate {
+        PromptTemplate::new(VISION_LLM_FIGURE_DESCRIBE_PROMPT)
+    }
+
+    /// RAGFlow `vision_llm_figure_describe_prompt_with_context.md` — Figure description with surrounding context.
+    pub fn vision_llm_figure_describe_with_context() -> PromptTemplate {
+        PromptTemplate::new(VISION_LLM_FIGURE_DESCRIBE_PROMPT_WITH_CONTEXT)
+    }
+
     /// Get template by name.
     pub fn get(name: &str) -> Option<PromptTemplate> {
         match name {
@@ -392,6 +522,34 @@ impl PromptLibrary {
             "question_prompt" => Some(Self::question_prompt()),
             "meta_data" => Some(Self::meta_data()),
             "meta_filter" => Some(Self::meta_filter()),
+            "related_question" => Some(Self::related_question()),
+            "resume_system" => Some(Self::resume_system()),
+            "resume_system_en" => Some(Self::resume_system_en()),
+            "resume_basic_info" => Some(Self::resume_basic_info()),
+            "resume_basic_info_en" => Some(Self::resume_basic_info_en()),
+            "resume_education" => Some(Self::resume_education()),
+            "resume_education_en" => Some(Self::resume_education_en()),
+            "resume_project_exp" => Some(Self::resume_project_exp()),
+            "resume_project_exp_en" => Some(Self::resume_project_exp_en()),
+            "resume_work_exp" => Some(Self::resume_work_exp()),
+            "resume_work_exp_en" => Some(Self::resume_work_exp_en()),
+            "structured_output" => Some(Self::structured_output()),
+            "sufficiency_check" => Some(Self::sufficiency_check()),
+            "summary4memory" => Some(Self::summary4memory()),
+            "tool_call_summary" => Some(Self::tool_call_summary()),
+            "toc_detection" => Some(Self::toc_detection()),
+            "toc_extraction" => Some(Self::toc_extraction()),
+            "toc_extraction_continue" => Some(Self::toc_extraction_continue()),
+            "toc_from_text_system" => Some(Self::toc_from_text_system()),
+            "toc_from_text_user" => Some(Self::toc_from_text_user()),
+            "toc_index" => Some(Self::toc_index()),
+            "toc_relevance_system" => Some(Self::toc_relevance_system()),
+            "toc_relevance_user" => Some(Self::toc_relevance_user()),
+            "vision_llm_describe" => Some(Self::vision_llm_describe()),
+            "vision_llm_figure_describe" => Some(Self::vision_llm_figure_describe()),
+            "vision_llm_figure_describe_with_context" => {
+                Some(Self::vision_llm_figure_describe_with_context())
+            }
             _ => None,
         }
     }
@@ -450,6 +608,32 @@ impl PromptLibrary {
             "question_prompt",
             "meta_data",
             "meta_filter",
+            "related_question",
+            "resume_system",
+            "resume_system_en",
+            "resume_basic_info",
+            "resume_basic_info_en",
+            "resume_education",
+            "resume_education_en",
+            "resume_project_exp",
+            "resume_project_exp_en",
+            "resume_work_exp",
+            "resume_work_exp_en",
+            "structured_output",
+            "sufficiency_check",
+            "summary4memory",
+            "tool_call_summary",
+            "toc_detection",
+            "toc_extraction",
+            "toc_extraction_continue",
+            "toc_from_text_system",
+            "toc_from_text_user",
+            "toc_index",
+            "toc_relevance_system",
+            "toc_relevance_user",
+            "vision_llm_describe",
+            "vision_llm_figure_describe",
+            "vision_llm_figure_describe_with_context",
         ]
     }
 }
@@ -2390,6 +2574,1105 @@ pub fn fallback_llm_from_env() -> Option<FallbackLlm> {
     Some(FallbackLlm::new(primary, fallbacks).with_retries(3))
 }
 
+// ── Remaining RAGFlow rag/prompts templates ─────────────────────
+// Ported verbatim from the 28 remaining `rag/prompts/*.md` templates:
+//   related_question.md · resume_{system,basic_info,education,project_exp,work_exp}{,_en}.md
+//   structured_output_prompt.md · sufficiency_check.md · summary4memory.md · tool_call_summary.md
+//   toc_{detection,extraction,extraction_continue,from_text_system,from_text_user,index,
+//        relevance_system,relevance_user}.md
+//   vision_llm_{describe,figure_describe,figure_describe_with_context}_prompt.md
+// Jinja `{{ var }}` placeholders are flattened to `{var}` so `PromptTemplate::render` can
+// substitute them (same convention as the citation_plus / meta_filter ports). JSON schema
+// braces in the resume prompts are single `{`/`}` (Jinja `{{` escapes to a literal `{`).
+
+/// RAGFlow `related_question.md` — generate 5-10 related questions to broaden retrieval scope.
+pub const RAGFLOW_RELATED_QUESTION_PROMPT: &str = r#"# Role
+You are an AI language model assistant tasked with generating **5-10 related questions** based on a user's original query.
+These questions should help **expand the search query scope** and **improve search relevance**.
+
+---
+
+## Instructions
+
+**Input:**
+You are provided with a **user's question**.
+
+**Output:**
+Generate **5-10 alternative questions** that are **related** to the original user question.
+These alternatives should help retrieve a **broader range of relevant documents** from a vector database.
+
+**Context:**
+Focus on **rephrasing** the original question in different ways, ensuring the alternative questions are **diverse but still connected** to the topic of the original query.
+Do **not** create overly obscure, irrelevant, or unrelated questions.
+
+**Fallback:**
+If you cannot generate any relevant alternatives, do **not** return any questions.
+
+---
+
+## Guidance
+
+1. Each alternative should be **unique** but still **relevant** to the original query.
+2. Keep the phrasing **clear, concise, and easy to understand**.
+3. Avoid overly technical jargon or specialized terms **unless directly relevant**.
+4. Ensure that each question **broadens** the search angle, **not narrows** it.
+
+---
+
+## Example
+
+**Original Question:**
+> What are the benefits of electric vehicles?
+
+**Alternative Questions:**
+1. How do electric vehicles impact the environment?
+2. What are the advantages of owning an electric car?
+3. What is the cost-effectiveness of electric vehicles?
+4. How do electric vehicles compare to traditional cars in terms of fuel efficiency?
+5. What are the environmental benefits of switching to electric cars?
+6. How do electric vehicles help reduce carbon emissions?
+7. Why are electric vehicles becoming more popular?
+8. What are the long-term savings of using electric vehicles?
+9. How do electric vehicles contribute to sustainability?
+10. What are the key benefits of electric vehicles for consumers?
+
+---
+
+## Reason
+Rephrasing the original query into multiple alternative questions helps the user explore **different aspects** of their search topic, improving the **quality of search results**.
+These questions guide the search engine to provide a **more comprehensive set** of relevant documents.
+"#;
+
+/// RAGFlow `resume_system.md` — professional resume analysis assistant (Chinese).
+pub const RESUME_SYSTEM_PROMPT_ZH: &str = r#"你是一个专业的简历分析助手。你的任务是将给定的简历文本转换为 JSON 输出。
+(如果有中英文简历同时出现时，只关注中文简历)
+严格按照 JSON 格式返回结果，不要有任何其他文字。"#;
+
+/// RAGFlow `resume_system_en.md` — professional resume analysis assistant (English).
+pub const RESUME_SYSTEM_PROMPT_EN: &str = r#"You are a professional resume analysis assistant. Your task is to convert the given resume text into JSON output.
+(If both Chinese and English resumes appear, focus only on the English resume)
+Strictly return results in JSON format without any other text."#;
+
+/// RAGFlow `resume_basic_info.md` — extract basic resume info into JSON (Chinese).
+pub const RESUME_BASIC_INFO_PROMPT_ZH: &str = r#"请从以下带行号索引的简历文本中提取基本信息。
+
+{indexed_text}
+
+提取如下信息到 JSON，若某些字段不存在则输出 "" 空或 0:
+{
+  "name_kwd": "",
+  "gender_kwd": "",
+  "age_int": 0,
+  "phone_kwd": "",
+  "email_tks": "",
+  "birth_dt": "",
+  "work_exp_flt": 0,
+  "current_location": "",
+  "expect_city_names_tks": [],
+  "expect_position_name_tks": [],
+  "skill_tks": [],
+  "language_tks": [],
+  "certificate_tks": [],
+  "self_evaluation_tks": ""
+}
+
+字段说明:
+- name_kwd: 姓名，如"张三"
+- gender_kwd: 男/女，若不存在则不填
+- age_int: 当前年龄，整数
+- phone_kwd: 电话/手机，请保留原文中的形式，保留国家码区号括号
+- email_tks: 邮箱，如 "xxx@qq.com"
+- birth_dt: 出生年月，如 "1996-11"
+- work_exp_flt: 工作年限，浮点数
+- current_location: 现居地/当前城市，不要从工作经历中推测，要写明现居地
+- expect_city_names_tks: 期望工作城市列表，简历中需要明确说明是期望城市
+- expect_position_name_tks: 期望职位列表
+- skill_tks: 技能/技术栈列表
+- language_tks: 语言能力列表
+- certificate_tks: 证书/资质列表
+- self_evaluation_tks: 自我评价/个人优势/个人总结，完整提取原文内容
+
+只返回 JSON。 /no_think"#;
+
+/// RAGFlow `resume_basic_info_en.md` — extract basic resume info into JSON (English).
+pub const RESUME_BASIC_INFO_PROMPT_EN: &str = r#"Please extract basic information from the following line-indexed resume text.
+
+{indexed_text}
+
+Extract the following information into JSON. If a field does not exist, output "" or 0:
+{
+  "name_kwd": "",
+  "gender_kwd": "",
+  "age_int": 0,
+  "phone_kwd": "",
+  "email_tks": "",
+  "birth_dt": "",
+  "work_exp_flt": 0,
+  "current_location": "",
+  "expect_city_names_tks": [],
+  "expect_position_name_tks": [],
+  "skill_tks": [],
+  "language_tks": [],
+  "certificate_tks": [],
+  "self_evaluation_tks": ""
+}
+
+Field descriptions:
+- name_kwd: Full name, e.g. "John Smith"
+- gender_kwd: Male/Female, leave empty if not present
+- age_int: Current age, integer
+- phone_kwd: Phone number, keep original format including country code and brackets
+- email_tks: Email address, e.g. "xxx@gmail.com"
+- birth_dt: Date of birth, e.g. "1996-11"
+- work_exp_flt: Years of work experience, float
+- current_location: Current city/location, do not infer from work experience, must be explicitly stated
+- expect_city_names_tks: List of preferred work cities, must be explicitly stated in the resume
+- expect_position_name_tks: List of desired positions
+- skill_tks: List of skills/tech stack
+- language_tks: List of language proficiencies
+- certificate_tks: List of certificates/qualifications
+- self_evaluation_tks: Self-evaluation/personal strengths/summary, extract full original text
+
+Return JSON only. /no_think"#;
+
+/// RAGFlow `resume_education.md` — extract education background into JSON (Chinese).
+pub const RESUME_EDUCATION_PROMPT_ZH: &str = r#"请从以下带行号索引的简历文本中提取教育背景。
+
+{indexed_text}
+
+提取为 JSON:
+{
+  "education": [
+    {
+      "school": "",
+      "major": "",
+      "degree": "",
+      "department": "",
+      "start_date": "",
+      "end_date": "",
+      "desc_lines": [start_index, end_index]
+    }
+  ]
+}
+
+字段说明:
+- school: 学校全称，如"厦门大学"，中英文都可以
+- major: 专业，如"机械工程"
+- degree: 学位，本科/硕士/博士/专科/高中/初中，若不存在则填""
+- department: 系/学院，如"信息工程系"
+- start_date: 开始时间，格式为 %Y.%m 或 %Y
+- end_date: 结束时间，若至今填写"至今"，若不存在填写""
+- desc_lines: [起始行号, 结束行号]，教育描述对应的行号范围（可选）
+  - 包括课程成绩、研究方向、GPA、荣誉奖项等
+  - 不存在则填 []
+
+只返回 JSON。 /no_think"#;
+
+/// RAGFlow `resume_education_en.md` — extract education background into JSON (English).
+pub const RESUME_EDUCATION_PROMPT_EN: &str = r#"Please extract education background from the following line-indexed resume text.
+
+{indexed_text}
+
+Extract into JSON:
+{
+  "education": [
+    {
+      "school": "",
+      "major": "",
+      "degree": "",
+      "department": "",
+      "start_date": "",
+      "end_date": "",
+      "desc_lines": [start_index, end_index]
+    }
+  ]
+}
+
+Field descriptions:
+- school: Full school name, e.g. "Stanford University", both Chinese and English are acceptable
+- major: Major/field of study, e.g. "Computer Science"
+- degree: Degree level - Bachelor/Master/PhD/Associate/High School/Middle School, leave "" if not available
+- department: Department/College, e.g. "School of Engineering"
+- start_date: Start date, format %Y.%m or %Y
+- end_date: End date, use "Present" if still enrolled, "" if not available
+- desc_lines: [start_line, end_line], line number range for education description (optional)
+  - Includes coursework, research focus, GPA, honors/awards, etc.
+  - Use [] if not available
+
+Return JSON only. /no_think"#;
+
+/// RAGFlow `resume_project_exp.md` — extract project experience into JSON (Chinese).
+pub const RESUME_PROJECT_EXP_PROMPT_ZH: &str = r#"请从以下带行号索引的简历文本中提取项目经验。
+
+{indexed_text}
+
+提取为 JSON，每段项目经验包含:
+{
+  "projectExperience": [
+    {
+      "project_name": "",
+      "role": "",
+      "start_date": "",
+      "end_date": "",
+      "desc_lines": [start_index, end_index]
+    }
+  ]
+}
+
+字段说明:
+- project_name: 项目名称
+- role: 担任角色/职责，如"项目负责人"、"后端开发"
+- start_date: 开始时间，格式为 %Y.%m 或 %Y
+- end_date: 结束时间，若至今填写"至今"，若不存在填写""
+- desc_lines: [起始行号, 结束行号]，项目描述对应的行号范围（整数数组）
+  - 指项目描述的原文引用段落 index 范围，包括项目内容、技术栈、成果等
+  - 不包括 project_name、role、start_date、end_date 所在行
+  - 尽可能写全，直到下一段项目经验或其他段落标题为止
+  - 遇到以下段落标题时必须截止，不要将其包含在 desc_lines 中：
+    个人评价、自我评价、个人总结、个人优势、自我描述、技能特长、专业技能、教育背景、教育经历、工作经历、工作经验、证书资质、语言能力、兴趣爱好、求职意向
+  - 如果不存在就写 []
+
+只返回 JSON。 /no_think"#;
+
+/// RAGFlow `resume_project_exp_en.md` — extract project experience into JSON (English).
+pub const RESUME_PROJECT_EXP_PROMPT_EN: &str = r#"Please extract project experience from the following line-indexed resume text.
+
+{indexed_text}
+
+Extract into JSON, each project experience entry contains:
+{
+  "projectExperience": [
+    {
+      "project_name": "",
+      "role": "",
+      "start_date": "",
+      "end_date": "",
+      "desc_lines": [start_index, end_index]
+    }
+  ]
+}
+
+Field descriptions:
+- project_name: Project name
+- role: Role/responsibility, e.g. "Project Lead", "Backend Developer"
+- start_date: Start date, format %Y.%m or %Y
+- end_date: End date, use "Present" if ongoing, "" if not available
+- desc_lines: [start_line, end_line], line number range for project description (integer array)
+  - Refers to the original text reference range for project description, including project content, tech stack, achievements, etc.
+  - Does not include lines containing project_name, role, start_date, end_date
+  - Include as much as possible until the next project experience entry or other section heading
+  - STOP before these section headings (do not include them in desc_lines):
+    Self-evaluation, Personal Summary, Skills, Technical Skills, Education, Work Experience, Certificates, Languages, Hobbies, Career Objective
+  - Use [] if not available
+
+Return JSON only. /no_think"#;
+
+/// RAGFlow `resume_work_exp.md` — extract work experience into JSON (Chinese).
+pub const RESUME_WORK_EXP_PROMPT_ZH: &str = r#"请从以下带行号索引的简历文本中提取工作经历。
+
+{indexed_text}
+
+提取为 JSON，每段工作经历包含:
+{
+  "workExperience": [
+    {
+      "company": "",
+      "position": "",
+      "internship": 0,
+      "start_date": "",
+      "end_date": "",
+      "desc_lines": [start_index, end_index]
+    }
+  ]
+}
+
+字段说明:
+- company: 公司全称（含括号内地区信息），如"阿里巴巴(中国)有限公司"
+- position: 职位名称，遵循原文不要编造或推测
+- internship: 该段经历是否是实习，是实习为1，不是为0
+- start_date: 入职时间，格式为 %Y.%m 或 %Y，如 "2024.1"
+- end_date: 离职时间，若至今填写"至今"，若不存在填写""
+- desc_lines: [起始行号, 结束行号]，工作描述对应的行号范围（整数数组）
+  - 指工作经历描述的原文引用段落 index 范围，包括工作成果、业绩、主要工作、技术栈等
+  - 不包括 company、position、start_date、end_date 所在行
+  - 尽可能写全，直到下一段工作经历或其他段落标题为止
+  - 遇到以下段落标题时必须截止，不要将其包含在 desc_lines 中：
+    个人评价、自我评价、个人总结、个人优势、自我描述、技能特长、专业技能、教育背景、教育经历、项目经验、项目经历、证书资质、语言能力、兴趣爱好、求职意向
+  - 如果不存在就写 []
+
+示例:
+[22]: 阿里巴巴 2021.11-2022.11 高级工程师
+[23]: 工作描述: 从事地推工作完成xx业绩
+[24]: 在地推任务中考核为A
+则 desc_lines 应为 [23, 24]
+
+只返回 JSON。 /no_think"#;
+
+/// RAGFlow `resume_work_exp_en.md` — extract work experience into JSON (English).
+pub const RESUME_WORK_EXP_PROMPT_EN: &str = r#"Please extract work experience from the following line-indexed resume text.
+
+{indexed_text}
+
+Extract into JSON, each work experience entry contains:
+{
+  "workExperience": [
+    {
+      "company": "",
+      "position": "",
+      "internship": 0,
+      "start_date": "",
+      "end_date": "",
+      "desc_lines": [start_index, end_index]
+    }
+  ]
+}
+
+Field descriptions:
+- company: Full company name (including region info in brackets), e.g. "Google Inc."
+- position: Job title, follow original text, do not fabricate or guess
+- internship: Whether this is an internship, 1 for yes, 0 for no
+- start_date: Start date, format %Y.%m or %Y, e.g. "2024.1"
+- end_date: End date, use "Present" if still employed, "" if not available
+- desc_lines: [start_line, end_line], line number range for job description (integer array)
+  - Refers to the original text reference range for job description, including achievements, responsibilities, tech stack, etc.
+  - Include as much as possible until the next work experience entry or other section heading
+  - STOP before these section headings (do not include them in desc_lines):
+    Self-evaluation, Personal Summary, Skills, Technical Skills, Education, Project Experience, Certificates, Languages, Hobbies, Career Objective
+  - Use [] if not available
+
+Example:
+[22]: Google Inc. 2021.11-2022.11 Senior Engineer
+[23]: Job description: Responsible for backend development
+[24]: Achieved 99.9% uptime for core services
+Then desc_lines should be [23, 24]
+
+Return JSON only. /no_think"#;
+
+/// RAGFlow `structured_output_prompt.md` — JSON-only output constraints with a user-supplied schema.
+pub const STRUCTURED_OUTPUT_PROMPT: &str = r#"You're a helpful AI assistant. You could answer questions and output in JSON format.
+constraints:
+    - You must output in JSON format.
+    - Do not output boolean value, use string type instead.
+    - Do not output integer or float value, use number type instead.
+eg:
+    Here is the JSON schema:
+    {"properties": {"age": {"type": "number","description": ""},"name": {"type": "string","description": ""}},"required": ["age","name"],"type": "Object Array String Number Boolean","value": ""}
+
+    Here is the user's question:
+    My name is John Doe and I am 30 years old.
+
+    output:
+    {"name": "John Doe", "age": 30}
+Here is the JSON schema:
+    {schema}"#;
+
+/// RAGFlow `sufficiency_check.md` — judge whether retrieved docs are sufficient to answer.
+pub const SUFFICIENCY_CHECK_PROMPT: &str = r#"You are a information retrieval evaluation expert. Please assess whether the currently retrieved content is sufficient to answer the user's question.
+
+User question:
+{question}
+
+Retrieved content:
+{retrieved_docs}
+
+Please determine whether these content are sufficient to answer the user's question.
+
+Output format (JSON):
+```json
+{
+    "is_sufficient": true/false,
+    "reasoning": "Your reasoning for the judgment",
+    "missing_information": ["Missing information 1", "Missing information 2"]
+}
+```
+
+Requirements:
+1. If the retrieved content contains key information needed to answer the query, judge as sufficient (true).
+2. If key information is missing, judge as insufficient (false), and list the missing information.
+3. The `reasoning` should be concise and clear.
+4. The `missing_information` should only be filled when insufficient, otherwise empty array."#;
+
+/// RAGFlow `summary4memory.md` — condense tool-call responses into "[Status] + [Key Outcome] + [Critical Constraints]".
+pub const SUMMARY4MEMORY_PROMPT: &str = r#"**Role**: AI Assistant  
+**Task**: Summarize tool call responses  
+**Rules**:  
+1. Context: You've executed a tool (API/function) and received a response.  
+2. Condense the response into 1-2 short sentences.  
+3. Never omit:  
+   - Success/error status  
+   - Core results (e.g., data points, decisions)  
+   - Critical constraints (e.g., limits, conditions)  
+4. Exclude technical details like timestamps/request IDs unless crucial.  
+5. Use language as the same as main content of the tool response.  
+
+**Response Template**:  
+"[Status] + [Key Outcome] + [Critical Constraints]"  
+
+**Examples**:  
+🔹 Tool Response:  
+{"status": "success", "temperature": 78.2, "unit": "F", "location": "Tokyo", "timestamp": 16923456}  
+→ Summary: "Success: Tokyo temperature is 78°F."  
+
+🔹 Tool Response:  
+{"error": "invalid_api_key", "message": "Authentication failed: expired key"}  
+→ Summary: "Error: Authentication failed (expired API key)."  
+
+🔹 Tool Response:  
+{"available": true, "inventory": 12, "product": "widget", "limit": "max 5 per customer"}  
+→ Summary: "Available: 12 widgets in stock (max 5 per customer)."  
+
+**Your Turn**:  
+ - Tool call: {name}
+ - Tool inputs as following:
+{params}
+
+ - Tool Response:
+{result}"#;
+
+/// RAGFlow `tool_call_summary.md` — extract info relevant to the current call from tool results.
+pub const TOOL_CALL_SUMMARY_PROMPT: &str = r#"**Task Instruction:**
+
+You are tasked with reading and analyzing tool call result based on the following inputs: **Inputs for current call**, and **Results**. Your objective is to extract relevant and helpful information for **Inputs for current call** from the **Results** and seamlessly integrate this information into the previous steps to continue reasoning for the original question.
+
+**Guidelines:**
+
+1. **Analyze the Results:**
+  - Carefully review the content of each results of tool call.
+  - Identify factual information that is relevant to the **Inputs for current call** and can aid in the reasoning process for the original question.
+
+2. **Extract Relevant Information:**
+  - Select the information from the Searched Web Pages that directly contributes to advancing the previous reasoning steps.
+  - Ensure that the extracted information is accurate and relevant.
+
+  - **Inputs for current call:**  
+  {inputs}
+
+  - **Results:**  
+  {results}"#;
+
+/// RAGFlow `toc_detection.md` — detect whether a page contains a table of contents.
+pub const TOC_DETECTION_PROMPT: &str = r#"You are an AI assistant designed to analyze text content and detect whether a table of contents (TOC) list exists on the given page. Follow these steps:  
+
+1. **Analyze the Input**: Carefully review the provided text content.  
+2. **Identify Key Features**: Look for common indicators of a TOC, such as:  
+   - Section titles or headings paired with page numbers.
+   - Patterns like repeated formatting (e.g., bold/italicized text, dots/dashes between titles and numbers).  
+   - Phrases like "Table of Contents," "Contents," or similar headings.  
+   - Logical grouping of topics/subtopics with sequential page references.  
+3. **Discern Negative  Features**:
+   - The text contains no numbers, or the numbers present are clearly not page references (e.g., dates, statistical figures, phone numbers, version numbers).
+   - The text consists of full, descriptive sentences and paragraphs that form a narrative, present arguments, or explain concepts, rather than succinctly listing topics.
+   - Contains citations with authors, publication years, journal titles, and page ranges (e.g., "Smith, J. (2020). Journal Title, 10(2), 45-67.").
+   - Lists keywords or terms followed by multiple page numbers, often in alphabetical order.
+   - Comprises terms followed by their definitions or explanations.
+   - Labeled with headers like "Appendix A," "Appendix B," etc.
+   - Contains expressive language thanking individuals or organizations for their support or contributions.
+4. **Evaluate Evidence**: Weigh the presence/absence of these features to determine if the content resembles a TOC.
+5. **Output Format**: Provide your response in the following JSON structure:  
+   ```json  
+   {  
+     "reasoning": "Step-by-step explanation of your analysis based on the features identified." ,
+     "exists": true/false
+   }  
+   ```  
+6. **DO NOT** output anything else except JSON structure.
+
+**Input text Content ( Text-Only Extraction ):**  
+{page_txt} 
+"#;
+
+/// RAGFlow `toc_extraction.md` — parse a TOC page into a JSON array of {structure, title}.
+pub const TOC_EXTRACTION_PROMPT: &str = r#"You are an expert parser and data formatter. Your task is to analyze the provided table of contents (TOC) text and convert it into a valid JSON array of objects.
+
+**Instructions:**
+1.  Analyze each line of the input TOC.
+2.  For each line, extract the following three pieces of information:
+    *   `structure`: The hierarchical index/numbering (e.g., "1", "2.1", "3.2.5", "A.1"). If a line has no visible numbering or structure indicator (like a main "Chapter" title), use `null`.
+    *   `title`: The textual title of the section or chapter. This should be the main descriptive text, clean and without the page number.
+3.  Output **only** a valid JSON array. Do not include any other text, explanations, or markdown code block fences (like ```json) in your response.
+
+**JSON Format:**
+The output must be a list of objects following this exact schema:
+```json
+[
+    {
+        "structure": <structure index, "x.x.x" or None> (string）,
+        "title": <title of the section>
+    },
+    ...
+]
+```
+
+**Input Example:**
+```
+Contents
+1 Introduction to the System ... 1
+1.1 Overview .... 2
+1.2 Key Features .... 5
+2 Installation Guide ....8
+2.1 Prerequisites ........ 9
+2.2 Step-by-Step Process ........ 12
+Appendix A: Specifications ..... 45
+References ... 47
+```
+
+**Expected Output For The Example:**
+```json
+[
+    {"structure": null, "title": "Contents"},
+    {"structure": "1", "title": "Introduction to the System"},
+    {"structure": "1.1", "title": "Overview"},
+    {"structure": "1.2", "title": "Key Features"},
+    {"structure": "2", "title": "Installation Guide"},
+    {"structure": "2.1", "title": "Prerequisites"},
+    {"structure": "2.2", "title": "Step-by-Step Process"},
+    {"structure": "A", "title": "Specifications"},
+    {"structure": null, "title": "References"}
+]
+```
+
+**Now, process the following TOC input:**
+```
+{toc_page}
+```"#;
+
+/// RAGFlow `toc_extraction_continue.md` — append a new TOC page to an existing JSON array.
+pub const TOC_EXTRACTION_CONTINUE_PROMPT: &str = r#"You are an expert parser and data formatter, currently in the process of building a JSON array from a multi-page table of contents (TOC). Your task is to analyze the new page of content and **append** the new entries to the existing JSON array.
+
+**Instructions:**
+1.  You will be given two inputs:
+    *   `current_page_text`: The text content from the new page of the TOC.
+    *   `existing_json`: The valid JSON array you have generated from the previous pages.
+2.  Analyze each line of the `current_page_text` input.
+3.  For each new line, extract the following three pieces of information:
+    *   `structure`: The hierarchical index/numbering (e.g., "1", "2.1", "3.2.5"). Use `null` if none exists.
+    *   `title`: The clean textual title of the section or chapter.
+    *   `page`: The page number on which the section starts. Extract only the number. Use `null` if not present.
+4.  **Append these new entries** to the `existing_json` array. Do not modify, reorder, or delete any of the existing entries.
+5.  Output **only** the complete, updated JSON array. Do not include any other text, explanations, or markdown code block fences (like ```json).
+
+**JSON Format:**
+The output must be a valid JSON array following this schema:
+```json
+[
+    {
+        "structure": <string or null>,
+        "title": <string>,
+        "page": <number or null>
+    },
+    ...
+]
+```
+
+**Input Example:**
+`current_page_text`:
+```
+3.2 Advanced Configuration ........... 25
+3.3 Troubleshooting .................. 28
+4 User Management .................... 30
+```
+
+`existing_json`:
+```json
+[
+    {"structure": "1", "title": "Introduction", "page": 1},
+    {"structure": "2", "title": "Installation", "page": 5},
+    {"structure": "3", "title": "Configuration", "page": 12},
+    {"structure": "3.1", "title": "Basic Setup", "page": 15}
+]
+```
+
+**Expected Output For The Example:**
+```json
+[
+    {"structure": "3.2", "title": "Advanced Configuration", "page": 25},
+    {"structure": "3.3", "title": "Troubleshooting", "page": 28},
+    {"structure": "4", "title": "User Management", "page": 30}
+]
+```
+
+**Now, process the following inputs:**
+`current_page_text`:
+{toc_page}
+
+`existing_json`:
+{toc_json}"#;
+
+/// RAGFlow `toc_from_text_system.md` — extract TOC headings from a chunk dict into JSON (title/chunk_id).
+pub const TOC_FROM_TEXT_SYSTEM_PROMPT: &str = r#"You are a robust Table-of-Contents (TOC) extractor.
+
+GOAL
+Given a dictionary of chunks {"<chunk_ID>": chunk_text}, extract TOC-like headings and return a strict JSON array of objects:
+[
+  {"title": "", "chunk_id": ""},
+  ...
+]
+
+FIELDS
+- "title": the heading text (clean, no page numbers or leader dots).
+  - If any part of a chunk has no valid heading, output that part as {"title":"-1", ...}.
+- "chunk_id": the chunk ID (string).
+  - One chunk can yield multiple JSON objects in order (unmatched text + one or more headings).
+
+RULES
+1) Preserve input chunk order strictly.
+2) If a chunk contains multiple headings, expand them in order:
+   - Pre-heading narrative → {"title":"-1","chunk_id":"<chunk_ID>"}
+   - Then each heading → {"title":"...","chunk_id":"<chunk_ID>"}
+3) Do not merge outputs across chunks; each object refers to exactly one chunk ID.
+4) "title" must be non-empty (or exactly "-1"). "chunk_id" must be a string (chunk ID).
+5) When ambiguous, prefer "-1" unless the text strongly looks like a heading.
+
+HEADING DETECTION (cues, not hard rules)
+- Appears near line start, short isolated phrase, often followed by content.
+- May contain separators: — —— - : ： · •
+- Numbering styles:
+  • 第[一二三四五六七八九十百]+(篇|章|节|条)
+  • [(（]?[一二三四五六七八九十]+[)）]?
+  • [(（]?[①②③④⑤⑥⑦⑧⑨⑩][)）]?
+  • ^\d+(\.\d+)*[)．.]?\s*
+  • ^[IVXLCDM]+[).]
+  • ^[A-Z][).]
+- Canonical section cues (general only):
+  Common heading indicators include words such as:
+  "Overview", "Introduction", "Background", "Purpose", "Scope", "Definition",
+  "Method", "Procedure", "Result", "Discussion", "Summary", "Conclusion",
+  "Appendix", "Reference", "Annex", "Acknowledgment", "Disclaimer".
+  These are soft cues, not strict requirements.
+- Length restriction:
+  • Chinese heading: ≤25 characters
+  • English heading: ≤80 characters
+- Exclude long narrative sentences, continuous prose, or bullet-style lists → output as "-1".
+
+OUTPUT FORMAT
+- Return ONLY a valid JSON array of {"title","content"} objects.
+- No reasoning or commentary.
+
+EXAMPLES
+
+Example 1 — No heading
+Input:
+[{"0": "Copyright page · Publication info (ISBN 123-456). All rights reserved."}, ...]
+Output:
+[
+  {"title":"-1","chunk_id":"0"},
+  ...
+]
+
+Example 2 — One heading
+Input:
+[{"1": "Chapter 1: General Provisions This chapter defines the overall rules…"}, ...]
+Output:
+[
+  {"title":"Chapter 1: General Provisions","chunk_id":"1"},
+  ...
+]
+
+Example 3 — Narrative + heading
+Input:
+[{"2": "This paragraph introduces the background and goals. Section 2: Definitions Key terms are explained…"}, ...]
+Output:
+[
+  {"title":"Section 2: Definitions","chunk_id":"2"},
+  ...
+]
+
+Example 4 — Multiple headings in one chunk
+Input:
+[{"3": "Declarations and Commitments (I) Party B commits… (II) Party C commits… Appendix A Data Specification"}, ...]
+Output:
+[
+  {"title":"Declarations and Commitments","chunk_id":"3"},
+  {"title":"(I) Party B commits","chunk_id":"3"},
+  {"title":"(II) Party C commits","chunk_id":"3"},
+  {"title":"Appendix A Data Specification","chunk_id":"3"},
+  ...
+]
+
+Example 5 — Numbering styles
+Input:
+[{"4": "1. Scope: Defines boundaries. 2) Definitions: Terms used. III) Methods Overview."}, ...]
+Output:
+[
+  {"title":"1. Scope","chunk_id":"4"},
+  {"title":"2) Definitions","chunk_id":"4"},
+  {"title":"III) Methods Overview","chunk_id":"4"},
+  ...
+]
+
+Example 6 — Long list (NOT headings)
+Input:
+{"5": "Item list: apples, bananas, strawberries, blueberries, mangos, peaches"}, ...]
+Output:
+[
+  {"title":"-1","chunk_id":"5"},
+  ...
+]
+
+Example 7 — Mixed Chinese/English
+Input:
+{"6": "（出版信息略）This standard follows industry practices. Chapter 1: Overview 摘要… 第2节：术语与缩略语"}, ...]
+Output:
+[
+  {"title":"Chapter 1: Overview","chunk_id":"6"},
+  {"title":"第2节：术语与缩略语","chunk_id":"6"},
+  ...
+]"#;
+
+/// RAGFlow `toc_from_text_user.md` — user half of the chunk-dict TOC extraction.
+pub const TOC_FROM_TEXT_USER_PROMPT: &str = r#"OUTPUT FORMAT
+- Return ONLY the JSON array.
+- Use double quotes.
+- No extra commentary.
+- Keep language of "title" the same as the input.
+
+INPUT
+{text}"#;
+
+/// RAGFlow `toc_index.md` — match a titled entry against text; JSON {reasoning, exist}.
+pub const TOC_INDEX_PROMPT: &str = r#"You are an expert analyst tasked with matching text content to the title.
+
+**Instructions:**
+1. Analyze the given title with its numeric structure index and the provided text.
+2. Determine whether the title is mentioned as a section tile in the given text.
+3. Provide a concise, step-by-step reasoning for your decision.
+4. Output **only** the complete JSON object. Do not include any other text, explanations, or markdown code block fences (like ```json).
+
+**Output Format:**
+Your output must be a valid JSON object with the following keys:
+{
+"reasoning": "Step-by-step explanation of your analysis.",
+"exist": "<yes or no>",
+}
+
+** The title: **
+{structure} {title}
+
+** Given text: **
+{text}"#;
+
+/// RAGFlow `toc_relevance_system.md` — score TOC entries (5/3/1/0/-1) against a query with hierarchical traversal.
+pub const TOC_RELEVANCE_SYSTEM_PROMPT: &str = r#"# System Prompt: TOC Relevance Evaluation
+
+You are an expert logical reasoning assistant specializing in hierarchical Table of Contents (TOC) relevance evaluation.
+
+## GOAL
+You will receive:
+1. A JSON list of TOC items, each with fields:
+   ```json
+   {
+     "level": <integer>,   // e.g., 1, 2, 3
+     "title": <string>     // section title
+   }
+   ```
+2. A user query (natural language question).
+
+You must assign a **relevance score** (integer) to every TOC entry, based on how related its `title` is to the `query`.
+
+---
+
+## RULES
+
+### Scoring System
+- 5 → highly relevant (directly answers or matches the query intent)
+- 3 → somewhat related (same topic or partially overlaps)
+- 1 → weakly related (vague or tangential)
+- 0 → no clear relation
+- -1 → explicitly irrelevant or contradictory
+
+### Hierarchy Traversal
+- The TOC is hierarchical: smaller `level` = higher layer (e.g., level 1 is top-level, level 2 is a subsection).
+- You must traverse in **hierarchical order** — interpret the structure based on levels (1 > 2 > 3).
+- If a high-level item (level 1) is strongly related (score 5), its child items (level 2, 3) are likely relevant too.
+- If a high-level item is unrelated (-1 or 0), its deeper children are usually less relevant unless the titles clearly match the query.
+- Lower (deeper) levels provide more specific content; prefer assigning higher scores if they directly match the query.
+
+### Output Format
+Return a **JSON array**, preserving the input order but adding a new key `"score"`:
+
+```json
+[
+  {"level": 1, "title": "Introduction", "score": 0},
+  {"level": 2, "title": "Definition of Sustainability", "score": 5}
+]
+```
+
+### Constraints
+- Output **only the JSON array** — no explanations or reasoning text.
+
+### EXAMPLES
+
+#### Example 1
+Input TOC:
+[
+  {"level": 1, "title": "Machine Learning Overview"},
+  {"level": 2, "title": "Supervised Learning"},
+  {"level": 2, "title": "Unsupervised Learning"},
+  {"level": 3, "title": "Applications of Deep Learning"}
+]
+
+Query:
+"How is deep learning used in image classification?"
+
+Output:
+[
+  {"level": 1, "title": "Machine Learning Overview", "score": 3},
+  {"level": 2, "title": "Supervised Learning", "score": 3},
+  {"level": 2, "title": "Unsupervised Learning", "score": 0},
+  {"level": 3, "title": "Applications of Deep Learning", "score": 5}
+]
+
+---
+
+#### Example 2
+Input TOC:
+[
+  {"level": 1, "title": "Marketing Basics"},
+  {"level": 2, "title": "Consumer Behavior"},
+  {"level": 2, "title": "Digital Marketing"},
+  {"level": 3, "title": "Social Media Campaigns"},
+  {"level": 3, "title": "SEO Optimization"}
+]
+
+Query:
+"What are the best online marketing methods?"
+
+Output:
+[
+  {"level": 1, "title": "Marketing Basics", "score": 3},
+  {"level": 2, "title": "Consumer Behavior", "score": 1},
+  {"level": 2, "title": "Digital Marketing", "score": 5},
+  {"level": 3, "title": "Social Media Campaigns", "score": 5},
+  {"level": 3, "title": "SEO Optimization", "score": 5}
+]
+
+---
+
+#### Example 3
+Input TOC:
+[
+  {"level": 1, "title": "Physics Overview"},
+  {"level": 2, "title": "Classical Mechanics"},
+  {"level": 3, "title": "Newton's Laws"},
+  {"level": 2, "title": "Thermodynamics"},
+  {"level": 3, "title": "Entropy and Heat Transfer"}
+]
+
+Query:
+"What is entropy?"
+
+Output:
+[
+  {"level": 1, "title": "Physics Overview", "score": 3},
+  {"level": 2, "title": "Classical Mechanics", "score": 0},
+  {"level": 3, "title": "Newton's Laws", "score": -1},
+  {"level": 2, "title": "Thermodynamics", "score": 5},
+  {"level": 3, "title": "Entropy and Heat Transfer", "score": 5}
+]
+"#;
+
+/// RAGFlow `toc_relevance_user.md` — user half of the TOC relevance scoring.
+pub const TOC_RELEVANCE_USER_PROMPT: &str = r#"# User Prompt: TOC Relevance Evaluation
+
+You will now receive:
+1. A JSON list of TOC items (each with `level` and `title`)
+2. A user query string.
+
+Traverse the TOC hierarchically based on level numbers and assign scores (5,3,1,0,-1) according to the rules in the system prompt.  
+Output **only** the JSON array with the added `"score"` field.
+
+---
+
+**Input TOC:**
+{toc_json}
+
+**Query:**
+{query}
+"#;
+
+/// RAGFlow `vision_llm_describe_prompt.md` — transcribe a PDF page image into clean Markdown.
+/// The `{% if page %}` conditional is flattened to always emit the page divider.
+pub const VISION_LLM_DESCRIBE_PROMPT: &str = r#"## INSTRUCTION
+Transcribe the content from the provided PDF page image into clean Markdown format.
+
+- Only output the content transcribed from the image.
+- Do NOT output this instruction or any other explanation.
+- If the content is missing or you do not understand the input, return an empty string.
+
+## RULES
+1. Do NOT generate examples, demonstrations, or templates.
+2. Do NOT output any extra text such as 'Example', 'Example Output', or similar.
+3. Do NOT generate any tables, headings, or content that is not explicitly present in the image.
+4. Transcribe content word-for-word. Do NOT modify, translate, or omit any content.
+5. Do NOT explain Markdown or mention that you are using Markdown.
+6. Do NOT wrap the output in ```markdown or ``` blocks.
+7. Only apply Markdown structure to headings, paragraphs, lists, and tables, strictly based on the layout of the image. Do NOT create tables unless an actual table exists in the image.
+8. Preserve the original language, information, and order exactly as shown in the image.
+
+At the end of the transcription, add the page divider: `--- Page {page} ---`.
+
+> If you do not detect valid content in the image, return an empty string.
+"#;
+
+/// RAGFlow `vision_llm_figure_describe_prompt.md` — describe a figure image (structured data vs general content).
+pub const VISION_LLM_FIGURE_DESCRIBE_PROMPT: &str = r#"## ROLE
+
+You are an expert visual data analyst.
+
+## GOAL
+
+Analyze the image and produce a textual representation strictly based on what is visible in the image.
+
+## DECISION RULE (CRITICAL)
+
+First, determine whether the image contains an explicit visual data representation with enumerable data units forming a coherent dataset.
+
+Enumerable data units are clearly separable, repeatable elements intended for comparison, measurement, or aggregation, such as:
+
+- rows or columns in a table
+- individual bars in a bar chart
+- identifiable data points or series in a line graph
+- labeled segments in a pie chart
+
+The mere presence of numbers, icons, UI elements, or labels does NOT qualify unless they together form such a dataset.
+
+## TASKS
+
+1. Inspect the image and determine which output mode applies based on the decision rule.
+2. Use surrounding context only to disambiguate terms that appear in the image.
+3. Follow the output rules strictly.
+4. Include only content that is explicitly visible in the image.
+5. Do not infer intent, functionality, process logic, or meaning beyond what is visually or textually shown.
+
+## OUTPUT RULES (STRICT)
+
+- Produce output in **exactly one** of the two modes defined below.
+- Do NOT mention, label, or reference the modes in the output.
+- Do NOT combine content from both modes.
+- Do NOT explain or justify the choice of mode.
+- Do NOT add any headings, titles, or commentary beyond what the mode requires.
+
+---
+
+## MODE 1: STRUCTURED VISUAL DATA OUTPUT
+
+(Use only if the image contains enumerable data units forming a coherent dataset.)
+
+Output **only** the following fields, in list form.
+Do NOT add free-form paragraphs or additional sections.
+
+- Visual Type:
+- Title:
+- Axes / Legends / Labels:
+- Data Points:
+- Captions / Annotations:
+
+---
+
+## MODE 2: GENERAL FIGURE CONTENT
+
+(Use only if the image does NOT contain enumerable data units.)
+
+Write the content directly, starting from the first sentence.
+Do NOT add any introductory labels, titles, headings, or prefixes.
+
+Requirements:
+
+- Describe visible regions and components in a stable order (e.g., top-to-bottom, left-to-right).
+- Explicitly name interface elements or visual objects exactly as they appear (e.g., tabs, panels, buttons, icons, input fields).
+- Transcribe all visible text verbatim; do not paraphrase, summarize, or reinterpret labels.
+- Describe spatial grouping, containment, and alignment of elements.
+- Do NOT interpret intent, behavior, workflows, gameplay rules, or processes.
+- Do NOT describe the figure as a chart, diagram, process, phase, or sequence unless such words explicitly appear in the image text.
+- Avoid narrative or stylistic language unless it is a dominant and functional visual element.
+
+Use concise, information-dense sentences.
+Do not use bullet lists or structured fields in this mode.
+"#;
+
+/// RAGFlow `vision_llm_figure_describe_prompt_with_context.md` — figure description with surrounding context.
+pub const VISION_LLM_FIGURE_DESCRIBE_PROMPT_WITH_CONTEXT: &str = r#"You are an expert visual data analyst.
+
+## GOAL
+
+Analyze the image and produce a textual representation strictly based on what is visible in the image.
+Surrounding context may be used only for minimal clarification or disambiguation of terms that appear in the image, not as a source of new information.
+
+## CONTEXT (ABOVE)
+
+{context_above}
+
+## CONTEXT (BELOW)
+
+{context_below}
+
+## DECISION RULE (CRITICAL)
+
+First, determine whether the image contains an explicit visual data representation with enumerable data units forming a coherent dataset.
+
+Enumerable data units are clearly separable, repeatable elements intended for comparison, measurement, or aggregation, such as:
+
+- rows or columns in a table
+- individual bars in a bar chart
+- identifiable data points or series in a line graph
+- labeled segments in a pie chart
+
+The mere presence of numbers, icons, UI elements, or labels does NOT qualify unless they together form such a dataset.
+
+## TASKS
+
+1. Inspect the image and determine which output mode applies based on the decision rule.
+2. Use surrounding context only to disambiguate terms that appear in the image.
+3. Follow the output rules strictly.
+4. Include only content that is explicitly visible in the image.
+5. Do not infer intent, functionality, process logic, or meaning beyond what is visually or textually shown.
+
+## OUTPUT RULES (STRICT)
+
+- Produce output in **exactly one** of the two modes defined below.
+- Do NOT mention, label, or reference the modes in the output.
+- Do NOT combine content from both modes.
+- Do NOT explain or justify the choice of mode.
+- Do NOT add any headings, titles, or commentary beyond what the mode requires.
+
+---
+
+## MODE 1: STRUCTURED VISUAL DATA OUTPUT
+
+(Use only if the image contains enumerable data units forming a coherent dataset.)
+
+Output **only** the following fields, in list form.
+Do NOT add free-form paragraphs or additional sections.
+
+- Visual Type:
+- Title:
+- Axes / Legends / Labels:
+- Data Points:
+- Captions / Annotations:
+
+---
+
+## MODE 2: GENERAL FIGURE CONTENT
+
+(Use only if the image does NOT contain enumerable data units.)
+
+Write the content directly, starting from the first sentence.
+Do NOT add any introductory labels, titles, headings, or prefixes.
+
+Requirements:
+
+- Describe visible regions and components in a stable order (e.g., top-to-bottom, left-to-right).
+- Explicitly name interface elements or visual objects exactly as they appear (e.g., tabs, panels, buttons, icons, input fields).
+- Transcribe all visible text verbatim; do not paraphrase, summarize, or reinterpret labels.
+- Describe spatial grouping, containment, and alignment of elements.
+- Do NOT interpret intent, behavior, workflows, gameplay rules, or processes.
+- Do NOT describe the figure as a chart, diagram, process, phase, or sequence unless such words explicitly appear in the image text.
+- Avoid narrative or stylistic language unless it is a dominant and functional visual element.
+
+Use concise, information-dense sentences.
+Do not use bullet lists or structured fields in this mode.
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2609,6 +3892,115 @@ mod tests {
 
         let qp = PromptLibrary::question_prompt();
         assert!(qp.content().contains("Propose {topn} questions"));
+    }
+
+    #[test]
+    fn test_ragflow_remaining_prompts_registered() {
+        // Every remaining rag/prompts port (related_question, resume series,
+        // structured output, sufficiency check, memory/tool summaries, TOC
+        // pipeline, vision) is resolvable via get() and listed by list().
+        let listed = PromptLibrary::list();
+        for name in [
+            "related_question",
+            "resume_system",
+            "resume_system_en",
+            "resume_basic_info",
+            "resume_basic_info_en",
+            "resume_education",
+            "resume_education_en",
+            "resume_project_exp",
+            "resume_project_exp_en",
+            "resume_work_exp",
+            "resume_work_exp_en",
+            "structured_output",
+            "sufficiency_check",
+            "summary4memory",
+            "tool_call_summary",
+            "toc_detection",
+            "toc_extraction",
+            "toc_extraction_continue",
+            "toc_from_text_system",
+            "toc_from_text_user",
+            "toc_index",
+            "toc_relevance_system",
+            "toc_relevance_user",
+            "vision_llm_describe",
+            "vision_llm_figure_describe",
+            "vision_llm_figure_describe_with_context",
+        ] {
+            assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+            assert!(listed.contains(&name), "not listed: {name}");
+        }
+    }
+
+    #[test]
+    fn test_ragflow_remaining_prompt_render() {
+        // resume_basic_info (zh): indexed_text substitutes; JSON schema braces survive.
+        let mut v1 = HashMap::new();
+        v1.insert("indexed_text", "[1]: 张三 男 28岁\n[2]: 电话 13800138000");
+        let out1 = PromptLibrary::resume_basic_info().render(&v1);
+        assert!(out1.contains("张三"));
+        assert!(out1.contains("\"name_kwd\""));
+        assert!(out1.contains("只返回 JSON"));
+        assert!(!out1.contains("{indexed_text}"));
+
+        // resume_education_en: same variable, English instructions.
+        let mut v2 = HashMap::new();
+        v2.insert("indexed_text", "[1]: Stanford University, CS");
+        let out2 = PromptLibrary::resume_education_en().render(&v2);
+        assert!(out2.contains("Stanford University"));
+        assert!(out2.contains("Return JSON only"));
+
+        // related_question: original RAGFlow wording (5-10 questions), no placeholders left.
+        let out3 = PromptLibrary::related_question().content().to_string();
+        assert!(out3.contains("5-10 related questions"));
+        assert!(out3.contains("electric vehicles"));
+
+        // toc_relevance_user: toc_json + query render; no Jinja leftovers.
+        let mut v4 = HashMap::new();
+        v4.insert("toc_json", "[{\"level\": 1, \"title\": \"Intro\"}]");
+        v4.insert("query", "What is entropy?");
+        let out4 = PromptLibrary::toc_relevance_user().render(&v4);
+        assert!(out4.contains("Intro"));
+        assert!(out4.contains("What is entropy?"));
+        assert!(!out4.contains("{{ toc_json }}"));
+
+        // structured_output: schema placeholder renders.
+        let mut v5 = HashMap::new();
+        v5.insert("schema", "{\"type\": \"object\"}");
+        let out5 = PromptLibrary::structured_output().render(&v5);
+        assert!(out5.contains("{\"type\": \"object\"}"));
+        assert!(!out5.contains("{schema}"));
+
+        // vision_llm_describe: flattened page divider uses {page}.
+        let mut v6 = HashMap::new();
+        v6.insert("page", "3");
+        let out6 = PromptLibrary::vision_llm_describe().render(&v6);
+        assert!(out6.contains("--- Page 3 ---"));
+        assert!(!out6.contains("{% if page %}"));
+    }
+
+    #[test]
+    fn test_ragflow_remaining_prompt_verbatim() {
+        // Bilingual resume prompts keep their original Chinese/English markers.
+        let sys_zh = PromptLibrary::resume_system();
+        assert!(sys_zh.content().contains("专业的简历分析助手"));
+        let sys_en = PromptLibrary::resume_system_en();
+        assert!(sys_en.content().contains("professional resume analysis assistant"));
+        // resume_work_exp (zh) keeps the stop-heading list.
+        let work_zh = PromptLibrary::resume_work_exp();
+        assert!(work_zh.content().contains("个人评价"));
+        assert!(work_zh.content().contains("desc_lines"));
+        // toc_from_text_system keeps the heading-numbering regexes verbatim.
+        let toc_fts = PromptLibrary::toc_from_text_system();
+        assert!(toc_fts.content().contains("第[一二三四五六七八九十百]+(篇|章|节|条)"));
+        // summary4memory keeps the response template.
+        let s4m = PromptLibrary::summary4memory();
+        assert!(s4m.content().contains("[Status] + [Key Outcome] + [Critical Constraints]"));
+        // sufficiency_check keeps the JSON output keys.
+        let suff = PromptLibrary::sufficiency_check();
+        assert!(suff.content().contains("is_sufficient"));
+        assert!(suff.content().contains("missing_information"));
     }
 
 }

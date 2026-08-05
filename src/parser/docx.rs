@@ -16,7 +16,7 @@ use crate::{Document, Result};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 /// One parsed paragraph: (text, style name).
 pub type DocxParagraph = (String, String);
@@ -475,13 +475,136 @@ impl DocxParser {
 impl Parse for DocxParser {
     fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
         let content = self.extract_text(data)?;
-        Ok(new_document(
+        let mut doc = new_document(
             name,
             content,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             data.len(),
-        ))
+        );
+        // `get_picture` — docx_parser.py:33-70: count embedded images so
+        // downstream image-context steps know whether this document has any.
+        if let Ok(images) = extract_images(data) {
+            if !images.is_empty() {
+                doc.metadata
+                    .insert("image_count".to_string(), images.len().to_string());
+            }
+        }
+        Ok(doc)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Embedded-image extraction — docx_parser.py `get_picture` (33-70).
+//
+// Paragraph images live in the drawing markup: `<pic:pic><a:blip r:embed=
+// "rIdN"/></pic:pic>`. The embed id resolves through
+// `word/_rels/document.xml.rels` to a `word/media/*` part, whose bytes are
+// the image. The Python code walks per-paragraph and tolerates damaged
+// images via a blob fallback; here we do the same resolution document-wide
+// and return `(media file name, bytes)` pairs.
+// ---------------------------------------------------------------------------
+
+/// `get_picture` — docx_parser.py:33-70, document-wide. Returns every
+/// embedded image as `(file name, bytes)`, in document order, skipping
+/// unresolvable or empty blips.
+pub fn extract_images(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut zf = zip::ZipArchive::new(Cursor::new(data))
+        .map_err(|e| anyhow::anyhow!("Invalid DOCX zip: {e}"))?;
+
+    let document_xml = read_zip_entry(&mut zf, "word/document.xml")
+        .ok_or_else(|| anyhow::anyhow!("word/document.xml missing"))?;
+    let rels_xml = read_zip_entry(&mut zf, "word/_rels/document.xml.rels")
+        .unwrap_or_default();
+
+    // rId → relationship target.
+    let mut rels: HashMap<String, String> = HashMap::new();
+    {
+        let mut reader = Reader::from_str(&rels_xml);
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(event)) | Ok(Event::Empty(event))
+                    if event.local_name().as_ref() == b"Relationship" =>
+                {
+                    let id = event
+                        .attributes()
+                        .flatten()
+                        .find(|attr| attr.key.local_name().as_ref() == b"Id")
+                        .map(|attr| String::from_utf8_lossy(&attr.value).into_owned());
+                    let target = event
+                        .attributes()
+                        .flatten()
+                        .find(|attr| attr.key.local_name().as_ref() == b"Target")
+                        .map(|attr| String::from_utf8_lossy(&attr.value).into_owned());
+                    if let (Some(id), Some(target)) = (id, target) {
+                        rels.insert(id, target);
+                    }
+                }
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+        }
+    }
+
+    // Collect `r:embed` ids from every `<a:blip>` in the document body.
+    let mut embeds: Vec<String> = Vec::new();
+    {
+        let mut reader = Reader::from_str(&document_xml);
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(event)) | Ok(Event::Empty(event))
+                    if event.local_name().as_ref() == b"blip" =>
+                {
+                    for attr in event.attributes().flatten() {
+                        if attr.key.local_name().as_ref() == b"embed" {
+                            embeds.push(
+                                String::from_utf8_lossy(&attr.value).into_owned(),
+                            );
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+        }
+    }
+
+    let mut images = Vec::new();
+    for embed in embeds {
+        let Some(target) = rels.get(&embed) else {
+            continue;
+        };
+        // Resolve the relationship target relative to word/ (mirrors
+        // `document.part.related_parts[embed]`).
+        let path = if target.starts_with('/') {
+            target.trim_start_matches('/').to_owned()
+        } else {
+            format!("word/{}", target.trim_start_matches("./"))
+        };
+        let Some(bytes) = read_zip_entry_bytes(&mut zf, &path) else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        images.push((name, bytes));
+    }
+    Ok(images)
+}
+
+fn read_zip_entry_bytes(
+    zf: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Option<Vec<u8>> {
+    let Ok(mut file) = zf.by_name(name) else {
+        return None;
+    };
+    let mut bytes = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 #[cfg(test)]
@@ -640,6 +763,56 @@ mod tests {
             doc.mime_type,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         );
+    }
+
+    #[test]
+    fn extract_images_resolves_blip_embeds_through_rels() {
+        // `get_picture` — docx_parser.py:33-70: `<a:blip r:embed="rId5"/>`
+        // → word/_rels/document.xml.rels rId5 → word/media/image1.png bytes.
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>
+    <w:p><w:r><w:t>Text with a picture</w:t></w:r></w:p>
+    <w:p><w:r><w:drawing><pic:pic><a:blip r:embed="rId5"/></pic:pic></w:drawing></w:r></w:p>
+  </w:body>
+</w:document>"#;
+            zw.start_file("word/document.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+  <Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image2.png"/>
+</Relationships>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            zw.start_file("word/media/image1.png", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(&[0x89, b'P', b'N', b'G', 1, 2, 3]).unwrap();
+            // image2 is referenced by rels but never blipped → not extracted.
+            zw.finish().unwrap();
+        }
+
+        let images = extract_images(&buf).unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].0, "image1.png");
+        assert_eq!(images[0].1, vec![0x89, b'P', b'N', b'G', 1, 2, 3]);
+
+        // parse() surfaces the count as metadata.
+        let doc = DocxParser::new().parse("pic.docx", &buf).unwrap();
+        assert_eq!(doc.metadata.get("image_count").map(String::as_str), Some("1"));
     }
 
     /// Build a minimal valid DOCX (document.xml + styles.xml + [Content_Types].xml).
