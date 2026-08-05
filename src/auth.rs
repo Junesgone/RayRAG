@@ -186,6 +186,51 @@ impl UserStore {
         })
     }
 
+    /// 管理员：以显式角色创建用户（RAGFlow admin create_user 移植）。
+    ///
+    /// 用户名兼作登录名（本存储按 email 建索引）；密码沿用自助注册的
+    /// 最小长度策略。
+    pub fn create_user(&self, username: &str, password: &str, role: &str) -> Result<User> {
+        let username = username.trim();
+        if username.is_empty() {
+            anyhow::bail!("Username is required");
+        }
+        if password.len() < 12 {
+            anyhow::bail!("Password must be at least 12 characters");
+        }
+        let role = if role == "admin" { "admin" } else { "normal" };
+        let user = User {
+            id: uuid::Uuid::new_v4().to_string(),
+            nickname: username.to_string(),
+            email: username.to_ascii_lowercase(),
+            password_hash: hash_password(password)?,
+            role: role.to_string(),
+            created_at: now_ms(),
+        };
+        self.mutate(|users| {
+            if users.contains_key(&user.email) {
+                anyhow::bail!("User '{}' already exists", user.email);
+            }
+            users.insert(user.email.clone(), user.clone());
+            Ok(user)
+        })
+    }
+
+    /// 管理员：授予或撤销管理员角色（RAGFlow grant_admin/revoke_admin 移植）。
+    pub fn set_role(&self, user_id: &str, role: &str) -> Result<bool> {
+        let role = if role == "admin" { "admin" } else { "normal" };
+        self.mutate_if_changed(|users| {
+            let Some(user) = users.values_mut().find(|user| user.id == user_id) else {
+                return Ok((false, false));
+            };
+            if user.role == role {
+                return Ok((true, false));
+            }
+            user.role = role.to_string();
+            Ok((true, true))
+        })
+    }
+
     /// Validate a token and return the user_id if valid.
     pub fn validate_token(&self, token: &str) -> Option<String> {
         let tokens = self.tokens.read().unwrap();

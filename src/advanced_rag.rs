@@ -479,3 +479,461 @@ fn split_comparison(query: &str) -> Option<(String, String)> {
     }
     None
 }
+
+// ── Tree-structured query decomposition retrieval ─────────────────
+// Port of RAGFlow `rag/advanced_rag/tree_structured_query_decomposition_retrieval.py`
+// (DeepResearchRetriever): decompose a complex question into sub-queries,
+// retrieve for each, check sufficiency, and recursively drill down until
+// the evidence is sufficient or the depth budget is exhausted.
+
+use std::sync::Arc;
+
+/// Verdict of the sufficiency checker (RAGFlow `SufficiencyVerdict`).
+#[derive(Debug, Clone)]
+pub struct SufficiencyVerdict {
+    pub is_sufficient: bool,
+    pub reasoning: String,
+    pub missing_information: Vec<String>,
+}
+
+/// One follow-up question (RAGFlow `FollowUpQuestion`).
+#[derive(Debug, Clone)]
+pub struct FollowUpQuestion {
+    pub question: String,
+    pub query: String,
+}
+
+/// Follow-up plan produced by the multi-query generator
+/// (RAGFlow `FollowUpPlan`).
+#[derive(Debug, Clone)]
+pub struct FollowUpPlan {
+    pub reasoning: String,
+    pub questions: Vec<FollowUpQuestion>,
+}
+
+/// Accumulated evidence across a deep-research run (RAGFlow
+/// `ResearchChunkInfo`): unique chunks plus per-document aggregation.
+#[derive(Debug, Clone, Default)]
+pub struct ResearchChunkInfo {
+    pub total: usize,
+    pub chunks: Vec<crate::search::SearchResult>,
+    pub doc_aggs: Vec<crate::search::DocumentAggregation>,
+}
+
+impl ResearchChunkInfo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Merge chunks in, deduplicating by chunk id, and refresh document
+    /// aggregation counts (RAGFlow `merge_chunk_info`).
+    pub fn merge(&mut self, chunks: &[crate::search::SearchResult]) {
+        for chunk in chunks {
+            if !self.chunks.iter().any(|c| c.chunk.id == chunk.chunk.id) {
+                self.chunks.push(chunk.clone());
+            }
+        }
+        let mut counts: std::collections::HashMap<String, (String, usize)> =
+            std::collections::HashMap::new();
+        for chunk in &self.chunks {
+            let entry = counts
+                .entry(chunk.chunk.id.clone())
+                .or_insert_with(|| (chunk.chunk.doc_name.clone(), 0));
+            entry.1 += 1;
+        }
+        self.doc_aggs = counts
+            .into_iter()
+            .map(|(doc_id, (doc_name, count))| crate::search::DocumentAggregation {
+                doc_name,
+                doc_id,
+                count,
+            })
+            .collect();
+        self.total = self.chunks.len();
+    }
+}
+
+/// Outcome of one (recursive) research step: aggregated text plus every
+/// chunk retrieved anywhere under this subtree.
+#[derive(Debug, Clone, Default)]
+pub struct ResearchOutcome {
+    pub text: String,
+    pub chunks: Vec<crate::search::SearchResult>,
+}
+
+/// Format retrieved chunks as the prompt evidence block (RAGFlow
+/// `kb_prompt`, simplified): numbered, content truncated to a char budget.
+pub fn kb_prompt(
+    results: &[crate::search::SearchResult],
+    max_chunks: usize,
+    max_chars_per_chunk: usize,
+) -> String {
+    let mut out = String::new();
+    for (i, result) in results.iter().take(max_chunks).enumerate() {
+        let content: String = result.chunk.content.chars().take(max_chars_per_chunk).collect();
+        out.push_str(&format!("[{}] {}\n", i + 1, content));
+    }
+    out
+}
+
+/// Extract the first JSON object/array from an LLM response, tolerating
+/// markdown fences and surrounding prose.
+fn parse_llm_json(text: &str) -> Option<serde_json::Value> {
+    for open in ['{', '['] {
+        let close = if open == '{' { '}' } else { ']' };
+        if let Some(start) = text.find(open) {
+            if let Some(end) = text[start..].rfind(close) {
+                let candidate = &text[start..start + end + 1];
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Tree-structured deep-research retriever (RAGFlow `DeepResearchRetriever`).
+pub struct DeepResearchRetriever {
+    chat: Arc<dyn crate::llm::ChatModel>,
+    retrieve: Arc<dyn Fn(&str) -> anyhow::Result<Vec<crate::search::SearchResult>> + Send + Sync>,
+    /// Maximum recursion depth for follow-up questions.
+    pub max_depth: usize,
+    /// Maximum number of chunks fed to the sufficiency/query LLMs.
+    pub max_chunks_in_prompt: usize,
+    /// Maximum characters per chunk in the evidence block.
+    pub max_chars_per_chunk: usize,
+    sufficiency_prompt: String,
+    followup_prompt: String,
+}
+
+impl DeepResearchRetriever {
+    pub fn new(
+        chat: Arc<dyn crate::llm::ChatModel>,
+        retrieve: impl Fn(&str) -> anyhow::Result<Vec<crate::search::SearchResult>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        Self {
+            chat,
+            retrieve: Arc::new(retrieve),
+            max_depth: 2,
+            max_chunks_in_prompt: 32,
+            max_chars_per_chunk: 1200,
+            sufficiency_prompt: DEFAULT_SUFFICIENCY_PROMPT.to_string(),
+            followup_prompt: DEFAULT_FOLLOWUP_PROMPT.to_string(),
+        }
+    }
+
+    pub fn with_prompts(mut self, sufficiency: &str, followup: &str) -> Self {
+        self.sufficiency_prompt = sufficiency.to_string();
+        self.followup_prompt = followup.to_string();
+        self
+    }
+
+    /// Ask the LLM whether the retrieved evidence answers `question`.
+    async fn check_sufficiency(&self, question: &str, evidence: &str) -> anyhow::Result<SufficiencyVerdict> {
+        let prompt = self
+            .sufficiency_prompt
+            .replace("{question}", question)
+            .replace("{retrieved_docs}", evidence);
+        let answer = self.chat.chat(&prompt, &[]).await?;
+        let json = parse_llm_json(&answer)
+            .ok_or_else(|| anyhow::anyhow!("sufficiency check returned no JSON: {answer}"))?;
+        Ok(SufficiencyVerdict {
+            is_sufficient: json["is_sufficient"].as_bool().unwrap_or(false),
+            reasoning: json["reasoning"].as_str().unwrap_or_default().to_string(),
+            missing_information: json["missing_information"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Generate follow-up questions for the missing information.
+    async fn gen_followups(
+        &self,
+        question: &str,
+        query: &str,
+        missing: &[String],
+        evidence: &str,
+    ) -> anyhow::Result<FollowUpPlan> {
+        let prompt = self
+            .followup_prompt
+            .replace("{question}", question)
+            .replace("{query}", query)
+            .replace("{missing_information}", &missing.join("\n"))
+            .replace("{retrieved_docs}", evidence);
+        let answer = self.chat.chat(&prompt, &[]).await?;
+        let json = parse_llm_json(&answer)
+            .ok_or_else(|| anyhow::anyhow!("follow-up generation returned no JSON: {answer}"))?;
+        let questions = json["queries"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|q| {
+                        let question = q["question"].as_str()?;
+                        let query = q["query"].as_str().unwrap_or(question);
+                        Some(FollowUpQuestion {
+                            question: question.to_string(),
+                            query: query.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(FollowUpPlan {
+            reasoning: json["reasoning"].as_str().unwrap_or_default().to_string(),
+            questions,
+        })
+    }
+
+    /// Recursive research: retrieve → check sufficiency → decompose →
+    /// recurse on sub-queries (RAGFlow `DeepResearchRetriever.research`).
+    pub async fn research(
+        &self,
+        question: &str,
+        query: &str,
+        depth: usize,
+    ) -> anyhow::Result<ResearchOutcome> {
+        if depth == 0 {
+            return Ok(ResearchOutcome::default());
+        }
+        let results = (self.retrieve)(query)?;
+        let evidence = kb_prompt(&results, self.max_chunks_in_prompt, self.max_chars_per_chunk);
+        let mut outcome = ResearchOutcome {
+            text: evidence.clone(),
+            chunks: results,
+        };
+        let verdict = self.check_sufficiency(question, &evidence).await?;
+        if !verdict.is_sufficient {
+            let plan = self
+                .gen_followups(
+                    question,
+                    query,
+                    &verdict.missing_information,
+                    &evidence,
+                )
+                .await?;
+            let futures: Vec<_> = plan
+                .questions
+                .iter()
+                .map(|q| self.research(&q.question, &q.query, depth - 1))
+                .collect();
+            let results = futures_util::future::join_all(futures).await;
+            for result in results {
+                if let Ok(sub) = result {
+                    if !sub.text.trim().is_empty() {
+                        outcome.text.push_str("\n");
+                        outcome.text.push_str(&sub.text);
+                    }
+                    outcome.chunks.extend(sub.chunks);
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// One-shot deep research: runs the recursion and merges all evidence
+    /// into a `ResearchChunkInfo` (RAGFlow `DeepResearcher.astream` flow).
+    pub async fn deep_research(
+        &self,
+        question: &str,
+        query: &str,
+    ) -> anyhow::Result<(ResearchOutcome, ResearchChunkInfo)> {
+        let outcome = self.research(question, query, self.max_depth).await?;
+        let mut info = ResearchChunkInfo::new();
+        info.merge(&outcome.chunks);
+        Ok((outcome, info))
+    }
+
+}
+
+/// Default sufficiency-check prompt, ported from
+/// `rag/prompts/sufficiency_check.md`.
+pub const DEFAULT_SUFFICIENCY_PROMPT: &str = r#"You are an expert research assistant. Your task is to determine whether the retrieved documents are sufficient to answer the user's question.
+
+Guidelines:
+- If the documents contain enough information to fully answer the question, set "is_sufficient" to true.
+- If information is missing or incomplete, set "is_sufficient" to false and list the specific missing information.
+- Base your decision solely on the provided documents, not on external knowledge.
+
+Respond in JSON format only:
+{"is_sufficient": true/false, "reasoning": "...", "missing_information": ["..."]}
+
+Question: {question}
+
+Retrieved Documents:
+{retrieved_docs}"#;
+
+/// Default follow-up question generator, ported from
+/// `rag/prompts/multi_queries_gen.md`.
+pub const DEFAULT_FOLLOWUP_PROMPT: &str = r#"You are an expert research assistant. The retrieved documents do not fully answer the original question. Generate follow-up questions to gather the missing information.
+
+Guidelines:
+- Generate 1-3 follow-up questions that target the missing information.
+- Each question must be a concrete search query that can be used to retrieve more documents.
+- Questions should be independent and cover different aspects of the missing information.
+
+Respond in JSON format only:
+{"reasoning": "...", "queries": [{"question": "...", "query": "..."}]}
+
+Original Question: {question}
+Current Query: {query}
+Missing Information: {missing_information}
+Retrieved Documents:
+{retrieved_docs}"#;
+
+#[cfg(test)]
+mod deep_research_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use crate::llm::{ChatMessage, ChatModel};
+    use crate::search::{IndexedChunk, SearchResult};
+
+    struct FakeChatModel {
+        calls: Arc<AtomicUsize>,
+        sufficient_after: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatModel for FakeChatModel {
+        fn model_name(&self) -> &str {
+            "fake-chat"
+        }
+        async fn chat(&self, system: &str, _history: &[ChatMessage]) -> anyhow::Result<String> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if system.contains("sufficient") {
+                if n <= self.sufficient_after {
+                    Ok(r#"{"is_sufficient": false, "reasoning": "need more", "missing_information": ["more details"]}"#.into())
+                } else {
+                    Ok(r#"{"is_sufficient": true, "reasoning": "enough", "missing_information": []}"#.into())
+                }
+            } else {
+                Ok(r#"{"reasoning": "split", "queries": [{"question": "sub q1", "query": "sub query 1"}, {"question": "sub q2", "query": "sub query 2"}]}"#.into())
+            }
+        }
+        async fn chat_stream(
+            &self,
+            _system: &str,
+            _history: &[ChatMessage],
+            _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    fn fake_retrieve(calls: Arc<AtomicUsize>) -> impl Fn(&str) -> anyhow::Result<Vec<SearchResult>> {
+        move |query: &str| {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(vec![SearchResult {
+                chunk: IndexedChunk {
+                    id: format!("c{n}"),
+                    doc_name: format!("doc{n}"),
+                    content: format!("content for {query} ({n})"),
+                    embedding: vec![],
+                    token_count: 0,
+                    position: 0,
+                    metadata: Default::default(),
+                },
+                score: 0.9,
+                rank: 0,
+            }])
+        }
+    }
+
+    #[tokio::test]
+    async fn sufficient_evidence_stops_after_one_level() {
+        let chat_calls = Arc::new(AtomicUsize::new(0));
+        let ret_calls = Arc::new(AtomicUsize::new(0));
+        let chat: Arc<dyn ChatModel> = Arc::new(FakeChatModel {
+            calls: chat_calls.clone(),
+            sufficient_after: 0,
+        });
+        let retriever = DeepResearchRetriever::new(chat, fake_retrieve(ret_calls.clone()));
+        let (outcome, info) = retriever
+            .deep_research("what is x", "x")
+            .await
+            .expect("deep research runs");
+        assert_eq!(chat_calls.load(Ordering::SeqCst), 1, "only sufficiency check");
+        assert_eq!(ret_calls.load(Ordering::SeqCst), 1, "only one retrieval");
+        assert!(outcome.text.contains("content for x"));
+        assert_eq!(info.total, 1);
+        assert_eq!(info.doc_aggs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn insufficient_evidence_recurses_into_followups() {
+        let chat_calls = Arc::new(AtomicUsize::new(0));
+        let ret_calls = Arc::new(AtomicUsize::new(0));
+        let chat: Arc<dyn ChatModel> = Arc::new(FakeChatModel {
+            calls: chat_calls.clone(),
+            sufficient_after: 1,
+        });
+        let retriever = DeepResearchRetriever::new(chat, fake_retrieve(ret_calls.clone()));
+        let (outcome, info) = retriever
+            .deep_research("what is x", "x")
+            .await
+            .expect("deep research runs");
+        // 1 sufficiency (insufficient) + 1 followup gen + 2 sufficiency checks
+        assert_eq!(chat_calls.load(Ordering::SeqCst), 4);
+        // 1 root retrieval + 2 follow-up retrievals, deduplicated
+        assert_eq!(ret_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(info.total, 3);
+        assert!(outcome.text.contains("content for sub query 1"));
+        assert!(outcome.text.contains("content for sub query 2"));
+    }
+
+    #[test]
+    fn kb_prompt_numbers_and_truncates_chunks() {
+        let results = vec![
+            SearchResult {
+                chunk: IndexedChunk {
+                    id: "a".into(),
+                    doc_name: "d".into(),
+                    content: "hello world".into(),
+                    embedding: vec![],
+                    token_count: 0,
+                    position: 0,
+                    metadata: Default::default(),
+                },
+                score: 1.0,
+                rank: 0,
+            },
+            SearchResult {
+                chunk: IndexedChunk {
+                    id: "b".into(),
+                    doc_name: "d".into(),
+                    content: "second chunk".into(),
+                    embedding: vec![],
+                    token_count: 0,
+                    position: 0,
+                    metadata: Default::default(),
+                },
+                score: 0.5,
+                rank: 1,
+            },
+        ];
+        let prompt = kb_prompt(&results, 1, 5);
+        assert_eq!(prompt, "[1] hello\n");
+        let all = kb_prompt(&results, 10, 1000);
+        assert!(all.contains("[1] hello world"));
+        assert!(all.contains("[2] second chunk"));
+    }
+
+    #[test]
+    fn parse_llm_json_handles_markdown_fences() {
+        let raw = "Here you go:\n```json\n{\"is_sufficient\": true, \"reasoning\": \"ok\", \"missing_information\": []}\n```";
+        let json = parse_llm_json(raw).expect("json extracted");
+        assert_eq!(json["is_sufficient"], true);
+        let arr = parse_llm_json("[1, 2, 3] trailing");
+        assert_eq!(arr.unwrap()[1], 2);
+        assert!(parse_llm_json("no json here").is_none());
+    }
+}

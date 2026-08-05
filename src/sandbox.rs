@@ -1434,3 +1434,459 @@ mod tests {
         assert_eq!(formatted, "Line 1: Import: os\nLine 3: Call: eval");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 远程调用契约层（新增，对齐 client.py / providers/self_managed.py +
+// executor_manager api 层 routes.py / handlers.py；不改动既有 pub API）
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 任务提交/结果拉取语义（对齐 SelfManagedProvider.execute_code）：
+//   - POST {endpoint}/run，请求体 {"code_b64": b64(code), "language", "arguments"}
+//   - 同步返回（无轮询）：200 → CodeExecutionResult JSON；非 200 → Err("HTTP …")
+//   - 请求超时 = 执行超时（对齐 requests timeout=exec_timeout）
+//   - 请求级瞬时错误按 max_retries 重试（默认 3，指数退避）
+//   - GET {endpoint}/healthz → 200 即健康（对齐 health_check）
+//
+// executor_manager api 层语义（对齐 handlers.py run_code_handler）：
+//   - nodejs 执行前追加 "\n\nmodule.exports = { main };"（既有 append_nodejs_module_export）
+//   - 安全检查不过 → status=program_runner_error / exit_code=-999 /
+//     stderr=issue 行列表 / detail="Code is unsafe"
+//   - 未处理异常 → status=program_runner_error / exit_code=-999 /
+//     stderr=str(e) / detail="unhandled_exception"
+
+/// 执行结构化结果（对齐 schemas.py ExecutionStructuredResult）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExecutionStructuredResult {
+    pub present: bool,
+    #[serde(default)]
+    pub value: Option<Value>,
+    #[serde(default = "default_structured_type")]
+    pub r#type: String,
+}
+
+fn default_structured_type() -> String {
+    "json".to_string()
+}
+
+/// 代码执行结果（对齐 schemas.py CodeExecutionResult，/run 响应体）。
+///
+/// `status` 保留为上游字符串值，由 [`ResultStatus::parse`] 解析为类型化枚举。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CodeExecutionResult {
+    pub status: String,
+    #[serde(default)]
+    pub stdout: String,
+    #[serde(default)]
+    pub stderr: String,
+    pub exit_code: i64,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub time_used_ms: Option<f64>,
+    #[serde(default)]
+    pub memory_used_kb: Option<f64>,
+    #[serde(default)]
+    pub resource_limit_type: Option<String>,
+    #[serde(default)]
+    pub unauthorized_access_type: Option<String>,
+    #[serde(default)]
+    pub runtime_error_type: Option<String>,
+    #[serde(default)]
+    pub artifacts: Vec<ArtifactItem>,
+    #[serde(default)]
+    pub result: Option<ExecutionStructuredResult>,
+}
+
+impl CodeExecutionResult {
+    /// 转换为远程执行结果（对齐 SelfManagedProvider 的 ExecutionResult 组装：
+    /// stdout/stderr/exit_code + metadata{status,time_used_ms,memory_used_kb,detail,
+    /// artifacts,result_present,result_value,result_type}）。
+    pub fn into_remote(self, execution_time: f64) -> RemoteExecutionResult {
+        let structured = self.result.clone();
+        RemoteExecutionResult {
+            stdout: self.stdout,
+            stderr: self.stderr,
+            exit_code: self.exit_code,
+            execution_time,
+            status: ResultStatus::parse(self.status.as_str()),
+            time_used_ms: self.time_used_ms,
+            memory_used_kb: self.memory_used_kb,
+            detail: self.detail,
+            artifacts: self.artifacts,
+            result_present: structured.as_ref().map(|result| result.present).unwrap_or(false),
+            result_value: structured.as_ref().and_then(|result| result.value.clone()),
+            result_type: structured.map(|result| result.r#type),
+        }
+    }
+}
+
+/// 不安全代码响应（对齐 handlers.py run_code_handler 安全检查分支：
+/// status=program_runner_error, exit_code=-999, stderr=issue 行列表,
+/// detail="Code is unsafe"）。
+pub fn unsafe_code_result(issue_details: &str) -> CodeExecutionResult {
+    CodeExecutionResult {
+        status: ResultStatus::ProgramRunnerError.as_str().to_string(),
+        stdout: String::new(),
+        stderr: issue_details.to_string(),
+        exit_code: exit_codes::UNSAFE_CODE,
+        detail: Some("Code is unsafe".to_string()),
+        ..Default::default()
+    }
+}
+
+/// 未处理异常响应（对齐 handlers.py run_code_handler 异常分支：
+/// status=program_runner_error, exit_code=-999, stderr=str(e),
+/// detail="unhandled_exception"）。
+pub fn unhandled_exception_result(error: &str) -> CodeExecutionResult {
+    CodeExecutionResult {
+        status: ResultStatus::ProgramRunnerError.as_str().to_string(),
+        stdout: String::new(),
+        stderr: error.to_string(),
+        exit_code: exit_codes::UNSAFE_CODE,
+        detail: Some("unhandled_exception".to_string()),
+        ..Default::default()
+    }
+}
+
+/// 远程执行结果（对齐 providers/base.py ExecutionResult + metadata 子集）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteExecutionResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i64,
+    pub execution_time: f64,
+    pub status: Option<ResultStatus>,
+    pub time_used_ms: Option<f64>,
+    pub memory_used_kb: Option<f64>,
+    pub detail: Option<String>,
+    pub artifacts: Vec<ArtifactItem>,
+    pub result_present: bool,
+    pub result_value: Option<Value>,
+    pub result_type: Option<String>,
+}
+
+/// 远程沙箱配置（对齐 SelfManagedProvider 配置项）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteSandboxConfig {
+    /// executor_manager HTTP endpoint（默认 http://localhost:9385）。
+    pub endpoint: String,
+    /// 请求超时秒数（默认 30）。
+    pub timeout_seconds: u64,
+    /// 最大重试次数（默认 3）。
+    pub max_retries: u32,
+    /// 容器池大小（默认 10，仅信息用途）。
+    pub pool_size: u32,
+}
+
+impl Default for RemoteSandboxConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:9385".to_string(),
+            timeout_seconds: 30,
+            max_retries: 3,
+            pool_size: 10,
+        }
+    }
+}
+
+impl RemoteSandboxConfig {
+    /// 从环境变量覆盖（对齐 client.py _load_self_managed_provider_config_from_env：
+    /// SANDBOX_HOST + SANDBOX_EXECUTOR_MANAGER_PORT → endpoint（端口默认 9385）、
+    /// SANDBOX_EXECUTOR_MANAGER_POOL_SIZE → pool_size）。
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        let host = std::env::var("SANDBOX_HOST")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if let Some(host) = host {
+            let port =
+                std::env::var("SANDBOX_EXECUTOR_MANAGER_PORT").unwrap_or_else(|_| "9385".to_string());
+            config.endpoint = format!("http://{host}:{port}");
+        }
+        if let Ok(pool) = std::env::var("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE") {
+            if let Ok(parsed) = pool.trim().parse() {
+                config.pool_size = parsed;
+            }
+        }
+        config
+    }
+}
+
+/// 远程语言规范化（对齐 SelfManagedProvider._normalize_language）。
+pub fn normalize_remote_language(language: &str) -> String {
+    match language.trim().to_lowercase().as_str() {
+        "" => "python".to_string(),
+        "python" | "python3" => "python".to_string(),
+        "javascript" | "nodejs" => "nodejs".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 构建 /run 请求体（对齐 SelfManagedProvider.execute_code 的 payload：
+/// code_b64 + language + arguments）。
+pub fn build_run_payload(code: &str, language: &str, arguments: &Map<String, Value>) -> Value {
+    use base64::Engine;
+    let code_b64 = base64::engine::general_purpose::STANDARD.encode(code.as_bytes());
+    json!({
+        "code_b64": code_b64,
+        "language": normalize_remote_language(language),
+        "arguments": arguments,
+    })
+}
+
+/// 自管理沙箱远程客户端（对齐 SelfManagedProvider）。
+#[derive(Debug, Clone)]
+pub struct RemoteSandboxClient {
+    pub config: RemoteSandboxConfig,
+}
+
+impl Default for RemoteSandboxClient {
+    fn default() -> Self {
+        Self {
+            config: RemoteSandboxConfig::default(),
+        }
+    }
+}
+
+impl RemoteSandboxClient {
+    pub fn new(config: RemoteSandboxConfig) -> Self {
+        Self { config }
+    }
+
+    /// 从环境变量构造（对齐 client.py 的 env 覆盖路径）。
+    pub fn from_env() -> Self {
+        Self::new(RemoteSandboxConfig::from_env())
+    }
+
+    /// 健康检查（对齐 health_check：GET {endpoint}/healthz，200 = healthy）。
+    pub async fn health_check(&self) -> bool {
+        let url = format!("{}/healthz", self.config.endpoint.trim_end_matches('/'));
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+        else {
+            return false;
+        };
+        match client.get(&url).send().await {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        }
+    }
+
+    /// 提交代码执行任务并同步拉取结果（对齐 execute_code：POST {endpoint}/run）。
+    ///
+    /// 语义：请求体 code_b64/language/arguments；请求超时 = 执行超时；
+    /// 非 200 → Err("HTTP {status}: {body}")；请求级瞬时错误按 max_retries 重试
+    /// （线性退避）；超时 → Err("Execution timed out after {N} seconds")。
+    pub async fn run(
+        &self,
+        code: &str,
+        language: &str,
+        timeout: Option<u64>,
+        arguments: &Map<String, Value>,
+    ) -> Result<RemoteExecutionResult> {
+        let exec_timeout = timeout.unwrap_or(self.config.timeout_seconds).max(1);
+        let payload = build_run_payload(code, language, arguments);
+        let url = format!("{}/run", self.config.endpoint.trim_end_matches('/'));
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(exec_timeout))
+            .build()?;
+
+        let start = std::time::Instant::now();
+        let attempts = self.config.max_retries.max(1);
+        let mut last_error: Option<anyhow::Error> = None;
+        for attempt in 0..attempts {
+            match client.post(&url).json(&payload).send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await?;
+                    if !status.is_success() {
+                        return Err(anyhow::anyhow!("HTTP {status}: {body}"));
+                    }
+                    let wire: CodeExecutionResult = serde_json::from_str(&body)?;
+                    return Ok(wire.into_remote(start.elapsed().as_secs_f64()));
+                }
+                Err(error) => {
+                    if error.is_timeout() {
+                        return Err(anyhow::anyhow!(
+                            "Execution timed out after {exec_timeout} seconds"
+                        ));
+                    }
+                    last_error = Some(anyhow::anyhow!("HTTP request failed: {error}"));
+                    if attempt + 1 < attempts {
+                        tokio::time::sleep(Duration::from_millis(100 * (attempt as u64 + 1))).await;
+                    }
+                }
+            }
+        }
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("HTTP request failed after {attempts} attempts")))
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 启动一个一次性 HTTP 测试服务，返回监听端口。
+    async fn serve_once(status_line: &str, body: &str) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let status_line = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 8192];
+            let _ = socket.read(&mut buf).await;
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        });
+        port
+    }
+
+    #[test]
+    fn remote_language_normalization_matches_provider() {
+        assert_eq!(normalize_remote_language("python"), "python");
+        assert_eq!(normalize_remote_language("python3"), "python");
+        assert_eq!(normalize_remote_language("javascript"), "nodejs");
+        assert_eq!(normalize_remote_language("nodejs"), "nodejs");
+        assert_eq!(normalize_remote_language(""), "python");
+        assert_eq!(normalize_remote_language("ruby"), "ruby");
+    }
+
+    #[test]
+    fn run_payload_base64_encodes_code_and_arguments() {
+        use base64::Engine;
+        let payload = build_run_payload(
+            "def main():\n    return 1\n",
+            "python3",
+            &Map::from_iter([("x".into(), json!(1))]),
+        );
+        assert_eq!(payload["language"].as_str(), Some("python"));
+        assert_eq!(payload["arguments"]["x"].as_i64(), Some(1));
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload["code_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "def main():\n    return 1\n");
+    }
+
+    #[test]
+    fn remote_response_parses_into_typed_result() {
+        let wire: CodeExecutionResult = serde_json::from_str(
+            r#"{
+                "status": "success", "stdout": "hello", "stderr": "",
+                "exit_code": 0, "detail": null,
+                "time_used_ms": 12.5, "memory_used_kb": 2048.0,
+                "artifacts": [{"name": "chart.png", "mime_type": "image/png", "size": 10, "content_b64": "AAAA"}],
+                "result": {"present": true, "value": {"sum": 103}, "type": "json"}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(wire.status, "success");
+        assert_eq!(wire.artifacts.len(), 1);
+        assert_eq!(wire.artifacts[0].mime_type, "image/png");
+        let remote = wire.into_remote(0.5);
+        assert_eq!(remote.status, Some(ResultStatus::Success));
+        assert_eq!(remote.exit_code, 0);
+        assert!(remote.stdout.contains("hello"));
+        assert_eq!(remote.time_used_ms, Some(12.5));
+        assert_eq!(remote.memory_used_kb, Some(2048.0));
+        assert!(remote.result_present);
+        assert_eq!(remote.result_type.as_deref(), Some("json"));
+        assert_eq!(remote.result_value.as_ref().unwrap().get("sum"), Some(&json!(103)));
+    }
+
+    #[test]
+    fn handler_failure_results_match_run_code_handler() {
+        // 安全检查分支（对齐 handlers.py：-999 / program_runner_error / "Code is unsafe"）
+        let unsafe_result = unsafe_code_result("Line 1: Import: os");
+        assert_eq!(unsafe_result.status, ResultStatus::ProgramRunnerError.as_str());
+        assert_eq!(unsafe_result.exit_code, exit_codes::UNSAFE_CODE);
+        assert_eq!(unsafe_result.detail.as_deref(), Some("Code is unsafe"));
+        assert_eq!(unsafe_result.stderr, "Line 1: Import: os");
+        // 未处理异常分支（对齐 handlers.py：-999 / "unhandled_exception"）
+        let exception_result = unhandled_exception_result("boom");
+        assert_eq!(exception_result.exit_code, exit_codes::UNSAFE_CODE);
+        assert_eq!(
+            exception_result.detail.as_deref(),
+            Some("unhandled_exception")
+        );
+        assert_eq!(exception_result.stderr, "boom");
+    }
+
+    #[tokio::test]
+    async fn remote_client_run_roundtrip_over_http() {
+        let body = json!({
+            "status": "success",
+            "stdout": "plain output",
+            "stderr": "",
+            "exit_code": 0,
+            "detail": null,
+            "time_used_ms": 12.5,
+            "memory_used_kb": 2048.0,
+            "artifacts": [],
+            "result": {"present": true, "value": {"greeting": "hello 世界"}, "type": "json"}
+        })
+        .to_string();
+        let port = serve_once("200 OK", &body).await;
+        let client = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            ..Default::default()
+        });
+        let result = client
+            .run(
+                "def main(name):\n    return {'greeting': f'hello {name}'}\n",
+                "python3",
+                Some(10),
+                &Map::from_iter([("name".into(), json!("世界"))]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, Some(ResultStatus::Success));
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("plain output"));
+        assert_eq!(
+            result.result_value.as_ref().unwrap().get("greeting"),
+            Some(&json!("hello 世界"))
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_client_non_200_returns_http_error() {
+        let port = serve_once("500 Internal Server Error", "boom").await;
+        let client = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            ..Default::default()
+        });
+        let error = client
+            .run("x", "python", Some(5), &Map::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("HTTP 500"));
+        assert!(error.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn remote_client_health_check_reports_liveness() {
+        let port = serve_once("200 OK", r#"{"status":"ok"}"#).await;
+        let healthy = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            ..Default::default()
+        });
+        assert!(healthy.health_check().await);
+        let dead = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: "http://127.0.0.1:1".to_string(),
+            ..Default::default()
+        });
+        assert!(!dead.health_check().await);
+    }
+}

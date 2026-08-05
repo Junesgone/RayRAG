@@ -327,11 +327,23 @@ impl LlmClient {
         &self,
         messages: &[ChatMessage],
         patch: crate::generation_params::GenerationParamsPatch,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> Result<String>
     where
         F: FnMut(&str),
     {
+        let mut on_chunk = on_chunk;
+        self.chat_stream_impl(messages, patch, &mut on_chunk).await
+    }
+
+    /// Non-generic SSE loop shared by [`Self::chat_stream`] and the
+    /// [`ChatModel`] trait implementation (which receives a boxed closure).
+    async fn chat_stream_impl<F: FnMut(&str) + ?Sized>(
+        &self,
+        messages: &[ChatMessage],
+        patch: crate::generation_params::GenerationParamsPatch,
+        on_chunk: &mut F,
+    ) -> Result<String> {
         let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": messages
@@ -432,6 +444,61 @@ impl LlmClient {
             anyhow::bail!("LLM API error ({}): {}", status, text);
         }
         Ok(resp.json().await?)
+    }
+
+    /// Model name of this client (RAGFlow `Base.model_name`).
+    pub fn model_name(&self) -> &str {
+        &self.config.model
+    }
+
+    /// API base URL of this client.
+    pub fn api_base(&self) -> &str {
+        &self.config.api_base
+    }
+
+    /// Raw OpenAI-compatible chat request — used by vision (cv) models that
+    /// need structured `content` parts (text + image_url).
+    pub async fn chat_raw(&self, body: serde_json::Value) -> Result<serde_json::Value> {
+        self.send_chat_request(&body).await
+    }
+
+    /// Raw multipart POST returning JSON — used by audio transcription
+    /// (`/audio/transcriptions`).
+    pub async fn raw_post_multipart(
+        &self,
+        url: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<serde_json::Value> {
+        let mut request = self.client.post(url).multipart(form);
+        if !self.config.api_key.is_empty() {
+            request = request.bearer_auth(&self.config.api_key);
+        }
+        let resp = request.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error ({}): {}", status, text);
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Raw JSON POST returning bytes — used by TTS (`/audio/speech`).
+    pub async fn raw_post_bytes(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<Vec<u8>> {
+        let mut request = self.client.post(url).json(body);
+        if !self.config.api_key.is_empty() {
+            request = request.bearer_auth(&self.config.api_key);
+        }
+        let resp = request.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error ({}): {}", status, text);
+        }
+        Ok(resp.bytes().await?.to_vec())
     }
 
     /// Backward-compatible content-only adapter.
@@ -2113,4 +2180,590 @@ mod conversation_store_tests {
         assert_eq!(store.get(&conversation.id).unwrap().messages.len(), 2);
         std::fs::remove_dir_all(root).ok();
     }
+}
+
+// ── Model factory (rag/llm/__init__.py + module Base abstractions) ──
+
+/// Model capability kinds — mirrors RAGFlow `MODULE_MAPPING` keys
+/// (`chat_model`, `embedding_model`, `rerank_model`, `ocr_model`,
+/// `cv_model`, `sequence2txt_model`, `tts_model`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelKind {
+    Chat,
+    Embedding,
+    Rerank,
+    Ocr,
+    Cv,
+    Seq2txt,
+    Tts,
+}
+
+impl ModelKind {
+    /// RAGFlow `MODULE_MAPPING` module name for this kind.
+    pub const fn module_name(self) -> &'static str {
+        match self {
+            Self::Chat => "chat_model",
+            Self::Embedding => "embedding_model",
+            Self::Rerank => "rerank_model",
+            Self::Ocr => "ocr_model",
+            Self::Cv => "cv_model",
+            Self::Seq2txt => "sequence2txt_model",
+            Self::Tts => "tts_model",
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Embedding => "embedding",
+            Self::Rerank => "rerank",
+            Self::Ocr => "ocr",
+            Self::Cv => "cv",
+            Self::Seq2txt => "seq2txt",
+            Self::Tts => "tts",
+        }
+    }
+}
+
+/// All model kinds, in RAGFlow module order.
+pub const MODEL_KINDS: [ModelKind; 7] = [
+    ModelKind::Chat,
+    ModelKind::Embedding,
+    ModelKind::Rerank,
+    ModelKind::Seq2txt,
+    ModelKind::Tts,
+    ModelKind::Ocr,
+    ModelKind::Cv,
+];
+
+/// Chat model abstraction — RAGFlow `chat_model.Base` (async_chat /
+/// async_chat_streamly). RayRAG's chat backends are all OpenAI-compatible.
+#[async_trait::async_trait]
+pub trait ChatModel: Send + Sync {
+    /// Model name (RAGFlow `Base.model_name`).
+    fn model_name(&self) -> &str;
+    /// Max context length in tokens (RAGFlow `Base.max_length`, default 8192).
+    fn max_length(&self) -> usize {
+        8192
+    }
+    /// One-shot chat: system prompt + history → answer text.
+    async fn chat(&self, system: &str, history: &[ChatMessage]) -> Result<String>;
+    /// Streaming chat, delivering each SSE delta to `on_chunk`.
+    async fn chat_stream(
+        &self,
+        system: &str,
+        history: &[ChatMessage],
+        on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+    ) -> Result<String>;
+}
+
+#[async_trait::async_trait]
+impl ChatModel for LlmClient {
+    fn model_name(&self) -> &str {
+        LlmClient::model_name(self)
+    }
+
+    async fn chat(&self, system: &str, history: &[ChatMessage]) -> Result<String> {
+        let mut messages = Vec::with_capacity(history.len() + 1);
+        messages.push(ChatMessage::new("system", system));
+        messages.extend(history.iter().cloned());
+        Ok(self.chat_completion(&messages).await?.content)
+    }
+
+    async fn chat_stream(
+        &self,
+        system: &str,
+        history: &[ChatMessage],
+        on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+    ) -> Result<String> {
+        let mut messages = Vec::with_capacity(history.len() + 1);
+        messages.push(ChatMessage::new("system", system));
+        messages.extend(history.iter().cloned());
+        let mut on_chunk = on_chunk;
+        self.chat_stream_impl(&messages, GenerationParamsPatch::default(), &mut on_chunk)
+            .await
+    }
+}
+
+/// OCR model abstraction — RAGFlow `ocr_model.Base.parse_pdf`.
+#[async_trait::async_trait]
+pub trait OcrModel: Send + Sync {
+    fn model_name(&self) -> &str;
+    /// Parse a PDF file into extracted text.
+    async fn parse_pdf(&self, filepath: &str) -> Result<String>;
+}
+
+/// Computer-vision model abstraction — RAGFlow `cv_model.Base`.
+#[async_trait::async_trait]
+pub trait CvModel: Send + Sync {
+    fn model_name(&self) -> &str;
+    /// Describe an image (raw bytes) in natural language.
+    async fn describe(&self, image: &[u8]) -> Result<String>;
+    /// Describe an image with a custom prompt.
+    async fn describe_with_prompt(&self, image: &[u8], prompt: &str) -> Result<String>;
+}
+
+/// Speech-to-text model abstraction — RAGFlow `sequence2txt_model.Base`.
+#[async_trait::async_trait]
+pub trait Seq2txtModel: Send + Sync {
+    fn model_name(&self) -> &str;
+    /// Transcribe an audio file into text.
+    async fn transcription(&self, audio_path: &str) -> Result<String>;
+}
+
+/// Text-to-speech model abstraction — RAGFlow `tts_model.Base`.
+#[async_trait::async_trait]
+pub trait TtsModel: Send + Sync {
+    fn model_name(&self) -> &str;
+    /// Synthesize speech; returns audio bytes.
+    async fn tts(&self, text: &str) -> Result<Vec<u8>>;
+}
+
+/// OpenAI-compatible computer-vision model (chat completions with
+/// image_url content parts) — mirrors `cv_model.GptV4` family.
+pub struct OpenAiCvModel {
+    client: LlmClient,
+    lang: String,
+}
+
+impl OpenAiCvModel {
+    pub fn new(client: LlmClient, lang: &str) -> Self {
+        Self {
+            client,
+            lang: lang.to_string(),
+        }
+    }
+
+    fn vision_messages(&self, prompt: &str, image_b64: &str) -> serde_json::Value {
+        serde_json::json!([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {
+                    "url": format!("data:image/png;base64,{image_b64}")
+                }}
+            ]
+        }])
+    }
+}
+
+#[async_trait::async_trait]
+impl CvModel for OpenAiCvModel {
+    fn model_name(&self) -> &str {
+        self.client.model_name()
+    }
+
+    async fn describe(&self, image: &[u8]) -> Result<String> {
+        self.describe_with_prompt(image, "").await
+    }
+
+    async fn describe_with_prompt(&self, image: &[u8], prompt: &str) -> Result<String> {
+        let prompt = if prompt.trim().is_empty() {
+            format!("Describe this image in {}.", self.lang)
+        } else {
+            prompt.to_string()
+        };
+        let body = serde_json::json!({
+            "model": self.client.model_name(),
+            "messages": self.vision_messages(&prompt, &base64_encode(image)),
+            "max_tokens": 512,
+        });
+        let json = self.client.chat_raw(body).await?;
+        Ok(json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+}
+
+/// OpenAI-compatible speech-to-text model (`/audio/transcriptions`) —
+/// mirrors `sequence2txt_model.GPTSeq2txt` (whisper family).
+pub struct OpenAiSeq2txtModel {
+    client: LlmClient,
+}
+
+impl OpenAiSeq2txtModel {
+    pub fn new(client: LlmClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait::async_trait]
+impl Seq2txtModel for OpenAiSeq2txtModel {
+    fn model_name(&self) -> &str {
+        self.client.model_name()
+    }
+
+    async fn transcription(&self, audio_path: &str) -> Result<String> {
+        let bytes = std::fs::read(audio_path)?;
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name("audio.mp3")
+            .mime_str("audio/mpeg")?;
+        let form = reqwest::multipart::Form::new()
+            .text("model", self.client.model_name().to_string())
+            .part("file", part);
+        let url = format!("{}/audio/transcriptions", self.client.api_base());
+        let json = self.client.raw_post_multipart(&url, form).await?;
+        Ok(json["text"].as_str().unwrap_or_default().to_string())
+    }
+}
+
+/// OpenAI-compatible text-to-speech model (`/audio/speech`) — mirrors
+/// `tts_model.OpenAITTS`.
+pub struct OpenAiTtsModel {
+    client: LlmClient,
+    voice: String,
+}
+
+impl OpenAiTtsModel {
+    pub fn new(client: LlmClient, voice: &str) -> Self {
+        Self {
+            client,
+            voice: voice.to_string(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TtsModel for OpenAiTtsModel {
+    fn model_name(&self) -> &str {
+        self.client.model_name()
+    }
+
+    async fn tts(&self, text: &str) -> Result<Vec<u8>> {
+        let body = serde_json::json!({
+            "model": self.client.model_name(),
+            "input": text,
+            "voice": self.voice,
+        });
+        let url = format!("{}/audio/speech", self.client.api_base());
+        self.client.raw_post_bytes(&url, &body).await
+    }
+}
+
+/// Stub for model kinds with no Rust backend yet (OCR needs Python-side
+/// MinerU/Paddle). Implements the remaining traits and fails with a clear
+/// error, mirroring RAGFlow's factory returning no class for unknown kinds.
+pub struct UnsupportedModel {
+    kind: &'static str,
+    model: String,
+}
+
+impl UnsupportedModel {
+    pub fn new(kind: &'static str, model: &str) -> Self {
+        Self {
+            kind,
+            model: model.to_string(),
+        }
+    }
+
+    fn error(&self) -> anyhow::Error {
+        anyhow::anyhow!(
+            "model kind '{}' (model '{}') has no Rust backend yet",
+            self.kind,
+            self.model
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl OcrModel for UnsupportedModel {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+    async fn parse_pdf(&self, _filepath: &str) -> Result<String> {
+        Err(self.error())
+    }
+}
+
+#[async_trait::async_trait]
+impl CvModel for UnsupportedModel {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+    async fn describe(&self, _image: &[u8]) -> Result<String> {
+        Err(self.error())
+    }
+    async fn describe_with_prompt(&self, _image: &[u8], _prompt: &str) -> Result<String> {
+        Err(self.error())
+    }
+}
+
+#[async_trait::async_trait]
+impl Seq2txtModel for UnsupportedModel {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+    async fn transcription(&self, _audio_path: &str) -> Result<String> {
+        Err(self.error())
+    }
+}
+
+#[async_trait::async_trait]
+impl TtsModel for UnsupportedModel {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+    async fn tts(&self, _text: &str) -> Result<Vec<u8>> {
+        Err(self.error())
+    }
+}
+
+/// Resolve a model API base URL: explicit override > provider default
+/// (RAGFlow `FACTORY_DEFAULT_BASE_URL`) > global fallback.
+fn resolve_base_url(provider: &str, api_base: Option<&str>, fallback: &str) -> String {
+    api_base
+        .map(str::to_string)
+        .or_else(|| {
+            crate::providers::provider_default_base(provider, provider).map(str::to_string)
+        })
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Create a chat model for a provider — RAGFlow `ChatModel[_FACTORY_NAME]`.
+/// All RayRAG chat backends are OpenAI-compatible; the provider only selects
+/// the default base URL when none is given.
+pub fn chat_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Box<dyn ChatModel> {
+    let config = LlmConfig {
+        api_base: resolve_base_url(provider, api_base, "https://api.openai.com/v1"),
+        api_key: api_key.to_string(),
+        model: model.to_string(),
+        ..LlmConfig::default()
+    };
+    Box::new(LlmClient::new(config))
+}
+
+/// Create an embedding model for a provider — RAGFlow
+/// `EmbeddingModel[_FACTORY_NAME]` (OpenAI-compatible family).
+pub fn embedding_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Result<Box<dyn crate::embed::Embedder>> {
+    if provider.eq_ignore_ascii_case("builtin") {
+        anyhow::bail!(
+            "Builtin embedding requires a local model path; use embed::local_embedder() instead"
+        );
+    }
+    let base = resolve_base_url(provider, api_base, "https://api.openai.com/v1");
+    Ok(Box::new(crate::embed::OpenAIEmbedder::new(
+        &base, api_key, model,
+    )))
+}
+
+/// Create a rerank model for a provider — RAGFlow
+/// `RerankModel[_FACTORY_NAME]` (Cohere-compatible `/v1/rerank` family).
+pub fn rerank_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Result<Box<dyn crate::rerank::Reranker>> {
+    let _ = model;
+    let base = resolve_base_url(provider, api_base, "http://127.0.0.1:8899");
+    let mut reranker = crate::rerank::RemoteReranker::new(&base);
+    if !api_key.is_empty() {
+        reranker = reranker.with_api_key(api_key);
+    }
+    Ok(Box::new(reranker))
+}
+
+/// Create a computer-vision model for a provider — RAGFlow
+/// `CvModel[_FACTORY_NAME]` (GptV4 family).
+pub fn cv_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Box<dyn CvModel> {
+    let base = resolve_base_url(provider, api_base, "https://api.openai.com/v1");
+    let client = LlmClient::new(LlmConfig {
+        api_base: base,
+        api_key: api_key.to_string(),
+        model: model.to_string(),
+        ..LlmConfig::default()
+    });
+    Box::new(OpenAiCvModel::new(client, "Chinese"))
+}
+
+/// Create a speech-to-text model for a provider — RAGFlow
+/// `Seq2txtModel[_FACTORY_NAME]` (GPTSeq2txt family).
+pub fn seq2txt_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Box<dyn Seq2txtModel> {
+    let base = resolve_base_url(provider, api_base, "https://api.openai.com/v1");
+    let client = LlmClient::new(LlmConfig {
+        api_base: base,
+        api_key: api_key.to_string(),
+        model: model.to_string(),
+        ..LlmConfig::default()
+    });
+    Box::new(OpenAiSeq2txtModel::new(client))
+}
+
+/// Create a text-to-speech model for a provider — RAGFlow
+/// `TTSModel[_FACTORY_NAME]` (OpenAITTS family).
+pub fn tts_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Box<dyn TtsModel> {
+    let base = resolve_base_url(provider, api_base, "https://api.openai.com/v1");
+    let client = LlmClient::new(LlmConfig {
+        api_base: base,
+        api_key: api_key.to_string(),
+        model: model.to_string(),
+        ..LlmConfig::default()
+    });
+    Box::new(OpenAiTtsModel::new(client, "alloy"))
+}
+
+/// Create an OCR model for a provider — RAGFlow `OcrModel[_FACTORY_NAME]`.
+/// No Rust OCR backend exists yet (upstream uses Python MinerU/Paddle), so
+/// this always returns the explicit-error stub.
+pub fn ocr_model_for(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Box<dyn OcrModel> {
+    let _ = (provider, api_key, api_base);
+    Box::new(UnsupportedModel::new("ocr", model))
+}
+
+/// Whether a factory can construct a working (non-stub) model of `kind` for
+/// `provider`. OCR is the only kind with no Rust backend.
+pub fn model_kind_supported(kind: ModelKind, provider: &str) -> bool {
+    match kind {
+        ModelKind::Ocr => false,
+        ModelKind::Chat
+        | ModelKind::Embedding
+        | ModelKind::Rerank
+        | ModelKind::Cv
+        | ModelKind::Seq2txt
+        | ModelKind::Tts => !provider.is_empty(),
+    }
+}
+
+/// Minimal standard base64 encoder (RFC 4648, padded) — avoids pulling the
+/// `base64` crate for image data URLs and audio payloads.
+fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod model_factory_tests {
+    use super::*;
+
+    #[test]
+    fn model_kind_module_names_match_ragflow() {
+        assert_eq!(ModelKind::Chat.module_name(), "chat_model");
+        assert_eq!(ModelKind::Embedding.module_name(), "embedding_model");
+        assert_eq!(ModelKind::Rerank.module_name(), "rerank_model");
+        assert_eq!(ModelKind::Ocr.module_name(), "ocr_model");
+        assert_eq!(ModelKind::Cv.module_name(), "cv_model");
+        assert_eq!(ModelKind::Seq2txt.module_name(), "sequence2txt_model");
+        assert_eq!(ModelKind::Tts.module_name(), "tts_model");
+        assert_eq!(MODEL_KINDS.len(), 7);
+    }
+
+    #[test]
+    fn chat_model_for_returns_working_client() {
+        let chat = chat_model_for("OpenAI", "sk-test", "gpt-4o", None);
+        assert_eq!(chat.model_name(), "gpt-4o");
+        assert_eq!(chat.max_length(), 8192);
+        assert!(model_kind_supported(ModelKind::Chat, "OpenAI"));
+    }
+
+    #[test]
+    fn embedding_model_for_rejects_builtin_without_path() {
+        let err = embedding_model_for("Builtin", "", "bge-m3", None);
+        assert!(err.is_err());
+        let ok = embedding_model_for("OpenAI", "sk-test", "text-embedding-3-small", None);
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn rerank_model_for_returns_remote_reranker() {
+        let reranker = rerank_model_for("Cohere", "key", "rerank-model", None);
+        assert!(reranker.is_ok());
+    }
+
+    #[test]
+    fn ocr_factory_returns_explicit_error_stub() {
+        let ocr = ocr_model_for("MinerU", "", "mineru", None);
+        assert_eq!(ocr.model_name(), "mineru");
+        assert!(!model_kind_supported(ModelKind::Ocr, "MinerU"));
+        let err = tokio_test_block_on(ocr.parse_pdf("/tmp/nonexistent.pdf"));
+        assert!(err.is_err());
+        let msg = format!("{}", err.unwrap_err());
+        assert!(msg.contains("ocr"), "stub error mentions kind: {msg}");
+    }
+
+    #[test]
+    fn cv_model_builds_vision_payload() {
+        let client = LlmClient::new(LlmConfig {
+            api_base: "https://api.openai.com/v1".into(),
+            api_key: "k".into(),
+            model: "gpt-4o".into(),
+            ..LlmConfig::default()
+        });
+        let cv = OpenAiCvModel::new(client, "Chinese");
+        assert_eq!(cv.model_name(), "gpt-4o");
+        let msgs = cv.vision_messages("描述", "QUJD");
+        assert_eq!(msgs[0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            msgs[0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,QUJD"
+        );
+    }
+
+    #[test]
+    fn base64_encode_matches_rfc4648() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(b"hello world"), "aGVsbG8gd29ybGQ=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+    }
+}
+
+/// Block on an async future in a sync test (small local helper mirroring
+/// tokio::test's runtime without the attribute).
+fn tokio_test_block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build test runtime")
+        .block_on(future)
 }

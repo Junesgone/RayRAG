@@ -1,3 +1,13 @@
+## 2026-08-05 v0.2.1：远程沙箱 + 插件 + NLP/LLM 工厂 + doc_store
+
+- sandbox.rs +456 远程契约；plugin.rs 插件机制（LLM 工具插件）
+- nlp.rs +658（分词/繁简/query 规范化/词权重）；llm.rs +655（7 类模型工厂）
+- advanced_rag.rs RAPTOR；doc_store.rs（Memory/Postgres/Zvec 三后端+池）
+- memory.rs 高亮/聚合；api/admin.rs 端点补齐
+- 修复：admin users 路由冲突（{username} vs {user_id} → 删旧路由）
+- 测试基线：**1047 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 261 → **200**
+
 ## 2026-08-05 v0.2.0 容器验证
 
 - 部署成功：容器 healthy、healthz 200、7 页面全 200

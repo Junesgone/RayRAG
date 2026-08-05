@@ -1606,53 +1606,6 @@ pub(crate) fn delete_document_data(
     Ok(())
 }
 
-// ── Search ─────────────────────────────────────────────────────
-
-async fn admin_delete_user(
-    State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
-    axum::extract::Path(user_id): axum::extract::Path<String>,
-) -> Response {
-    if !auth.is_admin {
-        return Json(serde_json::json!({ "code": 403, "message": "Admin required" }))
-            .into_response();
-    }
-    match state.users.delete_user(&user_id, &auth.user_id) {
-        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Ok(false) => {
-            Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response()
-        }
-        Err(error) => {
-            Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response()
-        }
-    }
-}
-
-async fn admin_reset_password(
-    State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
-    axum::extract::Path(user_id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Response {
-    if !auth.is_admin {
-        return Json(serde_json::json!({ "code": 403, "message": "Admin required" }))
-            .into_response();
-    }
-    let new_password = body
-        .get("new_password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    match state.users.reset_password(&user_id, new_password) {
-        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Ok(false) => {
-            Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response()
-        }
-        Err(error) => {
-            Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response()
-        }
-    }
-}
-
 async fn query_graphrag(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -2541,13 +2494,51 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{dataset_id}/graphrag/query",
             axum::routing::post(query_graphrag),
         )
+        // ── RAGFlow admin API (admin/server/routes.py port) ──
+        .route("/api/v1/admin/ping", get(crate::api::admin::ping))
         .route(
-            "/api/v1/admin/users/{user_id}",
-            axum::routing::delete(admin_delete_user),
+            "/api/v1/admin/users",
+            get(crate::api::admin::list_users).post(crate::api::admin::create_user),
         )
         .route(
-            "/api/v1/admin/users/{user_id}/password",
-            axum::routing::patch(admin_reset_password),
+            "/api/v1/admin/users/{username}",
+            get(crate::api::admin::get_user_details).delete(crate::api::admin::delete_user),
+        )
+        .route(
+            "/api/v1/admin/users/{username}/password",
+            axum::routing::put(crate::api::admin::change_password),
+        )
+        .route(
+            "/api/v1/admin/users/{username}/activate",
+            axum::routing::put(crate::api::admin::alter_user_activate_status),
+        )
+        .route(
+            "/api/v1/admin/users/{username}/admin",
+            axum::routing::put(crate::api::admin::grant_admin)
+                .delete(crate::api::admin::revoke_admin),
+        )
+        .route(
+            "/api/v1/admin/users/{username}/keys",
+            get(crate::api::admin::get_user_api_keys)
+                .post(crate::api::admin::generate_user_api_key),
+        )
+        .route(
+            "/api/v1/admin/users/{username}/keys/{key}",
+            axum::routing::delete(crate::api::admin::delete_user_api_key),
+        )
+        .route("/api/v1/admin/version", get(crate::api::admin::show_version))
+        .route(
+            "/api/v1/admin/variables",
+            get(crate::api::admin::get_variable).put(crate::api::admin::set_variable),
+        )
+        .route("/api/v1/admin/configs", get(crate::api::admin::get_config))
+        .route(
+            "/api/v1/admin/environments",
+            get(crate::api::admin::get_environments),
+        )
+        .route(
+            "/api/v1/admin/log_levels",
+            get(crate::api::admin::get_log_levels).put(crate::api::admin::set_log_level),
         )
         .route("/api/v1/search", post(crate::api::search::weighted_search))
         .route(

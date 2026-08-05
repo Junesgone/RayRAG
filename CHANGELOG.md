@@ -2,6 +2,35 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.2.1] — 2026-08-05
+
+### Added
+
+- **远程沙箱契约**（`src/sandbox.rs` +456）：RemoteSandboxClient/Config（task 提交/
+  结果拉取、超时=执行超时、重试、/healthz）、CodeExecutionResult 系列、
+  unsafe/unhandled_exception 失败分支。
+- **插件机制**（`src/plugin.rs` 新建）：PluginManager（发现/加载/执行、env 注入、
+  错误隔离）、LLM 工具插件（OpenAI tool 转换）、内置插件 1-2 个。
+- **NLP 工具**（`src/nlp.rs` +658）：rag_tokenize（CJK 单字+二元组）、全角→半角、
+  ~450 对繁→简映射（替代 OpenCC）、sub_special_char、QueryBase（rm_www/
+  normalize_query 管线）、TermWeightComputer（NER×postag）。
+- **LLM 工厂**（`src/llm.rs` +655）：ModelKind 7 类 + Chat/Ocr/Cv/Seq2txt/Tts
+  trait 抽象 + OpenAi 系列实现（vision/audio/tts 多模态 payload）。
+- **RAPTOR 检索**（`src/advanced_rag.rs`）：问题分解→子检索→汇总（复用已有
+  Retrieval/Chunk 组件）。
+- **doc_store 抽象**（`src/doc_store.rs` 新建）：DocStore trait（insert/delete/
+  search/update/sql 全契约）+ Memory/Postgres/Zvec 三后端 + 连接池
+  （es_conn_pool 语义：2 次重试/5s 间隔/按 URL 选后端）。
+- **memory utils**（`src/memory.rs` 新建）：highlight_text（按句切分/<em> 标记）、
+  aggregate_by_field。
+- **admin 端点**：users CRUD/keys/activate/admin 授权/version/ping（对齐
+  admin/server/routes.py）。
+
+### Fixed
+
+- `/api/v1/admin/users/{username}` 与既有 `{user_id}` 路由冲突 → 删除旧
+  重复路由与 handler（新路由功能更全）。
+
 ## [0.2.0] — 2026-08-05
 
 ### Added
