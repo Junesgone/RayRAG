@@ -1,3 +1,9 @@
+## 2026-08-05 v0.1.5 容器验证
+
+- 部署成功：容器 healthy、healthz 200
+- providers 页面 Model Catalog 确认：providerModels JS 对象注入（20 厂商/157 模型），页面 55KB
+- 已提交 20af543（v0.1.5）+ 本记录
+
 ## 2026-08-05 v0.1.5：模型目录 + 沙箱契约 + graphrag 阶段标记
 
 - Provider Model Catalog：20 厂商/157 模型种子化（fixtures + providers 页 modal）
