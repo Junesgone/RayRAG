@@ -1,3 +1,10 @@
+## 2026-08-05 v0.3.1：按钮 diff 核对补齐
+
+- deleg_c9865d52 单 agent 又 1800s 超时（反复 cargo check 排队）；产出落盘
+  web.rs +169（12 个按钮事件）；父 agent 门禁 1147 全绿
+- 教训升级：web.rs 单文件任务一律超时——UI 改动直接主 agent 做或按函数拆分
+  多 agent 且每 agent 只跑一次门禁
+
 ## 2026-08-05 v0.3.0 端到端冒烟验证（GPU 链路）
 
 - 登录 /api/v1/auth/login（注意：非 /api/v1/user/login）→ token

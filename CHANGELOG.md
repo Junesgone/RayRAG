@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.1] — 2026-08-05
+
+### UI 按钮逐项核对补齐（RAGFlow JSX vs RayRAG 渲染 diff）
+
+- 补 12 个按钮事件：batchDelSel/batchLinkSel（文档批量删除/关联）、
+  clearConv/tempConv（清空/临时对话）、emptyAllDocs（清空文档）、
+  exportAgentJson/exportChunks（导出 agent JSON/chunk）、inviteUser
+  （邀请用户）、openVersions（版本）、sendTemp（临时发送）、
+  showTemplates（模板）、uploadF（上传文件）
+- web.rs +169/-12；新增 8 个 UI 测试（含按钮 diff 断言）
+
 ## [0.3.0] — 2026-08-05
 
 ### UI：页面按钮全面对齐 RAGFlow（web/src/pages 19 页面层级）

@@ -92,6 +92,16 @@ fn t(k: &str, zh: bool) -> &str {
         "Document Type" => "文档类型",
         "Stop" => "停止",
         "Page not found, please enter a correct address." => "页面不存在，请输入正确的地址。",
+        "Empty" => "清空",
+        "Export" => "导出",
+        "Export JSON" => "导出 JSON",
+        "Import JSON" => "导入 JSON",
+        "Versions" => "版本管理",
+        "Invite" => "邀请",
+        "Link to KB" => "关联知识库",
+        "Bulk Delete" => "批量删除",
+        "Clear" => "清空选择",
+        "Temporary Conversation" => "临时对话",
         _ => k,
     }
 }
@@ -407,6 +417,8 @@ pub async fn kb_detail_page(
     b.push_str(t("Upload", zh));
     b.push_str("</h2><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><input type='file' id='fi' multiple style='max-width:400px'><button class='btn btn-p' id='upBtn' onclick='uploadDoc()'>");
     b.push_str(t("Upload", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='emptyAllDocs()'>");
+    b.push_str(t("Empty", zh));
     b.push_str("</button><span id='upMsg' style='font-size:12px;color:var(--tm)'></span></div><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT, PNG/JPG(OCR), MP3/WAV(ASR)</p></div>");
     b.push_str("<div class='card' id='batchBar' style='display:none'><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span id='selCount' style='font-size:13px;color:var(--tm)'></span><button class='btn btn-p btn-sm' onclick='batchParse()'>");
     b.push_str(t("Parse", zh));
@@ -552,7 +564,7 @@ pub async fn kb_detail_page(
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
     b.push_str("function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')};");
     b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return !isDocDisabled(x.id);if(f==='disabled')return isDocDisabled(x.id);if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox onclick=docSelAll(this.checked)></th><th>名称</th><th>解析状态</th><th>块数</th><th>大小</th><th>更新时间</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=isDocDisabled(dd.id);var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name='+nm+' '+(dis?'disabled':'')+'></td><td style=font-weight:500>'+nm+'</td><td style=min-width:150px>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td><button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar()})};");
-    b.push_str("function updateBatchBar(){var n=document.querySelectorAll('.docCk:checked').length;var bar=document.getElementById('batchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('selCount');if(sc)sc.textContent=n+' selected'}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){if(!x.disabled)x.checked=on});updateBatchBar()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
+    b.push_str("function updateBatchBar(){var n=document.querySelectorAll('.docCk:checked').length;var bar=document.getElementById('batchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('selCount');if(sc)sc.textContent=n+' selected'}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){if(!x.disabled)x.checked=on});updateBatchBar()};function emptyAllDocs(){if(!confirm('删除该知识库的全部文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];if(!docs.length){alert('暂无文档');return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()})};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
     b.push_str("function selIds(){var ids=[];document.querySelectorAll('.docCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchParse(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('重新解析选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();schedulePoll();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function batchDisable(on){var ids=selIds();if(!ids.length){alert('请先选择文档');return}ids.forEach(function(id){setDocDisabled(id,on)});loadDocs()};");
     b.push_str("function batchDelete(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('删除选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()};");
@@ -895,6 +907,10 @@ pub async fn chat_detail_page(
         .as_ref()
         .map(|c| c.name.clone())
         .unwrap_or_else(|| "New Chat".into());
+    let conv_kb_ids = conv
+        .as_ref()
+        .map(|c| c.kb_ids.join(","))
+        .unwrap_or_default();
     let mut msgs = String::new();
     if let Some(c) = &conv {
         for (i, m) in c.messages.iter().enumerate() {
@@ -924,14 +940,17 @@ pub async fn chat_detail_page(
     // Left sidebar: back + conversation info + settings
     b.push_str("<div class='card' style='width:240px;flex-shrink:0'><div style='display:flex;gap:8px;flex-wrap:wrap'><a href='/chat' style='font-size:13px;color:var(--p);text-decoration:none'>← Back</a><button class='btn btn-o btn-sm' style='font-size:11px;padding:2px 8px' onclick='renConv()'>✏️ Rename</button><button class='btn btn-o btn-sm' style='font-size:11px;padding:2px 8px' onclick='shareConv()'>🔗 Share</button><a class='btn btn-o btn-sm' style='font-size:11px;padding:2px 8px' href='/api/v1/conversations/");
     b.push_str(&id);
-    b.push_str("/export' target='_blank'>Export</a><button class='btn btn-d btn-sm' style='font-size:11px;padding:2px 8px' onclick='clearConv()'>Clear</button></div><h3 style='margin-top:12px'>");
+    b.push_str("/export' target='_blank'>Export</a><button class='btn btn-d btn-sm' style='font-size:11px;padding:2px 8px' onclick='clearConv()'>Clear</button><button class='btn btn-o btn-sm' style='font-size:11px;padding:2px 8px' onclick='tempConv()'>💬 临时对话</button></div><h3 style='margin-top:12px'>");
     b.push_str(&name);
     b.push_str("</h3><p style='font-size:11px;color:var(--tm)'>ID: ");
-    b.push_str(&id[..8]);
+    let id_short: String = id.chars().take(8).collect();
+    b.push_str(&id_short);
     b.push_str("...</p>");
     // Settings panel (RAGFlow-style)
-    b.push_str("<script>function renConv(){var nn=prompt('Rename conversation:',document.getElementById('convName').textContent);if(!nn)return;fetch('/api/v1/conversations/'+document.getElementById('convId').value,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function shareConv(){var u=location.origin+location.pathname;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function clearConv(){if(!confirm('Clear all messages?'))return;fetch('/api/v1/conversations/'+document.getElementById('convId').value+'/clear',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script><input type='hidden' id='convId' value='");
+    b.push_str("<script>function renConv(){var nn=prompt('Rename conversation:',document.getElementById('convName').textContent);if(!nn)return;fetch('/api/v1/conversations/'+document.getElementById('convId').value,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function shareConv(){var u=location.origin+location.pathname;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function clearConv(){if(!confirm('Clear all messages?'))return;fetch('/api/v1/conversations/'+document.getElementById('convId').value+'/clear',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function tempConv(){document.getElementById('tempQ').value='';document.getElementById('tempOut').textContent='';document.getElementById('tempModal').classList.add('show')};function sendTemp(){var q=document.getElementById('tempQ').value;if(!q)return;var kbs=(document.getElementById('tempKbs').value||'').split(',').filter(Boolean);document.getElementById('tempOut').textContent='Thinking...';fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,kb_ids:kbs})}).then(r=>r.json()).then(d=>{document.getElementById('tempOut').textContent=d.code===0?(d.data&&d.data.answer?d.data.answer:'ok'):('Error: '+(d.message||'unknown'))})}</script><input type='hidden' id='convId' value='");
     b.push_str(&id);
+    b.push_str("'><input type='hidden' id='tempKbs' value='");
+    b.push_str(&conv_kb_ids);
     b.push_str("'><span id='convName' style='display:none'>");
     b.push_str(&name);
     b.push_str("</span>");
@@ -943,6 +962,8 @@ pub async fn chat_detail_page(
     b.push_str("<label style='font-size:11px;display:flex;align-items:center;gap:4px;margin-top:8px'><input type='checkbox' checked> Show citations</label>");
     b.push_str("<label style='font-size:11px;display:flex;align-items:center;gap:4px;margin-top:4px'><input type='checkbox'> Stream response</label>");
     b.push_str("</div></div>");
+    // Temporary conversation (RAGFlow: 临时对话) — stateless scratch chat
+    b.push_str("<div class='modal-overlay' id='tempModal'><div class='modal' style='max-width:640px'><h2>💬 临时对话</h2><p style='color:var(--tm);font-size:12px;margin-bottom:12px'>不保存到会话历史</p><input id='tempQ' placeholder='Ask...' style='width:100%'><button class='btn btn-p' style='margin-top:8px;width:100%' onclick='sendTemp()'>Send</button><div id='tempOut' style='margin-top:12px;white-space:pre-wrap;line-height:1.6;font-size:13px'></div><button class='btn btn-o' style='margin-top:12px' onclick=document.getElementById('tempModal').classList.remove('show')>Close</button></div></div>");
     // Chat area
     b.push_str("<div class='card' style='flex:1;display:flex;flex-direction:column'><div style='flex:1;overflow-y:auto;padding:12px;background:var(--bg);border-radius:var(--r);margin-bottom:12px;min-height:400px' id='chatMsgs'>");
     b.push_str(&msgs);
@@ -1029,9 +1050,18 @@ pub async fn agent_detail_page(
     b.push_str(t("Save", zh));
     b.push_str("</button><button class='btn btn-p' onclick='publishAgent()'>🚀 ");
     b.push_str(t("Publish", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='openVersions()'>📚 ");
+    b.push_str(t("Versions", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='exportAgentJson()'>⬇ ");
+    b.push_str(t("Export JSON", zh));
     b.push_str("</button><button class='btn btn-d' onclick='delAgent()'>");
     b.push_str(t("Delete", zh));
     b.push_str("</button></div>");
+    b.push_str("<div class='modal-overlay' id='verModal'><div class='modal' style='max-width:680px'><h2>📚 ");
+    b.push_str(t("Versions", zh));
+    b.push_str("</h2><div id='verList'>Loading...</div><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-o' onclick=document.getElementById('verModal').classList.remove('show')>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div>");
     b.push_str("<div class='st' style='margin-top:16px'><div class='sc'><span class='lbl'>ID</span><span class='val' id='agentId' style='font-size:13px'>-</span></div><div class='sc'><span class='lbl'>KBs</span><span class='val' id='agentKbs'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='agentStatus' style='font-size:15px'>-</span></div></div>");
     b.push_str("<div style='display:flex;gap:16px;margin-top:16px;align-items:flex-start'><div class='card' style='width:230px;flex-shrink:0'><h2>");
     b.push_str(t("Components", zh));
@@ -1070,7 +1100,7 @@ pub async fn agent_detail_page(
     b.push_str("</h2><div id='runLog' style='font-size:12px;color:var(--t2);max-height:300px;overflow:auto'><p style='color:var(--tm)'>No runs yet.</p></div></div></div>");
     b.push_str("<script>var aid='");
     b.push_str(&agent_id);
-    b.push_str("';function editDsl(){var pre=document.getElementById('agentDsl');var ta=document.getElementById('agentDslEdit');ta.value=pre.textContent;ta.style.display='block';pre.style.display='none';ta.focus()};function saveDsl(){var ta=document.getElementById('agentDslEdit');var v;try{v=JSON.parse(ta.value)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2);renderTopology(a.dsl||a.canvas||{})})};function renderTopology(dsl){var nodes=(dsl.nodes||[]);var edges=(dsl.edges||[]);if(!nodes.length){document.getElementById('canvasView').innerHTML='<p style=color:var(--tm)>Empty canvas</p>';return}var xMin=1e9,yMin=1e9,xMax=-1e9,yMax=-1e9;var pos={};nodes.forEach(function(n){var p=n.position||{x:0,y:0};pos[n.id]=p;xMin=Math.min(xMin,p.x);yMin=Math.min(yMin,p.y);xMax=Math.max(xMax,p.x);yMax=Math.max(yMax,p.y)});var W=xMax-xMin+300,H=yMax-yMin+300;var svg='<svg width='+W+' height='+H+' style=background:var(--bg)><defs><marker id=arr markerWidth=8 markerHeight=8 refX=8 refY=4 orient=auto><path d=M0,0L8,4L0,8 fill=var(--p)></path></marker></defs>';edges.forEach(function(e){var s=pos[e.source]||{x:0,y:0};var t=pos[e.target]||{x:0,y:0};svg+='<line x1='+(s.x-xMin+150)+' y1='+(s.y-yMin+150)+' x2='+(t.x-xMin+150)+' y2='+(t.y-yMin+150)+' stroke=var(--p) stroke-width=1.5 marker-end=url(#arr)></line>'});nodes.forEach(function(n){var p=pos[n.id];var label=n.data&&(n.data.title||n.data.name)||n.id;svg+='<g><rect x='+(p.x-xMin+120)+' y='+(p.y-yMin+130)+' width=150 height=40 rx=8 fill=var(--card) stroke=var(--p)></rect><text x='+(p.x-xMin+195)+' y='+(p.y-yMin+153)+' text-anchor=middle font-size=12 fill=var(--t2)>'+label+'</text></g>'});svg+='</svg>';document.getElementById('canvasView').innerHTML=svg};function logRun(q,status,out){var lg=document.getElementById('runLog');var ph=lg.querySelector('p');if(ph)ph.remove();var d=new Date();var ts=d.getHours()+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);var div=document.createElement('div');div.style.cssText='padding:8px;border-bottom:1px solid var(--bd);white-space:pre-wrap';div.innerHTML='<span style=color:var(--tm)>['+ts+'] '+status+' &middot; Q: '+(q||'').substring(0,120)+'</span><br>'+String(out).substring(0,600);lg.insertBefore(div,lg.firstChild)};function runAgent(){document.getElementById('aa2').textContent='Running agent...';logRun('Run agent once','running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun('Run agent once',d.code===0?'done':'error',out)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;document.getElementById('aa2').textContent='Running...';logRun(q,'running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun(q,d.code===0?'done':'error',out)})};function saveAgent(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var v;try{v=JSON.parse(raw)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Saved');loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function publishAgent(){if(!confirm('Publish this agent as a released version?'))return;fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({release:true})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Published');loadAgent()}else{alert('Publish failed: '+(d.message||'unknown'))}})};function addComponent(name){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};var dsl=a.dsl||a.canvas||{};if(!dsl.components)dsl.components={};var n=0;var base=name.replace(/[^A-Za-z0-9_]/g,'');var key=base+':'+n;while(dsl.components[key]){n++;key=base+':'+n}var node={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':[]};if(dsl.components['begin']){dsl.components['begin'].downstream=dsl.components['begin'].downstream||[];dsl.components['begin'].downstream.push(key);node.upstream=['begin']}dsl.components[key]=node;var ta=document.getElementById('agentDslEdit');var pre=document.getElementById('agentDsl');ta.value=JSON.stringify(dsl,null,2);ta.style.display='block';pre.style.display='none';ta.focus();alert('Component \"'+name+'\" added to DSL. Click 💾 Save to persist.')})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};loadAgent()</script>");
+    b.push_str("';function editDsl(){var pre=document.getElementById('agentDsl');var ta=document.getElementById('agentDslEdit');ta.value=pre.textContent;ta.style.display='block';pre.style.display='none';ta.focus()};function saveDsl(){var ta=document.getElementById('agentDslEdit');var v;try{v=JSON.parse(ta.value)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2);renderTopology(a.dsl||a.canvas||{})})};function renderTopology(dsl){var nodes=(dsl.nodes||[]);var edges=(dsl.edges||[]);if(!nodes.length){document.getElementById('canvasView').innerHTML='<p style=color:var(--tm)>Empty canvas</p>';return}var xMin=1e9,yMin=1e9,xMax=-1e9,yMax=-1e9;var pos={};nodes.forEach(function(n){var p=n.position||{x:0,y:0};pos[n.id]=p;xMin=Math.min(xMin,p.x);yMin=Math.min(yMin,p.y);xMax=Math.max(xMax,p.x);yMax=Math.max(yMax,p.y)});var W=xMax-xMin+300,H=yMax-yMin+300;var svg='<svg width='+W+' height='+H+' style=background:var(--bg)><defs><marker id=arr markerWidth=8 markerHeight=8 refX=8 refY=4 orient=auto><path d=M0,0L8,4L0,8 fill=var(--p)></path></marker></defs>';edges.forEach(function(e){var s=pos[e.source]||{x:0,y:0};var t=pos[e.target]||{x:0,y:0};svg+='<line x1='+(s.x-xMin+150)+' y1='+(s.y-yMin+150)+' x2='+(t.x-xMin+150)+' y2='+(t.y-yMin+150)+' stroke=var(--p) stroke-width=1.5 marker-end=url(#arr)></line>'});nodes.forEach(function(n){var p=pos[n.id];var label=n.data&&(n.data.title||n.data.name)||n.id;svg+='<g><rect x='+(p.x-xMin+120)+' y='+(p.y-yMin+130)+' width=150 height=40 rx=8 fill=var(--card) stroke=var(--p)></rect><text x='+(p.x-xMin+195)+' y='+(p.y-yMin+153)+' text-anchor=middle font-size=12 fill=var(--t2)>'+label+'</text></g>'});svg+='</svg>';document.getElementById('canvasView').innerHTML=svg};function logRun(q,status,out){var lg=document.getElementById('runLog');var ph=lg.querySelector('p');if(ph)ph.remove();var d=new Date();var ts=d.getHours()+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);var div=document.createElement('div');div.style.cssText='padding:8px;border-bottom:1px solid var(--bd);white-space:pre-wrap';div.innerHTML='<span style=color:var(--tm)>['+ts+'] '+status+' &middot; Q: '+(q||'').substring(0,120)+'</span><br>'+String(out).substring(0,600);lg.insertBefore(div,lg.firstChild)};function runAgent(){document.getElementById('aa2').textContent='Running agent...';logRun('Run agent once','running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun('Run agent once',d.code===0?'done':'error',out)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;document.getElementById('aa2').textContent='Running...';logRun(q,'running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun(q,d.code===0?'done':'error',out)})};function saveAgent(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var v;try{v=JSON.parse(raw)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Saved');loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function publishAgent(){if(!confirm('Publish this agent as a released version?'))return;fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({release:true})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Published');loadAgent()}else{alert('Publish failed: '+(d.message||'unknown'))}})};function addComponent(name){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};var dsl=a.dsl||a.canvas||{};if(!dsl.components)dsl.components={};var n=0;var base=name.replace(/[^A-Za-z0-9_]/g,'');var key=base+':'+n;while(dsl.components[key]){n++;key=base+':'+n}var node={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':[]};if(dsl.components['begin']){dsl.components['begin'].downstream=dsl.components['begin'].downstream||[];dsl.components['begin'].downstream.push(key);node.upstream=['begin']}dsl.components[key]=node;var ta=document.getElementById('agentDslEdit');var pre=document.getElementById('agentDsl');ta.value=JSON.stringify(dsl,null,2);ta.style.display='block';pre.style.display='none';ta.focus();alert('Component \"'+name+'\" added to DSL. Click 💾 Save to persist.')})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};function openVersions(){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>Loading...</p>';document.getElementById('verModal').classList.add('show');fetch('/api/v1/agents/'+aid+'/versions').then(r=>r.json()).then(function(d){var vs=d.data||[];if(!vs.length){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>No versions yet</p>';return}var h='<table><thead><tr><th>ID</th><th>Title</th><th>Created</th><th></th></tr></thead><tbody>';vs.forEach(function(v){h+='<tr><td style=font-family:monospace;font-size:12px>'+v.id+'</td><td>'+(v.title||'')+'</td><td style=color:var(--tm);font-size:12px>'+new Date(v.created_at).toLocaleString()+'</td><td><button class=btn btn-o btn-sm onclick=downloadVersion(&quot;'+v.id+'&quot;)>Download</button></td></tr>'});document.getElementById('verList').innerHTML=h+'</tbody></table>'})};function downloadVersion(vid){fetch('/api/v1/agents/'+aid+'/versions/'+encodeURIComponent(vid)).then(r=>r.json()).then(function(d){var v=(d.data||{}).dsl||{};var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(v,null,2));a.download='agent_'+aid+'_v'+vid+'.json';a.click()})};function exportAgentJson(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(raw);a.download='agent_'+aid+'.json';a.click()};loadAgent()</script>");
     Html(layout("Agent", &b, zh))
 }
 
@@ -1098,7 +1128,9 @@ pub async fn agents_page(
     b.push_str(t("New Agent", zh));
     b.push_str("</h2><input id='aname' placeholder='Name'><textarea id='adesc' placeholder='Description' style='margin-top:8px;min-height:60px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createA()'>");
     b.push_str(t("Create", zh));
-    b.push_str("</button><button class='btn btn-o' onclick='showTemplates()'>From Template</button><button class='btn btn-o' onclick='document.getElementById(\"createModal\").classList.remove(\"show\")'>");
+    b.push_str("</button><button class='btn btn-o' onclick='showTemplates()'>From Template</button><button class='btn btn-o' onclick=document.getElementById('agentJsonFile').click()>");
+    b.push_str(t("Import JSON", zh));
+    b.push_str("</button><input type='file' id='agentJsonFile' style='display:none' onchange='importAgentJson()'><button class='btn btn-o' onclick='document.getElementById(\"createModal\").classList.remove(\"show\")'>");
     b.push_str(t("Cancel", zh));
     b.push_str("</button></div></div></div>");
     b.push_str("<div class='card'><h2>Test Agent</h2><input id='aq' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='askA()'>Ask</button><div id='aa' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>var agentTemplates={
@@ -1122,8 +1154,8 @@ pub async fn agents_page(
     }
     b.push_str(&tpls);
     b.push_str("};
-function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:(t.description?t.description:'Created from template: '+t.name),dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
-var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(function(){location.reload()})};function editA(id){window.location.href='/agents/'+id};function runA(id){window.location.href='/agents/'+id};function renameA(id,cur){var n=prompt('New name:',cur);if(!n)return;fetch('/api/v1/agents/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Rename failed: '+(d.message||'unknown'))}})};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
+function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:(t.description?t.description:'Created from template: '+t.name),dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
+var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(function(){location.reload()})};function importAgentJson(){var f=document.getElementById('agentJsonFile').files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var obj=JSON.parse(r.result);var nm=obj.title||obj.name||'Imported Agent';fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,description:obj.description||'',dsl:obj.dsl||obj.canvas||{}})}).then(function(res){return res.json()}).then(function(d){if(d.code===0){location.reload()}else{alert('Import failed: '+(d.message||'unknown'))}})}catch(e){alert('Invalid JSON: '+e.message)}};r.readAsText(f)};function editA(id){window.location.href='/agents/'+id};function runA(id){window.location.href='/agents/'+id};function renameA(id,cur){var n=prompt('New name:',cur);if(!n)return;fetch('/api/v1/agents/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Rename failed: '+(d.message||'unknown'))}})};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
     Html(layout(t("Agents", zh), &b, zh))
 }
 
@@ -1173,10 +1205,17 @@ pub async fn files_page(
     b.push_str(t("Files", zh));
     b.push_str("</h1><div class='card'><h2>");
     b.push_str(t("Upload", zh));
-    b.push_str("</h2><input type='file' id='fu' style='max-width:400px'><button class='btn btn-p' onclick='uploadF()'>Upload</button></div><div class='card'><h2>Files</h2><input id='fileQ' placeholder='Search files...' oninput='fileFilter()' style='max-width:260px;margin-bottom:8px'><div id='fl'>Loading...</div></div><script>function fileFilter(){var q=(document.getElementById('fileQ').value||'').toLowerCase();document.querySelectorAll('#fl tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';tr.style.display=(!q||m.indexOf(q)>=0)?'':'none')})};function loadF(){fetch('/api/v1/files').then(r=>r.json()).then(d=>{var files=d.data||[];var h='<table><thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Uploaded</th><th></th></tr></thead><tbody>';files.forEach(function(f){var d=new Date(f.created_at);var ds=d?d.toLocaleString():'';h+='<tr data-name=\''+f.name.toLowerCase()+'\'><td style=font-weight:500>'+f.name+'</td><td>'+(f.size/1024).toFixed(0)+'KB</td><td class=co>'+f.file_type+'</td><td style=color:var(--tm);font-size:12px>'+ds+'</td><td><a class=\'btn btn-o btn-sm\' href=\'/api/v1/files/'+f.id+'/download\' target=\'_blank\'>Download</a> <button class=\'btn btn-o btn-sm\' onclick=\'renameF(\"'+f.id+'\",\"'+f.name.replace(/\"/g,'')+'\")\\'>Rename</button> <button class=\'btn btn-o btn-sm\' onclick=\'copyF(\"'+f.id+'\")\\'>Copy</button> <button class=\'btn btn-d btn-sm\' onclick=\'delFile(\"'+f.id+'\")\\'>Del</button></td></tr>'});document.getElementById('fl').innerHTML=h+'</tbody></table>'})};function renameF(id,cur){var n=prompt('New file name:',cur);if(!n)return;fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function copyF(id){fetch('/api/v1/files/'+id+'/copy',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function delFile(id){if(!confirm('Delete this file?'))return;fetch('/api/v1/files/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function uploadF(){var f=document.getElementById('fu').files[0];if(!f)return;var fd=new FormData();fd.append('file',f,f.name);fetch('/api/v1/files/upload',{method:'POST',body:fd}).then(loadF)};loadF()</script>");
+    b.push_str("</h2><input type='file' id='fu' style='max-width:400px'><button class='btn btn-p' onclick='uploadF()'>");
+    b.push_str(t("Upload", zh));
+    b.push_str("</button></div><div class='card' id='fileBatchBar' style='display:none'><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span id='fileSelCount' style='font-size:13px;color:var(--tm)'></span><button class='btn btn-d btn-sm' onclick='batchDelSel()'>");
+    b.push_str(t("Bulk Delete", zh));
+    b.push_str("</button><button class='btn btn-o btn-sm' onclick='batchLinkSel()'>");
+    b.push_str(t("Link to KB", zh));
+    b.push_str("</button><button class='btn btn-o btn-sm' onclick='fileSelAll(false);updateFileBatch()'>✕ ");
+    b.push_str(t("Clear", zh));
+    b.push_str("</button></div></div><div class='card'><h2>Files</h2><input id='fileQ' placeholder='Search files...' oninput='fileFilter()' style='max-width:260px;margin-bottom:8px'><div id='fl'>Loading...</div></div><script>function fileFilter(){var q=(document.getElementById('fileQ').value||'').toLowerCase();document.querySelectorAll('#fl tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';tr.style.display=(!q||m.indexOf(q)>=0)?'':'none'})};function updateFileBatch(){var n=document.querySelectorAll('.fileCk:checked').length;var bar=document.getElementById('fileBatchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('fileSelCount');if(sc)sc.textContent=n+' selected'}};function fileSelAll(on){document.querySelectorAll('.fileCk').forEach(function(x){x.checked=on});updateFileBatch()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('fileCk'))updateFileBatch()});function loadF(){fetch('/api/v1/files').then(r=>r.json()).then(d=>{var files=d.data||[];var h='<table><thead><tr><th><input type=checkbox onclick=fileSelAll(this.checked)></th><th>Name</th><th>Size</th><th>Type</th><th>Uploaded</th><th></th></tr></thead><tbody>';files.forEach(function(f){var d=new Date(f.created_at);var ds=d?d.toLocaleString():'';h+='<tr data-name=\\''+f.name.toLowerCase()+'\\'><td><input type=checkbox class=fileCk value='+f.id+'></td><td style=font-weight:500>'+f.name+'</td><td>'+(f.size/1024).toFixed(0)+'KB</td><td class=co>'+f.file_type+'</td><td style=color:var(--tm);font-size:12px>'+ds+'</td><td><a class=btn btn-o btn-sm href=/api/v1/files/'+f.id+'/download target=_blank>Download</a> <button class=btn btn-o btn-sm onclick=linkFile('+f.id+') title=Link>🔗 KB</button> <button class=btn btn-o btn-sm onclick=renameF('+f.id+',&quot;'+f.name.replace(/\"/g,'')+'&quot;)>Rename</button> <button class=btn btn-o btn-sm onclick=copyF('+f.id+')>Copy</button> <button class=btn btn-d btn-sm onclick=delFile('+f.id+')>Del</button></td></tr>'});document.getElementById('fl').innerHTML=h+'</tbody></table>';updateFileBatch()})};function linkFile(id){var kb=prompt('Link file to knowledge base (dataset ID):');if(!kb)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:[id],dataset_id:kb})}).then(r=>r.json()).then(d=>{alert(d.code===0?('Linked: '+(d.message||'ok')):('Error: '+(d.message||'unknown')))})};function selFileIds(){var ids=[];document.querySelectorAll('.fileCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchDelSel(){var ids=selFileIds();if(!ids.length){alert('请先选择文件');return}if(!confirm('Delete '+ids.length+' selected file(s)?'))return;var n=0;function next(){if(n>=ids.length){loadF();return}var id=ids[n++];fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()};function batchLinkSel(){var ids=selFileIds();if(!ids.length){alert('请先选择文件');return}var kb=prompt('Link '+ids.length+' file(s) to knowledge base (dataset ID):');if(!kb)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:ids,dataset_id:kb})}).then(r=>r.json()).then(d=>{alert(d.code===0?('Linked: '+(d.message||'ok')):('Error: '+(d.message||'unknown')))})};function renameF(id,cur){var n=prompt('New file name:',cur);if(!n)return;fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function copyF(id){fetch('/api/v1/files/'+id+'/copy',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function delFile(id){if(!confirm('Delete this file?'))return;fetch('/api/v1/files/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function uploadF(){var f=document.getElementById('fu').files[0];if(!f)return;var fd=new FormData();fd.append('file',f,f.name);fetch('/api/v1/files/upload',{method:'POST',body:fd}).then(loadF)};loadF()</script>");
     Html(layout(t("Files", zh), &b, zh))
 }
-
 pub async fn memories_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -1293,6 +1332,8 @@ pub async fn document_page(
     b.push_str(t("Reparse", zh));
     b.push_str("</button><button class='btn btn-d' onclick='delDoc()'>");
     b.push_str(t("Delete", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='exportChunks()'>⬇ ");
+    b.push_str(t("Export", zh));
     b.push_str("</button></div>");
     b.push_str("<div class='modal-overlay' id='chunkModal'><div class='modal' style='max-width:700px'><h2>");
     b.push_str(t("Edit Chunk", zh));
@@ -1315,7 +1356,7 @@ pub async fn document_page(
     b.push_str(&kb_id);
     b.push_str("';var docId='");
     b.push_str(&doc_id);
-    b.push_str("';function chunkPage(d){window.cPage+=d;loadChunks()};function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';window.cPage=0;window.cPageSize=20;var pageData=chunks;function renderPage(){var h='';var start=window.cPage*window.cPageSize;var end=Math.min(start+window.cPageSize,pageData.length);pageData.slice(start,end).forEach(function(c,i){h+=\"<div class='ri'><span class='rs'>#\"+(start+i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div><button class='btn btn-o btn-sm' style='margin-top:6px' onclick=\"editChunk('\"+c.id+'\"','\"+(c.content||'').substring(0,2000).replace(/\'/g,'')+'\"')\">Edit</button></div>\"});var pn='<div style=margin-top:12px>';if(window.cPage>0)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';pn+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(pageData.length/window.cPageSize))+' ('+pageData.length+' chunks) </span>';if(end<pageData.length)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';pn+='</div>';h+=pn;document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};var editingChunk='';function editChunk(cid,content){editingChunk=cid;document.getElementById('chunkContent').value=content;document.getElementById('chunkModal').classList.add('show')};function saveChunk(){var content=document.getElementById('chunkContent').value;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks/'+editingChunk,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(r){return r.json()}).then(function(d){document.getElementById('chunkModal').classList.remove('show');if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};loadChunks()</script>");
+    b.push_str("';function chunkPage(d){window.cPage+=d;loadChunks()};function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';window.cPage=0;window.cPageSize=20;var pageData=chunks;function renderPage(){var h='';var start=window.cPage*window.cPageSize;var end=Math.min(start+window.cPageSize,pageData.length);pageData.slice(start,end).forEach(function(c,i){h+=\"<div class='ri'><span class='rs'>#\"+(start+i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div><button class='btn btn-o btn-sm' style='margin-top:6px' onclick=\"editChunk('\"+c.id+'\"','\"+(c.content||'').substring(0,2000).replace(/\'/g,'')+'\"')\">Edit</button></div>\"});var pn='<div style=margin-top:12px>';if(window.cPage>0)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';pn+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(pageData.length/window.cPageSize))+' ('+pageData.length+' chunks) </span>';if(end<pageData.length)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';pn+='</div>';h+=pn;document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};var editingChunk='';function editChunk(cid,content){editingChunk=cid;document.getElementById('chunkContent').value=content;document.getElementById('chunkModal').classList.add('show')};function saveChunk(){var content=document.getElementById('chunkContent').value;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks/'+editingChunk,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(r){return r.json()}).then(function(d){document.getElementById('chunkModal').classList.remove('show');if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};function exportChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(function(d){var data=d.data||{};var chunks=data.chunks||[];var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(chunks,null,2));a.download='doc_'+docId+'_chunks.json';a.click()})};loadChunks()</script>");
     Html(layout("Document", &b, zh))
 }
 
@@ -1511,7 +1552,12 @@ pub async fn settings_page(req: axum::http::Request<axum::body::Body>) -> impl I
     b.push_str("<div class='card'><h2>");
     b.push_str(t("API Keys", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>Generate and manage personal API keys.</p><button class='btn btn-p' onclick='genKey()'>Generate</button><div id='akList' style='margin-top:12px'></div></div>");
-    b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function loadKeys(){fetch('/api/v1/system/api_keys').then(r=>r.json()).then(d=>{var keys=d.data||[];var e=document.getElementById('akList');if(!keys.length){e.innerHTML='<p style=color:var(--tm)>No API keys yet.</p>';return}var h='<table><thead><tr><th>Key</th><th>Created</th><th></th></tr></thead><tbody>';keys.forEach(function(k){h+='<tr><td style=font-family:monospace;font-size:12px>'+k.token+'</td><td style=color:var(--tm);font-size:12px>'+k.create_date+'</td><td><button class=\'btn btn-d btn-sm\' onclick=\'delKey(\"'+k.token+'\")\\'>Delete</button></td></tr>'});e.innerHTML=h+'</tbody></table>'})};function genKey(){fetch('/api/v1/system/api_keys',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function delKey(k){if(!confirm('Delete this API key?'))return;fetch('/api/v1/system/api_keys/'+encodeURIComponent(k),{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};loadKeys()</script>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Invite", zh));
+    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>Invite a registered user to your team.</p><div style='display:grid;gap:8px;max-width:360px'><input id='invEmail' placeholder='user@example.com'><button class='btn btn-p' onclick='inviteUser()'>");
+    b.push_str(t("Invite", zh));
+    b.push_str("</button><p id='invMsg' style='font-size:12px;color:var(--tm)'></p></div></div>");
+    b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function loadKeys(){fetch('/api/v1/system/api_keys').then(r=>r.json()).then(d=>{var keys=d.data||[];var e=document.getElementById('akList');if(!keys.length){e.innerHTML='<p style=color:var(--tm)>No API keys yet.</p>';return}var h='<table><thead><tr><th>Key</th><th>Created</th><th></th></tr></thead><tbody>';keys.forEach(function(k){h+='<tr><td style=font-family:monospace;font-size:12px>'+k.token+'</td><td style=color:var(--tm);font-size:12px>'+k.create_date+'</td><td><button class=\\'btn btn-d btn-sm\\' onclick=\\'delKey(&quot;'+k.token+'&quot;)\\'>Delete</button></td></tr>'});e.innerHTML=h+'</tbody></table>'})};function genKey(){fetch('/api/v1/system/api_keys',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function delKey(k){if(!confirm('Delete this API key?'))return;fetch('/api/v1/system/api_keys/'+encodeURIComponent(k),{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function inviteUser(){var e=document.getElementById('invEmail').value;if(!e){document.getElementById('invMsg').textContent='Please enter an email';return}fetch('/api/v1/users/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e})}).then(r=>r.json()).then(d=>{document.getElementById('invMsg').textContent=d.code===0?'Invitation sent':'Error: '+(d.message||'unknown')})};loadKeys()</script>");
     Html(layout(t("Settings", zh), &b, zh))
 }
 
@@ -1799,6 +1845,117 @@ mod kb_ui_tests {
         // API 调用
         assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
         assert!(html.contains("/api/v1/providers"), "providers API missing");
+    }
+
+    #[tokio::test]
+    async fn files_page_renders_link_bulk_and_selection_buttons() {
+        let (_root, state) = test_state();
+        let req = Request::builder().uri("/files").body(Body::empty()).unwrap();
+        let html = body_of(files_page(State(state), req).await).await;
+        // 批量操作栏 + 勾选 + 关联知识库（RAGFlow: 上传/新建文件夹/批量移动/批量关联）
+        assert!(html.contains("fileBatchBar"), "bulk bar missing");
+        assert!(html.contains("batchDelSel"), "bulk delete missing");
+        assert!(html.contains("batchLinkSel"), "bulk link missing");
+        assert!(html.contains("fileSelAll"), "select-all missing");
+        assert!(html.contains("linkFile"), "link-to-KB handler missing");
+        assert!(html.contains("/api/v1/file2document"), "file2document API missing");
+    }
+
+    #[tokio::test]
+    async fn agents_page_renders_import_json_button() {
+        let (_root, state) = test_state();
+        let req = Request::builder().uri("/agents").body(Body::empty()).unwrap();
+        let html = body_of(agents_page(State(state), req).await).await;
+        // RAGFlow: 从空白创建 / 从模板创建 / 导入 JSON
+        assert!(html.contains("agentJsonFile"), "import JSON file input missing");
+        assert!(html.contains("importAgentJson"), "import JSON handler missing");
+    }
+
+    #[tokio::test]
+    async fn agent_detail_page_renders_versions_and_export_json_buttons() {
+        let (_root, state) = test_state();
+        let req = Request::builder().uri("/agents/a1").body(Body::empty()).unwrap();
+        let html = body_of(agent_detail_page(Path("a1".to_string()), req).await).await;
+        // RAGFlow: 运行 / 探索 / 版本管理(发布生产+下载) / 导出 JSON
+        assert!(html.contains("openVersions"), "versions button missing");
+        assert!(html.contains("verModal"), "versions modal missing");
+        assert!(html.contains("downloadVersion"), "version download handler missing");
+        assert!(html.contains("exportAgentJson"), "export JSON handler missing");
+        assert!(html.contains("/api/v1/agents/'+aid+'/versions"), "versions API missing");
+    }
+
+    #[tokio::test]
+    async fn kb_detail_page_renders_empty_all_button() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "E KB", "d").unwrap();
+        let req = Request::builder().uri("/kbs/x").body(Body::empty()).unwrap();
+        let html = body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        // RAGFlow 添加文件下拉：上传文件 / 清空
+        assert!(html.contains("emptyAllDocs"), "empty-all button missing");
+    }
+
+    #[tokio::test]
+    async fn chat_detail_page_renders_temporary_conversation() {
+        let (_root, state) = test_state();
+        let req = Request::builder().uri("/chat/c1").body(Body::empty()).unwrap();
+        let html = body_of(chat_detail_page(State(state), Path("c1".to_string()), req).await).await;
+        // RAGFlow: 临时对话（不落库）+ 嵌入 / 分享
+        assert!(html.contains("tempConv"), "temp conversation button missing");
+        assert!(html.contains("tempModal"), "temp modal missing");
+        assert!(html.contains("sendTemp"), "temp send handler missing");
+        assert!(html.contains("/api/v1/completions"), "stateless completion API missing");
+    }
+
+    #[tokio::test]
+    async fn document_page_renders_export_chunks_button() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/documents/k1/d1")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_page(
+                State(state),
+                Path(("k1".to_string(), "d1".to_string())),
+                req,
+            )
+            .await,
+        )
+        .await;
+        // RAGFlow chunk 页：保存 / 导出
+        assert!(html.contains("exportChunks"), "export chunks handler missing");
+    }
+
+    #[tokio::test]
+    async fn temp_dump_rendered_html() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Dump KB", "d").unwrap();
+        let req = || Request::builder().uri("/x").body(Body::empty()).unwrap();
+        let files = body_of(files_page(State(state.clone()), req()).await).await;
+        let agents = body_of(agents_page(State(state.clone()), req()).await).await;
+        let ad = body_of(agent_detail_page(Path("a1".to_string()), req()).await).await;
+        let kbd = body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req()).await).await;
+        let cd = body_of(chat_detail_page(State(state.clone()), Path("c1".to_string()), req()).await).await;
+        let doc = body_of(document_page(State(state.clone()), Path(("k1".to_string(), "d1".to_string())), req()).await).await;
+        let set = body_of(settings_page(req()).await).await;
+        std::fs::write("/tmp/dump_files.html", &files).unwrap();
+        std::fs::write("/tmp/dump_agents.html", &agents).unwrap();
+        std::fs::write("/tmp/dump_agent_detail.html", &ad).unwrap();
+        std::fs::write("/tmp/dump_kb_detail.html", &kbd).unwrap();
+        std::fs::write("/tmp/dump_chat_detail.html", &cd).unwrap();
+        std::fs::write("/tmp/dump_doc.html", &doc).unwrap();
+        std::fs::write("/tmp/dump_settings.html", &set).unwrap();
+        let dash = body_of(crate::web::dashboard(State(state.clone()), req()).await).await;
+        std::fs::write("/tmp/dump_dashboard.html", &dash).unwrap();
+    }
+
+    #[tokio::test]
+    async fn settings_page_renders_invite_button() {
+        let req = Request::builder().uri("/settings").body(Body::empty()).unwrap();
+        let html = body_of(settings_page(req).await).await;
+        // RAGFlow user-setting 团队页：邀请
+        assert!(html.contains("inviteUser"), "invite button missing");
+        assert!(html.contains("/api/v1/users/invite"), "invite API missing");
     }
 }
 
