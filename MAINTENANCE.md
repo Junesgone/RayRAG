@@ -1,3 +1,9 @@
+## 2026-08-05 v0.1.9 容器验证
+
+- 部署成功：容器 healthy、healthz 200、/datasources /kbs /agents /chat /settings 全 200
+- 连接器路由已注册（/api/v1/datasources/connect 返回 401=需认证，属正常）
+- 已提交 fdb31a7（v0.1.9：connectors + channels + sync tasks）
+
 ## 2026-08-05 v0.1.9：连接器框架 + 渠道框架 + sync 任务
 
 - connectors.rs ~1480：Connector trait + Local/WebDAV/Blob/Feishu/Confluence + Registry
