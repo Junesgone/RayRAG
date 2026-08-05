@@ -306,6 +306,21 @@ pub async fn get_doc(
     }
 }
 
+/// Wire a document into the async task executor (RAGFlow `task_executor.py`
+/// port). Enqueues the doc into the persisted TaskQueue and hands execution to
+/// the TaskExecutor worker pool; the upload and reparse flows share this path.
+///
+/// The returned `task_id` matches the RAGFlow `task_id` returned by
+/// `/datasets/{kb}/documents` upload responses.
+pub(crate) fn enqueue_document_processing(
+    state: std::sync::Arc<crate::server::AppState>,
+    owner_id: &str,
+    doc: DocRecord,
+    priority: i32,
+) -> anyhow::Result<String> {
+    crate::server::queue_document_processing(state, owner_id, doc, priority)
+}
+
 /// POST /api/v1/datasets/{kb_id}/documents/{doc_id}/reparse — re-parse
 pub async fn reparse_doc(
     State(state): State<std::sync::Arc<AppState>>,
@@ -321,7 +336,7 @@ pub async fn reparse_doc(
     if doc.kb_id != kb_id {
         return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
     }
-    match crate::server::queue_document_processing(
+    match enqueue_document_processing(
         state,
         &auth.user_id,
         doc,

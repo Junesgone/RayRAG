@@ -66,6 +66,9 @@ pub struct AppState {
     pub tenant_models: Arc<crate::api::tenant_models::TenantModelStore>,
     pub memories: Arc<crate::api::features::MemoryStore>,
     pub tasks: Arc<crate::api::features::TaskQueue>,
+    /// Async document task executor (RAGFlow `task_executor.py` port): the
+    /// queue + worker pool that runs document processing off the request path.
+    pub task_executor: Arc<crate::task_executor::TaskExecutor>,
     pub agents: Arc<crate::api::features::AgentStore>,
     pub agent_runs: Arc<crate::api::features::AgentRunRegistry>,
     pub agent_checkpoints: Arc<crate::agent_checkpoint::AgentCheckpointStore>,
@@ -998,7 +1001,82 @@ pub(crate) fn queue_document_processing(
         state.tasks.request_cancel(&task_id).ok();
         return Err(error);
     }
+    // Hand the task to the async TaskExecutor (RAGFlow task_executor port):
+    // the executor's worker pool runs `process_document` off the request path.
+    // The TaskQueue lease makes this execution exclusive with the legacy
+    // dispatcher, so queueing here is idempotent with `dispatch_pending_document_tasks`.
+    let _ = state.task_executor.submit(crate::task_executor::ExecTask {
+        id: task_id.clone(),
+        doc_id: doc.id.clone(),
+        kb_id: doc.kb_id.clone(),
+        name: doc.name.clone(),
+        priority,
+        from_page: 0,
+        to_page: -1,
+        attempts: 0,
+        max_retries: 2,
+        state: crate::task_executor::TaskState::Pending,
+        progress: 0.0,
+        message: "Queued for parsing".into(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    });
     Ok(task_id)
+}
+
+/// Build the TaskExecutor handler that drives the existing document worker
+/// (`process_document`). The progress callback passed by the executor feeds
+/// the live task registry (RAGFlow `CURRENT_TASKS`/`set_progress` semantics);
+/// `process_document` itself writes DocStore run status (RUNNING → DONE/FAILED).
+///
+/// Retry ownership: `process_document` retries through the TaskQueue lease
+/// (`can_retry`), so errors surfaced here are treated as permanent — the
+/// executor must not double-retry.
+fn document_executor_handler(state: Arc<AppState>) -> crate::task_executor::TaskHandler {
+    Arc::new(
+        move |task: crate::task_executor::ExecTask,
+              progress: crate::task_executor::ProgressCallback| {
+            let state = state.clone();
+            Box::pin(async move {
+                let Some(doc) = state.docs.get(&task.doc_id) else {
+                    return Err(crate::task_executor::TaskError::permanent(
+                        "Document metadata is missing",
+                    ));
+                };
+                let path = document_storage_path(&state, &doc);
+                if !path.is_file() {
+                    return Err(crate::task_executor::TaskError::permanent(
+                        "Uploaded file is missing",
+                    ));
+                }
+                progress.set_progress(&task, 0.05, "Parsing document");
+                process_document(state.clone(), doc, path, task.id.clone()).await;
+                // process_document owns retry through the TaskQueue lease;
+                // classify the outcome for the executor's counters.
+                let status = state
+                    .tasks
+                    .list()
+                    .into_iter()
+                    .find(|queued| queued.id == task.id)
+                    .map(|queued| queued.status)
+                    .unwrap_or_default();
+                match status.as_str() {
+                    "done" => Ok(0),
+                    // A retry was queued or another worker owns the lease; this
+                    // submission's execution is complete either way.
+                    "pending" | "running" => Ok(0),
+                    "cancelled" => Err(crate::task_executor::TaskError::permanent(
+                        "Processing cancelled",
+                    )),
+                    other => Err(crate::task_executor::TaskError::permanent(format!(
+                        "Document processing failed: {other}"
+                    ))),
+                }
+            })
+        },
+    )
 }
 
 fn retryable_processing_error(error: &anyhow::Error) -> bool {
@@ -2949,6 +3027,10 @@ pub async fn run(
         tenant_models,
         memories: Arc::new(crate::api::features::MemoryStore::new(&memories_path)?),
         tasks: Arc::new(crate::api::features::TaskQueue::new(&t)?),
+        task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
+            "task_executor_0",
+            max_concurrent_document_tasks(),
+        )),
         agents: Arc::new(crate::api::features::AgentStore::new(&agents_path)?),
         agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
         agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::new(
@@ -2970,6 +3052,14 @@ pub async fn run(
     });
 
     start_document_task_dispatcher(state.clone());
+    // Start the async task executor (RAGFlow task_executor port): it drains the
+    // same TaskQueue entries submitted by queue_document_processing. The
+    // TaskQueue lease makes execution exclusive with the legacy dispatcher, so
+    // the two worker paths never process the same task concurrently.
+    let executor_handler = document_executor_handler(state.clone());
+    state
+        .task_executor
+        .spawn(executor_handler, std::time::Duration::from_millis(2_000));
     let router = build_router(state);
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!(
@@ -3087,6 +3177,10 @@ mod tests {
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
             tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
+            task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
+                "test_executor",
+                4,
+            )),
             agents: Arc::new(crate::api::features::AgentStore::in_memory()),
             agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
             agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),
@@ -3240,6 +3334,10 @@ mod tests {
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
             tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
+            task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
+                "test_executor",
+                4,
+            )),
             agents: Arc::new(crate::api::features::AgentStore::in_memory()),
             agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
             agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),

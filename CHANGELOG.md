@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.8] — 2026-08-05
+
+### Added
+
+- **TaskExecutor**（`src/task_executor.rs`，~680 行，对标 `task_executor.py`）：
+  异步任务队列（tokio::mpsc + Semaphore 限流）、状态机 Pending→Processing→
+  Done/Failed（对齐 RAGFlow doc 状态 UNSTARTED/RUNNING/DONE/FAILED）、
+  进度回调（set_progress：`[ERROR]` 前缀/`Page(a~b):` 页前缀/HH:MM:SS 时间戳）、
+  失败重试（retryable 标记 + 指数退避 + max_retries）、status/stats 上报、
+  submit/shutdown 生命周期；接入 document.rs 上传队列。
+- **ChatPipeline**（`src/chat.rs`，835 行，对标 `generator.py`）：
+  问题改写（full_question：绝对 ISO 日期 + USER:/ASSISTANT: 会话，**ERROR** 回退）、
+  多路查询（multi_queries_gen：<2 命中时生成 2-3 路补充查询，JSON 解析容错）、
+  引用格式化（citation_plus 二次 LLM 生成 + repair_bad_citation_formats 规范化
+  [ID:n] + references 按被引过滤）、format_knowledge（kb_prompt 树形渲染）。
+
 ## [0.1.7] — 2026-08-05
 
 ### Added

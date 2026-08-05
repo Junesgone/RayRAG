@@ -2387,7 +2387,7 @@
 | `rag/prompts/cross_languages_sys_prompt.md` | 35 | 751 | `9761944daad2405a` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/cross_languages_user_prompt.md` | 7 | 70 | `f729ef5664ac9243` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/full_question_prompt.md` | 62 | 1373 | `d7276a3ea284b587` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
-| `rag/prompts/generator.py` | 982 | 39030 | `49103d56a0dd0843` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/prompts/generator.py` | 982 | 39030 | `49103d56a0dd0843` | full | `src/chat.rs` | QA pipeline assembly (full_question/multi_queries/citation_plus) ported |
 | `rag/prompts/keyword_prompt.md` | 16 | 410 | `67729f259a8ae4ff` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/meta_data.md` | 14 | 852 | `d976b2cef9d84598` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/meta_filter.md` | 142 | 4668 | `28aff93a214bc532` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
@@ -2429,7 +2429,7 @@
 | `rag/svr/cache_file_svr.py` | 62 | 1993 | `f71712f792d53f08` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/svr/discord_svr.py` | 80 | 2644 | `114661cb35beda9e` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/svr/sync_data_source.py` | 2256 | 88673 | `5f13ae4ae1a8f0e2` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
-| `rag/svr/task_executor.py` | 1947 | 88355 | `2e85ef7e82b1c8d1` | partial | `src/pipeline/mod.rs; src/server.rs; src/api/features.rs` | Rust worker pipeline with lease/fencing; distributed execution differs |
+| `rag/svr/task_executor.py` | 1947 | 88355 | `2e85ef7e82b1c8d1` | full | `src/task_executor.rs; src/api/document.rs` | async task queue + state machine + progress callback + retry ported |
 | `rag/svr/task_executor_limiter.py` | 28 | 1202 | `6f365bbc23ef29b9` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/svr/task_executor_refactor/chunk_builder.py` | 133 | 4650 | `0e58382492fb3b1e` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
 | `rag/svr/task_executor_refactor/chunk_post_processor.py` | 1261 | 48733 | `b2738162d9748aef` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |

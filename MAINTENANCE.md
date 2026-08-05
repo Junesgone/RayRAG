@@ -1,3 +1,10 @@
+## 2026-08-05 v0.1.8：TaskExecutor + ChatPipeline
+
+- task_executor.rs ~680 行：异步队列/状态机/进度回调/指数退避重试（对齐 task_executor.py）
+- chat.rs 835 行：full_question 改写/multi_queries/citation_plus 引用/reflect 管线
+- 测试基线：**967 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 442 → **440**
+
 ## 2026-08-05 v0.1.7 容器验证
 
 - 部署成功：容器 healthy、healthz 200、核心页面 200
