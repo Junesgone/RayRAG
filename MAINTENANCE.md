@@ -1,3 +1,17 @@
+## 2026-08-05 v0.2.2 容器验证
+
+- 部署成功：容器 healthy、healthz 200、6 页面全 200
+- 已提交 1ade38d（v0.2.2：common/热配置/工具契约/资源加载）
+
+## 2026-08-05 部署层与基础设施覆盖收尾（helm / sandbox / deepdoc-server）
+
+- 新建 helm/：最小 Helm chart（Chart.yaml + values.yaml + _helpers.tpl + templates/{deployment,service,configmap}.yaml + README.md），镜像 rayrag:local，Service 端口 9390 → 容器 8080；PostgreSQL 依赖说明见 helm/README.md（上游 elasticsearch/minio/mysql/opensearch/redis/infinity 子组件语义由单一 PostgreSQL 依赖替代）。helm lint 0 失败、helm template 渲染通过
+- 覆盖矩阵：helm/* 18 行 partial → replaced（RayRAG files = helm/ 新 chart；helm/templates/tests/test-connection.yaml 保持 reference）
+- 覆盖矩阵：deepdoc/server/* 13 行 → N/A（上游 v0.26.4 检出无 deepdoc/server/ 目录——版本差异，deepdoc/ 仅含 parser/ 与 vision/；等价语义由 src/parser/、src/ocr.rs、src/app_parsers.rs 覆盖）
+- 覆盖矩阵：agent/sandbox 22 个非代码文件标注 covered-by（等价语义已在 src/sandbox.rs + Dockerfile：seccomp profile、--user nobody、tmpfs、--memory + RLIMIT_AS、GNU timeout、124/137 退出码分类；沙箱镜像语义以 code 执行限制表达）
+- 核对：admin/client 4 个非代码文件（COMMAND.md/README.md/pyproject.toml/uv.lock）现状不变（partial，文档/打包元数据；对应代码文件已 full 移植至 src/api/admin.rs）
+- 验证：timeout 280 cargo check --features postgres-backend 0 错误；docker compose config --quiet 通过
+
 ## 2026-08-05 v0.2.2：common/热配置/工具契约/资源加载
 
 - api/common.rs：ApiError 信封 + TeamPermission；runtime_config.rs 热更新
