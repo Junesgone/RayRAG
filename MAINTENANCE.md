@@ -1,3 +1,12 @@
+## 2026-08-05 v0.3.2：OCR 解析链路打通
+
+- 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
+- 根因 2：figure.rs:514 在 tokio runtime 内再建 runtime → panic
+  （"Cannot start a runtime from within a runtime"）
+- 修复：new() 惰性 from_env() + block_in_place/Handle::current().block_on
+- .env 增 RAYRAG_OCR_PROVIDER=proxy；OCR 代理契约：POST /ocr + {"image":b64}
+- 验证：PNG→OCR 文字→索引→检索 score 0.902；四 GPU 服务全打通
+
 ## 2026-08-05 v0.3.1 reranker 修复 + 延迟基准
 
 - 根因：8081 mxbai-rerank 手工进程绑 127.0.0.1（容器内 172.29.0.1 不可达）

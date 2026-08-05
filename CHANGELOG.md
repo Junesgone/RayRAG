@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.2] — 2026-08-05
+
+### Fixed
+
+- **OCR 解析链路打通**：FigureParser::new() 惰性接入 OcrClient（.env
+  RAYRAG_OCR_PROVIDER=proxy + RAYRAG_OCR_BASE_URL）；修复 async 上下文
+  内再建 runtime 的 panic（figure.rs:514 "Cannot start a runtime from
+  within a runtime" → block_in_place + Handle::current().block_on）。
+- 验证：PNG 上传→OCR 提取文字→索引→检索命中（score 0.902，content
+  含 OCR 文字）。四个 GPU 服务（LLM/embedding/reranker/OCR）全部打通。
+
 ## [0.3.1] — 2026-08-05
 
 ### UI 按钮逐项核对补齐（RAGFlow JSX vs RayRAG 渲染 diff）

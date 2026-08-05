@@ -36,10 +36,10 @@ pub struct FigureParser {
 
 impl FigureParser {
     pub fn new() -> Self {
-        Self {
-            ocr: None,
-            vision: None,
-        }
+        // 惰性接入 OCR：.env 设置 RAYRAG_OCR_PROVIDER=proxy + RAYRAG_OCR_BASE_URL 时，
+        // 图片解析自动调用 OCR 服务提取文字（对齐 RAGFlow figure_parser use_ocr 语义）。
+        let ocr = crate::ocr::OcrClient::from_env().ok().flatten();
+        Self { ocr, vision: None }
     }
 
     /// Enable OCR for raster images.
@@ -508,11 +508,12 @@ fn parse_raster(
     // Try OCR if client is available
     let mut ocr_text = String::new();
     if let Some(client) = ocr {
-        if let Ok(found) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(client.ocr(data))
-        {
+        // 已在 tokio runtime 内执行时禁止再建 runtime；用 block_in_place + 当前
+        // handle 同步等待（对齐 RAGFlow figure_parser 的同步 OCR 调用语义）。
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(client.ocr(data))
+        });
+        if let Ok(found) = result {
             if !found.is_empty() {
                 ocr_text = found;
             }
