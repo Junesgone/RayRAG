@@ -103,6 +103,12 @@ md-5 = "0.11.0"
 lettre = { version = "0.11.23", features = ["smtp-transport", "rustls-tls", "builder"] }
 tempfile = "3.27.0"
 
+# RAGFlow common-layer parity (all crates already present in the local cargo
+# cache — no network needed):
+aes = "0.8"                                      # common/crypto_utils.py AES-CBC
+pbkdf2 = { version = "0.12", features = ["hmac"] } # PBKDF2-HMAC-SHA256 key derivation
+unicode-normalization = "0.1"                    # common/text_utils.py NFKC
+
 [[bin]]
 name = "rayrag"
 path = "src/main.rs"

@@ -22419,3 +22419,450 @@ mod tests {
         assert!(workflow.unsupported_components().is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// canvas.py remaining semantics (appended; pure helpers, no runtime changes).
+//
+// These functions mirror the parts of `agent/canvas.py` that were not yet
+// ported: `Canvas.reset` globals handling (`sys.*` typed resets and `env.*`
+// restoration from the canvas variables table), `get_history` windowing,
+// `is_reff`, the retrieval reference accumulator (`add_reference` /
+// `_has_reference` / `_build_message_end`) and the tool-use trace merge from
+// `tool_use_callback`. All are standalone so they can be tested in isolation
+// and reused by sync and async execution paths alike.
+// ---------------------------------------------------------------------------
+
+/// Empty retrieval slot used by `add_retrieval_reference` when no reference
+/// was recorded yet (`canvas.py`: `self.retrieval = [{"chunks": {}, "doc_aggs": {}}]`).
+pub fn empty_retrieval_slot() -> Map<String, Value> {
+    let mut slot = Map::new();
+    slot.insert("chunks".to_owned(), Value::Object(Map::new()));
+    slot.insert("doc_aggs".to_owned(), Value::Object(Map::new()));
+    slot
+}
+
+/// `Canvas.reset(mem=False)` for `sys.*` globals: string → "", int/bool → 0,
+/// float → 0, list → [], dict → {}, anything else → null. Mirrors the Python
+/// `isinstance` dispatch (bool is an int subclass in Python, hence 0).
+pub fn reset_sys_globals(globals: &mut Map<String, Value>) {
+    let keys: Vec<String> = globals
+        .keys()
+        .filter(|key| key.starts_with("sys."))
+        .cloned()
+        .collect();
+    for key in keys {
+        let reset = match globals.get(&key) {
+            Some(Value::String(_)) => Value::String(String::new()),
+            Some(Value::Number(_)) => Value::Number(0.into()),
+            Some(Value::Bool(_)) => Value::Number(0.into()),
+            Some(Value::Array(_)) => Value::Array(Vec::new()),
+            Some(Value::Object(_)) => Value::Object(Map::new()),
+            _ => Value::Null,
+        };
+        globals.insert(key, reset);
+    }
+}
+
+/// `Canvas.reset(mem=False)` for `env.*` globals: restore each variable from
+/// the canvas variables table — the declared `value` wins when present,
+/// otherwise the type-based default (`number` → 0, `boolean` → false,
+/// `object` → {}, `array*` → [], anything else → ""). Variables missing from
+/// the table reset to "".
+pub fn reset_env_globals(globals: &mut Map<String, Value>, variables: &Map<String, Value>) {
+    let keys: Vec<String> = globals
+        .keys()
+        .filter(|key| key.starts_with("env."))
+        .cloned()
+        .collect();
+    for key in keys {
+        let var_key = &key[4..];
+        let reset = match variables.get(var_key) {
+            Some(variable) => match variable.get("value") {
+                Some(value) if !value.is_null() => value.clone(),
+                _ => {
+                    let var_type = variable.get("type").and_then(Value::as_str).unwrap_or("");
+                    match var_type {
+                        "number" => Value::Number(0.into()),
+                        "boolean" => Value::Bool(false),
+                        "object" => Value::Object(Map::new()),
+                        kind if kind.starts_with("array") => Value::Array(Vec::new()),
+                        _ => Value::String(String::new()),
+                    }
+                }
+            },
+            None => Value::String(String::new()),
+        };
+        globals.insert(key, reset);
+    }
+}
+
+/// `Canvas.get_history(window_size)`: last `window_size * 2` history entries
+/// as `{"role", "content"}` objects. Dict entries expose their `content`
+/// field (default ""), other values are stringified. `window_size <= 0`
+/// returns an empty list.
+pub fn get_history_window(history: &[(String, Value)], window_size: usize) -> Vec<Value> {
+    if window_size == 0 {
+        return Vec::new();
+    }
+    let start = history.len().saturating_sub(window_size * 2);
+    history[start..]
+        .iter()
+        .map(|(role, obj)| {
+            let content = match obj {
+                Value::Object(map) => map
+                    .get("content")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String(String::new())),
+                Value::String(text) => Value::String(text.clone()),
+                other => Value::String(other.to_string()),
+            };
+            let mut entry = Map::new();
+            entry.insert("role".to_owned(), Value::String(role.clone()));
+            entry.insert("content".to_owned(), content);
+            Value::Object(entry)
+        })
+        .collect()
+}
+
+/// `Canvas.is_reff(exp)`: true when `exp` is a resolvable canvas reference —
+/// a bare global name present in `globals`, or exactly `component@var` with a
+/// known component id. Mirrors the Python `strip("{")`/`strip("}")` handling
+/// and the strict two-part `@` split.
+pub fn is_canvas_reference(
+    expression: &str,
+    globals: &Map<String, Value>,
+    component_ids: &BTreeSet<String>,
+) -> bool {
+    let expression = expression.trim_matches('{').trim_matches('}');
+    let Some((component_id, _)) = expression.split_once('@') else {
+        return globals.contains_key(expression);
+    };
+    if expression.split('@').count() != 2 {
+        return false;
+    }
+    component_ids.contains(component_id)
+}
+
+/// `Canvas.add_reference(chunks, doc_infos)`: merge formatted chunks and doc
+/// infos into the latest retrieval slot. Chunk ids are hashed with
+/// `hash_str2int(id, 500)` and deduplicated; doc aggs deduplicate by
+/// `doc_name`. A missing retrieval list is seeded with an empty slot.
+pub fn add_retrieval_reference(
+    retrieval: &mut Vec<Map<String, Value>>,
+    chunks: &[Value],
+    doc_infos: &[Value],
+) {
+    if retrieval.is_empty() {
+        retrieval.push(empty_retrieval_slot());
+    }
+    let slot = retrieval.last_mut().expect("retrieval slot was just seeded");
+    let chunks_map = slot
+        .entry("chunks".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(chunks_map) = chunks_map {
+        for chunk in chunks {
+            let Some(id) = chunk.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let cid = hash_str2int(id, 500).to_string();
+            if !chunks_map.contains_key(&cid) {
+                chunks_map.insert(cid, chunk.clone());
+            }
+        }
+    }
+    let doc_aggs = slot
+        .entry("doc_aggs".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(doc_aggs) = doc_aggs {
+        for doc in doc_infos {
+            let Some(name) = doc.get("doc_name").and_then(Value::as_str) else {
+                continue;
+            };
+            if !doc_aggs.contains_key(name) {
+                doc_aggs.insert(name.to_owned(), doc.clone());
+            }
+        }
+    }
+}
+
+/// `Canvas._has_reference()`: the latest retrieval slot carries at least one
+/// chunk or doc aggregation.
+pub fn retrieval_has_reference(retrieval: &[Map<String, Value>]) -> bool {
+    let Some(slot) = retrieval.last() else {
+        return false;
+    };
+    let non_empty = |key: &str| {
+        slot.get(key)
+            .and_then(Value::as_object)
+            .is_some_and(|entries| !entries.is_empty())
+    };
+    non_empty("chunks") || non_empty("doc_aggs")
+}
+
+/// `Canvas._build_message_end(cpn_obj)`: status (when set), attachment (only
+/// when it is an object) and the latest retrieval reference (when present).
+pub fn build_message_end(
+    status: Option<&str>,
+    attachment: Option<&Value>,
+    retrieval: &[Map<String, Value>],
+) -> Map<String, Value> {
+    let mut end = Map::new();
+    if let Some(status) = status {
+        end.insert("status".to_owned(), Value::String(status.to_owned()));
+    }
+    if let Some(Value::Object(attachment)) = attachment {
+        end.insert("attachment".to_owned(), Value::Object(attachment.clone()));
+    }
+    if retrieval_has_reference(retrieval) {
+        end.insert(
+            "reference".to_owned(),
+            Value::Object(
+                retrieval
+                    .last()
+                    .expect("has reference implies non-empty")
+                    .clone(),
+            ),
+        );
+    }
+    end
+}
+
+/// One tool-use trace entry appended by `tool_use_callback`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolUseTrace {
+    pub path: String,
+    pub tool_name: String,
+    pub arguments: Value,
+    pub result: Value,
+    pub elapsed_time: Option<f64>,
+}
+
+impl ToolUseTrace {
+    pub fn to_value(&self) -> Value {
+        let mut entry = Map::new();
+        entry.insert("path".to_owned(), Value::String(self.path.clone()));
+        entry.insert("tool_name".to_owned(), Value::String(self.tool_name.clone()));
+        entry.insert("arguments".to_owned(), self.arguments.clone());
+        entry.insert("result".to_owned(), self.result.clone());
+        entry.insert(
+            "elapsed_time".to_owned(),
+            self.elapsed_time.map(Value::from).unwrap_or(Value::Null),
+        );
+        Value::Object(entry)
+    }
+}
+
+/// `Canvas.tool_use_callback` merge logic (the Redis persistence layer is the
+/// caller's concern): append the trace to the last log entry when it belongs
+/// to the same component id, otherwise start a new entry.
+pub fn merge_tool_use_trace(logs: &mut Vec<Value>, component_id: &str, trace: &ToolUseTrace) {
+    let trace_value = trace.to_value();
+    if let Some(last) = logs.last_mut()
+        && let Some(last_id) = last.get("component_id").and_then(Value::as_str)
+        && last_id == component_id
+        && let Some(trace_arr) = last.get_mut("trace").and_then(Value::as_array_mut)
+    {
+        trace_arr.push(trace_value);
+        return;
+    }
+    let mut entry = Map::new();
+    entry.insert(
+        "component_id".to_owned(),
+        Value::String(component_id.to_owned()),
+    );
+    entry.insert("trace".to_owned(), Value::Array(vec![trace_value]));
+    logs.push(Value::Object(entry));
+}
+
+/// `Canvas.tts` text cleaning (`clean_tts_text`): drop C0 control characters,
+/// drop emoji blocks, collapse whitespace, cap at 500 chars. Returns the
+/// cleaned text (empty input stays empty).
+pub fn clean_tts_text(text: &str) -> String {
+    const MAX_LEN: usize = 500;
+    let mut cleaned = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        let is_control = code <= 0x08
+            || (0x0B..=0x0C).contains(&code)
+            || (0x0E..=0x1F).contains(&code)
+            || code == 0x7F;
+        let is_emoji = (0x1F600..=0x1F64F).contains(&code)
+            || (0x1F300..=0x1F5FF).contains(&code)
+            || (0x1F680..=0x1F6FF).contains(&code)
+            || (0x1F1E0..=0x1F1FF).contains(&code)
+            || (0x2700..=0x27BF).contains(&code)
+            || (0x1F900..=0x1F9FF).contains(&code)
+            || (0x1FA70..=0x1FAFF).contains(&code);
+        if is_control || is_emoji {
+            continue;
+        }
+        cleaned.push(ch);
+    }
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > MAX_LEN {
+        collapsed.chars().take(MAX_LEN).collect()
+    } else {
+        collapsed
+    }
+}
+
+#[cfg(test)]
+mod canvas_semantics_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn map_of(entries: &[(&str, Value)]) -> Map<String, Value> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn reset_globals_restores_sys_types_and_env_variable_defaults() {
+        let mut globals = map_of(&[
+            ("sys.query", json!("hello")),
+            ("sys.conversation_turns", json!(3)),
+            ("sys.files", json!(["f1"])),
+            ("sys.history", json!(["user: hi"])),
+            ("env.api_key", json!("old")),
+            ("env.limit", json!(42)),
+            ("env.debug", json!(true)),
+            ("env.profile", json!({"a": 1})),
+            ("env.tags", json!(["x"])),
+            ("env.missing_src", json!("v")),
+        ]);
+        let variables = map_of(&[
+            ("api_key", json!({"type": "string", "value": "new-key"})),
+            ("limit", json!({"type": "number"})),
+            ("debug", json!({"type": "boolean"})),
+            ("profile", json!({"type": "object"})),
+            ("tags", json!({"type": "array<string>"})),
+            ("missing_src", json!({"type": "string"})),
+        ]);
+        reset_sys_globals(&mut globals);
+        assert_eq!(globals["sys.query"], json!(""));
+        assert_eq!(globals["sys.conversation_turns"], json!(0));
+        assert_eq!(globals["sys.files"], json!([]));
+        assert_eq!(globals["sys.history"], json!([]));
+        // A boolean sys.* global resets to 0 (bool is an int in Python).
+        assert_eq!(globals["sys.conversation_turns"], json!(0));
+
+        reset_env_globals(&mut globals, &variables);
+        // Declared value wins.
+        assert_eq!(globals["env.api_key"], json!("new-key"));
+        // Type-based defaults when no value is declared.
+        assert_eq!(globals["env.limit"], json!(0));
+        assert_eq!(globals["env.debug"], json!(false));
+        assert_eq!(globals["env.profile"], json!({}));
+        assert_eq!(globals["env.tags"], json!([]));
+        assert_eq!(globals["env.missing_src"], json!(""));
+        // Unknown variable name → "".
+        globals.insert("env.ghost".to_owned(), json!("x"));
+        reset_env_globals(&mut globals, &variables);
+        assert_eq!(globals["env.ghost"], json!(""));
+    }
+
+    #[test]
+    fn history_windowing_and_reference_checks_match_canvas() {
+        let history: Vec<(String, Value)> = vec![
+            ("user".into(), json!("q1")),
+            ("assistant".into(), json!({"content": "a1"})),
+            ("user".into(), json!("q2")),
+            ("assistant".into(), json!("a2")),
+        ];
+        // window_size 0 → empty.
+        assert!(get_history_window(&history, 0).is_empty());
+        // window_size 1 → last 2 entries.
+        let window = get_history_window(&history, 1);
+        assert_eq!(window.len(), 2);
+        assert_eq!(window[0], json!({"role": "user", "content": "q2"}));
+        assert_eq!(window[1], json!({"role": "assistant", "content": "a2"}));
+        // window_size larger than history → everything, dict content extracted.
+        let window = get_history_window(&history, 10);
+        assert_eq!(window.len(), 4);
+        assert_eq!(window[1], json!({"role": "assistant", "content": "a1"}));
+
+        let globals = map_of(&[("sys.query", json!("q"))]);
+        let ids: BTreeSet<String> = ["begin".to_owned(), "retrieval_0".to_owned()]
+            .into_iter()
+            .collect();
+        assert!(is_canvas_reference("{{sys.query}}", &globals, &ids));
+        assert!(is_canvas_reference("retrieval_0@content", &globals, &ids));
+        assert!(!is_canvas_reference("retrieval_0@a@b", &globals, &ids));
+        assert!(!is_canvas_reference("missing@content", &globals, &ids));
+        assert!(!is_canvas_reference("sys.nope", &globals, &ids));
+    }
+
+    #[test]
+    fn reference_accumulation_dedupes_and_builds_message_end() {
+        let mut retrieval: Vec<Map<String, Value>> = vec![];
+        let chunks = vec![
+            json!({"id": "chunk-1", "content": "c1"}),
+            json!({"id": "chunk-1", "content": "c1-dup"}),
+            json!({"id": "chunk-2", "content": "c2"}),
+        ];
+        let docs = vec![
+            json!({"doc_name": "doc-a", "count": 1}),
+            json!({"doc_name": "doc-a", "count": 2}),
+        ];
+        add_retrieval_reference(&mut retrieval, &chunks, &docs);
+        let slot = retrieval.last().unwrap();
+        let chunks_map = slot["chunks"].as_object().unwrap();
+        assert_eq!(chunks_map.len(), 2, "duplicate chunk id collapses");
+        let cid1 = hash_str2int("chunk-1", 500).to_string();
+        let cid2 = hash_str2int("chunk-2", 500).to_string();
+        assert!(chunks_map.contains_key(&cid1));
+        assert!(chunks_map.contains_key(&cid2));
+        assert_eq!(chunks_map[&cid1]["content"], json!("c1"));
+        let doc_aggs = slot["doc_aggs"].as_object().unwrap();
+        assert_eq!(doc_aggs.len(), 1, "doc aggs dedupe by doc_name");
+        assert_eq!(doc_aggs["doc-a"]["count"], json!(1));
+        assert!(retrieval_has_reference(&retrieval));
+
+        let end = build_message_end(Some("finished"), Some(&json!({"type": "pdf"})), &retrieval);
+        assert_eq!(end["status"], json!("finished"));
+        assert_eq!(end["attachment"], json!({"type": "pdf"}));
+        assert!(end.contains_key("reference"));
+        assert!(end["reference"].is_object());
+
+        let end = build_message_end(None, Some(&json!("plain-text")), &[]);
+        assert!(!end.contains_key("status"));
+        assert!(
+            !end.contains_key("attachment"),
+            "non-object attachment skipped"
+        );
+        assert!(!end.contains_key("reference"), "no retrieval → no reference");
+    }
+
+    #[test]
+    fn tool_trace_merge_and_tts_cleaning_follow_python() {
+        let trace = |name: &str| ToolUseTrace {
+            path: format!("Agent-->{name}"),
+            tool_name: name.to_owned(),
+            arguments: json!({"q": "x"}),
+            result: json!("ok"),
+            elapsed_time: Some(0.5),
+        };
+        let mut logs: Vec<Value> = vec![];
+        merge_tool_use_trace(&mut logs, "agent_0", &trace("retrieval"));
+        merge_tool_use_trace(&mut logs, "agent_0", &trace("generate"));
+        // Same component → same entry, two traces.
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0]["component_id"], json!("agent_0"));
+        assert_eq!(logs[0]["trace"].as_array().unwrap().len(), 2);
+        // Different component → new entry.
+        merge_tool_use_trace(&mut logs, "agent_1", &trace("search"));
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[1]["component_id"], json!("agent_1"));
+        assert_eq!(logs[1]["trace"][0]["tool_name"], json!("search"));
+
+        assert_eq!(clean_tts_text(""), "");
+        assert_eq!(clean_tts_text("plain text"), "plain text");
+        assert_eq!(clean_tts_text("a\u{0007}b\u{007f}c"), "abc");
+        assert_eq!(clean_tts_text("hi 😀 there 🚀"), "hi there");
+        assert_eq!(clean_tts_text("  multi \n  line \t text "), "multi line text");
+        let long = "x".repeat(600);
+        assert_eq!(clean_tts_text(&long).chars().count(), 500);
+    }
+}

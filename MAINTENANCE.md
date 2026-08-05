@@ -1,3 +1,12 @@
+## 2026-08-05 v0.2.4：common 工具层 + settings + benchmark + 矩阵收尾
+
+- common.rs ~1800：常量表/文本/时间/浮点/crypto(AES-PBKDF2)/ssrf/校验
+- settings.rs：from_env/from_reader + parse_model_entry；benchmark.rs：IR 指标
+- agent.rs：canvas 语义（ToolUseTrace/clean_tts_text/reset globals）
+- 矩阵收尾：N/A-by-design 19（whatsapp Node 网关/Go CLI/README/占位）+ full 3
+- 测试基线：**1114 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 105 → **44**（full 541，N/A 35，unmapped 0）
+
 ## 2026-08-05 v0.2.3 容器验证
 
 - 部署成功：容器 healthy、healthz 200、6 页面全 200

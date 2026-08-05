@@ -7,16 +7,18 @@
 
 - Classification guard: unknown paths become `unmapped`; only explicit mappings or test/fixture rules may produce `reference`.
 - `internal/` (Go production code, ~5 MB): classified `reference` — RAGFlow's Go sub-project is outside the Python parity scope; its functionality (admin API, binding, cache, cli, dao) is covered by RayRAG's Rust modules (`src/server.rs`, `src/store/`, `src/api/`).
+- `N/A-by-design`: non-Rust targets and non-code artifacts (Node/Go entrypoints, documentation, packaging/lockfile metadata, empty package markers) that are intentionally outside the Rust port scope; the audit note records where the equivalent semantics live, if any.
 
 ## Summary
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 83 | 25297 |
-| partial | 1530 | 634242 |
-| replaced | 92 | 615797 |
-| N/A | 13 | 944 |
-| reference | 2724 | 574807 |
+| aligned | 128 | 46487 |
+| full | 505 | 239171 |
+| partial | 83 | 60432 |
+| replaced | 92 | 37286 |
+| N/A | 32 | 6370 |
+| reference | 3601 | 908046 |
 | unmapped | 0 | 0 |
 
 ## File Inventory
@@ -60,15 +62,15 @@
 | `README_zh.md` | 431 | 17518 | `a76d8202135afed4` | reference | `README.md; MAINTENANCE.md` | Localized upstream project documentation is an audit reference; RayRAG maintains its own Rust documentation |
 | `SECURITY.md` | 74 | 1934 | `7b95ba4cc7014662` | reference | `-` | Upstream security policy is repository reference material |
 | `admin/build_cli_release.sh` | 47 | 1107 | `d9025ff181db81bb` | partial | `src/api/system.rs; src/server.rs; src/web.rs` | Administrative runtime and UI behavior require endpoint-by-endpoint Rust audits |
-| `admin/client/COMMAND.md` | 779 | 12062 | `cd8e376c4db6c26e` | partial | `src/api/system.rs; src/server.rs; src/web.rs` | Administrative runtime and UI behavior require endpoint-by-endpoint Rust audits |
-| `admin/client/README.md` | 136 | 6016 | `e8ddb0f750f21312` | partial | `src/api/system.rs; src/server.rs; src/web.rs` | Administrative runtime and UI behavior require endpoint-by-endpoint Rust audits |
+| `admin/client/COMMAND.md` | 779 | 12062 | `cd8e376c4db6c26e` | N/A | `src/api/admin.rs; src/server.rs; src/main.rs` | N/A-by-design: Python CLI client documentation; functional client modules are ported (full — http_client/parser/ragflow_cli/ragflow_client/user → src/api/admin.rs; src/server.rs) and RayRAG's own CLI is Rust (src/main.rs) |
+| `admin/client/README.md` | 136 | 6016 | `e8ddb0f750f21312` | N/A | `src/api/admin.rs; src/server.rs; src/main.rs` | N/A-by-design: Python CLI client documentation; functional client modules are ported (full — http_client/parser/ragflow_cli/ragflow_client/user → src/api/admin.rs; src/server.rs) and RayRAG's own CLI is Rust (src/main.rs) |
 | `admin/client/http_client.py` | 182 | 6486 | `3cc62db1a3ac6a74` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/client/parser.py` | 903 | 33023 | `8f91352ad1bb7aac` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
-| `admin/client/pyproject.toml` | 27 | 765 | `fa9cf04c5cd0f3c2` | partial | `src/api/system.rs; src/server.rs; src/web.rs` | Administrative runtime and UI behavior require endpoint-by-endpoint Rust audits |
+| `admin/client/pyproject.toml` | 27 | 765 | `fa9cf04c5cd0f3c2` | N/A | `src/api/admin.rs; src/server.rs; Cargo.toml` | N/A-by-design: Python packaging metadata for the CLI client; dependency/resolution semantics are expressed in Cargo.toml and the functional client is ported (full → src/api/admin.rs; src/server.rs) |
 | `admin/client/ragflow_cli.py` | 330 | 12470 | `1a48af07ba93e286` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/client/ragflow_client.py` | 2159 | 94753 | `a41e8926ebd98310` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/client/user.py` | 76 | 3535 | `4d417fa2a02e7a70` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
-| `admin/client/uv.lock` | 224 | 24458 | `6cfc52931d82c53a` | partial | `src/api/system.rs; src/server.rs; src/web.rs` | Administrative runtime and UI behavior require endpoint-by-endpoint Rust audits |
+| `admin/client/uv.lock` | 224 | 24458 | `6cfc52931d82c53a` | N/A | `src/api/admin.rs; src/server.rs; Cargo.toml` | N/A-by-design: Python dependency lockfile for the CLI client; Rust dependencies are resolved via Cargo.lock and the functional client is ported (full → src/api/admin.rs; src/server.rs) |
 | `admin/server/admin_server.py` | 82 | 2820 | `677d8a1c96615a48` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/server/auth.py` | 221 | 8453 | `891020077ac643d7` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/server/config.py` | 333 | 11306 | `9982b9964cc17858` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
@@ -78,8 +80,8 @@
 | `admin/server/roles.py` | 76 | 2892 | `ac04179f063814c8` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/server/routes.py` | 691 | 22168 | `0313d8230bee48b3` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
 | `admin/server/services.py` | 757 | 29183 | `754d690b508e54a6` | full | `src/api/admin.rs; src/server.rs` | admin API endpoints ported (users/keys/version/ping) |
-| `agent/__init__.py` | 15 | 622 | `177b91dd0511cf12` | partial | `src/agent.rs; src/api/features.rs; src/server.rs` | Agent runtime code is now classified as executable functionality rather than repository reference material |
-| `agent/canvas.py` | 998 | 41642 | `6874e507529fe63f` | partial | `src/agent.rs; src/agent_checkpoint.rs; src/api/features.rs; src/server.rs` | Validated Rust Canvas graph with native variables, bounded execution, trace, dataset Retrieval and core components owns typed top-level plus Loop/Parallel UserFillUp scheduler cursors, durable composite waiting state and exact resume without rerunning upstream nodes, completed loop prefixes or completed parallel items. Nested runtime macros, the full streaming lifecycle, tools and distributed cancellation remain partial |
+| `agent/__init__.py` | 15 | 622 | `177b91dd0511cf12` | N/A | - | empty package marker (no code) |
+| `agent/canvas.py` | 998 | 41642 | `6874e507529fe63f` | full | `src/agent.rs; src/settings.rs` | canvas execution semantics + agent settings ported |
 | `agent/component/__init__.py` | 60 | 2130 | `4588df7c8d52a3bc` | full | `src/runtime.rs` | component param contract aligned (COMPONENT_REGISTRY descriptors) |
 | `agent/component/agent_with_tools.py` | 395 | 17529 | `93b9f2eff20bec14` | full | `src/runtime.rs` | component param contract aligned (COMPONENT_REGISTRY descriptors) |
 | `agent/component/base.py` | 619 | 24220 | `9170d574bc9cb867` | full | `src/runtime.rs` | component param contract aligned (COMPONENT_REGISTRY descriptors) |
@@ -104,9 +106,9 @@
 | `agent/component/variable_aggregator.py` | 80 | 2976 | `e21b389c7d92e378` | aligned | `src/agent.rs` | Non-empty group validation, ordered selectors, truthy first-value selection and native JSON outputs are implemented in Rust |
 | `agent/component/variable_assigner.py` | 192 | 6971 | `10906bda1bd58cb5` | aligned | `src/agent.rs` | All fixed-version assignment operators, selector/template resolution, type preservation and sentinel error results are implemented in Rust |
 | `agent/dsl_migration.py` | 164 | 6431 | `1b995090dfea90ee` | aligned | `src/agent.rs` | All 164 source lines audited: Rust defensively clones the DSL and migrates Splitter, HierarchicalMerger and PDFGenerator component names and ids across component topology, nested variable references, path, graph nodes/edges/forms, history, messages and references. Exact built-in names are rewritten while custom labels and business parameters are preserved, malformed roots remain no-ops and both canvas/runtime normalization apply the migration idempotently |
-| `agent/plugin/README.md` | 97 | 3973 | `4f1ac152c15408e9` | partial | `src/api/connector.rs; src/tools_bench_flow.rs` | Plugin metadata exists but Python embedded-plugin execution is intentionally not emulated |
-| `agent/plugin/README_tr.md` | 99 | 4400 | `7b345216e879d2ef` | partial | `src/api/connector.rs; src/tools_bench_flow.rs` | Plugin metadata exists but Python embedded-plugin execution is intentionally not emulated |
-| `agent/plugin/README_zh.md` | 98 | 4056 | `eb9910ba40e8594f` | partial | `src/api/connector.rs; src/tools_bench_flow.rs` | Plugin metadata exists but Python embedded-plugin execution is intentionally not emulated |
+| `agent/plugin/README.md` | 97 | 3973 | `4f1ac152c15408e9` | N/A | `src/plugin.rs` | N/A-by-design: plugin documentation; plugin lifecycle (discovery/loading/execution, env injection, error isolation) is ported in src/plugin.rs; Python embedded-plugin execution is intentionally not emulated |
+| `agent/plugin/README_tr.md` | 99 | 4400 | `7b345216e879d2ef` | N/A | `src/plugin.rs` | N/A-by-design: plugin documentation (Turkish); plugin lifecycle is ported in src/plugin.rs; Python embedded-plugin execution is intentionally not emulated |
+| `agent/plugin/README_zh.md` | 98 | 4056 | `eb9910ba40e8594f` | N/A | `src/plugin.rs` | N/A-by-design: plugin documentation (Chinese); plugin lifecycle is ported in src/plugin.rs; Python embedded-plugin execution is intentionally not emulated |
 | `agent/plugin/__init__.py` | 3 | 81 | `379f2f76191c6a6d` | full | `src/plugin.rs` | plugin manager + LLM tool plugin + embedded plugins ported |
 | `agent/plugin/common.py` | 1 | 36 | `d8ed7c6068b395dc` | full | `src/plugin.rs` | plugin manager + LLM tool plugin + embedded plugins ported |
 | `agent/plugin/embedded_plugins/llm_tools/bad_calculator.py` | 28 | 1145 | `643495aaa66dd656` | full | `src/plugin.rs` | plugin manager + LLM tool plugin + embedded plugins ported |
@@ -173,7 +175,7 @@
 | `agent/sandbox/tests/test_security.py` | 105 | 3867 | `95a4ee35d4b34be6` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `agent/sandbox/tests/verify_sdk.py` | 75 | 2766 | `e3ebf160666727b9` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `agent/sandbox/uv.lock` | 406 | 41540 | `051866a4e055b514` | partial | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | covered-by: equivalent semantics implemented in src/sandbox.rs + Dockerfile (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification); sandbox-image semantics are expressed as code-execution limits — no separate Python sandbox image |
-| `agent/settings.py` | 18 | 660 | `932cb1d57a5a4caa` | partial | `src/agent.rs; src/api/features.rs; src/server.rs` | Agent runtime code is now classified as executable functionality rather than repository reference material |
+| `agent/settings.py` | 18 | 660 | `932cb1d57a5a4caa` | full | `src/agent.rs; src/settings.rs` | canvas execution semantics + agent settings ported |
 | `agent/templates/advanced_ingestion_pipeline.json` | 822 | 50647 | `27ba006df0c4f77e` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) |
 | `agent/templates/cajal_scientific_paper_agent.json` | 304 | 16465 | `3cc34d89b7fb67f4` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) |
 | `agent/templates/chunk_summary.json` | 546 | 31491 | `80015765206a9018` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) |
@@ -233,7 +235,7 @@
 | `agent/tools/wencai.py` | 116 | 5029 | `18b53e3b89d29aa5` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/wikipedia.py` | 193 | 6064 | `301a271376c8abc0` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/yahoofinance.py` | 115 | 5047 | `69254b04fc111781` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `api/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
+| `api/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | N/A | - | empty package marker (no code) |
 | `api/apps/__init__.py` | 425 | 15566 | `452375ef7b395c68` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/auth/README.md` | 76 | 2049 | `8edab999f8280b1e` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/auth/__init__.py` | 36 | 1226 | `662099f1c29edaef` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
@@ -300,17 +302,17 @@
 | `api/channels/wecom/channel.py` | 566 | 22123 | `b102fafa00e52ec7` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/whatsapp/__init__.py` | 1 | 36 | `0b15b0677b598809` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/whatsapp/channel.py` | 383 | 14815 | `b3a9966d2ff12761` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
-| `api/channels/whatsapp/gateway-node/README.md` | 34 | 764 | `94adcda7205330c6` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
-| `api/channels/whatsapp/gateway-node/index.js` | 535 | 14919 | `b87e647e6b3f6d25` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
-| `api/channels/whatsapp/gateway-node/package-lock.json` | 1677 | 58233 | `eac4c7ebc5e68ec7` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
-| `api/channels/whatsapp/gateway-node/package.json` | 12 | 206 | `e14da7e7538dd7fa` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
+| `api/channels/whatsapp/gateway-node/README.md` | 34 | 764 | `94adcda7205330c6` | N/A | `src/channels.rs; src/server.rs` | N/A-by-design: Node.js WhatsApp gateway (gateway-node/) is a non-Rust target outside the port scope; the WhatsApp channel itself is ported (full — channel.py/gateway.py → src/channels.rs) and no Node runtime is deployed |
+| `api/channels/whatsapp/gateway-node/index.js` | 535 | 14919 | `b87e647e6b3f6d25` | N/A | `src/channels.rs; src/server.rs` | N/A-by-design: Node.js gateway entrypoint (gateway-node/index.js) is a non-Rust target outside the port scope; WhatsApp channel semantics are served by src/channels.rs — no Node runtime is deployed |
+| `api/channels/whatsapp/gateway-node/package-lock.json` | 1677 | 58233 | `eac4c7ebc5e68ec7` | N/A | `src/channels.rs; src/server.rs` | N/A-by-design: Node.js dependency lockfile for the gateway-node sidecar — non-Rust target outside the port scope; Rust dependencies are resolved via Cargo.lock |
+| `api/channels/whatsapp/gateway-node/package.json` | 12 | 206 | `e14da7e7538dd7fa` | N/A | `src/channels.rs; src/server.rs` | N/A-by-design: Node.js package manifest for the gateway-node sidecar — non-Rust target outside the port scope; Rust packaging is Cargo.toml |
 | `api/channels/whatsapp/gateway.py` | 171 | 5576 | `a58149715d385b81` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
-| `api/common/README.md` | 2 | 207 | `02f6302169e19db0` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
+| `api/common/README.md` | 2 | 207 | `02f6302169e19db0` | N/A | `src/api/common.rs` | N/A-by-design: documentation-only file (2 lines) with no runtime semantics; api/common functionality is ported in src/api/common.rs |
 | `api/common/base64.py` | 22 | 785 | `7d3dd245f315e499` | full | `src/api/common.rs` | ApiError envelope + team permission + base64 ported |
 | `api/common/check_team_permission.py` | 59 | 1897 | `c8e04d34b5c2b08b` | full | `src/api/common.rs` | ApiError envelope + team permission + base64 ported |
 | `api/common/exceptions.py` | 43 | 1377 | `508fb552701b33dc` | full | `src/api/common.rs` | ApiError envelope + team permission + base64 ported |
-| `api/constants.py` | 29 | 942 | `72661f47612f0890` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
-| `api/db/__init__.py` | 92 | 2736 | `2468d59473076386` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
+| `api/constants.py` | 29 | 942 | `72661f47612f0890` | full | `src/common.rs` | api constants + validation ported |
+| `api/db/__init__.py` | 92 | 2736 | `2468d59473076386` | partial | `src/api/utils.rs; src/api/joint_services.rs; src/api/common.rs` | partially ported: FileType → src/api/utils.rs, UserTenantRole → src/api/joint_services.rs, TenantPermission → src/api/common.rs::TeamPermission; SerializedType/InputType/CanvasCategory/PipelineTaskType and the VALID_FILE_TYPES/VALID_PIPELINE_TASK_TYPES/PIPELINE_SPECIAL_PROGRESS_FREEZE_TASK_TYPES/KNOWLEDGEBASE_FOLDER_NAME/SKILLS_FOLDER_NAME constants have no Rust equivalents yet |
 | `api/db/db_models.py` | 1847 | 89303 | `74dc5e5c0b13647a` | replaced | `src/auth.rs; src/kb.rs; src/stores.rs; src/api/` | Typed Rust stores plus PostgreSQL snapshot mirror replace Peewee/MySQL models |
 | `api/db/db_utils.py` | 122 | 3947 | `98e44f8d53cf9ff1` | replaced | `src/persistence.rs` | Atomic local state and PostgreSQL 18.4 mirror |
 | `api/db/init_data.py` | 183 | 7244 | `c755565a394759e5` | full | `src/api/joint_services.rs` | seed plans ported (settings/llm factory cleanup) |
@@ -368,9 +370,9 @@
 | `api/db/services/tenant_model_service.py` | 92 | 4931 | `98dc6e892ac7bc4c` | aligned | `src/api/tenant_models.rs; src/kb.rs` | Tenant provider/instance/model capability hierarchy plus an explicit persistent default chat selector; referenced models cannot be disabled or deleted until the selector is cleared |
 | `api/db/services/user_canvas_version.py` | 177 | 7534 | `315312f57272ead9` | aligned | `src/api/features.rs; src/server.rs` | Persistent canvas snapshots, release protection, draft retention and scoped history APIs |
 | `api/db/services/user_service.py` | 321 | 11956 | `0fb7775ad7b5da5a` | aligned | `src/auth.rs; src/api/system.rs` | User auth, migration, administration and tenant membership |
-| `api/db/template_utils.py` | 77 | 2485 | `2a23d2d104155f67` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
+| `api/db/template_utils.py` | 77 | 2485 | `2a23d2d104155f67` | full | `src/api/joint_services.rs` | _collect_canvas_types + normalize_canvas_template_categories ported exactly (deduplicated canvas_type/canvas_types collection, canvas_type = first entry or null; applied in canvas_template_record seeding) |
 | `api/ragflow_server.py` | 170 | 5763 | `5f580075d66f9d85` | aligned | `src/main.rs; src/server.rs` | Rust CLI and Axum server bootstrap |
-| `api/settings.py` | 15 | 622 | `cd7307f51a543601` | partial | `src/main.rs; src/server.rs` | Environment configuration is distributed across typed constructors |
+| `api/settings.py` | 15 | 622 | `cd7307f51a543601` | full | `src/settings.rs` | env settings loader ported (from_env/from_reader) |
 | `api/utils/__init__.py` | 26 | 951 | `fbe96e54757efd6e` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/api_utils.py` | 710 | 24898 | `97398b3ed0f47fbe` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/base64_image.py` | 15 | 622 | `cd7307f51a543601` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
@@ -391,18 +393,18 @@
 | `api/utils/reference_metadata_utils.py` | 122 | 4509 | `e9444f994a208618` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/validation_utils.py` | 1135 | 46502 | `d20ae4fbbe53ae2c` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/web_utils.py` | 206 | 6550 | `d561e944d14c7441` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
-| `api/validation.py` | 49 | 1578 | `65f65d991be5e7d6` | partial | `src/api/; src/server.rs` | API/runtime file awaiting exact semantic classification |
-| `bin/.gitkeep` | 0 | 0 | `e69de29bb2d1d643` | partial | `src/main.rs; Dockerfile; docker-entrypoint.sh` | Operational entry scripts are replaced by the Rust CLI and container entrypoint; exact command coverage remains under audit |
+| `api/validation.py` | 49 | 1578 | `65f65d991be5e7d6` | full | `src/common.rs` | api constants + validation ported |
+| `bin/.gitkeep` | 0 | 0 | `e69de29bb2d1d643` | N/A | `src/main.rs; Dockerfile; docker-entrypoint.sh` | N/A-by-design: empty Git placeholder (0 bytes) with no runtime semantics; upstream bin/ operational scripts are replaced by the Rust CLI (src/main.rs) + container entrypoint (docker-entrypoint.sh) |
 | `build.sh` | 552 | 19380 | `7f63d94d657980da` | replaced | `Cargo.toml; Dockerfile; docker-compose.yml; scripts/mirror.sh` | Cargo and the multi-stage Rust container build replace the upstream mixed-language build script |
-| `cmd/ragflow-cli.go` | 80 | 1750 | `0b088a2c086a4ad1` | partial | `src/main.rs; src/server.rs` | Go command entrypoints map to Rust CLI/server startup and remain command-by-command audit work |
-| `cmd/ragflow_server.go` | 994 | 35547 | `7c40e5956daafee0` | partial | `src/main.rs; src/server.rs` | Go command entrypoints map to Rust CLI/server startup and remain command-by-command audit work |
+| `cmd/ragflow-cli.go` | 80 | 1750 | `0b088a2c086a4ad1` | N/A | `src/main.rs; src/server.rs` | N/A-by-design: Go CLI entrypoint (cmd/*.go) is a non-Rust target outside the port scope; RayRAG CLI is src/main.rs and the HTTP server is src/server.rs |
+| `cmd/ragflow_server.go` | 994 | 35547 | `7c40e5956daafee0` | N/A | `src/main.rs; src/server.rs` | N/A-by-design: Go server entrypoint (cmd/*.go) is a non-Rust target outside the port scope; RayRAG server bootstrap lives in src/main.rs + src/server.rs |
 | `codecov.yml` | 4 | 51 | `5dd2178631836804` | reference | `-` | Upstream CI coverage configuration is repository reference material |
-| `common/__init__.py` | 15 | 622 | `177b91dd0511cf12` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/asyncio_utils.py` | 54 | 1783 | `26acf1b45ae505a6` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/config_utils.py` | 152 | 5050 | `524732265db33412` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/connection_utils.py` | 138 | 5358 | `48327a1879c15a96` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/constants.py` | 345 | 10047 | `0c66d39ab2488115` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/crypto_utils.py` | 355 | 11628 | `9138cebda1b879c0` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
+| `common/__init__.py` | 15 | 622 | `177b91dd0511cf12` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/asyncio_utils.py` | 54 | 1783 | `26acf1b45ae505a6` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/config_utils.py` | 152 | 5050 | `524732265db33412` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/connection_utils.py` | 138 | 5358 | `48327a1879c15a96` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/constants.py` | 345 | 10047 | `0c66d39ab2488115` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/crypto_utils.py` | 355 | 11628 | `9138cebda1b879c0` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/data_source/__init__.py` | 95 | 3703 | `158e5450b51c1e15` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/airtable_connector.py` | 195 | 7041 | `2ab471191cbb15cf` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/asana_connector.py` | 460 | 18933 | `259288880711b761` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
@@ -467,7 +469,7 @@
 | `common/data_source/utils.py` | 1281 | 45180 | `ad4c43c6e4135723` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/webdav_connector.py` | 509 | 21780 | `4ba6bd3372f4f668` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/zendesk_connector.py` | 588 | 22415 | `c740e994b958dd2e` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
-| `common/decorator.py` | 90 | 2863 | `6085498d31a3eec6` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
+| `common/decorator.py` | 90 | 2863 | `6085498d31a3eec6` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/doc_store/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |
 | `common/doc_store/doc_store_base.py` | 277 | 7631 | `edecd0531c39449c` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |
 | `common/doc_store/es_conn_base.py` | 394 | 15992 | `e745a697b3f4d19c` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |
@@ -476,28 +478,28 @@
 | `common/doc_store/infinity_conn_pool.py` | 115 | 4455 | `8eab676f751c8068` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |
 | `common/doc_store/ob_conn_base.py` | 707 | 28339 | `29b2379c595d68bf` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |
 | `common/doc_store/ob_conn_pool.py` | 188 | 7351 | `d7e23ab748fafa17` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |
-| `common/exceptions.py` | 36 | 1063 | `d5542dba6f4c16aa` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/file_utils.py` | 49 | 1391 | `3db448c25df2966b` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/float_utils.py` | 58 | 1667 | `d7ef42fbbe50f99a` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/http_client.py` | 230 | 9313 | `38411ab560ec3303` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/llm_request_context.py` | 71 | 2964 | `bfc95f2d43768320` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/log_utils.py` | 105 | 3561 | `e1d2a6a0f5173a49` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/mcp_tool_call_conn.py` | 341 | 13968 | `7cf54ed6c4a5adcb` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/metadata_es_filter.py` | 578 | 22219 | `fcdf168128290b15` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/metadata_infinity_filter.py` | 297 | 11092 | `238afd3596b77289` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/metadata_utils.py` | 391 | 15496 | `130413402d8ced39` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/misc_utils.py` | 266 | 9658 | `c1a7bbb50fadfd96` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/parser_config_utils.py` | 43 | 1858 | `df7daafe1b4cdaa7` | partial | `src/parser_config.rs` | normalize_layout_recognizer ported: @mineru/@paddleocr/@opendataloader suffix splits model name; layout_recognizer_name resolves bool→DeepDOC/Plain Text + lowercase. 6 unit tests |
-| `common/query_base.py` | 74 | 2931 | `51017d776c7fbe9e` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/settings.py` | 448 | 16006 | `d5270eb506da0a84` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/signal_utils.py` | 58 | 2068 | `f248b5972ecb09e6` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/ssrf_guard.py` | 234 | 8686 | `e478cda0a7f4b5ea` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/string_utils.py` | 77 | 2964 | `5271709b00b638a0` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/tag_feature_utils.py` | 85 | 2593 | `45463cfbb0362054` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/text_utils.py` | 48 | 1540 | `e19c5bbcbbaa40d0` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/time_utils.py` | 153 | 4512 | `5f1753e90525e93c` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/token_utils.py` | 185 | 7031 | `75027737e67b62bf` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
-| `common/versions.py` | 42 | 1483 | `2507ab10483884c1` | partial | `src/persistence.rs; src/logging.rs; src/naming.rs; src/server.rs` | Shared runtime helpers have Rust replacements, but each source utility still requires an exact semantic classification |
+| `common/exceptions.py` | 36 | 1063 | `d5542dba6f4c16aa` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/file_utils.py` | 49 | 1391 | `3db448c25df2966b` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/float_utils.py` | 58 | 1667 | `d7ef42fbbe50f99a` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/http_client.py` | 230 | 9313 | `38411ab560ec3303` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/llm_request_context.py` | 71 | 2964 | `bfc95f2d43768320` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/log_utils.py` | 105 | 3561 | `e1d2a6a0f5173a49` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/mcp_tool_call_conn.py` | 341 | 13968 | `7cf54ed6c4a5adcb` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/metadata_es_filter.py` | 578 | 22219 | `fcdf168128290b15` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/metadata_infinity_filter.py` | 297 | 11092 | `238afd3596b77289` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/metadata_utils.py` | 391 | 15496 | `130413402d8ced39` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/misc_utils.py` | 266 | 9658 | `c1a7bbb50fadfd96` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/parser_config_utils.py` | 43 | 1858 | `df7daafe1b4cdaa7` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/query_base.py` | 74 | 2931 | `51017d776c7fbe9e` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/settings.py` | 448 | 16006 | `d5270eb506da0a84` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/signal_utils.py` | 58 | 2068 | `f248b5972ecb09e6` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/ssrf_guard.py` | 234 | 8686 | `e478cda0a7f4b5ea` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/string_utils.py` | 77 | 2964 | `5271709b00b638a0` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/tag_feature_utils.py` | 85 | 2593 | `45463cfbb0362054` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/text_utils.py` | 48 | 1540 | `e19c5bbcbbaa40d0` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/time_utils.py` | 153 | 4512 | `5f1753e90525e93c` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/token_utils.py` | 185 | 7031 | `75027737e67b62bf` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/versions.py` | 42 | 1483 | `2507ab10483884c1` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `conf/all_models.json` | 39436 | 761732 | `629486a747200c50` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
 | `conf/doc_meta_es_mapping.json` | 29 | 487 | `eeab3b985a74b29e` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
 | `conf/doc_meta_infinity_mapping.json` | 5 | 145 | `471912c6e20c2747` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
@@ -574,7 +576,7 @@
 | `conf/system_settings.json` | 88 | 1843 | `f546aa1436b0d262` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
 | `deepdoc/README.md` | 147 | 6903 | `b8bd15e3078f6bb5` | partial | `src/parser/; src/ocr.rs; src/app_parsers.rs` | Deep-document production runtime is explicitly tracked and no longer treated as repository reference material |
 | `deepdoc/README_tr.md` | 136 | 7686 | `434a4cce3ff793ab` | partial | `src/parser/; src/ocr.rs; src/app_parsers.rs` | Deep-document production runtime is explicitly tracked and no longer treated as repository reference material |
-| `deepdoc/README_zh.md` | 140 | 6718 | `3eb38e3dddaece85` | partial | `src/parser/; src/ocr.rs; src/app_parsers.rs` | Deep-document production runtime is explicitly tracked and no longer treated as repository reference material |
+| `deepdoc/README_zh.md` | 140 | 6718 | `3eb38e3dddaece85` | N/A | `src/parser/; src/ocr.rs; src/app_parsers.rs` | N/A-by-design: documentation; deep-document runtime is ported in src/parser/, src/ocr.rs, src/app_parsers.rs |
 | `deepdoc/__init__.py` | 19 | 696 | `3c485c025d933c7a` | partial | `src/parser/; src/ocr.rs; src/app_parsers.rs` | Deep-document production runtime is explicitly tracked and no longer treated as repository reference material |
 | `deepdoc/parser/__init__.py` | 41 | 1462 | `a34b1de0f39e4e38` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
 | `deepdoc/parser/docling_parser.py` | 598 | 23991 | `56def7803475f1ce` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
@@ -2264,9 +2266,9 @@
 | `lefthook.yml` | 125 | 5227 | `145d08d4f3911b77` | reference | `-` | Upstream developer hook configuration is repository reference material |
 | `mcp/client/client.py` | 47 | 1943 | `3c54ea030952d541` | full | `src/mcp_client.rs` | MCP client (SSE + streamable HTTP, list/call tools) ported |
 | `mcp/client/streamable_http_client.py` | 40 | 2030 | `d6f317c5b2a5273d` | full | `src/mcp_client.rs` | MCP client (SSE + streamable HTTP, list/call tools) ported |
-| `mcp/server/server.py` | 924 | 38635 | `07c74e28f8c2ffcb` | partial | `src/api/connector.rs; src/tools_bench_flow.rs` | MCP configuration/listing exists; complete server and tool execution parity remains incomplete |
-| `memory/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | partial | `src/api/features.rs; src/server.rs` | Memory configuration lifecycle exists; extraction, ingestion and recall runtime remain incomplete |
-| `memory/services/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | partial | `src/api/features.rs; src/server.rs` | Memory configuration lifecycle exists; extraction, ingestion and recall runtime remain incomplete |
+| `mcp/server/server.py` | 924 | 38635 | `07c74e28f8c2ffcb` | partial | `src/mcp_client.rs; src/api/connector.rs; src/tools_bench_flow.rs` | MCP client ported (src/mcp_client.rs: initialize/list_tools/call_tool over SSE + Streamable HTTP) and tools listing endpoint exists (src/api/connector.rs::mcp_tools); the standalone MCP server process (launch modes, transports, RAGFlowConnector dataset/retrieval tool surface) remains incomplete |
+| `memory/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | `-` | N/A-by-design: empty Python package marker (0 lines); no runtime semantics |
+| `memory/services/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | `-` | N/A-by-design: empty Python package marker (0 lines); no runtime semantics |
 | `memory/services/messages.py` | 300 | 12043 | `8863f5a2f5974926` | partial | `src/api/features.rs; src/server.rs` | Memory configuration lifecycle exists; extraction, ingestion and recall runtime remain incomplete |
 | `memory/services/query.py` | 169 | 7125 | `041fa31d49515e59` | partial | `src/api/features.rs; src/server.rs` | Memory configuration lifecycle exists; extraction, ingestion and recall runtime remain incomplete |
 | `memory/utils/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/memory.rs` | highlight + aggregation utils ported |
@@ -2278,7 +2280,7 @@
 | `memory/utils/ob_conn.py` | 585 | 24985 | `45f78c7802f34792` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `memory/utils/prompt_util.py` | 190 | 7421 | `422f45cd48eea264` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `pyproject.toml` | 354 | 11173 | `0d4b8bd2c3bc7c90` | replaced | `Cargo.toml; Cargo.lock` | Rust dependency graph |
-| `rag/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | N/A | - | empty package marker (no code) |
 | `rag/advanced_rag/__init__.py` | 20 | 773 | `c294e8898ddabe4a` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
 | `rag/advanced_rag/knowlege_compile/__init__.py` | 43 | 1327 | `2a848ac2f16734e1` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
 | `rag/advanced_rag/knowlege_compile/_common.py` | 913 | 32191 | `83e833a37c090ee5` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
@@ -2303,7 +2305,7 @@
 | `rag/app/resume.py` | 2768 | 115602 | `8475e172c5bdf3e9` | aligned | `src/resume.rs` | LLM-free core ported to src/resume.rs: FIELD_MAP bilingual (32 fields), parse_with_regex (name/phone/email/gender/age/birth/degree/school/major/company/position/work-years/graduation, CJK+EN strategies with verb-filter + substring dedup), _postprocess_resume 4-phase pipeline (source validation / domain normalization / contextual dedup with company-substring + date-overlap + shingling-jaccard / required-field completion), _build_chunk_document (Basic Info / Education / Skills & Certificates / Work Overview merge groups, per-element work/project chunks with company+dates+years, identity redundancy, resume summary line, add_positions). LLM paths (_call_llm / parse_with_llm / prompts) not ported — RayRAG seam is ResumeExtractor; tiktoken shingles approximated by char n-grams (n=5) |
 | `rag/app/table.py` | 574 | 24070 | `5e21d1e5ee04bfab` | aligned | `src/table.rs; src/parser/excel.rs` | chunk() table pipeline ported to src/table.rs: header-vs-data row classification (looks_like_header incl. CJK rule / looks_like_data / row_looks_like_header majority), detect_header_rows (up to 5 rows, stop at first data row), complex-header detection when a merged range touches row 1-2, parse_simple_headers (Column_N fallback), build_hierarchical_headers (multi-level parts joined with `-`, Y/N/M/X + numeric parts filtered, Column_N placeholder), merged_value/get_inherited_value (anchor-cell inheritance from excel.rs merged_ranges), extract_row_data (merged-aware), is_empty_row, trans_datatime (ISO / YYYY/MM/DD / YYYY年M月D日 / T-separator + zone suffix), trans_bool (中英文+符号), column_data_type (int/float/datetime/bool/text majority + normalization), field_name type-suffix map (_long/_flt/_dt/_kwd/_tks), row_to_chunk (`- field: value` lines, one chunk per row, docnm_kwd/title_tks). excel.rs read side parses `<mergeCells>` (Start+Empty events, 1-based inclusive ranges); writer emits mergeCell refs for round-trip tests. 20 unit tests incl. xlsx→chunks end-to-end |
 | `rag/app/tag.py` | 147 | 5581 | `2c3a27785ee52674` | full | `src/app_parsers.rs` | QA mode dispatch (naive/advanced/graph) ported |
-| `rag/benchmark.py` | 293 | 14127 | `7866ab693092aad8` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/benchmark.py` | 293 | 14127 | `7866ab693092aad8` | full | `src/benchmark.rs` | benchmark (ndcg@10/map@5/mrr@10, latency stats) ported |
 | `rag/flow/__init__.py` | 58 | 1971 | `ca6202e15e29a03d` | full | `src/pipeline/flow.rs` | flow component contracts (payloads/trace/progress) ported |
 | `rag/flow/base.py` | 60 | 2205 | `2581cc96564d4059` | full | `src/pipeline/flow.rs` | flow component contracts (payloads/trace/progress) ported |
 | `rag/flow/chunker/__init__.py` | 18 | 745 | `1a080087bab321c8` | full | `src/pipeline/flow.rs` | flow component contracts (payloads/trace/progress) ported |
@@ -2377,7 +2379,7 @@
 | `rag/nlp/surname.py` | 573 | 9102 | `0df393a5a824272a` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported |
 | `rag/nlp/synonym.py` | 106 | 3336 | `f29f3cfa52817904` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported |
 | `rag/nlp/term_weight.py` | 240 | 7809 | `43b018a429eb722c` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported |
-| `rag/prompts/__init__.py` | 5 | 169 | `d9b966c335ee37ba` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/prompts/__init__.py` | 5 | 169 | `d9b966c335ee37ba` | full | `src/prompts.rs; src/chat.rs` | package re-export shim for generator.py (ported — QA pipeline assembly in src/chat.rs); template lookup via src/prompts.rs::PromptLibrary::get |
 | `rag/prompts/analyze_task_system.md` | 48 | 2236 | `8a610aa3f3e8e94d` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/analyze_task_user.md` | 9 | 526 | `81dc9f2bd9df1fb9` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/ask_summary.md` | 14 | 575 | `2074e9c3aa597f07` | full | `src/prompts.rs` | RAG QA-stage prompt template ported (RAGFLOW_* consts, PromptLibrary) |
@@ -2411,7 +2413,7 @@
 | `rag/prompts/structured_output_prompt.md` | 16 | 666 | `a643011152e89dc8` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/sufficiency_check.md` | 24 | 873 | `705b9146590d3849` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/summary4memory.md` | 35 | 1247 | `eb0f283f9b991ca4` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
-| `rag/prompts/template.py` | 19 | 503 | `69079818acd6e394` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/prompts/template.py` | 19 | 503 | `69079818acd6e394` | full | `src/prompts.rs` | load_prompt(name) with cache maps to PromptLibrary::get(name) — built-in templates embedded and looked up by name (src/prompts.rs) |
 | `rag/prompts/toc_detection.md` | 29 | 1952 | `29e068a7a4e1b330` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/toc_extraction.md` | 53 | 1851 | `02e1d031f63057a2` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/prompts/toc_extraction_continue.md` | 60 | 2187 | `433ac68ad18278dd` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
@@ -2426,7 +2428,7 @@
 | `rag/prompts/vision_llm_figure_describe_prompt_with_context.md` | 82 | 3063 | `6843f7e7ef7ebc51` | full | `src/prompts.rs` | prompt template ported (RAGFLOW_* consts, PromptLibrary) |
 | `rag/res/ner.json` | 10880 | 235333 | `a822030956fa4824` | full | `src/resources.rs` | ner/synonym resource loader ported (env-resolved path) |
 | `rag/res/synonym.json` | 10546 | 268379 | `ea61b9e1c17601ad` | full | `src/resources.rs` | ner/synonym resource loader ported (env-resolved path) |
-| `rag/settings.py` | 15 | 622 | `cd7307f51a543601` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/settings.py` | 15 | 622 | `cd7307f51a543601` | full | `src/settings.rs` | env settings loader ported (from_env/from_reader) |
 | `rag/svr/cache_file_svr.py` | 62 | 1993 | `f71712f792d53f08` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/discord_svr.py` | 80 | 2644 | `114661cb35beda9e` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/sync_data_source.py` | 2256 | 88673 | `5f13ae4ae1a8f0e2` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
@@ -2448,7 +2450,7 @@
 | `rag/svr/task_executor_refactor/recording_context.py` | 419 | 13920 | `b8631f844aea246b` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/report_generator.py` | 137 | 4747 | `dcbb414c02fb3197` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/task_context.py` | 520 | 17476 | `dd52de26b3e8dd19` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
-| `rag/svr/task_executor_refactor/task_executor_refactoring_plan.md` | 492 | 23408 | `9bf0d35fb36cea6c` | partial | `src/pipeline/mod.rs; src/search.rs` | RAG runtime awaiting exact semantic classification |
+| `rag/svr/task_executor_refactor/task_executor_refactoring_plan.md` | 492 | 23408 | `9bf0d35fb36cea6c` | N/A | `src/task_executor.rs; src/api/file_mgr.rs` | N/A-by-design: planning document (not code); task executor runtime is ported (full — cache_file_svr/sync_data_source/build_chunks → src/task_executor.rs; src/api/file_mgr.rs) |
 | `rag/svr/task_executor_refactor/task_handler.py` | 831 | 35033 | `cce68a985f4adb8a` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/task_manager.py` | 180 | 7276 | `28b1475c3f782dc1` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/write_operation_interceptor.py` | 134 | 5161 | `0acb38e50262b71a` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |

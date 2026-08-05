@@ -220,13 +220,41 @@ pub fn check_file_team_permission(
     false
 }
 
+// ---------------------------------------------------------------------------
+// RAGFlow constants re-exports (common/constants.py + api/constants.py)
+// ---------------------------------------------------------------------------
+// The canonical definitions live in `crate::common::constants`; these
+// re-exports give API handlers the same short names RAGFlow uses without
+// re-defining the tables here. `FILE_NAME_LEN_LIMIT` / `IMG_BASE64_PREFIX`
+// already live in `api::utils` (see its coverage map).
+
+pub use crate::common::constants::{
+    API_VERSION, ActiveEnum, DATASET_NAME_LIMIT, MEMORY_NAME_LIMIT, MEMORY_SIZE_LIMIT,
+    NAME_LENGTH_LIMIT, REQUEST_MAX_WAIT_SEC, REQUEST_WAIT_SEC, RetCode, StatusEnum, TaskStatus,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use base64::Engine as _;
 
     #[test]
+    fn api_constants_re_export_ragflow_semantics() {
+        assert_eq!(RetCode::ArgumentError.as_i32(), 101);
+        assert_eq!(TaskStatus::Done.as_str(), "3");
+        assert_eq!(StatusEnum::Valid.as_str(), "1");
+        assert_eq!(ActiveEnum::Active.as_str(), "1");
+        assert_eq!(API_VERSION, "v1");
+        assert_eq!(NAME_LENGTH_LIMIT, 1024);
+        assert_eq!(DATASET_NAME_LIMIT, 128);
+        assert_eq!(REQUEST_WAIT_SEC, 2);
+        assert_eq!(REQUEST_MAX_WAIT_SEC, 300);
+        assert_eq!(MEMORY_SIZE_LIMIT, 10 * 1024 * 1024);
+    }
+
+    #[test]
     fn admin_exception_family_maps_to_ragflow_codes() {
+        use base64::Engine as _;
         assert_eq!(ApiError::admin("boom").code, 400);
         assert_eq!(ApiError::user_not_found("alice").code, 404);
         assert_eq!(ApiError::user_not_found("alice").message, "User 'alice' not found");

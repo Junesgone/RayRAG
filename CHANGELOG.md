@@ -2,6 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.2.4] — 2026-08-05
+
+### Added
+
+- **common 工具层**（`src/common.rs` ~1800 行）：常量表（RetCode/TaskStatus/
+  StatusEnum/ParserType 15 种 chunk method/FileSource 31 种/LLMType/Storage/
+  MemoryType 位标志）、string/text/time/float/misc/parser_config/query_base/
+  connection_utils、crypto（AES-128/256-CBC + PKCS7 + RAGF magic 头 +
+  PBKDF2-HMAC-SHA256，与 Python wire format 逐字节一致；SM4 标记 TODO）、
+  ssrf_guard、参数校验；api/constants + api/validation 语义。
+- **settings 层**（`src/settings.rs` 新建）：Settings::from_env/from_reader、
+  StorageImpl/DocEngine 枚举、parse_model_entry（name@factory）、init_secret_key
+  （≥32 字符）、FLOAT_ZERO/PARAM_MAXDEPTH。
+- **benchmark**（`src/benchmark.rs` 新建）：BenchmarkDataset/Config、ndcg@10/
+  map@5/mrr@10（rank-ordered）、LatencyStats（avg/p50/p95/max）、
+  RetrievalRunner + run_retrieval_benchmark、to_markdown。
+- **canvas 语义**（`src/agent.rs` 追加）：reset_sys_globals/reset_env_globals、
+  get_history_window、is_canvas_reference、add_retrieval_reference、
+  ToolUseTrace + merge_tool_use_trace、clean_tts_text。
+
 ## [0.2.3] — 2026-08-05
 
 ### Added
