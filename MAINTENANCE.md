@@ -1,3 +1,11 @@
+## 2026-08-05 v0.3.0：UI 页面按钮对齐 RAGFlow
+
+- 批次 deleg_9d323be8 三子 agent 全部 1800s 超时（web.rs 大文件 + 编译排队）
+  但产出落盘（web.rs +796/server.rs +198/kb.rs +28）；父 agent 接管收尾：
+  test_state 预写 users.json（绕过 bootstrap env 依赖）+ i18n 双语断言
+- 测试基线：**1139 passed / 0 failed / 27 ignored**
+- 教训：web.rs 单文件 UI 任务 > 1800s 需拆分更细或主 agent 直接做
+
 ## 2026-08-05 v0.2.5 容器验证
 
 - 部署成功：容器 healthy、healthz 200、6 页面全 200

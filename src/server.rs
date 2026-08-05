@@ -168,6 +168,155 @@ fn unix_ms() -> u64 {
         .as_millis() as u64
 }
 
+// ── Self-service personal API keys (settings page) ────────────────────
+
+#[derive(Clone, Serialize)]
+struct SelfApiKey {
+    token: String,
+    create_time: u64,
+    create_date: String,
+}
+
+static SELF_API_KEYS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<SelfApiKey>>>,
+> = std::sync::OnceLock::new();
+
+fn self_api_keys() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<SelfApiKey>>> {
+    SELF_API_KEYS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// GET /api/v1/system/api_keys — list the current user's personal API keys.
+async fn list_my_api_keys(Extension(auth): Extension<AuthContext>) -> Response {
+    let keys = self_api_keys()
+        .lock()
+        .unwrap()
+        .get(&auth.user_id)
+        .cloned()
+        .unwrap_or_default();
+    Json(serde_json::json!({ "code": 0, "data": keys })).into_response()
+}
+
+/// POST /api/v1/system/api_keys — generate and persist a personal API key.
+async fn generate_my_api_key(Extension(auth): Extension<AuthContext>) -> Response {
+    let token = format!("sk-{}", uuid::Uuid::new_v4());
+    let now = unix_ms();
+    let entry = SelfApiKey {
+        token: token.clone(),
+        create_time: now,
+        create_date: chrono::Utc::now().to_rfc3339(),
+    };
+    self_api_keys()
+        .lock()
+        .unwrap()
+        .entry(auth.user_id.clone())
+        .or_default()
+        .push(entry);
+    Json(serde_json::json!({ "code": 0, "data": { "api_key": token } })).into_response()
+}
+
+/// DELETE /api/v1/system/api_keys/{key} — revoke one of the current user's API keys.
+async fn delete_my_api_key(
+    Extension(auth): Extension<AuthContext>,
+    Path(key): Path<String>,
+) -> Response {
+    let mut map = self_api_keys().lock().unwrap();
+    if let Some(keys) = map.get_mut(&auth.user_id) {
+        keys.retain(|entry| entry.token != key);
+    }
+    Json(serde_json::json!({ "code": 0, "data": true })).into_response()
+}
+
+// ── File rename / copy (files page) ────────────────────────────────────
+
+fn file_physical_path(data_dir: &str, id: &str, name: &str) -> std::path::PathBuf {
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    std::path::Path::new(data_dir).join(if extension.is_empty() {
+        id.to_string()
+    } else {
+        format!("{id}.{extension}")
+    })
+}
+
+/// PATCH /api/v1/files/{id} — rename a file record (and physical blob when the extension changes).
+async fn rename_file(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(file_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let name = body
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let Some(name) = name else {
+        return Json(serde_json::json!({ "code": 400, "message": "name is required" }))
+            .into_response();
+    };
+    let Some(record) = state
+        .files
+        .list_for(&auth.user_id, auth.is_admin, "root")
+        .into_iter()
+        .find(|record| record.id == file_id)
+    else {
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+            .into_response();
+    };
+    if record.name != name {
+        let old_path = file_physical_path(&state.files.data_dir, &file_id, &record.name);
+        let new_path = file_physical_path(&state.files.data_dir, &file_id, &name);
+        if old_path != new_path && old_path.exists() {
+            let _ = std::fs::rename(&old_path, &new_path);
+        }
+        let mut updated = record.clone();
+        updated.name = name;
+        let _ = state.files.remove(&file_id);
+        match state.files.add(updated) {
+            Ok(_) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+            Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() }))
+                .into_response(),
+        }
+    } else {
+        Json(serde_json::json!({ "code": 0, "data": true })).into_response()
+    }
+}
+
+/// POST /api/v1/files/{id}/copy — duplicate a file record and its physical blob.
+async fn copy_file(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(file_id): Path<String>,
+) -> Response {
+    let Some(record) = state
+        .files
+        .list_for(&auth.user_id, auth.is_admin, "root")
+        .into_iter()
+        .find(|record| record.id == file_id)
+    else {
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+            .into_response();
+    };
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let source = file_physical_path(&state.files.data_dir, &file_id, &record.name);
+    let target = file_physical_path(&state.files.data_dir, &new_id, &record.name);
+    if source.exists() {
+        let _ = std::fs::copy(&source, &target);
+    }
+    let mut copied = record.clone();
+    copied.id = new_id;
+    copied.created_at = unix_ms();
+    match state.files.add_unique(copied) {
+        Ok(record) => Json(serde_json::json!({ "code": 0, "data": record })).into_response(),
+        Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() }))
+            .into_response(),
+    }
+}
+
 #[derive(Clone)]
 pub struct AuthContext {
     pub user_id: String,
@@ -421,12 +570,23 @@ async fn update_dataset(
     if !kb_manageable(&state, &dataset_id, &auth) {
         return api_error(StatusCode::NOT_FOUND, "Knowledge base not found");
     }
+    let name = body.get("name").and_then(|value| value.as_str());
+    let description = body.get("description").and_then(|value| value.as_str());
     let permission = body.get("permission").and_then(|value| value.as_str());
     let requested_embedding = body
         .get("embd_id")
         .or_else(|| body.get("embedding_model"))
         .and_then(|value| value.as_str());
-    // 解析 chunk/解析器配置 → parser_config JSON
+    if let Some(name) = name {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || trimmed.len() > 255 {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "Knowledge base name is required and must not exceed 255 characters",
+            );
+        }
+    }
+    // 解析 chunk/解析器/检索配置 → parser_config JSON
     // 兼容两种传法：顶层 RAGFlow camelCase 键（前端 KB 配置页），或嵌套 parser_config 对象
     let mut config = serde_json::Map::new();
     if let Some(nested) = body.get("parser_config").and_then(|v| v.as_object()) {
@@ -454,6 +614,12 @@ async fn update_dataset(
         "entity_types",
         "layout_recognize",
         "ocr_enabled",
+        // 检索配置（RAGFlow retrieval_setting 对齐）
+        "top_k",
+        "similarity_threshold",
+        "vector_similarity_weight",
+        "rerank",
+        "rerank_model",
     ] {
         if let Some(value) = body.get(key) {
             config.insert(key.into(), value.clone());
@@ -464,10 +630,15 @@ async fn update_dataset(
     } else {
         Some(serde_json::Value::Object(config).to_string())
     };
-    if permission.is_none() && requested_embedding.is_none() && parser_config.is_none() {
+    if name.is_none()
+        && description.is_none()
+        && permission.is_none()
+        && requested_embedding.is_none()
+        && parser_config.is_none()
+    {
         return api_error(
             StatusCode::BAD_REQUEST,
-            "permission or embedding_model is required",
+            "name, permission, embedding_model or parser_config is required",
         );
     }
     let current = state.kbs.get(&dataset_id).expect("manageable KB exists");
@@ -489,6 +660,13 @@ async fn update_dataset(
         }
         None => None,
     };
+    // 名称/描述与其它配置分别持久化
+    if let Err(error) = state
+        .kbs
+        .update_name_description(&dataset_id, name, description)
+    {
+        return api_error(StatusCode::BAD_REQUEST, &error.to_string());
+    }
     match state.kbs.update_config(
         &dataset_id,
         permission,
@@ -2622,7 +2800,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/files", get(crate::api::file_mgr::list_files))
         .route(
             "/api/v1/files/{file_id}",
-            axum::routing::delete(crate::api::file_mgr::delete_file),
+            axum::routing::delete(crate::api::file_mgr::delete_file).patch(rename_file),
+        )
+        .route(
+            "/api/v1/files/{file_id}/copy",
+            post(copy_file),
         )
         .route(
             "/api/v1/files/{file_id}/download",
@@ -2857,6 +3039,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/system/new_api_key",
             post(crate::api::system::new_api_key),
+        )
+        .route(
+            "/api/v1/system/api_keys",
+            get(list_my_api_keys).post(generate_my_api_key),
+        )
+        .route(
+            "/api/v1/system/api_keys/{key}",
+            axum::routing::delete(delete_my_api_key),
         )
         .route("/api/v1/llm/models", get(crate::api::system::list_models))
         .route(

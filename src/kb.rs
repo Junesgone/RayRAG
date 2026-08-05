@@ -450,6 +450,34 @@ impl KbStore {
         })
     }
 
+    /// Rename a knowledge base and/or update its description (RAGFlow rename flow).
+    pub fn update_name_description(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<Option<KnowledgeBase>> {
+        self.mutate_if_changed(|kbs| {
+            let Some(kb) = kbs.get_mut(id) else {
+                return Ok((None, false));
+            };
+            let name_changed =
+                name.is_some_and(|value| kb.name != value.trim());
+            let desc_changed = description.is_some_and(|value| kb.description != value);
+            if !name_changed && !desc_changed {
+                return Ok((Some(kb.clone()), false));
+            }
+            if let Some(name) = name {
+                kb.name = name.trim().to_string();
+            }
+            if let Some(description) = description {
+                kb.description = description.to_string();
+            }
+            kb.updated_at = now_ms();
+            Ok((Some(kb.clone()), true))
+        })
+    }
+
     /// Delete a knowledge base by ID.
     pub fn delete(&self, id: &str) -> Result<bool> {
         self.mutate_if_changed(|kbs| {
