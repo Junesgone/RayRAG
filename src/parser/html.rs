@@ -25,8 +25,25 @@ use scraper::{ElementRef, Html, Node};
 
 /// Block elements that start a new logical block id (html_parser.py:29-35).
 pub const BLOCK_TAGS: &[&str] = &[
-    "h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "article", "section",
-    "aside", "ul", "ol", "li", "table", "pre", "code", "blockquote", "figure",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "div",
+    "article",
+    "section",
+    "aside",
+    "ul",
+    "ol",
+    "li",
+    "table",
+    "pre",
+    "code",
+    "blockquote",
+    "figure",
     "figcaption",
 ];
 
@@ -107,7 +124,13 @@ impl RAGFlowHtmlParser {
                         let nested = Html::parse_fragment(content);
                         let nested_root = nested.root_element();
                         // Re-run with the same parent/block context.
-                        Self::walk_children(nested_root, parser_result, chunk_token_num, parent_name, block_id.clone());
+                        Self::walk_children(
+                            nested_root,
+                            parser_result,
+                            chunk_token_num,
+                            parent_name,
+                            block_id.clone(),
+                        );
                         continue;
                     }
                     let tag_name = parent_name.unwrap_or("inner_text").to_string();
@@ -251,7 +274,10 @@ impl RAGFlowHtmlParser {
         let mut current_table: Vec<String> = Vec::new();
         let mut current_count = 0usize;
 
-        for row in soup.root_element().select(&scraper::Selector::parse("tr").unwrap()) {
+        for row in soup
+            .root_element()
+            .select(&scraper::Selector::parse("tr").unwrap())
+        {
             let row_html = row.html();
             let token_count = estimate_tokens(&row_html);
             if current_count + token_count > chunk_token_num {
@@ -288,7 +314,8 @@ fn sanitize_html(input: &str) -> String {
             continue;
         }
         // Comment: <!-- ... -->
-        if i + 3 < chars.len() && chars[i + 1] == '!' && chars[i + 2] == '-' && chars[i + 3] == '-' {
+        if i + 3 < chars.len() && chars[i + 1] == '!' && chars[i + 2] == '-' && chars[i + 3] == '-'
+        {
             let mut j = i + 4;
             let mut closed = false;
             while j + 2 < chars.len() {
@@ -423,7 +450,10 @@ fn html_unescape(s: &str) -> String {
                     "apos" => Some('\''),
                     "nbsp" => Some('\u{00a0}'),
                     _ => {
-                        if let Some(hex) = entity.strip_prefix("#x").or_else(|| entity.strip_prefix("#X")) {
+                        if let Some(hex) = entity
+                            .strip_prefix("#x")
+                            .or_else(|| entity.strip_prefix("#X"))
+                        {
                             u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
                         } else if let Some(dec) = entity.strip_prefix('#') {
                             dec.parse::<u32>().ok().and_then(char::from_u32)

@@ -34,7 +34,11 @@ pub struct BochaSearchResult {
 
 #[async_trait]
 pub trait BochaProvider: Send + Sync {
-    async fn search(&self, api_key: &str, request: &BochaSearchRequest) -> Result<Vec<BochaSearchResult>>;
+    async fn search(
+        &self,
+        api_key: &str,
+        request: &BochaSearchRequest,
+    ) -> Result<Vec<BochaSearchResult>>;
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +70,11 @@ impl BochaClient {
 
 #[async_trait]
 impl BochaProvider for BochaClient {
-    async fn search(&self, api_key: &str, request: &BochaSearchRequest) -> Result<Vec<BochaSearchResult>> {
+    async fn search(
+        &self,
+        api_key: &str,
+        request: &BochaSearchRequest,
+    ) -> Result<Vec<BochaSearchResult>> {
         if api_key.trim().is_empty() {
             bail!("bocha: API key is required");
         }
@@ -75,8 +83,15 @@ impl BochaProvider for BochaClient {
         }
         let mut body = Map::new();
         body.insert("query".into(), Value::String(request.query.clone()));
-        body.insert("count".into(), Value::Number(request.top_n.clamp(1, 20).into()));
-        let summary = if request.channel.eq_ignore_ascii_case("news") { "true" } else { "false" };
+        body.insert(
+            "count".into(),
+            Value::Number(request.top_n.clamp(1, 20).into()),
+        );
+        let summary = if request.channel.eq_ignore_ascii_case("news") {
+            "true"
+        } else {
+            "false"
+        };
         body.insert("summary".into(), Value::Bool(summary == "true"));
         if let Some(freshness) = request.freshness.as_deref().filter(|f| !f.is_empty()) {
             body.insert("freshness".into(), Value::String(freshness.to_string()));
@@ -96,11 +111,13 @@ impl BochaProvider for BochaClient {
             .await
             .context("could not read Bocha response body")?;
         if body.len() > MAX_BOCHA_RESPONSE_BODY {
-            bail!("Bocha response body exceeds {} bytes", MAX_BOCHA_RESPONSE_BODY);
+            bail!(
+                "Bocha response body exceeds {} bytes",
+                MAX_BOCHA_RESPONSE_BODY
+            );
         }
-        let envelope: Value = serde_json::from_slice(&body).with_context(|| {
-            format!("Bocha response (HTTP {status}) was not valid JSON")
-        })?;
+        let envelope: Value = serde_json::from_slice(&body)
+            .with_context(|| format!("Bocha response (HTTP {status}) was not valid JSON"))?;
         if !status.is_success() {
             let detail = envelope
                 .get("msg")
@@ -115,7 +132,10 @@ impl BochaProvider for BochaClient {
         Ok(pages
             .iter()
             .filter_map(|page| {
-                let title = page.get("title").and_then(Value::as_str).unwrap_or_default();
+                let title = page
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let link = page.get("url").and_then(Value::as_str).unwrap_or_default();
                 if title.is_empty() || link.is_empty() {
                     return None;
@@ -182,12 +202,28 @@ mod tests {
     async fn missing_key_or_query_is_rejected() {
         let client = BochaClient::default();
         let error = client
-            .search("", &BochaSearchRequest { query: "q".into(), channel: "web".into(), top_n: 5, freshness: None })
+            .search(
+                "",
+                &BochaSearchRequest {
+                    query: "q".into(),
+                    channel: "web".into(),
+                    top_n: 5,
+                    freshness: None,
+                },
+            )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("API key"));
         let error = client
-            .search("key", &BochaSearchRequest { query: "".into(), channel: "web".into(), top_n: 5, freshness: None })
+            .search(
+                "key",
+                &BochaSearchRequest {
+                    query: "".into(),
+                    channel: "web".into(),
+                    top_n: 5,
+                    freshness: None,
+                },
+            )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("query"));
@@ -198,12 +234,15 @@ mod tests {
     async fn live_bocha_search() {
         let api_key = std::env::var("BOCHA_API_KEY").expect("BOCHA_API_KEY must be set");
         let results = BochaClient::default()
-            .search(&api_key, &BochaSearchRequest {
-                query: "RAGFlow".into(),
-                channel: "web".into(),
-                top_n: 5,
-                freshness: None,
-            })
+            .search(
+                &api_key,
+                &BochaSearchRequest {
+                    query: "RAGFlow".into(),
+                    channel: "web".into(),
+                    top_n: 5,
+                    freshness: None,
+                },
+            )
             .await
             .unwrap();
         assert!(!results.is_empty());

@@ -452,7 +452,10 @@ const PUBMED_OUTPUTS: &[(&str, &str)] = &[
     ("_ERROR", "Terminal PubMed request or parsing error"),
 ];
 const BING_INPUTS: &[(&str, &str)] = &[
-    ("query", "Bing query or Canvas selector; defaults to sys.query"),
+    (
+        "query",
+        "Bing query or Canvas selector; defaults to sys.query",
+    ),
     ("top_n", "Positive result limit; defaults to 10"),
     (
         "max_retries",
@@ -469,7 +472,10 @@ const BING_OUTPUTS: &[(&str, &str)] = &[
     ("_ERROR", "Terminal Bing request or parsing error"),
 ];
 const BAIDU_INPUTS: &[(&str, &str)] = &[
-    ("query", "Baidu query or Canvas selector; defaults to sys.query"),
+    (
+        "query",
+        "Baidu query or Canvas selector; defaults to sys.query",
+    ),
     ("top_n", "Positive result limit; defaults to 10"),
     (
         "max_retries",
@@ -486,7 +492,10 @@ const BAIDU_OUTPUTS: &[(&str, &str)] = &[
     ("_ERROR", "Terminal Baidu request or parsing error"),
 ];
 const BOCHA_INPUTS: &[(&str, &str)] = &[
-    ("query", "Bocha query or Canvas selector; defaults to sys.query"),
+    (
+        "query",
+        "Bocha query or Canvas selector; defaults to sys.query",
+    ),
     ("top_n", "Positive result limit; defaults to 10"),
     (
         "max_retries",
@@ -519,7 +528,10 @@ const TENCENT_FINANCE_OUTPUTS: &[(&str, &str)] = &[
         "RAGFlow-style Tencent quote row (name/price/change/high/low)",
     ),
     ("json", "Go-compatible results envelope with Tencent quote"),
-    ("_ERROR", "Terminal Tencent Finance request or parsing error"),
+    (
+        "_ERROR",
+        "Terminal Tencent Finance request or parsing error",
+    ),
 ];
 const BAIDU_SCHOLAR_INPUTS: &[(&str, &str)] = &[
     (
@@ -1001,9 +1013,15 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         inputs: &[
             ("script", "Code to execute (falls back to input script)"),
             ("lang", "Language: python3 (default)"),
-            ("arguments", "Object of named arguments passed to the sandbox"),
+            (
+                "arguments",
+                "Object of named arguments passed to the sandbox",
+            ),
         ],
-        outputs: &[("content", "Canonical execution result"), ("actual_type", "Inferred result type")],
+        outputs: &[
+            ("content", "Canonical execution result"),
+            ("actual_type", "Inferred result type"),
+        ],
     },
     StaticComponentDescriptor {
         name: "exesql",
@@ -1028,7 +1046,10 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
             ("cc_email", "Comma-split additional recipients"),
             ("subject", "Email subject"),
             ("content", "Email body (HTML)"),
-            ("smtp_server", "SMTP server (falls back to env EMAIL_SMTP_SERVER)"),
+            (
+                "smtp_server",
+                "SMTP server (falls back to env EMAIL_SMTP_SERVER)",
+            ),
             ("smtp_port", "SMTP port (default 465)"),
             ("email", "Sender email (env EMAIL_SENDER)"),
             ("password", "Authorization code (env EMAIL_SMTP_PASSWORD)"),
@@ -1040,9 +1061,18 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         name: "tushare",
         category: ComponentCategory::Agent,
         inputs: &[
-            ("content", "Keyword or stock symbol (array items joined with ',')"),
-            ("token", "TuShare API token (falls back to env TUSHARE_TOKEN)"),
-            ("src", "News source: sina/wallstreetcn/10jqka/eastmoney/yuncaijing/fenghuang/jinrongjie"),
+            (
+                "content",
+                "Keyword or stock symbol (array items joined with ',')",
+            ),
+            (
+                "token",
+                "TuShare API token (falls back to env TUSHARE_TOKEN)",
+            ),
+            (
+                "src",
+                "News source: sina/wallstreetcn/10jqka/eastmoney/yuncaijing/fenghuang/jinrongjie",
+            ),
             ("start_date", "Range start, format %Y-%m-%d %H:%M:%S"),
             ("end_date", "Range end, defaults to now"),
             ("keyword", "Case-insensitive content filter"),
@@ -1053,21 +1083,56 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
         name: "akshare",
         category: ComponentCategory::Agent,
         inputs: &[
-            ("content", "Stock symbol or keyword (array items joined with ',')"),
+            (
+                "content",
+                "Stock symbol or keyword (array items joined with ',')",
+            ),
             ("top_n", "Max news items (default 10)"),
         ],
         outputs: &[("content", "Markdown news list")],
     },
     StaticComponentDescriptor {
+        name: "translate",
+        category: ComponentCategory::Agent,
+        inputs: &[
+            (
+                "content",
+                "Text to translate (array items joined with newline)",
+            ),
+            (
+                "auth_key",
+                "DeepL auth key (optional; RayRAG prefers BAIDU_TRANSLATE_APPID/KEY env, falls back to keyless Baidu sug endpoint)",
+            ),
+            (
+                "source_lang",
+                "Source language code, DeepL style (ZH/EN/JA/...; default auto)",
+            ),
+            (
+                "target_lang",
+                "Target language code, DeepL style (EN-GB/EN-US/ZH/...; default EN)",
+            ),
+        ],
+        outputs: &[("content", "Translated text")],
+    },
+    StaticComponentDescriptor {
         name: "iwencai",
         category: ComponentCategory::Agent,
         inputs: &[
-            ("query", "The question/conditions to select stocks (defaults to sys.query)"),
+            (
+                "query",
+                "The question/conditions to select stocks (defaults to sys.query)",
+            ),
             ("top_n", "Max result rows (default 10)"),
-            ("query_type", "stock/zhishu/fund/hkstock/usstock/threeboard/conbond/insurance/futures/lccp/foreign_exchange"),
+            (
+                "query_type",
+                "stock/zhishu/fund/hkstock/usstock/threeboard/conbond/insurance/futures/lccp/foreign_exchange",
+            ),
             ("cookie", "Optional iwencai session cookie"),
         ],
-        outputs: &[("formalized_content", "Markdown tables rendered from the iwencai answer")],
+        outputs: &[(
+            "formalized_content",
+            "Markdown tables rendered from the iwencai answer",
+        )],
     },
     StaticComponentDescriptor {
         name: "crawler",
@@ -1790,5 +1855,33 @@ mod tests {
         let error = track_elapsed("Extractor", || Err(anyhow!("downstream"))).unwrap_err();
         assert_eq!(error.to_string(), "Extractor: downstream");
         assert_eq!(error.root_cause().to_string(), "downstream");
+    }
+
+    #[test]
+    fn translate_descriptor_is_registered_with_deepl_contract() {
+        assert!(is_supported_agent_component("translate"));
+        assert!(is_supported_agent_component("Translate"));
+        let all = component_descriptors(&[]);
+        let translate = all
+            .iter()
+            .find(|descriptor| descriptor.name == "translate")
+            .unwrap();
+        assert_eq!(translate.category, "agent");
+        assert_eq!(
+            translate
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["auth_key", "content", "source_lang", "target_lang"]
+        );
+        assert_eq!(
+            translate
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["content"]
+        );
     }
 }

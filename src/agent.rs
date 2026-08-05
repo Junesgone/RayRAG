@@ -10,16 +10,21 @@
 #[path = "wencai.rs"]
 pub(crate) mod wencai;
 
+use crate::akshare::{AkShareClient, AkShareRequest};
 use crate::arxiv::{ArxivClient, ArxivPaper, ArxivProvider, ArxivSearchRequest, ArxivSortBy};
 use crate::baidu::{BaiduClient, BaiduProvider, BaiduSearchRequest};
-use crate::baike::{BaikeArticle, BaikeClient, BaikeProvider, BaikeSearchRequest};
 use crate::baidu_scholar::{BaiduScholarClient, BaiduScholarProvider, BaiduScholarRequest};
+use crate::baike::{BaikeArticle, BaikeClient, BaikeProvider, BaikeSearchRequest};
 use crate::bing::{BingClient, BingProvider, BingSearchRequest};
 use crate::bocha::{BochaClient, BochaProvider, BochaSearchRequest};
+use crate::code_exec::{CodeRequest, SandboxClient, process_result};
+use crate::crawler::{CrawlerClient, CrawlerRequest};
 use crate::duckduckgo::{
     DuckDuckGoChannel, DuckDuckGoClient, DuckDuckGoProvider, DuckDuckGoSearchRequest,
 };
 use crate::eastmoney::{EastMoneyClient, EastMoneyNewsRequest, EastMoneyProvider};
+use crate::email::{EmailClient, EmailConfig, EmailRequest};
+use crate::exesql::{ExeSqlConfig, execute_sql};
 use crate::generation_params::GenerationParamsPatch;
 use crate::github::{GitHubClient, GitHubProvider, GitHubRepository, GitHubSearchRequest};
 use crate::google::{GoogleClient, GoogleProvider, GoogleSearchRequest};
@@ -33,16 +38,9 @@ use crate::pubmed::{PubMedArticle, PubMedClient, PubMedProvider, PubMedSearchReq
 use crate::qweather::{QWeatherClient, QWeatherProvider, QWeatherRequest, QWeatherType};
 use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
+use crate::tencent_finance::{TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest};
 use crate::translate::{BaiduTranslateClient, TranslateRequest};
-use crate::akshare::{AkShareClient, AkShareRequest};
 use crate::tushare::{TuShareClient, TuShareRequest};
-use crate::code_exec::{CodeRequest, process_result, SandboxClient};
-use crate::crawler::{CrawlerClient, CrawlerRequest};
-use crate::email::{EmailClient, EmailConfig, EmailRequest};
-use crate::exesql::{execute_sql, ExeSqlConfig};
-use crate::tencent_finance::{
-    TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest,
-};
 use crate::wikipedia::{
     WIKIPEDIA_LANGUAGES, WikipediaArticle, WikipediaClient, WikipediaProvider,
     WikipediaSearchRequest,
@@ -4603,35 +4601,21 @@ async fn execute_canvas_agent_tool_with_providers(
         }
         "eastmoney" => {
             validate_domestic_search_params(&child, "EastMoney")?;
-            execute_agent_eastmoney_with_timeout(
-                runtime,
-                &child,
-                &EastMoneyClient::default(),
-            )
-            .await?;
+            execute_agent_eastmoney_with_timeout(runtime, &child, &EastMoneyClient::default())
+                .await?;
         }
         "jin10" => {
             validate_domestic_search_params(&child, "Jin10")?;
-            execute_agent_jin10_with_timeout(runtime, &child, &Jin10Client::default())
-                .await?;
+            execute_agent_jin10_with_timeout(runtime, &child, &Jin10Client::default()).await?;
         }
         "qweather" => {
             validate_domestic_search_params(&child, "QWeather")?;
-            execute_agent_qweather_with_timeout(
-                runtime,
-                &child,
-                &QWeatherClient::default(),
-            )
-            .await?;
+            execute_agent_qweather_with_timeout(runtime, &child, &QWeatherClient::default())
+                .await?;
         }
         "searxng" => {
             validate_domestic_search_params(&child, "SearXNG")?;
-            execute_agent_searxng_with_timeout(
-                runtime,
-                &child,
-                &SearxngClient::default(),
-            )
-            .await?;
+            execute_agent_searxng_with_timeout(runtime, &child, &SearxngClient::default()).await?;
         }
         _ => unreachable!("Agent tool component was validated while loading"),
     }
@@ -5103,31 +5087,37 @@ async fn execute_node(
             .await
             .map(Some),
         "translate" => {
-            let translated = execute_translate_with_provider(node, input, &BaiduTranslateClient::default()).await?;
+            let translated =
+                execute_translate_with_provider(node, input, &BaiduTranslateClient::default())
+                    .await?;
             runtime.outputs.insert(node.id.clone(), translated);
             Ok(None)
         }
         "crawler" => {
             validate_crawler_params(node)?;
-            let crawled = execute_crawler_with_provider(node, input, &CrawlerClient::default()).await?;
+            let crawled =
+                execute_crawler_with_provider(node, input, &CrawlerClient::default()).await?;
             runtime.outputs.insert(node.id.clone(), crawled);
             Ok(None)
         }
         "akshare" => {
             validate_akshare_params(node)?;
-            let news = execute_akshare_with_provider(node, input, &AkShareClient::default()).await?;
+            let news =
+                execute_akshare_with_provider(node, input, &AkShareClient::default()).await?;
             runtime.outputs.insert(node.id.clone(), news);
             Ok(None)
         }
         "tushare" => {
             validate_tushare_params(node)?;
-            let news = execute_tushare_with_provider(node, input, &TuShareClient::default()).await?;
+            let news =
+                execute_tushare_with_provider(node, input, &TuShareClient::default()).await?;
             runtime.outputs.insert(node.id.clone(), news);
             Ok(None)
         }
         "iwencai" => {
             validate_wencai_params(node)?;
-            let result = execute_wencai_with_provider(node, input, &wencai::WenCaiClient::default()).await?;
+            let result =
+                execute_wencai_with_provider(node, input, &wencai::WenCaiClient::default()).await?;
             runtime.outputs.insert(node.id.clone(), result);
             Ok(None)
         }
@@ -5224,8 +5214,7 @@ async fn execute_node(
             Ok(None)
         }
         "eastmoney" => {
-            execute_eastmoney_with_provider(runtime, node, &EastMoneyClient::default())
-                .await?;
+            execute_eastmoney_with_provider(runtime, node, &EastMoneyClient::default()).await?;
             Ok(None)
         }
         "jin10" => {
@@ -5233,8 +5222,7 @@ async fn execute_node(
             Ok(None)
         }
         "qweather" => {
-            execute_qweather_with_provider(runtime, node, &QWeatherClient::default())
-                .await?;
+            execute_qweather_with_provider(runtime, node, &QWeatherClient::default()).await?;
             Ok(None)
         }
         "searxng" => {
@@ -6836,11 +6824,20 @@ async fn execute_code_exec_with_provider(
         .and_then(Value::as_str)
         .map(str::to_string)
         .filter(|value| !value.is_empty())
-        .or_else(|| input.inputs.get("script").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            input
+                .inputs
+                .get("script")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_default();
     if code.trim().is_empty() {
         let message = "**ERROR**: CodeExec script must not be empty";
-        return Ok(Map::from_iter([("_ERROR".into(), Value::String(message.into()))]));
+        return Ok(Map::from_iter([(
+            "_ERROR".into(),
+            Value::String(message.into()),
+        )]));
     }
     let mut arguments = Map::new();
     if let Some(raw) = node.params.get("arguments") {
@@ -7060,7 +7057,10 @@ async fn execute_tushare_with_provider(
         keyword,
     };
     match client.news(&request).await {
-        Ok(markdown) => Ok(Map::from_iter([("content".into(), Value::String(markdown))])),
+        Ok(markdown) => Ok(Map::from_iter([(
+            "content".into(),
+            Value::String(markdown),
+        )])),
         Err(error) => {
             let message = format!("**ERROR**: {error}");
             Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
@@ -7213,7 +7213,10 @@ async fn execute_crawler_with_provider(
         proxy,
     };
     match client.fetch(&request).await {
-        Ok(extracted) => Ok(Map::from_iter([("content".into(), Value::String(extracted))])),
+        Ok(extracted) => Ok(Map::from_iter([(
+            "content".into(),
+            Value::String(extracted),
+        )])),
         Err(error) => {
             let message = format!("An unexpected error occurred: {error}");
             Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
@@ -7264,7 +7267,10 @@ async fn execute_translate_with_provider(
         target_lang,
     };
     match client.translate(&request).await {
-        Ok(translated) => Ok(Map::from_iter([("content".into(), Value::String(translated))])),
+        Ok(translated) => Ok(Map::from_iter([(
+            "content".into(),
+            Value::String(translated),
+        )])),
         Err(error) => {
             let message = format!("Translate error: {error}");
             Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
@@ -7773,18 +7779,18 @@ async fn execute_bocha_search_with_provider(
     }
     let api_key = std::env::var("BOCHA_API_KEY").unwrap_or_default();
     if api_key.is_empty() {
-        set_domestic_search_error(
-            runtime,
-            node,
-            "BOCHA_API_KEY is not configured".into(),
-        );
+        set_domestic_search_error(runtime, node, "BOCHA_API_KEY is not configured".into());
         return Ok(());
     }
     let request = BochaSearchRequest {
         query,
         channel: bing_channel(node)?,
         top_n: bing_top_n(node)?,
-        freshness: node.params.get("freshness").and_then(Value::as_str).map(str::to_string),
+        freshness: node
+            .params
+            .get("freshness")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     };
     let delay = bing_retry_delay(node)?;
     let mut last_error = None;
@@ -7898,11 +7904,7 @@ async fn execute_jin10_with_provider(
 ) -> Result<()> {
     let secret_key = std::env::var("JIN10_SECRET_KEY").unwrap_or_default();
     if secret_key.is_empty() {
-        set_domestic_search_error(
-            runtime,
-            node,
-            "JIN10_SECRET_KEY is not configured".into(),
-        );
+        set_domestic_search_error(runtime, node, "JIN10_SECRET_KEY is not configured".into());
         return Ok(());
     }
     let r#type = match node.params.get("type").and_then(Value::as_str) {
@@ -8012,11 +8014,7 @@ async fn execute_qweather_with_provider(
 ) -> Result<()> {
     let api_key = std::env::var("QWEATHER_API_KEY").unwrap_or_default();
     if api_key.is_empty() {
-        set_domestic_search_error(
-            runtime,
-            node,
-            "QWEATHER_API_KEY is not configured".into(),
-        );
+        set_domestic_search_error(runtime, node, "QWEATHER_API_KEY is not configured".into());
         return Ok(());
     }
     let location = match node.params.get("location").and_then(Value::as_str) {
@@ -8124,7 +8122,11 @@ async fn execute_searxng_with_provider(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .or_else(|| std::env::var("SEARXNG_URL").ok().filter(|value| !value.is_empty()));
+        .or_else(|| {
+            std::env::var("SEARXNG_URL")
+                .ok()
+                .filter(|value| !value.is_empty())
+        });
     let searxng_url = match searxng_url {
         Some(url) => url,
         None => {
@@ -8264,7 +8266,12 @@ async fn execute_tencent_finance_with_provider(
             set_domestic_search_error(runtime, node, "Task has been canceled".into());
             return Ok(());
         }
-        match provider.quote(&TencentFinanceRequest { symbol: symbol.into() }).await {
+        match provider
+            .quote(&TencentFinanceRequest {
+                symbol: symbol.into(),
+            })
+            .await
+        {
             Ok(quote) => {
                 let row = crate::tencent_finance::tencent_quote_to_tool_row(&quote);
                 let rows = vec![row];
@@ -8457,7 +8464,10 @@ async fn execute_agent_tencent_finance_with_timeout(
             set_domestic_search_error(
                 runtime,
                 child,
-                format!("TencentFinance timed out after {} seconds", timeout.as_secs()),
+                format!(
+                    "TencentFinance timed out after {} seconds",
+                    timeout.as_secs()
+                ),
             );
             Ok(())
         }
@@ -13643,14 +13653,7 @@ fn validate_code_exec_params(node: &CanvasNode) -> Result<()> {
 }
 
 fn validate_exesql_params(node: &CanvasNode) -> Result<()> {
-    for field in [
-        "db_type",
-        "database",
-        "username",
-        "host",
-        "password",
-        "sql",
-    ] {
+    for field in ["db_type", "database", "username", "host", "password", "sql"] {
         if node
             .params
             .get(field)
@@ -13790,7 +13793,10 @@ fn bing_channel(node: &CanvasNode) -> Result<String> {
         return match topic.as_str() {
             Some("general") => Ok("general".into()),
             Some("news") => Ok("news".into()),
-            _ => bail!("domestic search '{}' topic must be general or news", node.id),
+            _ => bail!(
+                "domestic search '{}' topic must be general or news",
+                node.id
+            ),
         };
     }
     match node.params.get("channel").and_then(Value::as_str) {
@@ -13808,14 +13814,20 @@ fn bing_top_n(node: &CanvasNode) -> Result<usize> {
         .params
         .get("top_n")
         .map(|value| {
-            value
-                .as_u64()
-                .ok_or_else(|| anyhow!("domestic search '{}' top_n must be a positive integer", node.id))
+            value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "domestic search '{}' top_n must be a positive integer",
+                    node.id
+                )
+            })
         })
         .transpose()?
         .unwrap_or(10);
     if value == 0 || value > usize::MAX as u64 {
-        bail!("domestic search '{}' top_n must be a positive integer", node.id);
+        bail!(
+            "domestic search '{}' top_n must be a positive integer",
+            node.id
+        );
     }
     Ok(value as usize)
 }
@@ -21216,8 +21228,8 @@ mod tests {
         // A tiny white image with a black rectangle, generated in pure Rust
         // as an RGB PNG (llama.cpp vision accepts PNG/JPEG, not PPM).
         fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
-            use flate2::write::ZlibEncoder;
             use flate2::Compression;
+            use flate2::write::ZlibEncoder;
             use std::io::Write;
             let mut raw = Vec::with_capacity((width * height * 3 + height) as usize);
             for y in 0..height {
@@ -21237,7 +21249,11 @@ mod tests {
                     for (i, entry) in table.iter_mut().enumerate() {
                         let mut c = i as u32;
                         for _ in 0..8 {
-                            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                            c = if c & 1 != 0 {
+                                0xEDB8_8320 ^ (c >> 1)
+                            } else {
+                                c >> 1
+                            };
                         }
                         *entry = c;
                     }
@@ -21276,8 +21292,7 @@ mod tests {
                 pixels[i + 2] = 0;
             }
         }
-        let data_url =
-            VisionClient::normalize_image(&encode_png(w, h, &pixels), "image/png");
+        let data_url = VisionClient::normalize_image(&encode_png(w, h, &pixels), "image/png");
 
         let client = VisionClient::new(VisionConfig {
             api_base: vision_base,
@@ -21286,7 +21301,10 @@ mod tests {
             lang: "Chinese".into(),
         });
         let out = client
-            .describe_with_prompt(&data_url, "What color is the rectangle? Answer in one word.")
+            .describe_with_prompt(
+                &data_url,
+                "What color is the rectangle? Answer in one word.",
+            )
             .await
             .unwrap();
         assert!(!out.content.is_empty());

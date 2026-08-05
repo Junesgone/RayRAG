@@ -138,7 +138,9 @@ pub fn normalize_provider_api_key(
         Some(key) if !key.trim().is_empty() => key.to_string(),
         _ => {
             let env_name = crate::providers::provider_api_key_env(provider_id, provider_name)?;
-            std::env::var(env_name).ok().filter(|key| !key.trim().is_empty())?
+            std::env::var(env_name)
+                .ok()
+                .filter(|key| !key.trim().is_empty())?
         }
     };
     let dialect = ProviderDialect::from_provider(provider_id, provider_name);
@@ -180,8 +182,7 @@ where
 pub fn normalize_inference_base(provider_id: &str, provider_name: &str, api_base: &str) -> String {
     let trimmed = api_base.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        if let Some(default) = crate::providers::provider_default_base(provider_id, provider_name)
-        {
+        if let Some(default) = crate::providers::provider_default_base(provider_id, provider_name) {
             return crate::providers::provider_dialect(provider_id, provider_name)
                 .apply_v1_suffix(default)
                 .to_string();
@@ -778,23 +779,50 @@ const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
     ("aliyun", include_str!("api/fixtures/models/aliyun.json")),
     ("baidu", include_str!("api/fixtures/models/baidu.json")),
     ("cohere", include_str!("api/fixtures/models/cohere.json")),
-    ("deepseek", include_str!("api/fixtures/models/deepseek.json")),
-    ("fishaudio", include_str!("api/fixtures/models/fishaudio.json")),
+    (
+        "deepseek",
+        include_str!("api/fixtures/models/deepseek.json"),
+    ),
+    (
+        "fishaudio",
+        include_str!("api/fixtures/models/fishaudio.json"),
+    ),
     ("gitee", include_str!("api/fixtures/models/gitee.json")),
     ("google", include_str!("api/fixtures/models/google.json")),
-    ("huggingface", include_str!("api/fixtures/models/huggingface.json")),
-    ("lmstudio", include_str!("api/fixtures/models/lmstudio.json")),
+    (
+        "huggingface",
+        include_str!("api/fixtures/models/huggingface.json"),
+    ),
+    (
+        "lmstudio",
+        include_str!("api/fixtures/models/lmstudio.json"),
+    ),
     ("minimax", include_str!("api/fixtures/models/minimax.json")),
-    ("moonshot", include_str!("api/fixtures/models/moonshot.json")),
+    (
+        "moonshot",
+        include_str!("api/fixtures/models/moonshot.json"),
+    ),
     ("nvidia", include_str!("api/fixtures/models/nvidia.json")),
     ("ollama", include_str!("api/fixtures/models/ollama.json")),
     ("openai", include_str!("api/fixtures/models/openai.json")),
-    ("openrouter", include_str!("api/fixtures/models/openrouter.json")),
-    ("siliconflow", include_str!("api/fixtures/models/siliconflow.json")),
+    (
+        "openrouter",
+        include_str!("api/fixtures/models/openrouter.json"),
+    ),
+    (
+        "siliconflow",
+        include_str!("api/fixtures/models/siliconflow.json"),
+    ),
     ("vllm", include_str!("api/fixtures/models/vllm.json")),
-    ("volcengine", include_str!("api/fixtures/models/volcengine.json")),
+    (
+        "volcengine",
+        include_str!("api/fixtures/models/volcengine.json"),
+    ),
     ("xai", include_str!("api/fixtures/models/xai.json")),
-    ("zhipu-ai", include_str!("api/fixtures/models/zhipu-ai.json")),
+    (
+        "zhipu-ai",
+        include_str!("api/fixtures/models/zhipu-ai.json"),
+    ),
 ];
 
 /// Parse every embedded fixture into a `ProviderModels` entry.
@@ -890,8 +918,7 @@ fn parse_provider_models(factory: &str, raw: &str) -> Option<ProviderModels> {
             object
                 .iter()
                 .filter_map(|(region, url)| {
-                    url.as_str()
-                        .map(|url| (region.clone(), url.to_string()))
+                    url.as_str().map(|url| (region.clone(), url.to_string()))
                 })
                 .collect::<BTreeMap<_, _>>()
         })
@@ -968,7 +995,10 @@ fn fixture_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
         .find_map(|key| value.get(*key).and_then(Value::as_str))
 }
 
-fn fixture_object<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a serde_json::Map<String, Value>> {
+fn fixture_object<'a>(
+    value: &'a Value,
+    keys: &[&str],
+) -> Option<&'a serde_json::Map<String, Value>> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_object))
 }
@@ -1198,7 +1228,10 @@ mod tests {
         // All 20 RAGFlow conf/models fixtures parse into catalog entries.
         assert_eq!(catalog.len(), 20);
         let total_models: usize = catalog.iter().map(|p| p.models.len()).sum();
-        assert!(total_models > 150, "expected 150+ seeded models, got {total_models}");
+        assert!(
+            total_models > 150,
+            "expected 150+ seeded models, got {total_models}"
+        );
         // Multi-region URL maps survive (aliyun: default/singapore/us).
         let aliyun = catalog.iter().find(|p| p.factory == "aliyun").unwrap();
         assert!(aliyun.url.contains_key("singapore"));
@@ -1212,19 +1245,36 @@ mod tests {
         assert_eq!(hf.name, "HuggingFace");
         assert_eq!(hf.models.len(), 1);
         // Dynamic providers carry an empty static list.
-        assert!(catalog.iter().find(|p| p.factory == "ollama").unwrap().models.is_empty());
+        assert!(
+            catalog
+                .iter()
+                .find(|p| p.factory == "ollama")
+                .unwrap()
+                .models
+                .is_empty()
+        );
         // list_models_for resolves by factory key; vision/asr normalize onto RayRAG names.
         assert_eq!(list_models_for("deepseek").len(), 2);
         let moonshot = list_models_for("moonshot");
-        assert!(moonshot.iter().any(|m| m.model_types.contains(&"image2text".to_string())));
+        assert!(
+            moonshot
+                .iter()
+                .any(|m| m.model_types.contains(&"image2text".to_string()))
+        );
         assert!(moonshot.iter().any(|m| m.thinking));
         // Provider id/name resolution maps aliases onto fixtures.
         assert_eq!(
             resolve_model_factory("zhipu-ai", "Zhipu AI").as_deref(),
             Some("zhipu-ai")
         );
-        assert_eq!(resolve_model_factory("qwen", "Aliyun").as_deref(), Some("aliyun"));
-        assert_eq!(resolve_model_factory("volcengine", "VolcEngine").as_deref(), Some("volcengine"));
+        assert_eq!(
+            resolve_model_factory("qwen", "Aliyun").as_deref(),
+            Some("aliyun")
+        );
+        assert_eq!(
+            resolve_model_factory("volcengine", "VolcEngine").as_deref(),
+            Some("volcengine")
+        );
         assert_eq!(resolve_model_factory("unknown", "Nope").as_deref(), None);
     }
 }

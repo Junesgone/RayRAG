@@ -18,9 +18,9 @@
 //!     （main.py|js + runner.py|js + args.json + artifacts/）
 //!   - artifact 收集契约：允许扩展名 → MIME、数量/大小上限、文件名净化
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -79,7 +79,8 @@ impl Default for LocalSandbox {
 impl LocalSandbox {
     pub fn new(limits: SandboxLimits) -> Self {
         Self {
-            python_bin: std::env::var("RAYRAG_SANDBOX_PYTHON").unwrap_or_else(|_| "python3".to_string()),
+            python_bin: std::env::var("RAYRAG_SANDBOX_PYTHON")
+                .unwrap_or_else(|_| "python3".to_string()),
             node_bin: std::env::var("RAYRAG_SANDBOX_NODE").unwrap_or_else(|_| "node".to_string()),
             limits,
         }
@@ -154,11 +155,18 @@ impl LocalSandbox {
             wrapped.process_group(0);
         }
 
-        let started = wrapped.spawn().map_err(|error| anyhow::anyhow!("Spawn failed: {error}"))?;
+        let started = wrapped
+            .spawn()
+            .map_err(|error| anyhow::anyhow!("Spawn failed: {error}"))?;
         let timeout = Duration::from_secs(self.limits.timeout_seconds);
         let output = tokio::time::timeout(timeout, started.wait_with_output())
             .await
-            .map_err(|_| anyhow::anyhow!("Execution timed out after {} seconds", self.limits.timeout_seconds))?
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Execution timed out after {} seconds",
+                    self.limits.timeout_seconds
+                )
+            })?
             .map_err(|error| anyhow::anyhow!("Execution failed: {error}"))?;
 
         let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -536,11 +544,7 @@ pub fn parse_timeout_duration(timeout: &str, default_seconds: u64) -> u64 {
         .and_then(|group| group.as_str().parse().ok())
         .unwrap_or(0);
     let total = minutes * 60 + seconds;
-    if total > 0 {
-        total
-    } else {
-        default_seconds
-    }
+    if total > 0 { total } else { default_seconds }
 }
 
 /// 格式化秒数为上游风格字符串（对齐 util.py format_timeout_duration）。
@@ -894,9 +898,15 @@ pub const DANGEROUS_PYTHON_CALLS: &[&str] = &[
 
 /// Node.js 危险模式（对齐 SecureJavaScriptAnalyzer.DANGEROUS_PATTERNS）。
 pub const DANGEROUS_NODEJS_PATTERNS: &[(&str, &str)] = &[
-    (r#"require\s*\(\s*['"]child_process['"]\s*\)"#, "Require: child_process"),
+    (
+        r#"require\s*\(\s*['"]child_process['"]\s*\)"#,
+        "Require: child_process",
+    ),
     (r#"require\s*\(\s*['"]fs['"]\s*\)"#, "Require: fs"),
-    (r#"require\s*\(\s*['"]worker_threads['"]\s*\)"#, "Require: worker_threads"),
+    (
+        r#"require\s*\(\s*['"]worker_threads['"]\s*\)"#,
+        "Require: worker_threads",
+    ),
     (r#"\beval\s*\("#, "Call: eval"),
     (r#"\bFunction\s*\("#, "Call: Function"),
     (r#"\bprocess\s*\.\s*binding\s*\("#, "Call: process.binding"),
@@ -922,12 +932,13 @@ pub fn analyze_code_security(code: &str, language: &str) -> (bool, Vec<(String, 
 
 /// Python 行级安全扫描（启发式，对齐 SecurePythonAnalyzer 的 issue 文案）。
 fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
-    let import_pattern =
-        regex::Regex::new(r"(?m)^\s*(?:import\s+([A-Za-z_][A-Za-z0-9_.]*)|from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import)")
-            .expect("static regex");
+    let import_pattern = regex::Regex::new(
+        r"(?m)^\s*(?:import\s+([A-Za-z_][A-Za-z0-9_.]*)|from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import)",
+    )
+    .expect("static regex");
     let call_alternation = DANGEROUS_PYTHON_CALLS.join("|");
-    let call_pattern = regex::Regex::new(&format!(r"\b(?:{call_alternation})\s*\("))
-        .expect("static regex");
+    let call_pattern =
+        regex::Regex::new(&format!(r"\b(?:{call_alternation})\s*\(")).expect("static regex");
     let import_alternation = DANGEROUS_PYTHON_IMPORTS.join("|");
     let attribute_pattern = regex::Regex::new(&format!(
         r"\b(?:{import_alternation})\.[A-Za-z_][A-Za-z0-9_]*"
@@ -936,9 +947,10 @@ fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
 
     let mut issues: Vec<(String, i64)> = Vec::new();
     let mut record = |description: String, line: i64, issues: &mut Vec<(String, i64)>| {
-        if !issues.iter().any(|(existing, lineno)| {
-            *existing == description && *lineno == line
-        }) {
+        if !issues
+            .iter()
+            .any(|(existing, lineno)| *existing == description && *lineno == line)
+        {
             issues.push((description, line));
         }
     };
@@ -955,7 +967,11 @@ fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
             let root = module.as_str().split('.').next().unwrap_or("");
             if DANGEROUS_PYTHON_IMPORTS.contains(&root) {
                 let line = code[..module.start()].matches('\n').count() as i64 + 1;
-                record(format!("From Import: {}", module.as_str()), line, &mut issues);
+                record(
+                    format!("From Import: {}", module.as_str()),
+                    line,
+                    &mut issues,
+                );
             }
         }
     }
@@ -975,7 +991,11 @@ fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
     for captures in attribute_pattern.captures_iter(code) {
         let matched = captures.get(0).expect("whole match");
         let line = code[..matched.start()].matches('\n').count() as i64 + 1;
-        record(format!("Attribute Access: {}", matched.as_str()), line, &mut issues);
+        record(
+            format!("Attribute Access: {}", matched.as_str()),
+            line,
+            &mut issues,
+        );
     }
     issues
 }
@@ -1008,10 +1028,17 @@ mod tests {
         let sandbox = LocalSandbox::default();
         let code = "def main(name):\n    return {\"greeting\": f\"hello {name}\"}\n";
         let result = sandbox
-            .execute(code, "python3", &Map::from_iter([("name".into(), json!("世界"))]))
+            .execute(
+                code,
+                "python3",
+                &Map::from_iter([("name".into(), json!("世界"))]),
+            )
             .await
             .unwrap();
-        eprintln!("PROBE stdout={:?} stderr={:?}", result.stdout, result.stderr);
+        eprintln!(
+            "PROBE stdout={:?} stderr={:?}",
+            result.stdout, result.stderr
+        );
         // wrapper 输出被提取
         assert!(!result.stdout.contains(RESULT_MARKER_PREFIX));
         let structured = result.structured.expect("structured result");
@@ -1036,7 +1063,10 @@ mod tests {
         };
         let sandbox = LocalSandbox::new(limits);
         let code = "def main():\n    import time\n    time.sleep(30)\n    return 1\n";
-        let error = sandbox.execute(code, "python", &Map::new()).await.unwrap_err();
+        let error = sandbox
+            .execute(code, "python", &Map::new())
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("timed out"));
     }
 
@@ -1088,15 +1118,30 @@ mod tests {
         // 枚举字符串值（对齐 models/enums.py）
         assert_eq!(SupportLanguage::Python.as_str(), "python");
         assert_eq!(SupportLanguage::Nodejs.as_str(), "nodejs");
-        assert_eq!(SupportLanguage::parse("python3"), Some(SupportLanguage::Python));
-        assert_eq!(SupportLanguage::parse("javascript"), Some(SupportLanguage::Nodejs));
+        assert_eq!(
+            SupportLanguage::parse("python3"),
+            Some(SupportLanguage::Python)
+        );
+        assert_eq!(
+            SupportLanguage::parse("javascript"),
+            Some(SupportLanguage::Nodejs)
+        );
         assert_eq!(SupportLanguage::parse("ruby"), None);
         assert_eq!(ResultStatus::Success.as_str(), "success");
         assert_eq!(ResultStatus::ProgramError.as_str(), "program_error");
-        assert_eq!(ResultStatus::ResourceLimitExceeded.as_str(), "resource_limit_exceeded");
-        assert_eq!(ResultStatus::UnauthorizedAccess.as_str(), "unauthorized_access");
+        assert_eq!(
+            ResultStatus::ResourceLimitExceeded.as_str(),
+            "resource_limit_exceeded"
+        );
+        assert_eq!(
+            ResultStatus::UnauthorizedAccess.as_str(),
+            "unauthorized_access"
+        );
         assert_eq!(ResultStatus::RuntimeError.as_str(), "runtime_error");
-        assert_eq!(ResultStatus::ProgramRunnerError.as_str(), "program_runner_error");
+        assert_eq!(
+            ResultStatus::ProgramRunnerError.as_str(),
+            "program_runner_error"
+        );
         assert_eq!(
             ResultStatus::parse("RESOURCE_LIMIT_EXCEEDED"),
             Some(ResultStatus::ResourceLimitExceeded)
@@ -1105,9 +1150,15 @@ mod tests {
         assert_eq!(ResourceLimitType::Time.as_str(), "time");
         assert_eq!(ResourceLimitType::Memory.as_str(), "memory");
         assert_eq!(ResourceLimitType::Output.as_str(), "output");
-        assert_eq!(UnauthorizedAccessType::DisallowedSyscall.as_str(), "disallowed_syscall");
+        assert_eq!(
+            UnauthorizedAccessType::DisallowedSyscall.as_str(),
+            "disallowed_syscall"
+        );
         assert_eq!(UnauthorizedAccessType::FileAccess.as_str(), "file_access");
-        assert_eq!(UnauthorizedAccessType::NetworkAccess.as_str(), "network_access");
+        assert_eq!(
+            UnauthorizedAccessType::NetworkAccess.as_str(),
+            "network_access"
+        );
         assert_eq!(RuntimeErrorType::Signalled.as_str(), "signalled");
         assert_eq!(RuntimeErrorType::NonzeroExit.as_str(), "nonzero_exit");
         // 负值退出码约定（对齐 execution.py / handlers.py / limiter.py）
@@ -1152,7 +1203,10 @@ mod tests {
         // 其他 → program_error / nonzero_exit
         let failure = classify_execution_failure(2, "Traceback: boom");
         assert_eq!(failure.status, ResultStatus::ProgramError);
-        assert_eq!(failure.runtime_error_type, Some(RuntimeErrorType::NonzeroExit));
+        assert_eq!(
+            failure.runtime_error_type,
+            Some(RuntimeErrorType::NonzeroExit)
+        );
     }
 
     #[test]
@@ -1185,21 +1239,39 @@ mod tests {
         assert_eq!(container_pool_name("nodejs", 2), "sandbox_nodejs_2");
         assert_eq!(container_pool_name("javascript", 1), "sandbox_nodejs_1");
         // python 执行命令：timeout + -I -B（对齐 _build_container_run_args）
-        let args = build_container_run_args("python", "task-1", "sandbox_python_0", 10, "runner.py");
+        let args =
+            build_container_run_args("python", "task-1", "sandbox_python_0", 10, "runner.py");
         assert_eq!(
             args,
             [
-                "docker", "exec", "--workdir", "/workspace/task-1", "sandbox_python_0",
-                "timeout", "10", "python", "-I", "-B", "runner.py",
+                "docker",
+                "exec",
+                "--workdir",
+                "/workspace/task-1",
+                "sandbox_python_0",
+                "timeout",
+                "10",
+                "python",
+                "-I",
+                "-B",
+                "runner.py",
             ]
         );
         // nodejs 执行命令：无 -I -B
-        let args = build_container_run_args("nodejs", "task-1", "sandbox_nodejs_0", 10, "runner.js");
+        let args =
+            build_container_run_args("nodejs", "task-1", "sandbox_nodejs_0", 10, "runner.js");
         assert_eq!(
             args,
             [
-                "docker", "exec", "--workdir", "/workspace/task-1", "sandbox_nodejs_0",
-                "timeout", "10", "nodejs", "runner.js",
+                "docker",
+                "exec",
+                "--workdir",
+                "/workspace/task-1",
+                "sandbox_nodejs_0",
+                "timeout",
+                "10",
+                "nodejs",
+                "runner.js",
             ]
         );
         // 容器创建参数（对齐 create_container：runsc/read-only/tmpfs/user/memory/seccomp）
@@ -1214,22 +1286,23 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--runtime=runsc"));
         assert!(args.iter().any(|arg| arg == "--read-only"));
         assert!(args.iter().any(|arg| arg == "--tmpfs"));
-        assert!(args.iter().any(|arg| arg == "/workspace:rw,exec,size=100M,uid=65534,gid=65534"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "/workspace:rw,exec,size=100M,uid=65534,gid=65534")
+        );
         assert!(args.iter().any(|arg| arg == "/tmp:rw,exec,size=50M"));
         assert!(args.iter().any(|arg| arg == "--user"));
         assert!(args.iter().any(|arg| arg == "nobody"));
         assert!(args.iter().any(|arg| arg == "--memory"));
         assert!(args.iter().any(|arg| arg == "512m"));
-        assert!(args.iter().any(|arg| arg == "seccomp=/app/seccomp-profile-default.json"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "seccomp=/app/seccomp-profile-default.json")
+        );
         assert!(args.iter().any(|arg| arg == "sandbox-base-python:latest"));
         // 非法内存值回退默认 256m
-        let args = build_container_create_args(
-            "sandbox_python_0",
-            "python",
-            "img",
-            Some("oops"),
-            false,
-        );
+        let args =
+            build_container_create_args("sandbox_python_0", "python", "img", Some("oops"), false);
         assert!(args.iter().any(|arg| arg == "256m"));
         assert!(!args.iter().any(|arg| arg.contains("seccomp")));
         // nodejs module.exports 追加（对齐 handlers.py）
@@ -1238,8 +1311,14 @@ mod tests {
             "function main() {}\n\nmodule.exports = { main };"
         );
         // 基础镜像默认值（对齐 SANDBOX_BASE_*_IMAGE 默认）
-        assert_eq!(sandbox_base_image_from_env("python"), "sandbox-base-python:latest");
-        assert_eq!(sandbox_base_image_from_env("nodejs"), "sandbox-base-nodejs:latest");
+        assert_eq!(
+            sandbox_base_image_from_env("python"),
+            "sandbox-base-python:latest"
+        );
+        assert_eq!(
+            sandbox_base_image_from_env("nodejs"),
+            "sandbox-base-nodejs:latest"
+        );
     }
 
     #[test]
@@ -1284,12 +1363,7 @@ mod tests {
         assert!(bundle.runner_source.contains("__RAGFLOW_RESULT__:"));
         assert!(bundle.runner_source.contains("artifacts"));
         // nodejs 包布局
-        let bundle = build_execution_bundle(
-            "nodejs",
-            b"function main() {}",
-            &Map::new(),
-        )
-        .unwrap();
+        let bundle = build_execution_bundle("nodejs", b"function main() {}", &Map::new()).unwrap();
         assert_eq!(bundle.code_name, "main.js");
         assert_eq!(bundle.runner_name, "runner.js");
         assert!(bundle.runner_source.contains("require(mainPath)"));
@@ -1303,50 +1377,60 @@ mod tests {
         // python 危险 import（对齐 SecurePythonAnalyzer）
         let (safe, issues) = analyze_code_security("import os\nx = 1\n", "python");
         assert!(!safe);
-        assert!(issues.iter().any(|(description, line)| {
-            description == "Import: os" && *line == 1
-        }));
-        let (safe, issues) = analyze_code_security(
-            "import json\nfrom subprocess import run\n",
-            "python",
+        assert!(
+            issues
+                .iter()
+                .any(|(description, line)| { description == "Import: os" && *line == 1 })
         );
+        let (safe, issues) =
+            analyze_code_security("import json\nfrom subprocess import run\n", "python");
         assert!(!safe);
-        assert!(issues.iter().any(|(description, line)| {
-            description == "From Import: subprocess" && *line == 2
-        }));
+        assert!(
+            issues.iter().any(|(description, line)| {
+                description == "From Import: subprocess" && *line == 2
+            })
+        );
         // python 危险调用 + 属性访问
-        let (safe, issues) = analyze_code_security("def main():\n    return eval('1+1')\n", "python");
+        let (safe, issues) =
+            analyze_code_security("def main():\n    return eval('1+1')\n", "python");
         assert!(!safe);
-        assert!(issues.iter().any(|(description, line)| {
-            description == "Call: eval" && *line == 2
-        }));
-        let (safe, _) = analyze_code_security("def main():\n    return os.path.join('a', 'b')\n", "python");
+        assert!(
+            issues
+                .iter()
+                .any(|(description, line)| { description == "Call: eval" && *line == 2 })
+        );
+        let (safe, _) =
+            analyze_code_security("def main():\n    return os.path.join('a', 'b')\n", "python");
         assert!(!safe);
         // 干净代码 → safe
-        let (safe, issues) = analyze_code_security(
-            "def main():\n    return {'ok': True}\n",
-            "python",
-        );
+        let (safe, issues) =
+            analyze_code_security("def main():\n    return {'ok': True}\n", "python");
         assert!(safe);
         assert!(issues.is_empty());
         // nodejs require（对齐 SecureJavaScriptAnalyzer）
         let (safe, issues) =
             analyze_code_security("const { exec } = require('child_process');\n", "nodejs");
         assert!(!safe);
-        assert!(issues.iter().any(|(description, _)| description == "Require: child_process"));
+        assert!(
+            issues
+                .iter()
+                .any(|(description, _)| description == "Require: child_process")
+        );
         let (safe, issues) = analyze_code_security("process.binding('natives');\n", "nodejs");
         assert!(!safe);
-        assert!(issues.iter().any(|(description, _)| description == "Call: process.binding"));
+        assert!(
+            issues
+                .iter()
+                .any(|(description, _)| description == "Call: process.binding")
+        );
         let (safe, _) = analyze_code_security("function main() { return 1; }\n", "nodejs");
         assert!(safe);
         // 不支持的语言 → unsafe（对齐 analyze_code_security 默认分支）
         let (safe, _) = analyze_code_security("x", "ruby");
         assert!(!safe);
         // issue 渲染（对齐 handlers.py："Line {lineno}: {issue}" 换行连接）
-        let formatted = format_security_issues(&[
-            ("Import: os".to_string(), 1),
-            ("Call: eval".to_string(), 3),
-        ]);
+        let formatted =
+            format_security_issues(&[("Import: os".to_string(), 1), ("Call: eval".to_string(), 3)]);
         assert_eq!(formatted, "Line 1: Import: os\nLine 3: Call: eval");
     }
 }

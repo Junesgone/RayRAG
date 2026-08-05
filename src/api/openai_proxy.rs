@@ -1,7 +1,11 @@
 //! OpenAI-compatible API proxy — exposes `/v1/chat/completions`.
 //! Enables RayRAG to be used as a drop-in replacement for any OpenAI client.
 
-use axum::{Extension, Json, extract::State, response::{IntoResponse, Response}};
+use axum::{
+    Extension, Json,
+    extract::State,
+    response::{IntoResponse, Response},
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -117,7 +121,9 @@ pub async fn chat_completions(
             let full = match llm2.chat_stream(&msgs2, gen2, |_| {}).await {
                 Ok(text) => text,
                 Err(error) => {
-                    let _ = tx.send(Ok(Event::default().event("error").data(error.to_string()))).await;
+                    let _ = tx
+                        .send(Ok(Event::default().event("error").data(error.to_string())))
+                        .await;
                     return;
                 }
             };
@@ -186,7 +192,10 @@ pub async fn embeddings(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let input = body.get("input").cloned().unwrap_or(serde_json::Value::Null);
+    let input = body
+        .get("input")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let texts: Vec<String> = match &input {
         serde_json::Value::String(text) => vec![text.clone()],
         serde_json::Value::Array(items) => items
@@ -223,7 +232,10 @@ pub async fn embeddings(
             return Json(serde_json::json!({"error":{"message":"No embedding model configured","type":"api_error","code":503}})).into_response();
         }
     };
-    let model = body.get("model").and_then(|value| value.as_str()).unwrap_or("default");
+    let model = body
+        .get("model")
+        .and_then(|value| value.as_str())
+        .unwrap_or("default");
     let data: Vec<serde_json::Value> = vectors
         .iter()
         .enumerate()
@@ -249,7 +261,10 @@ pub async fn rerank(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let query = body.get("query").and_then(|value| value.as_str()).unwrap_or("");
+    let query = body
+        .get("query")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     let documents: Vec<String> = body
         .get("documents")
         .and_then(|value| value.as_array())
@@ -279,9 +294,7 @@ pub async fn rerank(
         Ok(scores) => {
             let results: Vec<serde_json::Value> = scores
                 .iter()
-                .map(|(index, score)| {
-                    serde_json::json!({"index": index, "relevance_score": score})
-                })
+                .map(|(index, score)| serde_json::json!({"index": index, "relevance_score": score}))
                 .collect();
             let model = body
                 .get("model")

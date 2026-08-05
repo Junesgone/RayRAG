@@ -3,7 +3,7 @@
 //! Fetches project files, issues and merge requests via the GitLab REST API
 //! using a personal access token, then converts them into `ConnectorDoc`s.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -67,12 +67,13 @@ impl GitLabConnector {
             bail!(
                 "gitlab: upstream returned {}: {}",
                 status.as_u16(),
-                String::from_utf8_lossy(&body).chars().take(200).collect::<String>()
+                String::from_utf8_lossy(&body)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
             );
         }
-        serde_json::from_slice(&body).with_context(|| {
-            format!("gitlab: invalid JSON from {path}")
-        })
+        serde_json::from_slice(&body).with_context(|| format!("gitlab: invalid JSON from {path}"))
     }
 
     /// Resolve project id from `target` (numeric id, or `owner/repo` path).
@@ -107,7 +108,12 @@ impl GitLabConnector {
     }
 
     /// Fetch repository tree (recursive).
-    async fn list_tree(&self, options: &SourceOptions, project_id: i64, branch: &str) -> Result<Vec<Value>> {
+    async fn list_tree(
+        &self,
+        options: &SourceOptions,
+        project_id: i64,
+        branch: &str,
+    ) -> Result<Vec<Value>> {
         let mut all = Vec::new();
         let mut page = 1u32;
         loop {
@@ -159,15 +165,17 @@ impl GitLabConnector {
         let value = self
             .get(
                 options,
-                &format!(
-                    "/api/v4/projects/{project_id}/issues?state=all&per_page=100&scope=all"
-                ),
+                &format!("/api/v4/projects/{project_id}/issues?state=all&per_page=100&scope=all"),
             )
             .await?;
         Ok(value.as_array().cloned().unwrap_or_default())
     }
 
-    async fn list_merge_requests(&self, options: &SourceOptions, project_id: i64) -> Result<Vec<Value>> {
+    async fn list_merge_requests(
+        &self,
+        options: &SourceOptions,
+        project_id: i64,
+    ) -> Result<Vec<Value>> {
         let value = self
             .get(
                 options,
@@ -205,7 +213,10 @@ impl GitLabConnector {
                 .extension()
                 .map(|e| format!(".{}", e.to_string_lossy()))
                 .unwrap_or_default();
-            match self.fetch_file_raw(options, project_id, &path, &branch).await {
+            match self
+                .fetch_file_raw(options, project_id, &path, &branch)
+                .await
+            {
                 Ok(bytes) => {
                     let blob = String::from_utf8_lossy(&bytes).to_string();
                     let mut metadata = HashMap::new();
@@ -265,7 +276,11 @@ impl GitLabConnector {
                 metadata.insert("type".into(), "Issue".into());
                 metadata.insert("web_url".into(), web_url.clone());
                 docs.push(ConnectorDoc {
-                    id: if web_url.is_empty() { format!("issue-{title}") } else { web_url },
+                    id: if web_url.is_empty() {
+                        format!("issue-{title}")
+                    } else {
+                        web_url
+                    },
                     blob: description_for_doc.clone(),
                     source: DocumentSource::GitLab,
                     semantic_identifier: title,
@@ -314,7 +329,11 @@ impl GitLabConnector {
                 metadata.insert("type".into(), "MergeRequest".into());
                 metadata.insert("web_url".into(), web_url.clone());
                 docs.push(ConnectorDoc {
-                    id: if web_url.is_empty() { format!("mr-{title}") } else { web_url },
+                    id: if web_url.is_empty() {
+                        format!("mr-{title}")
+                    } else {
+                        web_url
+                    },
                     blob: description_for_doc.clone(),
                     source: DocumentSource::GitLab,
                     semantic_identifier: title,
@@ -336,7 +355,10 @@ mod tests {
 
     #[test]
     fn source_roundtrip() {
-        assert_eq!(DocumentSource::from_str("gitlab"), Some(DocumentSource::GitLab));
+        assert_eq!(
+            DocumentSource::from_str("gitlab"),
+            Some(DocumentSource::GitLab)
+        );
         assert_eq!(DocumentSource::GitLab.as_str(), "gitlab");
         assert_eq!(DocumentSource::from_str("blob"), Some(DocumentSource::Blob));
         assert_eq!(DocumentSource::from_str("unknown"), None);

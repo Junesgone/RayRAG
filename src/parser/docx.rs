@@ -13,8 +13,8 @@
 
 use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -93,7 +93,10 @@ impl RAGFlowDocxParser {
         static PATTERNS: OnceLock<Vec<(regex::Regex, &'static str)>> = OnceLock::new();
         let patterns = PATTERNS.get_or_init(|| {
             let raw: &[(&str, &str)] = &[
-                (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
+                (
+                    r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}[月/-][0-9]{1,2}日*$",
+                    "Dt",
+                ),
                 (r"^(20|19)[0-9]{2}年$", "Dt"),
                 (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}月*$", "Dt"),
                 (r"^[0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
@@ -133,7 +136,11 @@ impl RAGFlowDocxParser {
                 tks.push(word.to_string());
             }
         }
-        let tks: Vec<&str> = tks.iter().map(String::as_str).filter(|t| t.chars().count() > 1).collect();
+        let tks: Vec<&str> = tks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| t.chars().count() > 1)
+            .collect();
         if tks.len() > 3 {
             return if tks.len() < 12 { "Tx" } else { "Lx" };
         }
@@ -165,11 +172,13 @@ impl RAGFlowDocxParser {
         }
         // HashMap 迭代序不定：tie 时用确定性规则（非数字类型优先，保证表头判定的稳定性）
         let majority = |counts: HashMap<&'static str, usize>| {
-            counts.into_iter().max_by(|(a_type, a_count), (b_type, b_count)| {
-                b_count
-                    .cmp(a_count)
-                    .then_with(|| Self::num_rank(a_type).cmp(&Self::num_rank(b_type)))
-            })
+            counts
+                .into_iter()
+                .max_by(|(a_type, a_count), (b_type, b_count)| {
+                    b_count
+                        .cmp(a_count)
+                        .then_with(|| Self::num_rank(a_type).cmp(&Self::num_rank(b_type)))
+                })
         };
         let Some((max_type, _)) = majority(type_counts) else {
             return Vec::new();
@@ -183,11 +192,15 @@ impl RAGFlowDocxParser {
                     let cell = df[r].get(j).cloned().unwrap_or_default();
                     *row_counts.entry(Self::block_type(&cell)).or_insert(0) += 1;
                 }
-                let Some((row_type, _)) = row_counts.into_iter().max_by(|(a_type, a_count), (b_type, b_count)| {
-                    b_count
-                        .cmp(a_count)
-                        .then_with(|| Self::num_rank(a_type).cmp(&Self::num_rank(b_type)))
-                }) else {
+                let Some((row_type, _)) =
+                    row_counts
+                        .into_iter()
+                        .max_by(|(a_type, a_count), (b_type, b_count)| {
+                            b_count
+                                .cmp(a_count)
+                                .then_with(|| Self::num_rank(a_type).cmp(&Self::num_rank(b_type)))
+                        })
+                else {
                     continue;
                 };
                 if row_type != max_type {
@@ -384,10 +397,7 @@ fn parse_document_xml(
                     b"r" => in_run = false,
                     b"p" if !in_table => {
                         in_paragraph = false;
-                        let style = style_names
-                            .get(&cur_style_id)
-                            .cloned()
-                            .unwrap_or_default();
+                        let style = style_names.get(&cur_style_id).cloned().unwrap_or_default();
                         paragraphs.push((cur_text.clone(), style, cur_page));
                     }
                     b"tc" if in_row => {
@@ -499,7 +509,9 @@ mod tests {
         // Long text → Tx; very long → Lx.
         assert_eq!(block("这是一段比较长的文本内容用于测试类型判断"), "Tx");
         assert_eq!(
-            block("这是一段非常长的文本内容用于测试类型判断它包含了很多词汇以便触发长文本分类逻辑的阈值"),
+            block(
+                "这是一段非常长的文本内容用于测试类型判断它包含了很多词汇以便触发长文本分类逻辑的阈值"
+            ),
             "Lx"
         );
         assert_eq!(block("不明"), "Ot");
@@ -540,8 +552,18 @@ mod tests {
                 "h3".to_string(),
                 "h4".to_string(),
             ],
-            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()],
-            vec!["e".to_string(), "f".to_string(), "g".to_string(), "h".to_string()],
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+            ],
+            vec![
+                "e".to_string(),
+                "f".to_string(),
+                "g".to_string(),
+                "h".to_string(),
+            ],
         ];
         let lines = RAGFlowDocxParser::compose_table_content(&df);
         assert_eq!(lines.len(), 2);
@@ -631,8 +653,11 @@ mod tests {
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>"#;
-            zw.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default())
-                .unwrap();
+            zw.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(ct.as_bytes()).unwrap();
 
             let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -650,8 +675,11 @@ mod tests {
     <w:p><w:r><w:t>World</w:t></w:r></w:p>
   </w:body>
 </w:document>"#;
-            zw.start_file("word/document.xml", zip::write::SimpleFileOptions::default())
-                .unwrap();
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(doc.as_bytes()).unwrap();
 
             let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

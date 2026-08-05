@@ -361,9 +361,9 @@ pub struct TermWeightComputer {
 impl TermWeightComputer {
     pub fn new() -> Self {
         let stop_words = [
-            "请问", "您", "你", "我", "他", "是", "的", "就", "有", "于", "及", "即",
-            "在", "为", "最", "有", "从", "以", "了", "将", "与", "吗", "吧", "中",
-            "#", "什么", "怎么", "哪个", "哪些", "啥", "相关",
+            "请问", "您", "你", "我", "他", "是", "的", "就", "有", "于", "及", "即", "在", "为",
+            "最", "有", "从", "以", "了", "将", "与", "吗", "吧", "中", "#", "什么", "怎么",
+            "哪个", "哪些", "啥", "相关",
         ]
         .into_iter()
         .map(str::to_string)
@@ -416,8 +416,7 @@ impl TermWeightComputer {
     /// runs of one_term ≤ 4, split 5+ runs into bigrams).
     pub fn token_merge(&self, tks: &[String]) -> Vec<String> {
         fn one_term(t: &str) -> bool {
-            t.chars().count() == 1
-                || regex::Regex::new(r"^[0-9a-z]{1,2}$").unwrap().is_match(t)
+            t.chars().count() == 1 || regex::Regex::new(r"^[0-9a-z]{1,2}$").unwrap().is_match(t)
         }
         let mut res: Vec<String> = Vec::new();
         let mut i = 0;
@@ -876,11 +875,25 @@ mod tests {
         let tw = tw.with_resources(ne, df);
         let weights = tw.weights(&["中山市".into(), "水产".into(), "42.5".into()], false);
         let sum: f64 = weights.iter().map(|(_, w)| w).sum();
-        assert!((sum - 1.0).abs() < 1e-9, "weights must normalize to 1, got {sum}");
-        let num_w = weights.iter().find(|(t, _)| t == "42.5").map(|(_, w)| *w).unwrap();
-        let loca_w = weights.iter().find(|(t, _)| t == "中山市").map(|(_, w)| *w).unwrap();
+        assert!(
+            (sum - 1.0).abs() < 1e-9,
+            "weights must normalize to 1, got {sum}"
+        );
+        let num_w = weights
+            .iter()
+            .find(|(t, _)| t == "42.5")
+            .map(|(_, w)| *w)
+            .unwrap();
+        let loca_w = weights
+            .iter()
+            .find(|(t, _)| t == "中山市")
+            .map(|(_, w)| *w)
+            .unwrap();
         // RAGFlow ner map: loca=3 > number=2 — location must beat numbers
-        assert!(loca_w > num_w, "location NER weight (3) should beat number (2)");
+        assert!(
+            loca_w > num_w,
+            "location NER weight (3) should beat number (2)"
+        );
     }
 
     #[test]
@@ -897,10 +910,16 @@ mod tests {
     fn token_similarity_exact_match_outscores_partial() {
         let tw = TermWeightComputer::new();
         let q: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
-        let exact: Vec<String> = "水产 养殖 水质".split_whitespace().map(String::from).collect();
+        let exact: Vec<String> = "水产 养殖 水质"
+            .split_whitespace()
+            .map(String::from)
+            .collect();
         let partial: Vec<String> = "水质 管理".split_whitespace().map(String::from).collect();
         let scores = tw.token_similarity(&q, &[exact.clone(), partial.clone()]);
-        assert!(scores[0] > scores[1], "exact should beat partial: {scores:?}");
+        assert!(
+            scores[0] > scores[1],
+            "exact should beat partial: {scores:?}"
+        );
         assert!(scores[1] >= 0.0, "score must not go negative");
     }
 
@@ -935,14 +954,8 @@ mod tests {
         let tw = TermWeightComputer::new();
         let q: Vec<String> = "水产".split_whitespace().map(String::from).collect();
         let d: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
-        let (fused, tksim, vtsim) = tw.hybrid_similarity(
-            &[],
-            &[vec![0.0, 0.0]],
-            &q,
-            &[d.clone()],
-            0.3,
-            0.7,
-        );
+        let (fused, tksim, vtsim) =
+            tw.hybrid_similarity(&[], &[vec![0.0, 0.0]], &q, &[d.clone()], 0.3, 0.7);
         assert_eq!(vtsim[0], 0.0, "zero vectors give zero cosine");
         assert_eq!(fused, tksim, "fused == token sim when vectors sum to 0");
         assert!(tksim[0] > 0.0);

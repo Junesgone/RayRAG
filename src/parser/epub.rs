@@ -10,8 +10,8 @@ use crate::chunk::estimate_tokens;
 use crate::parser::html::RAGFlowHtmlParser;
 use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use std::io::Cursor;
 
 /// OPF XML namespace (epub_parser.py:26).
@@ -38,8 +38,8 @@ impl RAGFlowEpubParser {
             return Err(anyhow::anyhow!("Empty EPUB binary payload"));
         }
         let cursor = Cursor::new(binary);
-        let mut zf = zip::ZipArchive::new(cursor)
-            .map_err(|e| anyhow::anyhow!("Invalid EPUB zip: {e}"))?;
+        let mut zf =
+            zip::ZipArchive::new(cursor).map_err(|e| anyhow::anyhow!("Invalid EPUB zip: {e}"))?;
 
         let content_items = self.get_spine_items(&mut zf);
         let mut all_sections = Vec::new();
@@ -172,8 +172,8 @@ fn parse_container(xml: &str) -> Option<String> {
                     in_rootfile = true;
                     // Resolve attributes: full-path may be namespaced.
                     for attr in e.attributes().flatten() {
-                        let key = String::from_utf8_lossy(attr.key.local_name().as_ref())
-                            .to_string();
+                        let key =
+                            String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                         if key == "full-path" {
                             let v = String::from_utf8_lossy(&attr.value).to_string();
                             if !v.is_empty() {
@@ -194,7 +194,12 @@ fn parse_container(xml: &str) -> Option<String> {
 }
 
 /// Parse the OPF package: returns (manifest id→(href, media-type), spine idrefs).
-fn parse_opf(xml: &str) -> Option<(std::collections::HashMap<String, (String, String)>, Vec<String>)> {
+fn parse_opf(
+    xml: &str,
+) -> Option<(
+    std::collections::HashMap<String, (String, String)>,
+    Vec<String>,
+)> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
@@ -217,8 +222,8 @@ fn parse_opf(xml: &str) -> Option<(std::collections::HashMap<String, (String, St
                         let mut href = String::new();
                         let mut media_type = String::new();
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.local_name().as_ref())
-                                .to_string();
+                            let key =
+                                String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             let val = String::from_utf8_lossy(&attr.value).to_string();
                             match key.as_str() {
                                 "id" => id = val,
@@ -233,8 +238,8 @@ fn parse_opf(xml: &str) -> Option<(std::collections::HashMap<String, (String, St
                     }
                     b"itemref" if in_spine => {
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.local_name().as_ref())
-                                .to_string();
+                            let key =
+                                String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             if key == "idref" {
                                 let val = String::from_utf8_lossy(&attr.value).to_string();
                                 if !val.is_empty() {
@@ -254,8 +259,8 @@ fn parse_opf(xml: &str) -> Option<(std::collections::HashMap<String, (String, St
                         let mut href = String::new();
                         let mut media_type = String::new();
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.local_name().as_ref())
-                                .to_string();
+                            let key =
+                                String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             let val = String::from_utf8_lossy(&attr.value).to_string();
                             match key.as_str() {
                                 "id" => id = val,
@@ -270,8 +275,8 @@ fn parse_opf(xml: &str) -> Option<(std::collections::HashMap<String, (String, St
                     }
                     b"itemref" if in_spine => {
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.local_name().as_ref())
-                                .to_string();
+                            let key =
+                                String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             if key == "idref" {
                                 let val = String::from_utf8_lossy(&attr.value).to_string();
                                 if !val.is_empty() {
@@ -400,8 +405,14 @@ mod tests {
     fn parses_chapters_in_spine_order() {
         let epub = build_epub(
             &[
-                ("c1.xhtml", "<html><body><h1>First</h1><p>Alpha</p></body></html>"),
-                ("c2.xhtml", "<html><body><h1>Second</h1><p>Beta</p></body></html>"),
+                (
+                    "c1.xhtml",
+                    "<html><body><h1>First</h1><p>Alpha</p></body></html>",
+                ),
+                (
+                    "c2.xhtml",
+                    "<html><body><h1>Second</h1><p>Beta</p></body></html>",
+                ),
             ],
             true,
         );
@@ -439,8 +450,11 @@ mod tests {
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
 </container>"#;
-            zw.start_file("META-INF/container.xml", zip::write::SimpleFileOptions::default())
-                .unwrap();
+            zw.start_file(
+                "META-INF/container.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(container.as_bytes()).unwrap();
             let opf = r#"<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
@@ -455,7 +469,8 @@ mod tests {
             zw.write_all(opf.as_bytes()).unwrap();
             zw.start_file("c.xhtml", zip::write::SimpleFileOptions::default())
                 .unwrap();
-            zw.write_all(b"<html><body><p>Only</p></body></html>").unwrap();
+            zw.write_all(b"<html><body><p>Only</p></body></html>")
+                .unwrap();
             zw.finish().unwrap();
         }
         let parser = RAGFlowEpubParser::new();
@@ -474,7 +489,10 @@ mod tests {
 
     #[test]
     fn epub_parser_parse_trait_joins_sections() {
-        let epub = build_epub(&[("c1.xhtml", "<html><body><p>Hello</p></body></html>")], true);
+        let epub = build_epub(
+            &[("c1.xhtml", "<html><body><p>Hello</p></body></html>")],
+            true,
+        );
         let parser = EpubParser::new();
         let doc = parser.parse("book.epub", &epub).unwrap();
         assert!(doc.content.contains("Hello"));

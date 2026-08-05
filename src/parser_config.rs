@@ -13,15 +13,36 @@ pub fn normalize_layout_recognizer(raw: Option<&str>) -> (Option<String>, Option
     };
     let lowered = layout_recognizer_raw.to_lowercase();
     let (parser_model_name, layout_recognizer) = if lowered.ends_with("@mineru") {
-        (Some(layout_recognizer_raw.rsplit_once('@').unwrap().0.to_string()), "MinerU")
+        (
+            Some(
+                layout_recognizer_raw
+                    .rsplit_once('@')
+                    .unwrap()
+                    .0
+                    .to_string(),
+            ),
+            "MinerU",
+        )
     } else if lowered.ends_with("@paddleocr") {
         (
-            Some(layout_recognizer_raw.rsplit_once('@').unwrap().0.to_string()),
+            Some(
+                layout_recognizer_raw
+                    .rsplit_once('@')
+                    .unwrap()
+                    .0
+                    .to_string(),
+            ),
             "PaddleOCR",
         )
     } else if lowered.ends_with("@opendataloader") {
         (
-            Some(layout_recognizer_raw.rsplit_once('@').unwrap().0.to_string()),
+            Some(
+                layout_recognizer_raw
+                    .rsplit_once('@')
+                    .unwrap()
+                    .0
+                    .to_string(),
+            ),
             "OpenDataLoader",
         )
     } else {

@@ -26,7 +26,17 @@ pub fn rm_prefix(txt: &str) -> String {
     let trimmed = txt.trim();
     let lower = trimmed.to_lowercase();
     let prefixes = [
-        "问题", "答案", "回答", "user", "assistant", "q", "a", "question", "answer", "问", "答",
+        "问题",
+        "答案",
+        "回答",
+        "user",
+        "assistant",
+        "q",
+        "a",
+        "question",
+        "answer",
+        "问",
+        "答",
     ];
     for p in prefixes {
         if lower.starts_with(p) {
@@ -72,11 +82,7 @@ pub fn detect_delimiter(text: &str) -> char {
             tab += 1;
         }
     }
-    if tab >= comma {
-        '\t'
-    } else {
-        ','
-    }
+    if tab >= comma { '\t' } else { ',' }
 }
 
 /// Parse a txt/csv Q&A blob — qa.py:333-402. Deformed lines either append to
@@ -254,9 +260,7 @@ pub fn parse_qa_markdown(text: &str) -> Vec<QaPair> {
                 last_answer.clear();
             }
             let i = question_level;
-            while !question_stack.is_empty()
-                && i <= *level_stack.last().unwrap_or(&usize::MAX)
-            {
+            while !question_stack.is_empty() && i <= *level_stack.last().unwrap_or(&usize::MAX) {
                 question_stack.pop();
                 level_stack.pop();
             }
@@ -280,7 +284,10 @@ pub fn parse_qa_markdown(text: &str) -> Vec<QaPair> {
 
 /// Dispatch entry — mirrors qa.py chunk() for the text formats. Returns
 /// per-pair chunk docs as (content_with_weight, content_ltks, row_num).
-pub fn parse_qa_file(filename: &str, text: &str) -> Result<Vec<(String, Vec<String>, i64)>, String> {
+pub fn parse_qa_file(
+    filename: &str,
+    text: &str,
+) -> Result<Vec<(String, Vec<String>, i64)>, String> {
     let lower = filename.to_lowercase();
     let eng = false; // Q&A parser defaults to Chinese prefix in RAGFlow chunk()
     let doc_title: String = {
@@ -289,7 +296,10 @@ pub fn parse_qa_file(filename: &str, text: &str) -> Result<Vec<(String, Vec<Stri
             .rfind('.')
             .map(|idx| filename[..idx].to_string())
             .unwrap_or_else(|| filename.to_string());
-        stem.split_whitespace().map(String::from).collect::<Vec<_>>().join(" ")
+        stem.split_whitespace()
+            .map(String::from)
+            .collect::<Vec<_>>()
+            .join(" ")
     };
     let _ = doc_title;
 
@@ -403,7 +413,10 @@ mod tests {
 
     #[test]
     fn md_question_level_parses_headings() {
-        assert_eq!(md_question_level("## 水质管理"), (2, "水质管理".to_string()));
+        assert_eq!(
+            md_question_level("## 水质管理"),
+            (2, "水质管理".to_string())
+        );
         assert_eq!(md_question_level("# 一、概述"), (1, "一、概述".to_string()));
         assert_eq!(md_question_level("####### too deep"), (0, String::new()));
         assert_eq!(md_question_level("plain text"), (0, String::new()));

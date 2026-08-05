@@ -166,6 +166,15 @@ impl Pipeline {
         // chunk_builder.extract_outline before persistence.
         Self::normalize_first_chunk_metadata(&mut chunks);
 
+        // 2.7 Optional key-term extraction (RAGFlow auto_keywords): runs
+        // after chunking, before embedding, and stores per-chunk keywords in
+        // the `important_kwd` metadata consumed by hybrid retrieval.
+        if self.config.auto_keywords > 0 {
+            crate::extractor::Extractor::with_top_n(self.config.auto_keywords)
+                .extract_chunks(&mut chunks);
+            tracing::info!("Keywords: {} chunks annotated", chunks.len());
+        }
+
         // 3. Embed (if embedder is configured)
         if let Some(ref embedder) = self.embedder {
             embedder.embed_chunks(&mut chunks).await?;
@@ -460,12 +469,17 @@ mod tests {
                 embedding: None,
                 metadata: std::collections::HashMap::new(),
             };
-            c.metadata.insert("__outline__".into(), "[{\"title\":\"ch1\"}]".into());
+            c.metadata
+                .insert("__outline__".into(), "[{\"title\":\"ch1\"}]".into());
             c.metadata.insert("file_name".into(), "a.pdf".into());
             c
         }
 
-        let mut chunks = vec![chunk_with_outline(), chunk_with_outline(), chunk_with_outline()];
+        let mut chunks = vec![
+            chunk_with_outline(),
+            chunk_with_outline(),
+            chunk_with_outline(),
+        ];
         Pipeline::normalize_first_chunk_metadata(&mut chunks);
         assert!(chunks[0].metadata.contains_key("__outline__"));
         assert!(!chunks[1].metadata.contains_key("__outline__"));

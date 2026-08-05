@@ -4,8 +4,8 @@
 //! 可重试连接类错误，错误按类别返回（认证失败/连接失败/SMTP 错误/通用错误）。
 //! 凭据从节点参数或环境变量读取，测试不触碰真实 SMTP。
 
-use anyhow::{bail, Result};
-use lettre::message::{header::ContentType, Mailbox, Message, MultiPart, SinglePart};
+use anyhow::{Result, bail};
+use lettre::message::{Mailbox, Message, MultiPart, SinglePart, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{SmtpTransport, Transport};
 use std::time::Duration;
@@ -41,7 +41,9 @@ impl EmailClient {
             || config.email.trim().is_empty()
             || config.password.trim().is_empty()
         {
-            bail!("SMTP server, sender email and password are required (node params or env EMAIL_SMTP_*)");
+            bail!(
+                "SMTP server, sender email and password are required (node params or env EMAIL_SMTP_*)"
+            );
         }
         let to_email = request.to_email.trim();
         if to_email.is_empty() {
@@ -137,7 +139,8 @@ fn classify_smtp_error(error: lettre::transport::smtp::Error, config: &EmailConf
     if auth_failed {
         return "SMTP Authentication failed. Please check your SMTP username(email) and authorization code.".to_string();
     }
-    if error.is_transport_shutdown() || error.is_tls() || error.is_timeout() || error.is_response() {
+    if error.is_transport_shutdown() || error.is_tls() || error.is_timeout() || error.is_response()
+    {
         return format!(
             "Failed to connect to SMTP server {}:{} ({error})",
             config.smtp_server, config.smtp_port

@@ -78,7 +78,12 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "ZHIPU_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+            ProviderKind::ImageToText,
+        ],
         models: &["glm-4.5", "glm-4.7", "embedding-3", "rerank", "glm-4v-plus"],
         note: "智谱AI: GLM 系列 chat/embedding/rerank/视觉统一走 bigmodel.cn",
     },
@@ -100,8 +105,18 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "SILICONFLOW_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
-        models: &["Qwen/Qwen3-32B", "BAAI/bge-m3", "BAAI/bge-reranker-v2-m3", "Qwen/Qwen2.5-VL-72B"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+            ProviderKind::ImageToText,
+        ],
+        models: &[
+            "Qwen/Qwen3-32B",
+            "BAAI/bge-m3",
+            "BAAI/bge-reranker-v2-m3",
+            "Qwen/Qwen2.5-VL-72B",
+        ],
         note: "硅基流动: 聚合开源模型, chat/embedding/rerank/视觉全支持, 国内直连",
     },
     ProviderPreset {
@@ -122,8 +137,18 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "MINIMAX_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText, ProviderKind::TextToSpeech],
-        models: &["MiniMax-M3", "MiniMax-M2", "MiniMax-Embedding", "abab6.5s-chat"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+            ProviderKind::TextToSpeech,
+        ],
+        models: &[
+            "MiniMax-M3",
+            "MiniMax-M2",
+            "MiniMax-Embedding",
+            "abab6.5s-chat",
+        ],
         note: "MiniMax: M3/M2 chat、Embedding、TTS, 国内直连; RayRAG 默认提供商",
     },
     ProviderPreset {
@@ -133,7 +158,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "DASHSCOPE_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["qwen-max", "qwen-plus", "text-embedding-v4", "qwen-vl-max"],
         note: "阿里云百炼/通义千问: DashScope compatible-mode OpenAI 兼容",
     },
@@ -144,8 +173,16 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "ARK_API_KEY",
         dialect: ProviderDialect::VolcEngine,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
-        models: &["doubao-1-5-pro-32k-250115", "doubao-embedding", "doubao-1-5-vision-pro"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
+        models: &[
+            "doubao-1-5-pro-32k-250115",
+            "doubao-embedding",
+            "doubao-1-5-vision-pro",
+        ],
         note: "火山方舟: 豆包系列, 密钥字段为 ark_api_key; 发现走 /api/v3/models",
     },
     ProviderPreset {
@@ -155,8 +192,17 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "QIANFAN_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
-        models: &["ernie-4.5-turbo-128k", "ernie-3.5-8k", "embedding-v1", "ernie-4.5-vl-128k"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
+        models: &[
+            "ernie-4.5-turbo-128k",
+            "ernie-3.5-8k",
+            "embedding-v1",
+            "ernie-4.5-vl-128k",
+        ],
         note: "百度千帆: ERNIE 系列, v2 OpenAI 兼容端点",
     },
     ProviderPreset {
@@ -188,7 +234,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "MODELSCOPE_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["Qwen/Qwen3-32B-Instruct", "AI-ModelScope/bge-m3"],
         note: "魔搭社区: 国内直连聚合推理",
     },
@@ -199,7 +249,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "GITEE_AI_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+        ],
         models: &["Qwen3-235B-A22B", "bge-m3"],
         note: "Gitee AI: 国内直连, chat/embedding/rerank",
     },
@@ -265,7 +319,12 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "OPENAI_COMPATIBLE_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+            ProviderKind::ImageToText,
+        ],
         models: &["Qwen3.5-9B", "Qwen3-Embedding-4B", "mxbai-rerank-large-v2"],
         note: "任意 OpenAI 兼容端点 (llama.cpp/vLLM/LiteLLM); 默认指向本机 GPU llama-server 8088",
     },
@@ -276,7 +335,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "VLLM_API_KEY",
         dialect: ProviderDialect::Vllm,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["Qwen/Qwen3-32B-Instruct"],
         note: "vLLM 自托管; 发现走 /v1/models",
     },
@@ -287,7 +350,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "OLLAMA_API_KEY",
         dialect: ProviderDialect::Ollama,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["qwen3:32b", "bge-m3"],
         note: "Ollama 本地; 发现走 /api/tags + /api/show",
     },
@@ -298,7 +365,14 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "XINFERENCE_API_KEY",
         dialect: ProviderDialect::Xinference,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText, ProviderKind::TextToSpeech, ProviderKind::SpeechToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+            ProviderKind::ImageToText,
+            ProviderKind::TextToSpeech,
+            ProviderKind::SpeechToText,
+        ],
         models: &["qwen3", "bge-m3", "bge-reranker-v2-m3"],
         note: "Xinference 本地推理平台, 六类能力全支持",
     },
@@ -309,7 +383,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "LOCALAI_API_KEY",
         dialect: ProviderDialect::LocalAi,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["gpt-4"],
         note: "LocalAI 本地 OpenAI 兼容",
     },
@@ -331,7 +409,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "GPUSTACK_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["qwen3"],
         note: "GPUStack 本地 GPU 集群",
     },
@@ -398,8 +480,19 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "OPENAI_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText, ProviderKind::TextToSpeech, ProviderKind::SpeechToText],
-        models: &["gpt-4o", "gpt-4o-mini", "text-embedding-3-large", "gpt-4o-mini-tts"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+            ProviderKind::TextToSpeech,
+            ProviderKind::SpeechToText,
+        ],
+        models: &[
+            "gpt-4o",
+            "gpt-4o-mini",
+            "text-embedding-3-large",
+            "gpt-4o-mini-tts",
+        ],
         note: "OpenAI 官方",
     },
     ProviderPreset {
@@ -409,7 +502,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "AZURE_OPENAI_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["gpt-4o"],
         note: "Azure OpenAI, 需替换 resource 与 deployment",
     },
@@ -431,7 +528,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "GEMINI_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["gemini-2.5-pro", "gemini-2.5-flash", "text-embedding-004"],
         note: "Google Gemini",
     },
@@ -453,7 +554,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "OPENROUTER_API_KEY",
         dialect: ProviderDialect::OpenRouter,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["anthropic/claude-sonnet-4", "openai/gpt-4o"],
         note: "OpenRouter 聚合; 发现走 /api/v1/models?output_modalities=all",
     },
@@ -486,8 +591,16 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "COHERE_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Rerank, ProviderKind::Embedding],
-        models: &["command-r-plus", "rerank-multilingual-v3.0", "embed-english-v3.0"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Rerank,
+            ProviderKind::Embedding,
+        ],
+        models: &[
+            "command-r-plus",
+            "rerank-multilingual-v3.0",
+            "embed-english-v3.0",
+        ],
         note: "Cohere chat/rerank/embedding",
     },
     ProviderPreset {
@@ -497,8 +610,16 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "JINA_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank],
-        models: &["jina-chat", "jina-embeddings-v3", "jina-reranker-v2-base-multilingual"],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+        ],
+        models: &[
+            "jina-chat",
+            "jina-embeddings-v3",
+            "jina-reranker-v2-base-multilingual",
+        ],
         note: "Jina embedding/rerank/chat",
     },
     ProviderPreset {
@@ -530,7 +651,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "NVIDIA_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["meta/llama-3.3-70b-instruct", "nvidia/embed-qa-4"],
         note: "NVIDIA NIM 聚合",
     },
@@ -574,7 +699,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "PPIO_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["gpt-4o"],
         note: "PPIO",
     },
@@ -596,7 +725,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "SILICONFLOW_INTL_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+        ],
         models: &["Qwen/Qwen3-32B"],
         note: "硅基流动国际端点",
     },
@@ -607,7 +740,11 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "DEEPINFRA_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::ImageToText,
+        ],
         models: &["meta-llama/Llama-3.3-70B-Instruct"],
         note: "DeepInfra",
     },
@@ -629,7 +766,12 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         api_key_env: "API302_API_KEY",
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
-        kinds: &[ProviderKind::Chat, ProviderKind::Embedding, ProviderKind::Rerank, ProviderKind::ImageToText],
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::Embedding,
+            ProviderKind::Rerank,
+            ProviderKind::ImageToText,
+        ],
         models: &["gpt-4o", "text-embedding-3-small"],
         note: "302.AI 聚合",
     },
@@ -813,12 +955,10 @@ pub fn provider_preset(provider_id: &str) -> Option<&'static ProviderPreset> {
 /// Look up a preset by display name (case/hyphen insensitive).
 pub fn provider_preset_by_name(provider_name: &str) -> Option<&'static ProviderPreset> {
     let needle = normalize_provider_name(provider_name);
-    PROVIDER_PRESETS
-        .iter()
-        .find(|preset| {
-            normalize_provider_name(preset.name) == needle
-                || normalize_provider_name(preset.id) == needle
-        })
+    PROVIDER_PRESETS.iter().find(|preset| {
+        normalize_provider_name(preset.name) == needle
+            || normalize_provider_name(preset.id) == needle
+    })
 }
 
 /// Resolve the default API base for a provider (id or name), if a preset exists.
@@ -865,7 +1005,13 @@ pub fn provider_dialect(provider_id: &str, provider_name: &str) -> ProviderDiale
 pub fn provider_default_models(provider_id: &str, provider_name: &str) -> Vec<String> {
     provider_preset(provider_id)
         .or_else(|| provider_preset_by_name(provider_name))
-        .map(|preset| preset.models.iter().map(|model| (*model).to_string()).collect())
+        .map(|preset| {
+            preset
+                .models
+                .iter()
+                .map(|model| (*model).to_string())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -912,7 +1058,8 @@ static FACTORY_CATALOG_JSON: &str = include_str!("data/providers/llm_factories.j
 /// Lazily parsed factory catalog: `normalized factory name → entries`.
 fn factory_catalog() -> &'static std::collections::HashMap<String, Vec<FactoryModel>> {
     use std::sync::OnceLock;
-    static CATALOG: OnceLock<std::collections::HashMap<String, Vec<FactoryModel>>> = OnceLock::new();
+    static CATALOG: OnceLock<std::collections::HashMap<String, Vec<FactoryModel>>> =
+        OnceLock::new();
     CATALOG.get_or_init(|| {
         let v: serde_json::Value = serde_json::from_str(FACTORY_CATALOG_JSON).unwrap_or_default();
         let mut map = std::collections::HashMap::new();
@@ -922,14 +1069,22 @@ fn factory_catalog() -> &'static std::collections::HashMap<String, Vec<FactoryMo
                 let mut seen_names = std::collections::HashSet::new();
                 if let Some(list) = entry.get("models").and_then(|m| m.as_array()) {
                     for m in list {
-                        let n = m.get("n").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        let n = m
+                            .get("n")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         // The providers store requires unique model names; the
                         // upstream JSON occasionally lists the same model twice
                         // (e.g. FuturMix gpt-4o), so deduplicate defensively.
                         if n.is_empty() || !seen_names.insert(n.clone()) {
                             continue;
                         }
-                        let t = m.get("t").and_then(|x| x.as_str()).unwrap_or("chat").to_string();
+                        let t = m
+                            .get("t")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("chat")
+                            .to_string();
                         let mx = m.get("mx").and_then(|x| x.as_u64()).unwrap_or(0);
                         let tools = m.get("tools").and_then(|x| x.as_bool()).unwrap_or(false);
                         models.push(FactoryModel {
@@ -1026,7 +1181,10 @@ mod tests {
         assert!(provider_is_domestic("DeepSeek", "DeepSeek"));
         assert!(provider_is_domestic("SILICONFLOW", "SILICONFLOW"));
         assert!(provider_is_domestic("MiniMax", "MiniMax"));
-        assert!(provider_is_domestic("OpenAI-API-Compatible", "OpenAI-API-Compatible"));
+        assert!(provider_is_domestic(
+            "OpenAI-API-Compatible",
+            "OpenAI-API-Compatible"
+        ));
         assert!(!provider_is_domestic("OpenAI", "OpenAI"));
         assert!(!provider_is_domestic("Anthropic", "Anthropic"));
         assert!(!provider_is_domestic("", ""));
@@ -1059,22 +1217,42 @@ mod tests {
 
     #[test]
     fn capability_routing() {
-        assert!(provider_has_kind("ZHIPU-AI", "ZHIPU-AI", ProviderKind::Rerank));
-        assert!(provider_has_kind("SILICONFLOW", "SILICONFLOW", ProviderKind::Embedding));
-        assert!(!provider_has_kind("DeepSeek", "DeepSeek", ProviderKind::Rerank));
-        assert!(provider_has_kind("Xinference", "Xinference", ProviderKind::SpeechToText));
-        assert!(provider_has_kind("PaddleOCR", "PaddleOCR", ProviderKind::Ocr));
+        assert!(provider_has_kind(
+            "ZHIPU-AI",
+            "ZHIPU-AI",
+            ProviderKind::Rerank
+        ));
+        assert!(provider_has_kind(
+            "SILICONFLOW",
+            "SILICONFLOW",
+            ProviderKind::Embedding
+        ));
+        assert!(!provider_has_kind(
+            "DeepSeek",
+            "DeepSeek",
+            ProviderKind::Rerank
+        ));
+        assert!(provider_has_kind(
+            "Xinference",
+            "Xinference",
+            ProviderKind::SpeechToText
+        ));
+        assert!(provider_has_kind(
+            "PaddleOCR",
+            "PaddleOCR",
+            ProviderKind::Ocr
+        ));
         assert!(!provider_has_kind("OpenAI", "OpenAI", ProviderKind::Ocr));
     }
 
     #[test]
     fn key_env_conventions() {
         assert_eq!(provider_api_key_env("ZHIPU-AI", ""), Some("ZHIPU_API_KEY"));
-        assert_eq!(provider_api_key_env("DeepSeek", ""), Some("DEEPSEEK_API_KEY"));
         assert_eq!(
-            provider_api_key_env("VolcEngine", ""),
-            Some("ARK_API_KEY")
+            provider_api_key_env("DeepSeek", ""),
+            Some("DEEPSEEK_API_KEY")
         );
+        assert_eq!(provider_api_key_env("VolcEngine", ""), Some("ARK_API_KEY"));
         assert_eq!(provider_api_key_env("Ollama", ""), Some("OLLAMA_API_KEY"));
     }
 
@@ -1121,7 +1299,9 @@ mod tests {
             }
             let known = factory_known(preset.id, preset.name);
             assert!(
-                known || preset.id == "OpenAI-API-Compatible" || preset.id == "SoMark"
+                known
+                    || preset.id == "OpenAI-API-Compatible"
+                    || preset.id == "SoMark"
                     || preset.id == "Builtin",
                 "factory {} ({}) missing from embedded catalog",
                 preset.id,
@@ -1138,8 +1318,14 @@ mod tests {
             assert!(
                 matches!(
                     m.t,
-                    "chat" | "embedding" | "rerank" | "reranker" | "image2text"
-                        | "speech2text" | "tts" | "moderation"
+                    "chat"
+                        | "embedding"
+                        | "rerank"
+                        | "reranker"
+                        | "image2text"
+                        | "speech2text"
+                        | "tts"
+                        | "moderation"
                 ),
                 "unexpected model type {} for {}",
                 m.t,
@@ -1154,8 +1340,9 @@ mod tests {
         let ds = factory_full_models("DeepSeek", "DeepSeek");
         assert!(!ds.is_empty(), "DeepSeek catalog must not be empty");
         assert!(
-            ds.iter()
-                .any(|m| m.n == "deepseek-chat" || m.n == "deepseek-v4-chat" || m.n.contains("deepseek-v4")),
+            ds.iter().any(|m| m.n == "deepseek-chat"
+                || m.n == "deepseek-v4-chat"
+                || m.n.contains("deepseek-v4")),
             "DeepSeek catalog missing expected models: {:?}",
             ds.iter().map(|m| m.n).collect::<Vec<_>>()
         );

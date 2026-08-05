@@ -19,7 +19,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
@@ -62,8 +62,7 @@ impl StorageConfig {
     pub fn from_env() -> Self {
         Self {
             endpoint: std::env::var("RAYRAG_STORAGE_ENDPOINT").unwrap_or_default(),
-            region: std::env::var("RAYRAG_STORAGE_REGION")
-                .unwrap_or_else(|_| "us-east-1".into()),
+            region: std::env::var("RAYRAG_STORAGE_REGION").unwrap_or_else(|_| "us-east-1".into()),
             access_key: std::env::var("RAYRAG_STORAGE_ACCESS_KEY").unwrap_or_default(),
             secret_key: std::env::var("RAYRAG_STORAGE_SECRET_KEY").unwrap_or_default(),
             path_style: std::env::var("RAYRAG_STORAGE_PATH_STYLE")
@@ -74,9 +73,7 @@ impl StorageConfig {
     }
 
     pub fn enabled(&self) -> bool {
-        !self.endpoint.is_empty()
-            && !self.access_key.is_empty()
-            && !self.secret_key.is_empty()
+        !self.endpoint.is_empty() && !self.access_key.is_empty() && !self.secret_key.is_empty()
     }
 }
 
@@ -138,11 +135,11 @@ impl StorageClient {
             .with_context(|| format!("PUT failed: {url}"))?;
         let status = response.status();
         if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_default();
-            bail!("PUT {url} -> {status}: {}", body.chars().take(200).collect::<String>());
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "PUT {url} -> {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
         }
         Ok(())
     }
@@ -160,7 +157,10 @@ impl StorageClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            bail!("GET {url} -> {status}: {}", body.chars().take(200).collect::<String>());
+            bail!(
+                "GET {url} -> {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
         }
         Ok(response.bytes().await?.to_vec())
     }
@@ -288,8 +288,7 @@ impl StorageClient {
             .ok_or_else(|| anyhow!("no host in {url}"))?;
         let payload_hash = match body {
             Some(data) => hex::encode(Sha256::digest(data)),
-            None => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                .to_string(), // SHA-256 of empty string
+            None => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(), // SHA-256 of empty string
         };
         let canonical = format!(
             "{method}\n{path}\n{query}\nhost:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n\nhost;x-amz-content-sha256;x-amz-date\n{payload_hash}",
@@ -309,7 +308,9 @@ impl StorageClient {
         );
         headers.insert(
             "x-amz-content-sha256",
-            payload_hash.parse().map_err(|_| anyhow!("bad hash header"))?,
+            payload_hash
+                .parse()
+                .map_err(|_| anyhow!("bad hash header"))?,
         );
         headers.insert(
             "x-amz-date",
@@ -353,9 +354,7 @@ fn amz_date(secs: u64) -> String {
     let hh = rem / 3600;
     let mm = (rem % 3600) / 60;
     let ss = rem % 60;
-    format!(
-        "{y:04}{m:02}{d:02}T{hh:02}{mm:02}{ss:02}Z"
-    )
+    format!("{y:04}{m:02}{d:02}T{hh:02}{mm:02}{ss:02}Z")
 }
 
 /// Howard Hinnant's civil-from-days algorithm (proleptic Gregorian).
@@ -410,7 +409,10 @@ mod tests {
         // documented example secret.
         let secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
         let k_date = hmac_sha256(format!("AWS4{secret}"), "20150830").unwrap();
-        assert_eq!(hex::encode(&k_date), "68a9e4535ffbb09dcb6d25807a9ba5e3aef7cd00b3c57ed4b0c4a04988649f51");
+        assert_eq!(
+            hex::encode(&k_date),
+            "68a9e4535ffbb09dcb6d25807a9ba5e3aef7cd00b3c57ed4b0c4a04988649f51"
+        );
         let k_region = hmac_sha256(k_date, "us-east-1").unwrap();
         let k_service = hmac_sha256(k_region, "iam").unwrap();
         let k_signing = hmac_sha256(k_service, "aws4_request").unwrap();
@@ -421,10 +423,10 @@ mod tests {
     #[tokio::test]
     async fn presigned_url_is_well_formed() {
         let client = StorageClient::new(config_for("http://127.0.0.1:9000"));
-        let url = client
-            .presigned_get_url("docs", "a/b.txt", 3600)
-            .unwrap();
-        assert!(url.starts_with("http://127.0.0.1:9000/docs/a/b.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+        let url = client.presigned_get_url("docs", "a/b.txt", 3600).unwrap();
+        assert!(
+            url.starts_with("http://127.0.0.1:9000/docs/a/b.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256")
+        );
         assert!(url.contains("X-Amz-Expires=3600"));
         assert!(url.contains("X-Amz-Signature="), "{url}");
         // Signature is 64 lowercase hex chars.
@@ -463,12 +465,18 @@ mod tests {
     #[ignore]
     async fn minio_round_trip_live() {
         let cfg = StorageConfig::from_env();
-        assert!(cfg.enabled(), "set RAYRAG_STORAGE_ENDPOINT/_ACCESS_KEY/_SECRET_KEY");
+        assert!(
+            cfg.enabled(),
+            "set RAYRAG_STORAGE_ENDPOINT/_ACCESS_KEY/_SECRET_KEY"
+        );
         let client = StorageClient::new(cfg);
         let bucket = "rayrag-test";
         client.make_bucket(bucket).await.unwrap();
         assert!(client.health(bucket).await.unwrap());
-        client.put(bucket, "hello.txt", b"hello storage").await.unwrap();
+        client
+            .put(bucket, "hello.txt", b"hello storage")
+            .await
+            .unwrap();
         assert!(client.obj_exist(bucket, "hello.txt").await.unwrap());
         let data = client.get(bucket, "hello.txt").await.unwrap();
         assert_eq!(data, b"hello storage");

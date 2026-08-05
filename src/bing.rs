@@ -85,7 +85,10 @@ impl BingClient {
             let chunk = chunk.context("could not read Bing response body")?;
             let remaining = MAX_BING_RESPONSE_BODY.saturating_sub(body.len());
             if chunk.len() > remaining {
-                bail!("Bing response body exceeds {} bytes", MAX_BING_RESPONSE_BODY);
+                bail!(
+                    "Bing response body exceeds {} bytes",
+                    MAX_BING_RESPONSE_BODY
+                );
             }
             body.extend_from_slice(&chunk);
         }
@@ -172,7 +175,10 @@ impl BingProvider for BingClient {
             if !status.is_success() {
                 bail!("bing: upstream returned {}", status.as_u16());
             }
-            return Ok(parse_bing_results(&String::from_utf8_lossy(&body)).into_iter().take(request.top_n.clamp(1, 20)).collect());
+            return Ok(parse_bing_results(&String::from_utf8_lossy(&body))
+                .into_iter()
+                .take(request.top_n.clamp(1, 20))
+                .collect());
         }
         Ok(parse_bing_results(&String::from_utf8_lossy(&body))
             .into_iter()

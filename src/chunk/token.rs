@@ -46,11 +46,12 @@ impl TokenChunker {
                 set.push(c.to_string());
             }
         }
-        Regex::new(&set
-            .iter()
-            .map(|s| regex::escape(s))
-            .collect::<Vec<_>>()
-            .join("|"))
+        Regex::new(
+            &set.iter()
+                .map(|s| regex::escape(s))
+                .collect::<Vec<_>>()
+                .join("|"),
+        )
         .ok()
     }
 

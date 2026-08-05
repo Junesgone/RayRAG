@@ -20,8 +20,8 @@
 //! this module works on the decoded `SpreadsheetSheet` grid + merged ranges,
 //! and on CSV/TXT row grids, so all three table.py branches share one core.
 
-use crate::naive::{tokenize_doc, ChunkDoc};
 use crate::Result;
+use crate::naive::{ChunkDoc, tokenize_doc};
 
 /// Field-type suffix map — mirrors table.py `fields_map`:
 /// text→_tks, int→_long, keyword→_kwd, float→_flt, datetime→_dt, bool→_kwd.
@@ -62,7 +62,12 @@ pub fn looks_like_header(value: &str) -> bool {
 
 /// `_looks_like_data`: single Y/N/M/X chars, numeric, or short hex.
 pub fn looks_like_data(value: &str) -> bool {
-    if value.len() == 1 && matches!(value.to_ascii_uppercase().as_str(), "Y" | "N" | "M" | "X" | "/" | "-") {
+    if value.len() == 1
+        && matches!(
+            value.to_ascii_uppercase().as_str(),
+            "Y" | "N" | "M" | "X" | "/" | "-"
+        )
+    {
         return true;
     }
     let digits = value.replace('.', "").replace('-', "").replace(',', "");
@@ -187,12 +192,9 @@ pub fn build_hierarchical_headers(
                 .get(row_idx)
                 .and_then(|row| row.get(col_idx))
                 .and_then(|v| v.clone());
-            if let Some(mv) = merged_value(
-                merged_ranges,
-                row_idx as u32 + 1,
-                col_idx as u32 + 1,
-                grid,
-            ) {
+            if let Some(mv) =
+                merged_value(merged_ranges, row_idx as u32 + 1, col_idx as u32 + 1, grid)
+            {
                 cell_value = Some(mv);
             }
             if let Some(value) = cell_value {
@@ -211,7 +213,10 @@ pub fn build_hierarchical_headers(
             headers.push(parts.join("-"));
         }
     }
-    headers.into_iter().filter(|h| !h.is_empty() && h != "-").collect()
+    headers
+        .into_iter()
+        .filter(|h| !h.is_empty() && h != "-")
+        .collect()
 }
 
 /// `_extract_row_data`: a data row's values, merged-cell aware; None rows
@@ -278,10 +283,7 @@ pub fn trans_datatime(s: &str) -> Option<String> {
     let mut ymd: Option<(i64, u32, u32)> = None;
     for sep in ['-', '/', '.'] {
         let parts: Vec<&str> = date_part.split(sep).collect();
-        if parts.len() == 3
-            && parts[0].len() == 4
-            && parts[0].chars().all(|c| c.is_ascii_digit())
-        {
+        if parts.len() == 3 && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit()) {
             let year = parts[0].parse::<i64>().ok();
             let month = parts[1].parse::<u32>().ok();
             let day = parts[2].parse::<u32>().ok();
@@ -313,8 +315,14 @@ pub fn trans_datatime(s: &str) -> Option<String> {
             return None;
         }
         let h = tparts[0].parse::<u32>().ok()?;
-        let m = tparts.get(1).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-        let s = tparts.get(2).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        let m = tparts
+            .get(1)
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        let s = tparts
+            .get(2)
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
         if h > 23 || m > 59 || s > 59 {
             return None;
         }
@@ -335,7 +343,10 @@ pub fn trans_datatime(s: &str) -> Option<String> {
 pub fn trans_bool(s: &str) -> Option<&'static str> {
     let s = s.trim();
     let lower = s.to_ascii_lowercase();
-    if matches!(lower.as_str(), "true" | "yes" | "是" | "*" | "✓" | "✔" | "☑" | "✅" | "√") {
+    if matches!(
+        lower.as_str(),
+        "true" | "yes" | "是" | "*" | "✓" | "✔" | "☑" | "✅" | "√"
+    ) {
         return Some("yes");
     }
     if matches!(lower.as_str(), "false" | "no" | "否" | "⍻" | "×") {
@@ -647,11 +658,7 @@ mod tests {
 
     #[test]
     fn merged_value_reads_anchor_cell() {
-        let g = grid(&[
-            &["分组", "值"],
-            &["", "1"],
-            &["", "2"],
-        ]);
+        let g = grid(&[&["分组", "值"], &["", "1"], &["", "2"]]);
         let ranges = vec![(1, 1, 3, 1)];
         assert_eq!(merged_value(&ranges, 2, 1, &g), Some("分组".into()));
         assert_eq!(merged_value(&ranges, 3, 1, &g), Some("分组".into()));
@@ -660,11 +667,7 @@ mod tests {
 
     #[test]
     fn extract_row_data_inherits_merged_values() {
-        let g = grid(&[
-            &["分组", "值"],
-            &["", "1"],
-            &["", "2"],
-        ]);
+        let g = grid(&[&["分组", "值"], &["", "1"], &["", "2"]]);
         let ranges = vec![(1, 1, 3, 1)];
         let row = extract_row_data(&g, &ranges, 1, 2);
         assert_eq!(row, vec!["分组", "1"]);
@@ -711,22 +714,13 @@ mod tests {
 
     #[test]
     fn column_type_inference_majority_wins() {
-        let (values, ty) = column_data_type(&[
-            "1".into(),
-            "2".into(),
-            "3".into(),
-            "x".into(),
-            "4".into(),
-        ]);
+        let (values, ty) =
+            column_data_type(&["1".into(), "2".into(), "3".into(), "x".into(), "4".into()]);
         assert_eq!(ty, "int");
         assert_eq!(values[0], "1");
 
-        let (values, ty) = column_data_type(&[
-            "1.5".into(),
-            "2.5".into(),
-            "abc".into(),
-            "3.5".into(),
-        ]);
+        let (values, ty) =
+            column_data_type(&["1.5".into(), "2.5".into(), "abc".into(), "3.5".into()]);
         assert_eq!(ty, "float");
         assert_eq!(values[1], "2.5");
 
@@ -735,11 +729,7 @@ mod tests {
         assert_eq!(values[0], "yes");
         assert_eq!(values[1], "no");
 
-        let (_, ty) = column_data_type(&[
-            "2026-08-03".into(),
-            "2026-08-04".into(),
-            "text".into(),
-        ]);
+        let (_, ty) = column_data_type(&["2026-08-03".into(), "2026-08-04".into(), "text".into()]);
         assert_eq!(ty, "datetime");
     }
 
@@ -881,9 +871,15 @@ mod tests {
             .iter()
             .map(|row| row.iter().map(|v| Some(v.clone())).collect())
             .collect();
-        let (chunks, headers, count) =
-            chunk_table("merged.xlsx", &grid, &sheets[0].merged_ranges, "Chinese", 0, usize::MAX)
-                .unwrap();
+        let (chunks, headers, count) = chunk_table(
+            "merged.xlsx",
+            &grid,
+            &sheets[0].merged_ranges,
+            "Chinese",
+            0,
+            usize::MAX,
+        )
+        .unwrap();
 
         // Complex-header path (merge touches row 1): RAGFlow's CJK heuristic
         // treats A组/B组 as header-like, extending the header block.

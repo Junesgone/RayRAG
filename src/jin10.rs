@@ -240,7 +240,9 @@ impl Jin10Provider for Jin10Client {
                     .context("invalid Jin10 symbols URL")?;
             }
             Jin10Type::News => {
-                url = format!("{}/news", url).parse().context("invalid Jin10 news URL")?;
+                url = format!("{}/news", url)
+                    .parse()
+                    .context("invalid Jin10 news URL")?;
             }
         }
         let mut body = Map::new();
@@ -263,11 +265,13 @@ impl Jin10Provider for Jin10Client {
             .await
             .context("could not read Jin10 response body")?;
         if body.len() > MAX_JIN10_RESPONSE_BODY {
-            bail!("Jin10 response body exceeds {} bytes", MAX_JIN10_RESPONSE_BODY);
+            bail!(
+                "Jin10 response body exceeds {} bytes",
+                MAX_JIN10_RESPONSE_BODY
+            );
         }
-        let envelope: Value = serde_json::from_slice(&body).with_context(|| {
-            format!("Jin10 response (HTTP {status}) was not valid JSON")
-        })?;
+        let envelope: Value = serde_json::from_slice(&body)
+            .with_context(|| format!("Jin10 response (HTTP {status}) was not valid JSON"))?;
         if !status.is_success() {
             let message = envelope
                 .get("message")
@@ -284,9 +288,7 @@ impl Jin10Provider for Jin10Client {
             Jin10Type::Symbols if request.symbols_datatype == "quotes" => {
                 Self::render_quotes(&data)
             }
-            Jin10Type::Calendar | Jin10Type::Symbols | Jin10Type::News => {
-                Self::render_rows(&data)
-            }
+            Jin10Type::Calendar | Jin10Type::Symbols | Jin10Type::News => Self::render_rows(&data),
         };
         if request.top_n > 0 && results.len() > request.top_n {
             results.truncate(request.top_n);
@@ -365,17 +367,20 @@ mod tests {
     async fn missing_key_is_rejected() {
         let client = Jin10Client::default();
         let error = client
-            .search("", &Jin10Request {
-                r#type: Jin10Type::Flash,
-                flash_type: 1,
-                calendar_type: "cj".into(),
-                calendar_datatype: "data".into(),
-                symbols_type: "GOODS".into(),
-                symbols_datatype: "symbols".into(),
-                contain: String::new(),
-                filter: String::new(),
-                top_n: 5,
-            })
+            .search(
+                "",
+                &Jin10Request {
+                    r#type: Jin10Type::Flash,
+                    flash_type: 1,
+                    calendar_type: "cj".into(),
+                    calendar_datatype: "data".into(),
+                    symbols_type: "GOODS".into(),
+                    symbols_datatype: "symbols".into(),
+                    contain: String::new(),
+                    filter: String::new(),
+                    top_n: 5,
+                },
+            )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("secret key"));
@@ -386,17 +391,20 @@ mod tests {
     async fn live_jin10_flash() {
         let key = std::env::var("JIN10_SECRET_KEY").expect("JIN10_SECRET_KEY must be set");
         let results = Jin10Client::default()
-            .search(&key, &Jin10Request {
-                r#type: Jin10Type::Flash,
-                flash_type: 1,
-                calendar_type: "cj".into(),
-                calendar_datatype: "data".into(),
-                symbols_type: "GOODS".into(),
-                symbols_datatype: "symbols".into(),
-                contain: String::new(),
-                filter: String::new(),
-                top_n: 5,
-            })
+            .search(
+                &key,
+                &Jin10Request {
+                    r#type: Jin10Type::Flash,
+                    flash_type: 1,
+                    calendar_type: "cj".into(),
+                    calendar_datatype: "data".into(),
+                    symbols_type: "GOODS".into(),
+                    symbols_datatype: "symbols".into(),
+                    contain: String::new(),
+                    filter: String::new(),
+                    top_n: 5,
+                },
+            )
             .await
             .unwrap();
         assert!(!results.is_empty());

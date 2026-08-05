@@ -143,7 +143,9 @@ pub fn is_garbled_by_font_encoding(page_chars: &[GarbledChar], min_chars: usize)
         if has_subset_font_prefix(&c.fontname) {
             subset_font_count += 1;
         }
-        let Some(first) = text.chars().next() else { continue };
+        let Some(first) = text.chars().next() else {
+            continue;
+        };
         let cp = first as u32;
         if (0x2E80..=0x9FFF).contains(&cp)
             || (0xF900..=0xFAFF).contains(&cp)
@@ -295,10 +297,8 @@ pub fn text_merge(bxs: &mut Vec<PdfBox>, mean_height: &[f64]) {
         let same_page = bxs[i].page_number == bxs[i + 1].page_number;
         let same_col = bxs[i].col_id == bxs[i + 1].col_id;
         let same_layoutno = bxs[i].layoutno == bxs[i + 1].layoutno;
-        let mergeable_type = !matches!(
-            bxs[i].layout_type.as_str(),
-            "table" | "figure" | "equation"
-        );
+        let mergeable_type =
+            !matches!(bxs[i].layout_type.as_str(), "table" | "figure" | "equation");
         if !same_page || !same_col || !same_layoutno || !mergeable_type {
             i += 1;
             continue;
@@ -324,7 +324,12 @@ pub fn text_merge(bxs: &mut Vec<PdfBox>, mean_height: &[f64]) {
 /// `_naive_vertical_merge` — pdf_parser.py:926-1005. Group by page, sort by
 /// (top, x0), merge vertically adjacent boxes with overlap ≥ 0.3 and
 /// compatible layout unless split features say otherwise.
-pub fn naive_vertical_merge(bxs: &mut Vec<PdfBox>, mean_height: &[f64], mean_width: &[f64], is_english: bool) {
+pub fn naive_vertical_merge(
+    bxs: &mut Vec<PdfBox>,
+    mean_height: &[f64],
+    mean_width: &[f64],
+    is_english: bool,
+) {
     // Group by (page, "x") — Python uses a single "x" column group.
     let mut groups: HashMap<usize, Vec<PdfBox>> = HashMap::new();
     let mut order: Vec<usize> = Vec::new();
@@ -384,10 +389,7 @@ pub fn naive_vertical_merge(bxs: &mut Vec<PdfBox>, mean_height: &[f64], mean_wid
             }
             let overlap =
                 (group[i].x1.min(group[i + 1].x1) - group[i].x0.max(group[i + 1].x0)).max(0.0);
-            let min_w = group[i]
-                .width()
-                .min(group[i + 1].width())
-                .max(1.0);
+            let min_w = group[i].width().min(group[i + 1].width()).max(1.0);
             if overlap / min_w < 0.3 {
                 i += 1;
                 continue;
@@ -398,26 +400,28 @@ pub fn naive_vertical_merge(bxs: &mut Vec<PdfBox>, mean_height: &[f64], mean_wid
             let b_text = b.text.trim();
             let b_text2 = b_.text.trim();
             let concatting = [
-                b_text.chars().last().map_or(false, |c| {
-                    ",;:'\"，、‘“；：-".contains(c)
-                }),
+                b_text
+                    .chars()
+                    .last()
+                    .map_or(false, |c| ",;:'\"，、‘“；：-".contains(c)),
                 b_text.chars().count() > 1
-                    && b_text.chars().nth(b_text.chars().count() - 2).map_or(false, |c| {
-                        ",;:'\"，‘“、；：".contains(c)
-                    }),
-                !b_text2.is_empty() && b_text2.chars().next().map_or(false, |c| {
-                    "。；？！?”）),，、：".contains(c)
-                }),
+                    && b_text
+                        .chars()
+                        .nth(b_text.chars().count() - 2)
+                        .map_or(false, |c| ",;:'\"，‘“、；：".contains(c)),
+                !b_text2.is_empty()
+                    && b_text2
+                        .chars()
+                        .next()
+                        .map_or(false, |c| "。；？！?”）),，、：".contains(c)),
             ];
             let last_char = b_text.chars().last().unwrap_or('\0');
             let feats = [
                 b.layoutno != b_.layoutno,
                 "。？！?".contains(last_char),
                 is_english && ".!?".contains(last_char),
-                b.page_number == b_.page_number
-                    && b_.top - b.bottom > mh * 1.5,
-                b.page_number < b_.page_number
-                    && (b.x0 - b_.x0).abs() > mw * 4.0,
+                b.page_number == b_.page_number && b_.top - b.bottom > mh * 1.5,
+                b.page_number < b_.page_number && (b.x0 - b_.x0).abs() > mw * 4.0,
             ];
             let detach = [b.x1 < b_.x0, b.x0 > b_.x1];
             if (feats.iter().any(|&x| x) && !concatting.iter().any(|&x| x))
@@ -426,13 +430,9 @@ pub fn naive_vertical_merge(bxs: &mut Vec<PdfBox>, mean_height: &[f64], mean_wid
                 i += 1;
                 continue;
             }
-            group[i].text = format!(
-                "{} {}",
-                b.text.trim_end(),
-                b_.text.trim_start()
-            )
-            .trim()
-            .to_string();
+            group[i].text = format!("{} {}", b.text.trim_end(), b_.text.trim_start())
+                .trim()
+                .to_string();
             group[i].bottom = b_.bottom;
             group[i].x0 = b.x0.min(b_.x0);
             group[i].x1 = b.x1.max(b_.x1);
@@ -455,7 +455,11 @@ pub fn sort_y_firstly(bxs: &mut [PdfBox], _threshold: f64) {
     bxs.sort_by(|a, b| {
         a.page_number
             .cmp(&b.page_number)
-            .then_with(|| a.top.partial_cmp(&b.top).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                a.top
+                    .partial_cmp(&b.top)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.x0.partial_cmp(&b.x0).unwrap_or(std::cmp::Ordering::Equal))
     });
 }
@@ -475,8 +479,8 @@ pub fn filter_forpages(bxs: &mut Vec<PdfBox>, page_image_count: usize) {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        let re = regex::Regex::new(r"(contents|目录|目次|table of contents|致谢|acknowledge)$")
-            .unwrap();
+        let re =
+            regex::Regex::new(r"(contents|目录|目次|table of contents|致谢|acknowledge)$").unwrap();
         if !re.is_match(&normalized) {
             i += 1;
             continue;
@@ -599,10 +603,23 @@ pub fn is_chinese(c: char) -> bool {
 
 /// `_line_tag` — pdf_parser.py:1441-1454. Builds the `@@pages\tx0\tx1\ttop\tbottom##`
 /// marker for a box. `page_cum_height` is cumulative page heights (len = pages+1).
-pub fn line_tag(bx: &PdfBox, zoom: f64, page_cum_height: &[f64], page_image_heights_px: &[f64]) -> String {
+pub fn line_tag(
+    bx: &PdfBox,
+    zoom: f64,
+    page_cum_height: &[f64],
+    page_image_heights_px: &[f64],
+) -> String {
     let mut pns = vec![bx.page_number];
-    let mut top = bx.top - page_cum_height.get(bx.page_number.saturating_sub(1)).copied().unwrap_or(0.0);
-    let mut bott = bx.bottom - page_cum_height.get(bx.page_number.saturating_sub(1)).copied().unwrap_or(0.0);
+    let mut top = bx.top
+        - page_cum_height
+            .get(bx.page_number.saturating_sub(1))
+            .copied()
+            .unwrap_or(0.0);
+    let mut bott = bx.bottom
+        - page_cum_height
+            .get(bx.page_number.saturating_sub(1))
+            .copied()
+            .unwrap_or(0.0);
     let page_images_cnt = page_image_heights_px.len();
     if pns[pns.len() - 1].saturating_sub(1) >= page_images_cnt {
         return String::new();
@@ -651,12 +668,7 @@ pub fn filterout_scraps(
     fn height(b: &PdfBox) -> f64 {
         b.height()
     }
-    fn usefull(
-        b: &PdfBox,
-        zoom: f64,
-        page_image_widths_px: &[f64],
-        mean_height: &[f64],
-    ) -> bool {
+    fn usefull(b: &PdfBox, zoom: f64, page_image_widths_px: &[f64], mean_height: &[f64]) -> bool {
         if !b.layout_type.is_empty() {
             return true;
         }
@@ -717,10 +729,7 @@ pub fn filterout_scraps(
                 if bx_list[i].page_number as i64 - line.page_number as i64 > 0 {
                     break;
                 }
-                if !mmj
-                    && (y_dis(line, &bx_list[i])).abs() >= 3.0 * mh
-                    && height(line) < 1.5 * mh
-                {
+                if !mmj && (y_dis(line, &bx_list[i])).abs() >= 3.0 * mh && height(line) < 1.5 * mh {
                     break;
                 }
                 if !usefull(&bx_list[i], zoom, page_image_widths_px, mean_height) {

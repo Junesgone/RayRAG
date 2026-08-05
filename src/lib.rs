@@ -19,12 +19,13 @@ pub use search::SearchEngine;
 
 pub mod advanced_rag;
 pub mod agent;
+pub mod agent_checkpoint;
 pub mod agent_templates;
 pub mod akshare;
-pub mod agent_checkpoint;
 pub mod api;
 pub mod app_parsers;
 pub mod arxiv;
+pub mod audio;
 pub mod auth;
 pub mod baidu;
 pub mod baidu_scholar;
@@ -36,73 +37,73 @@ pub mod chunk;
 pub mod chunk_feedback;
 pub mod code_exec;
 pub mod crawler;
+pub mod data_source;
+pub mod dialog;
 pub mod document_writer;
 pub mod duckduckgo;
 pub mod eastmoney;
 pub mod email;
 pub mod embed;
 pub mod exesql;
+pub mod extractor;
 pub mod generation_params;
 pub mod github;
 pub mod google;
 pub mod google_scholar;
 pub mod graph_store;
-pub mod graphrag_enhanced;
 pub mod graphrag;
+pub mod graphrag_enhanced;
 pub mod graphrag_index;
+pub mod hypergraph;
 pub mod integration;
 pub mod jin10;
 pub mod kb;
+pub mod laws;
 pub mod llm;
 pub mod llm_enhanced;
-pub mod laws;
 pub mod logging;
+pub mod manual;
+pub mod merge;
 pub mod metrics;
 pub mod model_meta;
-pub mod naming;
 pub mod naive;
+pub mod naming;
 pub mod nlp;
 pub mod nlp_enhanced;
 pub mod ocr;
-pub mod vision;
-pub mod audio;
-pub mod storage;
-pub mod hypergraph;
-pub mod structure_compile;
-pub mod manual;
-pub mod merge;
-pub mod dialog;
 pub mod one;
-pub mod parser;
 pub mod paper;
+pub mod parser;
 pub mod parser_config;
 pub mod persistence;
 pub mod pipeline;
+pub mod presentation;
 pub mod prompts;
 pub mod providers;
-pub mod qa;
 pub mod pubmed;
+pub mod qa;
 pub mod qweather;
 pub mod raptor;
-pub mod tag;
 pub mod rerank;
-pub mod sandbox;
+pub mod resume;
 pub mod runtime;
+pub mod sandbox;
 pub mod search;
 pub mod searxng;
-pub mod data_source;
-pub mod surname;
 pub mod server;
+pub mod storage;
 pub mod store;
 pub mod stores;
+pub mod structure_compile;
+pub mod surname;
 pub mod table;
-pub mod presentation;
-pub mod resume;
+pub mod tag;
 pub mod tavily;
 pub mod tencent_finance;
 pub mod tools_bench_flow;
 pub mod translate;
 pub mod tushare;
+pub mod vision;
 pub mod web;
 pub mod wikipedia;
 pub mod yahoo_finance;
@@ -250,6 +251,11 @@ pub struct ParserConfig {
     /// Title chunker: prepend root chunk text to all later chunks, drop root.
     #[serde(alias = "rootChunkAsHeading")]
     pub root_chunk_as_heading: bool,
+    /// Auto-extract N key terms per chunk after chunking (0 disables;
+    /// RAGFlow `auto_keywords`). Results are stored in each chunk's
+    /// `important_kwd` metadata, consumed by hybrid retrieval.
+    #[serde(alias = "autoKeywords")]
+    pub auto_keywords: usize,
 }
 
 impl Default for ParserConfig {
@@ -296,6 +302,7 @@ impl Default for ParserConfig {
             hierarchy: None,
             include_heading_content: false,
             root_chunk_as_heading: false,
+            auto_keywords: 0,
         }
     }
 }

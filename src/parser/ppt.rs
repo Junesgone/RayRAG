@@ -11,7 +11,7 @@
 //!
 //! PPTX is a ZIP container with `ppt/slides/slideN.xml` parts.
 
-use crate::parser::{new_document, Parse};
+use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
 use std::io::Read;
 
@@ -132,18 +132,25 @@ impl Shape {
 /// `__get_bulleted_text` — bullet detection via `a:pPr` children.
 fn get_paragraph_text(paragraph: &XmlNode) -> String {
     let ppr = paragraph.first_child("pPr");
-    let is_bulleted = ppr.map(|p| {
-        p.children.iter().any(|c| {
-            matches!(c.name.as_str(), "buChar" | "buAutoNum" | "buBlip")
+    let is_bulleted = ppr
+        .map(|p| {
+            p.children
+                .iter()
+                .any(|c| matches!(c.name.as_str(), "buChar" | "buAutoNum" | "buBlip"))
         })
-    }).unwrap_or(false);
+        .unwrap_or(false);
     let level: usize = ppr
         .and_then(|p| p.attr("lvl"))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     let text = paragraph
         .children_named("r")
-        .map(|r| r.children_named("t").map(|t| t.text.clone()).collect::<Vec<_>>().join(""))
+        .map(|r| {
+            r.children_named("t")
+                .map(|t| t.text.clone())
+                .collect::<Vec<_>>()
+                .join("")
+        })
         .collect::<Vec<_>>()
         .join("");
     let text = text.trim().to_owned();
@@ -182,7 +189,12 @@ fn extract_table(tbl: &XmlNode) -> String {
                         .flat_map(|tb| tb.children_named("p"))
                         .map(|p| {
                             p.children_named("r")
-                                .map(|r| r.children_named("t").map(|t| t.text.clone()).collect::<Vec<_>>().join(""))
+                                .map(|r| {
+                                    r.children_named("t")
+                                        .map(|t| t.text.clone())
+                                        .collect::<Vec<_>>()
+                                        .join("")
+                                })
                                 .collect::<Vec<_>>()
                                 .join("")
                                 .trim()
@@ -267,11 +279,7 @@ fn shape_position(node: &XmlNode) -> (i64, i64) {
 /// Extract all slide texts (one per slide), sorted by slide number.
 /// `from_page`/`to_page` mirror `RAGFlowPptParser.__call__` (0-based,
 /// `from_page <= i < to_page` kept); defaults include every slide.
-pub fn slide_texts_paged(
-    data: &[u8],
-    from_page: usize,
-    to_page: usize,
-) -> Result<Vec<String>> {
+pub fn slide_texts_paged(data: &[u8], from_page: usize, to_page: usize) -> Result<Vec<String>> {
     let cursor = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(cursor)?;
 
@@ -394,8 +402,7 @@ mod tests {
         assert_eq!(text, "    .item");
 
         // Plain paragraph, no pPr → no prefix.
-        let root2 =
-            parse_xml(r#"<p:p><a:r><a:t>plain</a:t></a:r></p:p>"#).unwrap();
+        let root2 = parse_xml(r#"<p:p><a:r><a:t>plain</a:t></a:r></p:p>"#).unwrap();
         assert_eq!(get_paragraph_text(&root2), "plain");
     }
 
@@ -412,9 +419,21 @@ mod tests {
     #[test]
     fn shapes_sort_by_top_then_left() {
         let mut shapes = vec![
-            Shape { top: 300, left: 10, text: "late".into() },
-            Shape { top: 100, left: 500, text: "top".into() },
-            Shape { top: 100, left: 10, text: "top-left".into() },
+            Shape {
+                top: 300,
+                left: 10,
+                text: "late".into(),
+            },
+            Shape {
+                top: 100,
+                left: 500,
+                text: "top".into(),
+            },
+            Shape {
+                top: 100,
+                left: 10,
+                text: "top-left".into(),
+            },
         ];
         shapes.sort_by_key(Shape::sort_key);
         let order: Vec<&str> = shapes.iter().map(|s| s.text.as_str()).collect();

@@ -107,7 +107,12 @@ mod tests {
 
     #[test]
     fn join_nonempty_sections_filters_blanks() {
-        let sections = vec!["a".to_string(), "".to_string(), "  ".to_string(), "b".to_string()];
+        let sections = vec![
+            "a".to_string(),
+            "".to_string(),
+            "  ".to_string(),
+            "b".to_string(),
+        ];
         assert_eq!(join_nonempty_sections(&sections), "a\nb");
     }
 
@@ -123,14 +128,20 @@ mod tests {
         assert_eq!(c.docnm_kwd, "paper.txt");
         assert_eq!(c.title_tks, vec!["paper".to_string()]);
         assert_eq!(c.content_with_weight, "内容一\n内容二");
-        assert_eq!(c.content_ltks, vec!["内容一".to_string(), "内容二".to_string()]);
+        assert_eq!(
+            c.content_ltks,
+            vec!["内容一".to_string(), "内容二".to_string()]
+        );
     }
 
     #[test]
     fn one_chunk_no_extension_keeps_filename() {
         let c = one_chunk("README", "hello world");
         assert_eq!(c.title_tks, vec!["README".to_string()]);
-        assert_eq!(c.content_ltks, vec!["hello".to_string(), "world".to_string()]);
+        assert_eq!(
+            c.content_ltks,
+            vec!["hello".to_string(), "world".to_string()]
+        );
     }
 
     #[test]

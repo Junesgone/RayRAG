@@ -3,8 +3,8 @@
 //! 上游语义：POST api.tushare.pro 的 `news` 接口，按 src（新闻源）、时间范围、
 //! keyword 过滤，输出 markdown 表格。token 从节点参数或 TUSHARE_TOKEN 读取。
 
-use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, bail};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 const TUSHARE_ENDPOINT: &str = "https://api.tushare.pro";
@@ -60,10 +60,7 @@ impl TuShareClient {
             bail!("TuShare token is required (node param `token` or env TUSHARE_TOKEN)");
         }
         if !TUSHARE_SOURCES.contains(&request.src.as_str()) {
-            bail!(
-                "TuShare src must be one of: {}",
-                TUSHARE_SOURCES.join(", ")
-            );
+            bail!("TuShare src must be one of: {}", TUSHARE_SOURCES.join(", "));
         }
         if request.start_date >= request.end_date {
             bail!("TuShare start_date must be earlier than end_date");
@@ -77,12 +74,7 @@ impl TuShareClient {
                 "end_date": request.end_date,
             }
         });
-        let response = self
-            .http
-            .post(endpoint)
-            .json(&payload)
-            .send()
-            .await?;
+        let response = self.http.post(endpoint).json(&payload).send().await?;
         if !response.status().is_success() {
             bail!("TuShare HTTP {}", response.status());
         }
@@ -94,7 +86,9 @@ impl TuShareClient {
                 .unwrap_or("unknown error");
             bail!("TuShare error: {message}");
         }
-        let data = body.get("data").ok_or_else(|| anyhow::anyhow!("TuShare missing data"))?;
+        let data = body
+            .get("data")
+            .ok_or_else(|| anyhow::anyhow!("TuShare missing data"))?;
         let fields: Vec<String> = data
             .get("fields")
             .and_then(Value::as_array)
@@ -107,11 +101,18 @@ impl TuShareClient {
             })
             .unwrap_or_default();
         let content_index = fields.iter().position(|f| f == "content");
-        let items = data.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+        let items = data
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let keyword = request.keyword.trim().to_lowercase();
         let mut rows = Vec::new();
         for item in items {
-            let values: Vec<&Value> = item.as_array().map(|a| a.iter().collect()).unwrap_or_default();
+            let values: Vec<&Value> = item
+                .as_array()
+                .map(|a| a.iter().collect())
+                .unwrap_or_default();
             let content = content_index
                 .and_then(|i| values.get(i).copied())
                 .and_then(Value::as_str)
@@ -141,7 +142,7 @@ impl TuShareClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::post, Json, Router};
+    use axum::{Json, Router, routing::post};
 
     fn sample_response() -> Json<Value> {
         Json(json!({

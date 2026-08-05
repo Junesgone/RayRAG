@@ -6,7 +6,7 @@
 //! loop. PDF/DOCX extraction and vision figure parsing stay in the parser
 //! modules.
 
-use crate::paper::{bullets_category, title_frequency, Section};
+use crate::paper::{Section, bullets_category, title_frequency};
 
 /// A normalized section: (text, layoutno, positions).
 /// Position: (page, x1, x2, y1, y2).
@@ -194,7 +194,10 @@ mod tests {
 
     #[test]
     fn bigram_similarity_matches_outline_title() {
-        assert_eq!(bigram_similarity("Chapter 1: Introduction", "Chapter 1: Introduction"), 1.0);
+        assert_eq!(
+            bigram_similarity("Chapter 1: Introduction", "Chapter 1: Introduction"),
+            1.0
+        );
         // identical text has > 0.8 overlap with a short outline title
         assert!(bigram_similarity("引言", "引言") >= 0.8);
         // unrelated texts score low
@@ -204,14 +207,35 @@ mod tests {
     #[test]
     fn section_levels_outline_branch() {
         let outlines = vec![
-            Outline { title: "1. 概述".into(), level: 1 },
-            Outline { title: "2. 方法".into(), level: 1 },
-            Outline { title: "2.1 采样".into(), level: 2 },
+            Outline {
+                title: "1. 概述".into(),
+                level: 1,
+            },
+            Outline {
+                title: "2. 方法".into(),
+                level: 1,
+            },
+            Outline {
+                title: "2.1 采样".into(),
+                level: 2,
+            },
         ];
         let sections = vec![
-            Section3 { txt: "1. 概述".into(), layoutno: "title".into(), poss: vec![] },
-            Section3 { txt: "正文一".into(), layoutno: "text".into(), poss: vec![] },
-            Section3 { txt: "2.1 采样".into(), layoutno: "title".into(), poss: vec![] },
+            Section3 {
+                txt: "1. 概述".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "正文一".into(),
+                layoutno: "text".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "2.1 采样".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
         ];
         let (most, levels) = section_levels(&sections, &outlines, false);
         assert_eq!(most, 1);
@@ -223,9 +247,21 @@ mod tests {
     #[test]
     fn section_levels_fallback_branch() {
         let sections = vec![
-            Section3 { txt: "第一章 总则".into(), layoutno: "title".into(), poss: vec![] },
-            Section3 { txt: "第一条".into(), layoutno: "title".into(), poss: vec![] },
-            Section3 { txt: "第二章 水质".into(), layoutno: "title".into(), poss: vec![] },
+            Section3 {
+                txt: "第一章 总则".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "第一条".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "第二章 水质".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
         ];
         let (most, levels) = section_levels(&sections, &[], true);
         // family 0: 第…章 is index 1, 第…条 is index 3 (第…部分 is index 0)

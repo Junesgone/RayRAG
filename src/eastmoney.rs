@@ -224,10 +224,16 @@ pub fn eastmoney_results_to_tool_rows(results: &[EastMoneyNewsResult]) -> Vec<Va
             row.insert("link".into(), Value::String(result.link.clone()));
             row.insert("snippet".into(), Value::String(result.snippet.clone()));
             if !result.publish_time.is_empty() {
-                row.insert("publish_time".into(), Value::String(result.publish_time.clone()));
+                row.insert(
+                    "publish_time".into(),
+                    Value::String(result.publish_time.clone()),
+                );
             }
             if !result.media_name.is_empty() {
-                row.insert("media_name".into(), Value::String(result.media_name.clone()));
+                row.insert(
+                    "media_name".into(),
+                    Value::String(result.media_name.clone()),
+                );
             }
             Value::Object(row)
         })
@@ -281,7 +287,10 @@ mod tests {
     async fn missing_symbol_is_rejected() {
         let client = EastMoneyClient::default();
         let error = client
-            .search(&EastMoneyNewsRequest { symbol: "".into(), top_n: 5 })
+            .search(&EastMoneyNewsRequest {
+                symbol: "".into(),
+                top_n: 5,
+            })
             .await
             .unwrap_err();
         assert!(error.to_string().contains("symbol"));
@@ -291,7 +300,10 @@ mod tests {
     #[ignore = "requires live mainland-China access to EastMoney"]
     async fn live_eastmoney_news() {
         let results = EastMoneyClient::default()
-            .search(&EastMoneyNewsRequest { symbol: "农业".into(), top_n: 3 })
+            .search(&EastMoneyNewsRequest {
+                symbol: "农业".into(),
+                top_n: 3,
+            })
             .await
             .unwrap();
         assert!(!results.is_empty());

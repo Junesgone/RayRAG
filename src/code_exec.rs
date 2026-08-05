@@ -15,9 +15,9 @@
 //!   - GET /healthz 健康检查；单次执行超时由 RAYRAG_SANDBOX_TIMEOUT 配置（默认 30s）。
 //! /run 为同步接口（executor_manager 内部维护容器池），无需轮询/创建实例。
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use base64::Engine;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -162,10 +162,7 @@ pub fn parse_run_response(body: &Value) -> SandboxResult {
     if let Some(result) = body.get("result") {
         metadata.insert(
             "result_present".into(),
-            result
-                .get("present")
-                .cloned()
-                .unwrap_or(Value::Bool(false)),
+            result.get("present").cloned().unwrap_or(Value::Bool(false)),
         );
         metadata.insert(
             "result_value".into(),
@@ -190,10 +187,19 @@ pub fn parse_run_response(body: &Value) -> SandboxResult {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        stderr: body.get("stderr").and_then(Value::as_str).map(str::to_string),
+        stderr: body
+            .get("stderr")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         exit_code: body.get("exit_code").and_then(Value::as_i64).unwrap_or(0),
-        status: body.get("status").and_then(Value::as_str).map(str::to_string),
-        detail: body.get("detail").and_then(Value::as_str).map(str::to_string),
+        status: body
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        detail: body
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         time_used_ms: body.get("time_used_ms").and_then(Value::as_f64),
         memory_used_kb: body.get("memory_used_kb").and_then(Value::as_f64),
         artifacts: body
@@ -280,9 +286,7 @@ pub fn validate_expected_type(expected: &str, value: &Value) -> Result<()> {
     }
     let actual = infer_actual_type(value);
     if actual != etype {
-        bail!(
-            "CodeExec contract mismatch: expected type {etype}, got {actual}"
-        );
+        bail!("CodeExec contract mismatch: expected type {etype}, got {actual}");
     }
     Ok(())
 }
@@ -375,7 +379,12 @@ pub fn normalize_attachment_type(name: &str, mime_type: &str) -> String {
 }
 
 /// 附件段落渲染（对齐 _format_attachment_section）。
-pub fn format_attachment_section(key: &str, attachment_type: &str, name: &str, parsed: &str) -> String {
+pub fn format_attachment_section(
+    key: &str,
+    attachment_type: &str,
+    name: &str,
+    parsed: &str,
+) -> String {
     let title = if name.is_empty() {
         format!("{key} ({attachment_type})")
     } else {
@@ -391,14 +400,20 @@ pub fn process_result(result: &SandboxResult) -> Map<String, Value> {
     let mut outputs = Map::new();
 
     // 结构化结果优先；否则 stdout 反序列化（对齐 _resolve_execution_result_value）
-    let resolved = if result.metadata.get("result_present").and_then(Value::as_bool) == Some(true) {
+    let resolved = if result
+        .metadata
+        .get("result_present")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
         result
             .metadata
             .get("result_value")
             .cloned()
             .unwrap_or(Value::Null)
     } else {
-        serde_json::from_str::<Value>(&result.stdout).unwrap_or_else(|_| Value::String(result.stdout.clone()))
+        serde_json::from_str::<Value>(&result.stdout)
+            .unwrap_or_else(|_| Value::String(result.stdout.clone()))
     };
 
     // stderr-only 且无结果/工件 → 错误（对齐上游分支）
@@ -475,7 +490,10 @@ pub fn process_result(result: &SandboxResult) -> Map<String, Value> {
 
     let content = content_parts.join("\n\n");
     outputs.insert("content".into(), Value::String(content));
-    outputs.insert("actual_type".into(), Value::String(infer_actual_type(&resolved)));
+    outputs.insert(
+        "actual_type".into(),
+        Value::String(infer_actual_type(&resolved)),
+    );
     outputs
 }
 
@@ -506,8 +524,14 @@ mod tests {
     #[test]
     fn normalize_expected_type_handles_nested_arrays() {
         assert_eq!(normalize_expected_type("string"), "String");
-        assert_eq!(normalize_expected_type(" array< number > "), "Array<Number>");
-        assert_eq!(normalize_expected_type("Array<Array<String>>"), "Array<Array<String>>");
+        assert_eq!(
+            normalize_expected_type(" array< number > "),
+            "Array<Number>"
+        );
+        assert_eq!(
+            normalize_expected_type("Array<Array<String>>"),
+            "Array<Array<String>>"
+        );
         assert_eq!(normalize_expected_type("any"), "Any");
     }
 
@@ -530,10 +554,7 @@ mod tests {
         assert_eq!(value, json!("business"));
 
         // 两个业务输出 → 错误
-        let bad = Map::from_iter([
-            ("a".into(), json!(1)),
-            ("b".into(), json!(2)),
-        ]);
+        let bad = Map::from_iter([("a".into(), json!(1)), ("b".into(), json!(2))]);
         assert!(select_business_output(&bad).is_err());
 
         // 保留键名 → 错误
@@ -570,7 +591,14 @@ mod tests {
             ..Default::default()
         };
         let outputs = process_result(&result);
-        assert!(outputs.get("_ERROR").unwrap().as_str().unwrap().contains("boom"));
+        assert!(
+            outputs
+                .get("_ERROR")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("boom")
+        );
     }
 
     #[test]
@@ -591,7 +619,10 @@ mod tests {
         assert!(content.contains("\"price\": 1.5"));
         assert!(content.contains("attachment_count: 1"));
         assert!(content.contains("attachment_1 (csv): chart.csv"));
-        assert_eq!(outputs.get("actual_type").unwrap().as_str().unwrap(), "Object");
+        assert_eq!(
+            outputs.get("actual_type").unwrap().as_str().unwrap(),
+            "Object"
+        );
     }
 
     // ── executor_manager 远程客户端契约测试（mock，不发真实网络） ──────────
@@ -642,7 +673,10 @@ mod tests {
         assert!(result.detail.is_none());
         assert!(result.time_used_ms.is_none());
         assert_eq!(
-            result.metadata.get("result_present").and_then(Value::as_bool),
+            result
+                .metadata
+                .get("result_present")
+                .and_then(Value::as_bool),
             Some(false)
         );
         assert_eq!(result.metadata.get("result_value"), Some(&Value::Null));
@@ -650,7 +684,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_sends_code_b64_language_and_arguments() {
-        use axum::{routing::post, Json, Router};
+        use axum::{Json, Router, routing::post};
         let app = Router::new().route("/run", post(|body: Json<Value>| async move {
             // 请求契约：code_b64 + language + arguments（对齐 CodeExecutionRequest）
             assert!(body["code_b64"].as_str().unwrap().starts_with("ZGVmIG1haW4"));
@@ -685,9 +719,11 @@ mod tests {
 
     #[tokio::test]
     async fn run_surfaces_http_errors() {
-        use axum::{routing::post, Router};
-        let app =
-            Router::new().route("/run", post(|| async { axum::http::StatusCode::BAD_REQUEST }));
+        use axum::{Router, routing::post};
+        let app = Router::new().route(
+            "/run",
+            post(|| async { axum::http::StatusCode::BAD_REQUEST }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -708,7 +744,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_check_hits_healthz() {
-        use axum::{routing::get, Router};
+        use axum::{Router, routing::get};
         let app = Router::new().route("/healthz", get(|| async { "{\"status\":\"ok\"}" }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

@@ -9,10 +9,10 @@
 //! flattens the results. `gen_json` is the JSON-output helper (strips
 //! markdown fences, parses `{"items": [...]}`).
 
-use crate::llm::{ChatMessage, LlmClient};
 use crate::Result;
+use crate::llm::{ChatMessage, LlmClient};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Render `_struct_render_fields`: (bulleted field descriptions, JSON
 /// skeleton for one item).
@@ -168,7 +168,10 @@ pub fn hypergraph_prompts(config: &Value) -> (String, String) {
         .get("rules_for_time")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let global_rules = config.get("global_rules").and_then(Value::as_str).unwrap_or("");
+    let global_rules = config
+        .get("global_rules")
+        .and_then(Value::as_str)
+        .unwrap_or("");
 
     let entities_cfg = entity_config(config);
     let relations_cfg = relation_config(config);
@@ -262,11 +265,7 @@ pub fn hypergraph_prompts(config: &Value) -> (String, String) {
 
 /// `gen_json` helper: run the chat model and parse a single JSON object from
 /// the reply (markdown fences stripped, first `{...}` block taken).
-pub async fn gen_json(
-    client: &LlmClient,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<Value> {
+pub async fn gen_json(client: &LlmClient, system_prompt: &str, user_prompt: &str) -> Result<Value> {
     gen_json_with_temperature(client, system_prompt, user_prompt, None).await
 }
 
@@ -296,7 +295,10 @@ pub async fn gen_json_with_temperature(
         None => client.chat(&messages).await?,
     };
     parse_json_reply(&reply).ok_or_else(|| {
-        anyhow::anyhow!("LLM JSON reply could not be parsed: {}", truncate(&reply, 160))
+        anyhow::anyhow!(
+            "LLM JSON reply could not be parsed: {}",
+            truncate(&reply, 160)
+        )
     })
 }
 
@@ -393,7 +395,11 @@ pub async fn compile_hypergraph(
     for (chunk_id, text) in chunks {
         let (es, rs) = extract_hypergraph(client, text, config).await?;
         for e in es {
-            let name = e.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = e
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let name = name.trim().to_string();
             if !name.is_empty() && !seen_names.iter().any(|n| n == &name) {
                 seen_names.push(name.clone());
@@ -482,10 +488,15 @@ mod tests {
         let (node_prompt, edge_prompt) = hypergraph_prompts(&sample_config());
         assert!(node_prompt.contains("# Role and Task:"));
         assert!(node_prompt.contains("## Entity Fields:"));
-        assert!(node_prompt.contains("{\"items\": [{ \"type\": \"<one of: person|organization>\","));
+        assert!(
+            node_prompt.contains("{\"items\": [{ \"type\": \"<one of: person|organization>\",")
+        );
         assert!(node_prompt.contains("Auto-type: \"hypergraph\""));
         assert!(edge_prompt.contains("{known_nodes}"));
-        assert!(edge_prompt.contains("Only create relations between entities listed in 'Known Entities'"));
+        assert!(
+            edge_prompt
+                .contains("Only create relations between entities listed in 'Known Entities'")
+        );
     }
 
     #[test]
@@ -561,15 +572,18 @@ mod tests {
                 "fields": [{"type": "operates"}, {"type": "supplies"}]
             }
         });
-        let (entities, relations) =
-            extract_hypergraph(&client, text, &config).await.expect("extraction");
+        let (entities, relations) = extract_hypergraph(&client, text, &config)
+            .await
+            .expect("extraction");
         assert!(!entities.is_empty(), "entities extracted: {entities:?}");
         let names: Vec<String> = entities
             .iter()
             .filter_map(|e| e.get("name").and_then(Value::as_str).map(String::from))
             .collect();
         assert!(
-            names.iter().any(|n| n.contains("百鲤居") || n.contains("李锦澎")),
+            names
+                .iter()
+                .any(|n| n.contains("百鲤居") || n.contains("李锦澎")),
             "expected farm or owner entity, got {names:?}"
         );
         // Relations reference known entities only.

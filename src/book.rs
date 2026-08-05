@@ -8,7 +8,7 @@
 //! tika extractors stay in the parser modules.
 
 use crate::laws::remove_contents_table;
-use crate::paper::{anchored, bullets_category, not_title, BULLET_PATTERN};
+use crate::paper::{BULLET_PATTERN, anchored, bullets_category, not_title};
 use regex::Regex;
 
 /// random.choices with replacement — mirrors nlp:204-206. Deterministic:
@@ -45,7 +45,10 @@ pub fn is_chinese(text: &str) -> bool {
     if text.is_empty() {
         return false;
     }
-    let chinese = text.chars().filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c)).count();
+    let chinese = text
+        .chars()
+        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+        .count();
     chinese as f64 / text.chars().count() as f64 > 0.2
 }
 
@@ -257,7 +260,8 @@ pub fn naive_merge(
             pos.clear();
         }
         let threshold = (chunk_token_num as f64 * limit_ratio) as usize;
-        if cks.last().map(|s| s.is_empty()).unwrap_or(true) || tk_nums[tk_nums.len() - 1] > threshold
+        if cks.last().map(|s| s.is_empty()).unwrap_or(true)
+            || tk_nums[tk_nums.len() - 1] > threshold
         {
             if let Some(last) = cks.last() {
                 let overlapped = remove_tag(last);
@@ -286,7 +290,11 @@ pub fn naive_merge(
 /// Book chunk() text-family core — mirrors book.py:128-134 + 163-170:
 /// lines -> (line, "") pairs, remove contents, classify, hierarchical or
 /// naive merge.
-pub fn parse_book_text(filename: &str, text: &str, chunk_token_num: usize) -> Result<Vec<String>, String> {
+pub fn parse_book_text(
+    filename: &str,
+    text: &str,
+    chunk_token_num: usize,
+) -> Result<Vec<String>, String> {
     let lower = filename.to_lowercase();
     if !lower.ends_with(".txt") {
         return Err(format!(
@@ -357,48 +365,44 @@ mod tests {
         let picked = random_choices(&arr, 5);
         assert_eq!(picked.len(), 3);
         // deterministic in-order coverage
-        let arr3 = vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ];
+        let arr3 = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let picked3 = random_choices(&arr3, 3);
         assert_eq!(picked3, vec!["a", "b", "c"]);
     }
 
-#[test]
-fn is_english_detects_ascii_majority() {
-    let eng = vec![
-        "Hello world".to_string(),
-        "This is fine".to_string(),
-        "中文".to_string(),
-    ];
-    // 2/3 = 0.667, NOT > 0.8 -> false (Python-verified)
-    assert!(!is_english(&eng));
-}
+    #[test]
+    fn is_english_detects_ascii_majority() {
+        let eng = vec![
+            "Hello world".to_string(),
+            "This is fine".to_string(),
+            "中文".to_string(),
+        ];
+        // 2/3 = 0.667, NOT > 0.8 -> false (Python-verified)
+        assert!(!is_english(&eng));
+    }
 
-#[test]
-fn is_english_threshold() {
-    // 4/5 = 0.8 is NOT > 0.8 -> false
-    let eng = vec![
-        "Hello world".to_string(),
-        "This is fine".to_string(),
-        "More text here".to_string(),
-        "Yeah sure".to_string(),
-        "中文".to_string(),
-    ];
-    assert!(!is_english(&eng));
-    // 5/6 = 0.833 > 0.8 -> true
-    let all_eng = vec![
-        "Hello world".to_string(),
-        "This is fine".to_string(),
-        "More text here".to_string(),
-        "Yeah sure".to_string(),
-        "Almost done".to_string(),
-        "中文".to_string(),
-    ];
-    assert!(is_english(&all_eng));
-}
+    #[test]
+    fn is_english_threshold() {
+        // 4/5 = 0.8 is NOT > 0.8 -> false
+        let eng = vec![
+            "Hello world".to_string(),
+            "This is fine".to_string(),
+            "More text here".to_string(),
+            "Yeah sure".to_string(),
+            "中文".to_string(),
+        ];
+        assert!(!is_english(&eng));
+        // 5/6 = 0.833 > 0.8 -> true
+        let all_eng = vec![
+            "Hello world".to_string(),
+            "This is fine".to_string(),
+            "More text here".to_string(),
+            "Yeah sure".to_string(),
+            "Almost done".to_string(),
+            "中文".to_string(),
+        ];
+        assert!(is_english(&all_eng));
+    }
 
     #[test]
     fn is_chinese_detects_cjk_ratio() {
@@ -484,7 +488,10 @@ fn is_english_threshold() {
         let text = "目录\n第一章 概述\n这是正文内容。\n第二章 方法\n这也是正文内容。\n";
         let chunks = parse_book_text("book.txt", text, 128).unwrap();
         assert!(!chunks.is_empty(), "{chunks:?}");
-        assert!(chunks.iter().any(|c| c.contains("第二章 方法")), "{chunks:?}");
+        assert!(
+            chunks.iter().any(|c| c.contains("第二章 方法")),
+            "{chunks:?}"
+        );
         assert!(parse_book_text("book.pdf", text, 128).is_err());
     }
 }

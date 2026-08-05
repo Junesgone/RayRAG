@@ -840,7 +840,9 @@ pub async fn execute_group_templates(
                 match crate::hypergraph::compile_hypergraph(llm, &text_chunks, config).await {
                     Ok(ok) => ok,
                     Err(error) => {
-                        tracing::warn!("hypergraph-template {template_id}: extraction failed: {error}");
+                        tracing::warn!(
+                            "hypergraph-template {template_id}: extraction failed: {error}"
+                        );
                         continue;
                     }
                 };

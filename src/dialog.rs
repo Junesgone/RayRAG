@@ -22,11 +22,11 @@ static PATTERN_BRACKET: LazyLock<Regex> =
 static PATTERN_CJK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"【\s*ID\s*[: ]\s*(\d+)\s*】").unwrap());
 /// `ref12` / `REF 12` — ref-prefixed citation.
-static PATTERN_REF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)ref\s*(\d+)").unwrap());
+static PATTERN_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)ref\s*(\d+)").unwrap());
 /// Canonical `[ID:12]` marker, also used to extract cited indexes.
-pub static CITATION_MARKER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[(?:ID:)?([0-9\u{0660}-\u{0669}\u{06F0}-\u{06F9}]+)\]").unwrap());
+pub static CITATION_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[(?:ID:)?([0-9\u{0660}-\u{0669}\u{06F0}-\u{06F9}]+)\]").unwrap()
+});
 
 /// `normalize_arabic_digits`: map Arabic-Indic digits (U+0660..U+0669,
 /// U+06F0..U+06F9) to ASCII digits so citation indexes parse consistently.
@@ -57,25 +57,24 @@ pub fn repair_bad_citation_formats(answer: &str, max_index: usize) -> (String, H
     let mut valid: HashSet<usize> = HashSet::new();
     let mut out = String::with_capacity(answer.len());
 
-    let mut rewrite =
-        |out: &mut String, input: &str, pattern: &Regex| {
-            let mut last = 0;
-            for capture in pattern.captures_iter(input) {
-                let whole = capture.get(0).unwrap();
-                out.push_str(&input[last..whole.start()]);
-                let digits = capture.get(1).unwrap();
-                let parsed: Result<usize, _> = digits.as_str().parse();
-                match parsed {
-                    Ok(index) if index < max_index => {
-                        valid.insert(index);
-                        out.push_str(&format!("[ID:{}]", &input[digits.start()..digits.end()]));
-                    }
-                    _ => out.push_str(&input[whole.start()..whole.end()]),
+    let mut rewrite = |out: &mut String, input: &str, pattern: &Regex| {
+        let mut last = 0;
+        for capture in pattern.captures_iter(input) {
+            let whole = capture.get(0).unwrap();
+            out.push_str(&input[last..whole.start()]);
+            let digits = capture.get(1).unwrap();
+            let parsed: Result<usize, _> = digits.as_str().parse();
+            match parsed {
+                Ok(index) if index < max_index => {
+                    valid.insert(index);
+                    out.push_str(&format!("[ID:{}]", &input[digits.start()..digits.end()]));
                 }
-                last = whole.end();
+                _ => out.push_str(&input[whole.start()..whole.end()]),
             }
-            out.push_str(&input[last..]);
-        };
+            last = whole.end();
+        }
+        out.push_str(&input[last..]);
+    };
 
     // Pass each bad pattern over the evolving output, exactly like RAGFlow.
     rewrite(&mut out, &normalized, &PATTERN_PAREN);
@@ -94,7 +93,11 @@ pub fn repair_bad_citation_formats(answer: &str, max_index: usize) -> (String, H
 pub fn extract_cited_indexes(answer: &str) -> HashSet<usize> {
     CITATION_MARKER
         .captures_iter(&normalize_arabic_digits(answer))
-        .filter_map(|capture| capture.get(1).and_then(|digits| digits.as_str().parse().ok()))
+        .filter_map(|capture| {
+            capture
+                .get(1)
+                .and_then(|digits| digits.as_str().parse().ok())
+        })
         .collect()
 }
 
@@ -170,10 +173,8 @@ mod tests {
 
     #[test]
     fn bad_citation_formats_are_canonicalized() {
-        let (out, idx) = repair_bad_citation_formats(
-            "答案见 (ID: 12)、[ID: 3]、【ID: 7】与 ref9。",
-            20,
-        );
+        let (out, idx) =
+            repair_bad_citation_formats("答案见 (ID: 12)、[ID: 3]、【ID: 7】与 ref9。", 20);
         assert_eq!(out, "答案见 [ID:12]、[ID:3]、[ID:7]与 [ID:9]。");
         assert_eq!(idx, HashSet::from([12, 3, 7, 9]));
     }
@@ -216,10 +217,7 @@ mod tests {
 
     #[test]
     fn normalize_sql_preserves_inner_semicolons_and_plain_sql() {
-        assert_eq!(
-            normalize_sql("SELECT a; b FROM t;"),
-            "SELECT a; b FROM t"
-        );
+        assert_eq!(normalize_sql("SELECT a; b FROM t;"), "SELECT a; b FROM t");
         assert_eq!(normalize_sql("SELECT 1"), "SELECT 1");
     }
 

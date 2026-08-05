@@ -7,12 +7,10 @@
 //! caller feeds chunks and receives an in-memory `EntityGraph`; persistence
 //! hooks into zvec/postgres via the existing backends.
 
-use crate::graphrag::{
-    GraphExtractionResult, GraphExtractor, KgExtractedEdge, KgExtractedNode,
-};
+use crate::Result;
+use crate::graphrag::{GraphExtractionResult, GraphExtractor, KgExtractedEdge, KgExtractedNode};
 use crate::graphrag_enhanced::{EntityGraph, EntityType};
 use crate::llm::LlmClient;
-use crate::Result;
 use std::collections::{HashMap, HashSet};
 
 /// GRAPH_FIELD_SEP — utils.py separator used when concatenating
@@ -115,14 +113,20 @@ pub fn graph_merge(g1: &mut EntityGraph, g2: &EntityGraph) -> GraphChange {
 
 /// pagerank — mirrors networkx.pagerank (dangling-node fixed point, power
 /// iteration) over the in-memory graph. Returns name → score.
-pub fn pagerank(graph: &EntityGraph, alpha: f64, max_iter: usize, tol: f64) -> HashMap<String, f64> {
+pub fn pagerank(
+    graph: &EntityGraph,
+    alpha: f64,
+    max_iter: usize,
+    tol: f64,
+) -> HashMap<String, f64> {
     let names = graph.node_names();
     let n = names.len();
     if n == 0 {
         return HashMap::new();
     }
     let dangling_weight = alpha / n as f64;
-    let mut ranks: HashMap<String, f64> = names.iter().map(|k| (k.clone(), 1.0 / n as f64)).collect();
+    let mut ranks: HashMap<String, f64> =
+        names.iter().map(|k| (k.clone(), 1.0 / n as f64)).collect();
     let mut out: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let mut dangling = Vec::new();
     for name in &names {
@@ -157,10 +161,7 @@ pub fn pagerank(graph: &EntityGraph, alpha: f64, max_iter: usize, tol: f64) -> H
         }
         // normalize (networkx keeps L1 norm ~1)
         let sum: f64 = next.values().sum();
-        let diff: f64 = ranks
-            .iter()
-            .map(|(k, v)| (next[k] / sum - v).abs())
-            .sum();
+        let diff: f64 = ranks.iter().map(|(k, v)| (next[k] / sum - v).abs()).sum();
         ranks = next.into_iter().map(|(k, v)| (k, v / sum)).collect();
         if diff < tol {
             break;
@@ -360,9 +361,16 @@ mod tests {
 
         let change = graph_merge(&mut g1, &g2);
         assert!(change.added_updated_nodes.contains("A"));
-        assert!(change.added_updated_edges.contains(&("A".to_string(), "B".to_string())));
+        assert!(
+            change
+                .added_updated_edges
+                .contains(&("A".to_string(), "B".to_string()))
+        );
         let desc = g1.description_of("A").unwrap();
-        assert!(desc.contains("<SEP>"), "descriptions concatenated with <SEP>");
+        assert!(
+            desc.contains("<SEP>"),
+            "descriptions concatenated with <SEP>"
+        );
         assert_eq!(g1.edge_weight("A", "B").unwrap(), 4.0, "weights accumulate");
         assert!(g1.edge_weight("A", "C").is_some(), "new edge added");
         assert!(g1.source_id_of("A").contains(&"d1".to_string()));

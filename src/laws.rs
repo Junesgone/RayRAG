@@ -6,7 +6,7 @@
 //! splitting and tree merging. Docx/Pdf/Html/tika extractors stay in the
 //! parser modules.
 
-use crate::paper::{anchored, bullets_category, not_bullet, not_title, BULLET_PATTERN};
+use crate::paper::{BULLET_PATTERN, anchored, bullets_category, not_bullet, not_title};
 
 /// Strip whitespace (spaces, full-width spaces, ideographic space) —
 /// mirrors the re.sub in remove_contents_table (nlp:856).
@@ -249,11 +249,7 @@ pub fn tree_merge(
 
 /// Laws chunk() text-family core — mirrors laws.py:172-177 + 207-217:
 /// split lines, drop empties, remove contents, classify and tree-merge.
-pub fn parse_laws_text(
-    filename: &str,
-    text: &str,
-    depth: usize,
-) -> Result<Vec<String>, String> {
+pub fn parse_laws_text(filename: &str, text: &str, depth: usize) -> Result<Vec<String>, String> {
     let lower = filename.to_lowercase();
     let supported = lower.ends_with(".txt")
         || lower.ends_with(".md")
@@ -271,8 +267,14 @@ pub fn parse_laws_text(
         .collect();
     remove_contents_table(&mut sections, false);
     let bull = bullets_category(&sections);
-    let pairs: Vec<(String, String)> = sections.iter().map(|s| (s.clone(), String::new())).collect();
-    let family_len = BULLET_PATTERN.get(bull.max(0) as usize).map(|f| f.len()).unwrap_or(0);
+    let pairs: Vec<(String, String)> = sections
+        .iter()
+        .map(|s| (s.clone(), String::new()))
+        .collect();
+    let family_len = BULLET_PATTERN
+        .get(bull.max(0) as usize)
+        .map(|f| f.len())
+        .unwrap_or(0);
     let bull_i = bull as i64;
     let res = if bull >= 0 {
         tree_merge(bull_i, &pairs, depth, family_len)
@@ -309,7 +311,11 @@ mod tests {
             "1. Overview".to_string(),
         ];
         remove_contents_table(&mut sections, true);
-        assert_eq!(sections.len(), 3, "Python leaves it untouched: {sections:?}");
+        assert_eq!(
+            sections.len(),
+            3,
+            "Python leaves it untouched: {sections:?}"
+        );
     }
 
     #[test]
@@ -324,10 +330,7 @@ mod tests {
         // Python pops the header line AND the prefix-source line
         // ("第一章", first 3 chars "第一"), then looks for another line
         // starting with "第一" — "第二章" does not match.
-        assert_eq!(
-            sections,
-            vec!["第二章".to_string(), "正文开始".to_string()]
-        );
+        assert_eq!(sections, vec!["第二章".to_string(), "正文开始".to_string()]);
     }
 
     #[test]
@@ -338,7 +341,11 @@ mod tests {
         )];
         let before = sections.len();
         make_colon_as_title(&mut sections);
-        assert_eq!(sections.len(), before, "Python arr[1] is the separator, always < 32 chars");
+        assert_eq!(
+            sections.len(),
+            before,
+            "Python arr[1] is the separator, always < 32 chars"
+        );
     }
 
     #[test]
@@ -365,7 +372,10 @@ mod tests {
     fn tree_merge_chinese_family() {
         let sections = vec![
             ("第一章 总则".to_string(), "title".to_string()),
-            ("第一条 本规定适用于全部范围。".to_string(), "title".to_string()),
+            (
+                "第一条 本规定适用于全部范围。".to_string(),
+                "title".to_string(),
+            ),
             ("第二章 水质".to_string(), "title".to_string()),
         ];
         let bull = bullets_category(&[
@@ -389,7 +399,10 @@ mod tests {
         // "第一章 总则" is the prefix-source line and gets removed by
         // remove_contents_table (Python-verified); remaining sections
         // tree-merge into chunks that include the 第二章 title.
-        assert!(chunks.iter().any(|c| c.contains("第二章 水质")), "{chunks:?}");
+        assert!(
+            chunks.iter().any(|c| c.contains("第二章 水质")),
+            "{chunks:?}"
+        );
         assert!(parse_laws_text("laws.pdf", text, 2).is_err());
     }
 }

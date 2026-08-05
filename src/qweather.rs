@@ -58,7 +58,8 @@ pub struct QWeatherResult {
 
 #[async_trait]
 pub trait QWeatherProvider: Send + Sync {
-    async fn search(&self, api_key: &str, request: &QWeatherRequest) -> Result<Vec<QWeatherResult>>;
+    async fn search(&self, api_key: &str, request: &QWeatherRequest)
+    -> Result<Vec<QWeatherResult>>;
 }
 
 #[derive(Debug, Clone)]
@@ -71,17 +72,17 @@ pub struct QWeatherClient {
 
 impl Default for QWeatherClient {
     fn default() -> Self {
-        Self::new_with_endpoints(QWEATHER_GEO_ENDPOINT, QWEATHER_DEV_ENDPOINT, QWEATHER_PAID_ENDPOINT)
-            .expect("fixed QWeather endpoints are valid")
+        Self::new_with_endpoints(
+            QWEATHER_GEO_ENDPOINT,
+            QWEATHER_DEV_ENDPOINT,
+            QWEATHER_PAID_ENDPOINT,
+        )
+        .expect("fixed QWeather endpoints are valid")
     }
 }
 
 impl QWeatherClient {
-    pub(crate) fn new_with_endpoints(
-        geo: &str,
-        dev: &str,
-        paid: &str,
-    ) -> Result<Self> {
+    pub(crate) fn new_with_endpoints(geo: &str, dev: &str, paid: &str) -> Result<Self> {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(RedirectPolicy::none())
@@ -97,11 +98,7 @@ impl QWeatherClient {
     }
 
     /// Resolve a location keyword to a QWeather location id via the geo API.
-    async fn resolve_location_id(
-        &self,
-        api_key: &str,
-        location: &str,
-    ) -> Result<String> {
+    async fn resolve_location_id(&self, api_key: &str, location: &str) -> Result<String> {
         let url = format!(
             "{}?location={}&key={}",
             self.geo_endpoint,
@@ -120,11 +117,13 @@ impl QWeatherClient {
             .await
             .context("could not read QWeather geo response body")?;
         if body.len() > MAX_QWEATHER_RESPONSE_BODY {
-            bail!("QWeather geo response body exceeds {} bytes", MAX_QWEATHER_RESPONSE_BODY);
+            bail!(
+                "QWeather geo response body exceeds {} bytes",
+                MAX_QWEATHER_RESPONSE_BODY
+            );
         }
-        let envelope: Value = serde_json::from_slice(&body).with_context(|| {
-            format!("QWeather geo response (HTTP {status}) was not valid JSON")
-        })?;
+        let envelope: Value = serde_json::from_slice(&body)
+            .with_context(|| format!("QWeather geo response (HTTP {status}) was not valid JSON"))?;
         let code = envelope
             .get("code")
             .and_then(Value::as_str)
@@ -153,11 +152,13 @@ impl QWeatherClient {
             .await
             .context("could not read QWeather response body")?;
         if body.len() > MAX_QWEATHER_RESPONSE_BODY {
-            bail!("QWeather response body exceeds {} bytes", MAX_QWEATHER_RESPONSE_BODY);
+            bail!(
+                "QWeather response body exceeds {} bytes",
+                MAX_QWEATHER_RESPONSE_BODY
+            );
         }
-        let envelope: Value = serde_json::from_slice(&body).with_context(|| {
-            format!("QWeather response (HTTP {status}) was not valid JSON")
-        })?;
+        let envelope: Value = serde_json::from_slice(&body)
+            .with_context(|| format!("QWeather response (HTTP {status}) was not valid JSON"))?;
         Ok((status.as_u16().to_string(), envelope))
     }
 }
@@ -178,20 +179,30 @@ fn urlencoding(input: &str) -> String {
 
 #[async_trait]
 impl QWeatherProvider for QWeatherClient {
-    async fn search(&self, api_key: &str, request: &QWeatherRequest) -> Result<Vec<QWeatherResult>> {
+    async fn search(
+        &self,
+        api_key: &str,
+        request: &QWeatherRequest,
+    ) -> Result<Vec<QWeatherResult>> {
         if api_key.trim().is_empty() {
             bail!("qweather: API key is required");
         }
         if request.location.trim().is_empty() {
             bail!("qweather: location is required");
         }
-        let location_id = self.resolve_location_id(api_key.trim(), request.location.trim()).await?;
+        let location_id = self
+            .resolve_location_id(api_key.trim(), request.location.trim())
+            .await?;
         let base = if request.paid {
             self.paid_endpoint.to_string()
         } else {
             self.dev_endpoint.to_string()
         };
-        let lang = if request.lang.is_empty() { "zh".to_string() } else { request.lang.clone() };
+        let lang = if request.lang.is_empty() {
+            "zh".to_string()
+        } else {
+            request.lang.clone()
+        };
         let (http_code, envelope) = match request.r#type {
             QWeatherType::Weather => {
                 let period = if request.time_period.is_empty() {
@@ -268,7 +279,10 @@ impl QWeatherProvider for QWeatherClient {
                         .iter()
                         .filter_map(|item| {
                             let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
-                            let category = item.get("category").and_then(Value::as_str).unwrap_or_default();
+                            let category = item
+                                .get("category")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
                             let text = item.get("text").and_then(Value::as_str).unwrap_or_default();
                             if name.is_empty() {
                                 return None;
@@ -345,26 +359,32 @@ mod tests {
     async fn missing_key_or_location_is_rejected() {
         let client = QWeatherClient::default();
         let error = client
-            .search("", &QWeatherRequest {
-                location: "中山".into(),
-                r#type: QWeatherType::Weather,
-                time_period: "now".into(),
-                lang: "zh".into(),
-                paid: false,
-                top_n: 5,
-            })
+            .search(
+                "",
+                &QWeatherRequest {
+                    location: "中山".into(),
+                    r#type: QWeatherType::Weather,
+                    time_period: "now".into(),
+                    lang: "zh".into(),
+                    paid: false,
+                    top_n: 5,
+                },
+            )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("API key"));
         let error = client
-            .search("key", &QWeatherRequest {
-                location: "".into(),
-                r#type: QWeatherType::Weather,
-                time_period: "now".into(),
-                lang: "zh".into(),
-                paid: false,
-                top_n: 5,
-            })
+            .search(
+                "key",
+                &QWeatherRequest {
+                    location: "".into(),
+                    r#type: QWeatherType::Weather,
+                    time_period: "now".into(),
+                    lang: "zh".into(),
+                    paid: false,
+                    top_n: 5,
+                },
+            )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("location"));
@@ -375,14 +395,17 @@ mod tests {
     async fn live_qweather_weather_now() {
         let key = std::env::var("QWEATHER_API_KEY").expect("QWEATHER_API_KEY must be set");
         let results = QWeatherClient::default()
-            .search(&key, &QWeatherRequest {
-                location: "中山".into(),
-                r#type: QWeatherType::Weather,
-                time_period: "now".into(),
-                lang: "zh".into(),
-                paid: false,
-                top_n: 5,
-            })
+            .search(
+                &key,
+                &QWeatherRequest {
+                    location: "中山".into(),
+                    r#type: QWeatherType::Weather,
+                    time_period: "now".into(),
+                    lang: "zh".into(),
+                    paid: false,
+                    top_n: 5,
+                },
+            )
             .await
             .unwrap();
         assert!(!results.is_empty());

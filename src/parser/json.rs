@@ -138,11 +138,7 @@ impl RAGFlowJsonParser {
             .iter()
             .map(|c| {
                 let s = serde_json::to_string(c).unwrap_or_default();
-                if ensure_ascii {
-                    escape_ascii(&s)
-                } else {
-                    s
-                }
+                if ensure_ascii { escape_ascii(&s) } else { s }
             })
             .collect()
     }

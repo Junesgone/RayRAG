@@ -21,7 +21,7 @@
 //! text (layout markers only); without any OCR it reports the file bytes.
 
 use crate::ocr::{OcrClient, PaddleLayoutBlock, PaddleOcrConfig};
-use crate::parser::{new_document, Parse};
+use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -97,12 +97,23 @@ impl PaddleOcrLayoutParser {
     ) -> Result<Document> {
         let client = OcrClient::paddleocr(config.clone())?;
         let blocks = client.paddleocr_layout_file(name, data).await?;
-        Ok(assemble_document(name, data, &blocks, method, LayoutKind::PaddleOcr))
+        Ok(assemble_document(
+            name,
+            data,
+            &blocks,
+            method,
+            LayoutKind::PaddleOcr,
+        ))
     }
 
     /// Full asynchronous layout flow against the configured client.
     /// Falls back to plain OCR text when the backend is the legacy proxy.
-    pub async fn parse_async(&self, name: &str, data: &[u8], method: ParseMethod) -> Result<Document> {
+    pub async fn parse_async(
+        &self,
+        name: &str,
+        data: &[u8],
+        method: ParseMethod,
+    ) -> Result<Document> {
         let client = self.ocr.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "[PaddleOCR] no OCR client configured; set RAYRAG_OCR_PROVIDER=paddleocr"
@@ -113,7 +124,9 @@ impl PaddleOcrLayoutParser {
             // layout-marker wrapper over plain OCR text.
             let text = client.ocr_file(name, data).await?;
             let content = if text.trim().is_empty() {
-                format!("<!--IMAGE_START-->\n[No text detected in image: {name}]\n<!--IMAGE_END-->\n")
+                format!(
+                    "<!--IMAGE_START-->\n[No text detected in image: {name}]\n<!--IMAGE_END-->\n"
+                )
             } else {
                 format!(
                     "<!--IMAGE_START-->\n[DOCUMENT_LAYOUT: {}]\n{}\n<!--IMAGE_END-->\n",
@@ -121,10 +134,21 @@ impl PaddleOcrLayoutParser {
                     text.trim(),
                 )
             };
-            return Ok(new_document(name, content, mime_from_name(name), data.len()));
+            return Ok(new_document(
+                name,
+                content,
+                mime_from_name(name),
+                data.len(),
+            ));
         }
         let blocks = client.paddleocr_layout_file(name, data).await?;
-        Ok(assemble_document(name, data, &blocks, method, LayoutKind::PaddleOcr))
+        Ok(assemble_document(
+            name,
+            data,
+            &blocks,
+            method,
+            LayoutKind::PaddleOcr,
+        ))
     }
 }
 
@@ -256,7 +280,8 @@ pub fn position_tag(block: &PaddleLayoutBlock) -> String {
 /// a `1-3` page range expands to `[0, 1, 2]`.
 pub fn extract_positions(text: &str) -> Vec<(Vec<u32>, f64, f64, f64, f64)> {
     static TAG: OnceLock<Regex> = OnceLock::new();
-    let tag = TAG.get_or_init(|| Regex::new(r"@@[0-9-]+\t[0-9.\t]+##").expect("position tag regex"));
+    let tag =
+        TAG.get_or_init(|| Regex::new(r"@@[0-9-]+\t[0-9.\t]+##").expect("position tag regex"));
     let mut poss = Vec::new();
     for found in tag.find_iter(text) {
         let raw = found.as_str().trim_matches(['#', '@']);
@@ -375,10 +400,16 @@ mod tests {
         let poss = extract_positions(text);
         assert_eq!(poss.len(), 2);
         assert_eq!(poss[0].0, vec![1]); // page 2 → 0-based 1
-        assert_eq!((poss[0].1, poss[0].2, poss[0].3, poss[0].4), (50.0, 150.0, 100.0, 200.0));
+        assert_eq!(
+            (poss[0].1, poss[0].2, poss[0].3, poss[0].4),
+            (50.0, 150.0, 100.0, 200.0)
+        );
         // upstream splits "1-3" on '-' without range expansion → [0, 2]
         assert_eq!(poss[1].0, vec![0, 2]);
-        assert_eq!((poss[1].1, poss[1].2, poss[1].3, poss[1].4), (5.0, 9.0, 7.0, 8.0));
+        assert_eq!(
+            (poss[1].1, poss[1].2, poss[1].3, poss[1].4),
+            (5.0, 9.0, 7.0, 8.0)
+        );
     }
 
     #[test]
@@ -397,7 +428,13 @@ mod tests {
     #[test]
     fn assemble_document_raw_serializes_content_and_tag_lines() {
         let blocks = vec![block(1, "text", "hello", [0.0, 0.0, 40.0, 20.0])];
-        let doc = assemble_document("scan.png", b"img", &blocks, ParseMethod::Raw, LayoutKind::PaddleOcr);
+        let doc = assemble_document(
+            "scan.png",
+            b"img",
+            &blocks,
+            ParseMethod::Raw,
+            LayoutKind::PaddleOcr,
+        );
         let content = doc.content;
         assert!(content.contains("<!--IMAGE_START-->"));
         assert!(content.contains("[DOCUMENT_LAYOUT: paddleocr]"));

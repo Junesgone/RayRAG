@@ -1,3 +1,11 @@
+## 2026-08-05 v0.1.6：translate 工具 + KeyTerm 提取器
+
+- translate（deepl 契约）：百度翻译 VIP 签名 + sug 免 key 降级；descriptor 注册 runtime
+- extractor.rs 402 行：词频/位置/POS 代理权重 + CJK n-gram 关键词提取，pipeline 可选调用
+- title.rs：标题连续性/章节序号语义补齐
+- 测试基线：**945 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 507 → **502**
+
 ## 2026-08-05 v0.1.5 容器验证
 
 - 部署成功：容器 healthy、healthz 200

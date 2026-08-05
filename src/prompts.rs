@@ -279,7 +279,9 @@ impl PromptLibrary {
             "lightrag_default_language" => Some(Self::lightrag_default_language()),
             "lightrag_default_tuple_delimiter" => Some(Self::lightrag_default_tuple_delimiter()),
             "lightrag_default_record_delimiter" => Some(Self::lightrag_default_record_delimiter()),
-            "lightrag_default_completion_delimiter" => Some(Self::lightrag_default_completion_delimiter()),
+            "lightrag_default_completion_delimiter" => {
+                Some(Self::lightrag_default_completion_delimiter())
+            }
             "lightrag_default_entity_types" => Some(Self::lightrag_default_entity_types()),
             "lightrag_default_user_prompt" => Some(Self::lightrag_default_user_prompt()),
             _ => None,
@@ -444,8 +446,7 @@ pub const GRAPH_EXTRACTION_CONTINUE_PROMPT: &str =
     "MANY entities were missed in the last extraction.  Add them below using the same format:\n";
 
 /// GraphRAG loop check: answer Y if entities still need to be added, else N.
-pub const GRAPH_EXTRACTION_LOOP_PROMPT: &str =
-    "It appears some entities may have still been missed. Answer Y if there are still entities that need to be added, or N if there are none. Please answer with a single letter Y or N.\n";
+pub const GRAPH_EXTRACTION_LOOP_PROMPT: &str = "It appears some entities may have still been missed. Answer Y if there are still entities that need to be added, or N if there are none. Please answer with a single letter Y or N.\n";
 
 /// Summarize multiple descriptions of the same entity into one comprehensive description.
 pub const GRAPH_SUMMARIZE_DESCRIPTIONS_PROMPT: &str = r#"
@@ -1356,14 +1357,20 @@ mod tests {
             "question_proposal",
             "keyword_extraction",
         ] {
-            assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
         }
     }
 
     #[test]
     fn test_lightrag_defaults_registered() {
         // Constants mirror rag/graphrag/light/graph_prompt.py PROMPTS defaults.
-        assert_eq!(PromptLibrary::lightrag_default_language().content(), "English");
+        assert_eq!(
+            PromptLibrary::lightrag_default_language().content(),
+            "English"
+        );
         assert_eq!(
             PromptLibrary::lightrag_default_tuple_delimiter().content(),
             "<|>"
@@ -1376,12 +1383,18 @@ mod tests {
             PromptLibrary::lightrag_default_completion_delimiter().content(),
             "<|COMPLETE|>"
         );
-        assert_eq!(PromptLibrary::lightrag_default_user_prompt().content(), "n/a");
+        assert_eq!(
+            PromptLibrary::lightrag_default_user_prompt().content(),
+            "n/a"
+        );
         assert_eq!(
             PromptLibrary::lightrag_fail_response().content(),
             "Sorry, I'm not able to provide an answer to that question.[no-context]"
         );
-        assert_eq!(LIGHTRAG_DEFAULT_ENTITY_TYPES, ["organization", "person", "geo", "event", "category"]);
+        assert_eq!(
+            LIGHTRAG_DEFAULT_ENTITY_TYPES,
+            ["organization", "person", "geo", "event", "category"]
+        );
         let types_tmpl = PromptLibrary::lightrag_default_entity_types();
         let types = types_tmpl.content();
         assert!(types.contains("organization") && types.contains("category"));
@@ -1398,7 +1411,10 @@ mod tests {
             "lightrag_default_entity_types",
             "lightrag_default_user_prompt",
         ] {
-            assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
             assert!(listed.contains(&name), "not listed: {name}");
         }
     }

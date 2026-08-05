@@ -635,13 +635,23 @@ pub fn ragflow_rerank(
                 .chunk
                 .metadata
                 .get("title_tks")
-                .map(|s| s.split_whitespace().map(String::from).filter(|t| !t.is_empty()).collect())
+                .map(|s| {
+                    s.split_whitespace()
+                        .map(String::from)
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
             let question_tks: Vec<String> = c
                 .chunk
                 .metadata
                 .get("question_tks")
-                .map(|s| s.split_whitespace().map(String::from).filter(|t| !t.is_empty()).collect())
+                .map(|s| {
+                    s.split_whitespace()
+                        .map(String::from)
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
             let important_kwd: Vec<String> = c
                 .chunk
@@ -716,7 +726,12 @@ pub fn ragflow_rerank_by_model(
                 .chunk
                 .metadata
                 .get("title_tks")
-                .map(|s| s.split_whitespace().map(String::from).filter(|t| !t.is_empty()).collect())
+                .map(|s| {
+                    s.split_whitespace()
+                        .map(String::from)
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
             let important_kwd: Vec<String> = c
                 .chunk
@@ -1233,11 +1248,12 @@ mod tests {
         let mut r = hybrid_result(id, "d1", doc_name);
         r.chunk.metadata.insert(
             "content_ltks".into(),
-            content_ltks.split_whitespace().collect::<Vec<_>>().join(" "),
+            content_ltks
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
         );
-        r.chunk
-            .metadata
-            .insert("pagerank_fea".into(), "0.5".into());
+        r.chunk.metadata.insert("pagerank_fea".into(), "0.5".into());
         r
     }
 
@@ -1268,18 +1284,14 @@ mod tests {
         let hit = chunk_with_tokens("c1", "doc-a", "水产 养殖 水质");
         let miss = chunk_with_tokens("c2", "doc-b", "金融 股票 债券");
         // reranker says miss (0.9) is more relevant than hit (0.2)
-        let (fused, tksim, vtsim) = ragflow_rerank_by_model(
-            &[hit, miss],
-            "水产 养殖",
-            &tw,
-            0.3,
-            0.7,
-            &[0.2, 0.9],
-            None,
-        );
+        let (fused, tksim, vtsim) =
+            ragflow_rerank_by_model(&[hit, miss], "水产 养殖", &tw, 0.3, 0.7, &[0.2, 0.9], None);
         assert!((vtsim[0] - 0.2).abs() < 1e-6 && (vtsim[1] - 0.9).abs() < 1e-6);
         // vtweight 0.7 dominates: miss should now rank first
-        assert!(fused[1] > fused[0], "model score should dominate: {fused:?}");
+        assert!(
+            fused[1] > fused[0],
+            "model score should dominate: {fused:?}"
+        );
         assert!(tksim[0] > tksim[1], "lexical still prefers hit: {tksim:?}");
     }
 
@@ -1290,7 +1302,10 @@ mod tests {
             .metadata
             .insert("tag_fea".into(), "{\"水产\": 2.0}".into());
         let scores = ragflow_rank_feature_scores(
-            Some(&HashMap::from([("水产".into(), 1.0_f32), ("pagerank_fea".into(), 0.0_f32)])),
+            Some(&HashMap::from([
+                ("水产".into(), 1.0_f32),
+                ("pagerank_fea".into(), 0.0_f32),
+            ])),
             &[c],
         );
         // nor=1*2=2, denor=sqrt(4)=2, q_denor=sqrt(1)=1 → 2/2/1=1 → ×10 + pagerank 0.5

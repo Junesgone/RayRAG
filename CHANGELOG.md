@@ -2,6 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.6] — 2026-08-05
+
+### Added
+
+- **translate 工具**（`src/translate.rs` + `src/runtime.rs`）：注册 translate descriptor
+  （对齐 RAGFlow deepl 参数契约），百度翻译 VIP 签名 API + 免 key sug 降级双路径
+  （大陆可用）；3 个 mock-HTTP 测试（SUG 解析/VIP MD5 签名表单校验/错误码透传）。
+- **KeyTerm Extractor**（`src/extractor.rs`，402 行）：RAGFlow KeyTermExtractor 语义的
+  统计实现——词频/位置/POS 代理权重、CJK n-gram（跳过虚词开头、单字过滤）、
+  停用词表；`extract_key_terms` / `extract_key_terms_with_top_n` / chunk 批量接口；
+  pipeline 可选集成。
+- **title_chunker.py 主文件语义**：标题连续性检查/章节序号处理补入 `src/chunk/title.rs`。
+
+### Fixed
+
+- extractor CJK 测试断言（默认 top-N 截断遮蔽 4 字短语 → 显式 wide top_n 验证）。
+
 ## [0.1.5] — 2026-08-05
 
 ### Added

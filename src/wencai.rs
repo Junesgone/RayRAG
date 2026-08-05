@@ -18,8 +18,8 @@
 //! 注：pywencai 依赖 JS 生成的 `hexin-v` 反爬 token，Rust 侧无法计算，
 //! 支持通过环境变量 IWENCAI_HEXIN_V（或节点参数 hexin_v）注入。
 
-use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, bail};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -45,8 +45,7 @@ pub const WENCAI_QUERY_TYPES: &[&str] = &[
 ];
 
 /// add_info（对齐 pywencai 固定请求体字段）。
-const ADD_INFO: &str =
-    "{\"urp\":{\"scene\":1,\"company\":1,\"business\":1},\"contentType\":\"json\",\"searchInfo\":true}";
+const ADD_INFO: &str = "{\"urp\":{\"scene\":1,\"company\":1,\"business\":1},\"contentType\":\"json\",\"searchInfo\":true}";
 /// log_info（对齐 pywencai 固定请求体字段）。
 const LOG_INFO: &str = "{\"input_type\":\"click\"}";
 /// source（对齐 pywencai 固定请求体字段）。
@@ -198,7 +197,8 @@ impl WenCaiClient {
         if footer_url.is_empty() {
             return Ok(None);
         }
-        let landing_url = if footer_url.starts_with("http://") || footer_url.starts_with("https://") {
+        let landing_url = if footer_url.starts_with("http://") || footer_url.starts_with("https://")
+        {
             footer_url.to_string()
         } else {
             // 相对路径 → 拼接 robot 端点所在的 scheme://host
@@ -465,10 +465,7 @@ fn render_rows_table(rows: &[Value]) -> Option<String> {
     for (index, row) in rows.iter().enumerate() {
         let mut cells = Vec::with_capacity(headers.len());
         for header in &headers {
-            let value = row
-                .get(header)
-                .map(format_cell)
-                .unwrap_or_default();
+            let value = row.get(header).map(format_cell).unwrap_or_default();
             cells.push(value);
         }
         out.push_str(&format!("| {index} | {} |\n", cells.join(" | ")));
@@ -480,7 +477,11 @@ fn render_rows_table(rows: &[Value]) -> Option<String> {
 fn render_object_table(map: &serde_json::Map<String, Value>) -> String {
     let mut out = String::from("| key | value |\n| --- | --- |\n");
     for (key, value) in map {
-        out.push_str(&format!("| {} | {} |\n", escape_cell(key), format_cell(value)));
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            escape_cell(key),
+            format_cell(value)
+        ));
     }
     out
 }
@@ -505,11 +506,7 @@ fn escape_cell(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        extract::Form,
-        routing::post,
-        Json, Router,
-    };
+    use axum::{Json, Router, extract::Form, routing::post};
     use std::collections::HashMap;
 
     /// 构造 get-robot-data 响应：content 为 JSON 字符串或对象均可。
@@ -551,7 +548,12 @@ mod tests {
         assert_eq!(payload["secondary_intent"], "stock");
         assert_eq!(payload["source"], "Ths_iwencai_Xuangu");
         assert_eq!(payload["version"], "2.0");
-        assert!(payload["add_info"].as_str().unwrap().contains("contentType"));
+        assert!(
+            payload["add_info"]
+                .as_str()
+                .unwrap()
+                .contains("contentType")
+        );
         assert!(payload["log_info"].as_str().unwrap().contains("input_type"));
     }
 
@@ -575,7 +577,10 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("WenCai query_type must be one of"), "{error}");
+        assert!(
+            error.contains("WenCai query_type must be one of"),
+            "{error}"
+        );
     }
 
     #[tokio::test]

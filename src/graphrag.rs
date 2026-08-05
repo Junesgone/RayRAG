@@ -13,10 +13,10 @@
 //!      validate keys/types, emit both text and structured output, and tag
 //!      nodes with their community titles.
 
+use crate::Result;
 use crate::graphrag_enhanced::{EntityGraph, EntityType};
 use crate::llm::LlmClient;
-use crate::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
 /// COMMUNITY_REPORT_PROMPT — verbatim from
@@ -275,7 +275,8 @@ pub struct Community {
 pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<String, Community>> {
     // Single level (0), like hierarchical_leiden's root level.
     let names = graph.node_names();
-    let mut parent: HashMap<String, String> = names.iter().cloned().map(|n| (n.clone(), n)).collect();
+    let mut parent: HashMap<String, String> =
+        names.iter().cloned().map(|n| (n.clone(), n)).collect();
     fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
         let p = parent.get(x).cloned().unwrap_or_else(|| x.to_string());
         if p != x {
@@ -288,10 +289,7 @@ pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<Str
     }
     for name in &names {
         // connections are undirected (add_relation pushes both ways)
-        let neighbors: Vec<String> = graph
-            .neighbors(name)
-            .into_iter()
-            .collect();
+        let neighbors: Vec<String> = graph.neighbors(name).into_iter().collect();
         for n in neighbors {
             let (ra, rb) = (find(&mut parent, name), find(&mut parent, &n));
             if ra != rb {
@@ -316,7 +314,10 @@ pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<Str
         communities.insert(comm_key(&members), comm);
     }
     // Normalize weights by the max (mirrors leiden.run)
-    let max_weight = communities.values().map(|c| c.weight).fold(0.0_f64, f64::max);
+    let max_weight = communities
+        .values()
+        .map(|c| c.weight)
+        .fold(0.0_f64, f64::max);
     if max_weight > 0.0 {
         for c in communities.values_mut() {
             c.weight /= max_weight;
@@ -472,18 +473,29 @@ fn extract_report_json(response: &str) -> Option<Value> {
 /// `_get_text_output` — mirrors community_reports_extractor.py: Markdown
 /// `# title\n\nsummary\n\n## finding summary\n\nfinding explanation…`.
 fn report_text_output(parsed: &Value, max_length: usize) -> String {
-    let title = parsed.get("title").and_then(Value::as_str).unwrap_or("Report");
+    let title = parsed
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Report");
     let summary = parsed.get("summary").and_then(Value::as_str).unwrap_or("");
     let mut out = format!("# {title}\n\n{summary}");
     if let Some(findings) = parsed.get("findings").and_then(Value::as_array) {
         for finding in findings {
             let fs = match finding {
                 Value::String(s) => s.clone(),
-                _ => finding.get("summary").and_then(Value::as_str).unwrap_or("").to_string(),
+                _ => finding
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             };
             let fe = match finding {
                 Value::String(_) => String::new(),
-                _ => finding.get("explanation").and_then(Value::as_str).unwrap_or("").to_string(),
+                _ => finding
+                    .get("explanation")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             };
             if fs.is_empty() && fe.is_empty() {
                 continue;
@@ -768,13 +780,24 @@ impl KgSearch {
             .as_ref()
             .and_then(|v| v.get("answer_type_keywords"))
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         let ents = parsed
             .as_ref()
             .and_then(|v| v.get("entities_from_query"))
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).take(5).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .take(5)
+                    .collect()
+            })
             .unwrap_or_default();
         (types, ents)
     }
@@ -824,7 +847,10 @@ impl KgSearch {
         let kw_joined = keywords.join(" ").to_lowercase();
         for name in graph.node_names() {
             let name_l = name.to_lowercase();
-            let overlap = keywords.iter().filter(|k| name_l.contains(&k.to_lowercase())).count();
+            let overlap = keywords
+                .iter()
+                .filter(|k| name_l.contains(&k.to_lowercase()))
+                .count();
             if overlap == 0 && !kw_joined.contains(&name_l) {
                 continue;
             }
@@ -901,16 +927,23 @@ impl KgSearch {
         let txt = txt.to_lowercase();
         for name in graph.node_names() {
             for nbr in graph.neighbors(&name) {
-                let key = if name < nbr { (name.clone(), nbr) } else { (nbr, name.clone()) };
-                let hit = txt.contains(&name.to_lowercase()) || txt.contains(&key.0.to_lowercase()) || txt.contains(&key.1.to_lowercase());
+                let key = if name < nbr {
+                    (name.clone(), nbr)
+                } else {
+                    (nbr, name.clone())
+                };
+                let hit = txt.contains(&name.to_lowercase())
+                    || txt.contains(&key.0.to_lowercase())
+                    || txt.contains(&key.1.to_lowercase());
                 if !hit {
                     continue;
                 }
-                let sim = if txt.contains(&key.0.to_lowercase()) && txt.contains(&key.1.to_lowercase()) {
-                    1.0
-                } else {
-                    0.5
-                };
+                let sim =
+                    if txt.contains(&key.0.to_lowercase()) && txt.contains(&key.1.to_lowercase()) {
+                        1.0
+                    } else {
+                        0.5
+                    };
                 if sim < sim_thr {
                     continue;
                 }
@@ -945,7 +978,8 @@ impl KgSearch {
         let mut matched: Vec<(&String, &String)> = community_reports
             .iter()
             .filter(|(key, _)| {
-                key.split('|').any(|e| entities.iter().any(|q| q.eq_ignore_ascii_case(e)))
+                key.split('|')
+                    .any(|e| entities.iter().any(|q| q.eq_ignore_ascii_case(e)))
             })
             .take(topn)
             .collect();
@@ -980,9 +1014,11 @@ impl KgSearch {
             Err(_) => (Vec::new(), vec![question.to_string()]),
         };
 
-        let mut ents_from_query = Self::get_relevant_ents_by_keywords(graph, &ents, sim_threshold, 56);
+        let mut ents_from_query =
+            Self::get_relevant_ents_by_keywords(graph, &ents, sim_threshold, 56);
         let ents_from_types = Self::get_relevant_ents_by_types(graph, &ty_kwds, 10000);
-        let mut rels_from_txt = Self::get_relevant_relations_by_txt(graph, question, sim_threshold, 56);
+        let mut rels_from_txt =
+            Self::get_relevant_relations_by_txt(graph, question, sim_threshold, 56);
 
         // n-hop path aggregation: deep hops contribute less
         let mut nhop_pathes: HashMap<(String, String), (f64, f64)> = HashMap::new();
@@ -1037,7 +1073,10 @@ impl KgSearch {
                 KgRelation {
                     sim: nsim * (s + 1.0),
                     pagerank: pr,
-                    description: graph.edge_description(&f, &t).unwrap_or_default().to_string(),
+                    description: graph
+                        .edge_description(&f, &t)
+                        .unwrap_or_default()
+                        .to_string(),
                 },
             );
         }
@@ -1051,7 +1090,8 @@ impl KgSearch {
         });
         ents_sorted.truncate(ent_topn);
 
-        let mut rels_sorted: Vec<((String, String), KgRelation)> = rels_from_txt.into_iter().collect();
+        let mut rels_sorted: Vec<((String, String), KgRelation)> =
+            rels_from_txt.into_iter().collect();
         rels_sorted.sort_by(|a, b| {
             (b.1.sim * b.1.pagerank)
                 .partial_cmp(&(a.1.sim * a.1.pagerank))
@@ -1065,7 +1105,12 @@ impl KgSearch {
             ents_csv.push_str("Entity,Score,Description\n");
             for (name, ent) in &ents_sorted {
                 let desc = ent.description.replace(',', " ").replace('\n', " ");
-                ents_csv.push_str(&format!("{},{:.2},{}\n", name, ent.sim * ent.pagerank, desc));
+                ents_csv.push_str(&format!(
+                    "{},{:.2},{}\n",
+                    name,
+                    ent.sim * ent.pagerank,
+                    desc
+                ));
             }
         }
         let mut rels_csv = String::new();
@@ -1080,7 +1125,10 @@ impl KgSearch {
 
         let comm = Self::community_retrieval(
             community_reports,
-            &ents_sorted.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+            &ents_sorted
+                .iter()
+                .map(|(n, _)| n.clone())
+                .collect::<Vec<_>>(),
             comm_topn,
         );
 
@@ -1203,7 +1251,8 @@ Text: {input_text}
 Output:"#;
 
 /// CONTINUE_PROMPT — append missed entities after the first pass.
-pub const CONTINUE_PROMPT: &str = "MANY entities were missed in the last extraction.  Add them below using the same format:\n";
+pub const CONTINUE_PROMPT: &str =
+    "MANY entities were missed in the last extraction.  Add them below using the same format:\n";
 
 /// LOOP_PROMPT — ask whether more entities remain (Y/N).
 pub const LOOP_PROMPT: &str = "It appears some entities may have still been missed. Answer Y if there are still entities that need to be added, or N if there are none. Please answer with a single letter Y or N.\n";
@@ -1271,7 +1320,8 @@ pub fn split_string_by_multi_markers(content: &str, markers: &[&str]) -> Vec<Str
 pub fn is_float_regex(value: &str) -> bool {
     let v = value.trim();
     !v.is_empty()
-        && v.chars().all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.'))
+        && v.chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.'))
         && v.chars().any(|c| c.is_ascii_digit())
 }
 
@@ -1350,8 +1400,12 @@ pub fn parse_extraction_records(
     let mut rcds = Vec::new();
     for record in records {
         // extract the parenthesized body: `("entity"<|>... )`
-        let Some(open) = record.find('(') else { continue };
-        let Some(close) = record.rfind(')') else { continue };
+        let Some(open) = record.find('(') else {
+            continue;
+        };
+        let Some(close) = record.rfind(')') else {
+            continue;
+        };
         if close <= open {
             continue;
         }
@@ -1399,22 +1453,24 @@ impl Default for GraphExtractor {
 
 impl GraphExtractor {
     pub fn new() -> Self {
-        Self {
-            max_gleanings: 2,
-        }
+        Self { max_gleanings: 2 }
     }
 
     /// Render the extraction prompt for one chunk.
-    pub fn render_prompt(
-        &self,
-        content: &str,
-        entity_types: &[String],
-        language: &str,
-    ) -> String {
+    pub fn render_prompt(&self, content: &str, entity_types: &[String], language: &str) -> String {
         let mut vars = HashMap::new();
-        vars.insert("tuple_delimiter".to_string(), DEFAULT_TUPLE_DELIMITER.to_string());
-        vars.insert("record_delimiter".to_string(), DEFAULT_RECORD_DELIMITER.to_string());
-        vars.insert("completion_delimiter".to_string(), DEFAULT_COMPLETION_DELIMITER.to_string());
+        vars.insert(
+            "tuple_delimiter".to_string(),
+            DEFAULT_TUPLE_DELIMITER.to_string(),
+        );
+        vars.insert(
+            "record_delimiter".to_string(),
+            DEFAULT_RECORD_DELIMITER.to_string(),
+        );
+        vars.insert(
+            "completion_delimiter".to_string(),
+            DEFAULT_COMPLETION_DELIMITER.to_string(),
+        );
         vars.insert("entity_types".to_string(), entity_types.join(","));
         vars.insert("input_text".to_string(), content.to_string());
         vars.insert("language".to_string(), language.to_string());
@@ -1432,10 +1488,7 @@ impl GraphExtractor {
     ) -> Result<GraphExtractionResult> {
         let hint_prompt = self.render_prompt(content, entity_types, language);
         let system = crate::llm::ChatMessage::new("system", hint_prompt.clone());
-        let mut history = vec![
-            system,
-            crate::llm::ChatMessage::new("user", "Output:"),
-        ];
+        let mut history = vec![system, crate::llm::ChatMessage::new("user", "Output:")];
         let response = llm.chat(&history).await?;
         let mut token_count = hint_prompt.chars().count() + response.chars().count();
         let mut results = response.clone();
@@ -1475,17 +1528,41 @@ impl GraphExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graphrag_enhanced::{EntityGraph, NerEntity, EntityType};
+    use crate::graphrag_enhanced::{EntityGraph, EntityType, NerEntity};
 
     // ── community report helpers ──────────────────────────────────
 
     fn graph_with_entities() -> EntityGraph {
         let mut g = EntityGraph::new();
         g.add_entities(&[
-            NerEntity { name: "中山市百鲤居".into(), entity_type: EntityType::Organization, start: 0, end: 0, confidence: 1.0 },
-            NerEntity { name: "李锦澎".into(), entity_type: EntityType::Person, start: 0, end: 0, confidence: 1.0 },
-            NerEntity { name: "水产养殖基地".into(), entity_type: EntityType::Location, start: 0, end: 0, confidence: 1.0 },
-            NerEntity { name: "孤岛节点".into(), entity_type: EntityType::Unknown, start: 0, end: 0, confidence: 1.0 },
+            NerEntity {
+                name: "中山市百鲤居".into(),
+                entity_type: EntityType::Organization,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "李锦澎".into(),
+                entity_type: EntityType::Person,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "水产养殖基地".into(),
+                entity_type: EntityType::Location,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "孤岛节点".into(),
+                entity_type: EntityType::Unknown,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
         ]);
         g.add_relation("中山市百鲤居", "李锦澎", 1.0);
         g.add_relation("中山市百鲤居", "水产养殖基地", 1.0);
@@ -1596,7 +1673,10 @@ mod tests {
 
     #[test]
     fn html_unescape_known_entities() {
-        assert_eq!(html_unescape("a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;"), "a&b<c>\"d\"'e'");
+        assert_eq!(
+            html_unescape("a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;"),
+            "a&b<c>\"d\"'e'"
+        );
         // unknown entity preserved verbatim
         assert_eq!(html_unescape("a&unknown;b"), "a&unknown;b");
     }
@@ -1606,10 +1686,34 @@ mod tests {
     fn kg_graph() -> EntityGraph {
         let mut g = EntityGraph::new();
         g.add_entities(&[
-            NerEntity { name: "中山市百鲤居".into(), entity_type: EntityType::Organization, start: 0, end: 0, confidence: 1.0 },
-            NerEntity { name: "李锦澎".into(), entity_type: EntityType::Person, start: 0, end: 0, confidence: 1.0 },
-            NerEntity { name: "水产养殖基地".into(), entity_type: EntityType::Location, start: 0, end: 0, confidence: 1.0 },
-            NerEntity { name: "罗氏沼虾".into(), entity_type: EntityType::Product, start: 0, end: 0, confidence: 1.0 },
+            NerEntity {
+                name: "中山市百鲤居".into(),
+                entity_type: EntityType::Organization,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "李锦澎".into(),
+                entity_type: EntityType::Person,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "水产养殖基地".into(),
+                entity_type: EntityType::Location,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "罗氏沼虾".into(),
+                entity_type: EntityType::Product,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
         ]);
         g.add_relation("中山市百鲤居", "李锦澎", 1.0);
         g.add_relation("中山市百鲤居", "水产养殖基地", 0.8);
@@ -1621,12 +1725,7 @@ mod tests {
     #[test]
     fn kg_entities_by_keywords_matches_names() {
         let g = kg_graph();
-        let hits = KgSearch::get_relevant_ents_by_keywords(
-            &g,
-            &["百鲤居".to_string()],
-            0.3,
-            10,
-        );
+        let hits = KgSearch::get_relevant_ents_by_keywords(&g, &["百鲤居".to_string()], 0.3, 10);
         assert!(hits.contains_key("中山市百鲤居"));
         let e = &hits["中山市百鲤居"];
         assert!(e.pagerank >= 2.0, "hub node should have degree 2");
@@ -1740,7 +1839,8 @@ mod tests {
 
     #[test]
     fn parse_extraction_records_skips_garbage() {
-        let out = "no parens here\n##(\"entity\"<|>\"\"<|>\"person\"<|>\"empty name\")##(\"entity\"";
+        let out =
+            "no parens here\n##(\"entity\"<|>\"\"<|>\"person\"<|>\"empty name\")##(\"entity\"";
         let (nodes, edges) = parse_extraction_records(out, &["person".to_string()], "c");
         assert!(nodes.is_empty(), "empty name entity skipped");
         assert!(edges.is_empty());
@@ -1768,18 +1868,30 @@ mod tests {
     #[test]
     fn handle_entity_and_relationship_parsers() {
         let ent = handle_single_entity_extraction(
-            &["\"entity\"".into(), "  name  ".into(), "person".into(), "desc".into()],
+            &[
+                "\"entity\"".into(),
+                "  name  ".into(),
+                "person".into(),
+                "desc".into(),
+            ],
             "k",
         )
         .unwrap();
         assert_eq!(ent.entity_name, "NAME");
         assert_eq!(ent.entity_type, "PERSON");
         // wrong first attr → None
-        assert!(handle_single_entity_extraction(
-            &["\"relationship\"".into(), "a".into(), "b".into(), "c".into()],
-            "k",
-        )
-        .is_none());
+        assert!(
+            handle_single_entity_extraction(
+                &[
+                    "\"relationship\"".into(),
+                    "a".into(),
+                    "b".into(),
+                    "c".into()
+                ],
+                "k",
+            )
+            .is_none()
+        );
         // relationship parser
         let rel = handle_single_relationship_extraction(
             &[

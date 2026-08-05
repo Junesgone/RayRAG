@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 
 /// Configuration shared by the ASR and TTS clients.
 #[derive(Debug, Clone)]
@@ -99,8 +99,7 @@ impl AsrClient {
         let mut form = reqwest::multipart::Form::new()
             .part(
                 "file",
-                reqwest::multipart::Part::bytes(audio.to_vec())
-                    .file_name(filename.to_string()),
+                reqwest::multipart::Part::bytes(audio.to_vec()).file_name(filename.to_string()),
             )
             .text("model", self.config.model.clone());
         let mut request = self
@@ -123,11 +122,14 @@ impl AsrClient {
         if !status.is_success() {
             bail!(
                 "ASR API error ({status}): {}",
-                String::from_utf8_lossy(&body).chars().take(300).collect::<String>()
+                String::from_utf8_lossy(&body)
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
             );
         }
-        let value: serde_json::Value = serde_json::from_slice(&body)
-            .with_context(|| "ASR response is not JSON")?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&body).with_context(|| "ASR response is not JSON")?;
         let text = value
             .get("text")
             .and_then(serde_json::Value::as_str)
@@ -168,8 +170,7 @@ impl TtsClient {
 
     /// Synthesize speech; returns the raw audio bytes (typically MP3).
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
-        self.synthesize_with_voice(text, &self.default_voice)
-            .await
+        self.synthesize_with_voice(text, &self.default_voice).await
     }
 
     /// Synthesize speech with an explicit voice (mirrors RAGFlow
@@ -201,7 +202,10 @@ impl TtsClient {
         if !status.is_success() {
             bail!(
                 "TTS API error ({status}): {}",
-                String::from_utf8_lossy(&body).chars().take(300).collect::<String>()
+                String::from_utf8_lossy(&body)
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
             );
         }
         if body.is_empty() {
@@ -215,12 +219,12 @@ impl TtsClient {
 mod tests {
     use super::*;
     use axum::{
+        Router,
         body::Body,
         http::StatusCode,
         routing::{get, post},
-        Router,
     };
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     async fn spawn_audio_server() -> (String, tokio::task::JoinHandle<()>) {
         let app = Router::new()
@@ -279,7 +283,10 @@ mod tests {
             api_key: "test-key".into(),
             model: "whisper-1".into(),
         });
-        let out = client.transcribe(b"RIFFfake-wav", "audio.wav").await.unwrap();
+        let out = client
+            .transcribe(b"RIFFfake-wav", "audio.wav")
+            .await
+            .unwrap();
         assert_eq!(out.text, "Hello RayRAG ASR");
         assert!(out.tokens > 0);
     }
@@ -352,7 +359,10 @@ mod tests {
             api_key: "sk-secret".into(),
             model: "whisper-1".into(),
         });
-        let out = client.transcribe(b"RIFFfake-wav", "audio.wav").await.unwrap();
+        let out = client
+            .transcribe(b"RIFFfake-wav", "audio.wav")
+            .await
+            .unwrap();
         assert_eq!(out.text, "Hello RayRAG ASR");
     }
 }

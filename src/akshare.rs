@@ -4,7 +4,7 @@
 //! 搜索接口返回相关新闻，按 top_n 截断，输出 Markdown 链接列表。
 //! 域名固定（search-api-web.eastmoney.com），无用户 URL 输入，天然免疫 SSRF。
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -113,9 +113,17 @@ impl AkShareClient {
             }
             news.push(StockNews {
                 title,
-                url: article.get("url").and_then(Value::as_str).unwrap_or("").to_string(),
+                url: article
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 content: strip_em(article.get("content").and_then(Value::as_str).unwrap_or("")),
-                date: article.get("date").and_then(Value::as_str).unwrap_or("").to_string(),
+                date: article
+                    .get("date")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 media_name: article
                     .get("mediaName")
                     .and_then(Value::as_str)
@@ -151,7 +159,10 @@ impl AkShareClient {
 
 /// 移除东财搜索返回的 `<em>` 高亮标签。
 fn strip_em(text: &str) -> String {
-    text.replace("<em>", "").replace("</em>", "").trim().to_string()
+    text.replace("<em>", "")
+        .replace("</em>", "")
+        .trim()
+        .to_string()
 }
 
 /// URL 查询参数编码（保留 JSON 字符）。
@@ -171,7 +182,7 @@ fn urlencoding(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::get, Router};
+    use axum::{Router, routing::get};
     use serde_json::json;
 
     const SAMPLE_RESPONSE: &str = r#"{"code":0,"msg":"OK","result":{"cmsArticleWebOld":[

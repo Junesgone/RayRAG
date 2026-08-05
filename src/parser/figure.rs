@@ -16,7 +16,7 @@
 //! Embeds result as image context marker for pipeline.
 
 use crate::ocr::OcrClient;
-use crate::parser::{new_document, Parse};
+use crate::parser::{Parse, new_document};
 use crate::vision::{VisionClient, VisionConfig};
 use crate::{Document, Result};
 use quick_xml::Reader;
@@ -116,8 +116,7 @@ pub fn vision_llm_chunk_sync(
     prompt: Option<&str>,
 ) -> Result<String> {
     // Skip tiny crops that fail provider image-size limits (mirror min_side).
-    let tiny = detect_dimensions(image_bytes)
-        .is_some_and(|(w, h)| w < 11 || h < 11);
+    let tiny = detect_dimensions(image_bytes).is_some_and(|(w, h)| w < 11 || h < 11);
     if tiny {
         return Ok(String::new());
     }
@@ -370,7 +369,21 @@ fn detect_dimensions(data: &[u8]) -> Option<(u32, u32)> {
         while i + 9 <= data.len() {
             if data[i] == 0xFF {
                 let marker = data[i + 1];
-                if matches!(marker, 0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF) {
+                if matches!(
+                    marker,
+                    0xC0 | 0xC1
+                        | 0xC2
+                        | 0xC3
+                        | 0xC5
+                        | 0xC6
+                        | 0xC7
+                        | 0xC9
+                        | 0xCA
+                        | 0xCB
+                        | 0xCD
+                        | 0xCE
+                        | 0xCF
+                ) {
                     let h = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
                     let w = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
                     return Some((w, h));
@@ -513,10 +526,12 @@ fn parse_raster(
         false
     } else {
         // English: >32 words; other langs: >32 chars (mirrors picture.py).
-        if ocr_text
-            .chars()
-            .all(|c| c.is_ascii() && (c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || c.is_ascii_punctuation()))
-        {
+        if ocr_text.chars().all(|c| {
+            c.is_ascii()
+                && (c.is_ascii_alphanumeric()
+                    || c.is_ascii_whitespace()
+                    || c.is_ascii_punctuation())
+        }) {
             ocr_text.split_whitespace().count() > 32 || token_count > 32
         } else {
             ocr_text.chars().count() > 32 || token_count > 32
@@ -684,8 +699,8 @@ mod tests {
         // 64x24 white PNG with a black rectangle (same generator as the
         // agent::tests::gpu_vision_endpoint_describes_image_with_prompt test).
         fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
-            use flate2::write::ZlibEncoder;
             use flate2::Compression;
+            use flate2::write::ZlibEncoder;
             use std::io::Write;
             let mut raw = Vec::with_capacity((width * height * 3 + height) as usize);
             for y in 0..height {
@@ -704,7 +719,11 @@ mod tests {
                 for (i, entry) in table.iter_mut().enumerate() {
                     let mut c = i as u32;
                     for _ in 0..8 {
-                        c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                        c = if c & 1 != 0 {
+                            0xEDB8_8320 ^ (c >> 1)
+                        } else {
+                            c >> 1
+                        };
                     }
                     *entry = c;
                 }
@@ -746,8 +765,7 @@ mod tests {
         let png = encode_png(w, h, &pixels);
 
         let base = std::env::var("RAYRAG_TEST_VISION_BASE").unwrap();
-        let model =
-            std::env::var("RAYRAG_TEST_VISION_MODEL").unwrap_or_else(|_| "default".into());
+        let model = std::env::var("RAYRAG_TEST_VISION_MODEL").unwrap_or_else(|_| "default".into());
         let vision = VisionClient::new(VisionConfig {
             api_base: base,
             api_key: String::new(),

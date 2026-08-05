@@ -482,10 +482,12 @@ async fn update_dataset(
         }
         None => None,
     };
-    match state
-        .kbs
-        .update_config(&dataset_id, permission, embd_id.as_deref(), parser_config.as_deref())
-    {
+    match state.kbs.update_config(
+        &dataset_id,
+        permission,
+        embd_id.as_deref(),
+        parser_config.as_deref(),
+    ) {
         Ok(Some(kb)) => Json(ApiResponse {
             code: 0,
             message: "Updated".into(),
@@ -1525,21 +1527,23 @@ pub(crate) fn delete_document_data(
 
 // ── Search ─────────────────────────────────────────────────────
 
-
-
-
 async fn admin_delete_user(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     axum::extract::Path(user_id): axum::extract::Path<String>,
 ) -> Response {
     if !auth.is_admin {
-        return Json(serde_json::json!({ "code": 403, "message": "Admin required" })).into_response();
+        return Json(serde_json::json!({ "code": 403, "message": "Admin required" }))
+            .into_response();
     }
     match state.users.delete_user(&user_id, &auth.user_id) {
         Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response(),
+        Ok(false) => {
+            Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response()
+        }
+        Err(error) => {
+            Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response()
+        }
     }
 }
 
@@ -1550,16 +1554,23 @@ async fn admin_reset_password(
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     if !auth.is_admin {
-        return Json(serde_json::json!({ "code": 403, "message": "Admin required" })).into_response();
+        return Json(serde_json::json!({ "code": 403, "message": "Admin required" }))
+            .into_response();
     }
-    let new_password = body.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
+    let new_password = body
+        .get("new_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     match state.users.reset_password(&user_id, new_password) {
         Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response(),
+        Ok(false) => {
+            Json(serde_json::json!({ "code": 404, "message": "User not found" })).into_response()
+        }
+        Err(error) => {
+            Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response()
+        }
     }
 }
-
 
 async fn query_graphrag(
     State(state): State<Arc<AppState>>,
@@ -1589,11 +1600,7 @@ async fn query_graphrag(
         .and_then(|value| value.as_str())
         .unwrap_or("");
     let names = graph.node_names();
-    let edges = names
-        .iter()
-        .map(|name| graph.degree(name))
-        .sum::<usize>()
-        / 2;
+    let edges = names.iter().map(|name| graph.degree(name)).sum::<usize>() / 2;
     let node_list: Vec<serde_json::Value> = names
         .iter()
         .take(200)
@@ -1642,7 +1649,9 @@ async fn build_graphrag(
         .unwrap()
         .to_vec()
         .into_iter()
-        .filter(|chunk| chunk.metadata.get("kb_id").map(String::as_str) == Some(dataset_id.as_str()))
+        .filter(|chunk| {
+            chunk.metadata.get("kb_id").map(String::as_str) == Some(dataset_id.as_str())
+        })
         .collect();
     if chunks.is_empty() {
         return api_error(StatusCode::BAD_REQUEST, "No chunks in this knowledge base");
@@ -1658,7 +1667,10 @@ async fn build_graphrag(
             .get("doc_id")
             .cloned()
             .unwrap_or_else(|| chunk.doc_name.clone());
-        by_doc.entry(doc_id).or_default().push(chunk.content.clone());
+        by_doc
+            .entry(doc_id)
+            .or_default()
+            .push(chunk.content.clone());
     }
     let mut graph = crate::graphrag_enhanced::EntityGraph::new();
     let mut doc_count = 0usize;
@@ -1685,11 +1697,7 @@ async fn build_graphrag(
     }
     let nodes = graph.node_count();
     let names = graph.node_names();
-    let edges = names
-        .iter()
-        .map(|name| graph.degree(name))
-        .sum::<usize>()
-        / 2;
+    let edges = names.iter().map(|name| graph.degree(name)).sum::<usize>() / 2;
     // 持久化：合并到 GraphStore 的 kb_graphs（重启后保留）
     let mut snapshot = state.graphs.snapshot();
     snapshot.kb_graphs.insert(dataset_id.clone(), graph.clone());
@@ -1725,26 +1733,43 @@ async fn change_password(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let current = body.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
-    let new_password = body.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
-    match state.users.change_password(&auth.user_id, current, new_password) {
+    let current = body
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let new_password = body
+        .get("new_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match state
+        .users
+        .change_password(&auth.user_id, current, new_password)
+    {
         Ok(()) => Json(serde_json::json!({ "code": 0, "message": "ok" })).into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response(),
+        Err(error) => {
+            Json(serde_json::json!({ "code": 400, "message": error.to_string() })).into_response()
+        }
     }
 }
-
 
 async fn clear_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     axum::extract::Path(conversation_id): axum::extract::Path<String>,
 ) -> Response {
-    if state.conversations.get_for(&conversation_id, &auth.user_id).is_none() {
-        return Json(serde_json::json!({ "code": 404, "message": "Conversation not found" })).into_response();
+    if state
+        .conversations
+        .get_for(&conversation_id, &auth.user_id)
+        .is_none()
+    {
+        return Json(serde_json::json!({ "code": 404, "message": "Conversation not found" }))
+            .into_response();
     }
     match state.conversations.clear_messages(&conversation_id) {
         Ok(_) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response(),
+        Err(error) => {
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response()
+        }
     }
 }
 
@@ -1754,11 +1779,16 @@ async fn export_conversation(
     axum::extract::Path(conversation_id): axum::extract::Path<String>,
 ) -> Response {
     let Some(conversation) = state.conversations.get_for(&conversation_id, &auth.user_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "Conversation not found" })).into_response();
+        return Json(serde_json::json!({ "code": 404, "message": "Conversation not found" }))
+            .into_response();
     };
     let mut markdown = format!("# {}\n\n", conversation.name);
     for message in &conversation.messages {
-        let role = if message.role == "user" { "**User**" } else { "**Assistant**" };
+        let role = if message.role == "user" {
+            "**User**"
+        } else {
+            "**Assistant**"
+        };
         markdown.push_str(&format!("{role}: {}\n\n", message.content));
     }
     (
@@ -1795,7 +1825,10 @@ async fn rename_conversation(
     let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
         return api_error(StatusCode::BAD_REQUEST, "name is required");
     };
-    match state.conversations.rename_for(&conversation_id, &auth.user_id, name) {
+    match state
+        .conversations
+        .rename_for(&conversation_id, &auth.user_id, name)
+    {
         Ok(Some(_)) => Json(ApiResponse {
             code: 0,
             message: "Renamed".into(),
@@ -1812,10 +1845,16 @@ async fn delete_conversation(
     Extension(auth): Extension<AuthContext>,
     axum::extract::Path(conversation_id): axum::extract::Path<String>,
 ) -> Response {
-    match state.conversations.delete_for(&conversation_id, &auth.user_id) {
+    match state
+        .conversations
+        .delete_for(&conversation_id, &auth.user_id)
+    {
         Ok(true) => Json(serde_json::json!({ "code": 0, "message": "ok" })).into_response(),
-        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "Conversation not found" })).into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response(),
+        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "Conversation not found" }))
+            .into_response(),
+        Err(error) => {
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response()
+        }
     }
 }
 
@@ -2062,8 +2101,11 @@ async fn chat_completion(
         .and_then(|v| v.as_u64())
         .unwrap_or(4)
         .clamp(1, 20) as usize;
-    let hits = state.engine.read().unwrap().hybrid_search_kbs(
-        crate::search::HybridSearchQuery {
+    let hits = state
+        .engine
+        .read()
+        .unwrap()
+        .hybrid_search_kbs(crate::search::HybridSearchQuery {
             query: q,
             query_embedding: None,
             kb_ids: &kb_ids,
@@ -2071,8 +2113,7 @@ async fn chat_completion(
             vector_weight: 0.5,
             doc_ids: None,
             rank_feature: None,
-        },
-    );
+        });
     let mut context = String::new();
     let mut references = Vec::new();
     for (i, hit) in hits.iter().take(4).enumerate() {
@@ -2152,7 +2193,10 @@ async fn require_api_auth(
                 })
         });
 
-    if let Some(user_id) = token.as_deref().and_then(|token| state.users.validate_token(token)) {
+    if let Some(user_id) = token
+        .as_deref()
+        .and_then(|token| state.users.validate_token(token))
+    {
         let is_admin = state.users.is_admin(&user_id);
         let mut request = request;
         request
@@ -2302,7 +2346,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/search", get(crate::web::search_page))
         .route("/providers", get(crate::web::providers_page))
         .route("/skills", get(crate::web::skills_page))
-        .route("/documents/{kb_id}/{doc_id}", get(crate::web::document_page))
+        .route(
+            "/documents/{kb_id}/{doc_id}",
+            get(crate::web::document_page),
+        )
         .route("/settings", get(crate::web::settings_page))
         .route("/api-docs", get(crate::web::api_docs))
         .route("/status", get(crate::web::status_page))
@@ -2311,7 +2358,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/dataset/{id}", get(crate::web::dataset_page))
         .route("/datasources", get(crate::web::datasources_page))
         .route("/files", get(crate::web::files_page))
-
         .route("/agents", get(crate::web::agents_page))
         .route("/agents/{agent_id}", get(crate::web::agent_detail_page))
         .route("/memories", get(crate::web::memories_page))
@@ -2398,7 +2444,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/conversations/{conversation_id}/export",
             axum::routing::get(export_conversation),
         )
-        .route("/api/v1/user/password", axum::routing::patch(change_password))
+        .route(
+            "/api/v1/user/password",
+            axum::routing::patch(change_password),
+        )
         .route(
             "/api/v1/datasets/{dataset_id}/graphrag/build",
             axum::routing::post(build_graphrag),
@@ -2524,7 +2573,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::openai_proxy::chat_completions),
         )
         .route("/api/v1/models", get(crate::api::openai_proxy::list_models))
-        .route("/api/v1/embeddings", post(crate::api::openai_proxy::embeddings))
+        .route(
+            "/api/v1/embeddings",
+            post(crate::api::openai_proxy::embeddings),
+        )
         .route("/api/v1/rerank", post(crate::api::openai_proxy::rerank))
         .route(
             "/api/v1/providers",
@@ -2621,9 +2673,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             // POST /compilation-template-groups/{id}/execute — run the
             // group's tree-kind templates (RAPTOR) over supplied chunks.
             "/api/v1/compilation_template_groups/{id}/execute",
-            axum::routing::post(
-                crate::api::compilation_templates::execute_group_templates,
-            ),
+            axum::routing::post(crate::api::compilation_templates::execute_group_templates),
         )
         .route(
             "/api/v1/compilation_templates/builtins",
@@ -2753,7 +2803,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/langfuse",
             get(crate::api::system::get_langfuse).post(crate::api::system::update_langfuse),
         )
-        .fallback_service(ServeDir::new(sd).precompressed_gzip().precompressed_br().not_found_service(axum::routing::get(crate::web::not_found_page)))
+        .fallback_service(
+            ServeDir::new(sd)
+                .precompressed_gzip()
+                .precompressed_br()
+                .not_found_service(axum::routing::get(crate::web::not_found_page)),
+        )
         .layer(DefaultBodyLimit::max(
             max_upload_bytes()
                 .saturating_mul(MAX_DOCUMENTS_PER_UPLOAD)
@@ -8298,13 +8353,15 @@ mod tests {
         let llm_model = std::env::var("RAYRAG_TEST_LLM_MODEL").expect("RAYRAG_TEST_LLM_MODEL");
         let env = test_env();
         let mut state: AppState = (*env.state).clone();
-        state.llm = Some(Arc::new(crate::llm::LlmClient::new(crate::llm::LlmConfig {
-            api_base: llm_base,
-            api_key: String::new(),
-            model: llm_model,
-            generation: Default::default(),
-            system_prompt: String::new(),
-        })));
+        state.llm = Some(Arc::new(crate::llm::LlmClient::new(
+            crate::llm::LlmConfig {
+                api_base: llm_base,
+                api_key: String::new(),
+                model: llm_model,
+                generation: Default::default(),
+                system_prompt: String::new(),
+            },
+        )));
         let state = Arc::new(state);
         let router = build_router(state.clone());
 
@@ -8405,11 +8462,15 @@ mod tests {
             .find(|r| r["entities"].is_array())
             .expect("hypergraph result");
         let hyper_entities = hyper_result["entities"].as_array().unwrap();
-        assert!(!hyper_entities.is_empty(), "hypergraph entities: {hyper_entities:?}");
         assert!(
-            hyper_entities
-                .iter()
-                .any(|e| e["name"].as_str().map(|n| n.contains("百鲤居") || n.contains("李锦澎")).unwrap_or(false)),
+            !hyper_entities.is_empty(),
+            "hypergraph entities: {hyper_entities:?}"
+        );
+        assert!(
+            hyper_entities.iter().any(|e| e["name"]
+                .as_str()
+                .map(|n| n.contains("百鲤居") || n.contains("李锦澎"))
+                .unwrap_or(false)),
             "expected farm/owner entity"
         );
         // Persisted as a knowledge_compile document checkpoint.
@@ -8423,6 +8484,9 @@ mod tests {
         assert_eq!(checkpoint.method, "knowledge_compile");
         assert_eq!(checkpoint.kb_id, "kb-1");
         assert!(checkpoint.entity_types.contains(&"entity".to_string()));
-        assert!(checkpoint.graph.node_count() > 0, "compiled graph nodes persisted");
+        assert!(
+            checkpoint.graph.node_count() > 0,
+            "compiled graph nodes persisted"
+        );
     }
 }

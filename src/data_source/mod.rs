@@ -47,10 +47,7 @@ pub struct ConnectorDoc {
 impl ConnectorDoc {
     /// Render a RAGFlow-style text blob (used for preview / ingestion).
     pub fn to_markdown(&self) -> String {
-        format!(
-            "# {}\n\n{}",
-            self.semantic_identifier, self.blob
-        )
+        format!("# {}\n\n{}", self.semantic_identifier, self.blob)
     }
 }
 

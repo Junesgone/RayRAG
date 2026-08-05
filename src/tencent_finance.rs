@@ -67,7 +67,9 @@ impl TencentFinanceClient {
             .context("could not build Tencent Finance HTTP client")?;
         Ok(Self {
             client,
-            quote_endpoint: quote_endpoint.parse().context("invalid Tencent quote endpoint")?,
+            quote_endpoint: quote_endpoint
+                .parse()
+                .context("invalid Tencent quote endpoint")?,
         })
     }
 }
@@ -130,7 +132,10 @@ impl TencentFinanceProvider for TencentFinanceClient {
             .await
             .context("could not read Tencent Finance response body")?;
         if body.len() > MAX_TENCENT_RESPONSE_BODY {
-            bail!("Tencent Finance response exceeds {} bytes", MAX_TENCENT_RESPONSE_BODY);
+            bail!(
+                "Tencent Finance response exceeds {} bytes",
+                MAX_TENCENT_RESPONSE_BODY
+            );
         }
         if !status.is_success() {
             bail!("tencent_finance: upstream returned {}", status.as_u16());
@@ -145,7 +150,10 @@ pub fn tencent_quote_to_tool_row(quote: &TencentQuote) -> Value {
     row.insert("name".into(), Value::String(quote.name.clone()));
     row.insert("price".into(), Value::String(quote.price.clone()));
     row.insert("change".into(), Value::String(quote.change.clone()));
-    row.insert("change_percent".into(), Value::String(quote.change_percent.clone()));
+    row.insert(
+        "change_percent".into(),
+        Value::String(quote.change_percent.clone()),
+    );
     row.insert("open".into(), Value::String(quote.open.clone()));
     row.insert("high".into(), Value::String(quote.high.clone()));
     row.insert("low".into(), Value::String(quote.low.clone()));
@@ -193,7 +201,9 @@ mod tests {
     #[ignore = "requires live access to qt.gtimg.cn"]
     async fn live_tencent_quote() {
         let quote = TencentFinanceClient::default()
-            .quote(&TencentFinanceRequest { symbol: "sh600519".into() })
+            .quote(&TencentFinanceRequest {
+                symbol: "sh600519".into(),
+            })
             .await
             .unwrap();
         assert_eq!(quote.name, "贵州茅台");

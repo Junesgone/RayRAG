@@ -243,12 +243,8 @@ impl RaptorTree {
                     next_level.push(node);
                 } else {
                     // LLM summary with extractive fallback.
-                    let texts: Vec<String> =
-                        cluster.iter().map(|n| n.content.clone()).collect();
-                    let summary = match summarizer
-                        .summarize(&texts, prompt, max_token)
-                        .await
-                    {
+                    let texts: Vec<String> = cluster.iter().map(|n| n.content.clone()).collect();
+                    let summary = match summarizer.summarize(&texts, prompt, max_token).await {
                         Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
                         _ => Self::extractive_summarize(cluster),
                     };
@@ -791,7 +787,12 @@ mod tests {
             max_token: usize,
         ) -> Result<String> {
             let rendered = prompt.replace("{cluster_content}", &texts.join("\n"));
-            Ok(format!("LLM-SUMMARY({})[{}][{}]", texts.len(), rendered.chars().count(), max_token))
+            Ok(format!(
+                "LLM-SUMMARY({})[{}][{}]",
+                texts.len(),
+                rendered.chars().count(),
+                max_token
+            ))
         }
     }
 
@@ -835,7 +836,9 @@ mod tests {
             ("Python is slow".into(), vec![0.0, 1.0]),
         ];
         let mut tree = RaptorTree::new(0.5);
-        tree.build_with_llm(&chunks, &FailingSummarizer).await.unwrap();
+        tree.build_with_llm(&chunks, &FailingSummarizer)
+            .await
+            .unwrap();
         // Tree still builds; root exists.
         assert!(tree.root().is_some());
         assert!(tree.len() >= 3);
@@ -925,7 +928,11 @@ mod tests {
         let graph = tree.to_graph();
         assert_eq!(graph.entities.len(), 3);
         assert_eq!(graph.relations.len(), 2);
-        let root_ent = graph.entities.iter().find(|e| e.name == "Root summary").unwrap();
+        let root_ent = graph
+            .entities
+            .iter()
+            .find(|e| e.name == "Root summary")
+            .unwrap();
         assert_eq!(root_ent.kind, "tree_node");
         assert!(root_ent.source_chunk_ids.is_empty());
         let leaf = graph.entities.iter().find(|e| e.name == "Chunk A").unwrap();
@@ -969,12 +976,24 @@ mod tests {
         // Three related Chinese chunks so clustering forms one cluster and
         // the LLM must produce a same-language titled summary.
         let chunks = vec![
-            ("中山市百鲤居水产养殖场主营四大家鱼养殖。".into(), vec![1.0, 0.0, 0.0]),
-            ("水产养殖需要关注水质、溶氧和饲料管理。".into(), vec![0.9, 0.1, 0.0]),
-            ("科学养殖可以提高鱼类的成活率与产量。".into(), vec![0.8, 0.2, 0.0]),
+            (
+                "中山市百鲤居水产养殖场主营四大家鱼养殖。".into(),
+                vec![1.0, 0.0, 0.0],
+            ),
+            (
+                "水产养殖需要关注水质、溶氧和饲料管理。".into(),
+                vec![0.9, 0.1, 0.0],
+            ),
+            (
+                "科学养殖可以提高鱼类的成活率与产量。".into(),
+                vec![0.8, 0.2, 0.0],
+            ),
         ];
         let mut tree = RaptorTree::new(0.5);
-        let root = tree.build_with_llm(&chunks, &summarizer).await.expect("build");
+        let root = tree
+            .build_with_llm(&chunks, &summarizer)
+            .await
+            .expect("build");
         assert!(!root.is_empty());
         // Root (or a level-1 node) must carry a real LLM summary, not the
         // extractive fallback prefix.
@@ -990,7 +1009,8 @@ mod tests {
         // 需要关注水质、溶氧和饲料管理。"). The LLM rewrite adds connective
         // structure ("通过...管理...提升..."), so require the root content
         // to be a real paraphrase, not the verbatim extractive join.
-        let extractive_join = "中山市百鲤居水产养殖场主营四大家鱼养殖。水产养殖需要关注水质、溶氧和饲料管理。";
+        let extractive_join =
+            "中山市百鲤居水产养殖场主营四大家鱼养殖。水产养殖需要关注水质、溶氧和饲料管理。";
         assert!(
             !root_node.content.starts_with(extractive_join),
             "content looks extractive, LLM summary missing; root={:?} nodes={}",

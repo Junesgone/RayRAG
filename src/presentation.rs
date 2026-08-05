@@ -20,9 +20,9 @@
 //! by the Rust zip-based reader; only `.pptx` containers are handled, which
 //! mirrors RAGFlow's python-pptx requirement (tika fallback is not ported).
 
-use crate::naive::{tokenize_doc, ChunkDoc};
-use crate::parser::ppt::slide_texts;
 use crate::Result;
+use crate::naive::{ChunkDoc, tokenize_doc};
+use crate::parser::ppt::slide_texts;
 
 /// True when the filename is a PPTX/PPT presentation (case-insensitive).
 pub fn is_presentation(name: &str) -> bool {
@@ -126,14 +126,10 @@ mod tests {
         let slide1 = r#"<p:sld><p:sp><p:txBody><a:p><a:r><a:t>Hello slide one</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"#;
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
-        zip.start_file("[Content_Types].xml", options)
-            .unwrap();
-        std::io::Write::write_all(&mut zip, content_types.as_bytes())
-            .unwrap();
-        zip.start_file("ppt/slides/slide1.xml", options)
-            .unwrap();
-        std::io::Write::write_all(&mut zip, slide1.as_bytes())
-            .unwrap();
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        std::io::Write::write_all(&mut zip, content_types.as_bytes()).unwrap();
+        zip.start_file("ppt/slides/slide1.xml", options).unwrap();
+        std::io::Write::write_all(&mut zip, slide1.as_bytes()).unwrap();
         let bytes = zip.finish().unwrap().into_inner();
 
         let chunks = chunk_pptx("deck.pptx", &bytes, 0, 100, "Chinese").unwrap();
@@ -159,15 +155,12 @@ mod tests {
         let slide2 = r#"<p:sld><p:sp><p:txBody><a:p><a:r><a:t>Second</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"#;
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
-        zip.start_file("[Content_Types].xml", options)
-            .unwrap();
-        std::io::Write::write_all(&mut zip, content_types.as_bytes())
-            .unwrap();
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        std::io::Write::write_all(&mut zip, content_types.as_bytes()).unwrap();
         for (name, xml) in [("slide1", slide1), ("slide2", slide2)] {
             zip.start_file(&format!("ppt/slides/{name}.xml"), options)
                 .unwrap();
-            std::io::Write::write_all(&mut zip, xml.as_bytes())
-                .unwrap();
+            std::io::Write::write_all(&mut zip, xml.as_bytes()).unwrap();
         }
         let bytes = zip.finish().unwrap().into_inner();
 

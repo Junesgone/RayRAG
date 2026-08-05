@@ -103,7 +103,10 @@ pub fn field_map_en() -> Vec<(&'static str, &'static str)> {
         ("project_tks", "Project Experience/Project Name"),
         ("work_desc_tks", "Job Responsibilities/Description"),
         ("project_desc_tks", "Project Description/Responsibilities"),
-        ("self_evaluation_tks", "Self-Evaluation/Personal Strengths/Summary"),
+        (
+            "self_evaluation_tks",
+            "Self-Evaluation/Personal Strengths/Summary",
+        ),
     ]
 }
 
@@ -165,7 +168,10 @@ pub fn calc_single_exp_years(start_str: &str, end_str: &str) -> f64 {
     let Some((sy, sm)) = parse_date_str(start) else {
         return 0.0;
     };
-    let (ey, em) = if matches!(end, "至今" | "现在" | "present" | "Present" | "now" | "Now" | "") {
+    let (ey, em) = if matches!(
+        end,
+        "至今" | "现在" | "present" | "Present" | "now" | "Now" | ""
+    ) {
         // Current date (2026-08-03 for deterministic tests).
         (2026, 8)
     } else {
@@ -202,7 +208,9 @@ fn text_shingles(text: &str, n: usize) -> HashSet<Vec<char>> {
     if chars.len() < n {
         return HashSet::from([chars]);
     }
-    (0..=chars.len() - n).map(|i| chars[i..i + n].to_vec()).collect()
+    (0..=chars.len() - n)
+        .map(|i| chars[i..i + n].to_vec())
+        .collect()
 }
 
 /// `_shingling_jaccard` — resume.py:2732. Empty union → 1.0.
@@ -305,7 +313,9 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
     if let Some(name) = _get_str(resume, "name_kwd") {
         if !unknown_names.contains(&name.as_str()) {
             let norm_name = normalize_for_comparison(&name);
-            if !norm_full_text.is_empty() && !norm_name.is_empty() && !norm_full_text.contains(&norm_name)
+            if !norm_full_text.is_empty()
+                && !norm_name.is_empty()
+                && !norm_full_text.contains(&norm_name)
             {
                 resume["name_kwd"] = json!("");
             }
@@ -381,7 +391,10 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
         resume["birth_dt"] = json!(normalized);
     }
     if let Some(phone) = _get_str(resume, "phone_kwd") {
-        let cleaned: String = phone.chars().filter(|c| c.is_ascii_digit() || *c == '+').collect();
+        let cleaned: String = phone
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == '+')
+            .collect();
         if !cleaned.is_empty() {
             resume["phone_kwd"] = json!(cleaned);
         }
@@ -396,7 +409,13 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
     }
 
     // --- Phase 3: contextual deduplication (order-preserving) ---
-    for list_field in ["corp_nm_tks", "school_name_tks", "major_tks", "position_name_tks", "skill_tks"] {
+    for list_field in [
+        "corp_nm_tks",
+        "school_name_tks",
+        "major_tks",
+        "position_name_tks",
+        "skill_tks",
+    ] {
         if let Some(Value::Array(_)) = resume.get(list_field) {
             let items = _get_str_list(resume, list_field);
             let mut seen = HashSet::new();
@@ -419,9 +438,21 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
             Some(Value::Array(arr)) => arr
                 .iter()
                 .map(|d| WorkExpDetail {
-                    company: d.get("company").and_then(Value::as_str).unwrap_or("").to_string(),
-                    start_date: d.get("start_date").and_then(Value::as_str).unwrap_or("").to_string(),
-                    end_date: d.get("end_date").and_then(Value::as_str).unwrap_or("").to_string(),
+                    company: d
+                        .get("company")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    start_date: d
+                        .get("start_date")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    end_date: d
+                        .get("end_date")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
                     years: d.get("years").and_then(Value::as_f64).unwrap_or(0.0),
                 })
                 .collect(),
@@ -432,16 +463,14 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
         let mut kept_indices: Vec<usize> = Vec::new();
         for i in 0..work_descs.len() {
             let mut is_dup = false;
-            let corp_i = normalize_for_comparison(
-                corp_names.get(i).map(String::as_str).unwrap_or(""),
-            );
+            let corp_i =
+                normalize_for_comparison(corp_names.get(i).map(String::as_str).unwrap_or(""));
             let detail_i = details.get(i).cloned().unwrap_or_default();
             let dt_start_i = parse_date_str(&detail_i.start_date);
             let dt_end_i = parse_date_str(&detail_i.end_date);
             for &j in &kept_indices {
-                let corp_j = normalize_for_comparison(
-                    corp_names.get(j).map(String::as_str).unwrap_or(""),
-                );
+                let corp_j =
+                    normalize_for_comparison(corp_names.get(j).map(String::as_str).unwrap_or(""));
                 // Strategy A: company substring + time overlap.
                 if !corp_i.is_empty() && !corp_j.is_empty() {
                     let (shorter, longer) = if corp_i.len() <= corp_j.len() {
@@ -492,11 +521,16 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
             }
         }
         if kept_indices.len() < work_descs.len() {
-            let new_descs: Vec<String> = kept_indices.iter().map(|&i| work_descs[i].clone()).collect();
+            let new_descs: Vec<String> = kept_indices
+                .iter()
+                .map(|&i| work_descs[i].clone())
+                .collect();
             resume["work_desc_tks"] = json!(new_descs);
             if !corp_names.is_empty() {
-                let new_corps: Vec<String> =
-                    kept_indices.iter().filter_map(|&i| corp_names.get(i).cloned()).collect();
+                let new_corps: Vec<String> = kept_indices
+                    .iter()
+                    .filter_map(|&i| corp_names.get(i).cloned())
+                    .collect();
                 resume["corp_nm_tks"] = json!(new_corps);
             }
             if !details.is_empty() {
@@ -515,8 +549,10 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
                 resume["_work_exp_details"] = json!(new_details);
             }
             if !positions.is_empty() {
-                let new_positions: Vec<String> =
-                    kept_indices.iter().filter_map(|&i| positions.get(i).cloned()).collect();
+                let new_positions: Vec<String> = kept_indices
+                    .iter()
+                    .filter_map(|&i| positions.get(i).cloned())
+                    .collect();
                 resume["position_name_tks"] = json!(new_positions);
             }
             // Recalculate work years.
@@ -580,8 +616,13 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
 
     // --- Phase 4: field completion ---
     let required_fields = [
-        "name_kwd", "gender_kwd", "phone_kwd", "email_tks",
-        "position_name_tks", "school_name_tks", "major_tks",
+        "name_kwd",
+        "gender_kwd",
+        "phone_kwd",
+        "email_tks",
+        "position_name_tks",
+        "school_name_tks",
+        "major_tks",
     ];
     for field in required_fields {
         if resume.get(field).is_none() {
@@ -600,15 +641,28 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
 
 /// Identity fields redundantly written to every chunk.
 const IDENTITY_FIELDS: [&str; 6] = [
-    "name_kwd", "phone_kwd", "email_tks", "gender_kwd", "highest_degree_kwd", "work_exp_flt",
+    "name_kwd",
+    "phone_kwd",
+    "email_tks",
+    "gender_kwd",
+    "highest_degree_kwd",
+    "work_exp_flt",
 ];
 
 /// Merge groups: (fields, zh title, en title).
 const MERGE_GROUPS: [(&[&str], &str, &str); 4] = [
     (
         &[
-            "name_kwd", "name_pinyin_kwd", "gender_kwd", "age_int", "phone_kwd", "email_tks",
-            "birth_dt", "work_exp_flt", "position_name_tks", "expect_city_names_tks",
+            "name_kwd",
+            "name_pinyin_kwd",
+            "gender_kwd",
+            "age_int",
+            "phone_kwd",
+            "email_tks",
+            "birth_dt",
+            "work_exp_flt",
+            "position_name_tks",
+            "expect_city_names_tks",
             "expect_position_name_tks",
         ],
         "基本信息",
@@ -616,9 +670,17 @@ const MERGE_GROUPS: [(&[&str], &str, &str); 4] = [
     ),
     (
         &[
-            "first_school_name_tks", "first_degree_kwd", "highest_degree_kwd", "first_major_tks",
-            "edu_first_fea_kwd", "degree_kwd", "major_tks", "school_name_tks", "sch_rank_kwd",
-            "edu_fea_kwd", "edu_end_int",
+            "first_school_name_tks",
+            "first_degree_kwd",
+            "highest_degree_kwd",
+            "first_major_tks",
+            "edu_first_fea_kwd",
+            "degree_kwd",
+            "major_tks",
+            "school_name_tks",
+            "sch_rank_kwd",
+            "edu_fea_kwd",
+            "edu_end_int",
         ],
         "教育背景",
         "Education",
@@ -753,7 +815,9 @@ pub fn build_chunk_document(filename: &str, resume: &Resume, lang: &str) -> Vec<
             if !fields_set.contains(field_key) {
                 continue;
             }
-            let Some(value) = resume.get(*field_key) else { continue };
+            let Some(value) = resume.get(*field_key) else {
+                continue;
+            };
             if value.is_null() {
                 continue;
             }
@@ -796,7 +860,9 @@ pub fn build_chunk_document(filename: &str, resume: &Resume, lang: &str) -> Vec<
         if all_merged.contains(field_key) {
             continue;
         }
-        let Some(value) = resume.get(*field_key) else { continue };
+        let Some(value) = resume.get(*field_key) else {
+            continue;
+        };
         if value.is_null() {
             continue;
         }
@@ -828,7 +894,10 @@ pub fn build_chunk_document(filename: &str, resume: &Resume, lang: &str) -> Vec<
                     {
                         let detail = &work_details[idx];
                         let company = detail.get("company").and_then(Value::as_str).unwrap_or("");
-                        let start_d = detail.get("start_date").and_then(Value::as_str).unwrap_or("");
+                        let start_d = detail
+                            .get("start_date")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
                         let end_d = detail.get("end_date").and_then(Value::as_str).unwrap_or("");
                         let years = detail.get("years").and_then(Value::as_f64).unwrap_or(0.0);
                         let mut time_parts = Vec::new();
@@ -895,13 +964,12 @@ pub fn build_chunk_document(filename: &str, resume: &Resume, lang: &str) -> Vec<
         if text_value.trim().is_empty() {
             continue;
         }
-        let content = if !resume_summary.is_empty()
-            && !matches!(*field_key, "name_kwd" | "phone_kwd")
-        {
-            format!("{field_desc}: {text_value}\n[{resume_summary}]")
-        } else {
-            format!("{field_desc}: {text_value}")
-        };
+        let content =
+            if !resume_summary.is_empty() && !matches!(*field_key, "name_kwd" | "phone_kwd") {
+                format!("{field_desc}: {text_value}\n[{resume_summary}]")
+            } else {
+                format!("{field_desc}: {text_value}")
+            };
         let mut chunk = base_chunk(filename, &title_tks, &title_sm_tks, &content);
         for (mk, mv) in &identity_meta {
             if mk != field_key {
@@ -918,7 +986,13 @@ pub fn build_chunk_document(filename: &str, resume: &Resume, lang: &str) -> Vec<
     if chunks.is_empty() {
         let name = _get_str(resume, "name_kwd")
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| if en { "Unknown".into() } else { "未知".into() });
+            .unwrap_or_else(|| {
+                if en {
+                    "Unknown".into()
+                } else {
+                    "未知".into()
+                }
+            });
         let content = format!("{}: {name}", if en { "Name" } else { "姓名" });
         chunks.push(base_chunk(filename, &title_tks, &title_sm_tks, &content));
     }
@@ -1027,8 +1101,9 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
 
     // --- Name ---
     if en {
-        let re_label = regex::Regex::new(r"(?i)(?:Name|Full\s*Name)\s*[:：]\s*([A-Za-z][A-Za-z\s\-\.]{1,40})")
-            .unwrap();
+        let re_label =
+            regex::Regex::new(r"(?i)(?:Name|Full\s*Name)\s*[:：]\s*([A-Za-z][A-Za-z\s\-\.]{1,40})")
+                .unwrap();
         for line in lines.iter().take(30) {
             if let Some(caps) = re_label.captures(line) {
                 resume["name_kwd"] = json!(caps.get(1).unwrap().as_str().trim());
@@ -1057,9 +1132,9 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
         }
         if resume.get("name_kwd").is_none() {
             let title_words = [
-                "个人", "简历", "求职", "应聘", "基本", "信息", "概述", "简介", "教育", "工作", "经历",
-                "经验", "技能", "项目", "自我", "评价", "专业", "技术", "证书", "语言", "能力", "培训",
-                "荣誉", "奖项",
+                "个人", "简历", "求职", "应聘", "基本", "信息", "概述", "简介", "教育", "工作",
+                "经历", "经验", "技能", "项目", "自我", "评价", "专业", "技术", "证书", "语言",
+                "能力", "培训", "荣誉", "奖项",
             ];
             for line in lines.iter().take(20) {
                 if title_words.iter().any(|w| line.contains(w)) {
@@ -1111,10 +1186,15 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
 
     // --- Gender ---
     if en {
-        let re_label = regex::Regex::new(r"(?i)(?:Gender|Sex)\s*[:：]\s*(Male|Female|M|F)").unwrap();
+        let re_label =
+            regex::Regex::new(r"(?i)(?:Gender|Sex)\s*[:：]\s*(Male|Female|M|F)").unwrap();
         if let Some(caps) = re_label.captures(text) {
             let raw = caps.get(1).unwrap().as_str().trim().to_uppercase();
-            resume["gender_kwd"] = json!(if raw == "M" || raw == "MALE" { "Male" } else { "Female" });
+            resume["gender_kwd"] = json!(if raw == "M" || raw == "MALE" {
+                "Male"
+            } else {
+                "Female"
+            });
         } else {
             let re_word = regex::Regex::new(r"(?i)\b(Male|Female)\b").unwrap();
             if let Some(m) = re_word.find(&text[..text.len().min(500)]) {
@@ -1140,10 +1220,14 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
     // --- Age ---
     if en {
         let re_age = regex::Regex::new(r"(?i)(?:Age)\s*[:：]\s*(\d{1,2})").unwrap();
-        let mut age = re_age.captures(text).map(|c| c.get(1).unwrap().as_str().to_string());
+        let mut age = re_age
+            .captures(text)
+            .map(|c| c.get(1).unwrap().as_str().to_string());
         if age.is_none() {
             let re_years = regex::Regex::new(r"(?i)(\d{1,2})\s*years?\s*old").unwrap();
-            age = re_years.captures(text).map(|c| c.get(1).unwrap().as_str().to_string());
+            age = re_years
+                .captures(text)
+                .map(|c| c.get(1).unwrap().as_str().to_string());
         }
         if let Some(a) = age {
             if let Ok(v) = a.parse::<i64>() {
@@ -1161,7 +1245,8 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
 
     // --- Birth ---
     if en {
-        let re_label = regex::Regex::new(r"(?i)(?:Birth|DOB|Date\s*of\s*Birth)\s*[:：]\s*(.{6,20})").unwrap();
+        let re_label =
+            regex::Regex::new(r"(?i)(?:Birth|DOB|Date\s*of\s*Birth)\s*[:：]\s*(.{6,20})").unwrap();
         if let Some(caps) = re_label.captures(text) {
             resume["birth_dt"] = json!(caps.get(1).unwrap().as_str().trim());
         } else {
@@ -1178,22 +1263,37 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
     }
 
     // --- Degree ---
-    let degree_zh = ["博士", "硕士", "本科", "大专", "专科", "高中", "MBA", "EMBA", "MPA"];
+    let degree_zh = [
+        "博士", "硕士", "本科", "大专", "专科", "高中", "MBA", "EMBA", "MPA",
+    ];
     let degree_en = [
-        "PhD", "Master", "Bachelor", "Associate", "Diploma", "High School", "MBA", "EMBA",
-        "MPA", "Doctor",
+        "PhD",
+        "Master",
+        "Bachelor",
+        "Associate",
+        "Diploma",
+        "High School",
+        "MBA",
+        "EMBA",
+        "MPA",
+        "Doctor",
     ];
     let keywords: &[&str] = if en { &degree_en } else { &degree_zh };
-    let found: Vec<&str> = keywords.iter().copied().filter(|d| text.contains(d)).collect();
+    let found: Vec<&str> = keywords
+        .iter()
+        .copied()
+        .filter(|d| text.contains(d))
+        .collect();
     if !found.is_empty() {
         resume["degree_kwd"] = json!(found);
     }
 
     // --- School ---
     let schools: Vec<String> = if en {
-        let re_school =
-            regex::Regex::new(r"([A-Z][A-Za-z\s\-&]{2,40}(?:University|College|Institute|School|Academy))")
-                .unwrap();
+        let re_school = regex::Regex::new(
+            r"([A-Z][A-Za-z\s\-&]{2,40}(?:University|College|Institute|School|Academy))",
+        )
+        .unwrap();
         re_school
             .captures_iter(text)
             .map(|c| {
@@ -1205,14 +1305,20 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
             })
             .collect()
     } else {
-        let re_school = regex::Regex::new(r"[\u{4e00}-\u{9fa5}]{2,15}(?:大学|学院|职业技术学院)").unwrap();
+        let re_school =
+            regex::Regex::new(r"[\u{4e00}-\u{9fa5}]{2,15}(?:大学|学院|职业技术学院)").unwrap();
         re_school
             .find_iter(text)
             .map(|m| m.as_str().to_string())
             .collect()
     };
     if !schools.is_empty() {
-        let unique: Vec<String> = schools.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+        let unique: Vec<String> = schools
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         resume["school_name_tks"] = json!(unique);
         resume["first_school_name_tks"] = json!(schools[0]);
     }
@@ -1277,7 +1383,14 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
 
     // Filter verb list (bilingual) + substring dedup (resume.py:1665-1688).
     let filter_verbs: &[&str] = if en {
-        &["completed", "conducted", "implemented", "responsible", "participated", "developed"]
+        &[
+            "completed",
+            "conducted",
+            "implemented",
+            "responsible",
+            "participated",
+            "developed",
+        ]
     } else {
         &["完成", "进行", "实施", "负责", "参与", "开发"]
     };
@@ -1285,7 +1398,8 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
     let mut unique_companies: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for c in &companies {
-        if c.chars().count() < min_len || filter_verbs.iter().any(|v| c.to_lowercase().contains(v)) {
+        if c.chars().count() < min_len || filter_verbs.iter().any(|v| c.to_lowercase().contains(v))
+        {
             continue;
         }
         if seen.contains(c) {
@@ -1328,11 +1442,32 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
             .filter(|p| !p.is_empty())
             .collect();
         let suffixes = [
-            "Engineer", "Manager", "Director", "Supervisor", "Specialist", "Designer",
-            "Consultant", "Assistant", "Architect", "Analyst", "Developer", "Lead", "Officer",
-            "Coordinator", "Administrator", "Intern", "VP", "President",
+            "Engineer",
+            "Manager",
+            "Director",
+            "Supervisor",
+            "Specialist",
+            "Designer",
+            "Consultant",
+            "Assistant",
+            "Architect",
+            "Analyst",
+            "Developer",
+            "Lead",
+            "Officer",
+            "Coordinator",
+            "Administrator",
+            "Intern",
+            "VP",
+            "President",
         ];
-        let filter_pos_verbs = ["responsible", "participated", "completed", "developed", "designed"];
+        let filter_pos_verbs = [
+            "responsible",
+            "participated",
+            "completed",
+            "developed",
+            "designed",
+        ];
         for line in &lines {
             if line.chars().count() > 60 {
                 continue;
@@ -1342,7 +1477,9 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
                 let re = regex::Regex::new(&pat).unwrap();
                 if let Some(m) = re.captures(line) {
                     let pos = m.get(1).unwrap().as_str().trim().to_string();
-                    if !filter_pos_verbs.iter().any(|v| pos.to_lowercase().contains(v))
+                    if !filter_pos_verbs
+                        .iter()
+                        .any(|v| pos.to_lowercase().contains(v))
                         && pos.chars().count() > 3
                     {
                         out.push(pos);
@@ -1352,9 +1489,10 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
         }
         out
     } else {
-        let re_label =
-            regex::Regex::new(r"(?:职位|岗位|职务|职称|担任)\s*[:：]\s*([\u{4e00}-\u{9fa5}a-zA-Z]{2,15})")
-                .unwrap();
+        let re_label = regex::Regex::new(
+            r"(?:职位|岗位|职务|职称|担任)\s*[:：]\s*([\u{4e00}-\u{9fa5}a-zA-Z]{2,15})",
+        )
+        .unwrap();
         let mut out: Vec<String> = re_label
             .captures_iter(text)
             .map(|c| c.get(1).unwrap().as_str().to_string())
@@ -1369,8 +1507,18 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
             }
         }
         let suffixes = [
-            "工程师", "经理", "总监", "主管", "专员", "设计师", "顾问", "助理", "架构师", "分析师",
-            "开发者", "负责人",
+            "工程师",
+            "经理",
+            "总监",
+            "主管",
+            "专员",
+            "设计师",
+            "顾问",
+            "助理",
+            "架构师",
+            "分析师",
+            "开发者",
+            "负责人",
         ];
         let filter_pos = ["负责", "参与", "完成", "开发了", "设计了"];
         for line in &lines {
@@ -1400,7 +1548,8 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
 
     // --- Work years ---
     if en {
-        let re_exp = regex::Regex::new(r"(?i)(\d+)\+?\s*years?\s*(?:of\s*)?(?:experience|work)").unwrap();
+        let re_exp =
+            regex::Regex::new(r"(?i)(\d+)\+?\s*years?\s*(?:of\s*)?(?:experience|work)").unwrap();
         if let Some(caps) = re_exp.captures(text) {
             if let Ok(v) = caps.get(1).unwrap().as_str().parse::<f64>() {
                 resume["work_exp_flt"] = json!(v);
@@ -1586,7 +1735,8 @@ fn load_rank(rows: &mut [SchoolRow]) {
 
 /// `GOOD_SCH` — schools.py:28-30: JSON list with `[,. &（）()]+` stripped.
 fn good_schools() -> std::collections::HashSet<String> {
-    let v: serde_json::Value = serde_json::from_str(GOOD_SCH_JSON).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value =
+        serde_json::from_str(GOOD_SCH_JSON).unwrap_or(serde_json::Value::Null);
     let arr = v.as_array().cloned().unwrap_or_default();
     let re = regex::Regex::new(r"[,. &（）()]+").unwrap();
     arr.iter()
@@ -1651,10 +1801,7 @@ pub fn select(nm: &str) -> Option<serde_json::Value> {
     load_rank(&mut rows);
     // alias match: nm in set(alias.split("+"))
     for row in &rows {
-        let hit_alias = row
-            .alias
-            .split('+')
-            .any(|a| a == nm);
+        let hit_alias = row.alias.split('+').any(|a| a == nm);
         if row.name_cn == nm || row.name_en == nm || hit_alias {
             return Some(serde_json::json!({
                 "id": row.id,
@@ -1750,12 +1897,21 @@ const REGIONS_TBL_JSON: &str = include_str!("data/resume/regions_tbl.json");
 
 /// Load the regions table as `id → (name, parent)`.
 fn regions_tbl() -> std::collections::HashMap<String, (String, String)> {
-    let v: serde_json::Value = serde_json::from_str(REGIONS_TBL_JSON).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value =
+        serde_json::from_str(REGIONS_TBL_JSON).unwrap_or(serde_json::Value::Null);
     let mut out = std::collections::HashMap::new();
     if let Some(obj) = v.as_object() {
         for (id, entry) in obj {
-            let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-            let parent = entry.get("parent").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let parent = entry
+                .get("parent")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             out.insert(id.clone(), (name, parent));
         }
     }
@@ -1827,8 +1983,16 @@ fn industries_tbl() -> std::collections::HashMap<String, (String, String)> {
     let mut out = std::collections::HashMap::new();
     if let Some(obj) = v.as_object() {
         for (id, entry) in obj {
-            let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-            let parent = entry.get("parent").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let parent = entry
+                .get("parent")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             out.insert(id.clone(), (name, parent));
         }
     }
@@ -1855,30 +2019,136 @@ pub fn industry_names(id: &str) -> Vec<String> {
 /// vocabulary (approximation of `tradi2simp`; full table lives in the
 /// compiled infinity.rag_tokenizer extension).
 const TRADI2SIMP: &[(char, char)] = &[
-    ('發', '发'), ('財', '财'), ('團', '团'), ('體', '体'), ('會', '会'), ('國', '国'),
-    ('學', '学'), ('華', '华'), ('東', '东'), ('業', '业'), ('產', '产'), ('訊', '讯'),
-    ('網', '网'), ('營', '营'), ('銷', '销'), ('廣', '广'), ('區', '区'), ('機', '机'),
-    ('構', '构'), ('門', '门'), ('開', '开'), ('關', '关'), ('聯', '联'), ('萬', '万'),
-    ('與', '与'), ('為', '为'), ('將', '将'), ('來', '来'), ('電', '电'), ('視', '视'),
-    ('話', '话'), ('計', '计'), ('劃', '划'), ('設', '设'), ('說', '说'),
-    ('論', '论'), ('證', '证'), ('實', '实'), ('驗', '验'), ('資', '资'), ('質', '质'),
-    ('運', '运'), ('輸', '输'), ('轉', '转'), ('軟', '软'), ('件', '件'), ('硬', '硬'),
-    ('顯', '显'), ('示', '示'), ('驅', '驱'), ('動', '动'), ('態', '态'), ('數', '数'),
-    ('據', '据'), ('庫', '库'), ('導', '导'), ('航', '航'), ('醫', '医'), ('藥', '药'),
-    ('農', '农'), ('銀', '银'), ('行', '行'), ('幣', '币'), ('價', '价'),
-    ('錢', '钱'), ('賬', '账'), ('戶', '户'), ('證', '证'), ('券', '券'), ('險', '险'),
-    ('買', '买'), ('賣', '卖'), ('購', '购'), ('貨', '货'), ('車', '车'), ('飛', '飞'),
-    ('機', '机'), ('場', '场'), ('橋', '桥'), ('樓', '楼'), ('築', '筑'), ('龍', '龙'),
-    ('鳳', '凤'), ('鳥', '鸟'), ('魚', '鱼'), ('馬', '马'), ('門', '门'),
-    ('風', '风'), ('雲', '云'), ('雪', '雪'), ('電', '电'), ('燈', '灯'), ('火', '火'),
-    ('水', '水'), ('陸', '陆'), ('海', '海'), ('洋', '洋'), ('島', '岛'), ('灣', '湾'),
-    ('港', '港'), ('澳', '澳'), ('台', '台'), ('廣', '广'), ('州', '州'),
-    ('深', '深'), ('圳', '圳'), ('佛', '佛'), ('山', '山'), ('東', '东'), ('莞', '莞'),
-    ('惠', '惠'), ('珠', '珠'), ('汕', '汕'), ('頭', '头'),
-    ('北', '北'), ('高', '高'), ('雄', '雄'),
-    ('新', '新'), ('竹', '竹'), ('桃', '桃'), ('園', '园'), ('蘭', '兰'), ('花', '花'),
-    ('蓮', '莲'), ('金', '金'), ('祖', '祖'), ('澎', '澎'),
-    ('湖', '湖'), ('綠', '绿'), ('嶼', '屿'),
+    ('發', '发'),
+    ('財', '财'),
+    ('團', '团'),
+    ('體', '体'),
+    ('會', '会'),
+    ('國', '国'),
+    ('學', '学'),
+    ('華', '华'),
+    ('東', '东'),
+    ('業', '业'),
+    ('產', '产'),
+    ('訊', '讯'),
+    ('網', '网'),
+    ('營', '营'),
+    ('銷', '销'),
+    ('廣', '广'),
+    ('區', '区'),
+    ('機', '机'),
+    ('構', '构'),
+    ('門', '门'),
+    ('開', '开'),
+    ('關', '关'),
+    ('聯', '联'),
+    ('萬', '万'),
+    ('與', '与'),
+    ('為', '为'),
+    ('將', '将'),
+    ('來', '来'),
+    ('電', '电'),
+    ('視', '视'),
+    ('話', '话'),
+    ('計', '计'),
+    ('劃', '划'),
+    ('設', '设'),
+    ('說', '说'),
+    ('論', '论'),
+    ('證', '证'),
+    ('實', '实'),
+    ('驗', '验'),
+    ('資', '资'),
+    ('質', '质'),
+    ('運', '运'),
+    ('輸', '输'),
+    ('轉', '转'),
+    ('軟', '软'),
+    ('件', '件'),
+    ('硬', '硬'),
+    ('顯', '显'),
+    ('示', '示'),
+    ('驅', '驱'),
+    ('動', '动'),
+    ('態', '态'),
+    ('數', '数'),
+    ('據', '据'),
+    ('庫', '库'),
+    ('導', '导'),
+    ('航', '航'),
+    ('醫', '医'),
+    ('藥', '药'),
+    ('農', '农'),
+    ('銀', '银'),
+    ('行', '行'),
+    ('幣', '币'),
+    ('價', '价'),
+    ('錢', '钱'),
+    ('賬', '账'),
+    ('戶', '户'),
+    ('證', '证'),
+    ('券', '券'),
+    ('險', '险'),
+    ('買', '买'),
+    ('賣', '卖'),
+    ('購', '购'),
+    ('貨', '货'),
+    ('車', '车'),
+    ('飛', '飞'),
+    ('機', '机'),
+    ('場', '场'),
+    ('橋', '桥'),
+    ('樓', '楼'),
+    ('築', '筑'),
+    ('龍', '龙'),
+    ('鳳', '凤'),
+    ('鳥', '鸟'),
+    ('魚', '鱼'),
+    ('馬', '马'),
+    ('門', '门'),
+    ('風', '风'),
+    ('雲', '云'),
+    ('雪', '雪'),
+    ('電', '电'),
+    ('燈', '灯'),
+    ('火', '火'),
+    ('水', '水'),
+    ('陸', '陆'),
+    ('海', '海'),
+    ('洋', '洋'),
+    ('島', '岛'),
+    ('灣', '湾'),
+    ('港', '港'),
+    ('澳', '澳'),
+    ('台', '台'),
+    ('廣', '广'),
+    ('州', '州'),
+    ('深', '深'),
+    ('圳', '圳'),
+    ('佛', '佛'),
+    ('山', '山'),
+    ('東', '东'),
+    ('莞', '莞'),
+    ('惠', '惠'),
+    ('珠', '珠'),
+    ('汕', '汕'),
+    ('頭', '头'),
+    ('北', '北'),
+    ('高', '高'),
+    ('雄', '雄'),
+    ('新', '新'),
+    ('竹', '竹'),
+    ('桃', '桃'),
+    ('園', '园'),
+    ('蘭', '兰'),
+    ('花', '花'),
+    ('蓮', '莲'),
+    ('金', '金'),
+    ('祖', '祖'),
+    ('澎', '澎'),
+    ('湖', '湖'),
+    ('綠', '绿'),
+    ('嶼', '屿'),
 ];
 
 /// `tradi2simp` — approximate traditional→simplified using the map above.
@@ -1942,9 +2212,14 @@ pub fn baike(cid: &str, default_v: i64) -> i64 {
 
 /// `CORP_TKS` — the token-frequency list (token dictionary).
 fn corp_tks() -> std::collections::HashSet<String> {
-    let v: serde_json::Value = serde_json::from_str(CORP_TKS_JSON).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value =
+        serde_json::from_str(CORP_TKS_JSON).unwrap_or(serde_json::Value::Null);
     v.as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -1970,9 +2245,13 @@ pub fn corp_norm(nm: &str, add_region: bool) -> String {
     let re_sep = regex::Regex::new("[()（）+'\"\t *\\【】-]+").unwrap();
     nm = re_sep.replace_all(&nm, " ").into_owned();
     // strip suffixes (case-insensitive)
-    let re_suffix = regex::Regex::new(r"(?i)([—-]+.*| +co\..*|corp\..*| +inc\..*| +ltd.*)").unwrap();
+    let re_suffix =
+        regex::Regex::new(r"(?i)([—-]+.*| +co\..*|corp\..*| +inc\..*| +ltd.*)").unwrap();
     nm = re_suffix.replace_all(&nm, "").into_owned();
-    let re_suffix2 = regex::Regex::new(r"(?i)(计算机|技术|(技术|科技|网络)*有限公司|公司|有限|研发中心|中国|总部)$").unwrap();
+    let re_suffix2 = regex::Regex::new(
+        r"(?i)(计算机|技术|(技术|科技|网络)*有限公司|公司|有限|研发中心|中国|总部)$",
+    )
+    .unwrap();
     nm = re_suffix2.replace_all(&nm, "").into_owned();
     // length guard
     if nm.chars().count() < 5 && !is_name(&nm.chars().take(2).collect::<String>()) {
@@ -1993,7 +2272,14 @@ pub fn corp_norm(nm: &str, add_region: bool) -> String {
             continue;
         }
         let re_alpha = regex::Regex::new(r"[0-9a-zA-Z,.]").unwrap();
-        if re_alpha.is_match(t) && re_alpha.is_match(&out.chars().last().map(|c| c.to_string()).unwrap_or_default()) {
+        if re_alpha.is_match(t)
+            && re_alpha.is_match(
+                &out.chars()
+                    .last()
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
+            )
+        {
             out.push(' ');
         }
         out.push_str(t);
@@ -2017,7 +2303,8 @@ pub fn corp_norm(nm: &str, add_region: bool) -> String {
 
 /// `GOOD_CORP` — corporations.py:94: normalized good-company set.
 fn good_corp_set() -> std::collections::HashSet<String> {
-    let v: serde_json::Value = serde_json::from_str(GOOD_CORP_JSON).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value =
+        serde_json::from_str(GOOD_CORP_JSON).unwrap_or(serde_json::Value::Null);
     v.as_array()
         .map(|a| {
             a.iter()
@@ -2030,7 +2317,8 @@ fn good_corp_set() -> std::collections::HashSet<String> {
 
 /// `CORP_TAG` — corporations.py:95-99: normalized name → tags.
 fn corp_tag_map() -> std::collections::HashMap<String, Vec<String>> {
-    let v: serde_json::Value = serde_json::from_str(CORP_TAG_JSON).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value =
+        serde_json::from_str(CORP_TAG_JSON).unwrap_or(serde_json::Value::Null);
     let mut out = std::collections::HashMap::new();
     if let Some(obj) = v.as_object() {
         for (c, tags) in obj {
@@ -2040,7 +2328,11 @@ fn corp_tag_map() -> std::collections::HashMap<String, Vec<String>> {
             }
             let t = tags
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             out.insert(cc, t);
         }
@@ -2220,7 +2512,10 @@ mod tests {
     #[test]
     fn shingling_jaccard_matches_expected() {
         // Identical → 1.0.
-        assert_eq!(shingling_jaccard("same text here", "same text here", 5), 1.0);
+        assert_eq!(
+            shingling_jaccard("same text here", "same text here", 5),
+            1.0
+        );
         // Completely different → 0.0.
         assert_eq!(shingling_jaccard("aaaa", "bbbb", 5), 0.0);
         // Both empty → 1.0.
@@ -2238,7 +2533,11 @@ mod tests {
         assert_eq!(resume["email_tks"], "zhangsan@example.com");
         assert_eq!(resume["work_exp_flt"], 5.0);
         let schools = resume["school_name_tks"].as_array().unwrap();
-        assert!(schools.iter().any(|s| s.as_str().unwrap().contains("中山大学")));
+        assert!(
+            schools
+                .iter()
+                .any(|s| s.as_str().unwrap().contains("中山大学"))
+        );
     }
 
     #[test]
@@ -2250,7 +2549,11 @@ mod tests {
         assert_eq!(resume["edu_end_int"], 2020);
         assert_eq!(resume["work_exp_flt"], 5.0);
         let schools = resume["school_name_tks"].as_array().unwrap();
-        assert!(schools.iter().any(|s| s.as_str().unwrap().contains("Stanford University")));
+        assert!(
+            schools
+                .iter()
+                .any(|s| s.as_str().unwrap().contains("Stanford University"))
+        );
     }
 
     #[test]
@@ -2302,7 +2605,11 @@ mod tests {
             "project_desc_tks": ["开发了电商平台"],
             "project_tks": ["电商平台"],
         });
-        let lines = vec!["张三".to_string(), "负责系统开发".to_string(), "开发了电商平台".to_string()];
+        let lines = vec![
+            "张三".to_string(),
+            "负责系统开发".to_string(),
+            "开发了电商平台".to_string(),
+        ];
         postprocess_resume(&mut resume, &lines, "Chinese");
         assert_eq!(resume["project_desc_tks"].as_array().unwrap().len(), 0);
         let work = resume["work_desc_tks"].as_array().unwrap();
@@ -2319,7 +2626,12 @@ mod tests {
             assert_eq!(resume[field], "");
         }
         // _tks fields complete as empty arrays.
-        for field in ["email_tks", "position_name_tks", "school_name_tks", "major_tks"] {
+        for field in [
+            "email_tks",
+            "position_name_tks",
+            "school_name_tks",
+            "major_tks",
+        ] {
             assert_eq!(resume[field].as_array().unwrap().len(), 0);
         }
     }
@@ -2343,7 +2655,9 @@ mod tests {
         // Identity fields redundantly present.
         assert_eq!(first.fields.get("name_kwd").unwrap(), "张三");
         // Education group exists.
-        let edu = chunks.iter().find(|c| c.content_with_weight.contains("教育背景"));
+        let edu = chunks
+            .iter()
+            .find(|c| c.content_with_weight.contains("教育背景"));
         assert!(edu.is_some());
         assert!(edu.unwrap().content_with_weight.contains("中山大学"));
         // Positions increment logically.
@@ -2371,8 +2685,16 @@ mod tests {
             .filter(|c| c.content_with_weight.contains("工作职责"))
             .collect();
         assert_eq!(work_chunks.len(), 2);
-        assert!(work_chunks[0].content_with_weight.contains("腾讯 2020.1-2022.1 2年"));
-        assert!(work_chunks[1].content_with_weight.contains("阿里 2022.1-2024.1 2年"));
+        assert!(
+            work_chunks[0]
+                .content_with_weight
+                .contains("腾讯 2020.1-2022.1 2年")
+        );
+        assert!(
+            work_chunks[1]
+                .content_with_weight
+                .contains("阿里 2022.1-2024.1 2年")
+        );
         // Each work chunk carries identity name.
         assert_eq!(work_chunks[0].fields.get("name_kwd").unwrap(), "张三");
     }

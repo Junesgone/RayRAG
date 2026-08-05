@@ -86,10 +86,8 @@ fn decode_entities(text: &str) -> String {
 fn parse_baidu_results(html: &str) -> Vec<BaiduSearchResult> {
     let document = Html::parse_document(html);
     let container = Selector::parse("div#content_left").expect("valid container selector");
-    let result_selector = Selector::parse(
-        "div.result, div.c-container, div[class*='result']",
-    )
-    .expect("valid result selector");
+    let result_selector = Selector::parse("div.result, div.c-container, div[class*='result']")
+        .expect("valid result selector");
     let title_selector = Selector::parse("h3 a, h3").expect("valid title selector");
     let mut results = Vec::new();
     if let Some(content) = document.select(&container).next() {
@@ -106,8 +104,10 @@ fn parse_baidu_results(html: &str) -> Vec<BaiduSearchResult> {
                 .unwrap_or_default()
                 .to_string();
             let snippet = item
-                .select(&Selector::parse(".c-abstract, .content-right_8Zs40, .c-span-last, span")
-                    .expect("valid snippet selector"))
+                .select(
+                    &Selector::parse(".c-abstract, .content-right_8Zs40, .c-span-last, span")
+                        .expect("valid snippet selector"),
+                )
                 .next()
                 .map(|node| decode_entities(strip_tags(&node.html()).trim()).to_string())
                 .unwrap_or_default();
@@ -166,7 +166,10 @@ impl BaiduProvider for BaiduClient {
             let chunk = chunk.context("could not read Baidu response body")?;
             let remaining = MAX_BAIDU_RESPONSE_BODY.saturating_sub(body.len());
             if chunk.len() > remaining {
-                bail!("Baidu response body exceeds {} bytes", MAX_BAIDU_RESPONSE_BODY);
+                bail!(
+                    "Baidu response body exceeds {} bytes",
+                    MAX_BAIDU_RESPONSE_BODY
+                );
             }
             body.extend_from_slice(&chunk);
         }
@@ -184,10 +187,7 @@ impl BaiduProvider for BaiduClient {
             bail!("baidu: safety verification page returned; retry later or use another provider");
         }
         let top_n = request.top_n.clamp(1, 20);
-        Ok(parse_baidu_results(&html)
-            .into_iter()
-            .take(top_n)
-            .collect())
+        Ok(parse_baidu_results(&html).into_iter().take(top_n).collect())
     }
 }
 

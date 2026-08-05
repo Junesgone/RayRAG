@@ -7,9 +7,9 @@
 //! across a merge) and the merge pipeline's similarity pre-filter
 //! (pairwise cosine similarity above the threshold before asking the LLM).
 
-use crate::llm::LlmClient;
 use crate::Result;
-use serde_json::{json, Value};
+use crate::llm::LlmClient;
+use serde_json::{Value, json};
 
 /// `MERGE_SYSTEM_PROMPT` — verbatim port.
 pub const MERGE_SYSTEM_PROMPT: &str = "You are an intelligent data merging assistant.\n\
@@ -87,14 +87,27 @@ pub fn apply_merge_invariants(existing: &Value, mut merged: Value) -> Value {
 
 /// `_struct_merge_pair`: LLM-judged merge of two payloads. Returns the merged
 /// payload when the LLM decides they are duplicates, else None. temperature 0.0.
-pub async fn merge_pair(existing: &Value, incoming: &Value, client: &LlmClient) -> Result<Option<Value>> {
+pub async fn merge_pair(
+    existing: &Value,
+    incoming: &Value,
+    client: &LlmClient,
+) -> Result<Option<Value>> {
     let user_prompt = MERGE_USER_PROMPT
         .replace("{item_existing}", &serde_json::to_string(existing)?)
         .replace("{item_incoming}", &serde_json::to_string(incoming)?);
     let system_prompt = format!("{MERGE_SYSTEM_PROMPT}\n\n{MERGE_DECISION_INSTRUCTION}");
-    let res = crate::hypergraph::gen_json_with_temperature(client, &system_prompt, &user_prompt, Some(0.0))
-        .await?;
-    if !res.get("duplicated").and_then(Value::as_bool).unwrap_or(false) {
+    let res = crate::hypergraph::gen_json_with_temperature(
+        client,
+        &system_prompt,
+        &user_prompt,
+        Some(0.0),
+    )
+    .await?;
+    if !res
+        .get("duplicated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return Ok(None);
     }
     let merged = res.get("merged").cloned().unwrap_or(Value::Null);
@@ -142,7 +155,10 @@ fn payloads_similar(a: &Value, b: &Value, threshold: f32) -> bool {
 fn embedding_of(value: &Value) -> Option<Vec<f32>> {
     for key in ["embedding", "q_vec"] {
         if let Some(v) = value.get(key).and_then(Value::as_array) {
-            let vec: Vec<f32> = v.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect();
+            let vec: Vec<f32> = v
+                .iter()
+                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                .collect();
             if !vec.is_empty() {
                 return Some(vec);
             }
@@ -154,7 +170,11 @@ fn embedding_of(value: &Value) -> Option<Vec<f32>> {
             if key.ends_with("_vec") {
                 let vec: Vec<f32> = val
                     .as_array()
-                    .map(|v| v.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect())
+                    .map(|v| {
+                        v.iter()
+                            .filter_map(|x| x.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if !vec.is_empty() {
                     return Some(vec);
@@ -203,7 +223,12 @@ fn union_chunk_ids(merged: &mut Value, existing: &Value) {
     let mut ids: Vec<String> = merged
         .get("source_chunk_ids")
         .and_then(Value::as_array)
-        .map(|v| v.iter().filter_map(Value::as_str).map(String::from).collect())
+        .map(|v| {
+            v.iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default();
     if let Some(list) = existing.get("source_chunk_ids").and_then(Value::as_array) {
         for v in list {
@@ -215,10 +240,7 @@ fn union_chunk_ids(merged: &mut Value, existing: &Value) {
         }
     }
     if let Some(map) = merged.as_object_mut() {
-        map.insert(
-            "source_chunk_ids".into(),
-            json!(ids),
-        );
+        map.insert("source_chunk_ids".into(), json!(ids));
     }
 }
 
@@ -301,7 +323,8 @@ mod tests {
             system_prompt: String::new(),
         });
         // Same logical entity, different descriptions.
-        let existing = json!({"type": "organization", "name": "百鲤居水产养殖场", "description": "位于中山"});
+        let existing =
+            json!({"type": "organization", "name": "百鲤居水产养殖场", "description": "位于中山"});
         let incoming = json!({"type": "organization", "name": "百鲤居水产养殖场", "description": "主营四大家鱼"});
         let merged = merge_pair(&existing, &incoming, &client)
             .await
@@ -311,7 +334,10 @@ mod tests {
         // Different entities → None.
         let other = json!({"type": "person", "name": "李锦澎", "description": "负责人"});
         assert!(
-            merge_pair(&existing, &other, &client).await.unwrap().is_none(),
+            merge_pair(&existing, &other, &client)
+                .await
+                .unwrap()
+                .is_none(),
             "unrelated items must not merge"
         );
     }

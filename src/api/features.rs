@@ -467,7 +467,8 @@ pub async fn chat_complete(
                     })
                     .collect();
                 let _ = tx.blocking_send(Ok(Event::default().data(
-                    serde_json::json!({"object": "chat.completion.references", "references": refs}).to_string(),
+                    serde_json::json!({"object": "chat.completion.references", "references": refs})
+                        .to_string(),
                 )));
             }
             let done = serde_json::json!({
@@ -736,7 +737,9 @@ async fn generate_chat_answer(
     let completion = if let Some(llm) = tenant_llm.as_ref().or(state.llm.as_deref()) {
         if let Some(on_chunk) = on_chunk {
             let text = llm
-                .rag_chat_stream(question, &contexts, history, generation, move |chunk| on_chunk(chunk))
+                .rag_chat_stream(question, &contexts, history, generation, move |chunk| {
+                    on_chunk(chunk)
+                })
                 .await?;
             return Ok(GeneratedChatAnswer {
                 answer: text,
@@ -993,7 +996,11 @@ fn default_providers() -> Vec<Provider> {
                 if !full.is_empty() {
                     full
                 } else {
-                    preset.models.iter().map(|model| (*model).to_string()).collect()
+                    preset
+                        .models
+                        .iter()
+                        .map(|model| (*model).to_string())
+                        .collect()
                 }
             },
             enabled: false,
@@ -1025,7 +1032,11 @@ fn default_providers() -> Vec<Provider> {
         } else {
             providers.push(Provider {
                 id: id.to_string(),
-                name: if id == "minimax" { "MiniMax".into() } else { "OpenAI-API-Compatible".into() },
+                name: if id == "minimax" {
+                    "MiniMax".into()
+                } else {
+                    "OpenAI-API-Compatible".into()
+                },
                 api_base: if id == "minimax" {
                     "https://api.minimaxi.com/v1".into()
                 } else {

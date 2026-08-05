@@ -89,8 +89,8 @@ fn decode_entities(text: &str) -> String {
 
 fn parse_baidu_scholar_results(html: &str) -> Vec<BaiduScholarResult> {
     let document = Html::parse_document(html);
-    let result_selector =
-        Selector::parse("div.result, div.sc_content, div[class*='result']").expect("valid result selector");
+    let result_selector = Selector::parse("div.result, div.sc_content, div[class*='result']")
+        .expect("valid result selector");
     let title_selector = Selector::parse("h3 a, h3").expect("valid title selector");
     let mut results = Vec::new();
     for item in document.select(&result_selector) {
@@ -106,8 +106,10 @@ fn parse_baidu_scholar_results(html: &str) -> Vec<BaiduScholarResult> {
             .unwrap_or_default()
             .to_string();
         let snippet = item
-            .select(&Selector::parse(".sc_content, .c_abstract, .sc_abstract")
-                .expect("valid snippet selector"))
+            .select(
+                &Selector::parse(".sc_content, .c_abstract, .sc_abstract")
+                    .expect("valid snippet selector"),
+            )
             .next()
             .map(|node| decode_entities(strip_tags(&node.html()).trim()).to_string())
             .unwrap_or_default();
@@ -188,7 +190,9 @@ impl BaiduScholarProvider for BaiduScholarClient {
         }
         let html = String::from_utf8_lossy(&body);
         if html.contains("百度安全验证") || html.contains("wappass") {
-            bail!("baidu_scholar: safety verification page returned; retry later or use another provider");
+            bail!(
+                "baidu_scholar: safety verification page returned; retry later or use another provider"
+            );
         }
         let top_n = request.top_n.clamp(1, 20);
         Ok(parse_baidu_scholar_results(&html)
@@ -263,7 +267,10 @@ mod tests {
     async fn empty_query_is_rejected() {
         let client = BaiduScholarClient::default();
         let error = client
-            .search(&BaiduScholarRequest { query: "".into(), top_n: 5 })
+            .search(&BaiduScholarRequest {
+                query: "".into(),
+                top_n: 5,
+            })
             .await
             .unwrap_err();
         assert!(error.to_string().contains("query is required"));
@@ -273,7 +280,10 @@ mod tests {
     #[ignore = "requires live access to xueshu.baidu.com"]
     async fn live_baidu_scholar_search() {
         let result = BaiduScholarClient::default()
-            .search(&BaiduScholarRequest { query: "RAG".into(), top_n: 5 })
+            .search(&BaiduScholarRequest {
+                query: "RAG".into(),
+                top_n: 5,
+            })
             .await;
         match result {
             Ok(results) => assert!(

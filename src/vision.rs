@@ -11,9 +11,9 @@
 //! `vision_llm_describe_prompt.md` (PDF page image -> clean Markdown).
 
 use crate::Result;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Default transcription prompt, ported from
 /// `rag/prompts/vision_llm_describe_prompt.md`.
@@ -112,12 +112,11 @@ impl VisionClient {
         }])
     }
 
-    async fn describe_inner(
-        &self,
-        image: &str,
-        prompt: Option<&str>,
-    ) -> Result<VisionDescription> {
-        let url = format!("{}/chat/completions", self.config.api_base.trim_end_matches('/'));
+    async fn describe_inner(&self, image: &str, prompt: Option<&str>) -> Result<VisionDescription> {
+        let url = format!(
+            "{}/chat/completions",
+            self.config.api_base.trim_end_matches('/')
+        );
         let body = json!({
             "model": self.config.model,
             "messages": self.vision_messages(image, prompt),
@@ -211,10 +210,7 @@ mod tests {
             axum::routing::post(|body: axum::Json<Value>| async move {
                 assert_eq!(body["model"], "vision-test");
                 assert_eq!(body["messages"][0]["role"], "user");
-                assert_eq!(
-                    body["messages"][0]["content"][1]["type"],
-                    "image_url"
-                );
+                assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
                 axum::Json(json!({
                     "choices": [{"message": {"content": "  转写结果  "}}],
                     "usage": {"total_tokens": 42}
@@ -232,10 +228,7 @@ mod tests {
             model: "vision-test".into(),
             ..VisionConfig::default()
         });
-        let out = client
-            .describe("data:image/png;base64,AA==")
-            .await
-            .unwrap();
+        let out = client.describe("data:image/png;base64,AA==").await.unwrap();
         assert_eq!(out.content, "转写结果");
         assert_eq!(out.total_tokens, 42);
     }

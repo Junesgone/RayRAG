@@ -4,7 +4,7 @@
 //! containers (or a specific container) and downloads blobs as
 //! connector documents.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 
 use super::{ConnectorDoc, DocumentSource, SourceOptions};
@@ -49,7 +49,12 @@ impl BlobConnector {
     }
 
     async fn get_xml(&self, url: &str) -> Result<String> {
-        let response = self.client.get(url).send().await.context("blob: request failed")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("blob: request failed")?;
         let status = response.status();
         let body = response.text().await?;
         if !status.is_success() {
@@ -63,14 +68,22 @@ impl BlobConnector {
     }
 
     async fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
-        let response = self.client.get(url).send().await.context("blob: request failed")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("blob: request failed")?;
         let status = response.status();
         let bytes = response.bytes().await?;
         if !status.is_success() {
             bail!(
                 "blob: upstream returned {}: {}",
                 status.as_u16(),
-                String::from_utf8_lossy(&bytes).chars().take(200).collect::<String>()
+                String::from_utf8_lossy(&bytes)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
             );
         }
         Ok(bytes.to_vec())
@@ -122,11 +135,7 @@ impl BlobConnector {
                 let url = format!("{endpoint}/{container}/{blob}?{sas}");
                 match self.get_bytes(&url).await {
                     Ok(bytes) => {
-                        let name = blob
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or(&blob)
-                            .to_string();
+                        let name = blob.rsplit('/').next().unwrap_or(&blob).to_string();
                         let ext = std::path::Path::new(&name)
                             .extension()
                             .map(|e| format!(".{}", e.to_string_lossy()))

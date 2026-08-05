@@ -150,7 +150,10 @@ pub fn tokenize_chunks(
             continue;
         }
         let mut d = ChunkDoc::base(docnm_kwd, title_tks.clone(), title_sm_tks.clone());
-        add_positions(&mut d, &[(ii as f64, ii as f64, ii as f64, ii as f64, ii as f64)]);
+        add_positions(
+            &mut d,
+            &[(ii as f64, ii as f64, ii as f64, ii as f64, ii as f64)],
+        );
         if let Some(pattern) = child_delimiters_pattern {
             d.mom_with_weight = Some(ck.clone());
             if let Ok(docs) = split_with_pattern(&d, pattern, ck) {
@@ -184,7 +187,11 @@ pub fn merge_markdown_sections(
             if overlapped_percent > 0 {
                 let overlap_len = current_text.chars().count() * overlapped_percent as usize / 100;
                 if overlap_len > 0 {
-                    overlap_part = current_text.chars().rev().take(overlap_len).collect::<Vec<_>>()
+                    overlap_part = current_text
+                        .chars()
+                        .rev()
+                        .take(overlap_len)
+                        .collect::<Vec<_>>()
                         .into_iter()
                         .rev()
                         .collect();
@@ -233,7 +240,8 @@ pub fn naive_chunk_text(
         .map(String::from)
         .filter(|s| !s.is_empty())
         .collect();
-    let sections: Vec<(String, String)> = pieces.iter().map(|s| (s.clone(), String::new())).collect();
+    let sections: Vec<(String, String)> =
+        pieces.iter().map(|s| (s.clone(), String::new())).collect();
 
     let ov = normalize_overlapped_percent(overlapped_percent);
     let chunks = crate::book::naive_merge(&sections, chunk_token_num, delimiter, ov as usize);
@@ -282,17 +290,17 @@ mod tests {
         add_positions(&mut d, &[(0.0, 1.0, 2.0, 3.0, 4.0)]);
         assert_eq!(d.page_num_int.as_ref().unwrap(), &vec![1]);
         assert_eq!(d.top_int.as_ref().unwrap(), &vec![3]);
-        assert_eq!(
-            d.position_int.as_ref().unwrap(),
-            &vec![(1, 1, 2, 3, 4)]
-        );
+        assert_eq!(d.position_int.as_ref().unwrap(), &vec![(1, 1, 2, 3, 4)]);
     }
 
     #[test]
     fn tokenize_strips_table_tags() {
         let mut d = ChunkDoc::base("f.txt", vec![], vec![]);
         tokenize_doc(&mut d, "a<table><tr><td>cell</td></tr></table>b");
-        assert_eq!(d.content_with_weight, "a<table><tr><td>cell</td></tr></table>b");
+        assert_eq!(
+            d.content_with_weight,
+            "a<table><tr><td>cell</td></tr></table>b"
+        );
         assert_eq!(d.content_ltks, vec!["a", "cell", "b"]);
     }
 
@@ -315,7 +323,11 @@ mod tests {
     #[test]
     fn tokenize_chunks_skips_empty_and_adds_positions() {
         let docs = tokenize_chunks(
-            &["正文一".to_string(), "   ".to_string(), "正文二".to_string()],
+            &[
+                "正文一".to_string(),
+                "   ".to_string(),
+                "正文二".to_string(),
+            ],
             "f.txt",
             vec![],
             vec![],
@@ -337,7 +349,10 @@ mod tests {
         );
         assert_eq!(docs.len(), 2);
         assert!(docs[0].mom_with_weight.is_some());
-        assert_eq!(docs[0].mom_with_weight.as_deref().unwrap(), "第一句。第二句。");
+        assert_eq!(
+            docs[0].mom_with_weight.as_deref().unwrap(),
+            "第一句。第二句。"
+        );
     }
 
     #[test]

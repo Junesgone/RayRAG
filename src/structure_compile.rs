@@ -14,12 +14,12 @@
 //! (`bulk_dedup_items`) from `_common.py` live here too; the wiki pipeline
 //! reuses them.
 
+use crate::Result;
 use crate::embed::Embedder;
 use crate::llm::LlmClient;
 use crate::merge;
-use crate::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -123,7 +123,11 @@ pub fn localize(value: &Value, language: &str) -> String {
             .join("\n"),
         Value::Object(map) => {
             let v = map.get(language).or_else(|| {
-                if language != "en" { map.get("en") } else { None }
+                if language != "en" {
+                    map.get("en")
+                } else {
+                    None
+                }
             });
             match v {
                 Some(Value::String(s)) => s.clone(),
@@ -229,9 +233,8 @@ pub fn hypergraph_prompts(config: &Value, language: &str) -> (String, String) {
     let guideline = cfg_get(config, &["guideline"], &Value::Null);
     let output = cfg_get(config, &["output"], &Value::Null);
     let options = cfg_get(config, &["options"], &Value::Null);
-    let uses_template_shape =
-        cfg_get(config, &["entity"], &Value::Null).is_object()
-            || cfg_get(config, &["relation"], &Value::Null).is_object();
+    let uses_template_shape = cfg_get(config, &["entity"], &Value::Null).is_object()
+        || cfg_get(config, &["relation"], &Value::Null).is_object();
 
     let target = localize(cfg_get(guideline, &["target"], &Value::Null), language);
     let rules_e = localize(
@@ -242,7 +245,10 @@ pub fn hypergraph_prompts(config: &Value, language: &str) -> (String, String) {
         cfg_get(guideline, &["rules_for_relations"], &Value::Null),
         language,
     );
-    let rules_t = localize(cfg_get(guideline, &["rules_for_time"], &Value::Null), language);
+    let rules_t = localize(
+        cfg_get(guideline, &["rules_for_time"], &Value::Null),
+        language,
+    );
     let global_rules = localize(cfg_get(config, &["global_rules"], &Value::Null), language);
 
     let mut rules_t = rules_t;
@@ -383,7 +389,9 @@ pub fn unwrap_items(res: &Value) -> Vec<Value> {
     match res {
         Value::Null => Vec::new(),
         Value::Object(map) => match map.get("items") {
-            Some(Value::Array(items)) => items.iter().filter(|it| it.is_object()).cloned().collect(),
+            Some(Value::Array(items)) => {
+                items.iter().filter(|it| it.is_object()).cloned().collect()
+            }
             _ => Vec::new(),
         },
         Value::Array(items) => items.iter().filter(|it| it.is_object()).cloned().collect(),
@@ -469,7 +477,10 @@ pub fn payload_description(payload: &Value) -> String {
 
 /// `_struct_load_payload`: parse `content_with_weight` into a dict.
 pub fn load_payload(doc: &Value) -> Value {
-    let raw = doc.get("content_with_weight").and_then(Value::as_str).unwrap_or("{}");
+    let raw = doc
+        .get("content_with_weight")
+        .and_then(Value::as_str)
+        .unwrap_or("{}");
     serde_json::from_str(raw).unwrap_or_else(|_| json!({}))
 }
 
@@ -513,7 +524,10 @@ pub fn graph_entity(payload: &Value, source_chunk_ids: Option<&[String]>) -> Opt
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "other".to_string());
     let aliases: Vec<String> = match payload.get("aliases") {
-        Some(Value::String(s)) => vec![s.trim().to_string()].into_iter().filter(|s| !s.is_empty()).collect(),
+        Some(Value::String(s)) => vec![s.trim().to_string()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect(),
         Some(Value::Array(items)) => items
             .iter()
             .filter_map(Value::as_str)
@@ -528,9 +542,7 @@ pub fn graph_entity(payload: &Value, source_chunk_ids: Option<&[String]>) -> Opt
         .unwrap_or("")
         .trim()
         .to_string();
-    let chunk_ids: Vec<String> = source_chunk_ids
-        .map(|ids| ids.to_vec())
-        .unwrap_or_default();
+    let chunk_ids: Vec<String> = source_chunk_ids.map(|ids| ids.to_vec()).unwrap_or_default();
     Some(json!({
         "aliases": aliases,
         "mention_count": 1,
@@ -570,7 +582,11 @@ pub fn merge_graph_entities(entities: &[Value]) -> Vec<Value> {
     let mut merged: HashMap<(String, String), Value> = HashMap::new();
     let mut order: Vec<(String, String)> = Vec::new();
     for entity in entities {
-        let name = entity.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let typ = entity
             .get("type")
             .and_then(Value::as_str)
@@ -598,8 +614,14 @@ pub fn merge_graph_entities(entities: &[Value]) -> Vec<Value> {
                     }
                 }
             }
-            let t_desc = target.get("discription").and_then(Value::as_str).unwrap_or("");
-            let i_desc = entity.get("discription").and_then(Value::as_str).unwrap_or("");
+            let t_desc = target
+                .get("discription")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let i_desc = entity
+                .get("discription")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             if t_desc.is_empty() && !i_desc.is_empty() {
                 target["discription"] = json!(i_desc);
             }
@@ -607,12 +629,22 @@ pub fn merge_graph_entities(entities: &[Value]) -> Vec<Value> {
                 target
                     .get("source_chunk_ids")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default(),
                 entity
                     .get("source_chunk_ids")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default(),
             ]);
             target["source_chunk_ids"] = json!(merged_ids);
@@ -753,7 +785,11 @@ pub fn find_vec_field(row: &Value) -> Option<Vec<f32>> {
             if key.starts_with("q_") && key.ends_with("_vec") {
                 let vec: Vec<f32> = val
                     .as_array()
-                    .map(|v| v.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect())
+                    .map(|v| {
+                        v.iter()
+                            .filter_map(|x| x.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if !vec.is_empty() {
                     return Some(vec);
@@ -780,7 +816,15 @@ pub fn doc_template_id(row: &Value) -> Option<String> {
 
 /// `_struct_filter_key`: dedup bucket key (doc_id, compile_kwd,
 /// from/to entity, template id).
-pub fn filter_key(row: &CompiledRow) -> (String, String, Option<String>, Option<String>, Option<String>) {
+pub fn filter_key(
+    row: &CompiledRow,
+) -> (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     (
         row.doc_id.clone(),
         row.compile_kwd.clone(),
@@ -1027,13 +1071,14 @@ pub fn exact_dedup_by_key(
         if !it.is_object() {
             continue;
         }
-        let norm = normalize_key(
-            it.get(name_key).and_then(Value::as_str).unwrap_or(""),
-        );
+        let norm = normalize_key(it.get(name_key).and_then(Value::as_str).unwrap_or(""));
         if norm.is_empty() {
             continue;
         }
-        let type_val = type_key.and_then(|tk| it.get(tk)).and_then(Value::as_str).map(String::from);
+        let type_val = type_key
+            .and_then(|tk| it.get(tk))
+            .and_then(Value::as_str)
+            .map(String::from);
         let key = (norm, type_val);
         if let Some((_, group)) = groups.iter_mut().find(|(k, _)| k == &key) {
             group.push(it.clone());
@@ -1073,7 +1118,12 @@ pub fn exact_dedup_by_key(
             chunk_id_lists.push(
                 it.get("chunk_ids")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect()
+                    })
                     .unwrap_or_default(),
             );
             mention_count += it.get("mention_count").and_then(Value::as_u64).unwrap_or(1) as usize;
@@ -1115,7 +1165,11 @@ fn sorted(set: &HashSet<String>) -> Vec<String> {
 }
 
 /// Union-find collapse after embedding/LLM merges (`_apply_dedup_merges`).
-fn apply_dedup_merges(canonical: &[Value], merged_into: &HashMap<usize, usize>, name_key: &str) -> Vec<Value> {
+fn apply_dedup_merges(
+    canonical: &[Value],
+    merged_into: &HashMap<usize, usize>,
+    name_key: &str,
+) -> Vec<Value> {
     fn root(i: usize, merged_into: &HashMap<usize, usize>) -> usize {
         let mut cur = i;
         while let Some(parent) = merged_into.get(&cur) {
@@ -1133,14 +1187,28 @@ fn apply_dedup_merges(canonical: &[Value], merged_into: &HashMap<usize, usize>, 
         let mut aliases: HashSet<String> = base
             .get("aliases")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default();
-        let mut chunk_id_lists: Vec<Vec<String>> = vec![base
-            .get("chunk_ids")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
-            .unwrap_or_default()];
-        let mut mention_count = base.get("mention_count").and_then(Value::as_u64).unwrap_or(0);
+        let mut chunk_id_lists: Vec<Vec<String>> = vec![
+            base.get("chunk_ids")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        ];
+        let mut mention_count = base
+            .get("mention_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         for (i, it) in canonical.iter().enumerate() {
             if i == ri || root(i, merged_into) != ri {
                 continue;
@@ -1159,7 +1227,12 @@ fn apply_dedup_merges(canonical: &[Value], merged_into: &HashMap<usize, usize>, 
             chunk_id_lists.push(
                 it.get("chunk_ids")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect()
+                    })
                     .unwrap_or_default(),
             );
         }
@@ -1255,8 +1328,14 @@ pub async fn bulk_dedup_items(
                         lines.push(format!(
                             "{}. \"{}\"{a_type} vs \"{}\"{b_type}",
                             idx + 1,
-                            canonical[*i].get(name_key).and_then(Value::as_str).unwrap_or(""),
-                            canonical[*j].get(name_key).and_then(Value::as_str).unwrap_or(""),
+                            canonical[*i]
+                                .get(name_key)
+                                .and_then(Value::as_str)
+                                .unwrap_or(""),
+                            canonical[*j]
+                                .get(name_key)
+                                .and_then(Value::as_str)
+                                .unwrap_or(""),
                         ));
                     }
                     let user_prompt = format!(
@@ -1267,7 +1346,14 @@ pub async fn bulk_dedup_items(
                         lines.join("\n"),
                     );
                     let system = DEFAULT_DISAMBIGUATE_SYSTEM;
-                    match crate::hypergraph::gen_json_with_temperature(chat, system, &user_prompt, Some(0.0)).await {
+                    match crate::hypergraph::gen_json_with_temperature(
+                        chat,
+                        system,
+                        &user_prompt,
+                        Some(0.0),
+                    )
+                    .await
+                    {
                         Ok(res) => {
                             let decisions: Vec<Value> = match &res {
                                 Value::Array(items) => items.clone(),
@@ -1280,10 +1366,8 @@ pub async fn bulk_dedup_items(
                                 _ => Vec::new(),
                             };
                             for (idx, (i, j)) in batch.iter().enumerate() {
-                                let verdict = decisions
-                                    .get(idx)
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(false);
+                                let verdict =
+                                    decisions.get(idx).and_then(Value::as_bool).unwrap_or(false);
                                 if verdict {
                                     merge_root(&mut merged_into, *i, *j, &canonical);
                                 }
@@ -1326,19 +1410,20 @@ fn root(i: usize, merged_into: &HashMap<usize, usize>) -> usize {
     cur
 }
 
-fn merge_root(
-    merged_into: &mut HashMap<usize, usize>,
-    i: usize,
-    j: usize,
-    canonical: &[Value],
-) {
+fn merge_root(merged_into: &mut HashMap<usize, usize>, i: usize, j: usize, canonical: &[Value]) {
     let ri = root(i, merged_into);
     let rj = root(j, merged_into);
     if ri == rj {
         return;
     }
-    let mi = canonical[ri].get("mention_count").and_then(Value::as_u64).unwrap_or(0);
-    let mj = canonical[rj].get("mention_count").and_then(Value::as_u64).unwrap_or(0);
+    let mi = canonical[ri]
+        .get("mention_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mj = canonical[rj]
+        .get("mention_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     if mi >= mj {
         merged_into.insert(rj, ri);
     } else {
@@ -1475,8 +1560,7 @@ pub fn entity_name_similarity(a: &str, b: &str) -> bool {
         return false;
     }
     if text_is_english(a) && text_is_english(b) {
-        return levenshtein_distance(a, b)
-            <= a.chars().count().min(b.chars().count()) / 2;
+        return levenshtein_distance(a, b) <= a.chars().count().min(b.chars().count()) / 2;
     }
     let set_a: HashSet<char> = a.chars().collect();
     let set_b: HashSet<char> = b.chars().collect();
@@ -1597,7 +1681,12 @@ pub enum PersistOutcome {
 pub trait CompileStore: Send + Sync {
     /// Search rows matching the filter, restricted to one kb.
     /// Returns rows with their stable ids.
-    async fn search(&self, kb_id: &str, condition: &CompileFilter, limit: usize) -> Result<Vec<Value>>;
+    async fn search(
+        &self,
+        kb_id: &str,
+        condition: &CompileFilter,
+        limit: usize,
+    ) -> Result<Vec<Value>>;
     /// KNN search: filter + top-k by cosine similarity over `q_vec`.
     async fn search_knn(
         &self,
@@ -1708,7 +1797,12 @@ impl CompileStore for MemoryCompileStore {
         self
     }
 
-    async fn search(&self, kb_id: &str, condition: &CompileFilter, limit: usize) -> Result<Vec<Value>> {
+    async fn search(
+        &self,
+        kb_id: &str,
+        condition: &CompileFilter,
+        limit: usize,
+    ) -> Result<Vec<Value>> {
         let rows = self.rows.lock().unwrap();
         let mut out: Vec<Value> = rows
             .iter()
@@ -1716,7 +1810,12 @@ impl CompileStore for MemoryCompileStore {
             .take(limit)
             .map(|(_, row)| serde_json::to_value(row).unwrap_or(Value::Null))
             .collect();
-        out.sort_by_key(|v| v.get("id").and_then(Value::as_str).unwrap_or("").to_string());
+        out.sort_by_key(|v| {
+            v.get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        });
         Ok(out)
     }
 
@@ -1784,9 +1883,7 @@ impl CompileStore for MemoryCompileStore {
 
     async fn delete_document(&self, kb_id: &str, doc_id: &str) -> Result<()> {
         let mut store = self.rows.lock().unwrap();
-        store.retain(|k, row| {
-            !(k.starts_with(&format!("{kb_id}:")) && row.doc_id == doc_id)
-        });
+        store.retain(|k, row| !(k.starts_with(&format!("{kb_id}:")) && row.doc_id == doc_id));
         Ok(())
     }
 }
@@ -1824,14 +1921,20 @@ impl JsonFileCompileStore {
         } else {
             Vec::new()
         };
-        self.cache.lock().unwrap().insert(kb_id.to_string(), rows.clone());
+        self.cache
+            .lock()
+            .unwrap()
+            .insert(kb_id.to_string(), rows.clone());
         Ok(rows)
     }
 
     fn save(&self, kb_id: &str, rows: &[CompiledRow]) -> Result<()> {
         let bytes = serde_json::to_vec(rows)?;
         crate::persistence::atomic_write(&self.path(kb_id), &bytes)?;
-        self.cache.lock().unwrap().insert(kb_id.to_string(), rows.to_vec());
+        self.cache
+            .lock()
+            .unwrap()
+            .insert(kb_id.to_string(), rows.to_vec());
         Ok(())
     }
 
@@ -1905,11 +2008,12 @@ impl JsonFileCompileStore {
             } else if let Some(entity) = graph_entity(&payload, None) {
                 let mut entity = entity;
                 if let Some(ids) = row.get("source_chunk_ids").and_then(Value::as_array) {
-                    entity["source_chunk_ids"] = json!(ids
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(String::from)
-                        .collect::<Vec<_>>());
+                    entity["source_chunk_ids"] = json!(
+                        ids.iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                    );
                 }
                 entities.push(entity);
             }
@@ -1925,11 +2029,17 @@ impl JsonFileCompileStore {
 }
 
 /// `_struct_graph_row_id`.
-pub fn graph_row_id(doc_id: &str, compile_kwd: &str, compilation_template_id: Option<&str>) -> String {
+pub fn graph_row_id(
+    doc_id: &str,
+    compile_kwd: &str,
+    compilation_template_id: Option<&str>,
+) -> String {
     let tpl = compilation_template_id.unwrap_or("");
     format!(
         "{:016x}",
-        xxhash_rust::xxh3::xxh3_64(format!("{doc_id}:structure_graph:{compile_kwd}:{tpl}").as_bytes())
+        xxhash_rust::xxh3::xxh3_64(
+            format!("{doc_id}:structure_graph:{compile_kwd}:{tpl}").as_bytes()
+        )
     )
 }
 
@@ -1939,7 +2049,12 @@ impl CompileStore for JsonFileCompileStore {
         self
     }
 
-    async fn search(&self, kb_id: &str, condition: &CompileFilter, limit: usize) -> Result<Vec<Value>> {
+    async fn search(
+        &self,
+        kb_id: &str,
+        condition: &CompileFilter,
+        limit: usize,
+    ) -> Result<Vec<Value>> {
         let rows = self.load(kb_id)?;
         let mut out: Vec<Value> = rows
             .iter()
@@ -1947,7 +2062,12 @@ impl CompileStore for JsonFileCompileStore {
             .take(limit)
             .map(|row| serde_json::to_value(row).unwrap_or(Value::Null))
             .collect();
-        out.sort_by_key(|v| v.get("id").and_then(Value::as_str).unwrap_or("").to_string());
+        out.sort_by_key(|v| {
+            v.get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        });
         Ok(out)
     }
 
@@ -2103,7 +2223,10 @@ pub fn rebuild_es_doc(
     }
     let mut new_doc = to_es_doc(
         payload,
-        base_doc.get("compile_kwd").and_then(Value::as_str).unwrap_or(""),
+        base_doc
+            .get("compile_kwd")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
         base_doc.get("doc_id").and_then(Value::as_str).unwrap_or(""),
         chunk_ids,
         vec,
@@ -2193,13 +2316,14 @@ pub async fn local_dedup(
             let existing = kept[existing_idx].clone();
             let existing_payload = load_payload(&serde_json::to_value(&existing)?);
             let incoming_payload = load_payload(&serde_json::to_value(&incoming)?);
-            let merged_payload = match merge::merge_pair(&existing_payload, &incoming_payload, chat).await {
-                Ok(Some(m)) => m,
-                _ => {
-                    kept.push(incoming);
-                    continue;
-                }
-            };
+            let merged_payload =
+                match merge::merge_pair(&existing_payload, &incoming_payload, chat).await {
+                    Ok(Some(m)) => m,
+                    _ => {
+                        kept.push(incoming);
+                        continue;
+                    }
+                };
             let merged_chunk_ids = union_ordered([
                 existing.source_chunk_ids.clone(),
                 incoming.source_chunk_ids.clone(),
@@ -2218,7 +2342,10 @@ pub async fn local_dedup(
                 new_vec,
                 &merged_chunk_ids,
                 true,
-                existing.compilation_template_ids.first().map(String::as_str),
+                existing
+                    .compilation_template_ids
+                    .first()
+                    .map(String::as_str),
                 existing.compilation_template_kind_kwd.as_deref(),
             );
             kept[existing_idx] = rebuilt;
@@ -2243,9 +2370,7 @@ pub async fn es_dedup_one(
         store.insert(kb_id, std::slice::from_ref(doc)).await?;
         return Ok(PersistOutcome::Inserted);
     }
-    let hits = store
-        .search_knn(kb_id, &condition, &doc.q_vec, 1)
-        .await?;
+    let hits = store.search_knn(kb_id, &condition, &doc.q_vec, 1).await?;
     let Some(old_doc) = hits.into_iter().next() else {
         store.insert(kb_id, std::slice::from_ref(doc)).await?;
         return Ok(PersistOutcome::Inserted);
@@ -2269,7 +2394,12 @@ pub async fn es_dedup_one(
         old_doc
             .get("source_chunk_ids")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default(),
         doc.source_chunk_ids.clone(),
     ]);
@@ -2287,7 +2417,11 @@ pub async fn es_dedup_one(
         doc.compilation_template_ids.first().map(String::as_str),
         doc.compilation_template_kind_kwd.as_deref(),
     );
-    let old_id = old_doc.get("id").and_then(Value::as_str).unwrap_or(&doc.id).to_string();
+    let old_id = old_doc
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or(&doc.id)
+        .to_string();
     let fields = serde_json::to_value(&rebuilt)?;
     store.update(kb_id, &old_id, &fields).await?;
     Ok(PersistOutcome::Updated)
@@ -2415,7 +2549,9 @@ pub fn chain_extract_edge(doc: &Value) -> Option<(String, String)> {
 
 /// `_chain_detect_violations`: self-loop / fan-out / fan-in / cycle (SCC).
 /// Returns {edge: [issue strings]}.
-pub fn chain_detect_violations(edges: &[(String, String)]) -> HashMap<(String, String), Vec<String>> {
+pub fn chain_detect_violations(
+    edges: &[(String, String)],
+) -> HashMap<(String, String), Vec<String>> {
     let mut issues: HashMap<(String, String), Vec<String>> = HashMap::new();
     let mut add = |edge: (String, String), reason: String| {
         issues.entry(edge).or_default().push(reason);
@@ -2435,7 +2571,10 @@ pub fn chain_detect_violations(edges: &[(String, String)]) -> HashMap<(String, S
             let mut siblings: Vec<String> = group.iter().map(|g| g.1.clone()).collect();
             siblings.sort();
             siblings.dedup();
-            let reason = format!("fan-out from '{node}' (also points to {})", siblings.join(", "));
+            let reason = format!(
+                "fan-out from '{node}' (also points to {})",
+                siblings.join(", ")
+            );
             for e in group {
                 add(e.clone(), reason.clone());
             }
@@ -2446,7 +2585,10 @@ pub fn chain_detect_violations(edges: &[(String, String)]) -> HashMap<(String, S
             let mut siblings: Vec<String> = group.iter().map(|g| g.0.clone()).collect();
             siblings.sort();
             siblings.dedup();
-            let reason = format!("fan-in to '{node}' (also reached from {})", siblings.join(", "));
+            let reason = format!(
+                "fan-in to '{node}' (also reached from {})",
+                siblings.join(", ")
+            );
             for e in group {
                 add(e.clone(), reason.clone());
             }
@@ -2566,11 +2708,16 @@ pub fn chain_gather_chunk_text(
                 if !seen.insert(cid.to_string()) {
                     continue;
                 }
-                let Some(text) = chunks_by_id.get(cid) else { continue };
+                let Some(text) = chunks_by_id.get(cid) else {
+                    continue;
+                };
                 if text.trim().is_empty() {
                     continue;
                 }
-                let truncated: String = text.chars().take(CHAIN_CORRECTION_MAX_CHUNK_CHARS).collect();
+                let truncated: String = text
+                    .chars()
+                    .take(CHAIN_CORRECTION_MAX_CHUNK_CHARS)
+                    .collect();
                 out.push((cid.to_string(), truncated));
                 if out.len() >= CHAIN_CORRECTION_MAX_CHUNKS {
                     return out;
@@ -2656,8 +2803,12 @@ pub async fn validate_and_correct_chain(
     let bad_edge_set: HashSet<(String, String)> = bad_edges.iter().cloned().collect();
     let mut keep_set: HashSet<(String, String)> = HashSet::new();
     for item in keep_raw {
-        let Some(s) = item.get("from").and_then(Value::as_str) else { continue };
-        let Some(t) = item.get("to").and_then(Value::as_str) else { continue };
+        let Some(s) = item.get("from").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(t) = item.get("to").and_then(Value::as_str) else {
+            continue;
+        };
         let edge = (s.trim().to_string(), t.trim().to_string());
         if bad_edge_set.contains(&edge) {
             keep_set.insert(edge);
@@ -2902,12 +3053,22 @@ mod tests {
     #[test]
     fn build_chunk_batches_skips_resume_and_empty() {
         let chunks = vec![
-            ChunkInput { id: "c0".into(), text: "text".into() },
-            ChunkInput { id: "c1".into(), text: "   ".into() },
-            ChunkInput { id: "c2".into(), text: "more".into() },
+            ChunkInput {
+                id: "c0".into(),
+                text: "text".into(),
+            },
+            ChunkInput {
+                id: "c1".into(),
+                text: "   ".into(),
+            },
+            ChunkInput {
+                id: "c2".into(),
+                text: "more".into(),
+            },
         ];
         let resume: HashSet<String> = ["c2".into()].into_iter().collect();
-        let (batches, info) = build_chunk_batches(&chunks, 1000, 0, Some(&resume), None, None, 1024);
+        let (batches, info) =
+            build_chunk_batches(&chunks, 1000, 0, Some(&resume), None, None, 1024);
         assert_eq!(info.kept, 1);
         assert_eq!(info.skipped_resume, 1);
         assert_eq!(info.skipped_empty, 1);
@@ -2949,10 +3110,26 @@ mod tests {
         // (a,b) fan-out+fan-in, (a,c) fan-out, (d,b) fan-in, (x,y)/(y,x) cycle.
         assert_eq!(issues.len(), 6);
         assert!(issues[&("a".into(), "a".into())].contains(&"self-loop".to_string()));
-        assert!(issues[&("a".into(), "b".into())].iter().any(|s| s.contains("fan-out")));
-        assert!(issues[&("d".into(), "b".into())].iter().any(|s| s.contains("fan-in")));
-        assert!(issues[&("x".into(), "y".into())].iter().any(|s| s.contains("cycle")));
-        assert!(issues[&("y".into(), "x".into())].iter().any(|s| s.contains("cycle")));
+        assert!(
+            issues[&("a".into(), "b".into())]
+                .iter()
+                .any(|s| s.contains("fan-out"))
+        );
+        assert!(
+            issues[&("d".into(), "b".into())]
+                .iter()
+                .any(|s| s.contains("fan-in"))
+        );
+        assert!(
+            issues[&("x".into(), "y".into())]
+                .iter()
+                .any(|s| s.contains("cycle"))
+        );
+        assert!(
+            issues[&("y".into(), "x".into())]
+                .iter()
+                .any(|s| s.contains("cycle"))
+        );
     }
 
     #[test]
@@ -2999,7 +3176,12 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["name"], "Apple");
         assert_eq!(out[0]["mention_count"], 5);
-        assert!(out[0]["aliases"].as_array().unwrap().contains(&json!("APPLE Inc")));
+        assert!(
+            out[0]["aliases"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("APPLE Inc"))
+        );
         assert_eq!(out[0]["chunk_ids"], json!(["c1", "c2"]));
     }
 
@@ -3030,10 +3212,16 @@ mod tests {
                 .unwrap();
             assert_eq!(knn.len(), 1);
             // Different kb is isolated.
-            let other = store.search_knn("kb2", &filter, &[1.0, 0.0, 0.0], 1).await.unwrap();
+            let other = store
+                .search_knn("kb2", &filter, &[1.0, 0.0, 0.0], 1)
+                .await
+                .unwrap();
             assert!(other.is_empty());
             // update
-            store.update("kb1", &row.id, &json!({"from_entity_kwd": "X"})).await.unwrap();
+            store
+                .update("kb1", &row.id, &json!({"from_entity_kwd": "X"}))
+                .await
+                .unwrap();
             let after = store.get("kb1", &row.id).await.unwrap().unwrap();
             assert_eq!(after["from_entity_kwd"], "X");
         });
@@ -3069,7 +3257,10 @@ mod tests {
                 .upsert_graph_json("kb1", &graph, "list", "doc-1", Some("tpl"))
                 .await
                 .unwrap();
-            let g = store.get("kb1", &graph_row_id("doc-1", "list", Some("tpl"))).await.unwrap();
+            let g = store
+                .get("kb1", &graph_row_id("doc-1", "list", Some("tpl")))
+                .await
+                .unwrap();
             assert!(g.is_some());
             assert_eq!(g.unwrap()["knowledge_graph_kwd"], "graph");
         });
@@ -3191,13 +3382,6 @@ mod tests {
         );
         assert_eq!(indices, vec![2, 3]);
         // Malformed / empty output yields no merges.
-        assert!(parse_resolution_results(
-            "no delimiters here",
-            5,
-            "##",
-            "<|>",
-            "&&"
-        )
-        .is_empty());
+        assert!(parse_resolution_results("no delimiters here", 5, "##", "<|>", "&&").is_empty());
     }
 }

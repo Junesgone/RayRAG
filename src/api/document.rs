@@ -350,7 +350,12 @@ pub async fn rename_doc(
     let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
         return Json(serde_json::json!({ "code": 400, "message": "name is required" }));
     };
-    if state.docs.get(&doc_id).filter(|doc| doc.kb_id == kb_id).is_none() {
+    if state
+        .docs
+        .get(&doc_id)
+        .filter(|doc| doc.kb_id == kb_id)
+        .is_none()
+    {
         return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
     }
     match state.docs.rename(&doc_id, name) {

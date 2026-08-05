@@ -28,8 +28,18 @@ pub struct MarkdownElement {
 }
 
 impl MarkdownElement {
-    fn new(content: String, start_line: usize, end_line: usize, element_type: Option<String>) -> Self {
-        Self { content, start_line, end_line, element_type }
+    fn new(
+        content: String,
+        start_line: usize,
+        end_line: usize,
+        element_type: Option<String>,
+    ) -> Self {
+        Self {
+            content,
+            start_line,
+            end_line,
+            element_type,
+        }
     }
 }
 
@@ -45,7 +55,11 @@ impl RAGFlowMarkdownParser {
     /// `extract_tables_and_remainder` — markdown_parser.py:27-122.
     /// Returns `(working_text, tables)`. `separate_tables` controls whether the
     /// matched table source is removed from the text or left inline.
-    pub fn extract_tables_and_remainder(&self, markdown_text: &str, separate_tables: bool) -> (String, Vec<String>) {
+    pub fn extract_tables_and_remainder(
+        &self,
+        markdown_text: &str,
+        separate_tables: bool,
+    ) -> (String, Vec<String>) {
         let mut tables: Vec<String> = Vec::new();
         let mut working_text = markdown_text.to_string();
 
@@ -140,7 +154,12 @@ impl crate::parser::Parse for MarkdownParser {
             .map(|e| e.content.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        Ok(crate::parser::new_document(name, body, "text/markdown", data.len()))
+        Ok(crate::parser::new_document(
+            name,
+            body,
+            "text/markdown",
+            data.len(),
+        ))
     }
 }
 
@@ -151,7 +170,9 @@ pub struct MarkdownElementExtractor<'a> {
 
 impl<'a> MarkdownElementExtractor<'a> {
     pub fn new(markdown_content: &'a str) -> Self {
-        Self { lines: markdown_content.split('\n').collect() }
+        Self {
+            lines: markdown_content.split('\n').collect(),
+        }
     }
 
     /// `get_delimiters` — markdown_parser.py:130-133.
@@ -176,7 +197,11 @@ impl<'a> MarkdownElementExtractor<'a> {
     /// With an explicit delimiter, splits the whole text on it; otherwise
     /// walks lines and slices block elements. `include_meta` attaches
     /// start/end line numbers.
-    pub fn extract_elements(&self, delimiter: Option<&str>, include_meta: bool) -> Vec<MarkdownElement> {
+    pub fn extract_elements(
+        &self,
+        delimiter: Option<&str>,
+        include_meta: bool,
+    ) -> Vec<MarkdownElement> {
         let mut sections: Vec<MarkdownElement> = Vec::new();
 
         let dels = delimiter.map(Self::get_delimiters).unwrap_or_default();
@@ -252,13 +277,7 @@ impl<'a> MarkdownElementExtractor<'a> {
                 push_section(&mut sections, el, include_meta);
                 i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else if !line.trim().is_empty() {
-                let el = extract_text_block(
-                    &self.lines,
-                    i,
-                    &header_re,
-                    &bullet_re,
-                    &ordered_re,
-                );
+                let el = extract_text_block(&self.lines, i, &header_re, &bullet_re, &ordered_re);
                 push_section(&mut sections, el, include_meta);
                 i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else {
@@ -359,7 +378,13 @@ fn extract_blockquote(lines: &[&str], start: usize) -> MarkdownElement {
 }
 
 /// `_extract_text_block` — markdown_parser.py:286-321.
-fn extract_text_block(lines: &[&str], start: usize, header_re: &Regex, bullet_re: &Regex, ordered_re: &Regex) -> MarkdownElement {
+fn extract_text_block(
+    lines: &[&str],
+    start: usize,
+    header_re: &Regex,
+    bullet_re: &Regex,
+    ordered_re: &Regex,
+) -> MarkdownElement {
     let mut end = start;
     let mut content = vec![lines[start]];
     let mut i = start + 1;
@@ -496,7 +521,10 @@ mod tests {
     fn extract_headers_code_lists_quotes_and_text() {
         let md = "# Title\n\nSome paragraph\nwith a second line.\n\n- item 1\n- item 2\n\n> quoted\n> more\n\n```rust\nfn main() {}\n```\n\n### Sub\n\nTail text";
         let els = MarkdownElementExtractor::new(md).extract_elements(None, true);
-        let types: Vec<&str> = els.iter().map(|e| e.element_type.as_deref().unwrap_or("")).collect();
+        let types: Vec<&str> = els
+            .iter()
+            .map(|e| e.element_type.as_deref().unwrap_or(""))
+            .collect();
         assert_eq!(types[0], "header");
         assert_eq!(els[0].content, "# Title");
         assert_eq!(types[1], "text_block");

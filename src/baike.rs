@@ -97,10 +97,7 @@ impl BaikeClient {
             }
         }
         let value: Value = serde_json::from_str(&body).context("parse Baike JSON")?;
-        let title = value
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or(query);
+        let title = value.get("title").and_then(Value::as_str).unwrap_or(query);
         let url = value
             .get("url")
             .and_then(Value::as_str)
@@ -193,6 +190,9 @@ mod tests {
         let title = value.get("title").and_then(Value::as_str).unwrap();
         let description = value.get("description").and_then(Value::as_str).unwrap();
         assert_eq!(title, "中山市");
-        assert_eq!(strip_html(description), "中山市，古称香山，是广东省下辖的地级市。");
+        assert_eq!(
+            strip_html(description),
+            "中山市，古称香山，是广东省下辖的地级市。"
+        );
     }
 }

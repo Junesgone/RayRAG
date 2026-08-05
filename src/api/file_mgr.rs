@@ -160,7 +160,8 @@ pub async fn delete_file(
         .into_iter()
         .find(|record| record.id == file_id);
     let Some(record) = record else {
-        return Json(serde_json::json!({ "code": 404, "message": "File not found" })).into_response();
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+            .into_response();
     };
     let extension = std::path::Path::new(&record.name)
         .extension()
@@ -193,7 +194,8 @@ pub async fn download_file(
         .into_iter()
         .find(|record| record.id == file_id);
     let Some(record) = record else {
-        return Json(serde_json::json!({ "code": 404, "message": "File not found" })).into_response();
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+            .into_response();
     };
     let extension = std::path::Path::new(&record.name)
         .extension()
@@ -207,10 +209,12 @@ pub async fn download_file(
     });
     match tokio::fs::read(&physical).await {
         Ok(bytes) => {
-            let mime = crate::parser::mime_from_extension(&extension).unwrap_or("application/octet-stream");
+            let mime = crate::parser::mime_from_extension(&extension)
+                .unwrap_or("application/octet-stream");
             ([(axum::http::header::CONTENT_TYPE, mime)], bytes).into_response()
         }
-        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content not found" })).into_response(),
+        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content not found" }))
+            .into_response(),
     }
 }
 

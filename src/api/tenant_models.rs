@@ -575,9 +575,7 @@ impl TenantModelStore {
                 .iter_mut()
                 .find(|model| model.name == model_name)
             else {
-                anyhow::bail!(
-                    "Cannot find model {model_name} on instance {instance_id}."
-                );
+                anyhow::bail!("Cannot find model {model_name} on instance {instance_id}.");
             };
             for capability in add {
                 if !model.model_types.contains(capability) {
@@ -1069,12 +1067,16 @@ mod tests {
                 update(Some("secret-key")),
             )
             .unwrap();
-        assert!(store
-            .sync_model_types("tenant-a", "local", "nope", "model-a", &[], &[])
-            .is_err());
-        assert!(store
-            .sync_model_types("tenant-a", "local", "inst-1", "missing", &[], &[])
-            .is_err());
+        assert!(
+            store
+                .sync_model_types("tenant-a", "local", "nope", "model-a", &[], &[])
+                .is_err()
+        );
+        assert!(
+            store
+                .sync_model_types("tenant-a", "local", "inst-1", "missing", &[], &[])
+                .is_err()
+        );
     }
 
     fn update(api_key: Option<&str>) -> TenantModelInstanceUpdate {

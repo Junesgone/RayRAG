@@ -7,8 +7,8 @@
 //!   4. 按 item.type 渲染 sections（text/table/...）
 //! 凭据：节点配置或 env TENCENT_SECRET_ID / TENCENT_SECRET_KEY / TENCENT_REGION。
 
-use crate::parser::{new_document, Document};
-use anyhow::{bail, Result};
+use crate::parser::{Document, new_document};
+use anyhow::{Result, bail};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -63,7 +63,8 @@ impl TcadpConfig {
                 .map(str::to_string)
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| {
-                    std::env::var("TENCENT_REGION").unwrap_or_else(|_| TCADP_REGION_DEFAULT.to_string())
+                    std::env::var("TENCENT_REGION")
+                        .unwrap_or_else(|_| TCADP_REGION_DEFAULT.to_string())
                 }),
         };
         if config.secret_id.is_empty() || config.secret_key.is_empty() {
@@ -117,7 +118,12 @@ impl TcadpParser {
         let url = format!("https://{TCADP_HOST}");
         let response = client
             .post(&url)
-            .headers(sign_headers(&payload, &config.region, &config.secret_id, &config.secret_key))
+            .headers(sign_headers(
+                &payload,
+                &config.region,
+                &config.secret_id,
+                &config.secret_key,
+            ))
             .json(&payload)
             .send()
             .await
@@ -142,7 +148,12 @@ impl TcadpParser {
         let content = extract_content_from_zip(&zip_bytes)?;
         let sections = parse_content_to_sections(&content);
         let text = sections.join("\n");
-        Ok(new_document(name, text, "application/octet-stream", data.len()))
+        Ok(new_document(
+            name,
+            text,
+            "application/octet-stream",
+            data.len(),
+        ))
     }
 }
 
@@ -153,7 +164,7 @@ fn sign_headers(
     secret_id: &str,
     secret_key: &str,
 ) -> reqwest::header::HeaderMap {
-    use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, HOST};
+    use reqwest::header::{CONTENT_TYPE, HOST, HeaderMap, HeaderValue};
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -172,9 +183,8 @@ fn sign_headers(
         "content-type:application/json; charset=utf-8\nhost:{TCADP_HOST}\nx-tc-action:reconstructdocument\n"
     );
     let signed_headers = "content-type;host;x-tc-action";
-    let canonical_request = format!(
-        "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{hashed_payload}"
-    );
+    let canonical_request =
+        format!("POST\n/\n\n{canonical_headers}\n{signed_headers}\n{hashed_payload}");
     let credential_scope = format!("{date}/{TCADP_SERVICE}/tc3_request");
     let string_to_sign = format!(
         "TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{}",
@@ -191,13 +201,25 @@ fn sign_headers(
     );
 
     let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
     headers.insert(HOST, HeaderValue::from_static(TCADP_HOST));
-    headers.insert("X-TC-Action", HeaderValue::from_static("ReconstructDocument"));
+    headers.insert(
+        "X-TC-Action",
+        HeaderValue::from_static("ReconstructDocument"),
+    );
     headers.insert("X-TC-Version", HeaderValue::from_static(TCADP_VERSION));
-    headers.insert("X-TC-Timestamp", HeaderValue::from_str(&timestamp.to_string()).unwrap());
+    headers.insert(
+        "X-TC-Timestamp",
+        HeaderValue::from_str(&timestamp.to_string()).unwrap(),
+    );
     headers.insert("X-TC-Region", HeaderValue::from_str(region).unwrap());
-    headers.insert("Authorization", HeaderValue::from_str(&authorization).unwrap());
+    headers.insert(
+        "Authorization",
+        HeaderValue::from_str(&authorization).unwrap(),
+    );
     headers
 }
 
@@ -238,7 +260,10 @@ fn extract_download_url_from_sse(body: &str) -> Result<String> {
             if let Some(progress) = value.get("Progress").and_then(serde_json::Value::as_str) {
                 task_progress = Some(progress.to_string());
             }
-            if let Some(url) = value.get("DocumentRecognizeResultUrl").and_then(serde_json::Value::as_str) {
+            if let Some(url) = value
+                .get("DocumentRecognizeResultUrl")
+                .and_then(serde_json::Value::as_str)
+            {
                 download_url = Some(url.to_string());
             }
             // 上游仅记录 Message；失败页信息单独在 FailedPages 中（此处忽略）
@@ -265,13 +290,22 @@ fn extract_content_from_zip(zip_bytes: &[u8]) -> Result<Vec<serde_json::Value>> 
         if member.encrypted() {
             bail!("[TCADP] Encrypted zip entry not supported: {name}");
         }
-        if member.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000) {
+        if member
+            .unix_mode()
+            .is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
             bail!("[TCADP] Symlink zip entry not supported: {name}");
         }
-        if name.starts_with('/') || name.starts_with("//") || name.len() > 2 && name.as_bytes()[1] == b':' {
+        if name.starts_with('/')
+            || name.starts_with("//")
+            || name.len() > 2 && name.as_bytes()[1] == b':'
+        {
             bail!("[TCADP] Unsafe zip path (absolute): {name}");
         }
-        let parts: Vec<&str> = name.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+        let parts: Vec<&str> = name
+            .split('/')
+            .filter(|p| !p.is_empty() && *p != ".")
+            .collect();
         if parts.iter().any(|part| *part == "..") {
             bail!("[TCADP] Unsafe zip path (traversal): {name}");
         }
@@ -281,8 +315,9 @@ fn extract_content_from_zip(zip_bytes: &[u8]) -> Result<Vec<serde_json::Value>> 
         let mut buffer = Vec::new();
         member.read_to_end(&mut buffer)?;
         if name.ends_with(".json") {
-            let value: serde_json::Value = serde_json::from_slice(&buffer)
-                .map_err(|error| anyhow::anyhow!("[TCADP] JSON parse failed for {name}: {error}"))?;
+            let value: serde_json::Value = serde_json::from_slice(&buffer).map_err(|error| {
+                anyhow::anyhow!("[TCADP] JSON parse failed for {name}: {error}")
+            })?;
             match value {
                 serde_json::Value::Array(items) => results.extend(items),
                 other => results.push(other),
@@ -302,8 +337,14 @@ fn extract_content_from_zip(zip_bytes: &[u8]) -> Result<Vec<serde_json::Value>> 
 fn parse_content_to_sections(content_data: &[serde_json::Value]) -> Vec<String> {
     let mut sections = Vec::new();
     for item in content_data {
-        let content_type = item.get("type").and_then(serde_json::Value::as_str).unwrap_or("text");
-        let content = item.get("content").and_then(serde_json::Value::as_str).unwrap_or("");
+        let content_type = item
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("text");
+        let content = item
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
         if content.trim().is_empty() {
             continue;
         }
@@ -372,11 +413,12 @@ data: {"Progress": "100", "TaskId": "t1", "SuccessPageNum": 3, "FailPageNum": 0,
         {
             let mut writer = zip::ZipWriter::new(&mut zip_buffer);
             let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("result.json", options).unwrap();
             writer
-                .start_file("result.json", options)
-                .unwrap();
-            writer
-                .write_all(r#"[{"type":"text","content":"第一段"},{"type":"table","content":"|a|b|"}]"#.as_bytes())
+                .write_all(
+                    r#"[{"type":"text","content":"第一段"},{"type":"table","content":"|a|b|"}]"#
+                        .as_bytes(),
+                )
                 .unwrap();
             writer.start_file("notes.md", options).unwrap();
             writer.write_all("# 标题".as_bytes()).unwrap();
@@ -410,9 +452,12 @@ data: {"Progress": "100", "TaskId": "t1", "SuccessPageNum": 3, "FailPageNum": 0,
 
     #[test]
     fn config_requires_secret_pair() {
-        let error = TcadpConfig::from_params(None, None, None).unwrap_err().to_string();
+        let error = TcadpConfig::from_params(None, None, None)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("TENCENT_SECRET_ID"));
-        let config = TcadpConfig::from_params(Some("id"), Some("key"), Some("ap-shanghai")).unwrap();
+        let config =
+            TcadpConfig::from_params(Some("id"), Some("key"), Some("ap-shanghai")).unwrap();
         assert_eq!(config.region, "ap-shanghai");
         assert_eq!(config.secret_id, "id");
     }
@@ -429,6 +474,9 @@ data: {"Progress": "100", "TaskId": "t1", "SuccessPageNum": 3, "FailPageNum": 0,
         assert!(auth.starts_with("TC3-HMAC-SHA256 Credential=test-secret-id/"));
         assert!(auth.contains("SignedHeaders=content-type;host;x-tc-action"));
         assert!(auth.contains("Signature="));
-        assert_eq!(headers.get("X-TC-Version").unwrap().to_str().unwrap(), "2024-05-22");
+        assert_eq!(
+            headers.get("X-TC-Version").unwrap().to_str().unwrap(),
+            "2024-05-22"
+        );
     }
 }

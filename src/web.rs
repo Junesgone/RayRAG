@@ -291,7 +291,10 @@ pub async fn kb_detail_page(
     let zh = detect_lang(req.headers());
     let kb = state.kbs.get(&id);
     let name = kb.as_ref().map(|k| k.name.clone()).unwrap_or_default();
-    let desc = kb.as_ref().map(|k| k.description.clone()).unwrap_or_default();
+    let desc = kb
+        .as_ref()
+        .map(|k| k.description.clone())
+        .unwrap_or_default();
     let docs = kb.as_ref().map(|k| k.doc_count).unwrap_or(0);
     let chunks = kb.as_ref().map(|k| k.chunk_count).unwrap_or(0);
     let initial = name
@@ -386,7 +389,9 @@ pub async fn kb_detail_page(
     b.push_str("<tr><td>");
     b.push_str(t("Embedding Model", zh));
     b.push_str("</td><td><span id='cfgEmbd' class='co'>-</span></td></tr>");
-    b.push_str("</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>");
+    b.push_str(
+        "</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>",
+    );
     b.push_str(t("Save", zh));
     b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
     // Tab 2：测试（检索测试面板，仿搜索页 JS）
@@ -405,7 +410,9 @@ pub async fn kb_detail_page(
     b.push_str(t("Vector Weight", zh));
     b.push_str("</label><select id='tw'><option>0.3</option><option selected>0.5</option><option>0.7</option><option>1.0</option></select><label style='font-size:12px;display:block;margin-top:8px'><input type='checkbox' id='tr'> ");
     b.push_str(t("Rerank", zh));
-    b.push_str("</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>");
+    b.push_str(
+        "</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>",
+    );
     b.push_str(t("Test", zh));
     b.push_str("</button></div><div><h3>");
     b.push_str(t("Results", zh));
@@ -748,7 +755,9 @@ pub async fn agents_page(
         rows.push_str(&format!("<tr data-name={}><td style='font-weight:500'>{}</td><td style='color:var(--t2)'>{}</td><td class='co'>{}</td><td><button class='btn btn-p btn-sm' onclick=\"testA('{}')\">Test</button> <button class='btn btn-o btn-sm' onclick=\"editA('{}')\">Edit</button> <button class='btn btn-o btn-sm' onclick=\"dupA('{}')\">Copy</button> <button class='btn btn-d btn-sm' onclick=\"delA('{}')\">Del</button></td></tr>",a.name.to_lowercase(),a.name,a.description,a.kb_ids.join(", "),a.id,a.id,a.id,a.id));
     }
     let mut b = String::new();
-    b.push_str("<div style='display:flex;align-items:center;gap:12px'><h1 style='flex:1;margin:0'>🤖 ");
+    b.push_str(
+        "<div style='display:flex;align-items:center;gap:12px'><h1 style='flex:1;margin:0'>🤖 ",
+    );
     b.push_str(t("Agents", zh));
     b.push_str("</h1><button class='btn btn-p' onclick='showCreate()'>+ ");
     b.push_str(t("New Agent", zh));
@@ -792,9 +801,20 @@ pub async fn datasources_page(
     req: axum::http::Request<axum::body::Body>,
 ) -> Result<axum::response::Html<String>, axum::response::Response> {
     let zh = crate::web::detect_lang(req.headers());
-    let mut b = format!("<h1>🔗 {}</h1>", if zh { "数据源（Data Sources）" } else { "Data Sources" });
+    let mut b = format!(
+        "<h1>🔗 {}</h1>",
+        if zh {
+            "数据源（Data Sources）"
+        } else {
+            "Data Sources"
+        }
+    );
     b.push_str("<div class='card'><h2>");
-    b.push_str(if zh { "新建 GitLab 数据源" } else { "Add GitLab Source" });
+    b.push_str(if zh {
+        "新建 GitLab 数据源"
+    } else {
+        "Add GitLab Source"
+    });
     b.push_str("</h2><div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px'>");
     b.push_str("<input id='dsName' placeholder='Name'><input id='dsUrl' placeholder='https://gitlab.com'><input id='dsToken' type='password' placeholder='Private token'><input id='dsTarget' placeholder='Project id or owner/repo'>");
     b.push_str("</div><label><input type='checkbox' id='dsIssues'> Issues</label> <label><input type='checkbox' id='dsMRs'> Merge Requests</label> ");
@@ -939,7 +959,9 @@ pub async fn document_page(
     b.push_str("</span><span class='val' id='docChunks'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='docStatus' style='font-size:15px'>-</span></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Chunks", zh));
-    b.push_str(" <span id='cTotal' style='font-size:13px;color:var(--tm)'></span></h2><div id='cl'>");
+    b.push_str(
+        " <span id='cTotal' style='font-size:13px;color:var(--tm)'></span></h2><div id='cl'>",
+    );
     b.push_str(t("Loading...", zh));
     b.push_str("</div></div>");
     b.push_str("<script>var kbId='");
@@ -950,9 +972,7 @@ pub async fn document_page(
     Html(layout("Document", &b, zh))
 }
 
-pub async fn skills_page(
-    req: axum::http::Request<axum::body::Body>,
-) -> impl IntoResponse {
+pub async fn skills_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let catalog = crate::runtime::component_catalog();
     let mut by_category: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
@@ -977,7 +997,12 @@ pub async fn skills_page(
         b.push_str(category);
         b.push_str("</h3><div class='kb-grid'>");
         for name in names {
-            let initial = name.chars().next().unwrap_or('C').to_uppercase().collect::<String>();
+            let initial = name
+                .chars()
+                .next()
+                .unwrap_or('C')
+                .to_uppercase()
+                .collect::<String>();
             b.push_str(&format!(
                 "<div class='kb-card'><div class='av-lg'>{initial}</div><h3>{name}</h3><p style='color:var(--tm);font-size:12px'>{}</p><a class='btn btn-o' style='margin-top:8px;font-size:12px;padding:4px 10px' href='/agents'>Use in Agent →</a></div>",
                 t("canvas component", zh)
@@ -1082,7 +1107,10 @@ pub async fn providers_page(
     b.push_str("</button></div></div></div><script>var providerModels=");
     b.push_str(&crate::model_meta::provider_models_payload().to_string());
     b.push_str(";function showProviderModels(el){var f=el.getAttribute('data-factory');var p=providerModels[f];if(!p)return;document.getElementById('modelModalTitle').textContent=p.name+' ('+f+')';var h='';if(!p.models||!p.models.length){h='<p style=color:var(--tm)>");
-    b.push_str(t("No static model list (models are discovered at runtime).", zh));
+    b.push_str(t(
+        "No static model list (models are discovered at runtime).",
+        zh,
+    ));
     b.push_str("</p>'}else{p.models.forEach(function(m){var tags=(m.t||[]).map(function(x){return '<span class=badge bs>'+x+'</span>'}).join(' ');h+='<div style=padding:8px 0;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;flex-wrap:wrap><span style=font-weight:500>'+m.n+'</span>'+tags+'</div>'})}document.getElementById('modelModalBody').innerHTML=h;document.getElementById('modelModal').classList.add('show')}</script>");
     Html(layout(t("Providers", zh), &b, zh))
 }
@@ -1102,7 +1130,10 @@ pub async fn not_found_page() -> impl IntoResponse {
     b.push_str("<div style='text-align:center;padding:80px 20px'><div style='font-size:72px;font-weight:800;color:var(--p)'>404</div><h1 style='margin:12px 0'>");
     b.push_str(t("Page not found", zh));
     b.push_str("</h1><p style='color:var(--tm);margin-bottom:24px'>");
-    b.push_str(t("The page you requested does not exist or has been moved.", zh));
+    b.push_str(t(
+        "The page you requested does not exist or has been moved.",
+        zh,
+    ));
     b.push_str("</p><a class='btn btn-p' href='/dashboard'>← ");
     b.push_str(t("Back to Dashboard", zh));
     b.push_str("</a></div>");
@@ -1133,7 +1164,7 @@ pub async fn settings_page(req: axum::http::Request<axum::body::Body>) -> impl I
 
 pub async fn api_docs(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let b = "<h1>📖 API Docs</h1><div class='card'><p style='color:var(--t2)'>45+ RESTful endpoints. Full RAG pipeline.</p><h3 style='margin-top:16px'>Auth & Users</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/auth/login</td><td>Login</td></tr><tr><td>POST</td><td class='co'>/api/v1/user/register</td><td>Register</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/user/password</td><td>Change password</td></tr><tr><td>DELETE/PATCH</td><td class='co'>/api/v1/admin/users/{id}</td><td>Delete user / reset password</td></tr></table><h3>Knowledge Bases</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/datasets</td><td>KB list/create</td></tr><tr><td>PUT/DELETE</td><td class='co'>/api/v1/datasets/{id}</td><td>Update config / delete</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents</td><td>Upload document</td></tr><tr><td>GET/DELETE/PATCH</td><td class='co'>/api/v1/datasets/{id}/documents/{did}</td><td>Get / delete / rename</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents/{did}/reparse</td><td>Reparse</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/build</td><td>Build knowledge graph</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/query</td><td>Query graph context</td></tr></table><h3>Search & Chat</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/retrieval</td><td>Vector/hybrid search</td></tr><tr><td>POST</td><td class='co'>/api/v1/completions</td><td>RAG chat</td></tr><tr><td>POST</td><td class='co'>/api/v1/chats/{id}/completions</td><td>RAG chat (history, SSE)</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/conversations/{id}</td><td>Delete conversation</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/conversations/{id}</td><td>Rename conversation</td></tr><tr><td>POST</td><td class='co'>/api/v1/conversations/{id}/clear</td><td>Clear messages</td></tr><tr><td>GET</td><td class='co'>/api/v1/conversations/{id}/export</td><td>Export Markdown</td></tr></table><h3>OpenAI-Compatible</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/chat/completions</td><td>Chat (stream + non-stream)</td></tr><tr><td>POST</td><td class='co'>/api/v1/embeddings</td><td>Embeddings</td></tr><tr><td>POST</td><td class='co'>/api/v1/rerank</td><td>Rerank (Jina format)</td></tr><tr><td>GET</td><td class='co'>/api/v1/models</td><td>Model list</td></tr></table><h3>Files & Memories</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/DELETE</td><td class='co'>/api/v1/files/{id}</td><td>Get / delete file</td></tr><tr><td>GET</td><td class='co'>/api/v1/files/{id}/download</td><td>Download file</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/memories/clear</td><td>Clear all conversations</td></tr></table><h3>Agents & System</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/agents</td><td>Agents CRUD</td></tr><tr><td>POST</td><td class='co'>/api/v1/agents/{id}/completions</td><td>Run agent</td></tr><tr><td>GET</td><td class='co'>/api/v1/stats</td><td>Stats</td></tr><tr><td>GET</td><td class='co'>/api/v1/system/healthz</td><td>Health check</td></tr></table></div>" ;
+    let b = "<h1>📖 API Docs</h1><div class='card'><p style='color:var(--t2)'>45+ RESTful endpoints. Full RAG pipeline.</p><h3 style='margin-top:16px'>Auth & Users</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/auth/login</td><td>Login</td></tr><tr><td>POST</td><td class='co'>/api/v1/user/register</td><td>Register</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/user/password</td><td>Change password</td></tr><tr><td>DELETE/PATCH</td><td class='co'>/api/v1/admin/users/{id}</td><td>Delete user / reset password</td></tr></table><h3>Knowledge Bases</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/datasets</td><td>KB list/create</td></tr><tr><td>PUT/DELETE</td><td class='co'>/api/v1/datasets/{id}</td><td>Update config / delete</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents</td><td>Upload document</td></tr><tr><td>GET/DELETE/PATCH</td><td class='co'>/api/v1/datasets/{id}/documents/{did}</td><td>Get / delete / rename</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents/{did}/reparse</td><td>Reparse</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/build</td><td>Build knowledge graph</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/query</td><td>Query graph context</td></tr></table><h3>Search & Chat</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/retrieval</td><td>Vector/hybrid search</td></tr><tr><td>POST</td><td class='co'>/api/v1/completions</td><td>RAG chat</td></tr><tr><td>POST</td><td class='co'>/api/v1/chats/{id}/completions</td><td>RAG chat (history, SSE)</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/conversations/{id}</td><td>Delete conversation</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/conversations/{id}</td><td>Rename conversation</td></tr><tr><td>POST</td><td class='co'>/api/v1/conversations/{id}/clear</td><td>Clear messages</td></tr><tr><td>GET</td><td class='co'>/api/v1/conversations/{id}/export</td><td>Export Markdown</td></tr></table><h3>OpenAI-Compatible</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/chat/completions</td><td>Chat (stream + non-stream)</td></tr><tr><td>POST</td><td class='co'>/api/v1/embeddings</td><td>Embeddings</td></tr><tr><td>POST</td><td class='co'>/api/v1/rerank</td><td>Rerank (Jina format)</td></tr><tr><td>GET</td><td class='co'>/api/v1/models</td><td>Model list</td></tr></table><h3>Files & Memories</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/DELETE</td><td class='co'>/api/v1/files/{id}</td><td>Get / delete file</td></tr><tr><td>GET</td><td class='co'>/api/v1/files/{id}/download</td><td>Download file</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/memories/clear</td><td>Clear all conversations</td></tr></table><h3>Agents & System</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/agents</td><td>Agents CRUD</td></tr><tr><td>POST</td><td class='co'>/api/v1/agents/{id}/completions</td><td>Run agent</td></tr><tr><td>GET</td><td class='co'>/api/v1/stats</td><td>Stats</td></tr><tr><td>GET</td><td class='co'>/api/v1/system/healthz</td><td>Health check</td></tr></table></div>";
     Html(layout("API Docs", b, zh))
 }
 

@@ -8,7 +8,7 @@
 //!
 //! 中国大陆网络适配：抓取本身走 reqwest（可配代理）；无外网时也可抓取国内站点。
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -58,9 +58,10 @@ impl CrawlerClient {
 
     /// 抓取并转换。返回与上游 be_output 一致的正文。
     pub async fn fetch(&self, request: &CrawlerRequest) -> Result<String> {
-        let url = reqwest::Url::parse(request.url.trim())
+        let url = reqwest::Url::parse(request.url.trim()).map_err(|_| anyhow!("URL not valid"))?;
+        assert_url_is_safe(&url)
+            .await
             .map_err(|_| anyhow!("URL not valid"))?;
-        assert_url_is_safe(&url).await.map_err(|_| anyhow!("URL not valid"))?;
 
         let raw = match &request.proxy {
             Some(proxy) if !proxy.trim().is_empty() => {
@@ -230,7 +231,10 @@ fn walk_markdown(node: &scraper::ElementRef<'_>, document: &Html, out: &mut Stri
         };
         let name = element.name().to_string();
         let element_ref = scraper::ElementRef::wrap(child).expect("element ref");
-        if matches!(name.as_str(), "script" | "style" | "head" | "noscript" | "svg") {
+        if matches!(
+            name.as_str(),
+            "script" | "style" | "head" | "noscript" | "svg"
+        ) {
             continue;
         }
         match name.as_str() {
@@ -322,7 +326,7 @@ fn compact_whitespace_preserve_newlines(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::get, Router};
+    use axum::{Router, routing::get};
 
     const SAMPLE_HTML: &str = r#"<html><head><title>T</title><style>.x{}</style></head>
 <body><h1>标题</h1><p>一段<b>加粗</b>文本 <a href="https://example.com/link">链接</a></p>

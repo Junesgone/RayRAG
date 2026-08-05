@@ -98,26 +98,24 @@ impl Embedder for OpenAIEmbedder {
         }
 
         let body: serde_json::Value = resp.json().await?;
-        let embeddings: Vec<Vec<f32>> = if let Some(data) = body.get("data").and_then(|d| d.as_array())
-        {
-            // Standard OpenAI shape.
-            data.iter()
-                .filter_map(|item| {
-                    flatten_embedding(item.get("embedding")?)
-                })
-                .collect()
-        } else if let Some(items) = body.as_array() {
-            // llama.cpp bare /embeddings shape: [{index, embedding:[[...]]}].
-            items
-                .iter()
-                .filter_map(|item| flatten_embedding(item.get("embedding")?))
-                .collect()
-        } else {
-            return Err(anyhow::anyhow!(
-                "Embedding API response has unexpected shape: {}",
-                body
-            ));
-        };
+        let embeddings: Vec<Vec<f32>> =
+            if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
+                // Standard OpenAI shape.
+                data.iter()
+                    .filter_map(|item| flatten_embedding(item.get("embedding")?))
+                    .collect()
+            } else if let Some(items) = body.as_array() {
+                // llama.cpp bare /embeddings shape: [{index, embedding:[[...]]}].
+                items
+                    .iter()
+                    .filter_map(|item| flatten_embedding(item.get("embedding")?))
+                    .collect()
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Embedding API response has unexpected shape: {}",
+                    body
+                ));
+            };
 
         if embeddings.len() != texts.len() {
             return Err(anyhow::anyhow!(

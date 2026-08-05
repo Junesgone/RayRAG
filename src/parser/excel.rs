@@ -406,7 +406,10 @@ fn worksheet_xml(rows: &[Vec<Value>], merged_ranges: &[(u32, u32, u32, u32)]) ->
                 )
             })
             .collect::<String>();
-        format!("<mergeCells count=\"{}\">{entries}</mergeCells>", merged_ranges.len())
+        format!(
+            "<mergeCells count=\"{}\">{entries}</mergeCells>",
+            merged_ranges.len()
+        )
     };
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">{merge_cells}<sheetData>{rows}</sheetData></worksheet>"

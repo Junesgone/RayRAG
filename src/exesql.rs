@@ -5,8 +5,8 @@
 //! 返回明确的不支持错误。安全：拒绝连接名为 rag_flow 的数据库（对齐上游 check 拒止）。
 //! 结果按 max_records 截断（默认 1024 行）。
 
-use anyhow::{bail, Result};
-use serde_json::{json, Map, Value};
+use anyhow::{Result, bail};
+use serde_json::{Map, Value, json};
 
 /// 支持的数据库类型（当前仅 postgres）。
 pub const SUPPORTED_DB_TYPES: &[&str] = &["postgres"];
@@ -72,11 +72,7 @@ async fn execute_postgres(config: &ExeSqlConfig, sql: &str) -> Result<String> {
     use postgres::{Client, NoTls};
     let connection_string = format!(
         "host={} port={} user={} password={} dbname={}",
-        config.host,
-        config.port,
-        config.username,
-        config.password,
-        config.database
+        config.host, config.port, config.username, config.password, config.database
     );
     let mut client = Client::connect(&connection_string, NoTls)
         .map_err(|error| anyhow::anyhow!("Failed to connect to PostgreSQL: {error}"))?;
@@ -169,7 +165,12 @@ mod tests {
     async fn rejects_empty_sql() {
         let result = execute_sql(&sample_config(), "  ").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("MUST not be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("MUST not be empty")
+        );
     }
 
     #[tokio::test]
@@ -192,10 +193,12 @@ mod tests {
         };
         let result = execute_sql(&config, "select 1").await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("does not support database named rag_flow"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not support database named rag_flow")
+        );
     }
 
     #[tokio::test]
@@ -207,7 +210,12 @@ mod tests {
         };
         let result = execute_sql(&config, "select 1").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported db_type"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported db_type")
+        );
     }
 
     #[test]

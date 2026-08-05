@@ -495,7 +495,6 @@ fn extract_toml(data: &[u8]) -> String {
     text
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

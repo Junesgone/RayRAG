@@ -138,11 +138,13 @@ impl SearxngProvider for SearxngClient {
             .await
             .context("could not read SearXNG response body")?;
         if body.len() > MAX_SEARXNG_RESPONSE_BODY {
-            bail!("SearXNG response body exceeds {} bytes", MAX_SEARXNG_RESPONSE_BODY);
+            bail!(
+                "SearXNG response body exceeds {} bytes",
+                MAX_SEARXNG_RESPONSE_BODY
+            );
         }
-        let payload: Value = serde_json::from_slice(&body).with_context(|| {
-            format!("SearXNG response (HTTP {status}) was not valid JSON")
-        })?;
+        let payload: Value = serde_json::from_slice(&body)
+            .with_context(|| format!("SearXNG response (HTTP {status}) was not valid JSON"))?;
         if !status.is_success() {
             let message = payload
                 .get("message")
@@ -235,12 +237,20 @@ mod tests {
     async fn missing_url_or_query_is_rejected() {
         let client = SearxngClient::default();
         let error = client
-            .search(&SearxngRequest { query: "q".into(), searxng_url: "".into(), top_n: 5 })
+            .search(&SearxngRequest {
+                query: "q".into(),
+                searxng_url: "".into(),
+                top_n: 5,
+            })
             .await
             .unwrap_err();
         assert!(error.to_string().contains("instance URL"));
         let error = client
-            .search(&SearxngRequest { query: "".into(), searxng_url: "http://localhost:4000".into(), top_n: 5 })
+            .search(&SearxngRequest {
+                query: "".into(),
+                searxng_url: "http://localhost:4000".into(),
+                top_n: 5,
+            })
             .await
             .unwrap_err();
         assert!(error.to_string().contains("query"));
@@ -251,7 +261,11 @@ mod tests {
     async fn live_searxng_search() {
         let url = std::env::var("SEARXNG_URL").expect("SEARXNG_URL must be set");
         let results = SearxngClient::default()
-            .search(&SearxngRequest { query: "RAGFlow".into(), searxng_url: url, top_n: 5 })
+            .search(&SearxngRequest {
+                query: "RAGFlow".into(),
+                searxng_url: url,
+                top_n: 5,
+            })
             .await
             .unwrap();
         assert!(!results.is_empty());

@@ -291,7 +291,9 @@ impl OcrClient {
         file_name: &str,
         data: &[u8],
     ) -> Result<String> {
-        let body = self.paddleocr_submit_and_fetch(config, file_name, data).await?;
+        let body = self
+            .paddleocr_submit_and_fetch(config, file_name, data)
+            .await?;
         parse_paddleocr_jsonl(&body)
     }
 
@@ -312,7 +314,9 @@ impl OcrClient {
     ) -> Result<Vec<PaddleLayoutBlock>> {
         match &self.backend {
             OcrBackend::PaddleOcr(config) => {
-                let body = self.paddleocr_submit_and_fetch(config, file_name, data).await?;
+                let body = self
+                    .paddleocr_submit_and_fetch(config, file_name, data)
+                    .await?;
                 parse_paddleocr_blocks(&body)
             }
             OcrBackend::LegacyProxy { .. } => anyhow::bail!(

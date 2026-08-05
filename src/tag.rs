@@ -58,11 +58,7 @@ pub fn detect_delimiter(text: &str) -> char {
             tab += 1;
         }
     }
-    if tab >= comma {
-        '\t'
-    } else {
-        ','
-    }
+    if tab >= comma { '\t' } else { ',' }
 }
 
 /// Parse a txt tag blob (tag.py:62-93): a 2-field line closes the current
@@ -201,7 +197,10 @@ mod tests {
         let pairs = parse_tag_text(text, '\t');
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs[0].content, "内容1");
-        assert_eq!(pairs[0].tags, vec!["标签1".to_string(), "标签2".to_string()]);
+        assert_eq!(
+            pairs[0].tags,
+            vec!["标签1".to_string(), "标签2".to_string()]
+        );
         // deformed line joins the NEXT content (content starts empty)
         assert_eq!(pairs[1].content, "续行\n内容2");
         assert_eq!(pairs[1].tags, vec!["标签3".to_string()]);

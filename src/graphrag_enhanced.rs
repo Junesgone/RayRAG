@@ -319,7 +319,10 @@ impl EntityGraph {
     /// Degree (connection count) for a node — RAGFlow computes `rank` from
     /// graph.degree before community detection.
     pub fn degree(&self, name: &str) -> usize {
-        self.nodes.get(name).map(|n| n.connections.len()).unwrap_or(0)
+        self.nodes
+            .get(name)
+            .map(|n| n.connections.len())
+            .unwrap_or(0)
     }
 
     /// Neighbor names of a node.
@@ -467,7 +470,10 @@ impl EntityGraph {
         }
         let mut obj = serde_json::Map::new();
         for (k, v) in counts {
-            obj.insert(k, serde_json::Value::Array(v.into_iter().map(serde_json::Value::String).collect()));
+            obj.insert(
+                k,
+                serde_json::Value::Array(v.into_iter().map(serde_json::Value::String).collect()),
+            );
         }
         serde_json::Value::Object(obj)
     }
@@ -475,10 +481,24 @@ impl EntityGraph {
     /// N-hop paths from an entity with edge weights — mirrors the
     /// `n_hop_with_weight` field consumed by KGSearch (each path is a node
     /// sequence plus per-edge weights; downstream weights deep hops less).
-    pub fn n_hop_paths(&self, entity_name: &str, max_depth: usize, max_paths: usize) -> Vec<(Vec<String>, Vec<f64>)> {
+    pub fn n_hop_paths(
+        &self,
+        entity_name: &str,
+        max_depth: usize,
+        max_paths: usize,
+    ) -> Vec<(Vec<String>, Vec<f64>)> {
         let mut results = Vec::new();
         let mut visited = HashSet::new();
-        self.dfs_paths(entity_name, 0, max_depth, max_paths, &mut visited, &mut Vec::new(), &mut Vec::new(), &mut results);
+        self.dfs_paths(
+            entity_name,
+            0,
+            max_depth,
+            max_paths,
+            &mut visited,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut results,
+        );
         results
     }
 
@@ -505,7 +525,16 @@ impl EntityGraph {
         if let Some(node) = self.nodes.get(name) {
             for (target, weight) in &node.connections {
                 weights.push(*weight as f64);
-                self.dfs_paths(target, depth + 1, max_depth, max_paths, visited, path, weights, results);
+                self.dfs_paths(
+                    target,
+                    depth + 1,
+                    max_depth,
+                    max_paths,
+                    visited,
+                    path,
+                    weights,
+                    results,
+                );
                 weights.pop();
             }
         }

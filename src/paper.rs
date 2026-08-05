@@ -219,10 +219,7 @@ pub fn abstract_chunk(
     (
         abstract_txt.to_string(),
         important_kwd,
-        abstract_txt
-            .split_whitespace()
-            .map(String::from)
-            .collect(),
+        abstract_txt.split_whitespace().map(String::from).collect(),
     )
 }
 
@@ -243,10 +240,14 @@ mod tests {
     fn not_title_rejects_long_lines_and_punctuation() {
         assert!(!not_title("第1条 管理规定"));
         assert!(!not_title("Short Title"));
-        assert!(not_title("This is a very long sentence that goes way beyond twelve words in a single title line yes"));
+        assert!(not_title(
+            "This is a very long sentence that goes way beyond twelve words in a single title line yes"
+        ));
         assert!(not_title("Title with, comma"));
         // >=32 chars with no space is rejected
-        assert!(not_title("这是一个超过三十二个字符的标题行长度测试用字符串啊啊啊啊啊啊啊啊"));
+        assert!(not_title(
+            "这是一个超过三十二个字符的标题行长度测试用字符串啊啊啊啊啊啊啊啊"
+        ));
     }
 
     #[test]
@@ -310,10 +311,7 @@ mod tests {
 
     #[test]
     fn group_sections_keeps_plain_text_as_one_chunk() {
-        let sections: Vec<Section> = vec![
-            ("第一段", "text"),
-            ("第二段", "text"),
-        ];
+        let sections: Vec<Section> = vec![("第一段", "text"), ("第二段", "text")];
         let chunks = group_sections(&sections);
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].contains("第一段"));

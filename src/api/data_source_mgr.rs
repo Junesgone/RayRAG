@@ -2,11 +2,11 @@
 //! (GitLab MVP). Mirrors RAGFlow's connector admin surface.
 
 use crate::data_source::{BlobConnector, GitLabConnector, SourceOptions};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use axum::Json;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
@@ -71,7 +71,10 @@ impl DataSourceStore {
     }
 
     fn persist(&self) -> Result<()> {
-        let _guard = self.save_lock.lock().map_err(|_| anyhow::anyhow!("save lock poisoned"))?;
+        let _guard = self
+            .save_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("save lock poisoned"))?;
         let sources = self
             .sources
             .read()
@@ -167,10 +170,16 @@ pub async fn create_data_source(
     let url = body.url.trim().to_string();
     let target = body.target.trim().to_string();
     if name.is_empty() || url.is_empty() || target.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "name/url/target are required".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "name/url/target are required".into(),
+        ));
     }
     if body.kind != "gitlab" && body.kind != "blob" {
-        return Err((StatusCode::BAD_REQUEST, "only gitlab/blob are supported".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "only gitlab/blob are supported".into(),
+        ));
     }
     let id = uuid::Uuid::new_v4().to_string();
     let record = DataSourceRecord {
@@ -188,7 +197,9 @@ pub async fn create_data_source(
     store
         .insert(record.clone())
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(serde_json::json!({ "code": 0, "data": record.redacted() })))
+    Ok(Json(
+        serde_json::json!({ "code": 0, "data": record.redacted() }),
+    ))
 }
 
 pub async fn delete_data_source(
@@ -199,8 +210,12 @@ pub async fn delete_data_source(
         .data_sources
         .as_ref()
         .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
-    let removed = store.remove(&id).map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(serde_json::json!({ "code": 0, "data": { "removed": removed } })))
+    let removed = store
+        .remove(&id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "code": 0, "data": { "removed": removed } }),
+    ))
 }
 
 pub async fn sync_data_source(
@@ -225,14 +240,13 @@ pub async fn sync_data_source(
         max_items: record.max_items,
     };
     let docs = match record.kind.as_str() {
-        "gitlab" => GitLabConnector::new()
-            .fetch(&options)
-            .await,
-        "blob" => BlobConnector::new()
-            .fetch(&options)
-            .await,
+        "gitlab" => GitLabConnector::new().fetch(&options).await,
+        "blob" => BlobConnector::new().fetch(&options).await,
         other => {
-            return Err((StatusCode::BAD_REQUEST, format!("unsupported source kind: {other}")));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unsupported source kind: {other}"),
+            ));
         }
     }
     .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?;
@@ -279,7 +293,10 @@ pub async fn sync_data_source(
             ) {
                 Ok(_) => ingested += 1,
                 Err(error) => {
-                    tracing::warn!("data source: ingest {} failed: {error:#}", doc.semantic_identifier);
+                    tracing::warn!(
+                        "data source: ingest {} failed: {error:#}",
+                        doc.semantic_identifier
+                    );
                     skipped.push(doc.semantic_identifier.clone());
                 }
             }

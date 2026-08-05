@@ -449,11 +449,7 @@ mod postgres_backend {
                         Ok(())
                     }
                 },
-                |error| {
-                    error
-                        .to_string()
-                        .contains("40P01")
-                },
+                |error| error.to_string().contains("40P01"),
             );
             assert!(result.is_ok());
             assert_eq!(attempts, 2);
