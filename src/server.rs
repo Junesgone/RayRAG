@@ -78,6 +78,9 @@ pub struct AppState {
     pub log_levels: Arc<crate::logging::LogLevelManager>,
     pub chunk_feedback_enabled: bool,
     pub chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting,
+    /// Chat channel registry (RAGFlow `api/channels` bootstrap port): built-in
+    /// builders registered at startup, running instances tracked by account id.
+    pub channels: Arc<crate::channels::ChannelRegistry>,
     pub(crate) document_commit_lock: Arc<std::sync::Mutex<()>>,
 }
 
@@ -2235,6 +2238,10 @@ fn public_api_path(path: &str) -> bool {
             | "/api/v1/user/register"
             | "/api/v1/system/healthz"
             | "/api/v1/version"
+            // Chat channel inbound endpoints: platform webhook callbacks must
+            // not need the RayRAG API token (RAGFlow channels are unauthenticated).
+            | "/api/v1/channels/webhook/{account_id}/inbound"
+            | "/api/v1/channels/feishu/{account_id}/event"
     )
 }
 
@@ -2639,6 +2646,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::delete(crate::api::data_source_mgr::delete_data_source),
         )
         .route(
+            "/api/v1/data_sources/{id}/connect",
+            post(crate::api::data_source_mgr::connect_data_source),
+        )
+        .route(
+            "/api/v1/data_sources/{id}/disconnect",
+            post(crate::api::data_source_mgr::disconnect_data_source),
+        )
+        .route(
+            "/api/v1/data_sources/{id}/files",
+            post(crate::api::data_source_mgr::list_data_source_files),
+        )
+        .route(
             "/api/v1/data_sources/{id}/sync",
             post(crate::api::data_source_mgr::sync_data_source),
         )
@@ -2881,6 +2900,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/langfuse",
             get(crate::api::system::get_langfuse).post(crate::api::system::update_langfuse),
         )
+        // Chat channel inbound endpoints (webhook / feishu event callbacks).
+        // New routes only; existing route behavior is unchanged.
+        .merge(crate::channels::channel_router())
         .fallback_service(
             ServeDir::new(sd)
                 .precompressed_gzip()
@@ -3003,6 +3025,10 @@ pub async fn run(
     )?);
     tenant_models.validate_providers(&providers)?;
 
+    // Bootstrap the chat channel registry (RAGFlow `api/channels` bootstrap):
+    // built-in builders (webhook, feishu) self-register here; enabled channels
+    // from the environment config are started below and stopped on shutdown.
+    let channels = crate::channels::bootstrap_registry().await;
     let state = Arc::new(AppState {
         static_dir: static_dir.into(),
         port,
@@ -3048,6 +3074,7 @@ pub async fn run(
         log_levels: Arc::new(log_levels),
         chunk_feedback_enabled: crate::chunk_feedback::feedback_enabled_from_env(),
         chunk_feedback_weighting: crate::chunk_feedback::feedback_weighting_from_env(),
+        channels: channels.clone(),
         document_commit_lock: Arc::new(std::sync::Mutex::new(())),
     });
 
@@ -3061,13 +3088,32 @@ pub async fn run(
         .task_executor
         .spawn(executor_handler, std::time::Duration::from_millis(2_000));
     let router = build_router(state);
+
+    // Chat channel start hook (RAGFlow `bootstrap.run_channels`): build + start
+    // every enabled channel from the environment config; errors are isolated
+    // per channel so one bad bot never aborts the API server.
+    let channel_config = crate::channels::channels_config_from_env();
+    let started = channels.start_all(&channel_config).await;
+    for (platform, account) in &started {
+        tracing::info!(platform, account, "chat channel started");
+    }
+
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!(
         "RayRAG v{} on http://0.0.0.0:{}",
         env!("CARGO_PKG_VERSION"),
         port
     );
-    axum::serve(listener, router).await?;
+    // Chat channel stop hook: on shutdown, stop every running channel.
+    let shutdown = async move {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::error!(%error, "failed to listen for shutdown signal");
+        }
+        channels.stop_all().await;
+    };
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown)
+        .await?;
     Ok(())
 }
 
@@ -3192,6 +3238,7 @@ mod tests {
             log_levels: Arc::new(crate::logging::LogLevelManager::in_memory()),
             chunk_feedback_enabled: false,
             chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
+            channels: Arc::new(crate::channels::ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         TestEnv { root, state, token }
@@ -3349,6 +3396,7 @@ mod tests {
             log_levels: Arc::new(crate::logging::LogLevelManager::in_memory()),
             chunk_feedback_enabled: false,
             chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
+            channels: Arc::new(crate::channels::ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         TestEnv { root, state, token }

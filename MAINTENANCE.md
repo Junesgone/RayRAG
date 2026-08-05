@@ -1,3 +1,11 @@
+## 2026-08-05 v0.1.9：连接器框架 + 渠道框架 + sync 任务
+
+- connectors.rs ~1480：Connector trait + Local/WebDAV/Blob/Feishu/Confluence + Registry
+- channels.rs ~1200：Channel trait + Registry + webhook/feishu（含 challenge 校验）
+- file_mgr.rs +236 DocFileCache；task_executor.rs +960 SyncTask + ChunkEnrichment
+- 测试基线：**986 passed / 0 failed / 27 ignored**
+- 覆盖矩阵：partial 440 → **331**
+
 ## 2026-08-05 v0.1.8：TaskExecutor + ChatPipeline
 
 - task_executor.rs ~680 行：异步队列/状态机/进度回调/指数退避重试（对齐 task_executor.py）

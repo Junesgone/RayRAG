@@ -1,7 +1,7 @@
 //! Data source manager — configures and syncs external connectors
 //! (GitLab MVP). Mirrors RAGFlow's connector admin surface.
 
-use crate::data_source::{BlobConnector, GitLabConnector, SourceOptions};
+use crate::data_source::{GitLabConnector, SourceOptions};
 use anyhow::{Context, Result, bail};
 use axum::Json;
 use axum::extract::{Extension, State};
@@ -24,6 +24,10 @@ pub struct DataSourceRecord {
     pub include_merge_requests: bool,
     pub max_items: usize,
     pub created_at: String,
+    /// Whether the connector has passed `load_credentials` (授权) since last
+    /// edit. Mirrors RAGFlow's connector enabled/connected state.
+    #[serde(default)]
+    pub connected: bool,
 }
 
 impl DataSourceRecord {
@@ -38,8 +42,20 @@ impl DataSourceRecord {
             "include_merge_requests": self.include_merge_requests,
             "max_items": self.max_items,
             "created_at": self.created_at,
+            "connected": self.connected,
             "token": if self.token.is_empty() { "" } else { "***" },
         })
+    }
+
+    pub fn to_options(&self) -> SourceOptions {
+        SourceOptions {
+            url: self.url.clone(),
+            token: self.token.clone(),
+            target: self.target.clone(),
+            include_issues: self.include_issues,
+            include_merge_requests: self.include_merge_requests,
+            max_items: self.max_items,
+        }
     }
 }
 
@@ -175,10 +191,15 @@ pub async fn create_data_source(
             "name/url/target are required".into(),
         ));
     }
-    if body.kind != "gitlab" && body.kind != "blob" {
+    // Supported kinds: gitlab (legacy) + connector registry kinds.
+    if !is_supported_kind(&body.kind) {
         return Err((
             StatusCode::BAD_REQUEST,
-            "only gitlab/blob are supported".into(),
+            format!(
+                "unsupported data source type: {} (supported: {})",
+                body.kind,
+                supported_kinds()
+            ),
         ));
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -193,6 +214,7 @@ pub async fn create_data_source(
         include_merge_requests: body.include_merge_requests,
         max_items: body.max_items.max(1),
         created_at: chrono::Utc::now().to_rfc3339(),
+        connected: false,
     };
     store
         .insert(record.clone())
@@ -231,25 +253,30 @@ pub async fn sync_data_source(
     let record = store
         .get(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
-    let options = SourceOptions {
-        url: record.url,
-        token: record.token,
-        target: record.target,
-        include_issues: record.include_issues,
-        include_merge_requests: record.include_merge_requests,
-        max_items: record.max_items,
-    };
-    let docs = match record.kind.as_str() {
-        "gitlab" => GitLabConnector::new().fetch(&options).await,
-        "blob" => BlobConnector::new().fetch(&options).await,
-        other => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("unsupported source kind: {other}"),
-            ));
+    let options = record.to_options();
+    let batch = match record.kind.as_str() {
+        // Legacy path: GitLab connector lives in src/data_source/.
+        "gitlab" => {
+            let docs = GitLabConnector::new().fetch(&options).await.map_err(|error| {
+                (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}"))
+            })?;
+            crate::connectors::SyncBatch {
+                docs,
+                failures: Vec::new(),
+            }
         }
-    }
-    .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?;
+        // Connector registry dispatch (RAGFlow data-source type → Connector).
+        kind => {
+            let connector = crate::connectors::ConnectorRegistry::create(kind, options)
+                .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+            connector
+                .fetch_all(record.max_items)
+                .await
+                .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?
+        }
+    };
+    let docs = batch.docs;
+    let connector_failures = batch.failures;
 
     // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
     // Each connector doc is written as a text file and routed through the
@@ -318,8 +345,115 @@ pub async fn sync_data_source(
         .collect();
     Ok(Json(serde_json::json!({
         "code": 0,
-        "data": { "count": docs.len(), "ingested": ingested, "skipped": skipped, "preview": preview }
+        "data": { "count": docs.len(), "ingested": ingested, "skipped": skipped, "failures": connector_failures, "preview": preview }
     })))
+}
+
+// ── Connector lifecycle endpoints (连接/断开/拉取列表) ──────────────────────
+
+/// POST /api/v1/data_sources/{id}/connect — 授权: run `load_credentials`
+/// against the source and mark the data source connected on success.
+/// Mirrors RAGFlow's "测试连接" (validate connector settings).
+pub async fn connect_data_source(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let store = state
+        .data_sources
+        .as_ref()
+        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+    let mut record = store
+        .get(&id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+    let options = record.to_options();
+    let mut connector = crate::connectors::ConnectorRegistry::create(&record.kind, options)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    connector
+        .load_credentials()
+        .await
+        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("connect failed: {error:#}")))?;
+    record.connected = true;
+    store
+        .insert(record.clone())
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(serde_json::json!({ "code": 0, "data": record.redacted() })))
+}
+
+/// POST /api/v1/data_sources/{id}/disconnect — mark the data source
+/// disconnected (RAGFlow disables the connector without deleting it).
+pub async fn disconnect_data_source(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let store = state
+        .data_sources
+        .as_ref()
+        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+    let mut record = store
+        .get(&id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+    record.connected = false;
+    store
+        .insert(record.clone())
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(serde_json::json!({ "code": 0, "data": record.redacted() })))
+}
+
+/// POST /api/v1/data_sources/{id}/files — 拉取列表: run `list_files` and
+/// return the remote file listing (RAGFlow slim-doc listing).
+pub async fn list_data_source_files(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let store = state
+        .data_sources
+        .as_ref()
+        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+    let record = store
+        .get(&id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+    let options = record.to_options();
+    let connector = crate::connectors::ConnectorRegistry::create(&record.kind, options)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    let files = connector
+        .list_files()
+        .await
+        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("list failed: {error:#}")))?;
+    let preview: Vec<serde_json::Value> = files
+        .iter()
+        .take(record.max_items.max(1))
+        .map(|file| {
+            serde_json::json!({
+                "id": file.id,
+                "name": file.name,
+                "path": file.path,
+                "extension": file.extension,
+                "size_bytes": file.size_bytes,
+                "updated_at": file.updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "data": { "count": files.len(), "files": preview }
+    })))
+}
+
+fn is_supported_kind(kind: &str) -> bool {
+    if kind == "gitlab" {
+        return true;
+    }
+    crate::connectors::ConnectorRegistry::kinds()
+        .iter()
+        .any(|info| info.kind == kind)
+}
+
+fn supported_kinds() -> String {
+    let mut kinds: Vec<String> = vec!["gitlab".into()];
+    for info in crate::connectors::ConnectorRegistry::kinds() {
+        kinds.push(info.kind.to_string());
+    }
+    kinds.join("/")
 }
 
 // ---- tests ----
@@ -343,6 +477,7 @@ mod tests {
             include_merge_requests: false,
             max_items: 10,
             created_at: "2026-01-01T00:00:00Z".into(),
+            connected: false,
         };
         store.insert(record).unwrap();
         let redacted = store.list();
@@ -370,6 +505,7 @@ mod tests {
                     include_merge_requests: false,
                     max_items: 5,
                     created_at: "2026-01-01T00:00:00Z".into(),
+                    connected: false,
                 })
                 .unwrap();
         }
@@ -386,5 +522,37 @@ mod tests {
         .unwrap();
         assert_eq!(body.max_items, 50);
         assert!(!body.include_issues);
+    }
+
+    #[test]
+    fn registry_dispatch_accepts_all_supported_kinds() {
+        // create_data_source's kind gate mirrors the connector registry.
+        for kind in ["gitlab", "blob", "local", "webdav", "feishu", "confluence"] {
+            assert!(is_supported_kind(kind), "kind {kind} should be supported");
+        }
+        assert!(!is_supported_kind("nope"));
+        assert!(supported_kinds().contains("feishu"));
+    }
+
+    #[test]
+    fn record_roundtrip_preserves_connected_flag() {
+        let record = DataSourceRecord {
+            id: "c1".into(),
+            name: "feishu-main".into(),
+            kind: "feishu".into(),
+            url: "https://open.feishu.cn".into(),
+            token: "app:secret".into(),
+            target: String::new(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 10,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: true,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: DataSourceRecord = serde_json::from_str(&json).unwrap();
+        assert!(back.connected);
+        let redacted = back.redacted();
+        assert_eq!(redacted["connected"], true);
     }
 }

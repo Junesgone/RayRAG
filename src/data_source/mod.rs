@@ -11,6 +11,15 @@ use std::collections::HashMap;
 pub enum DocumentSource {
     GitLab,
     Blob,
+    /// Local filesystem directory (RAGFlow has no local connector; this is the
+    /// offline equivalent of the WebDAV/Blob file connectors).
+    Local,
+    /// WebDAV server (RAGFlow `DocumentSource.WEBDAV`).
+    WebDav,
+    /// Feishu / Lark cloud drive (飞书云空间).
+    Feishu,
+    /// Atlassian Confluence (RAGFlow `DocumentSource.CONFLUENCE`).
+    Confluence,
 }
 
 impl DocumentSource {
@@ -18,6 +27,10 @@ impl DocumentSource {
         match self {
             DocumentSource::GitLab => "gitlab",
             DocumentSource::Blob => "blob",
+            DocumentSource::Local => "local",
+            DocumentSource::WebDav => "webdav",
+            DocumentSource::Feishu => "feishu",
+            DocumentSource::Confluence => "confluence",
         }
     }
 
@@ -25,6 +38,10 @@ impl DocumentSource {
         match value {
             "gitlab" => Some(DocumentSource::GitLab),
             "blob" => Some(DocumentSource::Blob),
+            "local" => Some(DocumentSource::Local),
+            "webdav" => Some(DocumentSource::WebDav),
+            "feishu" => Some(DocumentSource::Feishu),
+            "confluence" => Some(DocumentSource::Confluence),
             _ => None,
         }
     }

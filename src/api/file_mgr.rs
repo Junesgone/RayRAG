@@ -282,6 +282,161 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+// ============================================================================
+// DocFileCache — RAGFlow `rag/svr/cache_file_svr.py` port.
+//
+// RAGFlow runs a dedicated worker that polls the *ongoing* document tasks
+// (`TaskService.get_ongoing_doc_name()`), fetches each `(kb_id, location)`
+// file binary from object storage and caches it in Redis with a short TTL
+// (`12 * 60` seconds). The cache is populated *before* the parser needs the
+// file, so chunking workers read from the warm cache instead of hitting
+// object storage directly.
+//
+// This port keeps the same contract against RayRAG's local uploads dir:
+//   - key      = `"{kb_id}/{location}"` (same key layout as RAGFlow Redis);
+//   - `cache_ongoing`   = `cache_file_svr.main()` poll step;
+//   - `get`             = Redis `exist` + read (expired entries miss);
+//   - `sweep_expired`   = Redis TTL eviction (expired entries + files).
+//
+// Like Redis, the cache is volatile: `DocFileCache::new` starts empty and
+// drops stale cache files from a previous run.
+// ============================================================================
+
+/// One cached file entry (`cache_file_svr` Redis value + TTL bookkeeping).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheEntry {
+    /// `"{kb_id}/{location}"` — identical key layout to the RAGFlow worker.
+    pub key: String,
+    /// Physical file name inside the cache directory.
+    pub file_name: String,
+    pub size: usize,
+    /// Epoch millis when the entry was cached.
+    pub cached_at: u64,
+    /// Epoch millis after which the entry is considered expired (Redis TTL).
+    pub expires_at: u64,
+}
+
+/// Volatile on-disk cache for ongoing-task files (`cache_file_svr` port).
+pub struct DocFileCache {
+    entries: RwLock<HashMap<String, CacheEntry>>,
+    cache_dir: String,
+}
+
+impl DocFileCache {
+    /// Create an empty cache rooted at `cache_dir`. Stale files from a
+    /// previous run are removed (the cache is volatile, like Redis).
+    pub fn new(cache_dir: &str) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(cache_dir)?;
+        for entry in std::fs::read_dir(cache_dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("cache-")
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        Ok(Self {
+            entries: RwLock::new(HashMap::new()),
+            cache_dir: cache_dir.into(),
+        })
+    }
+
+    /// `"{kb_id}/{location}"` cache key (RAGFlow `"{}/{}".format(kb_id, loc)`).
+    pub fn key(kb_id: &str, location: &str) -> String {
+        format!("{kb_id}/{location}")
+    }
+
+    /// Path of the cached file if a non-expired entry exists.
+    pub fn get(&self, kb_id: &str, location: &str, now: u64) -> Option<std::path::PathBuf> {
+        let key = Self::key(kb_id, location);
+        let entries = self.entries.read().unwrap();
+        let entry = entries.get(&key)?;
+        if entry.expires_at <= now {
+            return None; // Redis `exist` after TTL eviction == false
+        }
+        let path = std::path::Path::new(&self.cache_dir).join(&entry.file_name);
+        path.is_file().then_some(path)
+    }
+
+    /// `cache_file_svr.main()` poll step: for each `(kb_id, location)` of an
+    /// ongoing task, cache the source file (read from `source_dir`) unless a
+    /// valid cache entry already exists. Returns the number of newly cached
+    /// files (the RAGFlow `CACHE: <loc>` log lines). Missing source files are
+    /// skipped, mirroring the `STORAGE_IMPL.get` error path.
+    pub fn cache_ongoing(
+        &self,
+        locations: &[(String, String)],
+        source_dir: &std::path::Path,
+        ttl: std::time::Duration,
+    ) -> anyhow::Result<usize> {
+        let now = now_ms();
+        let mut cached = 0usize;
+        for (kb_id, location) in locations {
+            let key = Self::key(kb_id, location);
+            {
+                let entries = self.entries.read().unwrap();
+                if entries
+                    .get(&key)
+                    .is_some_and(|entry| entry.expires_at > now)
+                {
+                    continue;
+                }
+            }
+            let Ok(data) = std::fs::read(source_dir.join(location)) else {
+                continue; // RAGFlow logs the storage error and keeps polling
+            };
+            let file_name = format!("cache-{}.bin", uuid::Uuid::new_v4());
+            let path = std::path::Path::new(&self.cache_dir).join(&file_name);
+            std::fs::write(&path, &data)?;
+            let entry = CacheEntry {
+                key: key.clone(),
+                file_name,
+                size: data.len(),
+                cached_at: now,
+                expires_at: now.saturating_add(ttl.as_millis() as u64),
+            };
+            self.entries.write().unwrap().insert(key, entry);
+            cached += 1;
+        }
+        Ok(cached)
+    }
+
+    /// Evict expired entries and delete their physical cache files
+    /// (Redis TTL eviction). Returns the number of evicted entries.
+    pub fn sweep_expired(&self, now: u64) -> usize {
+        let expired: Vec<CacheEntry> = self
+            .entries
+            .read()
+            .unwrap()
+            .values()
+            .filter(|entry| entry.expires_at <= now)
+            .cloned()
+            .collect();
+        if expired.is_empty() {
+            return 0;
+        }
+        let mut entries = self.entries.write().unwrap();
+        for entry in &expired {
+            entries.remove(&entry.key);
+            let _ = std::fs::remove_file(std::path::Path::new(&self.cache_dir).join(&entry.file_name));
+        }
+        expired.len()
+    }
+
+    /// Number of entries currently held (expired entries are counted until
+    /// swept, matching Redis semantics where keys disappear on access).
+    pub fn len(&self) -> usize {
+        self.entries.read().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +482,87 @@ mod tests {
             Ok(_) => panic!("corrupt file JSON must fail startup"),
         };
         assert!(error.to_string().contains("Failed to parse file metadata"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn doc_file_cache_caches_ongoing_files_with_ttl() {
+        let root = std::env::temp_dir().join(format!("rayrag-filecache-{}", uuid::Uuid::new_v4()));
+        let cache = DocFileCache::new(root.join("cache").to_str().unwrap()).unwrap();
+        let source_dir = root.join("uploads");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("a.pdf"), b"pdf-bytes-a").unwrap();
+        std::fs::write(source_dir.join("b.txt"), b"text-b").unwrap();
+
+        let now = now_ms();
+        let ttl = std::time::Duration::from_secs(60);
+        let locations = vec![
+            ("kb-1".to_string(), "a.pdf".to_string()),
+            ("kb-1".to_string(), "b.txt".to_string()),
+            // Missing source file is skipped, not fatal (RAGFlow storage-error path).
+            ("kb-1".to_string(), "missing.pdf".to_string()),
+        ];
+        let cached = cache
+            .cache_ongoing(&locations, &source_dir, ttl)
+            .unwrap();
+        assert_eq!(cached, 2);
+        assert_eq!(cache.len(), 2);
+
+        // Warm read returns the cached file path with the right bytes.
+        let path = cache.get("kb-1", "a.pdf", now).expect("cached file");
+        assert_eq!(std::fs::read(path).unwrap(), b"pdf-bytes-a");
+        // Unknown key misses.
+        assert!(cache.get("kb-2", "a.pdf", now).is_none());
+
+        // Re-polling the same locations does not re-cache (Redis `exist` skip).
+        let cached = cache
+            .cache_ongoing(&locations, &source_dir, ttl)
+            .unwrap();
+        assert_eq!(cached, 0);
+        assert_eq!(cache.len(), 2);
+
+        // After TTL the entry expires: get() misses (Redis TTL eviction)...
+        let later = now + 61_000;
+        assert!(cache.get("kb-1", "a.pdf", later).is_none());
+        assert_eq!(cache.len(), 2, "expired entries linger until swept");
+        // ...and sweep_expired removes the entry and its physical file.
+        assert_eq!(cache.sweep_expired(later), 2);
+        assert_eq!(cache.len(), 0);
+        let cache_dir = root.join("cache");
+        let leftover: Vec<_> = std::fs::read_dir(&cache_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(leftover.is_empty(), "cache files must be deleted on sweep");
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn doc_file_cache_is_volatile_across_restarts() {
+        let root = std::env::temp_dir().join(format!("rayrag-filecache2-{}", uuid::Uuid::new_v4()));
+        let cache_dir = root.join("cache");
+        let source_dir = root.join("uploads");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("c.md"), b"hello").unwrap();
+
+        let ttl = std::time::Duration::from_secs(60);
+        let cache = DocFileCache::new(cache_dir.to_str().unwrap()).unwrap();
+        cache
+            .cache_ongoing(
+                &[("kb-1".to_string(), "c.md".to_string())],
+                &source_dir,
+                ttl,
+            )
+            .unwrap();
+        assert_eq!(cache.len(), 1);
+
+        // A new DocFileCache (worker restart) drops stale files: Redis-like
+        // volatility — the cache is a warm-up, not durable storage.
+        let restarted = DocFileCache::new(cache_dir.to_str().unwrap()).unwrap();
+        assert_eq!(restarted.len(), 0);
+        assert!(restarted.get("kb-1", "c.md", 1_000_000u64).is_none());
+
         std::fs::remove_dir_all(root).ok();
     }
 }

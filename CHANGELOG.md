@@ -2,6 +2,28 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.1.9] — 2026-08-05
+
+### Added
+
+- **连接器框架**（`src/connectors.rs` ~1480 行，对标 `common/data_source`）：
+  Connector trait（load_credentials/list_files/fetch_file/normalize/fetch_all 分批
+  runner）、RemoteFile/SyncBatch 契约、LocalConnector/WebDavConnector/BlobAdapter
+  基础连接器 + FeishuConnector（tenant_access_token 授权、云空间递归列举、
+  docx raw_content 导出）/ ConfluenceConnector（spaceKey 分页、HTML→markdown）；
+  ConnectorRegistry 按类型分发；datasources 页面连接/断开/拉取按钮。
+- **渠道框架**（`src/channels.rs` ~1200 行，对标 `api/channels`）：
+  Channel trait（send_text/send_markdown/start/stop/dispatch 错误隔离）、
+  ChannelRegistry（register/build_channels/start_all/stop_all/dispatch_inbound，
+  bootstrap 语义）、webhook 渠道（OutgoingMessage 契约 POST）+ feishu 渠道
+  （tenant_access_token 缓存、text/interactive-card 发送、v2.0 事件归一化 +
+  URL verification challenge）；server.rs 启动/停止钩子。
+- **rag/svr 语义补齐**：`src/api/file_mgr.rs` +236（DocFileCache：Redis 式
+  `{kb_id}/{location}` 键、TTL 过期清理）；`src/task_executor.rs` +960
+  （SyncTask 同步任务类型：fingerprint 跳过、poll_range_start 窗口推进、
+  快照删除对账、超时永久 FAIL；ChunkEnrichment：auto_questions 两阶段 LLM
+  缓存 + 离线 fallback、important_kwd/question_kwd 元数据、进度消息对齐）。
+
 ## [0.1.8] — 2026-08-05
 
 ### Added
