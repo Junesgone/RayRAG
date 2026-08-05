@@ -1,3 +1,30 @@
+## 2026-08-05 v0.2.3 容器验证
+
+- 部署成功：容器 healthy、healthz 200、6 页面全 200
+- 已提交 3312c3c（v0.2.3：flow 契约/服务层/MCP 客户端/Helm）
+
+## 2026-08-05 覆盖矩阵收尾评估与文档化（v0.2.3 后续，纯文档）
+
+- 核对 24 行剩余 partial 条目，逐一标注理由；摘要表重新生成（此前 stale）：partial 105 → **83**、N/A 13 → **32**、full 502 → **505**（aligned 128 / replaced 92 / reference 3601，总数 4441 不变）
+- 矩阵头部新增 `N/A-by-design` 政策行（非 Rust 目标与非代码产物：Node/Go 入口、文档、打包/lockfile 元数据、空包标记）
+- **→ N/A-by-design（19 行）**：
+  - api/channels/whatsapp/gateway-node 4 行（README/index.js/package.json/package-lock.json）：Node.js 网关，非 Rust 移植范围；whatsapp channel.py/gateway.py 已 full → src/channels.rs
+  - cmd/ragflow-cli.go、cmd/ragflow_server.go：Go CLI/服务入口，非 Rust 目标；Rust CLI = src/main.rs、server = src/server.rs
+  - bin/.gitkeep：空 Git 占位；入口脚本由 Rust CLI + docker-entrypoint.sh 替代
+  - admin/client 4 行（COMMAND.md/README.md/pyproject.toml/uv.lock）：文档/打包元数据；功能客户端已 full → src/api/admin.rs
+  - agent/plugin 3 个 README（en/tr/zh）：文档；plugin 生命周期在 src/plugin.rs
+  - deepdoc/README_zh.md、api/common/README.md：文档
+  - rag/svr/task_executor_refactoring_plan.md：规划文档；执行器已 full → src/task_executor.rs
+  - memory/__init__.py、memory/services/__init__.py：空包标记（0 行）
+- **→ full（3 行，附 src 路径）**：
+  - rag/prompts/__init__.py：generator 再导出 shim（generator 已 full → src/chat.rs）
+  - rag/prompts/template.py：load_prompt(name)+缓存 → PromptLibrary::get(name)（src/prompts.rs）
+  - api/db/template_utils.py：_collect_canvas_types + normalize_canvas_template_categories 精确移植（src/api/joint_services.rs）
+- **保持 partial、说明列细化（2 行）**：api/db/__init__.py（FileType→src/api/utils.rs、UserTenantRole→src/api/joint_services.rs、TenantPermission→src/api/common.rs；SerializedType/InputType/CanvasCategory/PipelineTaskType 及常量组未移植）；mcp/server/server.py（MCP 客户端已移植 src/mcp_client.rs + tools 列表端点 src/api/connector.rs；独立 SSE server 与 RAGFlowConnector 工具面未完成）
+- **保持 partial 不变（2 行）**：memory/services/messages.py、query.py（消息存储运行时未移植；配置生命周期在 src/api/features.rs）
+- 复核：agent/sandbox 22 个非代码文件沿用 v0.2.3 covered-by 决定（保持 partial，等价语义在 src/sandbox.rs + Dockerfile，说明列已写明）
+- 未跑 cargo check（纯文档操作）；git 尚未提交
+
 ## 2026-08-05 v0.2.3：flow 契约 + 服务层 + MCP 客户端 + Helm
 
 - pipeline/flow.rs ~700：组件 payloads/trace/进度契约
