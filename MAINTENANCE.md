@@ -131,6 +131,16 @@
   settings_page 增加 State 参数（路由 axum 自动注入，测试同步修复）
 - 测试：settings 11 全绿
 
+## 2026-08-07 v0.3.3l：Search apps 对齐（RAGFlow searchapps 契约）
+
+- RAGFlow /searches（next-searches/index.tsx 源码确认）有 Create search
+  app 弹窗（名称输入 + onOk 创建）
+- RayRAG 新增 /api/v1/searchapps CRUD：SearchAppStore（JSON 持久化，
+  仿 DataSourceStore）name/kb_ids/hybrid/rerank/top_k + owner 作用域
+  列表 + 权限校验；search_page 加 💾 Save as App 按钮（prompt 名称 →
+  POST 当前 KB/hybrid/rerank 选择）
+- 测试：search 43 + server 75 全绿；待容器重建后验证 searchapps CRUD
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
