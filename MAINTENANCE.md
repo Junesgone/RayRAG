@@ -94,6 +94,14 @@
   后端 normalize_agent_category 已支持任意非空值）；createA 两处全部接线
 - 测试：web 20 全绿；待容器重建后验证类型创建
 
+## 2026-08-07 v0.3.3h：New Chat 弹窗对齐（名称 + 知识库多选）
+
+- 浏览器实测 /chats 与 /searches 空态均无创建按钮（RAGFlow v0.26.2 行为）
+- RayRAG New Chat 弹窗补 Name 输入 + 知识库多选下拉（打开时从
+  /api/v1/datasets 加载）；createChat 提交 {question: name, kb_ids}；
+  后端 ChatRequest 早已支持 kb_ids/chat_model/embedding_model
+- 测试：web 20 全绿；待容器重建后验证创建带知识库的会话
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
