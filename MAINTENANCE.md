@@ -156,6 +156,12 @@
      search_knowledge 全部出现）
 - Logs tab 已提交，待含其镜像的下次重建验证
 
+## 2026-08-07 v0.3.3o：Logs tab 位置修复
+
+- 容器验证发现 /dataset/{id} 页面无 tab5：Logs 块误插在 kb_detail_page
+  结尾（该路由渲染 dataset_page）。已迁移至 dataset_page 末尾（877 行），
+  kb_ui 12 + web 20 全绿；镜像重建中
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
