@@ -61,6 +61,19 @@
 - 测试：web 20 + providers 14 全绿；登录账号 = RAYRAG_ADMIN_EMAIL 默认
   admin@rayrag.local（非 "admin"）
 
+## 2026-08-07 v0.3.3e：悬停 tooltip 调研 + 行操作对齐
+
+- 调研结论：RAGFlow 行内图标按钮 tooltip 是**动态组件**（无静态 title/
+  aria-label），悬浮才渲染 —— RayRAG 用 title 属性等价实现（浏览器原生
+  悬停提示，效果一致）
+- 对齐：文档行 ✏️ 重命名按钮加 title="Rename"（两处 loadDocs）
+- 待办：RAGFlow 有 /api/v1/datasets/{id}/documents/{doc}/download 下载
+  文档端点；RayRAG 目前只有 /api/v1/files/{file_id}/download，文档级
+  下载端点待补（下轮）
+- 浏览器采集补充：Files 行内按钮 = Enable switch + N fields + General 下拉
+  + 4 图标按钮（reparse/预览/下载/删除）+ ... 菜单（Preview/Edit/Delete/
+  Download/Export/Reparse，locale 源码确认）
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
