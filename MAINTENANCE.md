@@ -30,6 +30,20 @@
   llm_factories.json（factory_catalog 解析 models 数组而非 llm）
 - 测试：providers 13/13、model_meta 11/11、全量 lib 1143/0 failed
 
+## 2026-08-06 v0.3.3c：Providers 页对齐 RAGFlow Model providers
+
+- 能力类型筛选条（All/LLM/Embedding/Rerank/TTS/ASR/VLM/OCR + 显示计数，
+  对齐 RAGFlow /user-setting/model 的 8 类筛选）；行 data-k 属性由
+  provider_has_kind 推导（7 种 ProviderKind）
+- + Add 按钮 + 添加提供商弹窗（ID/Name/API Base/API Key/Models →
+  POST /api/v1/providers/{id}，ProviderUpdate 契约）
+- 教训：web.rs 是"二进制"文件（read_file 拒读，用 sed/grep/python 操作）；
+  Rust 字符串内嵌 JS 时统一用「JS 字符串单引号 + Rust 内仅 \\" 转义」，
+  与既有 renameModal 模式一致（文件字节 4 反斜杠+引号）；patch 工具会
+  二次转义反斜杠导致 6 反斜杠垃圾字节，须用 python 脚本精确写入
+- 测试：新增 providers_page_renders_kind_filter_and_add_provider_modal
+  （kb_ui_tests 模块，需用该模块的 test_state/body_of）；全量 1144/0 failed
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）

@@ -1415,12 +1415,37 @@ pub async fn providers_page(
     let mut rows = String::new();
     for p in &providers {
         let factory = crate::model_meta::resolve_model_factory(&p.id, &p.name);
+        // Capability kinds (aligned with RAGFlow Model providers type filter).
+        let mut kinds = Vec::new();
+        use crate::providers::{provider_has_kind, ProviderKind};
+        if provider_has_kind(&p.id, &p.name, ProviderKind::Chat) {
+            kinds.push("llm");
+        }
+        if provider_has_kind(&p.id, &p.name, ProviderKind::Embedding) {
+            kinds.push("embedding");
+        }
+        if provider_has_kind(&p.id, &p.name, ProviderKind::Rerank) {
+            kinds.push("rerank");
+        }
+        if provider_has_kind(&p.id, &p.name, ProviderKind::TextToSpeech) {
+            kinds.push("tts");
+        }
+        if provider_has_kind(&p.id, &p.name, ProviderKind::SpeechToText) {
+            kinds.push("asr");
+        }
+        if provider_has_kind(&p.id, &p.name, ProviderKind::ImageToText) {
+            kinds.push("vlm");
+        }
+        if provider_has_kind(&p.id, &p.name, ProviderKind::Ocr) {
+            kinds.push("ocr");
+        }
         let click = match &factory {
             Some(factory) => format!(
-                " style='cursor:pointer' data-factory='{}' onclick='showProviderModels(this)'",
-                html_escape(factory)
+                " style='cursor:pointer' data-factory='{}' data-k='{}' onclick='showProviderModels(this)'",
+                html_escape(factory),
+                kinds.join(" ")
             ),
-            None => String::new(),
+            None => format!(" data-k='{}'", kinds.join(" ")),
         };
         rows.push_str(&format!(
             "<tr{}><td>{} {}{}</td><td class='co'>{}</td><td>{}</td></tr>",
@@ -1439,7 +1464,7 @@ pub async fn providers_page(
     let mut b = String::new();
     b.push_str("<h1>🤖 ");
     b.push_str(t("Providers", zh));
-    b.push_str("</h1><div class='card'><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
+    b.push_str("</h1><div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px'><span id='pfCount' style='color:var(--tm);font-size:12px'></span><button class='btn btn-o btn-sm pfb on' data-f='all' onclick='pf(\"all\",this)'>All</button><button class='btn btn-o btn-sm pfb' data-f='llm' onclick='pf(\"llm\",this)'>LLM</button><button class='btn btn-o btn-sm pfb' data-f='embedding' onclick='pf(\"embedding\",this)'>Embedding</button><button class='btn btn-o btn-sm pfb' data-f='rerank' onclick='pf(\"rerank\",this)'>Rerank</button><button class='btn btn-o btn-sm pfb' data-f='tts' onclick='pf(\"tts\",this)'>TTS</button><button class='btn btn-o btn-sm pfb' data-f='asr' onclick='pf(\"asr\",this)'>ASR</button><button class='btn btn-o btn-sm pfb' data-f='vlm' onclick='pf(\"vlm\",this)'>VLM</button><button class='btn btn-o btn-sm pfb' data-f='ocr' onclick='pf(\"ocr\",this)'>OCR</button><span style='flex:1'></span><button class='btn btn-p btn-sm' onclick='showAddProv()'>+ Add</button></div><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
     b.push_str(&rows);
     b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
     b.push_str(t(
@@ -1502,6 +1527,7 @@ pub async fn providers_page(
         zh,
     ));
     b.push_str("</p>'}else{p.models.forEach(function(m){var tags=(m.t||[]).map(function(x){return '<span class=badge bs>'+x+'</span>'}).join(' ');h+='<div style=padding:8px 0;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;flex-wrap:wrap><span style=font-weight:500>'+m.n+'</span>'+tags+'</div>'})}document.getElementById('modelModalBody').innerHTML=h;document.getElementById('modelModal').classList.add('show')}</script>");
+    b.push_str("<div class='modal-overlay' id='addProvModal' onclick='if(event.target===this)this.classList.remove(\"show\")'><div class='modal' style='max-width:520px'><h2>+ Add Provider</h2><label style='display:block;margin-top:12px'>Provider ID<input id='apId' placeholder='e.g. deepseek' style='width:100%'></label><label style='display:block;margin-top:12px'>Name<input id='apName' placeholder='Display name' style='width:100%'></label><label style='display:block;margin-top:12px'>API Base<input id='apBase' placeholder='https://api.example.com/v1' style='width:100%'></label><label style='display:block;margin-top:12px'>API Key<input id='apKey' type='password' placeholder='Optional' style='width:100%'></label><label style='display:block;margin-top:12px'>Models (comma separated)<input id='apModels' placeholder='model-a, model-b' style='width:100%'></label><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveAddProv()'>Save</button><button class='btn btn-o' onclick='document.getElementById(\"addProvModal\").classList.remove(\"show\")'>Cancel</button><span id='apStatus' style='margin-left:8px;color:var(--tm);font-size:12px'></span></div></div></div><script>function pf(k,btn){document.querySelectorAll('.pfb').forEach(function(x){x.classList.remove('on')});if(btn)btn.classList.add('on');document.querySelectorAll('tbody tr[data-k]').forEach(function(tr){var ks=(tr.getAttribute('data-k')||' ').split(' ');tr.style.display=(k==='all'||ks.indexOf(k)>=0)?'':'none'});var rows=document.querySelectorAll('tbody tr[data-k]');var n=0;rows.forEach(function(tr){if(tr.style.display!=='none')n++});var c=document.getElementById('pfCount');if(c)c.textContent=rows.length+' providers · '+n+' shown'};function showAddProv(){document.getElementById('apId').value='';document.getElementById('apName').value='';document.getElementById('apBase').value='';document.getElementById('apKey').value='';document.getElementById('apModels').value='';document.getElementById('apStatus').textContent='';document.getElementById('addProvModal').classList.add('show')};function saveAddProv(){var id=document.getElementById('apId').value.trim();var nm=document.getElementById('apName').value.trim();var base=document.getElementById('apBase').value.trim();var key=document.getElementById('apKey').value.trim();var ms=document.getElementById('apModels').value.split(',').map(function(x){return x.trim()}).filter(Boolean);if(!id||!nm){document.getElementById('apStatus').textContent='ID and Name required';return}var body={name:nm,api_base:base,api_key:key||null};if(ms.length)body.models=ms;var st=document.getElementById('apStatus');st.textContent='Saving…';fetch('/api/v1/providers/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(d.code===0){st.textContent='Saved ✓';setTimeout(function(){location.reload()},500)}else{st.textContent=d.message||'Failed'}}).catch(function(e){st.textContent='Error: '+e});};pf('all',document.querySelector('.pfb'));</script>");
     Html(layout(t("Providers", zh), &b, zh))
 }
 
@@ -1739,6 +1765,28 @@ mod kb_ui_tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn providers_page_renders_kind_filter_and_add_provider_modal() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/providers")
+            .header("accept-language", "en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        // RAGFlow-style capability filter buttons.
+        for label in ["All", "LLM", "Embedding", "Rerank", "TTS", "ASR", "VLM", "OCR"] {
+            assert!(body.contains(label), "missing filter button {label}");
+        }
+        // Rows carry data-k kind attributes for filtering.
+        assert!(body.contains("data-k="), "rows must carry data-k kind attributes");
+        // Add-provider modal + save wiring.
+        assert!(body.contains("addProvModal"), "missing add-provider modal");
+        assert!(body.contains("saveAddProv"), "missing add-provider save handler");
+        assert!(body.contains("/api/v1/providers/"), "missing providers API wiring");
+        assert!(body.contains("pf('all'"), "filter must initialize on All");
     }
 
     #[tokio::test]

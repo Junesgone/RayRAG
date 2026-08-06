@@ -36,6 +36,10 @@ All notable changes to RayRAG are documented in this file.
 - **内嵌 llm_factories.json 63 → 65 工厂 / 1064 模型**：从运行中
   RAGFlow v0.26.2 容器同步最新工厂目录（补 Xiaomi、New API），
   转换回紧凑 `{n,t,mx,tools}` 格式并全校验。
+- **Providers 页对齐 RAGFlow Model providers**：能力类型筛选
+  （All/LLM/Embedding/Rerank/TTS/ASR/VLM/OCR + 计数）、每行
+  `data-k` 类型属性、`+ Add` 按钮 + 添加提供商弹窗（POST
+  /api/v1/providers/{id}，对齐 RAGFlow Add 流程）。
 
 ## [0.3.2] — 2026-08-05
 
