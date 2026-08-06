@@ -110,6 +110,15 @@
   语言）、类型区加 Select all 快捷全选（类型多选 checkbox 已具备）
 - 测试：web 20 全绿
 
+## 2026-08-07 v0.3.3j：容器重建 + 三项端到端验证通过
+
+- 容器重建（含 v0.3.3g/h/i 全部代码）+ 实机验证：
+  1. Agent 类型创建 ✅（canvas_category=agent 落库；注意 create_agent 要求
+     dsl 字段必须为 JSON 对象，否则 400 "Agent DSL must be a JSON object"）
+  2. 带知识库会话创建 ✅（POST /api/v1/chats {question, kb_ids} code 0）
+  3. Memory 创建 ✅（memory_type ["raw","semantic"] code 0）
+- 测试数据已清理；覆盖矩阵 aligned 128→134
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
