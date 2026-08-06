@@ -20,15 +20,21 @@
 
 ## Dataset 列表 `/datasets`
 - 标题 + 筛选按钮 + `Search` + `Create dataset`；卡片（名称/`N files`/更新时间/设置按钮）；分页 `Total N`/页码/`50 / Page`
+- **Create dataset 弹窗**：`Name`（必填）、`Embedding model`（下拉）、`Parse type`（下拉，占位 "Please select a chunking method."）、`Built-in`（Pipeline 默认选项）、`Pipeline`（下拉）；按钮 `Save` / `Close`
 
 ## 知识库详情（4 Tab）
 ### Files `/dataset/files/{id}`
-- 头部：名称、`N files`、`30 GB`、Created；Tab：Files/Retrieval testing/Logs/Configuration
-- 工具栏：刷新、列设置、`Search`、`Add file`（下拉）
-- 表格列：Select all / Name / Upload date / Enable(开关) / Chunks / Metadata(`N fields`) / Parse(`General` 下拉) / Action
-- 行操作：预览(名称)、Metadata、Parse、启用开关、下载、删除、`...` 更多
+- 头部：名称、`N files`、`30 GB`、`Created 18/05/2026`；Tab：Files/Retrieval testing/Logs/Configuration
+- Files 标题下提示："Please wait for your files to finish parsing before starting an AI-powered chat."
+- 工具栏：刷新按钮、列设置按钮、`Search`、`Add file`（下拉 = **Upload file / Create empty file**）
+- 表格列：Select all / Name / Upload date / Enable(switch) / Chunks / Metadata(`N fields` 按钮) / Parse(`General` 下拉) / 图标按钮×2 / Action
+- 行内操作（实测）：Enable switch、`N fields`（metadata 弹窗）、`General`（解析方法下拉）、4 个图标按钮（含 `#icon-reparse` 重新解析）+ `...` 更多（下拉菜单）
+- 行操作菜单项（前端 locale 源码确认）：`Preview` / `Edit` / `Delete` / `Download` / `Export` / `Reparse`
+- **Upload file 弹窗**：`Files` / `Folder` 两个 Tab；拖放区 "drop your file here to upload"（file input multiple）；说明：本地部署单次 1GB 上限、批量 32 文件；cloud 10MB/128 文件；按钮 `Save` / `Close`
+- 分页 50/Page（607 页，`More pages` 快捷跳页）
 ### Retrieval testing `/dataset/retrieval/{id}`
-- Setting：相似度阈值 `Select value`、`Top N`、问题 textarea、`Run`；Results 区
+- Setting 完整字段：**Similarity threshold**（相似度阈值下拉）、**Vector similarity weight**（vector 0.30 / full-text 0.70 双滑块）、**Rerank model**（下拉）、**Use knowledge graph**（checkbox）、**Cross-language search**（checkbox）、**Meta data**（下拉）、**Top N**（默认 Top 10）
+- 操作：问题 textarea + **Run**；Results 区（空态 "No test has been run yet"）
 ### Logs `/dataset/logs/{id}`
 - 统计：Total files/Downloading/Processing；筛选 `File`/`Dataset` + `Search`
 - 表格列：ID/File name/Source/Ingestion pipeline/Start date/Task/Status/Operations
