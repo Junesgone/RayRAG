@@ -102,6 +102,14 @@
   后端 ChatRequest 早已支持 kb_ids/chat_model/embedding_model
 - 测试：web 20 全绿；待容器重建后验证创建带知识库的会话
 
+## 2026-08-07 v0.3.3i：Memory 创建弹窗对齐
+
+- 浏览器实测 Create memory 弹窗 = Name + *Memory type（raw/semantic/
+  episodic/procedural + (Select all)）+ Embedding model + LLM + Cancel/Confirm
+- RayRAG 对齐：弹窗标题 Create Memory（新建）/Edit Memory（编辑，i18n 双
+  语言）、类型区加 Select all 快捷全选（类型多选 checkbox 已具备）
+- 测试：web 20 全绿
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
