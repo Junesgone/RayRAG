@@ -581,6 +581,12 @@ pub async fn kb_detail_page(
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     b.push_str("fetch('/api/v1/providers').then(r=>r.json()).then(function(d){var sel=document.getElementById('embdSel');if(!sel)return;(d.data||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o)})})}).catch(function(){});");
     b.push_str("loadDocs();loadConfig();</script>");
+    // Tab 5: Logs (RAGFlow parity) — parse run status with File filter
+    b.push_str("<div id='tab5' style='display:none'><div class='card'><h2>");
+    b.push_str(t("Logs", zh));
+    b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
+    b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
+    b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\'\'>All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\''+nm.replace(/'/g,'&#39;')+'\'>'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||'?';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\''+nm.replace(/'/g,'&#39;')+'\'><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div>");
     Html(layout(&name, &b, zh))
 }
 
@@ -633,6 +639,8 @@ pub async fn dataset_page(
     b.push_str(t("Configuration", zh));
     b.push_str("</a></li><li><a href='#' onclick='showTab(4)' id='nav4'>🕸️ ");
     b.push_str(t("Knowledge Graph", zh));
+    b.push_str("</a></li><li><a href='#' onclick='showTab(5)' id='nav5'>📜 ");
+    b.push_str(t("Logs", zh));
     b.push_str("</a></li></ul></div>");
     // Content
     b.push_str("<div class='ds-content'>");
@@ -845,7 +853,7 @@ pub async fn dataset_page(
     // JS
     b.push_str("<script>var kbId='");
     b.push_str(&id);
-    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){for(var i=0;i<5;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
+    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
     b.push_str("function fmtSize(n){n=n||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB'};function fmtTime(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString()}catch(e){return ts}};");
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
