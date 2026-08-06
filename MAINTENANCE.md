@@ -119,6 +119,18 @@
   3. Memory 创建 ✅（memory_type ["raw","semantic"] code 0）
 - 测试数据已清理；覆盖矩阵 aligned 128→134
 
+## 2026-08-07 v0.3.3k：Settings 子页对齐（Chat channels + MCP）+ /files 实测
+
+- 浏览器实测 /files：Add file 下拉 = **Upload file / New folder**（与 dataset
+  Files tab 的 Upload file/Create empty file 不同，已记录）；表格 5 列
+  （Select all/Name/Upload date/Size/Dataset/Action）
+- user-setting 子页：Chat channels 头像菜单为 hover 触发（CDP 无法模拟），
+  改源码确认 MCP servers/Team members/Invite/Chat channels 文本存在
+- RayRAG settings 页补：Chat Channels section（registered_ids 渠道列表 +
+  状态）+ MCP Servers section（内置 MCP 工具目录 /api/v1/mcp/tools）；
+  settings_page 增加 State 参数（路由 axum 自动注入，测试同步修复）
+- 测试：settings 11 全绿
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
