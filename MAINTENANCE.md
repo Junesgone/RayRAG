@@ -160,7 +160,13 @@
 
 - 容器验证发现 /dataset/{id} 页面无 tab5：Logs 块误插在 kb_detail_page
   结尾（该路由渲染 dataset_page）。已迁移至 dataset_page 末尾（877 行），
-  kb_ui 12 + web 20 全绿；镜像重建中
+  - kb_ui 12 + web 20 全绿；镜像重建中
+
+  ## 2026-08-07 v0.3.3p：Logs tab 页面级验证通过
+
+  - 重建后 /dataset/{id} 页面验证：nav5/showTab(5)/id='tab5'/logFile/logBody/
+    loadLogs/filterLogs/badge 全部渲染 ✅
+  - 覆盖矩阵 aligned 134→137
 
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
