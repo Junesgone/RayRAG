@@ -85,6 +85,15 @@
   200 + `content-disposition: attachment; filename="rayrag_dl_test.txt"` +
   `application/octet-stream` + 字节完全一致（BYTES_MATCH）；测试 KB 已清理
 
+## 2026-08-07 v0.3.3g：Agent 创建弹窗对齐（Choose agent type）
+
+- 浏览器实测 RAGFlow Create agent 下拉 = Create from blank / Create from
+  template / Import JSON file；弹窗 = Choose agent type（Agent flow /
+  Ingestion pipeline）+ Name + Save/Close
+- RayRAG 对齐：创建弹窗加类型单选（canvas_category 提交 agent/ingestion，
+  后端 normalize_agent_category 已支持任意非空值）；createA 两处全部接线
+- 测试：web 20 全绿；待容器重建后验证类型创建
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
