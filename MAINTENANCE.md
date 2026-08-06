@@ -141,6 +141,13 @@
   POST 当前 KB/hybrid/rerank 选择）
 - 测试：search 43 + server 75 全绿；待容器重建后验证 searchapps CRUD
 
+## 2026-08-07 v0.3.3m：数据集 Logs tab 对齐
+
+- RAGFlow 4-tab（Files/Retrieval testing/Logs/Configuration）缺口补齐：
+  新增 📜 Logs tab（nav5）——文档解析状态表（run badge/Chunks/进度条）+
+  File 下拉筛选（按文档名过滤行）；showTab 循环 0-5
+- 测试：kb_ui 12 + web 20 全绿；Logs tab 待容器重建后验证
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
