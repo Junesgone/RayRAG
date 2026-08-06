@@ -966,6 +966,22 @@ pub async fn chat_detail_page(
     let id_short: String = id.chars().take(8).collect();
     b.push_str(&id_short);
     b.push_str("...</p>");
+    // Knowledge bases attached to this conversation (RAGFlow sidebar parity)
+    b.push_str("<div style='margin-top:12px'><h3 style='font-size:13px;margin-bottom:8px'>Knowledge Bases</h3>");
+    if conv_kb_ids.is_empty() {
+        b.push_str("<p style='font-size:11px;color:var(--tm)'>No knowledge base attached. Use the temporary chat to pick KBs.</p>");
+    } else {
+        for kb_id in conv_kb_ids.split(',') {
+            if kb_id.trim().is_empty() { continue; }
+            let kb_name = state.kbs.get(kb_id.trim()).map(|kb| kb.name.clone())
+                .unwrap_or_else(|| kb_id.trim().to_string());
+            b.push_str(&format!(
+                "<div style='display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg);border-radius:6px;margin-bottom:4px;font-size:12px'>📚 {}</div>",
+                kb_name
+            ));
+        }
+    }
+    b.push_str("</div>");
     // Settings panel (RAGFlow-style)
     b.push_str("<script>function renConv(){var nn=prompt('Rename conversation:',document.getElementById('convName').textContent);if(!nn)return;fetch('/api/v1/conversations/'+document.getElementById('convId').value,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function shareConv(){var u=location.origin+location.pathname;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function clearConv(){if(!confirm('Clear all messages?'))return;fetch('/api/v1/conversations/'+document.getElementById('convId').value+'/clear',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function tempConv(){document.getElementById('tempQ').value='';document.getElementById('tempOut').textContent='';document.getElementById('tempModal').classList.add('show')};function sendTemp(){var q=document.getElementById('tempQ').value;if(!q)return;var kbs=(document.getElementById('tempKbs').value||'').split(',').filter(Boolean);document.getElementById('tempOut').textContent='Thinking...';fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,kb_ids:kbs})}).then(r=>r.json()).then(d=>{document.getElementById('tempOut').textContent=d.code===0?(d.data&&d.data.answer?d.data.answer:'ok'):('Error: '+(d.message||'unknown'))})}</script><input type='hidden' id='convId' value='");
     b.push_str(&id);
