@@ -56,6 +56,7 @@
 
 ## Memory `/memories`
 - 标题 Memory + `Search` + `Create memory`；卡片（名称/时间/设置按钮）；分页
+- **Create memory 弹窗**：`Name`（placeholder "memory name"）、`*Memory type`（下拉 = **raw / semantic / episodic / procedural** + `(Select all)` 全选）、`Embedding model`（下拉）、`LLM`（下拉）；按钮 `Cancel` / `Confirm`；弹窗底部 `Clear` / `Close`
 
 ## File `/files`
 - 标题 Files + `Search` + `Add file`；表格列：Select all/Name/Upload date/Size/Dataset/Action；分页
