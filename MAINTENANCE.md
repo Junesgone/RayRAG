@@ -74,6 +74,14 @@
   + 4 图标按钮（reparse/预览/下载/删除）+ ... 菜单（Preview/Edit/Delete/
   Download/Export/Reparse，locale 源码确认）
 
+## 2026-08-07 v0.3.3f：文档下载端点（RAGFlow parity）
+
+- GET /api/v1/datasets/{id}/documents/{did}/download：kb_accessible 校验 →
+  DocStore.get + kb_id 匹配 → uploads/{storage_name} 读字节 →
+  Content-Disposition attachment；文件名消毒防路径穿越
+- UI：文档行加 ⬇️ 下载链接（title=Download，两处 loadDocs）
+- 测试：document 32 + server 75 全绿；容器镜像待重建后验证真实下载
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
