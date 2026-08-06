@@ -620,6 +620,13 @@ async fn update_dataset(
         "vector_similarity_weight",
         "rerank",
         "rerank_model",
+        "language",
+        "pdf_parser",
+        "page_index",
+        "image_and_table_window",
+        "excel_to_html",
+        "tag_sets",
+        "page_rank",
     ] {
         if let Some(value) = body.get(key) {
             config.insert(key.into(), value.clone());

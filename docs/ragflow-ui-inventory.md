@@ -39,8 +39,8 @@
 - 统计：Total files/Downloading/Processing；筛选 `File`/`Dataset` + `Search`
 - 表格列：ID/File name/Source/Ingestion pipeline/Start date/Task/Status/Operations
 ### Configuration `/dataset/configuration/{id}`
-- 基本：`*Name`、Language(`English`/`Chinese`)、Avatar、Description、Permissions(`Only me`)、Embedding model、Page rank、Tag sets
-- 解析：Parse type(`General`/`DeepDOC`)、Built-in pipeline、`PDF parser`、Recommended chunk size、Delimiter for text、Child chunk are used for retrieval、PageIndex、Image & table context window、Auto metadata、Overlapped percent(%)、Auto-keyword、Auto-question、Excel to HTML、Indexing model
+- 基本：`*Name`、Language 下拉（**English/Chinese/Traditional Chinese/Russian/Indonesian/Spanish/Vietnamese/Japanese/Korean/Portuguese BR/German/French/Italian/Tamil/Telugu 等 20+**）、Avatar、Description、Permissions 下拉（**Only me / Team**）、Embedding model、Page rank、Tag sets
+- 解析：Parse type 下拉 = **Chunking method 完整选项：General / Q&A / Resume / Manual / Table / Paper / Book / Laws / Presentation / One / Tag**；Built-in pipeline、PDF parser（**Light/General**）、Recommended chunk size、Delimiter for text、Child chunk are used for retrieval、PageIndex、Image & table context window、Auto metadata、Overlapped percent(%)、Auto-keyword、Auto-question、Excel to HTML、Indexing model
 - 操作：`Upload`、`Link data source`、`Cancel`、`Save`、`Settings`、`Built-in pipeline introduction`
 
 ## Chat `/chats`
