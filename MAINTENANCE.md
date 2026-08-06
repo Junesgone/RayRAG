@@ -81,6 +81,9 @@
   Content-Disposition attachment；文件名消毒防路径穿越
 - UI：文档行加 ⬇️ 下载链接（title=Download，两处 loadDocs）
 - 测试：document 32 + server 75 全绿；容器镜像待重建后验证真实下载
+- ✅ 容器重建后真实下载验证通过：POST 上传测试 txt → GET download →
+  200 + `content-disposition: attachment; filename="rayrag_dl_test.txt"` +
+  `application/octet-stream` + 字节完全一致（BYTES_MATCH）；测试 KB 已清理
 
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
