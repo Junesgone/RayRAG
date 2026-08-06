@@ -13,13 +13,18 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 128 | 46487 |
+| aligned | 134 | 46487 |
 | full | 541 | 245606 |
 | partial | 18 | 50105 |
 | replaced | 92 | 37286 |
 | N/A | 61 | 10262 |
 | reference | 3601 | 908046 |
 | unmapped | 0 | 0 |
+
+> v0.3.3d–i（2026-08-07）新增 aligned：文档下载端点（server.rs）、
+> dataset Configuration 5 字段 + 后端白名单 7 键、chunk method Resume/Tag、
+> providers 类型筛选 + Add 弹窗、agent 类型选择、New Chat 知识库多选、
+> Memory 弹窗、chat 侧栏知识库列表。
 
 ## File Inventory
 
