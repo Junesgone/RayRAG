@@ -50,7 +50,9 @@
 - 空态文案："No search app created yet"
 
 ## Agent `/agents`
-- 标题 Agents + `Search` + `Create agent`（筛选下拉 + 主按钮）；卡片（名称/`Last saved at:` 时间/设置按钮）；分页
+- 标题 + `Search` + `Create agent`（下拉 = **Create from blank / Create from template / Import JSON file**）；agent 卡片（名称/`Last saved at:` 时间/设置按钮）；分页
+- **Create agent 弹窗**：`Choose agent type`（**Agent flow** / **Ingestion pipeline** 两个类型卡片）、`Name`（必填，placeholder "Please input name"）；按钮 `Save` / `Close`
+- 点击 Save 后进入 Agent 画布编辑器（flow 编辑器，节点拖拽 + 侧栏配置）
 
 ## Memory `/memories`
 - 标题 Memory + `Search` + `Create memory`；卡片（名称/时间/设置按钮）；分页
