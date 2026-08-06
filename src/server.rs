@@ -2863,6 +2863,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/chat/completions",
             post(crate::api::openai_proxy::chat_completions),
         )
+        .route(
+            "/api/v1/openai/{chat_id}/chat/completions",
+            post(crate::api::openai_proxy::openai_rag_chat_completions),
+        )
         .route("/api/v1/models", get(crate::api::openai_proxy::list_models))
         .route(
             "/api/v1/embeddings",

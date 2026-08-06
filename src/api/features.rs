@@ -197,20 +197,20 @@ pub struct RegenerateRequest {
     pub embedding_model: Option<String>,
 }
 
-struct GeneratedChatAnswer {
-    answer: String,
-    citations: Vec<String>,
-    references: Vec<crate::llm::ChunkReference>,
-    usage: Option<crate::llm::TokenUsage>,
+pub(crate) struct GeneratedChatAnswer {
+    pub(crate) answer: String,
+    pub(crate) citations: Vec<String>,
+    pub(crate) references: Vec<crate::llm::ChunkReference>,
+    pub(crate) usage: Option<crate::llm::TokenUsage>,
 }
 
-struct ChatGenerationRequest<'a> {
-    question: &'a str,
-    kb_ids: &'a [String],
-    chat_model: Option<&'a str>,
-    embedding_model: Option<&'a str>,
-    history: &'a [crate::llm::ChatMessage],
-    generation: crate::generation_params::GenerationParamsPatch,
+pub(crate) struct ChatGenerationRequest<'a> {
+    pub(crate) question: &'a str,
+    pub(crate) kb_ids: &'a [String],
+    pub(crate) chat_model: Option<&'a str>,
+    pub(crate) embedding_model: Option<&'a str>,
+    pub(crate) history: &'a [crate::llm::ChatMessage],
+    pub(crate) generation: crate::generation_params::GenerationParamsPatch,
 }
 
 /// POST /api/v1/chats — create new chat session
@@ -644,7 +644,7 @@ async fn regenerate_owned_message(
     }
 }
 
-async fn generate_chat_answer(
+pub(crate) async fn generate_chat_answer(
     state: &AppState,
     auth: &AuthContext,
     request: ChatGenerationRequest<'_>,

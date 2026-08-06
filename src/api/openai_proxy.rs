@@ -3,7 +3,7 @@
 
 use axum::{
     Extension, Json,
-    extract::State,
+    extract::{Path, State},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -326,3 +326,101 @@ pub async fn list_models() -> impl IntoResponse {
         }],
     })
 }
+
+/// POST /v1/openai/{chat_id}/chat/completions — RAGFlow openai_api.py
+/// parity: OpenAI-format completion bound to a conversation's knowledge
+/// bases (retrieval-augmented), unlike the plain LLM proxy above.
+pub async fn openai_rag_chat_completions(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Json(body): Json<OpenAiChatRequest>,
+) -> Response {
+    let Some(history) = state.conversations.get_for(&chat_id, &auth.user_id) else {
+        return Json(serde_json::json!({
+            "error": {"message": "Chat not found", "type": "invalid_request_error"}
+        }))
+        .into_response();
+    };
+
+    let question = body
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    if question.trim().is_empty() {
+        return Json(serde_json::json!({
+            "error": {"message": "No user message provided", "type": "invalid_request_error"}
+        }))
+        .into_response();
+    }
+
+    let kb_ids = history.kb_ids.clone();
+    let chat_model = history.chat_model.clone();
+    let embedding_model = history.embedding_model.clone();
+    let history_msgs = history.messages.clone();
+
+    let generated = crate::api::features::generate_chat_answer(
+        &state,
+        &auth,
+        crate::api::features::ChatGenerationRequest {
+            question: &question,
+            kb_ids: &kb_ids,
+            chat_model: chat_model.as_deref(),
+            embedding_model: embedding_model.as_deref(),
+            history: &history_msgs,
+            generation: body.generation,
+        },
+        None,
+    )
+    .await;
+
+    let (answer, references) = match generated {
+        Ok(g) => (g.answer, g.references),
+        Err(e) => {
+            return Json(serde_json::json!({
+                "error": {"message": e.to_string(), "type": "server_error"}
+            }))
+            .into_response();
+        }
+    };
+
+    let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+    let model = if body.model.is_empty() || body.model == "model" {
+        "rayrag".to_string()
+    } else {
+        body.model.clone()
+    };
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let reference_json: Vec<serde_json::Value> = references
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "chunk_id": r.id,
+                "kb_id": r.kb_id,
+                "score": r.similarity,
+                "content": r.content.chars().take(200).collect::<String>(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "id": id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": answer},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "references": reference_json
+    }))
+    .into_response()
+}
+
