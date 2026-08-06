@@ -8,6 +8,7 @@ pub mod common;
 pub mod compilation_templates;
 pub mod connector;
 pub mod data_source_mgr;
+pub mod searchapp_mgr;
 pub mod document;
 pub mod document_metadata;
 pub mod evaluation;

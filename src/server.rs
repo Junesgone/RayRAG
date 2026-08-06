@@ -63,6 +63,7 @@ pub struct AppState {
     pub document_metadata: Arc<crate::api::document_metadata::DocumentMetadataStore>,
     pub files: Arc<crate::api::file_mgr::FileStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
+    pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
     pub providers: Arc<crate::api::features::ProviderStore>,
     pub tenant_models: Arc<crate::api::tenant_models::TenantModelStore>,
     pub memories: Arc<crate::api::features::MemoryStore>,
@@ -2838,6 +2839,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::data_source_mgr::disconnect_data_source),
         )
         .route(
+            "/api/v1/searchapps",
+            get(crate::api::searchapp_mgr::list_search_apps)
+                .post(crate::api::searchapp_mgr::create_search_app),
+        )
+        .route(
+            "/api/v1/searchapps/{id}",
+            axum::routing::delete(crate::api::searchapp_mgr::delete_search_app),
+        )
+        .route(
             "/api/v1/data_sources/{id}/files",
             post(crate::api::data_source_mgr::list_data_source_files),
         )
@@ -3174,6 +3184,9 @@ pub async fn run(
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
+    let search_apps = Some(Arc::new(crate::api::searchapp_mgr::SearchAppStore::new(
+        &format!("{}/../uploads/", static_dir),
+    )?));
 
     let llm = std::env::var("LLM_API_KEY")
         .ok()
@@ -3261,6 +3274,7 @@ pub async fn run(
         document_metadata,
         files,
         data_sources,
+        search_apps,
         providers,
         tenant_models,
         memories: Arc::new(crate::api::features::MemoryStore::new(&memories_path)?),
@@ -3431,6 +3445,7 @@ mod tests {
                     .unwrap(),
             ),
             data_sources: None,
+            search_apps: None,
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
@@ -3589,6 +3604,7 @@ mod tests {
                     .unwrap(),
             ),
             data_sources: None,
+            search_apps: None,
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
