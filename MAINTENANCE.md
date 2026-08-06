@@ -18,6 +18,18 @@
 - 测试：model_meta 11/11 通过；全量 lib 1142/1144（2 个过时断言已修）
 - 文档：docs/ragflow-ui-inventory.md 新增（UI 对齐 checklist）
 
+## 2026-08-06 v0.3.3b：PRESETS 64→69 + 内嵌工厂目录同步 65/1064
+
+- 新增 5 个 ProviderPreset：Xiaomi(api.xiaomimimo.com)、Qiniu(api.qnaigc.com)、
+  HuaweiCloud(api.modelarts-maas.com)、TokenHub(aitok.cc)、OrcaRouter(api.orcarouter.ai)
+- 新增 FIXTURE_TO_PRESET 24 条映射（fixture key→factory id，如 aliyun→Tongyi-Qianwen、
+  hunyuan→Tencent Hunyuan、gitee→GiteeAI）；provider_preset 回退解析，
+  provider_is_domestic("aliyun") 等此前误判非国内的问题修复
+- 内嵌 src/data/providers/llm_factories.json 同步为容器最新（65 工厂/1064 模型，
+  紧凑格式 {n,t,mx,tools}）；教训：该文件是转换格式，不能直接覆盖为原始
+  llm_factories.json（factory_catalog 解析 models 数组而非 llm）
+- 测试：providers 13/13、model_meta 11/11、全量 lib 1143/0 failed
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）

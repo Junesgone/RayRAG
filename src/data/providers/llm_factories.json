@@ -1,0 +1,6922 @@
+{
+ "OpenAI": {
+  "name": "OpenAI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TTS,TEXT RE-RANK,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "rank": "999",
+  "url": "https://api.openai.com/v1",
+  "models": [
+   {
+    "n": "gpt-5.5",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.2-pro",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.2",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.1",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.1-chat-latest",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-chat-latest",
+    "t": "chat",
+    "mx": 400000,
+    "tools": false
+   },
+   {
+    "n": "gpt-4.1",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-mini",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-nano",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.5-preview",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "o3",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "o4-mini",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "o4-mini-high",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-3.5-turbo",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "gpt-3.5-turbo-16k-0613",
+    "t": "chat",
+    "mx": 16385,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-ada-002",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-small",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "whisper-1",
+    "t": "speech2text",
+    "mx": 26214400,
+    "tools": false
+   },
+   {
+    "n": "gpt-4",
+    "t": "chat",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "gpt-4-turbo",
+    "t": "chat",
+    "mx": 8191,
+    "tools": true
+   },
+   {
+    "n": "gpt-4-32k",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "tts-1",
+    "t": "tts",
+    "mx": 2048,
+    "tools": false
+   }
+  ]
+ },
+ "xAI": {
+  "name": "xAI",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "rank": "992",
+  "models": [
+   {
+    "n": "grok-4",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "grok-3",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-fast",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-mini-mini-fast",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-2-vision",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   }
+  ]
+ },
+ "TokenPony": {
+  "name": "TokenPony",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "url": "https://ragflow.vip-api.tokenpony.cn/v1",
+  "models": [
+   {
+    "n": "qwen3-8b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3-0324",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-32b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2-instruct-0905",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-r1-0528",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-coder-480b",
+    "t": "chat",
+    "mx": 1024000,
+    "tools": true
+   },
+   {
+    "n": "hunyuan-a13b-instruct",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-next-80b-a3b-instruct",
+    "t": "chat",
+    "mx": 1024000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3.2-exp",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3.1-terminus",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-235b-a22b-instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-30b-a3b-instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ocr",
+    "t": "chat",
+    "mx": 8000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-235b-a22b-instruct-2507",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.6",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "minimax-m2",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   }
+  ]
+ },
+ "Tongyi-Qianwen": {
+  "name": "Tongyi-Qianwen",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK,TTS,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "rank": "994",
+  "url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "models": [
+   {
+    "n": "qwen3-max-2026-01-23",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-instruct-flash",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "kimi-k2.7-code",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-asr-flash-realtime-2025-10-27",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen-mt-flash",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "qwen3-vl-flash-2025-10-15",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "qwen3.5-35b-a3b",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-mt-plus",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "qwen-mt-turbo",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "glm-5.2",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "qwen3.7-max-preview",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-flash-2026-01-22",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "qwen3-coder-next",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "deepseek-v3.1",
+    "t": "chat",
+    "mx": 163840,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-instruct-flash-realtime",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3-omni-flash-2025-09-15",
+    "t": "chat",
+    "mx": 49152,
+    "tools": false
+   },
+   {
+    "n": "qvq-max",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-vc-2026-01-22",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-r1-distill-qwen-7b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "qwen3-livetranslate-flash-2025-12-01",
+    "t": "speech2text",
+    "mx": 49152,
+    "tools": false
+   },
+   {
+    "n": "kimi-k2-thinking",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-math-plus",
+    "t": "chat",
+    "mx": 3072,
+    "tools": false
+   },
+   {
+    "n": "qwen-plus-2025-12-01",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-vd-realtime-2026-01-15",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3.6-flash-2026-04-16",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-max-preview",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "deepseek-v4-flash",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "qwen-math-plus-latest",
+    "t": "chat",
+    "mx": 3072,
+    "tools": false
+   },
+   {
+    "n": "qvq-plus",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-flash-2025-11-27",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3-vl-flash",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-instruct-flash-realtime-2026-01-22",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3.7-max",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen-math-turbo",
+    "t": "chat",
+    "mx": 3072,
+    "tools": false
+   },
+   {
+    "n": "ZHIPU/GLM-5.1",
+    "t": "chat",
+    "mx": 202752,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-flash-2025-09-18",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen-vl-ocr-2025-11-20",
+    "t": "ocr",
+    "mx": 30720,
+    "tools": false
+   },
+   {
+    "n": "qwen3.5-397b-a17b",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "qwen3.6-plus-2026-04-02",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.6-35b-a3b",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "kimi/kimi-k2.5",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-flash-realtime-2025-11-27",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3-coder-plus-2025-07-22",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-plus-2025-12-19",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-omni-flash-realtime-2025-09-15",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "qwen3-omni-flash",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "qwen3-livetranslate-flash-realtime",
+    "t": "speech2text",
+    "mx": 49152,
+    "tools": false
+   },
+   {
+    "n": "qwen-vl-ocr-latest",
+    "t": "ocr",
+    "mx": 30720,
+    "tools": false
+   },
+   {
+    "n": "qwen3.5-omni-flash-2026-03-15",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "qwen3-asr-flash-realtime",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3.7-plus-2026-05-26",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-vc-realtime-2025-11-27",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen-plus-2025-09-11",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": false
+   },
+   {
+    "n": "qwen3-coder-plus",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.7-max-2026-05-20",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-max-2025-09-23",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-instruct-flash-2026-01-26",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-vd-realtime-2025-12-16",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen-mt-lite",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "qwen3-omni-flash-realtime",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-vd-2026-01-26",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "kimi/kimi-k2.7-code",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-plus-2025-01-25",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen3.5-27b",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-coder-turbo",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "qwen3-omni-flash-2025-12-01",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "qwen3.6-max-preview",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-omni-flash-realtime-2025-12-01",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "kimi-k2.5",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-coder-plus",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "qwen3-vl-plus-2025-09-23",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3.7-plus",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen-flash-character",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "qwen3.5-omni-plus",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "qwen3-coder-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "kimi/kimi-k2.6",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-math-plus-0919",
+    "t": "chat",
+    "mx": 3072,
+    "tools": false
+   },
+   {
+    "n": "qwen3.6-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.6-plus",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-flash-realtime-2025-09-18",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3.5-omni-plus-2026-03-15",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-flash-realtime",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen-omni-turbo",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "qwen3-livetranslate-flash-realtime-2025-09-22",
+    "t": "speech2text",
+    "mx": 49152,
+    "tools": false
+   },
+   {
+    "n": "qwen3-tts-flash",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-v4-pro",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "qwen3.6-27b",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-asr-flash-2026-02-10",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3-asr-flash-realtime-2026-02-10",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "ZHIPU/GLM-5",
+    "t": "chat",
+    "mx": 202752,
+    "tools": true
+   },
+   {
+    "n": "qwen-tts-2025-05-22",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3-coder-plus-2025-09-23",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-livetranslate-flash",
+    "t": "speech2text",
+    "mx": 49152,
+    "tools": false
+   },
+   {
+    "n": "qwen3.7-max-2026-06-08",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2.6",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen3-tts-vc-realtime-2026-01-15",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "qwen3.5-omni-flash",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen-vl-ocr",
+    "t": "ocr",
+    "mx": 30720,
+    "tools": false
+   },
+   {
+    "n": "qwen3.5-122b-a10b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3.2",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-r1",
+    "t": "chat",
+    "mx": 65792,
+    "tools": false
+   },
+   {
+    "n": "deepseek-v3",
+    "t": "chat",
+    "mx": 65792,
+    "tools": false
+   },
+   {
+    "n": "deepseek-r1-distill-qwen-1.5b",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "deepseek-r1-distill-qwen-14b",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "deepseek-r1-distill-qwen-32b",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "deepseek-r1-distill-llama-8b",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "deepseek-r1-distill-llama-70b",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "qwq-plus",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen-plus-2025-07-28",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen-plus-2025-07-14",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen-flash-2025-07-28",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.5-plus",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.5-plus-2026-02-15",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.5-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3.5-flash-2026-02-23",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-max",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-coder-480b-a35b-instruct",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-30b-a3b-instruct-2507",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-30b-a3b-thinking-2507",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-30b-a3b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-plus",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-235b-a22b-instruct",
+    "t": "image2text",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-vl-235b-a22b-thinking",
+    "t": "image2text",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-235b-a22b-instruct-2507",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-235b-a22b-thinking-2507",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-235b-a22b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-next-80b-a3b-instruct",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-next-80b-a3b-thinking",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-8b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-14b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-32b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen-long",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen-turbo",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen-max",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "qwen-plus",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen-plus-2025-04-28",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen-plus-latest",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "text-embedding-v2",
+    "t": "embedding",
+    "mx": 2048,
+    "tools": false
+   },
+   {
+    "n": "sambert-zhide-v1",
+    "t": "tts",
+    "mx": 2048,
+    "tools": false
+   },
+   {
+    "n": "sambert-zhiru-v1",
+    "t": "tts",
+    "mx": 2048,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-v3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-v4",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "qwen-vl-max",
+    "t": "image2text",
+    "mx": 765,
+    "tools": false
+   },
+   {
+    "n": "qwen-vl-plus",
+    "t": "image2text",
+    "mx": 765,
+    "tools": false
+   },
+   {
+    "n": "gte-rerank",
+    "t": "rerank",
+    "mx": 4000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-asr-flash",
+    "t": "speech2text",
+    "mx": 8000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-asr-flash-2025-09-08",
+    "t": "speech2text",
+    "mx": 8000,
+    "tools": false
+   },
+   {
+    "n": "gte-rerank-v2",
+    "t": "rerank",
+    "mx": 4000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-rerank",
+    "t": "rerank",
+    "mx": 4000,
+    "tools": false
+   }
+  ]
+ },
+ "ZHIPU-AI": {
+  "name": "ZHIPU-AI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "rank": "993",
+  "url": "https://open.bigmodel.cn/api/paas/v4",
+  "models": [
+   {
+    "n": "glm-4.7",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.5",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.5-x",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.5-air",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.5-airx",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.5-flash",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4.5v",
+    "t": "image2text",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "glm-4-plus",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-0520",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-airx",
+    "t": "chat",
+    "mx": 8000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-air",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-flash",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-flashx",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-long",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "glm-3-turbo",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "glm-4v",
+    "t": "image2text",
+    "mx": 2000,
+    "tools": true
+   },
+   {
+    "n": "glm-4-9b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "embedding-2",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "embedding-3",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "glm-asr",
+    "t": "speech2text",
+    "mx": 4096,
+    "tools": false
+   }
+  ]
+ },
+ "Ollama": {
+  "name": "Ollama",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "rank": "988",
+  "models": []
+ },
+ "ModelScope": {
+  "name": "ModelScope",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "models": []
+ },
+ "LocalAI": {
+  "name": "LocalAI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "models": []
+ },
+ "OpenAI-API-Compatible": {
+  "name": "OpenAI-API-Compatible",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "rank": "985",
+  "models": []
+ },
+ "VLLM": {
+  "name": "VLLM",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "models": []
+ },
+ "Moonshot": {
+  "name": "Moonshot",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT",
+  "status": "1",
+  "rank": "995",
+  "url": "https://api.moonshot.cn/v1",
+  "models": [
+   {
+    "n": "kimi-thinking-preview",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2-0711-preview",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2-0905-preview",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2-thinking",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2-thinking-turbo",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2-turbo-preview",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2.5",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "kimi-latest",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-8k",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-32k",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-128k",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-8k-vision-preview",
+    "t": "image2text",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-32k-vision-preview",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-128k-vision-preview",
+    "t": "image2text",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "moonshot-v1-auto",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   }
+  ]
+ },
+ "FastEmbed": {
+  "name": "FastEmbed",
+  "logo": "",
+  "tags": "TEXT EMBEDDING",
+  "status": "1",
+  "models": []
+ },
+ "Xinference": {
+  "name": "Xinference",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TTS,SPEECH2TEXT,MODERATION,TEXT RE-RANK",
+  "status": "1",
+  "models": []
+ },
+ "DeepSeek": {
+  "name": "DeepSeek",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "rank": "996",
+  "url": "https://api.deepseek.com/v1",
+  "models": [
+   {
+    "n": "deepseek-v4-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v4-pro",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   }
+  ]
+ },
+ "VolcEngine": {
+  "name": "VolcEngine",
+  "logo": "",
+  "tags": "LLM, TEXT EMBEDDING, IMAGE2TEXT",
+  "status": "1",
+  "url": "https://ark.cn-beijing.volces.com/api/v3",
+  "models": []
+ },
+ "BaiChuan": {
+  "name": "BaiChuan",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "models": [
+   {
+    "n": "Baichuan2-Turbo",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "Baichuan2-Turbo-192k",
+    "t": "chat",
+    "mx": 196608,
+    "tools": true
+   },
+   {
+    "n": "Baichuan3-Turbo",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "Baichuan3-Turbo-128k",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Baichuan4",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Baichuan-Text-Embedding",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   }
+  ]
+ },
+ "Jina": {
+  "name": "Jina",
+  "logo": "",
+  "tags": "TEXT EMBEDDING, TEXT RE-RANK",
+  "status": "1",
+  "models": [
+   {
+    "n": "jina-reranker-v1-base-en",
+    "t": "rerank",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-reranker-v1-turbo-en",
+    "t": "rerank",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-reranker-v1-tiny-en",
+    "t": "rerank",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-colbert-v1-en",
+    "t": "rerank",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v2-base-en",
+    "t": "embedding",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v2-base-de",
+    "t": "embedding",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v2-base-es",
+    "t": "embedding",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v2-base-code",
+    "t": "embedding",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v2-base-zh",
+    "t": "embedding",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-reranker-v2-base-multilingual",
+    "t": "rerank",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v3",
+    "t": "embedding",
+    "mx": 8196,
+    "tools": false
+   },
+   {
+    "n": "jina-embeddings-v4",
+    "t": "embedding",
+    "mx": 32768,
+    "tools": false
+   }
+  ]
+ },
+ "Builtin": {
+  "name": "Builtin",
+  "logo": "",
+  "tags": "TEXT EMBEDDING",
+  "status": "1",
+  "models": [
+   {
+    "n": "BAAI/bge-small-en-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-0.6B",
+    "t": "embedding",
+    "mx": 32768,
+    "tools": false
+   }
+  ]
+ },
+ "MiniMax": {
+  "name": "MiniMax",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "rank": "987",
+  "url": "https://api.minimaxi.com/v1",
+  "models": [
+   {
+    "n": "MiniMax-M3",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.7",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.7-highspeed",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.5",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.5-highspeed",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.1",
+    "t": "chat",
+    "mx": 200000,
+    "tools": false
+   },
+   {
+    "n": "MiniMax-M2",
+    "t": "chat",
+    "mx": 200000,
+    "tools": false
+   }
+  ]
+ },
+ "Mistral": {
+  "name": "Mistral",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,MODERATION",
+  "status": "1",
+  "url": "https://api.mistral.ai/v1",
+  "models": [
+   {
+    "n": "codestral-latest",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "mistral-large-latest",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "mistral-saba-latest",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "pixtral-large-latest",
+    "t": "image2text",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "ministral-3b-latest",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "ministral-8b-latest",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "mistral-embed",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "mistral-moderation-latest",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "mistral-small-latest",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "pixtral-12b-2409",
+    "t": "image2text",
+    "mx": 131000,
+    "tools": false
+   },
+   {
+    "n": "mistral-ocr-latest",
+    "t": "image2text",
+    "mx": 131000,
+    "tools": false
+   },
+   {
+    "n": "open-mistral-nemo",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "open-codestral-mamba",
+    "t": "chat",
+    "mx": 256000,
+    "tools": false
+   }
+  ]
+ },
+ "Azure-OpenAI": {
+  "name": "Azure-OpenAI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "models": [
+   {
+    "n": "gpt-4o-mini",
+    "t": "image2text",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o",
+    "t": "image2text",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-3.5-turbo",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "gpt-3.5-turbo-16k",
+    "t": "chat",
+    "mx": 16385,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-ada-002",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-small",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "whisper-1",
+    "t": "speech2text",
+    "mx": 26214400,
+    "tools": false
+   },
+   {
+    "n": "gpt-4",
+    "t": "chat",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "gpt-4-turbo",
+    "t": "chat",
+    "mx": 8191,
+    "tools": true
+   },
+   {
+    "n": "gpt-4-32k",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "gpt-4-vision-preview",
+    "t": "image2text",
+    "mx": 765,
+    "tools": false
+   }
+  ]
+ },
+ "Bedrock": {
+  "name": "Bedrock",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "models": []
+ },
+ "Gemini": {
+  "name": "Gemini",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT",
+  "status": "1",
+  "rank": "997",
+  "models": [
+   {
+    "n": "gemini-3-pro-preview",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-lite",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash-lite",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-embedding-001",
+    "t": "embedding",
+    "mx": 2048,
+    "tools": false
+   }
+  ]
+ },
+ "Groq": {
+  "name": "Groq",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "models": [
+   {
+    "n": "gemma2-9b-it",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "llama3-70b-8192",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "llama3-8b-8192",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "llama-3.1-70b-versatile",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "llama-3.1-8b-instant",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "llama-3.3-70b-versatile",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "llama-3.3-70b-specdec",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "mixtral-8x7b-32768",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   }
+  ]
+ },
+ "OpenRouter": {
+  "name": "OpenRouter",
+  "logo": "",
+  "tags": "LLM,IMAGE2TEXT",
+  "status": "1",
+  "rank": "989",
+  "url": "https://openrouter.ai/api/v1",
+  "models": []
+ },
+ "StepFun": {
+  "name": "StepFun",
+  "logo": "",
+  "tags": "LLM,IMAGE2TEXT,SPEECH2TEXT,TTS",
+  "status": "1",
+  "models": [
+   {
+    "n": "step-3",
+    "t": "image2text",
+    "mx": 65536,
+    "tools": true
+   },
+   {
+    "n": "step-2-mini",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "step-2-16k",
+    "t": "chat",
+    "mx": 16384,
+    "tools": true
+   },
+   {
+    "n": "step-1-8k",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "step-1-32k",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "step-1-256k",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "step-r1-v-mini",
+    "t": "image2text",
+    "mx": 102400,
+    "tools": true
+   },
+   {
+    "n": "step-1v-8k",
+    "t": "image2text",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "step-1v-32k",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "step-1o-vision-32k",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "step-1o-turbo-vision",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "step-tts-mini",
+    "t": "tts",
+    "mx": 1000,
+    "tools": false
+   },
+   {
+    "n": "step-tts-vivid",
+    "t": "tts",
+    "mx": 1000,
+    "tools": false
+   },
+   {
+    "n": "step-asr",
+    "t": "speech2text",
+    "mx": 32768,
+    "tools": false
+   }
+  ]
+ },
+ "NVIDIA": {
+  "name": "NVIDIA",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING, TEXT RE-RANK",
+  "status": "1",
+  "models": [
+   {
+    "n": "01-ai/yi-large",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "abacusai/dracarys-llama-3.1-70b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "ai21labs/jamba-1.5-large-instruct",
+    "t": "chat",
+    "mx": 256000,
+    "tools": false
+   },
+   {
+    "n": "ai21labs/jamba-1.5-mini-instruct",
+    "t": "chat",
+    "mx": 256000,
+    "tools": false
+   },
+   {
+    "n": "aisingapore/sea-lion-7b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "baichuan-inc/baichuan2-13b-chat",
+    "t": "chat",
+    "mx": 196608,
+    "tools": true
+   },
+   {
+    "n": "bigcode/starcoder2-7b",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "bigcode/starcoder2-15b",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "databricks/dbrx-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/deepseek-r1",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-2b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-7b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-2-2b-it",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-2-9b-it",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-2-27b-it",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "google/codegemma-1.1-7b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "google/codegemma-7b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "google/recurrentgemma-2b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "google/shieldgemma-9b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "ibm/granite-3.0-3b-a800m-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "ibm/granite-3.0-8b-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "ibm/granite-34b-code-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "ibm/granite-8b-code-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "ibm/granite-guardian-3.0-8b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "igenius / colosseum-355b_instruct_16k",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "igenius / italia_10b_instruct_16k",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "institute-of-science-tokyo/llama-3.1-swallow-70b-instruct-v01",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "institute-of-science-tokyo/llama-3.1-swallow-8b-instruct-v0.1",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "mediatek/breeze-7b-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta/codellama-70b",
+    "t": "chat",
+    "mx": 100000,
+    "tools": false
+   },
+   {
+    "n": "meta/llama2-70b",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "meta/llama3-8b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta/llama3-70b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.1-8b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.1-70b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.1-405b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.2-1b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.2-3b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.3-70b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-medium-128k-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-medium-4k-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-mini-128k-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-mini-4k-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-small-128k-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-small-8k-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3.5-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3.5-moe-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "mistralai/codestral-22b-instruct-v0.1",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "mistralai/mamba-codestral-7b-v0.1",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mistral-2-large-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mathstral-7b-v01",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mistral-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mistral-7b-instruct-v0.3",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mixtral-8x7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mixtral-8x22b-instruct",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mistral-large",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "mistralai/mistral-small-24b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama3-chatqa-1.5-8b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.1-nemoguard-8b-topic-control",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.1-nemotron-51b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.1-nemotron-70b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.1-nemotron-70b-reward",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama3-chatqa-1.5-70b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "nvidia/mistral-nemo-minitron-8b-base",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nemotron-4-340b-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": true
+   },
+   {
+    "n": "nvidia/nemotron-4-340b-reward",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nemotron-4-mini-hindi-4b-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nemotron-mini-4b-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "nv-mistralai/mistral-nemo-12b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen2-7b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen2.5-7b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen2.5-coder-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "rakuten/rakutenai-7b-chat",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "rakuten/rakutenai-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "seallms/seallm-7b-v2.5",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "snowflake/arctic",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "tokyotech-llm/llama-3-swallow-70b-instruct-v01",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "thudm/chatglm3-6b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "tiiuae/falcon3-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "upstage/solar-10.7b-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "writer/palmyra-creative-122b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "writer/palmyra-fin-70b-32k",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "writer/palmyra-med-70b-32k",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "writer/palmyra-med-70b",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "yentinglin/llama-3-taiwan-70b-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "zyphra/zamba2-7b-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3-unsupervised",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3-retromae",
+    "t": "embedding",
+    "mx": 8129,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-large-en-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-base-en-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-small-en-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "nvidia/embed-qa-4",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.2-nv-embedqa-1b-v1",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.2-nv-embedqa-1b-v2",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.2-nv-rerankqa-1b-v1",
+    "t": "rerank",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "nvidia/llama-3.2-nv-rerankqa-1b-v2",
+    "t": "rerank",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nvclip",
+    "t": "embedding",
+    "mx": 1024,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nv-embed-v1",
+    "t": "embedding",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nv-embedqa-e5-v5",
+    "t": "embedding",
+    "mx": 1024,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nv-embedqa-mistral-7b-v2",
+    "t": "embedding",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "nvidia/nv-rerankqa-mistral-4b-v3",
+    "t": "rerank",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "nvidia/rerank-qa-mistral-4b",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "snowflake-arctic-embed-xs",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "snowflake-arctic-embed-s",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "snowflake-arctic-embed-m",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "snowflake-arctic-embed-m-long",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "snowflake-arctic-embed-l",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "adept/fuyu-8b",
+    "t": "image2text",
+    "mx": 1024,
+    "tools": false
+   },
+   {
+    "n": "google/deplot",
+    "t": "image2text",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "google/paligemma",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.2-11b-vision-instruct",
+    "t": "image2text",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-3.2-90b-vision-instruct",
+    "t": "image2text",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/florence-2",
+    "t": "image2text",
+    "mx": 1024,
+    "tools": false
+   },
+   {
+    "n": "microsoft/kosmos-2",
+    "t": "image2text",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3-vision-128k-instruct",
+    "t": "image2text",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-3.5-vision-instruct",
+    "t": "image2text",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "nvidia/neva-22b",
+    "t": "image2text",
+    "mx": 1024,
+    "tools": false
+   }
+  ]
+ },
+ "LM-Studio": {
+  "name": "LM-Studio",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT",
+  "status": "1",
+  "models": []
+ },
+ "Cohere": {
+  "name": "Cohere",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK,SPEECH2TEXT",
+  "status": "1",
+  "rank": "990",
+  "models": [
+   {
+    "n": "command-a-plus-05-2026",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "command-a-03-2025",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "command-r7b-12-2024",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "command-a-translate-08-2025",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "command-a-reasoning-08-2025",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "command-a-vision-07-2025",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "command-r-plus-08-2024",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "command-r-08-2024",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "embed-v4.0",
+    "t": "embedding",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "embed-english-v3.0",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "embed-english-light-v3.0",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "embed-multilingual-v3.0",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "embed-multilingual-light-v3.0",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "rerank-v4.0-pro",
+    "t": "rerank",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "rerank-v4.0-fast",
+    "t": "rerank",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "rerank-v3.5",
+    "t": "rerank",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "rerank-english-v3.0",
+    "t": "rerank",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "rerank-multilingual-v3.0",
+    "t": "rerank",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "cohere-transcribe-03-2026",
+    "t": "speech2text",
+    "mx": 8192,
+    "tools": false
+   }
+  ]
+ },
+ "TogetherAI": {
+  "name": "TogetherAI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT",
+  "status": "1",
+  "models": []
+ },
+ "Upstage": {
+  "name": "Upstage",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "models": [
+   {
+    "n": "solar-1-mini-chat",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "solar-1-mini-chat-ja",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "solar-embedding-1-large-query",
+    "t": "embedding",
+    "mx": 4000,
+    "tools": false
+   },
+   {
+    "n": "solar-embedding-1-large-passage",
+    "t": "embedding",
+    "mx": 4000,
+    "tools": false
+   }
+  ]
+ },
+ "NovitaAI": {
+  "name": "NovitaAI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "models": [
+   {
+    "n": "qwen/qwen2.5-7b-instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.2-1b-instruct",
+    "t": "chat",
+    "mx": 131000,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.2-3b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "thudm/glm-4-9b-0414",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "thudm/glm-z1-9b-0414",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.1-8b-instruct-bf16",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "meta-llama/llama-3.1-8b-instruct",
+    "t": "chat",
+    "mx": 16384,
+    "tools": true
+   },
+   {
+    "n": "deepseek/deepseek-v3-0324",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1-turbo",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "Sao10K/L3-8B-Stheno-v3.2",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.3-70b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "deepseek/deepseek-r1-distill-llama-8b",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mistral-nemo",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3-8b-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "deepseek/deepseek-v3-turbo",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "mistralai/mistral-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1-distill-qwen-14b",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "baai/bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   }
+  ]
+ },
+ "SILICONFLOW": {
+  "name": "SILICONFLOW",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK,IMAGE2TEXT,TTS,SPEECH2TEXT",
+  "status": "1",
+  "rank": "986",
+  "url": "https://api.siliconflow.cn/v1",
+  "models": [
+   {
+    "n": "deepseek-ai/DeepSeek-V4-Pro",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V4-Flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "Pro/moonshotai/Kimi-K2.6",
+    "t": "image2text",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Pro/zai-org/GLM-5.1",
+    "t": "chat",
+    "mx": 205000,
+    "tools": true
+   },
+   {
+    "n": "nex-agi/Nex-N2-Pro",
+    "t": "image2text",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "MiniMaxAI/MiniMax-M2.5",
+    "t": "chat",
+    "mx": 197000,
+    "tools": true
+   },
+   {
+    "n": "Pro/MiniMaxAI/MiniMax-M2.5",
+    "t": "chat",
+    "mx": 197000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3.2",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "Pro/deepseek-ai/DeepSeek-V3.2",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "Pro/deepseek-ai/DeepSeek-V3.1-Terminus",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.6-35B-A3B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.6-27B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.5-397B-A17B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.5-122B-A10B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.5-35B-A3B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.5-27B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.5-9B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3.5-4B",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1",
+    "t": "chat",
+    "mx": 160000,
+    "tools": true
+   },
+   {
+    "n": "Pro/deepseek-ai/DeepSeek-R1",
+    "t": "chat",
+    "mx": 160000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3",
+    "t": "chat",
+    "mx": 160000,
+    "tools": true
+   },
+   {
+    "n": "Pro/deepseek-ai/DeepSeek-V3",
+    "t": "chat",
+    "mx": 160000,
+    "tools": true
+   },
+   {
+    "n": "stepfun-ai/Step-3.5-Flash",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-32B-Instruct",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-32B-Thinking",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-8B-Instruct",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-8B-Thinking",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-30B-A3B-Thinking",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+    "t": "image2text",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Omni-30B-A3B-Thinking",
+    "t": "image2text",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Omni-30B-A3B-Captioner",
+    "t": "image2text",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "inclusionAI/Ling-flash-2.0",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "inclusionAI/Ling-mini-2.0",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "tencent/Hunyuan-MT-7B",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "ByteDance-Seed/Seed-OSS-36B-Instruct",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "zai-org/GLM-4.5V",
+    "t": "image2text",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "zai-org/GLM-4.5-Air",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "tencent/Hunyuan-A13B-Instruct",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-32B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-14B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-8B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "THUDM/GLM-4-32B-0414",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "THUDM/GLM-Z1-9B-0414",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "THUDM/GLM-4-9B-0414",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-72B-Instruct-128K",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-72B-Instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-32B-Instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-14B-Instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-7B-Instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "Pro/Qwen/Qwen2.5-7B-Instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-Embedding-8B",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-8B",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-4B",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-0.6B",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-large-en-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-large-zh-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "Pro/BAAI/bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-VL-Reranker-8B",
+    "t": "rerank",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Reranker-8B",
+    "t": "rerank",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Reranker-4B",
+    "t": "rerank",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Reranker-0.6B",
+    "t": "rerank",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-reranker-v2-m3",
+    "t": "rerank",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "Pro/BAAI/bge-reranker-v2-m3",
+    "t": "rerank",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "fnlp/MOSS-TTSD-v0.5",
+    "t": "tts",
+    "mx": 26214400,
+    "tools": false
+   },
+   {
+    "n": "FunAudioLLM/CosyVoice2-0.5B",
+    "t": "tts",
+    "mx": 26214400,
+    "tools": false
+   }
+  ]
+ },
+ "siliconflow_intl": {
+  "name": "siliconflow_intl",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK,IMAGE2TEXT,TTS",
+  "status": "1",
+  "models": [
+   {
+    "n": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "t": "chat",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "MiniMaxAI/MiniMax-M2.5",
+    "t": "chat",
+    "mx": 197000,
+    "tools": true
+   },
+   {
+    "n": "zai-org/GLM-5",
+    "t": "chat",
+    "mx": 205000,
+    "tools": true
+   },
+   {
+    "n": "stepfun-ai/Step-3.5-Flash",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "moonshotai/Kimi-K2.5",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "MiniMaxAI/MiniMax-M2.1",
+    "t": "chat",
+    "mx": 197000,
+    "tools": true
+   },
+   {
+    "n": "zai-org/GLM-4.7",
+    "t": "chat",
+    "mx": 205000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3.2",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3.2-Exp",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "zai-org/GLM-4.6V",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3.1",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1",
+    "t": "chat",
+    "mx": 154000,
+    "tools": true
+   },
+   {
+    "n": "nex-agi/DeepSeek-V3.1-Nex-N1",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-32B-Instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-32B-Thinking",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "zai-org/GLM-4.5V",
+    "t": "chat",
+    "mx": 66000,
+    "tools": true
+   },
+   {
+    "n": "inclusionAI/Ling-mini-2.0",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "inclusionAI/Ring-flash-2.0",
+    "t": "chat",
+    "mx": 131000,
+    "tools": false
+   },
+   {
+    "n": "inclusionAI/Ling-flash-2.0",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "tencent/Hunyuan-MT-7B",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Omni-30B-A3B-Captioner",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Omni-30B-A3B-Thinking",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+    "t": "chat",
+    "mx": 65000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-30B-A3B-Thinking-2507",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "ByteDance-Seed/Seed-OSS-36B-Instruct",
+    "t": "chat",
+    "mx": 262000,
+    "tools": true
+   },
+   {
+    "n": "baidu/ERNIE-4.5-300B-A47B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": false
+   },
+   {
+    "n": "tencent/Hunyuan-A13B-Instruct",
+    "t": "chat",
+    "mx": 131000,
+    "tools": false
+   },
+   {
+    "n": "moonshotai/Kimi-K2-Instruct",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-32B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-14B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-8B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Reranker-8B",
+    "t": "rerank",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-8B",
+    "t": "embedding",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Reranker-4B",
+    "t": "rerank",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-4B",
+    "t": "embedding",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Reranker-0.6B",
+    "t": "rerank",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-0.6B",
+    "t": "embedding",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "THUDM/GLM-Z1-32B-0414",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "THUDM/GLM-4-32B-0414",
+    "t": "chat",
+    "mx": 33000,
+    "tools": true
+   },
+   {
+    "n": "THUDM/GLM-Z1-9B-0414",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "THUDM/GLM-4-9B-0414",
+    "t": "chat",
+    "mx": 33000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/QwQ-32B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "t": "chat",
+    "mx": 33000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen2.5-72B-Instruct-128K",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-ai/deepseek-vl2",
+    "t": "chat",
+    "mx": 4000,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen2.5-72B-Instruct",
+    "t": "chat",
+    "mx": 33000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-32B-Instruct",
+    "t": "chat",
+    "mx": 33000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-14B-Instruct",
+    "t": "chat",
+    "mx": 33000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen2.5-7B-Instruct",
+    "t": "chat",
+    "mx": 33000,
+    "tools": true
+   },
+   {
+    "n": "IndexTeam/IndexTTS-2",
+    "t": "tts",
+    "mx": 1000,
+    "tools": false
+   }
+  ]
+ },
+ "PPIO": {
+  "name": "PPIO",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "models": [
+   {
+    "n": "deepseek/deepseek-r1/community",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-v3/community",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-v3",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1-distill-llama-70b",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1-distill-qwen-32b",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1-distill-qwen-14b",
+    "t": "chat",
+    "mx": 64000,
+    "tools": false
+   },
+   {
+    "n": "deepseek/deepseek-r1-distill-llama-8b",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen-2.5-72b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen-2-vl-72b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.2-3b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen2.5-32b-instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "baichuan/baichuan2-13b-chat",
+    "t": "chat",
+    "mx": 14336,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.1-70b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "meta-llama/llama-3.1-8b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "01-ai/yi-1.5-34b-chat",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "01-ai/yi-1.5-9b-chat",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "thudm/glm-4-9b-chat",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen-2-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   }
+  ]
+ },
+ "Replicate": {
+  "name": "Replicate",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "rank": "987",
+  "url": "https://api.replicate.com",
+  "models": [
+   {
+    "n": "meta/llama-4-maverick-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta/llama-4-scout-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta/meta-llama-3-70b-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "meta/meta-llama-3-8b-instruct",
+    "t": "chat",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "replicate/all-mpnet-base-v2:b6b7585c9640cd7a9572c6e129c9549d79c9c31f0d3fdce7baac7c67ca38f305",
+    "t": "embedding",
+    "mx": 384,
+    "tools": false
+   },
+   {
+    "n": "ibm-granite/granite-embedding-278m-multilingual:1f76d42a05f120e12272746d5a2d86b525c13420773f795a4cbef9117d8685f1",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   }
+  ]
+ },
+ "Tencent Hunyuan": {
+  "name": "Tencent Hunyuan",
+  "logo": "",
+  "tags": "LLM,IMAGE2TEXT",
+  "status": "1",
+  "url": "https://api.hunyuan.cloud.tencent.com/v1",
+  "models": [
+   {
+    "n": "hunyuan-pro",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "hunyuan-standard",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "hunyuan-standard-256K",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "hunyuan-lite",
+    "t": "chat",
+    "mx": 262144,
+    "tools": false
+   },
+   {
+    "n": "hunyuan-vision",
+    "t": "image2text",
+    "mx": 8192,
+    "tools": false
+   }
+  ]
+ },
+ "XunFei Spark": {
+  "name": "XunFei Spark",
+  "logo": "",
+  "tags": "LLM,TTS",
+  "status": "1",
+  "models": [
+   {
+    "n": "Spark-Max",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "Spark-Max-32K",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "Spark-Lite",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "Spark-Pro",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "Spark-Pro-128K",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Spark-4.0-Ultra",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   }
+  ]
+ },
+ "BaiduYiyan": {
+  "name": "BaiduYiyan",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "models": []
+ },
+ "Fish Audio": {
+  "name": "Fish Audio",
+  "logo": "",
+  "tags": "TTS",
+  "status": "1",
+  "models": []
+ },
+ "Tencent Cloud": {
+  "name": "Tencent Cloud",
+  "logo": "",
+  "tags": "SPEECH2TEXT",
+  "status": "1",
+  "models": []
+ },
+ "Anthropic": {
+  "name": "Anthropic",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "rank": "998",
+  "url": "https://api.anthropic.com/",
+  "models": [
+   {
+    "n": "claude-opus-4-8",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-7",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-6",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-5-20251101",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-1-20250805",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-20250514",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-6",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-5-20250929",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-3-7-sonnet-20250219",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-3-5-sonnet-20241022",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-3-5-haiku-20241022",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   },
+   {
+    "n": "claude-3-haiku-20240307",
+    "t": "chat",
+    "mx": 204800,
+    "tools": true
+   }
+  ]
+ },
+ "Voyage AI": {
+  "name": "Voyage AI",
+  "logo": "",
+  "tags": "TEXT EMBEDDING, TEXT RE-RANK",
+  "status": "1",
+  "models": [
+   {
+    "n": "voyage-4-large",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-4",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-4-lite",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-3-large",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-3.5",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-3.5-lite",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-code-3",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-multimodal-3",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-large-2-instruct",
+    "t": "embedding",
+    "mx": 16000,
+    "tools": false
+   },
+   {
+    "n": "voyage-finance-2",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-multilingual-2",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-law-2",
+    "t": "embedding",
+    "mx": 16000,
+    "tools": false
+   },
+   {
+    "n": "voyage-code-2",
+    "t": "embedding",
+    "mx": 16000,
+    "tools": false
+   },
+   {
+    "n": "voyage-large-2",
+    "t": "embedding",
+    "mx": 16000,
+    "tools": false
+   },
+   {
+    "n": "voyage-2",
+    "t": "embedding",
+    "mx": 4000,
+    "tools": false
+   },
+   {
+    "n": "voyage-3",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "voyage-3-lite",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "rerank-1",
+    "t": "rerank",
+    "mx": 8000,
+    "tools": false
+   },
+   {
+    "n": "rerank-lite-1",
+    "t": "rerank",
+    "mx": 4000,
+    "tools": false
+   },
+   {
+    "n": "rerank-2.5",
+    "t": "rerank",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "rerank-2.5-lite",
+    "t": "rerank",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "rerank-2",
+    "t": "rerank",
+    "mx": 16000,
+    "tools": false
+   },
+   {
+    "n": "rerank-2-lite",
+    "t": "rerank",
+    "mx": 8000,
+    "tools": false
+   }
+  ]
+ },
+ "GiteeAI": {
+  "name": "GiteeAI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT,SPEECH2TEXT,TEXT RE-RANK",
+  "status": "1",
+  "url": "https://ai.gitee.com/v1/",
+  "models": [
+   {
+    "n": "ERNIE-4.5-Turbo",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "ERNIE-X1-Turbo",
+    "t": "chat",
+    "mx": 4096,
+    "tools": true
+   },
+   {
+    "n": "DeepSeek-R1",
+    "t": "chat",
+    "mx": 65792,
+    "tools": true
+   },
+   {
+    "n": "DeepSeek-V3",
+    "t": "chat",
+    "mx": 65792,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-235B-A22B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-30B-A3B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-32B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-8B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-4B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-0.6B",
+    "t": "chat",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "QwQ-32B",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "DeepSeek-R1-Distill-Qwen-32B",
+    "t": "chat",
+    "mx": 65792,
+    "tools": false
+   },
+   {
+    "n": "DeepSeek-R1-Distill-Qwen-14B",
+    "t": "chat",
+    "mx": 65792,
+    "tools": false
+   },
+   {
+    "n": "DeepSeek-R1-Distill-Qwen-1.5B",
+    "t": "chat",
+    "mx": 65792,
+    "tools": false
+   },
+   {
+    "n": "Qwen2.5-72B-Instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": true
+   },
+   {
+    "n": "Qwen2.5-32B-Instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "Qwen2.5-14B-Instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": true
+   },
+   {
+    "n": "Qwen2.5-7B-Instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen2-72B-Instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "Qwen2-7B-Instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": false
+   },
+   {
+    "n": "GLM-4-32B",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "GLM-4-9B-0414",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "glm-4-9b-chat",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "internlm3-8b-instruct",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "Yi-34B-Chat",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "ERNIE-4.5-Turbo-VL",
+    "t": "image2text",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "Qwen2.5-VL-32B-Instruct",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "Qwen2-VL-72B",
+    "t": "image2text",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "Align-DS-V",
+    "t": "image2text",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "InternVL3-78B",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "InternVL3-38B",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "InternVL2.5-78B",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "InternVL2.5-26B",
+    "t": "image2text",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "InternVL2-8B",
+    "t": "image2text",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "Qwen2-Audio-7B-Instruct",
+    "t": "speech2text",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "whisper-base",
+    "t": "speech2text",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "whisper-large",
+    "t": "speech2text",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "whisper-large-v3-turbo",
+    "t": "speech2text",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "whisper-large-v3",
+    "t": "speech2text",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "SenseVoiceSmall",
+    "t": "speech2text",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-Reranker-8B",
+    "t": "rerank",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-Reranker-4B",
+    "t": "rerank",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-Reranker-0.6B",
+    "t": "rerank",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-Embedding-8B",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-Embedding-4B",
+    "t": "embedding",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "Qwen3-Embedding-0.6B",
+    "t": "embedding",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "jina-clip-v1",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "jina-clip-v2",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "jina-reranker-m0",
+    "t": "rerank",
+    "mx": 10240,
+    "tools": false
+   },
+   {
+    "n": "bce-embedding-base_v1",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "bce-reranker-base_v1",
+    "t": "rerank",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "bge-reranker-v2-m3",
+    "t": "rerank",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "bge-large-zh-v1.5",
+    "t": "embedding",
+    "mx": 1024,
+    "tools": false
+   },
+   {
+    "n": "bge-small-zh-v1.5",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "nomic-embed-code",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   },
+   {
+    "n": "all-mpnet-base-v2",
+    "t": "embedding",
+    "mx": 512,
+    "tools": false
+   }
+  ]
+ },
+ "Google Cloud": {
+  "name": "Google Cloud",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "models": []
+ },
+ "HuggingFace": {
+  "name": "HuggingFace",
+  "logo": "",
+  "tags": "TEXT EMBEDDING,TEXT RE-RANK",
+  "status": "1",
+  "rank": "991",
+  "models": []
+ },
+ "GPUStack": {
+  "name": "GPUStack",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TTS,SPEECH2TEXT,TEXT RE-RANK",
+  "status": "1",
+  "models": []
+ },
+ "DeepInfra": {
+  "name": "DeepInfra",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TTS,SPEECH2TEXT,MODERATION",
+  "status": "1",
+  "models": [
+   {
+    "n": "moonshotai/Kimi-K2-Instruct",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "mistralai/Voxtral-Small-24B-2507",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "mistralai/Voxtral-Mini-3B-2507",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1-0528-Turbo",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-235B-A22B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-30B-A3B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-32B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-14B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3-0324-Turbo",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-Turbo",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1-0528",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3-0324",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "mistralai/Devstral-Small-2507",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/Llama-Guard-4-12B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/QwQ-32B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "anthropic/claude-4-opus",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "anthropic/claude-4-sonnet",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "google/gemini-2.5-flash",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "google/gemini-2.5-pro",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-3-27b-it",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-3-12b-it",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "google/gemma-3-4b-it",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "hexgrad/Kokoro-82M",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "canopylabs/orpheus-3b-0.1-ft",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sesame/csm-1b",
+    "t": "tts",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "microsoft/Phi-4-multimodal-instruct",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "deepseek-ai/DeepSeek-V3",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/Llama-3.3-70B-Instruct",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "microsoft/phi-4",
+    "t": "chat",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "openai/whisper-large-v3-turbo",
+    "t": "speech2text",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-base-en-v1.5",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-en-icl",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-large-en-v1.5",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "BAAI/bge-m3-multi",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-0.6B",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-4B",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "Qwen/Qwen3-Embedding-8B",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "intfloat/e5-base-v2",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "intfloat/e5-large-v2",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "intfloat/multilingual-e5-large",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "intfloat/multilingual-e5-large-instruct",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/all-MiniLM-L12-v2",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/all-MiniLM-L6-v2",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/all-mpnet-base-v2",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/clip-ViT-B-32",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/clip-ViT-B-32-multilingual-v1",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/multi-qa-mpnet-base-dot-v1",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "shibing624/text2vec-base-chinese",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "thenlper/gte-base",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   },
+   {
+    "n": "thenlper/gte-large",
+    "t": "embedding",
+    "mx": 0,
+    "tools": false
+   }
+  ]
+ },
+ "302.AI": {
+  "name": "302.AI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK,IMAGE2TEXT",
+  "status": "1",
+  "models": [
+   {
+    "n": "deepseek-chat",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "chatgpt-4o-latest",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "llama3.3-70b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-reasoner",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-7-sonnet-20250219",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-7-sonnet-latest",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "grok-3-beta",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-mini-beta",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "o3",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "o4-mini",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-235b-a22b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "qwen3-32b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "gemini-2.5-pro-preview-05-06",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "llama-4-maverick",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-20250514",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "jina-clip-v2",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "jina-reranker-m0",
+    "t": "rerank",
+    "mx": 10240,
+    "tools": false
+   }
+  ]
+ },
+ "CometAPI": {
+  "name": "CometAPI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT",
+  "status": "1",
+  "models": [
+   {
+    "n": "gpt-5-chat-latest",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "chatgpt-4o-latest",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-mini",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-nano",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "o4-mini-2025-04-16",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "o3-pro-2025-06-10",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-1-20250805",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-1-20250805-thinking",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514-thinking",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-7-sonnet-latest",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-5-haiku-latest",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-lite",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "grok-4-0709",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-2-image-1212",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3.1",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-r1-0528",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-chat",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-reasoner",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-30b-a3b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-coder-plus-2025-07-22",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "text-embedding-ada-002",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-small",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "whisper-1",
+    "t": "speech2text",
+    "mx": 26214400,
+    "tools": false
+   },
+   {
+    "n": "tts-1",
+    "t": "tts",
+    "mx": 2048,
+    "tools": false
+   }
+  ]
+ },
+ "LongCat": {
+  "name": "LongCat",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "url": "https://api.longcat.chat/openai",
+  "models": [
+   {
+    "n": "LongCat-Flash-Chat",
+    "t": "chat",
+    "mx": 8000,
+    "tools": true
+   },
+   {
+    "n": "LongCat-Flash-Thinking",
+    "t": "chat",
+    "mx": 8000,
+    "tools": true
+   }
+  ]
+ },
+ "DeerAPI": {
+  "name": "DeerAPI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT",
+  "status": "1",
+  "models": [
+   {
+    "n": "gpt-5-chat-latest",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "chatgpt-4o-latest",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-mini",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-nano",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "o4-mini-2025-04-16",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "o3-pro-2025-06-10",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-1-20250805",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-1-20250805-thinking",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514-thinking",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-7-sonnet-latest",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-5-haiku-latest",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-lite",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash",
+    "t": "image2text",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "grok-4-0709",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-2-image-1212",
+    "t": "image2text",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3.1",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-v3",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-r1-0528",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-chat",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-reasoner",
+    "t": "chat",
+    "mx": 64000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-30b-a3b",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-coder-plus-2025-07-22",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "text-embedding-ada-002",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-small",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "whisper-1",
+    "t": "speech2text",
+    "mx": 26214400,
+    "tools": false
+   },
+   {
+    "n": "tts-1",
+    "t": "tts",
+    "mx": 2048,
+    "tools": false
+   }
+  ]
+ },
+ "Jiekou.AI": {
+  "name": "Jiekou.AI",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK",
+  "status": "1",
+  "models": [
+   {
+    "n": "Sao10K/L3-8B-Stheno-v3.2",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "baichuan/baichuan-m2-32b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "baidu/ernie-4.5-300b-a47b-paddle",
+    "t": "chat",
+    "mx": 123000,
+    "tools": true
+   },
+   {
+    "n": "baidu/ernie-4.5-vl-424b-a47b",
+    "t": "chat",
+    "mx": 123000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-5-haiku-20241022",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-5-sonnet-20241022",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-7-sonnet-20250219",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3-haiku-20240307",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-haiku-4-5-20251001",
+    "t": "image2text",
+    "mx": 20000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-1-20250805",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-20250514",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-20250514",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-5-20250929",
+    "t": "image2text",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "deepseek/deepseek-r1-0528",
+    "t": "chat",
+    "mx": 163840,
+    "tools": true
+   },
+   {
+    "n": "deepseek/deepseek-v3-0324",
+    "t": "chat",
+    "mx": 163840,
+    "tools": true
+   },
+   {
+    "n": "deepseek/deepseek-v3.1",
+    "t": "chat",
+    "mx": 163840,
+    "tools": true
+   },
+   {
+    "n": "doubao-1-5-pro-32k-250115",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "doubao-1.5-pro-32k-character-250715",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash-20250609",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash-lite",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-lite",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-lite-preview-06-17",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-lite-preview-09-2025",
+    "t": "image2text",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash-preview-05-20",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro-preview-06-05",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "google/gemma-3-12b-it",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "google/gemma-3-27b-it",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-mini",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4.1-nano",
+    "t": "chat",
+    "mx": 1047576,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "gpt-5",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-chat-latest",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-codex",
+    "t": "image2text",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5-pro",
+    "t": "image2text",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.1",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.1-chat-latest",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.1-codex",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "grok-3",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-3-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "grok-4-0709",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "grok-4-fast-non-reasoning",
+    "t": "image2text",
+    "mx": 2000000,
+    "tools": true
+   },
+   {
+    "n": "grok-4-fast-reasoning",
+    "t": "image2text",
+    "mx": 2000000,
+    "tools": true
+   },
+   {
+    "n": "grok-code-fast-1",
+    "t": "chat",
+    "mx": 256000,
+    "tools": true
+   },
+   {
+    "n": "gryphe/mythomax-l2-13b",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.1-8b-instruct",
+    "t": "chat",
+    "mx": 16384,
+    "tools": false
+   },
+   {
+    "n": "meta-llama/llama-3.2-3b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": true
+   },
+   {
+    "n": "meta-llama/llama-3.3-70b-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "minimaxai/minimax-m1-80k",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "mistralai/mistral-7b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "mistralai/mistral-nemo",
+    "t": "chat",
+    "mx": 60288,
+    "tools": true
+   },
+   {
+    "n": "moonshotai/kimi-k2-0905",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "moonshotai/kimi-k2-instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "o1",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "o1-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "o3",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "o3-mini",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "openai/gpt-oss-120b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "openai/gpt-oss-20b",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen-2.5-72b-instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen-mt-plus",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen2.5-7b-instruct",
+    "t": "chat",
+    "mx": 32000,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen2.5-vl-72b-instruct",
+    "t": "chat",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-235b-a22b-fp8",
+    "t": "chat",
+    "mx": 40960,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-235b-a22b-instruct-2507",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen3-235b-a22b-thinking-2507",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen3-30b-a3b-fp8",
+    "t": "chat",
+    "mx": 40960,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-32b-fp8",
+    "t": "chat",
+    "mx": 40960,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-8b-fp8",
+    "t": "chat",
+    "mx": 128000,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-coder-480b-a35b-instruct",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen3-next-80b-a3b-instruct",
+    "t": "chat",
+    "mx": 65536,
+    "tools": true
+   },
+   {
+    "n": "qwen/qwen3-next-80b-a3b-thinking",
+    "t": "chat",
+    "mx": 65536,
+    "tools": true
+   },
+   {
+    "n": "sao10k/l3-70b-euryale-v2.1",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "sao10k/l3-8b-lunaris",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "sao10k/l31-70b-euryale-v2.2",
+    "t": "chat",
+    "mx": 8192,
+    "tools": true
+   },
+   {
+    "n": "thudm/glm-4.1v-9b-thinking",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "zai-org/glm-4.5",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "zai-org/glm-4.5v",
+    "t": "chat",
+    "mx": 65536,
+    "tools": true
+   },
+   {
+    "n": "baai/bge-m3",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-embedding-0.6b",
+    "t": "embedding",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-embedding-8b",
+    "t": "embedding",
+    "mx": 32768,
+    "tools": false
+   },
+   {
+    "n": "baai/bge-reranker-v2-m3",
+    "t": "rerank",
+    "mx": 8000,
+    "tools": false
+   },
+   {
+    "n": "qwen/qwen3-reranker-8b",
+    "t": "rerank",
+    "mx": 32768,
+    "tools": false
+   }
+  ]
+ },
+ "MinerU": {
+  "name": "MinerU",
+  "logo": "",
+  "tags": "OCR",
+  "status": "1",
+  "models": []
+ },
+ "PaddleOCR": {
+  "name": "PaddleOCR",
+  "logo": "",
+  "tags": "OCR",
+  "status": "1",
+  "url": "https://paddleocr.aistudio-app.com",
+  "models": []
+ },
+ "OpenDataLoader": {
+  "name": "OpenDataLoader",
+  "logo": "",
+  "tags": "OCR",
+  "status": "1",
+  "models": []
+ },
+ "n1n": {
+  "name": "n1n",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "url": "https://api.n1n.ai/v1",
+  "models": [
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-3.5-turbo",
+    "t": "chat",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "deepseek-chat",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   }
+  ]
+ },
+ "Astraflow": {
+  "name": "Astraflow",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "url": "https://api-us-ca.umodelverse.ai/v1",
+  "models": [
+   {
+    "n": "claude-opus-4-7",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-6",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-5-20250929",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-haiku-4-5-20251001",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Max",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Coder",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-32B",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2.6",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "glm-5.1",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.7",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-embedding-8b",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-ada-002",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   }
+  ]
+ },
+ "FuturMix": {
+  "name": "FuturMix",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,IMAGE2TEXT,SPEECH2TEXT,TTS,TEXT RE-RANK",
+  "status": "1",
+  "url": "https://futurmix.ai/v1",
+  "models": [
+   {
+    "n": "claude-sonnet-4-20250514",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-3.5-haiku",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.0-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "deepseek-chat",
+    "t": "chat",
+    "mx": 65536,
+    "tools": true
+   },
+   {
+    "n": "deepseek-reasoner",
+    "t": "chat",
+    "mx": 65536,
+    "tools": false
+   },
+   {
+    "n": "gpt-4o",
+    "t": "image2text",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "text-embedding-3-small",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "tts-1",
+    "t": "tts",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "tts-1-hd",
+    "t": "tts",
+    "mx": 4096,
+    "tools": false
+   },
+   {
+    "n": "whisper-1",
+    "t": "speech2text",
+    "mx": 25000000,
+    "tools": false
+   },
+   {
+    "n": "jina-reranker-v2-base-multilingual",
+    "t": "rerank",
+    "mx": 8192,
+    "tools": false
+   }
+  ]
+ },
+ "Astraflow-CN": {
+  "name": "Astraflow-CN",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING",
+  "status": "1",
+  "url": "https://api.modelverse.cn/v1",
+  "models": [
+   {
+    "n": "claude-opus-4-7",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-opus-4-6",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-sonnet-4-5-20250929",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "claude-haiku-4-5-20251001",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4-mini",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-5.4-nano",
+    "t": "chat",
+    "mx": 400000,
+    "tools": true
+   },
+   {
+    "n": "gpt-4o-mini",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Max",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-Coder",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-32B",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "t": "chat",
+    "mx": 131072,
+    "tools": true
+   },
+   {
+    "n": "kimi-k2.6",
+    "t": "chat",
+    "mx": 200000,
+    "tools": true
+   },
+   {
+    "n": "glm-5.1",
+    "t": "chat",
+    "mx": 128000,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2.7",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "MiniMax-M2",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-pro",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "gemini-2.5-flash",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   },
+   {
+    "n": "qwen3-embedding-8b",
+    "t": "embedding",
+    "mx": 8192,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-3-large",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   },
+   {
+    "n": "text-embedding-ada-002",
+    "t": "embedding",
+    "mx": 8191,
+    "tools": false
+   }
+  ]
+ },
+ "Avian": {
+  "name": "Avian",
+  "logo": "",
+  "tags": "LLM",
+  "status": "1",
+  "models": [
+   {
+    "n": "deepseek/deepseek-v3.2",
+    "t": "chat",
+    "mx": 164000,
+    "tools": true
+   },
+   {
+    "n": "moonshotai/kimi-k2.5",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "z-ai/glm-5",
+    "t": "chat",
+    "mx": 131000,
+    "tools": true
+   },
+   {
+    "n": "minimax/minimax-m2.5",
+    "t": "chat",
+    "mx": 1000000,
+    "tools": true
+   }
+  ]
+ },
+ "RAGcon": {
+  "name": "RAGcon",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TTS,TEXT RE-RANK,SPEECH2TEXT,IMAGE2TEXT",
+  "status": "1",
+  "models": []
+ },
+ "Xiaomi": {
+  "name": "Xiaomi",
+  "logo": "",
+  "tags": "LLM,IMAGE2TEXT",
+  "status": "1",
+  "url": "https://api.xiaomimimo.com/v1",
+  "models": [
+   {
+    "n": "mimo-v2.5-pro",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "mimo-v2.5",
+    "t": "chat",
+    "mx": 1048576,
+    "tools": true
+   },
+   {
+    "n": "mimo-v2-flash",
+    "t": "chat",
+    "mx": 262144,
+    "tools": true
+   }
+  ]
+ },
+ "Perplexity": {
+  "name": "Perplexity",
+  "logo": "",
+  "tags": "TEXT EMBEDDING",
+  "status": "1",
+  "models": [
+   {
+    "n": "pplx-embed-v1-0.6b",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "pplx-embed-v1-4b",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "pplx-embed-context-v1-0.6b",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   },
+   {
+    "n": "pplx-embed-context-v1-4b",
+    "t": "embedding",
+    "mx": 32000,
+    "tools": false
+   }
+  ]
+ },
+ "New API": {
+  "name": "New API",
+  "logo": "",
+  "tags": "LLM,TEXT EMBEDDING,TEXT RE-RANK,IMAGE2TEXT,TTS,SPEECH2TEXT",
+  "status": "1",
+  "rank": "885",
+  "models": []
+ }
+}

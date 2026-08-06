@@ -918,6 +918,69 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         models: &["hunyuan-turbos-latest"],
         note: "腾讯云 (与混元共用端点)",
     },
+    ProviderPreset {
+        id: "Xiaomi",
+        name: "Xiaomi",
+        base_url: "https://api.xiaomimimo.com/v1",
+        api_key_env: "XIAOMI_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[
+            ProviderKind::Chat,
+            ProviderKind::SpeechToText,
+            ProviderKind::TextToSpeech,
+        ],
+        models: &["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-tts"],
+        note: "小米 MiMo (国内直连)",
+    },
+    ProviderPreset {
+        id: "Qiniu",
+        name: "Qiniu",
+        base_url: "https://api.qnaigc.com/v1",
+        api_key_env: "QINIU_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat],
+        models: &[
+            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-pro",
+            "moonshotai/kimi-k2.6",
+        ],
+        note: "七牛云 AI (国内直连)",
+    },
+    ProviderPreset {
+        id: "HuaweiCloud",
+        name: "HuaweiCloud",
+        base_url: "https://api.modelarts-maas.com",
+        api_key_env: "HUAWEICLOUD_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding],
+        models: &["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v3.2"],
+        note: "华为云 ModelArts MaaS (国内直连)",
+    },
+    ProviderPreset {
+        id: "TokenHub",
+        name: "TokenHub",
+        base_url: "https://aitok.cc/v1",
+        api_key_env: "TOKENHUB_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Chat, ProviderKind::Embedding],
+        models: &["gpt-4o-mini", "gpt-4o", "gpt-4"],
+        note: "聚合中转站 (国内直连)",
+    },
+    ProviderPreset {
+        id: "OrcaRouter",
+        name: "OrcaRouter",
+        base_url: "https://api.orcarouter.ai",
+        api_key_env: "ORCAROUTER_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat, ProviderKind::TextToSpeech],
+        models: &["orcarouter/auto", "openai/tts-1"],
+        note: "模型路由 (需国际网络)",
+    },
 ];
 
 /// Normalize a provider id/name for lookup: lowercase, strip spaces and hyphens.
@@ -928,6 +991,40 @@ fn normalize_provider_name(value: &str) -> String {
         .flat_map(|c| c.to_lowercase())
         .collect()
 }
+
+/// Model-catalog fixture key → preset id. The provider model catalog
+/// (`src/api/fixtures/models/<key>.json` filenames, mirrored verbatim from
+/// RAGFlow `conf/models/`) uses keys that differ from the RAGFlow factory
+/// ids in `PROVIDER_PRESETS` for several factories (e.g. fixture `aliyun`
+/// is factory `Tongyi-Qianwen`). This table bridges the two so that
+/// `provider_preset("aliyun")`, `provider_is_domestic("aliyun")` and
+/// `factory_endpoint("aliyun")` resolve correctly.
+const FIXTURE_TO_PRESET: &[(&str, &str)] = &[
+    ("302ai", "302.AI"),
+    ("aliyun", "Tongyi-Qianwen"),
+    ("astraflow", "Astraflow"),
+    ("avian", "Avian"),
+    ("baidu", "BaiduYiyan"),
+    ("fishaudio", "Fish Audio"),
+    ("futurmix", "FuturMix"),
+    ("gitee", "GiteeAI"),
+    ("google", "Google Cloud"),
+    ("huaweicloud", "HuaweiCloud"),
+    ("hunyuan", "Tencent Hunyuan"),
+    ("jiekouai", "Jiekou.AI"),
+    ("lmstudio", "LM-Studio"),
+    ("mineru_local", "MinerU"),
+    ("n1n", "n1n"),
+    ("novita", "NovitaAI"),
+    ("orcarouter", "OrcaRouter"),
+    ("paddleocr_local", "PaddleOCR"),
+    ("qiniu", "Qiniu"),
+    ("tokenhub", "TokenHub"),
+    ("tokenpony", "TokenPony"),
+    ("voyage", "Voyage AI"),
+    ("xiaomi", "Xiaomi"),
+    ("xunfei", "XunFei Spark"),
+];
 
 /// Slugify a provider id for the providers store: lowercase, spaces and
 /// underscores become hyphens, other punctuation is dropped. The result only
@@ -945,11 +1042,24 @@ pub fn provider_id_slug(provider_id: &str) -> String {
 }
 
 /// Look up a preset by provider id (case/hyphen insensitive).
+///
+/// Falls back through `FIXTURE_TO_PRESET` so model-catalog fixture keys
+/// (e.g. `aliyun`, `hunyuan`) resolve onto their RAGFlow factory preset.
 pub fn provider_preset(provider_id: &str) -> Option<&'static ProviderPreset> {
     let needle = normalize_provider_name(provider_id);
-    PROVIDER_PRESETS
+    let direct = PROVIDER_PRESETS
         .iter()
-        .find(|preset| normalize_provider_name(preset.id) == needle)
+        .find(|preset| normalize_provider_name(preset.id) == needle);
+    direct.or_else(|| {
+        let factory = FIXTURE_TO_PRESET
+            .iter()
+            .find(|(key, _)| normalize_provider_name(key) == needle)
+            .map(|(_, id)| *id)?;
+        let needle = normalize_provider_name(factory);
+        PROVIDER_PRESETS
+            .iter()
+            .find(|preset| normalize_provider_name(preset.id) == needle)
+    })
 }
 
 /// Look up a preset by display name (case/hyphen insensitive).
@@ -1165,6 +1275,38 @@ mod tests {
     }
 
     #[test]
+    fn fixture_keys_resolve_to_presets_and_keep_domestic_flags() {
+        // Every model-catalog fixture key either matches a preset directly or
+        // resolves through FIXTURE_TO_PRESET, and the domestic classification
+        // follows the RAGFlow factory (CN providers stay domestic).
+        for (fixture, factory) in FIXTURE_TO_PRESET {
+            let preset = provider_preset(fixture)
+                .unwrap_or_else(|| panic!("fixture {fixture} must resolve to a preset"));
+            assert_eq!(
+                normalize_provider_name(preset.id),
+                normalize_provider_name(factory),
+                "fixture {fixture} resolved to wrong preset {}",
+                preset.id
+            );
+        }
+        // Domestic CN providers must stay marked reachable without a proxy.
+        for id in ["aliyun", "baidu", "hunyuan", "xunfei", "gitee", "xiaomi", "qiniu", "huaweicloud"] {
+            assert!(
+                provider_is_domestic(id, id),
+                "{id} must be classified domestic (CN provider)"
+            );
+        }
+        // International providers keep their annotation.
+        assert!(!provider_is_domestic("voyage", "voyage"));
+        assert!(!provider_is_domestic("orcarouter", "orcarouter"));
+        // Newly added presets carry a default endpoint.
+        for id in ["Xiaomi", "Qiniu", "HuaweiCloud", "TokenHub", "OrcaRouter"] {
+            let preset = provider_preset(id).unwrap();
+            assert!(!preset.base_url.is_empty(), "{id} preset needs a base_url");
+        }
+    }
+
+    #[test]
     fn lookups_are_case_and_hyphen_insensitive() {
         assert!(provider_preset("zhipu-ai").is_some());
         assert!(provider_preset("ZHIPU AI").is_some());
@@ -1302,7 +1444,13 @@ mod tests {
                 known
                     || preset.id == "OpenAI-API-Compatible"
                     || preset.id == "SoMark"
-                    || preset.id == "Builtin",
+                    || preset.id == "Builtin"
+                    // CN providers shipped as conf/models fixtures but absent
+                    // from the upstream llm_factories factory list (2026-08-06).
+                    || preset.id == "Qiniu"
+                    || preset.id == "HuaweiCloud"
+                    || preset.id == "TokenHub"
+                    || preset.id == "OrcaRouter",
                 "factory {} ({}) missing from embedded catalog",
                 preset.id,
                 preset.name

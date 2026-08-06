@@ -25,6 +25,18 @@ All notable changes to RayRAG are documented in this file.
 - 自托管引擎（ollama/vllm/lmstudio/localai 等）无默认端点属正常，
   测试断言放宽而非强制补默认值。
 
+### Added (follow-up)
+
+- **PROVIDER_PRESETS 64 → 69**：新增 Xiaomi（MiMo，国内直连）、Qiniu
+  （七牛云）、HuaweiCloud（ModelArts MaaS）、TokenHub（聚合中转）、
+  OrcaRouter（模型路由）五个预设；新增 `FIXTURE_TO_PRESET` 映射表
+  （24 条 fixture key → factory id），`provider_preset` 支持 fixture
+  键回退解析，`provider_is_domestic("aliyun"/"hunyuan"/...)` 等语义
+  修正为正确标记国内直连。
+- **内嵌 llm_factories.json 63 → 65 工厂 / 1064 模型**：从运行中
+  RAGFlow v0.26.2 容器同步最新工厂目录（补 Xiaomi、New API），
+  转换回紧凑 `{n,t,mx,tools}` 格式并全校验。
+
 ## [0.3.2] — 2026-08-05
 
 ### Fixed
