@@ -1,3 +1,23 @@
+## 2026-08-06 v0.3.3：Provider 目录 20→60 + RAGFlow UI 逐页实测清单
+
+- 从 docker-ragflow-cpu-1（v0.26.2）`/ragflow/conf/models/` 拷出 60 个
+  provider fixture（与 RayRAG 现有 fixture 格式完全一致，verbatim mirror），
+  补齐 40 个缺失提供商 → src/api/fixtures/models/（556 模型条目，JSON 全校验）
+- model_meta.rs：PROVIDER_MODEL_FIXTURES 60 条 + 别名 50 条；测试断言适配
+- 关键发现：RayRAG 内置 src/data/providers/llm_factories.json（65 厂商标记）
+  与 conf/models 目录（60 个）互为补充；fixture 才是模型目录数据源
+- UI 实测链路：前端 RSA 加密密码（JSEncrypt 公钥内嵌 bundle，openssl
+  pkeyutl 可复现）→ /api/v1/auth/login → users/me → users/me/models →
+  datasets → tenants；浏览器 navigate 会重置 localStorage token，须
+  SPA 内 CDP 点击保持会话（header 链接 a.click() 会整页跳转丢会话）
+- 路由实测：/dataset/{files|retrieval|logs|configuration}/{id} 四 Tab；
+  /chats /searches /agents /memories /files /user-setting/{data-source|model|api}
+- 实测数据：租户 31b104de...，30329 files / 383166 chunks / 30GB；
+  Model providers 类型分布 LLM 37 / Embedding 25 / Rerank 10 / TTS 8 /
+  ASR 11 / VLM 17 / OCR 4；35 种数据源清单
+- 测试：model_meta 11/11 通过；全量 lib 1142/1144（2 个过时断言已修）
+- 文档：docs/ragflow-ui-inventory.md 新增（UI 对齐 checklist）
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）

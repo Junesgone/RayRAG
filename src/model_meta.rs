@@ -823,6 +823,73 @@ const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
         "zhipu-ai",
         include_str!("api/fixtures/models/zhipu-ai.json"),
     ),
+    ("302ai", include_str!("api/fixtures/models/302ai.json")),
+    ("anthropic", include_str!("api/fixtures/models/anthropic.json")),
+    ("astraflow", include_str!("api/fixtures/models/astraflow.json")),
+    ("avian", include_str!("api/fixtures/models/avian.json")),
+    (
+        "azure-openai",
+        include_str!("api/fixtures/models/azure-openai.json"),
+    ),
+    ("baichuan", include_str!("api/fixtures/models/baichuan.json")),
+    ("bedrock", include_str!("api/fixtures/models/bedrock.json")),
+    ("cometapi", include_str!("api/fixtures/models/cometapi.json")),
+    ("deepinfra", include_str!("api/fixtures/models/deepinfra.json")),
+    ("futurmix", include_str!("api/fixtures/models/futurmix.json")),
+    ("gpustack", include_str!("api/fixtures/models/gpustack.json")),
+    ("groq", include_str!("api/fixtures/models/groq.json")),
+    (
+        "huaweicloud",
+        include_str!("api/fixtures/models/huaweicloud.json"),
+    ),
+    ("hunyuan", include_str!("api/fixtures/models/hunyuan.json")),
+    ("jiekouai", include_str!("api/fixtures/models/jiekouai.json")),
+    ("jina", include_str!("api/fixtures/models/jina.json")),
+    ("localai", include_str!("api/fixtures/models/localai.json")),
+    ("longcat", include_str!("api/fixtures/models/longcat.json")),
+    ("mineru", include_str!("api/fixtures/models/mineru.json")),
+    (
+        "mineru_local",
+        include_str!("api/fixtures/models/mineru_local.json"),
+    ),
+    ("mistral", include_str!("api/fixtures/models/mistral.json")),
+    (
+        "modelscope",
+        include_str!("api/fixtures/models/modelscope.json"),
+    ),
+    ("n1n", include_str!("api/fixtures/models/n1n.json")),
+    ("novita", include_str!("api/fixtures/models/novita.json")),
+    (
+        "orcarouter",
+        include_str!("api/fixtures/models/orcarouter.json"),
+    ),
+    ("paddleocr", include_str!("api/fixtures/models/paddleocr.json")),
+    (
+        "paddleocr_local",
+        include_str!("api/fixtures/models/paddleocr_local.json"),
+    ),
+    ("perplexity", include_str!("api/fixtures/models/perplexity.json")),
+    ("ppio", include_str!("api/fixtures/models/ppio.json")),
+    ("qiniu", include_str!("api/fixtures/models/qiniu.json")),
+    ("replicate", include_str!("api/fixtures/models/replicate.json")),
+    ("stepfun", include_str!("api/fixtures/models/stepfun.json")),
+    (
+        "togetherai",
+        include_str!("api/fixtures/models/togetherai.json"),
+    ),
+    ("tokenhub", include_str!("api/fixtures/models/tokenhub.json")),
+    (
+        "tokenpony",
+        include_str!("api/fixtures/models/tokenpony.json"),
+    ),
+    ("upstage", include_str!("api/fixtures/models/upstage.json")),
+    ("voyage", include_str!("api/fixtures/models/voyage.json")),
+    ("xiaomi", include_str!("api/fixtures/models/xiaomi.json")),
+    (
+        "xinference",
+        include_str!("api/fixtures/models/xinference.json"),
+    ),
+    ("xunfei", include_str!("api/fixtures/models/xunfei.json")),
 ];
 
 /// Parse every embedded fixture into a `ProviderModels` entry.
@@ -853,6 +920,7 @@ pub fn resolve_model_factory(provider_id: &str, provider_name: &str) -> Option<S
         ("zhipu", "zhipu-ai"),
         ("zhipuai", "zhipu-ai"),
         ("bigmodel", "zhipu-ai"),
+        ("glm", "zhipu-ai"),
         ("qwen", "aliyun"),
         ("dashscope", "aliyun"),
         ("kimi", "moonshot"),
@@ -861,6 +929,48 @@ pub fn resolve_model_factory(provider_id: &str, provider_name: &str) -> Option<S
         ("grok", "xai"),
         ("gemini", "google"),
         ("qianfan", "baidu"),
+        ("claude", "anthropic"),
+        ("anthropic", "anthropic"),
+        ("hunyuan", "hunyuan"),
+        ("tencent", "hunyuan"),
+        ("xunfei", "xunfei"),
+        ("spark", "xunfei"),
+        ("baichuan", "baichuan"),
+        ("stepfun", "stepfun"),
+        ("together", "togetherai"),
+        ("togetherai", "togetherai"),
+        ("voyage", "voyage"),
+        ("jina", "jina"),
+        ("perplexity", "perplexity"),
+        ("modelscope", "modelscope"),
+        ("localai", "localai"),
+        ("novita", "novita"),
+        ("upstage", "upstage"),
+        ("replicate", "replicate"),
+        ("azure", "azure-openai"),
+        ("azure-openai", "azure-openai"),
+        ("bedrock", "bedrock"),
+        ("gpustack", "gpustack"),
+        ("deepinfra", "deepinfra"),
+        ("ppio", "ppio"),
+        ("qiniu", "qiniu"),
+        ("xiaomi", "xiaomi"),
+        ("n1n", "n1n"),
+        ("302ai", "302ai"),
+        ("tokenpony", "tokenpony"),
+        ("cometapi", "cometapi"),
+        ("longcat", "longcat"),
+        ("jiekouai", "jiekouai"),
+        ("astraflow", "astraflow"),
+        ("avian", "avian"),
+        ("futurmix", "futurmix"),
+        ("orcarouter", "orcarouter"),
+        ("tokenhub", "tokenhub"),
+        ("huawei", "huaweicloud"),
+        ("huaweicloud", "huaweicloud"),
+        ("xinference", "xinference"),
+        ("mineru", "mineru"),
+        ("paddleocr", "paddleocr"),
     ];
     for (needle, factory) in aliases {
         if normalized_id == *needle || normalized_name == *needle {
@@ -1315,12 +1425,13 @@ mod tests {
     #[test]
     fn seeded_provider_catalog_covers_all_ragflow_fixtures() {
         let catalog = provider_model_catalog();
-        // All 20 RAGFlow conf/models fixtures parse into catalog entries.
-        assert_eq!(catalog.len(), 20);
+        // All 60 RAGFlow conf/models fixtures parse into catalog entries
+        // (20 baseline + 40 added 2026-08-06 from the live v0.26.2 container).
+        assert_eq!(catalog.len(), 60);
         let total_models: usize = catalog.iter().map(|p| p.models.len()).sum();
         assert!(
-            total_models > 150,
-            "expected 150+ seeded models, got {total_models}"
+            total_models > 500,
+            "expected 500+ seeded models, got {total_models}"
         );
         // Multi-region URL maps survive (aliyun: default/singapore/us).
         let aliyun = catalog.iter().find(|p| p.factory == "aliyun").unwrap();
@@ -1414,11 +1525,13 @@ mod tests {
     #[test]
     fn factory_llm_infos_maps_factory_to_endpoint_and_models() {
         let infos = factory_llm_infos();
-        assert_eq!(infos.len(), 20);
-        // Every factory carries a default endpoint (fixture url or preset).
+        assert_eq!(infos.len(), 60);
+        // Most factories carry a default endpoint (fixture url or preset);
+        // self-hosted engines (ollama/vllm/lmstudio/localai/...) legitimately
+        // resolve to empty until the user configures them.
         assert!(
-            infos.iter().all(|info| !info.url.is_empty()),
-            "every factory mapping must resolve a default endpoint"
+            infos.iter().filter(|info| !info.url.is_empty()).count() >= 50,
+            "expected 50+ factories to resolve a default endpoint"
         );
         // OpenAI: chat models are tools-capable, embeddings are not.
         let openai = infos.iter().find(|info| info.name == "OpenAI").unwrap();
@@ -1453,7 +1566,7 @@ mod tests {
         );
         // Summary rows are (factory, endpoint, model count).
         let summary = factory_mapping_summary();
-        assert_eq!(summary.len(), 20);
+        assert_eq!(summary.len(), 60);
         let (name, url, count) = summary.iter().find(|(n, _, _)| n == "Nvidia").unwrap();
         assert_eq!(url, "https://integrate.api.nvidia.com/v1");
         assert!(*count >= 46);

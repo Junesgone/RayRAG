@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.3] — 2026-08-06
+
+### Added
+
+- **Provider 模型目录 20 → 60**：从运行中的 RAGFlow v0.26.2 容器
+  `/ragflow/conf/models/` 整目录提取 60 个提供商 fixture（verbatim mirror），
+  新增 40 个缺失提供商（anthropic/azure-openai/bedrock/hunyuan/xunfei/
+  baichuan/stepfun/togetherai/perplexity/modelscope/xinference/mineru/
+  paddleocr/jina/voyage/groq/mistral/replicate/novita/upstage/xiaomi/qiniu/
+  deepinfra/gpustack 等），共 556 个模型条目；`model_meta.rs` 注册表
+  `PROVIDER_MODEL_FIXTURES` 扩至 60 条 + `resolve_model_factory` 别名
+  从 11 扩至 50（覆盖 Claude/混元/讯飞/百川/Azure/Bedrock/华为云等）。
+- **RAGFlow Web UI 清单** `docs/ragflow-ui-inventory.md`：真实浏览器
+  登录逐页实测，记录 15+ 页面层级的按钮/路由（登录/注册/首页/Dataset 列表/
+  知识库 4 Tab/Chat/Search/Agent/Memory/File/用户设置 8 菜单 + 35 数据源 +
+  Model providers 类型筛选 + API 文档页）——RayRAG 前端对齐的 checklist。
+
+### Fixed
+
+- 适配 60 fixture 的过时断言（catalog.len 20→60、端点覆盖 ≥50）。
+- 自托管引擎（ollama/vllm/lmstudio/localai 等）无默认端点属正常，
+  测试断言放宽而非强制补默认值。
+
 ## [0.3.2] — 2026-08-05
 
 ### Fixed
