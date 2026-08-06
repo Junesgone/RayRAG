@@ -380,6 +380,37 @@ pub async fn rename_doc(
     }
 }
 
+/// Download the original file of a document (RAGFlow-compatible:
+/// GET /api/v1/datasets/{dataset_id}/documents/{document_id}/download).
+pub async fn download_doc(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((kb_id, doc_id)): Path<(String, String)>,
+) -> axum::response::Response {
+    if !kb_accessible(&state, &kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" })).into_response();
+    }
+    let Some(doc) = state.docs.get(&doc_id).filter(|doc| doc.kb_id == kb_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    };
+    let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
+    let physical = uploads.join(&doc.storage_name);
+    match tokio::fs::read(&physical).await {
+        Ok(bytes) => {
+            let filename = doc.name.replace(['"', '\\', '/'], "_");
+            let disposition = format!("attachment; filename=\"{filename}\"");
+            let headers = [
+                (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
+                (axum::http::header::CONTENT_DISPOSITION, disposition.as_str()),
+            ];
+            (headers, bytes).into_response()
+        }
+        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
+            .into_response(),
+    }
+}
+
 pub async fn delete_doc(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,

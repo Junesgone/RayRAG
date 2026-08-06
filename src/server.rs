@@ -2625,6 +2625,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/datasets/{id}/documents/{did}/reparse",
             post(crate::api::document::reparse_doc),
+        )        .route(
+            "/api/v1/datasets/{id}/documents/{did}/download",
+            get(crate::api::document::download_doc),
         )
         .route(
             "/api/v1/datasets/{id}/documents/{did}/metadata",
