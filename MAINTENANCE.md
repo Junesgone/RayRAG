@@ -44,6 +44,23 @@
 - 测试：新增 providers_page_renders_kind_filter_and_add_provider_modal
   （kb_ui_tests 模块，需用该模块的 test_state/body_of）；全量 1144/0 failed
 
+## 2026-08-07 v0.3.3d：Configuration 对齐 + 容器重建验证
+
+- 浏览器实测 RAGFlow v0.26.2 下拉：Language 20+ 语言、Permissions=Only me/Team、
+  Chunking method 11 项（General/Q&A/Resume/Manual/Table/Paper/Book/Laws/
+  Presentation/One/Tag）、PDF parser=Light/General → 写入 UI inventory
+- RayRAG 对齐：dataset Configuration 补 Language/PDF Parser/PageIndex/
+  Image&Table Context Window/Excel to HTML 五字段 + saveConfig 提交；
+  chunk method select 补 Resume/Tag（对齐 11 项）；后端 update_dataset
+  白名单 + language/pdf_parser/page_index/image_and_table_window/
+  excel_to_html/tag_sets/page_rank
+- 容器重建（国内镜像 rayrag:local 新镜像）+ 页面级验证：/dashboard /login
+  /kbs /providers /settings /api-docs 全 200；admin@rayrag.local 登录后
+  /providers 渲染 60 catalog 卡片、8 类筛选按钮、data-k 属性
+  （llm×18/llm embedding vlm×13/ocr×2/tts asr×1...）、add-provider 弹窗
+- 测试：web 20 + providers 14 全绿；登录账号 = RAYRAG_ADMIN_EMAIL 默认
+  admin@rayrag.local（非 "admin"）
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
