@@ -168,6 +168,18 @@
     loadLogs/filterLogs/badge 全部渲染 ✅
   - 覆盖矩阵 aligned 134→137
 
+## 2026-08-07 v0.3.3q：OpenAI 兼容端点（RAGFlow openai_api parity）
+
+- RAGFlow restful_apis 文件清单（26 个）与 RayRAG 路由对照：23/26 已覆盖；
+  缺口 openai_api（绑定 chat_id 的检索增强 OpenAI 端点）
+- 新增 POST /api/v1/openai/{chat_id}/chat/completions：OpenAI 格式消息 →
+  会话 KB/模型解析 → generate_chat_answer（检索增强）→ OpenAI
+  chat.completion + references 数组；generate_chat_answer 等 3 处改
+  pub(crate) 复用
+- 内存实测：RayRAG 容器 65.25 MiB / 0.01% CPU vs RAGFlow 16.6 GiB /
+  580% CPU（含解析负载）——用户关注的低内存优势确认
+- 测试：openai 15 + server 75 全绿；待容器重建后实机验证端点
+
 ## 2026-08-05 v0.3.2：OCR 解析链路打通
 
 - 根因 1：FigureParser 装配 ocr=None（从未启用 OCR）
