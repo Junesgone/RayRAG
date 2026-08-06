@@ -82,6 +82,38 @@ enum Commands {
         static_dir: String,
     },
 
+    /// Online latency benchmark against a running RayRAG server
+    /// (measures retrieval latency p50/p95/max over N iterations).
+    Benchmark {
+        /// RayRAG API base URL
+        #[arg(long, default_value = "http://127.0.0.1:9390")]
+        api_base: String,
+
+        /// Admin email for login
+        #[arg(long, default_value = "admin@rayrag.local")]
+        email: String,
+
+        /// Admin password (defaults to RAYRAG_ADMIN_PASSWORD env)
+        #[arg(long)]
+        password: Option<String>,
+
+        /// Knowledge base id to query
+        #[arg(long)]
+        kb_id: String,
+
+        /// Iterations per query (default: 5)
+        #[arg(long, default_value = "5")]
+        iterations: usize,
+
+        /// Probe queries (repeatable; defaults to a built-in probe set)
+        #[arg(long)]
+        query: Vec<String>,
+
+        /// Enable reranker on retrieval
+        #[arg(long)]
+        rerank: bool,
+    },
+
     /// Search indexed documents using vector similarity
     Search {
         /// Search query text
@@ -306,6 +338,83 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             rayrag::server::run(port, &static_dir, log_levels).await?;
+            Ok(())
+        }
+        Commands::Benchmark {
+            api_base,
+            email,
+            password,
+            kb_id,
+            iterations,
+            query,
+            rerank,
+        } => {
+            use std::time::Instant;
+            let password = password.unwrap_or_else(|| {
+                std::env::var("RAYRAG_ADMIN_PASSWORD")
+                    .expect("--password missing; set RAYRAG_ADMIN_PASSWORD env")
+            });
+            let client = reqwest::Client::new();
+            // 登录拿 token
+            let login: serde_json::Value = client
+                .post(format!("{api_base}/api/v1/auth/login"))
+                .json(&serde_json::json!({ "email": email, "password": password }))
+                .send()
+                .await?
+                .json()
+                .await?;
+            let token = login
+                .get("data")
+                .and_then(|d| d.get("access_token"))
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| anyhow::anyhow!("login failed: {login}"))?;
+            let auth = format!("Bearer {token}");
+            // 探测查询（默认内置）
+            let queries: Vec<String> = if query.is_empty() {
+                vec![
+                    "RAGFlow 是什么".into(),
+                    "检索增强生成".into(),
+                    "知识库 文档 解析".into(),
+                    "embedding 模型".into(),
+                ]
+            } else {
+                query
+            };
+            let mut samples: Vec<f64> = Vec::new();
+            let mut failures = 0usize;
+            for q in &queries {
+                for _ in 0..iterations {
+                    let t0 = Instant::now();
+                    let resp = client
+                        .post(format!("{api_base}/api/v1/retrieval"))
+                        .header("Authorization", &auth)
+                        .json(&serde_json::json!({
+                            "question": q,
+                            "kb_ids": [kb_id],
+                            "top_k": 5,
+                            "rerank": rerank,
+                        }))
+                        .send()
+                        .await;
+                    match resp {
+                        Ok(r) if r.status().is_success() => {
+                            samples.push(t0.elapsed().as_secs_f64() * 1000.0);
+                        }
+                        _ => failures += 1,
+                    }
+                }
+            }
+            let stats = rayrag::benchmark::LatencyStats::from_millis(samples);
+            println!("=== RayRAG retrieval latency benchmark ===");
+            println!("api_base:     {api_base}");
+            println!("kb_id:        {kb_id}");
+            println!("queries:      {} × {} iter", queries.len(), iterations);
+            println!("rerank:       {rerank}");
+            println!("failures:     {failures}");
+            println!(
+                "count:        {}  avg: {:.1}ms  p50: {:.1}ms  p95: {:.1}ms  max: {:.1}ms",
+                stats.count, stats.avg_ms, stats.p50_ms, stats.p95_ms, stats.max_ms
+            );
             Ok(())
         }
         Commands::Search {
