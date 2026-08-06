@@ -1594,7 +1594,10 @@ pub async fn not_found_page(req: axum::http::Request<axum::body::Body>) -> impl 
     Html(layout("404", &b, zh))
 }
 
-pub async fn settings_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+pub async fn settings_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let mut b = String::new();
     b.push_str("<h1>⚙️ ");
@@ -1620,6 +1623,30 @@ pub async fn settings_page(req: axum::http::Request<axum::body::Body>) -> impl I
     b.push_str(t("Invite", zh));
     b.push_str("</button><p id='invMsg' style='font-size:12px;color:var(--tm)'></p></div></div>");
     b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function loadKeys(){fetch('/api/v1/system/api_keys').then(r=>r.json()).then(d=>{var keys=d.data||[];var e=document.getElementById('akList');if(!keys.length){e.innerHTML='<p style=color:var(--tm)>No API keys yet.</p>';return}var h='<table><thead><tr><th>Key</th><th>Created</th><th></th></tr></thead><tbody>';keys.forEach(function(k){h+='<tr><td style=font-family:monospace;font-size:12px>'+k.token+'</td><td style=color:var(--tm);font-size:12px>'+k.create_date+'</td><td><button class=\\'btn btn-d btn-sm\\' onclick=\\'delKey(&quot;'+k.token+'&quot;)\\'>Delete</button></td></tr>'});e.innerHTML=h+'</tbody></table>'})};function genKey(){fetch('/api/v1/system/api_keys',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function delKey(k){if(!confirm('Delete this API key?'))return;fetch('/api/v1/system/api_keys/'+encodeURIComponent(k),{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function inviteUser(){var e=document.getElementById('invEmail').value;if(!e){document.getElementById('invMsg').textContent='Please enter an email';return}fetch('/api/v1/users/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e})}).then(r=>r.json()).then(d=>{document.getElementById('invMsg').textContent=d.code===0?'Invitation sent':'Error: '+(d.message||'unknown')})};loadKeys()</script>");
+    
+    // Chat channels (RAGFlow user-setting parity): registered channel builders
+    b.push_str("<div class='card' style='margin-top:16px'><h3>Chat Channels</h3>");
+    let channel_ids = state.channels.registered_ids().await;
+    if channel_ids.is_empty() {
+        b.push_str("<p style='color:var(--tm);font-size:12px'>No chat channels registered. Configure via environment (CHANNELS_*) or data sources.</p>");
+    } else {
+        b.push_str("<table style='width:100%;font-size:13px'><thead><tr><th style='text-align:left'>Platform</th><th style='text-align:left'>Status</th></tr></thead><tbody>");
+        for cid in &channel_ids {
+            b.push_str(&format!(
+                "<tr><td>{}</td><td style='color:var(--s)'>● registered</td></tr>",
+                cid
+            ));
+        }
+        b.push_str("</tbody></table>");
+    }
+    b.push_str("</div>");
+    // MCP servers (RAGFlow user-setting parity): built-in MCP tool catalogue
+    b.push_str("<div class='card' style='margin-top:16px'><h3>MCP Servers</h3>");
+    b.push_str("<p style='color:var(--tm);font-size:12px'>RayRAG exposes a built-in MCP server at <code>/api/v1/mcp/tools</code> with the following tools:</p>");
+    b.push_str("<table style='width:100%;font-size:13px'><thead><tr><th style='text-align:left'>Tool</th><th style='text-align:left'>Description</th></tr></thead><tbody>");
+    b.push_str("<tr><td><code>search_knowledge</code></td><td style='font-size:12px'>Search RayRAG knowledge base with vector similarity</td></tr>");
+    b.push_str("<tr><td><code>list_datasets</code></td><td style='font-size:12px'>List available knowledge bases</td></tr>");
+    b.push_str("</tbody></table></div>");
     Html(layout(t("Settings", zh), &b, zh))
 }
 
@@ -2021,7 +2048,7 @@ mod kb_ui_tests {
         let kbd = body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req()).await).await;
         let cd = body_of(chat_detail_page(State(state.clone()), Path("c1".to_string()), req()).await).await;
         let doc = body_of(document_page(State(state.clone()), Path(("k1".to_string(), "d1".to_string())), req()).await).await;
-        let set = body_of(settings_page(req()).await).await;
+        let set = body_of(settings_page(State(test_state().1), req()).await).await;
         std::fs::write("/tmp/dump_files.html", &files).unwrap();
         std::fs::write("/tmp/dump_agents.html", &agents).unwrap();
         std::fs::write("/tmp/dump_agent_detail.html", &ad).unwrap();
@@ -2036,7 +2063,7 @@ mod kb_ui_tests {
     #[tokio::test]
     async fn settings_page_renders_invite_button() {
         let req = Request::builder().uri("/settings").body(Body::empty()).unwrap();
-        let html = body_of(settings_page(req).await).await;
+        let html = body_of(settings_page(State(test_state().1), req).await).await;
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
