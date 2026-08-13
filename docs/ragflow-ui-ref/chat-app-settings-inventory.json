@@ -1,0 +1,34 @@
+{
+  "source": "RAGFlow v0.26.4 web/src/pages/next-chats/chat/app-settings/*",
+  "structure": {
+    "chat_settings_page": "/chats/<id> 详情页 = chat-settings.tsx(组合) + saving-button.tsx(保存按钮+dirty指示)",
+    "chat_basic_settings": [
+      {"field": "icon/name/description", "component": "AvatarNameDescription"},
+      {"field": "llm_id + llm_setting(温度/top_p/max_tokens/频率/存在惩罚)", "component": "LlmSettingFieldItems", "showCollapse": true},
+      {"field": "prompt_config.prologue", "component": "Textarea", "tooltip": "setAnOpenerTip"},
+      {"field": "dataset_ids", "component": "KnowledgeBaseFormField"}
+    ],
+    "chat_prompt_engine": [
+      {"field": "prompt_config.system", "component": "Textarea(可折叠)"},
+      {"field": "prompt_config.cross_languages", "component": "CrossLanguageFormField(11语言chip)"},
+      {"field": "rerank_id/top_k", "component": "RerankFormFields"},
+      {"field": "prompt_config.similarity_threshold", "component": "SimilaritySliderFormField"},
+      {"field": "prompt_config.top_n", "component": "TopNFormField"},
+      {"field": "prompt_config.tavily_api_key", "component": "TavilyFormField", "cn_note": "RayRAG需提供国内替代(如本地搜索)"},
+      {"field": "prompt_config.toc_enhance", "component": "TOCEnhanceFormField"},
+      {"field": "prompt_config.use_kg", "component": "UseKnowledgeGraphFormField"},
+      {"field": "prompt_config.empty_response", "component": "Textarea", "tooltip": "emptyResponseTip"},
+      {"field": "prompt_config.quote", "component": "SwitchFormField", "tooltip": "quoteTip"},
+      {"field": "prompt_config.keyword", "component": "SwitchFormField", "tooltip": "keywordTip"},
+      {"field": "prompt_config.tts", "component": "SwitchFormField", "tooltip": "ttsTip"},
+      {"field": "prompt_config.reference_metadata.include", "component": "Switch", "tooltip": "showChunkMetadataTip"},
+      {"field": "prompt_config.reference_metadata.fields", "component": "多选", "tooltip": "metadataFieldsTip"}
+    ]
+  },
+  "rayrag_stage2_todo": [
+    "chat_app_detail_page 增加设置表单(基本设置+提示引擎两段)",
+    "ChatApp 结构需补 llm_setting/prompt_config 持久化字段",
+    "reference_metadata.include/fields 与 quote/keyword/tts/toc_enhance/use_kg 后端接线",
+    "tavily_api_key 国内替代方案(可选本地搜索服务)"
+  ]
+}
