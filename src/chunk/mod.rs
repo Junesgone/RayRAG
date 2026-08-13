@@ -9,7 +9,7 @@ mod token;
 pub mod tokenizer;
 pub use tokenizer::token_count;
 
-pub use naive::NaiveChunker;
+pub use naive::{NaiveChunker, SingleChunker};
 pub use title::TitleChunker;
 pub use token::TokenChunker;
 
@@ -41,6 +41,8 @@ pub fn chunker_for(config: &ParserConfig) -> Box<dyn ChunkStrategy> {
     match config.chunk_method.as_str() {
         "token" => Box::new(TokenChunker::new()),
         "title" => Box::new(TitleChunker::new()),
+        // RAGFlow rag/app/one.py: one file forms a single chunk.
+        "one" => Box::new(SingleChunker::new()),
         _ => Box::new(NaiveChunker::new()),
     }
 }

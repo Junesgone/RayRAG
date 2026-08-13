@@ -1,3 +1,25 @@
+## 2026-08-13 v0.3.3aq：chunk_method 领域解析器生产接线（app_parsers.py 对齐）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **又一处"实现完备但生产零引用"**：`src/app_parsers.rs`（Email/Paper/Laws/
+  Book/Picture/Table/Tag/Presentation/Audio/Qa 十个领域解析器 + QaMode
+  分发）只有 lib.rs 的 `mod` 声明引用——`pipeline.parse_document` 完全没
+  调用。后果：KB 配置 UI 的 12 种 chunk_method 全是摆设，所有文档一律
+  MIME 解析 + naive/token/title 分块（上游 `app_parsers.py get_parser`
+  按 parser_id 路由到领域专属解析管线）。
+- **接线**：① `app_parsers.rs` 加 `parser_for_method(chunk_method)` 分发
+  （10 个领域方法 → 对应解析器；naive/token/title/manual/one/
+  knowledge_graph 返回 None 走 MIME 管线）；② `parse_document` 顶部加
+  领域解析分支（空结果/异常 warn 后回退 MIME）；③ `chunk/mod.rs` 加
+  `SingleChunker`（对齐 `rag/app/one.py`：整文件单块，含 position 元数据
+  空数组），`chunker_for` 路由 `one`。
+- **UI 补齐**：KB 配置表单 chunkMethod 加 `picture/audio/email`（12→15，
+  与上游一致）；新增 **layout_recognize 选择器**（DeepDOC/PaddleOCR/
+  OpenDataLoader/MinerU/SoMark——后端五种识别器全部支持但此前 UI 无法
+  选择），loadConfig/saveConfig 同步接线。
+- 新测试：dispatch_tests 2（路由表 + email 解析）、single_tests 2。
+- 覆盖矩阵：28 行 app_parsers.rs 引用行补记接线说明。
+
 ## 2026-08-13 v0.3.3ap：rerank 链路闭环（宿主代理架构真相）+ 全模块死代码扫描
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

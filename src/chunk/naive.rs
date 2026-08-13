@@ -149,6 +149,40 @@ fn extract_overlap(text: &str, overlap_tokens: usize, position_aware: bool) -> S
 }
 
 #[cfg(test)]
+mod single_tests {
+    use super::*;
+    use crate::{Document, ParserConfig};
+
+    fn doc(content: &str) -> Document {
+        Document {
+            id: uuid::Uuid::new_v4(),
+            name: "sample.txt".to_string(),
+            content: content.to_string(),
+            mime_type: "text/plain".to_string(),
+            size: content.len(),
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn single_chunker_returns_whole_document_as_one_chunk() {
+        let d = doc("第一段。\n第二段。\n第三段。");
+        let config = ParserConfig::default();
+        let chunks = SingleChunker::new().chunk(&d, &config).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "第一段。\n第二段。\n第三段。");
+        assert_eq!(chunks[0].position, 0);
+    }
+
+    #[test]
+    fn single_chunker_skips_blank_documents() {
+        let d = doc("   ");
+        let config = ParserConfig::default();
+        assert!(SingleChunker::new().chunk(&d, &config).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -231,5 +265,45 @@ mod tests {
         assert!(!chunks[0].metadata.contains_key("position_int"));
         assert!(!chunks[0].metadata.contains_key("page_num_int"));
         assert!(!chunks[0].metadata.contains_key("top_int"));
+    }
+}
+
+
+/// Whole-document-as-one-chunk strategy — mirrors RAGFlow `rag/app/one.py`
+/// ("One file forms a chunk which maintains original text order").
+pub struct SingleChunker;
+
+impl SingleChunker {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ChunkStrategy for SingleChunker {
+    fn chunk(&self, doc: &Document, _config: &ParserConfig) -> Result<Vec<Chunk>> {
+        let content = doc.content.trim();
+        if content.is_empty() {
+            return Ok(vec![]);
+        }
+        let position_aware = doc
+            .metadata
+            .contains_key(super::RAGFLOW_POSITION_TAGS_METADATA);
+        Ok(vec![Chunk {
+            id: chunk_id(&doc.id, 0),
+            content: content.to_string(),
+            content_type: "text".to_string(),
+            doc_id: doc.id,
+            position: 0,
+            token_count: token_count(content),
+            embedding: None,
+            metadata: if position_aware {
+                let mut meta = doc.metadata.clone();
+                meta.insert("page_num_int".to_string(), "[]".to_string());
+                meta.insert("top_int".to_string(), "[]".to_string());
+                meta
+            } else {
+                doc.metadata.clone()
+            },
+        }])
     }
 }

@@ -206,6 +206,25 @@ impl Pipeline {
     }
 
     async fn parse_document(&self, name: &str, mime: &str, data: &[u8]) -> Result<crate::Document> {
+        // RAGFlow `app_parsers.py`: chunk_method (parser_id) selects the
+        // domain parser (paper/book/laws/qa/table/tag/presentation/picture/
+        // audio/email) — wired in v0.3.3aq, previously dead code.
+        if let Some(parser) = crate::app_parsers::parser_for_method(&self.config.chunk_method) {
+            match parser.parse(name, data) {
+                Ok(document) if !document.content.trim().is_empty() => return Ok(document),
+                Ok(_) => {
+                    tracing::warn!(
+                        %name,
+                        method = %self.config.chunk_method,
+                        "Domain parser returned empty content; falling back to MIME parser"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %name, "Domain parser failed; falling back to MIME parser");
+                }
+            }
+        }
+
         if is_somark_layout(&self.config.layout_recognize) && mime == "application/pdf" {
             let client = self.somark.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("SoMark layout requested but SOMARK_BASE_URL is not configured")

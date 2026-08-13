@@ -6,6 +6,26 @@ use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
 use regex::Regex;
 
+/// Route a `chunk_method` (RAGFlow `parser_id`) to its domain parser —
+/// mirrors `rag/app/app_parsers.py get_parser`. Returns `None` for the
+/// generic methods (`naive`/`token`/`title`/`manual`/`one`/`knowledge_graph`)
+/// and unknown values so the MIME-based pipeline keeps handling them.
+pub fn parser_for_method(method: &str) -> Option<Box<dyn Parse>> {
+    match method.to_ascii_lowercase().as_str() {
+        "email" => Some(Box::new(EmailParser::new())),
+        "paper" => Some(Box::new(PaperParser::new())),
+        "laws" => Some(Box::new(LawsParser::new())),
+        "book" => Some(Box::new(BookParser::new())),
+        "picture" => Some(Box::new(PictureParser::new())),
+        "table" => Some(Box::new(TableParser::new())),
+        "tag" => Some(Box::new(TagParser::new())),
+        "presentation" => Some(Box::new(PresentationParser::new())),
+        "audio" => Some(Box::new(AudioParser::new())),
+        "qa" => Some(Box::new(QaParser::new())),
+        _ => None,
+    }
+}
+
 // ── Email Parser ────────────────────────────────────────────────
 
 #[derive(Default)]
@@ -455,6 +475,42 @@ impl QaMode {
         } else {
             QaMode::Naive
         }
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn parser_for_method_routes_domain_parsers_and_returns_none_for_generic() {
+        assert!(parser_for_method("paper").is_some());
+        assert!(parser_for_method("book").is_some());
+        assert!(parser_for_method("laws").is_some());
+        assert!(parser_for_method("qa").is_some());
+        assert!(parser_for_method("table").is_some());
+        assert!(parser_for_method("tag").is_some());
+        assert!(parser_for_method("presentation").is_some());
+        assert!(parser_for_method("picture").is_some());
+        assert!(parser_for_method("audio").is_some());
+        assert!(parser_for_method("email").is_some());
+        // Generic methods and unknown values stay on the MIME pipeline.
+        assert!(parser_for_method("naive").is_none());
+        assert!(parser_for_method("token").is_none());
+        assert!(parser_for_method("title").is_none());
+        assert!(parser_for_method("manual").is_none());
+        assert!(parser_for_method("one").is_none());
+        assert!(parser_for_method("knowledge_graph").is_none());
+        assert!(parser_for_method("nonsense").is_none());
+    }
+
+    #[test]
+    fn email_parser_extracts_headers_and_body() {
+        let parser = EmailParser::new();
+        let raw = b"From: a@b.c\nSubject: test\n\nhello world\n";
+        let doc = parser.parse("mail.eml", raw).unwrap();
+        assert!(doc.content.contains("From: a@b.c"));
+        assert!(doc.content.contains("hello world"));
     }
 }
 
