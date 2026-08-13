@@ -1,3 +1,21 @@
+## 2026-08-13 v0.3.3ax：检索页 Language 多选 + prompt_config 全链路（cross_languages）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 源码确证：cross_languages 存 KB 的 `prompt_config`（db_models.py 默认模板
+  + dialog_service.py:652 读取并翻译提问）。据此打通 RayRAG 全链路：
+  1. `KnowledgeBase.prompt_config`（serde default {}，create/持久化全兼容）；
+  2. `update_config` 增第 5 参（Option<&Value>），`update_dataset` PUT 时对
+     `prompt_config` 做**对象级合并**（保留其他 chat 设置，不清空覆盖）；
+  3. UI：两个配置表单 Retrieval 段加 **Languages 输入行**（cfgLangs，
+     comma-separated 语言码 + 官方 tooltip ③ 原文）；save 写入
+     body.prompt_config.cross_languages，load 从 kb.prompt_config 回填；
+  4. chat_completion 与 retrieval 端点：读 KB prompt_config.cross_languages
+     → tenant LLM 按官方 prompt 批量翻译 → 逐语言 hybrid 检索 →
+     chunk.id 去重合并；无 LLM/翻译失败优雅降级。
+- 新测试：prompt_config_tests 2（持久化 roundtrip + 不污染其他字段）、
+  web 断言 cfgLangs/cross_languages 接线。
+
+
 ## 2026-08-13 v0.3.3aw：检索页 ⓘ 悬停提示 + 检索四字段（cross_languages/use_kg/keyword/size）+ 语雀连接器
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

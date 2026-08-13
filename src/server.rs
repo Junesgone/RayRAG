@@ -781,11 +781,25 @@ async fn update_dataset(
     {
         return api_error(StatusCode::BAD_REQUEST, &error.to_string());
     }
+    // RAGFlow prompt_config: merge the incoming JSON object over the stored one
+    // (object-level merge keeps other chat settings intact).
+    let prompt_config = body.get("prompt_config").and_then(|value| value.as_object()).cloned();
+    let merged_prompt_config = prompt_config.map(|incoming| {
+        let current = state
+            .kbs
+            .get(&dataset_id)
+            .map(|kb| kb.prompt_config.as_object().cloned().unwrap_or_default())
+            .unwrap_or_default();
+        let mut merged = current;
+        merged.extend(incoming);
+        serde_json::Value::Object(merged)
+    });
     match state.kbs.update_config(
         &dataset_id,
         permission,
         embd_id.as_deref(),
         parser_config.as_deref(),
+        merged_prompt_config.as_ref(),
     ) {
         Ok(Some(kb)) => Json(ApiResponse {
             code: 0,
@@ -2823,7 +2837,7 @@ async fn chat_completion(
         .and_then(|v| v.as_u64())
         .unwrap_or(4)
         .clamp(1, 20) as usize;
-    let hits = state
+    let mut hits = state
         .engine
         .read()
         .unwrap()
@@ -2836,6 +2850,75 @@ async fn chat_completion(
             doc_ids: None,
             rank_feature: None,
         });
+    // RAGFlow dialog_service: when a KB's prompt_config declares
+    // cross_languages, translate the question and merge extra-language hits
+    // (deduped by chunk id). Degrades to the original-language hits when no
+    // LLM is available or translation fails.
+    let cross_langs: Vec<String> = {
+        let mut langs = Vec::new();
+        for kb_id in &kb_ids {
+            if let Some(kb) = state.kbs.get(kb_id) {
+                if let Some(list) = kb.prompt_config.get("cross_languages").and_then(|v| v.as_array()) {
+                    for item in list.iter().filter_map(|v| v.as_str()) {
+                        if !item.trim().is_empty() && !langs.contains(&item.trim().to_string()) {
+                            langs.push(item.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        langs
+    };
+    if !cross_langs.is_empty() {
+        if let Some(llm_client) = &state.llm {
+            let langs_str = cross_langs.join(", ");
+            let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+            vars.insert("query", q);
+            vars.insert("languages", langs_str.as_str());
+            let sys = crate::prompts::PromptLibrary::cross_languages_sys()
+                .render(&std::collections::HashMap::new());
+            let user = crate::prompts::PromptLibrary::cross_languages_user().render(&vars);
+            let translated = match llm_client
+                .chat_completion(&[
+                    crate::llm::ChatMessage::new("system", &sys),
+                    crate::llm::ChatMessage::new("user", &user),
+                ])
+                .await
+            {
+                Ok(completion) => completion.content,
+                Err(error) => {
+                    tracing::warn!(%error, "cross_languages translation failed; original hits used");
+                    String::new()
+                }
+            };
+            let mut seen: std::collections::HashSet<String> =
+                hits.iter().map(|hit| hit.chunk.id.clone()).collect();
+            for translation in translated
+                .split("###")
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && *text != q)
+            {
+                let extra = state
+                    .engine
+                    .read()
+                    .unwrap()
+                    .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                        query: translation,
+                        query_embedding: None,
+                        kb_ids: &kb_ids,
+                        top_k,
+                        vector_weight: 0.5,
+                        doc_ids: None,
+                        rank_feature: None,
+                    });
+                for hit in extra {
+                    if seen.insert(hit.chunk.id.clone()) {
+                        hits.push(hit);
+                    }
+                }
+            }
+        }
+    }
     let mut context = String::new();
     let mut references = Vec::new();
     for (i, hit) in hits.iter().take(4).enumerate() {

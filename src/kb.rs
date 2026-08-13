@@ -37,6 +37,11 @@ pub struct KnowledgeBase {
     /// Avatar image (data URL or empty for the letter avatar).
     #[serde(default)]
     pub avatar: String,
+    /// RAGFlow `prompt_config` — JSON settings applied to RAG chats over this
+    /// KB (top_k / similarity_threshold / cross_languages / keyword / etc.).
+    /// Stored as a JSON object; empty object = defaults.
+    #[serde(default = "default_prompt_config")]
+    pub prompt_config: serde_json::Value,
     /// Creation timestamp (Unix ms)
     pub created_at: u64,
     /// Last update timestamp (Unix ms)
@@ -431,6 +436,7 @@ impl KbStore {
                 parser_config: parser_config.to_string(),
                 tag_sets: String::new(),
                 avatar: String::new(),
+                prompt_config: serde_json::json!({}),
                 created_at: now,
                 updated_at: now,
             };
@@ -440,7 +446,7 @@ impl KbStore {
     }
 
     pub fn update_permission(&self, id: &str, permission: &str) -> Result<Option<KnowledgeBase>> {
-        self.update_config(id, Some(permission), None, None)
+        self.update_config(id, Some(permission), None, None, None)
     }
 
     pub fn update_config(
@@ -449,6 +455,7 @@ impl KbStore {
         permission: Option<&str>,
         embd_id: Option<&str>,
         parser_config: Option<&str>,
+        prompt_config: Option<&serde_json::Value>,
     ) -> Result<Option<KnowledgeBase>> {
         if let Some(permission) = permission {
             validate_permission(permission)?;
@@ -463,7 +470,9 @@ impl KbStore {
             let permission_changed = permission.is_some_and(|value| kb.permission != value);
             let embedding_changed = embd_id.is_some_and(|value| kb.embd_id != value);
             let config_changed = parser_config.is_some_and(|value| kb.parser_config != value);
-            if !permission_changed && !embedding_changed && !config_changed {
+            let prompt_changed =
+                prompt_config.is_some_and(|value| kb.prompt_config != *value);
+            if !permission_changed && !embedding_changed && !config_changed && !prompt_changed {
                 return Ok((Some(kb.clone()), false));
             }
             if let Some(permission) = permission {
@@ -474,6 +483,9 @@ impl KbStore {
             }
             if let Some(parser_config) = parser_config {
                 kb.parser_config = parser_config.into();
+            }
+            if let Some(prompt_config) = prompt_config {
+                kb.prompt_config = prompt_config.clone();
             }
             kb.updated_at = now_ms();
             Ok((Some(kb.clone()), true))
@@ -578,6 +590,10 @@ impl KbStore {
         let data = serde_json::to_vec_pretty(&list)?;
         crate::persistence::atomic_write(std::path::Path::new(&self.file_path), &data)
     }
+}
+
+fn default_prompt_config() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 fn default_permission() -> String {
@@ -692,6 +708,62 @@ mod identity_update_tests {
             .unwrap();
         assert_eq!(updated.name, "new");
         assert_eq!(updated.description, "desc");
+    }
+}
+
+#[cfg(test)]
+mod prompt_config_tests {
+    use super::*;
+
+    #[test]
+    fn prompt_config_defaults_empty_and_persists_via_update_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("owner", "kb", "", "private", "default")
+            .unwrap();
+        assert_eq!(kb.prompt_config, serde_json::json!({}));
+
+        let updated = store
+            .update_config(
+                &kb.id,
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"cross_languages": ["en", "ja"], "keyword": true})),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.prompt_config,
+            serde_json::json!({"cross_languages": ["en", "ja"], "keyword": true})
+        );
+
+        // Reload from disk — prompt_config must survive persistence.
+        let reloaded = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let persisted = reloaded.get(&kb.id).unwrap();
+        assert_eq!(
+            persisted.prompt_config,
+            serde_json::json!({"cross_languages": ["en", "ja"], "keyword": true})
+        );
+        std::fs::remove_dir_all(dir.path()).ok();
+    }
+
+    #[test]
+    fn prompt_config_update_does_not_touch_other_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("owner", "kb", "desc", "private", "default")
+            .unwrap();
+        let updated = store
+            .update_config(&kb.id, None, None, None, Some(&serde_json::json!({"keyword": true})))
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "kb");
+        assert_eq!(updated.description, "desc");
+        assert_eq!(updated.embd_id, "default");
+        std::fs::remove_dir_all(dir.path()).ok();
     }
 }
 
@@ -868,7 +940,7 @@ mod tests {
         assert_eq!(kb.embd_id, "local/primary/embed-a");
 
         let updated = store
-            .update_config(&kb.id, Some("team"), Some("local/primary/embed-b"), None)
+            .update_config(&kb.id, Some("team"), Some("local/primary/embed-b"), None, None)
             .unwrap()
             .unwrap();
         assert_eq!(updated.permission, "team");
