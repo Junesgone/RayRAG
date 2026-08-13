@@ -1,3 +1,24 @@
+## 2026-08-13 v0.3.3ap：rerank 链路闭环（宿主代理架构真相）+ 全模块死代码扫描
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **宿主 rerank 架构真相（推翻 v0.3.3an 的阻塞判断）**：8081 的 llama-server
+  确实缺 `--reranking`（501），但宿主另有一个 **FastAPI 代理在 8899**
+  （`mxbai-rerank.service` → `proxy_server.py`），用 **cross-encoder logprob
+  法**（`get_relevance_score`：max_tokens=1 + logprobs 取 token '1' 概率）
+  实现 OpenAI 兼容 `/v1/rerank`——**不需要** llama-server 的 reranking 标志。
+  8899 绑 0.0.0.0，容器经 172.29.0.1:8899 可达。
+- **修复**：local-rerank provider + 租户实例 api_base 8081 → **8899**。
+  E2E：建库 → 上传 → 检索带 rerank_id → code 0，`score=1.0` 正确排序
+  （相关文档 1.0 > 无关 0.917）。**四路 GPU 链路（LLM/embedding/vision/
+  rerank）全部真机闭环**。
+- **全模块死代码扫描（v0.3.3ao 模式的系统性复查）**：对 src/ 全部模块
+  grep 外部引用数。结论：**无第二处死代码**——搜索/连接器模块
+  （arxiv/google/wikipedia/pubmed/baidu/baidu_scholar/bocha/eastmoney/
+  jin10/qweather/searxng/tencent_finance/tushare/wencai 等）全走
+  agent.rs 工具注册表；graphrag→graphrag_index→server.rs；mcp_client→
+  connector+mcp_server；benchmark→main.rs CLI。vision 是唯一特例且已修复。
+- 检索响应字段：chunk 用 `score`（rerank 后归一化分），非 `similarity`。
+
 ## 2026-08-13 v0.3.3ao：图片解析 vision 模型生产接线（对齐 picture.py/naive.py）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
