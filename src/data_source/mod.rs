@@ -23,6 +23,9 @@ pub enum DocumentSource {
     /// S3-protocol object storage (S3 / GCS-interop / Oracle S3-compat / MinIO;
     /// RAGFlow `DocumentSource.S3`).
     S3,
+    /// 语雀 (Yuque) — China-friendly document repo (RAGFlow has no direct
+    /// equivalent; local extension for mainland network parity).
+    Yuque,
 }
 
 impl DocumentSource {
@@ -35,6 +38,7 @@ impl DocumentSource {
             DocumentSource::Feishu => "feishu",
             DocumentSource::Confluence => "confluence",
             DocumentSource::S3 => "s3",
+            DocumentSource::Yuque => "yuque",
         }
     }
 
@@ -47,6 +51,7 @@ impl DocumentSource {
             "feishu" => Some(DocumentSource::Feishu),
             "confluence" => Some(DocumentSource::Confluence),
             "s3" => Some(DocumentSource::S3),
+            "yuque" => Some(DocumentSource::Yuque),
             _ => None,
         }
     }

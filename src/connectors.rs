@@ -2005,10 +2005,7 @@ impl Connector for YuqueConnector {
         Ok(ConnectorDoc {
             id: file.id.clone(),
             blob,
-            // DocumentSource has no Yuque variant yet — Confluence is the
-            // stand-in; the `source=yuque` metadata carries the real
-            // provenance until the enum is extended.
-            source: DocumentSource::Confluence,
+            source: DocumentSource::Yuque,
             semantic_identifier: file.name.clone(),
             extension: file.extension.clone(),
             doc_updated_at: file.updated_at.clone(),
@@ -2552,7 +2549,7 @@ mod yuque_connector_tests {
         assert_eq!(doc.metadata.get("source").map(String::as_str), Some("yuque"));
         assert_eq!(doc.metadata.get("namespace").map(String::as_str), Some("team/kb"));
         assert_eq!(doc.metadata.get("slug").map(String::as_str), Some("doc-one"));
-        assert_eq!(doc.source, DocumentSource::Confluence);
+        assert_eq!(doc.source, DocumentSource::Yuque);
     }
 
     /// Registry dispatch end-to-end: `create("yuque", …)` → fetch_all over the
