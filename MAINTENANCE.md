@@ -1,3 +1,24 @@
+## 2026-08-13 v0.3.3bc：检索应用页对齐（/searches）
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **溯源**：next-searches/ 与 next-chats/ 完全同构 —— ListFilterBar
+  （icon=searches、标题 searchApps、Create 按钮 testid create-search）、
+  SearchCard（HomeCard + MoreButton 悬停下拉 Rename/Delete）、
+  EmptyAppCard type=Search、点击进入检索详情页。
+- **SearchAppRecord 扩展**：icon + description（serde default，兼容旧记录）。
+- **update_search_app handler**（PUT /api/v1/searchapps/{id}）：部分更新
+  name/description/icon/kb_ids/hybrid/rerank/top_k，name-only 保持 rename；
+  SearchAppStore 补 upsert。
+- **web.rs 新增两页**：
+  - `search_apps_page`（/searches）：标题+搜索+Create 按钮、卡片
+    （悬停 ✏️/🗑）、空态可点大卡（🔎）、创建/重命名弹窗。
+  - `search_app_detail_page`（/searches/{id}）：应用头部 + 基本设置
+    （KB 多选/hybrid/rerank 开关/top_k）+ Save + 🔍 Test search 跳转
+    /search?sapp=。
+  - 路由 /searches、/searches/{id} 指向新页（/search 执行页保留）。
+- i18n：9 条新键；测试：searchapp_mgr 2（upsert/partial parse）。
+- 门禁：1334 passed / 0 failed / 27 ignored。
+
 ## 2026-08-13 v0.3.3bb：Chat 设置抽屉 + 钉钉 AI 表格连接器（Stage 2 主 UI + 连接器#2）
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

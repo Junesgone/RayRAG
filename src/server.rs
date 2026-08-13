@@ -3171,7 +3171,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // RAGFlow 0.26.4 route parity: /chats (chat apps) and /searches (search apps).
         .route("/chats", get(crate::web::chat_apps_page))
         .route("/chats/{id}", get(crate::web::chat_app_detail_page))
-        .route("/searches", get(crate::web::search_page))
+        .route("/searches", get(crate::web::search_apps_page))
+        .route("/searches/{id}", get(crate::web::search_app_detail_page))
         .route("/chat/{id}", get(crate::web::chat_detail_page))
         .route("/dataset/{id}", get(crate::web::dataset_page))
         .route("/datasources", get(crate::web::datasources_page))
@@ -3466,7 +3467,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/searchapps/{id}",
-            axum::routing::delete(crate::api::searchapp_mgr::delete_search_app),
+            axum::routing::put(crate::api::searchapp_mgr::update_search_app)
+                .delete(crate::api::searchapp_mgr::delete_search_app),
         )
         .route(
             "/api/v1/data_sources/{id}/files",

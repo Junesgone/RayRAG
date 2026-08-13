@@ -37,6 +37,15 @@ fn t(k: &str, zh: bool) -> &str {
         "Similarity Threshold" => "相似度阈值",
         "Top N" => "检索条数",
         "Empty Response" => "空回复文案",
+        "Search apps" => "检索应用",
+        "Create search" => "创建检索应用",
+        "No search app created yet" => "尚未创建检索应用",
+        "Click to create your first search app" => "点击创建你的第一个检索应用",
+        "Search app not found" => "检索应用不存在",
+        "Test search" => "测试检索",
+        "Hybrid" => "混合检索",
+        "Rerank" => "重排序",
+        "Top K" => "召回条数",
 
         "Agents" => "智能体",
         "Memories" => "记忆",
@@ -2336,6 +2345,123 @@ fn html_esc(input: &str, max_chars: usize) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+
+
+/// RAGFlow 0.26.4 parity: search-apps list page (`/searches`).
+pub async fn search_apps_page(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let apps = state
+        .search_apps
+        .as_ref()
+        .map(|s| s.list())
+        .unwrap_or_default();
+    let mut cards = String::new();
+    for a in &apps {
+        let initial = if a.icon.is_empty() {
+            a.name.chars().next().unwrap_or('S').to_uppercase().to_string()
+        } else {
+            a.icon.clone()
+        };
+        let desc = if a.description.is_empty() { "-".to_string() } else { a.description.clone() };
+        cards.push_str(&format!(
+            "<div class='chat-card' data-name='{name}' data-testid='search-card' onclick=\"location.href='/searches/{id}'\"><div class='cc-top'><div class='av' style='width:40px;height:40px;font-size:18px'>{icon}</div><div class='cc-meta'><h3 style='font-size:15px;margin:0'>{name}</h3><p style='font-size:12px;color:var(--tm);margin:2px 0 0'>{desc}</p></div><div class='cc-actions' onclick='event.stopPropagation()'><button class='btn btn-o btn-sm' onclick=\"renSApp('{id}','{name}')\">✏️</button><button class='btn btn-d btn-sm' onclick=\"delSApp('{id}')\">🗑</button></div></div></div>",
+            id = a.id, icon = initial, name = html_esc(&a.name, 30), desc = html_esc(&desc, 40)
+        ));
+    }
+    let mut b = String::new();
+    b.push_str("<div style='display:flex;align-items:center;gap:12px;margin-bottom:24px'>");
+    b.push_str(&format!("<h1 style='margin:0'>{}</h1>", t("Search apps", zh)));
+    b.push_str(&format!(
+        "<input id='sappSearch' placeholder='{}' style='margin-left:auto;width:240px' oninput='filterSApps(this.value)'>",
+        t("Search", zh)
+    ));
+    b.push_str(&format!(
+        "<button class='btn btn-p' data-testid='create-search' onclick='openNewSApp()'>+ {}</button></div>",
+        t("Create search", zh)
+    ));
+    b.push_str("<div class='chat-list' id='sappList'>");
+    if apps.is_empty() {
+        b.push_str(&format!(
+            "<div class='empty-card' data-testid='search-empty-create' onclick='openNewSApp()'><div style='font-size:44px'>🔎</div><p style='margin:12px 0 4px;font-size:15px'>{}</p><p style='color:var(--tm);font-size:12px;margin:0'>{}</p></div>",
+            t("No search app created yet", zh),
+            t("Click to create your first search app", zh),
+        ));
+    } else {
+        b.push_str(&cards);
+    }
+    b.push_str("</div>");
+    b.push_str(&format!("<div class='modal-overlay' id='newSAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='sappName' placeholder='{}' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeNewSApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveNewSApp()'>{}</button></div></div></div>",
+        t("Create search", zh), t("Name", zh), t("Cancel", zh), t("Save", zh)));
+    b.push_str(&format!("<div class='modal-overlay' id='renSAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='renSAppName' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeRenSApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveRenSApp()'>{}</button></div></div></div>",
+        t("Rename", zh), t("Cancel", zh), t("Save", zh)));
+    b.push_str("<input id='renSAppId' type='hidden'>");
+    b.push_str("<script>");
+    b.push_str("function filterSApps(v){v=(v||'').toLowerCase();document.querySelectorAll('#sappList .chat-card').forEach(function(c){c.style.display=(!v||(c.getAttribute('data-name')||'').toLowerCase().indexOf(v)>=0)?'':'none'})}");
+    b.push_str("function openNewSApp(){document.getElementById('sappName').value='';document.getElementById('newSAppModal').classList.add('show')}");
+    b.push_str("function closeNewSApp(){document.getElementById('newSAppModal').classList.remove('show')}");
+    b.push_str("function saveNewSApp(){var n=document.getElementById('sappName').value.trim();if(!n){alert('Name required');return}fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'create failed')}})}");
+    b.push_str("function renSApp(id,name){document.getElementById('renSAppId').value=id;document.getElementById('renSAppName').value=name;document.getElementById('renSAppModal').classList.add('show')}");
+    b.push_str("function closeRenSApp(){document.getElementById('renSAppModal').classList.remove('show')}");
+    b.push_str("function saveRenSApp(){var n=document.getElementById('renSAppName').value.trim();var id=document.getElementById('renSAppId').value;if(!n)return;fetch('/api/v1/searchapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
+    b.push_str("function delSApp(id){if(!confirm('Delete this search app?'))return;fetch('/api/v1/searchapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
+    b.push_str("</script>");
+    Html(layout(&t("Search apps", zh), &b, zh))
+}
+
+/// RAGFlow 0.26.4 parity: search-app detail page (`/searches/{id}`).
+pub async fn search_app_detail_page(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Path(app_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let app = state
+        .search_apps
+        .as_ref()
+        .and_then(|s| s.get(&app_id));
+    let app = match app {
+        Some(a) => a,
+        None => {
+            return Html(format!(
+                "<h1>404</h1><p>{}: {app_id}</p>",
+                t("Search app not found", zh)
+            ));
+        }
+    };
+    let initial = if app.icon.is_empty() {
+        app.name.chars().next().unwrap_or('S').to_uppercase().to_string()
+    } else {
+        app.icon.clone()
+    };
+    let mut kb_opts = String::new();
+    for kb in state.kbs.list() {
+        let sel = if app.kb_ids.contains(&kb.id) { " selected" } else { "" };
+        kb_opts.push_str(&format!("<option value='{}'{sel}>{}</option>", kb.id, html_esc(&kb.name, 40)));
+    }
+    let ck = |on: bool| if on { " checked" } else { "" };
+    let mut b = String::new();
+    b.push_str(&format!(
+        "<div style='display:flex;align-items:center;gap:12px;margin-bottom:20px'><a class='btn btn-o btn-sm' href='/searches' style='text-decoration:none'>←</a><div class='av' style='width:44px;height:44px;font-size:20px'>{}</div><div><h1 style='margin:0;font-size:18px'>{}</h1><p style='color:var(--tm);font-size:12px;margin:2px 0 0'>{}</p></div><button class='btn btn-p' style='margin-left:auto' onclick=\"location.href='/search?sapp={}'\">🔍 {}</button></div>",
+        initial, html_esc(&app.name, 40), html_esc(if app.description.is_empty() { "-" } else { &app.description }, 60), app_id, t("Test search", zh)
+    ));
+    b.push_str(&format!(
+        "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><select id='sa_kbs' multiple style='width:100%;min-height:72px'>{}</select><div style='display:flex;gap:16px;margin-top:10px'><label class='set-switch'><input type='checkbox' id='sa_hybrid'{}><span class='set-sw-label'>{}</span></label><label class='set-switch'><input type='checkbox' id='sa_rerank'{}><span class='set-sw-label'>{}</span></label></div><label class='set-label'>{}</label><input id='sa_topk' type='number' min='1' max='128' value='{}' style='width:120px'></div>",
+        t("Basic Settings", zh), t("Knowledge Bases", zh), kb_opts, ck(app.hybrid), t("Hybrid", zh), ck(app.rerank), t("Rerank", zh), t("Top K", zh), app.top_k
+    ));
+    b.push_str(&format!(
+        "<div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-p' onclick='saveSApp()'>{}</button></div>",
+        t("Save", zh)
+    ));
+    b.push_str(&format!(
+        "<script>function saveSApp(){{var id='{app_id}';var kbs=Array.from(document.getElementById('sa_kbs').selectedOptions).map(function(o){{return o.value}});fetch('/api/v1/searchapps/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{kb_ids:kbs,hybrid:document.getElementById('sa_hybrid').checked,rerank:document.getElementById('sa_rerank').checked,top_k:parseInt(document.getElementById('sa_topk').value)||8}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        app_id = app_id
+    ));
+    Html(layout(&t("Search apps", zh), &b, zh))
 }
 
 #[cfg(test)]
