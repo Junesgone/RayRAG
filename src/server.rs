@@ -3444,7 +3444,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/chatapps/{id}",
-            axum::routing::put(crate::api::chatapp_mgr::rename_chat_app)
+            axum::routing::put(crate::api::chatapp_mgr::update_chat_app)
                 .delete(crate::api::chatapp_mgr::delete_chat_app),
         )
         .route(

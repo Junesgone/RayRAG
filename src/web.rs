@@ -1,3 +1,4 @@
+
 //! RayRAG Web UI — Rust SSR, mirrors RAGFlow's complete UI flow.
 //! Every button, every page, every interaction matches RAGFlow's design.
 
@@ -24,6 +25,18 @@ fn t(k: &str, zh: bool) -> &str {
         "New conversation" => "新建对话",
         "No conversations yet" => "暂无对话",
         "Chat app not found" => "对话应用不存在",
+        "Chat Setting" => "对话设置",
+        "Basic Settings" => "基本设置",
+        "Icon" => "图标",
+        "Description" => "描述",
+        "LLM" => "大语言模型",
+        "Opener" => "开场白",
+        "System Prompt" => "系统提示词",
+        "Prompt Engine" => "提示引擎",
+        "Cross Languages" => "多语言检索",
+        "Similarity Threshold" => "相似度阈值",
+        "Top N" => "检索条数",
+        "Empty Response" => "空回复文案",
 
         "Agents" => "智能体",
         "Memories" => "记忆",
@@ -207,7 +220,7 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
 .tip:hover::after{content:attr(data-tip);position:absolute;left:22px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
 .lang-chip{border:1px solid var(--bd);border-radius:14px;padding:2px 10px;font-size:12px;background:transparent;color:var(--t);cursor:pointer}
 .lang-chip.on{background:var(--p);color:#fff;border-color:var(--p)}
-</style></head><body>");
+\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style></head><body>");
     h.push_str("<header class='hdr'><a href='/dashboard' class='logo'><svg width='28' height='28'><circle cx='14' cy='14' r='12' fill='#4f46e5'/><text x='14' y='19' text-anchor='middle' fill='#fff' font-size='13' font-weight='700'>R</text></svg>RayRAG</a>");
     h.push_str("<nav class='np'><a href='/dashboard'>");
     h.push_str(db);
@@ -2215,19 +2228,103 @@ pub async fn chat_app_detail_page(
     if convs.is_empty() {
         cards = format!("<p style='color:var(--tm);text-align:center;padding:32px'>{}</p>", t("No conversations yet", zh));
     }
+
+    // ---- settings form values (server-rendered from ChatApp) ----
+    let app = app.as_ref().unwrap();
+    let pc = app.prompt_config.as_ref().and_then(|v| v.as_object());
+    let getb = |k: &str, d: bool| pc.and_then(|o| o.get(k)).and_then(|v| v.as_bool()).unwrap_or(d);
+    let gets = |k: &str| pc.and_then(|o| o.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let getn = |k: &str, d: f64| pc.and_then(|o| o.get(k)).and_then(|v| v.as_f64()).unwrap_or(d);
+    let prologue = gets("prologue");
+    let system = gets("system");
+    let empty_response = gets("empty_response");
+    let quote = getb("quote", true);
+    let keyword = getb("keyword", false);
+    let tts = getb("tts", false);
+    let use_kg = getb("use_kg", false);
+    let toc_enhance = getb("toc_enhance", false);
+    let similarity = getn("similarity_threshold", 0.2);
+    let top_n = getn("top_n", 8.0) as i64;
+    let cross: Vec<String> = pc
+        .and_then(|o| o.get("cross_languages"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let llm_id = app.llm_id.clone().unwrap_or_default();
+    let mut kb_opts = String::new();
+    for kb in state.kbs.list() {
+        let sel = if app.kb_ids.contains(&kb.id) { " selected" } else { "" };
+        kb_opts.push_str(&format!("<option value='{}'{sel}>{}</option>", kb.id, html_esc(&kb.name, 40)));
+    }
+    // LLM options: tenant models via providers/models endpoint is async; render current value as text input + datalist from providers.
+    let mut llm_opts = String::new();
+    for p in state.providers.list() {
+        for m in &p.models {
+            llm_opts.push_str(&format!("<option value='{}'>", html_esc(m, 60)));
+        }
+    }
+
     let mut b = String::new();
+    // Header row: back + app identity + Settings button (RAGFlow chat-settings parity).
     b.push_str(&format!(
-        "<div style='display:flex;align-items:center;gap:12px;margin-bottom:20px'><div class='av' style='width:44px;height:44px;font-size:20px'>{}</div><div><h1 style='margin:0;font-size:18px'>{}</h1><p style='color:var(--tm);font-size:12px;margin:2px 0 0'>{}</p></div><button class='btn btn-p' style='margin-left:auto' onclick='newConv(\"{}\")'>+ {}</button></div>",
+        "<div style='display:flex;align-items:center;gap:12px;margin-bottom:20px'><a class='btn btn-o btn-sm' href='/chats' style='text-decoration:none'>←</a><div class='av' style='width:44px;height:44px;font-size:20px'>{}</div><div><h1 style='margin:0;font-size:18px'>{}</h1><p style='color:var(--tm);font-size:12px;margin:2px 0 0'>{}</p></div><button class='btn btn-p' style='margin-left:auto' onclick='newConv(\"{}\")'>+ {}</button><button class='btn btn-o' style='margin-left:8px' data-testid='chat-settings' onclick='toggleSettings()'>⚙</button></div>",
         icon, html_esc(&name, 40), html_esc(&desc, 60), app_id, t("New conversation", zh)
     ));
     b.push_str("<div class='chat-list'>");
     b.push_str(&cards);
     b.push_str("</div>");
-    b.push_str("<script>");
+
+    // ---- Settings drawer (440px, RAGFlow chat-detail-settings parity) ----
+    let sw = |k: &str, on: bool| if on { format!("<input type='checkbox' id='sw_{k}' checked>") } else { format!("<input type='checkbox' id='sw_{k}'>") };
+    let langs = ["Chinese","English","Japanese","Korean","French","German","Spanish","Portuguese","Italian","Dutch","Polish"];
+    let mut chips = String::new();
+    for l in langs {
+        let on = if cross.contains(&l.to_string()) { " on" } else { "" };
+        chips.push_str(&format!("<span class='lang-chip{on}' data-lang='{l}' onclick='toggleLang(this)'>{l}</span>"));
+    }
     b.push_str(&format!(
-        "function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}"
+        "<div class='settings-drawer' id='settingsDrawer'><div style='padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd)'><b>{}</b><button class='btn btn-o btn-sm' data-testid='chat-detail-settings-close' onclick='toggleSettings()'>✕</button></div><div style='padding:16px 20px;overflow-y:auto;flex:1'>",
+        t("Chat Setting", zh)
     ));
-    b.push_str("</script>");
+    // Basic settings section
+    b.push_str(&format!(
+        "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><input id='f_icon' value='{}' placeholder='🤖' style='width:100%'><label class='set-label'>{}</label><input id='f_name' value='{}' style='width:100%'><label class='set-label'>{}</label><textarea id='f_desc' rows='2' style='width:100%'>{}</textarea>",
+        t("Basic Settings", zh), t("Icon", zh), html_esc(&app.icon, 8), t("Name", zh), html_esc(&app.name, 128), t("Description", zh), html_esc(&app.description, 500)
+    ));
+    b.push_str(&format!(
+        "<label class='set-label'>{} (llm_id)</label><input id='f_llm' value='{}' list='llmList' style='width:100%' placeholder='如 Qwen3.5-9B'><datalist id='llmList'>{}</datalist>",
+        t("LLM", zh), html_esc(&llm_id, 80), llm_opts
+    ));
+    b.push_str(&format!(
+        "<label class='set-label'>{} (prologue)</label><textarea id='f_prologue' rows='3' style='width:100%'>{}</textarea><label class='set-label'>{}</label><select id='f_kbs' multiple style='width:100%;min-height:72px'>{}</select>",
+        t("Opener", zh), html_esc(&prologue, 2000), t("Knowledge Bases", zh), kb_opts
+    ));
+    b.push_str("</div>");
+    // Prompt engine section
+    b.push_str(&format!(
+        "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><textarea id='f_system' rows='4' style='width:100%'>{}</textarea><label class='set-label'>{}</label><div id='langChips' style='display:flex;flex-wrap:wrap;gap:6px;margin-top:6px'>{}</div>",
+        t("Prompt Engine", zh), t("System Prompt", zh), html_esc(&system, 4000), t("Cross Languages", zh), chips
+    ));
+    for (k, label) in [("quote", "Quote"), ("keyword", "Keyword"), ("tts", "TTS"), ("use_kg", "Use KG"), ("toc_enhance", "TOC Enhance")] {
+        let on = match k { "quote" => quote, "keyword" => keyword, "tts" => tts, "use_kg" => use_kg, _ => toc_enhance };
+        b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
+    }
+    b.push_str(&format!(
+        "<div style='display:flex;gap:12px;margin-top:8px'><div style='flex:1'><label class='set-label'>{}</label><input id='f_sim' type='number' step='0.05' min='0' max='1' value='{similarity}' style='width:100%'></div><div style='flex:1'><label class='set-label'>{}</label><input id='f_topn' type='number' step='1' min='1' max='128' value='{top_n}' style='width:100%'></div></div><label class='set-label' style='margin-top:8px'>{}</label><textarea id='f_empty' rows='2' style='width:100%'>{}</textarea>",
+        t("Similarity Threshold", zh), t("Top N", zh), t("Empty Response", zh), html_esc(&empty_response, 1000)
+    ));
+    b.push_str("</div>");
+    // Footer buttons
+    b.push_str(&format!(
+        "<div style='display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--bd)'><button class='btn btn-o' data-testid='chat-detail-settings-cancel' onclick='toggleSettings()'>{}</button><button class='btn btn-p' onclick='saveSettings()'>{}</button></div>",
+        t("Cancel", zh), t("Save", zh)
+    ));
+    b.push_str("</div>");
+    // JS
+    b.push_str(&format!(
+        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value}}}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        app_id = app_id
+    ));
     Html(layout(&t("Chat apps", zh), &b, zh))
 }
 

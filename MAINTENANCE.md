@@ -1,3 +1,34 @@
+## 2026-08-13 v0.3.3bb：Chat 设置抽屉 + 钉钉 AI 表格连接器（Stage 2 主 UI + 连接器#2）
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **Chat 设置抽屉（对齐 app-settings/chat-settings.tsx）**：
+  - RAGFlow 结构实测：详情页 ⚙ Settings 按钮（testid chat-settings）→
+    右侧 440px 抽屉（testid chat-detail-settings），标题 "Chat Setting"，
+    表单 = ChatBasicSetting（icon/name/description + LLM collapse + prologue
+    + KB 多选）+ ChatPromptEngine（system/cross_languages/rerank/similarity/
+    top_n/tavily/toc/use_kg/empty_response/quote/keyword/tts/reference_metadata），
+    底部 Cancel + SavingButton。defaultValues：quote=true、keyword=false、
+    tts=false、use_kg=false、toc_enhance=false、top_n=8、
+    similarity_threshold=0.2。
+  - RayRAG 实现：chat_app_detail_page 重写，加 ⚙ 按钮 + settings-drawer
+    （440px 右滑入），两段表单（基本设置/提示引擎），5 开关 + 2 数值 +
+    3 textarea + LLM datalist + KB 多选 + 11 语言 chip；Save/Cancel；
+    PUT /api/v1/chatapps/{id} 持久化。新增 .settings-drawer/.set-* CSS
+    与 13 条 i18n 键。
+- **update_chat_app handler**（RAGFlow updateChat parity）：PUT 接受任意
+  子集（name/description/icon/kb_ids/llm_id/llm_setting/prompt_config），
+  name-only 保持 rename 语义；rename_chat_app 被取代删除。测试 3 个
+  （roundtrip + name-only + prompt_config/llm_setting 解析）。
+- **ChatApp 字段**（上轮 6a317da）：llm_setting/prompt_config 持久化已就绪。
+- **钉钉 AI 表格连接器**（子agent 并行，仅改 src/connectors.rs）：
+  DingTalkAiTableConnector —— appKey/appSecret 换 access_token → 列 bases
+  → 列 sheets → 列 records，每行一个文档（列名:值拼接），token 缓存至
+  到期前 60s；kind "dingtalk_ai_table" 分发替换 bail；6 个本地 mock 测试。
+  connectors:: 37 passed（31+6）。
+- 待办转移：rerank 选择器、reference_metadata、refine_multiturn、reasoning
+  字段未入表单（inventory 已记录），下轮补。
+
+
 ## 2026-08-13 v0.3.3ba：Chat 应用体系 Stage 1（RAGFlow 0.26.4 /chats 对齐）
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

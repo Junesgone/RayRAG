@@ -544,6 +544,7 @@ impl ConnectorRegistry {
             "confluence" => Ok(Box::new(ConfluenceConnector::new(options))),
             "yuque" => Ok(Box::new(YuqueConnector::new(options)?)),
             "dingtalk" => Ok(Box::new(DingTalkConnector::new(options)?)),
+            "dingtalk_ai_table" => Ok(Box::new(DingTalkAiTableConnector::new(options)?)),
             // S3 协议家族：S3 / GCS-interop / Oracle S3-compat / Cloudflare R2
             // 共用 SigV4 连接器（R2 为 S3 兼容协议，端点经 options.url 指定）。
             "s3" | "gcs" | "oracle" | "r2" => Ok(Box::new(S3Connector::new(options))),
@@ -555,7 +556,7 @@ impl ConnectorRegistry {
             "github" | "bitbucket" | "jira" | "box" | "dropbox" | "onedrive"
             | "outlook" | "sharepoint" | "teams" | "slack" | "discord" | "zendesk"
             | "salesforce" | "moodle" | "airtable" | "asana" | "imap"
-            | "dingtalk_ai_table" | "seafile" | "rest_api" | "mysql"
+            | "seafile" | "rest_api" | "mysql"
             | "postgresql" | "bigquery" => {
                 bail!("connector not implemented yet: {kind} (registered, coming soon)")
             }
@@ -2539,6 +2540,448 @@ impl Connector for DingTalkConnector {
     }
 }
 
+// ── Concrete connector: DingTalk AI Table / 钉钉 AI 多维表格 ──────────────────
+//
+// DingTalk AI Table ("notable") connector — mirrors RAGFlow
+// `common/data_source/dingtalk_ai_table_connector.py`. NOT the cloud drive:
+// rows of multi-dimensional tables are ingested, one document per record.
+//
+// Auth: `token = "appKey:appSecret"` → accessToken
+// (POST `/v1.0/oauth2/accessToken`, body `{"appKey","appSecret"}`, response
+// `{"accessToken","expireIn"}`). The token is cached until 60s before the
+// `expireIn` deadline (RAGFlow re-uses the token until it expires).
+// List sheets:  GET `/v1.0/notable/tables/{tableId}/sheets?operatorId=…`
+//               (response `{"value":[{"id","name"}]}`; single call like the
+//               Python `GetAllSheetsRequest`, no pagination).
+// List records: GET `/v1.0/notable/tables/{tableId}/sheets/{sheetId}/records
+//               ?operatorId=…&maxResults=100&nextToken=…` (paginated;
+//               response `{"records":[{"id","fields"}],"nextToken"}`).
+//
+// All authenticated calls carry `x-acs-dingtalk-access-token: <token>`.
+//
+// Source options:
+//   * `url`    = optional API base override (default
+//                `https://api.dingtalk.com`)
+//   * `token`  = `appKey:appSecret`
+//   * `target` = Notable table id; `operator_id:table_id` when an operator
+//                unionId is required by the Notable APIs.
+#[derive(Debug)]
+pub struct DingTalkAiTableConnector {
+    client: reqwest::Client,
+    base_url: String,
+    app_key: String,
+    app_secret: String,
+    /// Notable table id (RAGFlow `table_id`, env `DINGTALK_AI_TABLE_BASE_ID`).
+    table_id: String,
+    /// Operator unionId required by the Notable APIs (may be empty).
+    operator_id: String,
+    /// Cached access token + expiry instant (refresh 60s before expireIn).
+    token_cache: std::sync::Mutex<Option<CachedAccessToken>>,
+}
+
+/// Cached DingTalk access token with its refresh deadline.
+#[derive(Debug, Clone)]
+struct CachedAccessToken {
+    token: String,
+    expires_at: std::time::Instant,
+}
+
+/// DingTalk Notable doc-id prefix (RAGFlow `_DINGTALK_AI_TABLE_DOC_ID_PREFIX`).
+const DINGTALK_AI_TABLE_DOC_ID_PREFIX: &str = "dingtalk_ai_table:";
+
+impl DingTalkAiTableConnector {
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let (app_key, app_secret) = split_credentials(&options.token);
+        if app_key.is_empty() || app_secret.is_empty() {
+            bail!("dingtalk_ai_table: appKey:appSecret required (token)");
+        }
+        // target: "table_id" or "operator_id:table_id" (operator unionId).
+        let target = options.target.trim();
+        let (operator_id, table_id) = match target.split_once(':') {
+            Some((operator, table)) => (operator.trim().to_string(), table.trim().to_string()),
+            None => (String::new(), target.to_string()),
+        };
+        if table_id.is_empty() {
+            bail!("dingtalk_ai_table: target required (Notable table id)");
+        }
+        let base_url = {
+            let raw = options.url.trim().trim_end_matches('/');
+            if raw.is_empty() {
+                "https://api.dingtalk.com".to_string()
+            } else {
+                raw.to_string()
+            }
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            base_url,
+            app_key,
+            app_secret,
+            table_id,
+            operator_id,
+            token_cache: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Exchange appKey/appSecret for an accessToken, cached until 60s before
+    /// the `expireIn` deadline elapses.
+    async fn access_token(&self) -> Result<String> {
+        {
+            let guard = self.token_cache.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(cached) = guard.as_ref() {
+                if std::time::Instant::now() < cached.expires_at {
+                    return Ok(cached.token.clone());
+                }
+            }
+        }
+        let url = format!("{}/v1.0/oauth2/accessToken", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({
+                "appKey": self.app_key,
+                "appSecret": self.app_secret,
+            }))
+            .send()
+            .await
+            .context("dingtalk_ai_table: accessToken request failed")?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "dingtalk_ai_table: accessToken upstream error ({}): code={}, message={}",
+                status.as_u16(),
+                value
+                    .get("code")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        let token = value
+            .get("accessToken")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("dingtalk_ai_table: accessToken missing in response"))?
+            .to_string();
+        // expireIn (seconds, default 7200); refresh 60s early, never below 1s.
+        let expire_in = value
+            .get("expireIn")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(7200);
+        let expires_at = std::time::Instant::now()
+            + std::time::Duration::from_secs(expire_in.saturating_sub(60).max(1));
+        *self.token_cache.lock().unwrap_or_else(|p| p.into_inner()) = Some(CachedAccessToken {
+            token: token.clone(),
+            expires_at,
+        });
+        Ok(token)
+    }
+
+    /// GET `path` with the DingTalk auth header; parse the JSON response.
+    /// Non-2xx yields a readable error carrying the upstream code/message.
+    async fn get_json(&self, path: &str, query: &[(&str, String)]) -> Result<serde_json::Value> {
+        let token = self.access_token().await?;
+        let mut url = format!("{}{}", self.base_url, path);
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(
+                &query
+                    .iter()
+                    .map(|(key, value)| format!("{}={}", urlencode(key), urlencode(value)))
+                    .collect::<Vec<_>>()
+                    .join("&"),
+            );
+        }
+        let response = self
+            .client
+            .get(&url)
+            .header("x-acs-dingtalk-access-token", &token)
+            .send()
+            .await
+            .with_context(|| format!("dingtalk_ai_table: request failed: {url}"))?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "dingtalk_ai_table: upstream error ({}): code={}, message={}",
+                status.as_u16(),
+                value
+                    .get("code")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        Ok(value)
+    }
+
+    /// Composite document id — RAGFlow `_document_id` =
+    /// `dingtalk_ai_table:{table_id}:{sheet_id}:{record_id}`.
+    fn doc_id(&self, sheet_id: &str, record_id: &str) -> String {
+        format!(
+            "{DINGTALK_AI_TABLE_DOC_ID_PREFIX}{}:{}:{}",
+            self.table_id, sheet_id, record_id
+        )
+    }
+
+    /// Enumerate sheets of the configured table (GetAllSheets, single call —
+    /// the Python `GetAllSheetsRequest` carries no pagination parameters).
+    async fn sheets(&self) -> Result<Vec<(String, String)>> {
+        let value = self
+            .get_json(
+                &format!(
+                    "/v1.0/notable/tables/{}/sheets",
+                    urlencode(&self.table_id)
+                ),
+                &[("operatorId", self.operator_id.clone())],
+            )
+            .await?;
+        let mut sheets = Vec::new();
+        for sheet in value
+            .get("value")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let id = sheet
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let name = sheet
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if !id.is_empty() {
+                sheets.push((id, name));
+            }
+        }
+        Ok(sheets)
+    }
+
+    /// One ListRecords page: `(records, next_token)`.
+    async fn records_page(
+        &self,
+        sheet_id: &str,
+        next_token: &str,
+        max_results: usize,
+    ) -> Result<(Vec<serde_json::Value>, String)> {
+        let value = self
+            .get_json(
+                &format!(
+                    "/v1.0/notable/tables/{}/sheets/{}/records",
+                    urlencode(&self.table_id),
+                    urlencode(sheet_id)
+                ),
+                &[
+                    ("operatorId", self.operator_id.clone()),
+                    ("maxResults", max_results.to_string()),
+                    ("nextToken", next_token.to_string()),
+                ],
+            )
+            .await?;
+        let records = value
+            .get("records")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let next = value
+            .get("nextToken")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok((records, next))
+    }
+}
+
+/// Render record fields as `列名: 值` lines (RAGFlow would JSON-dump them; the
+/// Rust connector flattens to readable text so `.txt` parsing is unambiguous).
+fn dingtalk_ai_table_record_blob(fields: &serde_json::Value) -> String {
+    let Some(object) = fields.as_object() else {
+        return fields.to_string();
+    };
+    let mut lines = String::new();
+    for (name, value) in object {
+        let rendered = match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        lines.push_str(name);
+        lines.push_str(": ");
+        lines.push_str(&rendered);
+        lines.push('\n');
+    }
+    lines
+}
+
+/// Semantic identifier: `{sheet_name} - {first short string field[:50]}`,
+/// falling back to `{sheet_name} - Record {record_id}` (RAGFlow
+/// `_convert_record_to_document`).
+fn dingtalk_ai_table_record_name(fields: &serde_json::Value, sheet_name: &str, record_id: &str) -> String {
+    if let Some(object) = fields.as_object() {
+        for value in object.values() {
+            if let serde_json::Value::String(text) = value {
+                if !text.is_empty() && text.len() < 100 {
+                    return format!(
+                        "{sheet_name} - {}",
+                        text.chars().take(50).collect::<String>()
+                    );
+                }
+            }
+        }
+    }
+    format!("{sheet_name} - Record {record_id}")
+}
+
+#[async_trait]
+impl Connector for DingTalkAiTableConnector {
+    fn kind(&self) -> &'static str {
+        "dingtalk_ai_table"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        if self.app_key.is_empty() || self.app_secret.is_empty() {
+            bail!("dingtalk_ai_table: appKey:appSecret required (token)");
+        }
+        // 换 token（缓存至到期前 60s），然后探针列 sheets 验证凭证可用
+        // （RAGFlow `validate_connector_settings` 调 GetAllSheets）。
+        self.access_token().await?;
+        let _ = self.sheets().await?;
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let mut files = Vec::new();
+        for (sheet_id, sheet_name) in self.sheets().await? {
+            let mut next_token = String::new();
+            let mut pages = 0usize;
+            loop {
+                let (records, next) = self.records_page(&sheet_id, &next_token, 100).await?;
+                for (index, record) in records.iter().enumerate() {
+                    let record_id = match record
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    {
+                        Some(id) => id.to_string(),
+                        None => format!("row{index}"),
+                    };
+                    let fields = record
+                        .get("fields")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let name = dingtalk_ai_table_record_name(&fields, &sheet_name, &record_id);
+                    let blob = dingtalk_ai_table_record_blob(&fields);
+                    let mut metadata = HashMap::new();
+                    metadata.insert("source".into(), "dingtalk_ai_table".into());
+                    metadata.insert("table_id".into(), self.table_id.clone());
+                    metadata.insert("sheet_id".into(), sheet_id.clone());
+                    metadata.insert("sheet_name".into(), sheet_name.clone());
+                    metadata.insert("record_id".into(), record_id.clone());
+                    files.push(RemoteFile {
+                        id: self.doc_id(&sheet_id, &record_id),
+                        name,
+                        path: format!("{}/{}/{}", self.table_id, sheet_id, record_id),
+                        extension: ".txt".into(),
+                        size_bytes: blob.len() as u64,
+                        updated_at: String::new(),
+                        fingerprint: String::new(),
+                        metadata,
+                    });
+                }
+                next_token = next;
+                if next_token.is_empty() {
+                    break;
+                }
+                pages += 1;
+                if pages > 1000 {
+                    bail!("dingtalk_ai_table: records pagination exceeded 1000 pages — aborting");
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let sheet_id = file
+            .metadata
+            .get("sheet_id")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let record_id = file
+            .metadata
+            .get("record_id")
+            .map(String::as_str)
+            .unwrap_or_default();
+        // Re-list the sheet until the record is found (RAGFlow `get_value`
+        // re-fetches content lazily; rows have no stable download URL).
+        let mut next_token = String::new();
+        let mut pages = 0usize;
+        loop {
+            let (records, next) = self.records_page(sheet_id, &next_token, 100).await?;
+            for (index, record) in records.iter().enumerate() {
+                let rid = record
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                // Fallback ids (row{index}) match records the API lists
+                // without an id.
+                let matched = (rid == record_id)
+                    || (rid.is_empty() && record_id == format!("row{index}"));
+                if matched {
+                    let fields = record
+                        .get("fields")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    return Ok(dingtalk_ai_table_record_blob(&fields).into_bytes());
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            next_token = next;
+            pages += 1;
+            if pages > 1000 {
+                bail!("dingtalk_ai_table: records pagination exceeded 1000 pages — aborting");
+            }
+        }
+        bail!(
+            "dingtalk_ai_table: record not found: {record_id} (sheet {sheet_id})"
+        )
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        for key in ["source", "table_id", "sheet_id", "sheet_name", "record_id"] {
+            if let Some(value) = file.metadata.get(key) {
+                metadata.insert(key.to_string(), value.clone());
+            }
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            source: DocumentSource::DingTalk,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Split "user:password" (or "app_id:app_secret") credential strings.
@@ -4334,5 +4777,355 @@ mod rss_connector_tests {
         let connector =
             ConnectorRegistry::create("rss", options("https://8.8.8.8/feed.xml".into())).unwrap();
         assert_eq!(connector.kind(), "rss");
+    }
+}
+
+#[cfg(test)]
+mod dingtalk_ai_table_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, body)`; the connector's `options.url` override points
+    /// here — no real network.
+    fn mock_ai_table_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base_url: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base_url;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    fn record(id: &str, fields: serde_json::Value) -> serde_json::Value {
+        json!({ "id": id, "fields": fields })
+    }
+
+    /// `new()` requires `token = "appKey:appSecret"` and a non-empty
+    /// `target` (Notable table id); `target = "op:tbl"` splits the operator
+    /// unionId off the table id.
+    #[test]
+    fn new_requires_app_key_app_secret_and_target() {
+        let error =
+            DingTalkAiTableConnector::new(options(String::new(), "no-colon", "tbl1")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+        let error =
+            DingTalkAiTableConnector::new(options(String::new(), "", "tbl1")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+        let error =
+            DingTalkAiTableConnector::new(options(String::new(), "appk:apps", "")).unwrap_err();
+        assert!(error.to_string().contains("target"), "got: {error:#}");
+
+        // operator_id:table_id target splits cleanly.
+        let connector = DingTalkAiTableConnector::new(options(
+            String::new(),
+            "appk:apps",
+            "op-union-1:tbl9",
+        ))
+        .unwrap();
+        assert_eq!(connector.table_id, "tbl9");
+        assert_eq!(connector.operator_id, "op-union-1");
+    }
+
+    /// load_credentials exchanges appKey/appSecret for an accessToken (cached
+    /// until 60s before expireIn) and probes the GetAllSheets endpoint; a
+    /// later list_files reuses the cached token — exactly ONE accessToken
+    /// request.
+    #[tokio::test]
+    async fn load_credentials_acquires_and_caches_access_token() {
+        let token_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = token_calls.clone();
+        let base = mock_ai_table_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (200, json!({"accessToken": "acc-abc", "expireIn": 7200}).to_string())
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => {
+                    if headers.contains("x-acs-dingtalk-access-token: acc-abc") {
+                        (200, json!({"value": []}).to_string())
+                    } else {
+                        (403, json!({"code": "invalidToken", "message": "bad token"}).to_string())
+                    }
+                }
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let mut connector =
+            DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        connector.load_credentials().await.unwrap();
+        // list_files reuses the cached token — no second accessToken request.
+        let files = connector.list_files().await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(
+            token_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "accessToken must be cached after load_credentials"
+        );
+    }
+
+    /// list_files walks sheets → paginated records, mapping every row onto a
+    /// RemoteFile: id=`dingtalk_ai_table:{table}:{sheet}:{record}` (row{idx}
+    /// fallback when the API lists a record without an id), name = first short
+    /// string field, metadata carries source/table/sheet/record ids.
+    #[tokio::test]
+    async fn list_files_walks_sheets_and_paginates_records() {
+        let base = mock_ai_table_server(move |method, path, query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
+                    200,
+                    json!({"value": [
+                        {"id": "s1", "name": "Sheet One"},
+                        {"id": "s2", "name": "Sheet Two"}
+                    ]})
+                    .to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets/s1/records") => {
+                    // First page carries nextToken; second page terminates.
+                    if query.contains("nt-2") {
+                        (
+                            200,
+                            json!({"records": [
+                                record("r3", json!({"标题": "第三条", "状态": "done"}))
+                            ], "nextToken": ""})
+                            .to_string(),
+                        )
+                    } else {
+                        (
+                            200,
+                            json!({"records": [
+                                record("r1", json!({"标题": "例会纪要", "负责人": "张三"})),
+                                record("r2", json!({"标题": "周报", "负责人": "李四"}))
+                            ], "nextToken": "nt-2"})
+                            .to_string(),
+                        )
+                    }
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets/s2/records") => (
+                    200,
+                    json!({"records": [
+                        record("r4", json!({"标题": "待办"})),
+                        json!({"fields": {"标题": "无 id 行"}})
+                    ], "nextToken": ""})
+                    .to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector = DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 5, "3 records in s1 + 2 in s2");
+
+        let first = &files[0];
+        assert_eq!(first.id, "dingtalk_ai_table:tbl1:s1:r1");
+        assert_eq!(first.name, "Sheet One - 例会纪要");
+        assert_eq!(first.path, "tbl1/s1/r1");
+        assert_eq!(first.extension, ".txt");
+        assert_eq!(first.metadata.get("source").map(String::as_str), Some("dingtalk_ai_table"));
+        assert_eq!(first.metadata.get("table_id").map(String::as_str), Some("tbl1"));
+        assert_eq!(first.metadata.get("sheet_id").map(String::as_str), Some("s1"));
+        assert_eq!(first.metadata.get("sheet_name").map(String::as_str), Some("Sheet One"));
+        assert_eq!(first.metadata.get("record_id").map(String::as_str), Some("r1"));
+
+        // Paginated page 2 lands under the same sheet.
+        assert_eq!(files[2].id, "dingtalk_ai_table:tbl1:s1:r3");
+
+        // Record without an id falls back to row{index} (sheet_id kept in the
+        // composite id, satisfying sheet_id+row 序号).
+        assert_eq!(files[4].id, "dingtalk_ai_table:tbl1:s2:row1");
+        assert_eq!(files[4].name, "Sheet Two - 无 id 行");
+    }
+
+    /// fetch_file re-lists the sheet and rebuilds the `列名: 值` blob for the
+    /// record; normalize tags the doc with source=dingtalk_ai_table metadata
+    /// and DocumentSource::DingTalk.
+    #[tokio::test]
+    async fn fetch_file_and_normalize_build_record_doc() {
+        let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
+                    200,
+                    json!({"value": [{"id": "s1", "name": "Sheet One"}]}).to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets/s1/records") => (
+                    200,
+                    json!({"records": [
+                        record("r1", json!({"标题": "例会纪要", "负责人": "张三", "人数": 3}))
+                    ], "nextToken": ""})
+                    .to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector = DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 1);
+
+        let raw = connector.fetch_file(&files[0]).await.unwrap();
+        let blob = String::from_utf8(raw).unwrap();
+        assert_eq!(blob, "标题: 例会纪要\n负责人: 张三\n人数: 3\n");
+
+        let doc = connector.normalize(&files[0], blob.clone().into_bytes()).unwrap();
+        assert_eq!(doc.blob, blob);
+        assert_eq!(doc.source, DocumentSource::DingTalk);
+        assert_eq!(doc.semantic_identifier, "Sheet One - 例会纪要");
+        assert_eq!(doc.extension, ".txt");
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("dingtalk_ai_table"));
+        assert_eq!(doc.metadata.get("sheet_name").map(String::as_str), Some("Sheet One"));
+        assert_eq!(doc.metadata.get("record_id").map(String::as_str), Some("r1"));
+
+        // Unknown record id → readable error.
+        let ghost = RemoteFile {
+            id: "dingtalk_ai_table:tbl1:s1:ghost".into(),
+            name: "ghost".into(),
+            path: "tbl1/s1/ghost".into(),
+            extension: ".txt".into(),
+            size_bytes: 0,
+            updated_at: String::new(),
+            fingerprint: String::new(),
+            metadata: [
+                ("sheet_id".to_string(), "s1".to_string()),
+                ("record_id".to_string(), "ghost".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let error = connector.fetch_file(&ghost).await.unwrap_err();
+        assert!(error.to_string().contains("not found"), "{error:#}");
+    }
+
+    /// Any non-2xx upstream response surfaces the upstream code/message in
+    /// the error (token exchange and OpenAPI probes alike).
+    #[tokio::test]
+    async fn upstream_error_response_reports_code_and_message() {
+        // GetAllSheets probe fails with a structured DingTalk error.
+        let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
+                    400,
+                    json!({"code": "invalidParameter.value.invalid",
+                           "message": "table not found"}).to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+        let mut connector =
+            DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("400"), "{error}");
+        assert!(error.contains("invalidParameter.value.invalid"), "{error}");
+        assert!(error.contains("table not found"), "{error}");
+
+        // A failing accessToken exchange reports code/message as well.
+        let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    401,
+                    json!({"code": "InvalidAuthentication",
+                           "message": "appSecret error"}).to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+        let mut connector =
+            DingTalkAiTableConnector::new(options(base, "appk:bad", "tbl1")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("401"), "{error}");
+        assert!(error.contains("InvalidAuthentication"), "{error}");
+        assert!(error.contains("appSecret error"), "{error}");
+    }
+
+    /// Registry dispatch: `create("dingtalk_ai_table", …)` returns the
+    /// DingTalkAiTableConnector instead of bailing with "not implemented";
+    /// the "dingtalk" (cloud drive) kind is untouched.
+    #[test]
+    fn registry_dispatches_dingtalk_ai_table_connector() {
+        let connector = ConnectorRegistry::create(
+            "dingtalk_ai_table",
+            options(String::new(), "appk:apps", "tbl1"),
+        )
+        .unwrap();
+        assert_eq!(connector.kind(), "dingtalk_ai_table");
+        assert_eq!(
+            ConnectorRegistry::create("dingtalk", options(String::new(), "appk:apps", "sp1"))
+                .unwrap()
+                .kind(),
+            "dingtalk"
+        );
     }
 }

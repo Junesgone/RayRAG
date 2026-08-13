@@ -150,6 +150,26 @@ pub struct RenameChatAppRequest {
     pub name: String,
 }
 
+/// Partial update for a chat app (RAGFlow `updateChat` parity): any subset of
+/// the settings-form fields. `name` alone reproduces the old rename semantics.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateChatAppRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub kb_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub llm_id: Option<Option<String>>,
+    #[serde(default)]
+    pub llm_setting: Option<serde_json::Value>,
+    #[serde(default)]
+    pub prompt_config: Option<serde_json::Value>,
+}
+
 pub async fn list_chat_apps(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -199,24 +219,70 @@ pub async fn create_chat_app(
     Ok(Json(serde_json::json!({ "code": 0, "data": { "id": id } })))
 }
 
-pub async fn rename_chat_app(
+pub async fn update_chat_app(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<RenameChatAppRequest>,
+    Json(body): Json<UpdateChatAppRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let store = state
         .chat_apps
         .as_ref()
         .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "chat apps disabled".into()))?;
-    let name = body.name.trim().to_string();
-    if name.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "name is required".into()));
+    let mut app = store
+        .get(&id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "chat app not found".into()))?;
+    let mut changed = false;
+    if let Some(name) = body.name {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "name is required".into()));
+        }
+        if name.chars().count() > 128 {
+            return Err((StatusCode::BAD_REQUEST, "name too long (max 128 chars)".into()));
+        }
+        if name != app.name {
+            app.name = name;
+            changed = true;
+        }
     }
-    let updated = store
-        .rename(&id, &name)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if updated.is_none() {
-        return Err((StatusCode::NOT_FOUND, "chat app not found".into()));
+    if let Some(description) = body.description {
+        let description = description.trim().to_string();
+        if description != app.description {
+            app.description = description;
+            changed = true;
+        }
+    }
+    if let Some(icon) = body.icon {
+        let icon = icon.trim().to_string();
+        if icon != app.icon {
+            app.icon = icon;
+            changed = true;
+        }
+    }
+    if let Some(kb_ids) = body.kb_ids {
+        if kb_ids != app.kb_ids {
+            app.kb_ids = kb_ids;
+            changed = true;
+        }
+    }
+    if let Some(llm_id) = body.llm_id {
+        if llm_id != app.llm_id {
+            app.llm_id = llm_id;
+            changed = true;
+        }
+    }
+    if let Some(llm_setting) = body.llm_setting {
+        app.llm_setting = Some(llm_setting);
+        changed = true;
+    }
+    if let Some(prompt_config) = body.prompt_config {
+        app.prompt_config = Some(prompt_config);
+        changed = true;
+    }
+    if changed {
+        store
+            .insert(app)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
     Ok(Json(serde_json::json!({ "code": 0, "message": "Updated" })))
 }
@@ -265,5 +331,28 @@ mod tests {
         assert!(store.remove("a1").unwrap().is_some());
         assert!(store.list().is_empty());
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn update_request_name_only_keeps_rename_semantics() {
+        let req: UpdateChatAppRequest =
+            serde_json::from_str(r#"{"name":"新名"}"#).unwrap();
+        assert_eq!(req.name.as_deref(), Some("新名"));
+        assert!(req.kb_ids.is_none());
+        assert!(req.prompt_config.is_none());
+    }
+
+    #[test]
+    fn update_request_accepts_prompt_config_and_llm_setting() {
+        let req: UpdateChatAppRequest = serde_json::from_str(
+            r#"{"prompt_config":{"system":"你是客服","quote":true},"llm_setting":{"temperature":0.3},"llm_id":null}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            req.prompt_config.unwrap()["quote"],
+            serde_json::json!(true)
+        );
+        assert!(req.llm_id.is_none()); // null coalesces to None (serde default)
+        assert!(req.llm_setting.is_some());
     }
 }
