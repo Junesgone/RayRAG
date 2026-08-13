@@ -1,3 +1,25 @@
+## 2026-08-13 v0.3.3an：真机 GPU 端到端验证（宿主三模型全链路）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 宿主 GPU 模型清单（ss + /proc + /v1/models 实测）：LLM = Qwen3.5-9B-Q4_K_M
+  @ 0.0.0.0:8088；Embedding = Qwen3-Embedding-4B-Q4_K_M @ 0.0.0.0:8888
+  （llama.cpp --embedding --pooling mean，2560 维）；OCR = PaddleOCR-VL-1.6 @ 8090；
+  rerank = mxbai-rerank-large-v2 @ 127.0.0.1:8081（API key `mxbai-rerank-key`）。
+- **E2E 全链路打通**：注册 local-llm/local-embedding/local-rerank 提供商 →
+  租户模型实例 → 建 KB（embd_id=裸模型名）→ 上传中文水产文档 → 解析 DONE →
+  GPU embedding 索引 → retrieval 命中（similarity 0.9344）→ GPU LLM RAG 回答
+  「溶解氧低于3毫克每升时鱼类会浮头」正确带引用。
+- **两个实坑**：① 容器内 127.0.0.1 不通宿主 GPU 服务——provider 与租户实例
+  api_base 必须用 docker 网关 `172.29.0.1`（compose 网络 rayrag_default 实测）；
+  ② 租户模型实例创建时会**快照继承 provider 的 api_base**，改 provider 不会
+  传导到已建实例，必须再 PUT 实例更新。
+- **宿主侧阻塞（非 RayRAG 缺陷）**：rerank 服务启动时未带 `--reranking`
+  标志，llama-server 明确报 501 "This server does not support reranking. Start
+  it with `--reranking`"；且只绑 127.0.0.1。重启宿主 rerank 服务（加
+  `--reranking --host 0.0.0.0`）后 RayRAG 即可直连验证 rerank 链路。
+- 测试数据已清理（KB + chat 删除）；GPU 三个 provider + 租户实例保留，
+  UI Model providers 页可直接选用。
+
 ## 2026-08-13 v0.3.3am：dark-first 设计 token 移植 + 22 个 UI 行转 aligned + crypt.py 行转 full
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
