@@ -1,3 +1,18 @@
+## 2026-08-13 v0.3.3aj：messages.py missing-token 修复闭环 + 行转 full
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 溯源 `fix_missing_tokenized_memory`：上游仅 elasticsearch doc engine 执行修复
+  （修 ES 的 `tokenized_content_ltks` 字段），其他引擎打日志后直接返回。
+- 核实 RayRAG 现状：修复循环本就完整移植（`repair_missing_field` 搜索缺失字段行
+  → 重放 content 触发刷新，guard 两条路径均有测试）；缺的只是**生产启动接线**。
+  RayRAG 用 `rag_tokenize`/`MsgTextQuery` 在查询时动态分词、不持久化 ltks 字段，
+  故非 ES 跳过是架构正确行为——与上游非 elasticsearch 路径逐字一致。
+- 本轮补齐启动钩子：server::run 在 chat channel 启动后打上游同款日志
+  （"Not using elasticsearch as doc engine, no need to fix missing tokenized memory."）
+  并注释完整溯源。
+- 覆盖矩阵 memory/services/messages.py 行 partial→full——上一批标注的
+  "missing-token no-op" 实为上游非 ES 原生行为，非缺口。
+
 ## 2026-08-13 v0.3.3ai：file_syncer 遗留键类型化解析 + service_conf 行转 full
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

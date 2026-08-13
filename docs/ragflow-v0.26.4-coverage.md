@@ -16,8 +16,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 126 | 45348 |
-| full | 549 | 263713 |
-| partial | 25 | 4780 |
+| full | 550 | 264013 |
+| partial | 24 | 4480 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3579 | 905357 |
@@ -2395,7 +2395,7 @@
 | `mcp/server/server.py` | 924 | 38635 | `07c74e28f8c2ffcb` | full | `src/mcp_server.rs` | MCP SSE server ported (ToolRegistry, JSON-RPC 2.0 dispatch) |
 | `memory/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | `-` | N/A-by-design: empty Python package marker (0 lines); no runtime semantics |
 | `memory/services/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | `-` | N/A-by-design: empty Python package marker (0 lines); no runtime semantics |
-| `memory/services/messages.py` | 300 | 12043 | `8863f5a2f5974926` | partial | `src/memory.rs; src/api/joint_services.rs; src/api/features.rs` | Composite-id upsert/deletion, physical field conversion, list/recent/search, status/forget, forgotten-first FIFO with rollback, engine-native index lifecycle and actual prefix application to native resources are implemented; missing-token repair is a documented no-op until a tokenize engine integrates — the only remaining delta
+| `memory/services/messages.py` | 300 | 12043 | `8863f5a2f5974926` | full | `src/memory.rs; src/api/joint_services.rs; src/api/features.rs` | Composite-id upsert/deletion, physical field conversion, list/recent/search, status/forget, forgotten-first FIFO with rollback and engine-native index lifecycle are implemented; fix_missing_tokenized_memory is fully ported (repair_missing_field search + content re-apply, unit-tested both guard paths) with the startup hook reproducing upstream's non-elasticsearch guard verbatim — RayRAG computes tokens at query time (rag_tokenize/MsgTextQuery) and persists no tokenized_content_ltks field, so there is no residual gap (v0.3.3aj)
 | `memory/services/query.py` | 169 | 7125 | `041fa31d49515e59` | full | `src/memory.rs; src/api/joint_services.rs` | message memory read/write/query ported |
 | `memory/utils/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `memory/utils/aggregation_utils.py` | 56 | 1792 | `6de63f1ba1355e62` | full | `src/memory.rs` | highlight + aggregation utils ported |

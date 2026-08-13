@@ -3807,6 +3807,18 @@ pub async fn run(
         tracing::info!(platform, account, "chat channel started");
     }
 
+    // Memory tokenized-field repair hook (RAGFlow
+    // `memory_message_service.fix_missing_tokenized_memory`): upstream only
+    // repairs on the elasticsearch doc engine and logs + returns on every
+    // other engine. RayRAG's zvec/postgres engine computes tokens at query
+    // time and never persists a `tokenized_content_ltks` field, so the guard
+    // short-circuits exactly like the upstream non-elasticsearch path. The
+    // full repair loop itself is ported and unit-tested in
+    // `joint_services::fix_missing_tokenized_memory` / `repair_missing_field`.
+    tracing::info!(
+        "Not using elasticsearch as doc engine, no need to fix missing tokenized memory."
+    );
+
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!(
         "RayRAG v{} on http://0.0.0.0:{}",
