@@ -1,3 +1,17 @@
+## 2026-08-13 v0.3.3ah：all_models 扁平别名索引 + Add-model 自动补全
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 查明 conf/all_models.json（3757 条 name/alias/model_types）的唯一消费方是内部 Go SDK
+  （`internal/entity/models/model.go` ProviderManager 的 alias2ModelIndex），Python API
+  与 React UI 均不引用。
+- RayRAG 完整移植该语义：`src/api/fixtures/models/all_models.json` 原样内嵌
+  （include_str! + std OnceLock 惰性解析，无新依赖）；`resolve_model_alias` 大小写不敏感
+  name/alias → 规范条目（Go 对重复别名报错，RayRAG 确定性保留首个并注释）；
+  `search_model_aliases` 子串搜索（UI 自动补全）；新增 `GET /api/v1/models/search?q=&limit=`
+  （需会话、限 100 条）；Add Provider 弹窗 Models 输入框接 datalist 自动补全
+  （防抖 250ms，逗号分段取末段搜索）。
+- 覆盖矩阵 conf/all_models.json 行 partial→full。
+
 ## 2026-08-13 v0.3.3ag：llm_factories 目录补齐（DeerAPI fixture + Astraflow-CN 别名）+ conf 行复核
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

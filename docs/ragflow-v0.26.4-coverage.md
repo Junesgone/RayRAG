@@ -16,8 +16,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 126 | 45348 |
-| full | 547 | 224108 |
-| partial | 27 | 44385 |
+| full | 548 | 263544 |
+| partial | 26 | 4949 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3579 | 905357 |
@@ -626,7 +626,7 @@
 | `common/time_utils.py` | 153 | 4512 | `5f1753e90525e93c` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/token_utils.py` | 185 | 7031 | `75027737e67b62bf` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/versions.py` | 42 | 1483 | `2507ab10483884c1` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
-| `conf/all_models.json` | 39436 | 761732 | `629486a747200c50` | partial | `.env.example; docker-compose.yml; src/main.rs` | All 60 conf/models provider catalogs are embedded verbatim (name/url/url_suffix/class/models) plus the DeerAPI relay fixture and Astraflow-CN alias (v0.3.3ag); the flat 3757-entry all-models alias list (name/alias/model_types autocomplete for the Add-model dialog) remains incremental
+| `conf/all_models.json` | 39436 | 761732 | `629486a747200c50` | full | `.env.example; docker-compose.yml; src/main.rs` | The 3757-entry flat alias catalog is embedded verbatim and exposed through a case-insensitive alias index (`resolve_model_alias`, Go SDK parity), a substring search (`search_model_aliases`), `GET /api/v1/models/search` and the Add-provider model-name datalist autocomplete (v0.3.3ah); the 61 conf/models factory fixtures are embedded separately
 | `conf/doc_meta_es_mapping.json` | 29 | 487 | `eeab3b985a74b29e` | replaced | `src/settings.rs; src/api/document_metadata.rs; src/persistence.rs; src/api/search.rs; src/server.rs; src/store/mod.rs` | Intentional Rust replacement: typed constants preserve shards=2, replicas=0, refresh=1000ms, source=true, dynamic=runtime and the exact id/kb_id/meta_fields schema; canonical JSON snapshots and optional opaque PostgreSQL 18 mirroring replace the ES index, while metadata filtering/enrichment stays independent of zvec-rust chunk vectors |
 | `conf/doc_meta_infinity_mapping.json` | 5 | 145 | `471912c6e20c2747` | replaced | `src/settings.rs; src/api/document_metadata.rs; src/persistence.rs; src/api/search.rs; src/server.rs; src/store/mod.rs` | Intentional Rust replacement: typed schemas preserve varchar defaults for id/kb_id and JSON default `{}` for dynamic meta_fields; canonical JSON snapshots and optional opaque PostgreSQL 18 mirroring replace the Infinity table, while zvec-rust remains scoped to chunk vectors |
 | `conf/infinity_mapping.json` | 76 | 5413 | `dfc07d2e44814c39` | full | `src/settings.rs; src/store/infinity_chunk.rs; src/store/mod.rs; src/search.rs; src/persistence.rs; src/api/chunks.rs; src/api/search.rs; src/server.rs` | Exact 73-column order/types/defaults, 45 fulltext + 2 secondary index contracts, five alias groups, dynamic vector/HNSW metadata and sparse bidirectional JSON/zvec persistence codec are implemented; analyzer/index selection, generic filter/sort/aggregation, dense threshold, atan Fusion (`atan(x)*2/pi`) and same-table multi-dimension vector lifecycle are also implemented (v0.3.3af)
