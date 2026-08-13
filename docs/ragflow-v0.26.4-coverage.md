@@ -16,8 +16,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 126 | 45348 |
-| full | 548 | 263544 |
-| partial | 26 | 4949 |
+| full | 549 | 263713 |
+| partial | 25 | 4780 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3579 | 905357 |
