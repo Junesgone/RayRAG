@@ -1,4 +1,9 @@
 //! Persistent document-level metadata and RAGFlow-compatible filtering.
+//!
+//! The fixed upstream engine mappings expose exactly `id`, `kb_id` and a
+//! dynamic JSON/object `meta_fields`. RayRAG keeps that wire schema in its
+//! atomic JSON snapshot; PostgreSQL may mirror the complete snapshot, while
+//! zvec-rust remains scoped to chunk vectors.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -17,6 +22,7 @@ use crate::server::{AppState, AuthContext, kb_accessible, kb_manageable};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DocumentMetadataRecord {
+    #[serde(rename = "id", alias = "doc_id")]
     pub doc_id: String,
     pub kb_id: String,
     #[serde(default)]
@@ -321,17 +327,47 @@ impl DocumentMetadataStore {
         let requested: HashSet<_> = doc_ids.iter().collect();
         self.mutate(|records| {
             let mut updated = 0;
+            let mut found = HashSet::new();
+            let mut empty_records = Vec::new();
             for record in records
                 .values_mut()
                 .filter(|record| record.kb_id == kb_id && requested.contains(&record.doc_id))
             {
+                found.insert(record.doc_id.clone());
                 let original = record.meta_fields.clone();
                 apply_updates(&mut record.meta_fields, updates);
                 apply_deletes(&mut record.meta_fields, deletes);
                 record.meta_fields = normalize_metadata(std::mem::take(&mut record.meta_fields));
                 if record.meta_fields != original {
                     updated += 1;
+                    if record.meta_fields.is_empty() {
+                        empty_records.push(record.doc_id.clone());
+                    }
                 }
+            }
+            for doc_id in empty_records {
+                records.remove(&doc_id);
+            }
+            for doc_id in requested
+                .into_iter()
+                .filter(|doc_id| !found.contains(*doc_id))
+            {
+                let mut meta_fields = Map::new();
+                apply_updates(&mut meta_fields, updates);
+                apply_deletes(&mut meta_fields, deletes);
+                let meta_fields = normalize_metadata(meta_fields);
+                if meta_fields.is_empty() {
+                    continue;
+                }
+                records.insert(
+                    doc_id.clone(),
+                    DocumentMetadataRecord {
+                        doc_id: doc_id.clone(),
+                        kb_id: kb_id.into(),
+                        meta_fields,
+                    },
+                );
+                updated += 1;
             }
             Ok((updated, updated > 0))
         })
@@ -862,7 +898,7 @@ fn apply_updates(meta: &mut Map<String, Value>, updates: &[MetadataUpdate]) {
         let match_provided = update
             .r#match
             .as_ref()
-            .is_some_and(|value| !value_is_empty(value));
+            .is_some_and(|value| !value.is_null() && value.as_str() != Some(""));
         match meta.get_mut(&update.key) {
             None if !match_provided => {
                 meta.insert(update.key.clone(), update.value.clone());
@@ -933,6 +969,37 @@ mod tests {
     }
 
     #[test]
+    fn record_wire_schema_uses_upstream_id_and_accepts_legacy_doc_id() {
+        let record = DocumentMetadataRecord {
+            doc_id: "doc-a".into(),
+            kb_id: "kb-a".into(),
+            meta_fields: object(serde_json::json!({ "author": "Ada" })),
+        };
+        let encoded = serde_json::to_value(&record).unwrap();
+        assert_eq!(encoded["id"], "doc-a");
+        assert_eq!(encoded["kb_id"], "kb-a");
+        assert_eq!(encoded["meta_fields"]["author"], "Ada");
+        assert!(encoded.get("doc_id").is_none());
+
+        let legacy: DocumentMetadataRecord = serde_json::from_value(serde_json::json!({
+            "doc_id": "legacy-doc",
+            "kb_id": "legacy-kb",
+            "meta_fields": {}
+        }))
+        .unwrap();
+        assert_eq!(legacy.doc_id, "legacy-doc");
+        assert_eq!(legacy.kb_id, "legacy-kb");
+
+        let canonical: DocumentMetadataRecord = serde_json::from_value(serde_json::json!({
+            "id": "canonical-doc",
+            "kb_id": "canonical-kb"
+        }))
+        .unwrap();
+        assert_eq!(canonical.doc_id, "canonical-doc");
+        assert!(canonical.meta_fields.is_empty());
+    }
+
+    #[test]
     fn replacement_normalizes_lists_and_removes_old_keys() {
         let store = DocumentMetadataStore::in_memory();
         store
@@ -1000,6 +1067,80 @@ mod tests {
     }
 
     #[test]
+    fn batch_update_creates_missing_rows_and_removes_empty_rows() {
+        let store = DocumentMetadataStore::in_memory();
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-a".into()],
+                    &[MetadataUpdate {
+                        key: "authors".into(),
+                        value: Value::String("关羽、孙权".into()),
+                        r#match: None,
+                    }],
+                    &[],
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.get("doc-a", "kb-a").unwrap()["authors"],
+            Value::String("关羽、孙权".into())
+        );
+
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-a".into()],
+                    &[],
+                    &[MetadataDelete {
+                        key: "authors".into(),
+                        value: None,
+                    }],
+                )
+                .unwrap(),
+            1
+        );
+        assert!(store.get("doc-a", "kb-a").is_none());
+
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-b".into()],
+                    &[MetadataUpdate {
+                        key: "authors".into(),
+                        value: Value::String("ignored".into()),
+                        r#match: Some(Value::String("missing".into())),
+                    }],
+                    &[],
+                )
+                .unwrap(),
+            0
+        );
+        assert!(store.get("doc-b", "kb-a").is_none());
+
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-c".into()],
+                    &[MetadataUpdate {
+                        key: "rank".into(),
+                        value: Value::Number(1.into()),
+                        r#match: Some(Value::Number(0.into())),
+                    }],
+                    &[],
+                )
+                .unwrap(),
+            0
+        );
+        assert!(store.get("doc-c", "kb-a").is_none());
+    }
+
+    #[test]
     fn summary_batch_update_and_restart_are_consistent() {
         let root =
             std::env::temp_dir().join(format!("rayrag-document-metadata-{}", uuid::Uuid::new_v4()));
@@ -1034,6 +1175,9 @@ mod tests {
         let summary = store.summary("kb-a", None);
         assert_eq!(summary["tags"].value_type, "list");
         assert_eq!(summary["tags"].values.len(), 2);
+        let persisted: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[0]["id"], "doc-a");
+        assert!(persisted[0].get("doc_id").is_none());
         drop(store);
         let restored = DocumentMetadataStore::new(path.to_str().unwrap()).unwrap();
         assert_eq!(

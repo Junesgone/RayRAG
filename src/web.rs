@@ -1,9 +1,9 @@
 //! RayRAG Web UI — Rust SSR, mirrors RAGFlow's complete UI flow.
 //! Every button, every page, every interaction matches RAGFlow's design.
 
-use crate::server::{AppState, AuthContext};
+use crate::server::AppState;
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Path, State},
     response::{Html, IntoResponse, Redirect},
 };
 use std::sync::Arc;
@@ -87,8 +87,51 @@ fn t(k: &str, zh: bool) -> &str {
         "Close" => "关闭",
         "New Agent" => "新建智能体",
         "Create Memory" => "创建记忆",
-    "Edit Memory" => "编辑记忆",
+        "Edit Memory" => "编辑记忆",
         "Clear All" => "清空全部",
+        "Messages" => "消息",
+        "Memory Messages" => "记忆消息",
+        "Memory extract is configured with Prompts and Temperature from Advanced Settings." => {
+            "记忆提取使用高级设置中的提示词和温度值进行配置。"
+        }
+        "Search messages" => "搜索消息",
+        "Agent" => "智能体",
+        "All agents" => "全部智能体",
+        "Session ID" => "会话 ID",
+        "Type" => "类型",
+        "Valid date" => "有效日期",
+        "Forget at" => "遗忘于",
+        "Enable" => "启用",
+        "Action" => "操作",
+        "Content" => "内容",
+        "Content embed" => "内容向量",
+        "Forget" => "遗忘",
+        "Forget message" => "遗忘消息",
+        "Are you sure you want to forget?" => "确定遗忘吗？",
+        "After forgetting, this message will not be retrieved by agents." => {
+            "遗忘后，智能体将无法检索此消息。"
+        }
+        "Previous" => "上一页",
+        "Next" => "下一页",
+        "No messages yet" => "暂无消息",
+        "Loading messages..." => "正在加载消息…",
+        "Back to Memories" => "返回记忆列表",
+        "Memory Configuration" => "记忆配置",
+        "Basic settings" => "基础设置",
+        "Advanced settings" => "高级设置",
+        "Avatar" => "头像",
+        "Chat Model" => "对话模型",
+        "Memory Type" => "记忆类型",
+        "Memory capacity (bytes)" => "记忆容量（字节）",
+        "Permissions" => "权限",
+        "Only me" => "仅自己",
+        "Team" => "团队",
+        "Storage type" => "存储类型",
+        "Forgetting policy" => "遗忘策略",
+        "Temperature" => "温度",
+        "System prompt" => "系统提示词",
+        "User prompt" => "用户提示词",
+        "Reset" => "重置",
         "Knowledge Base" => "知识库",
         "Document Type" => "文档类型",
         "Stop" => "停止",
@@ -112,6 +155,19 @@ fn detect_lang(h: &axum::http::HeaderMap) -> bool {
         .map(|c| c.contains("lang=zh-CN"))
         .unwrap_or(true)
 }
+
+/// Serialize a string for an inline JavaScript value without permitting an
+/// attacker-controlled path segment to terminate the surrounding `<script>`.
+fn json_script_string(value: &str) -> String {
+    serde_json::to_string(value)
+        .expect("string serializes")
+        .replace('&', "\\u0026")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 const CSS: &str = include_str!("./web_css.txt");
 
 fn layout(title: &str, body: &str, zh: bool) -> String {
@@ -282,8 +338,16 @@ pub async fn kbs_page(
             .unwrap_or('K')
             .to_uppercase()
             .collect::<String>();
-        let name_js = kb.name.replace('&', "&amp;").replace('\'', "&#39;").replace('"', "&quot;");
-        let desc_js = kb.description.replace('&', "&amp;").replace('\'', "&#39;").replace('"', "&quot;");
+        let name_js = kb
+            .name
+            .replace('&', "&amp;")
+            .replace('\'', "&#39;")
+            .replace('"', "&quot;");
+        let desc_js = kb
+            .description
+            .replace('&', "&amp;")
+            .replace('\'', "&#39;")
+            .replace('"', "&quot;");
         let menu = format!(
             "<div class='kb-menu' id='km-{menu_id}' style='display:none;position:absolute;top:34px;right:8px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:50;min-width:150px;padding:4px'><button class='btn btn-o btn-sm' style='text-align:left;justify-content:flex-start;width:100%' data-id='{id}' data-name='{name_js}' data-desc='{desc_js}' onclick='event.stopPropagation();kbRenameOpen(this)'>✏️ {rename}</button><button class='btn btn-o btn-sm' style='text-align:left;justify-content:flex-start;width:100%' data-id='{id}' onclick='event.stopPropagation();exportKb(this)'>⬇️ {export}</button><button class='btn btn-d btn-sm' style='text-align:left;justify-content:flex-start;width:100%' data-id='{id}' data-name='{name_js}' onclick='event.stopPropagation();delKb(this)'>🗑 {delete}</button></div>",
             menu_id = format!("km-{}", kb.id),
@@ -334,7 +398,9 @@ pub async fn kbs_page(
     b.push_str(t("Name", zh));
     b.push_str("'><input id='kbDesc' placeholder='");
     b.push_str(t("Description", zh));
-    b.push_str("' style='margin-top:8px'><select id='kbPerm' style='margin-top:8px'><option value=''>");
+    b.push_str(
+        "' style='margin-top:8px'><select id='kbPerm' style='margin-top:8px'><option value=''>",
+    );
     b.push_str(t("Permission", zh));
     b.push_str(": ");
     b.push_str(t("Default", zh));
@@ -359,7 +425,7 @@ pub async fn kbs_page(
     b.push_str("function kbFilter(){var q=(document.getElementById('kbSearch').value||'').toLowerCase();document.querySelectorAll('#kbGrid .kb-card').forEach(function(c){var n=(c.getAttribute('data-name')||'').toLowerCase();c.style.display=(!q||n.indexOf(q)>=0)?'':'none'})};");
     b.push_str("function kbSort(){var s=document.getElementById('kbSort').value;var grid=document.getElementById('kbGrid');var arr=Array.prototype.slice.call(grid.querySelectorAll('.kb-card'));arr.sort(function(a,b){if(s==='created')return (parseInt(b.getAttribute('data-created'),10)||0)-(parseInt(a.getAttribute('data-created'),10)||0);return (a.getAttribute('data-name')||'').localeCompare(b.getAttribute('data-name')||'')});arr.forEach(function(c){grid.appendChild(c)})};");
     b.push_str("function toggleKbMenu(btn){var id=btn.getAttribute('data-id');var m=document.getElementById('km-'+id);if(!m)return;var open=m.style.display==='block';document.querySelectorAll('.kb-menu').forEach(function(x){x.style.display='none'});m.style.display=open?'none':'block'};function closeKbMenus(){document.querySelectorAll('.kb-menu').forEach(function(x){x.style.display='none'})};document.addEventListener('click',function(e){if(!e.target.closest('.more'))closeKbMenus()});");
-    b.push_str("function kbRenameOpen(btn){document.getElementById('rnId').value=btn.getAttribute('data-id');document.getElementById('rnName').value=btn.getAttribute('data-name')||'';document.getElementById('rnDesc').value=btn.getAttribute('data-desc')||'';document.getElementById('renameModal').classList.add('show')};function renameKb(){var id=document.getElementById('rnId').value;var n=document.getElementById('rnName').value;var d=document.getElementById('rnDesc').value;if(!n){alert('Name is required');return}fetch('/api/v1/datasets/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d,canvas_category:document.querySelector('input[name=agentType]:checked')?document.querySelector('input[name=agentType]:checked').value:'agent'})}).then(function(r){return r.json()}).then(function(res){if(res.code===0){location.reload()}else{alert('Rename failed: '+(res.message||'unknown'))}})};");
+    b.push_str("function kbRenameOpen(btn){document.getElementById('rnId').value=btn.getAttribute('data-id');document.getElementById('rnName').value=btn.getAttribute('data-name')||'';document.getElementById('rnDesc').value=btn.getAttribute('data-desc')||'';document.getElementById('renameModal').classList.add('show')};function renameKb(){var id=document.getElementById('rnId').value;var n=document.getElementById('rnName').value;var d=document.getElementById('rnDesc').value;if(!n){alert('Name is required');return}fetch('/api/v1/datasets/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d})}).then(function(r){return r.json()}).then(function(res){if(res.code===0){location.reload()}else{alert('Rename failed: '+(res.message||'unknown'))}})};");
     b.push_str("function delKb(btn){var id=btn.getAttribute('data-id');var name=btn.getAttribute('data-name')||'';if(!confirm('Delete knowledge base '+name+'? This will remove all its documents and chunks.'))return;fetch('/api/v1/datasets/'+id,{method:'DELETE'}).then(function(){location.reload()})};");
     b.push_str("function exportKb(btn){var id=btn.getAttribute('data-id');fetch('/api/v1/datasets/'+id).then(function(r){return r.json()}).then(function(d){if(d.code!==0){alert('Export failed: '+(d.message||'unknown'));return}var kb=d.data||{};return fetch('/api/v1/datasets/'+id+'/documents').then(function(r){return r.json()}).then(function(dd){var docs=dd.data||[];return Promise.all(docs.map(function(doc){return fetch('/api/v1/datasets/'+id+'/documents/'+doc.id+'/chunks').then(function(r){return r.json()}).then(function(cd){doc.chunks=(cd.data||[]);return doc}).catch(function(){doc.chunks=[];return doc})}))}).then(function(docs){var out={id:kb.id,name:kb.name,description:kb.description,permission:kb.permission,embd_id:kb.embd_id,parser_config:kb.parser_config,chunk_count:kb.chunk_count,doc_count:kb.doc_count,exported_at:new Date().toISOString(),documents:docs};var blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(kb.name||'kb')+'.json';document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},100)})}).catch(function(e){alert('Export failed: '+e)})};");
     b.push_str("</script>");
@@ -429,7 +495,9 @@ pub async fn kb_detail_page(
     b.push_str(t("Enable", zh));
     b.push_str("</button><button class='btn btn-d btn-sm' onclick='batchDelete()'>");
     b.push_str(t("Delete", zh));
-    b.push_str("</button><button class='btn btn-o btn-sm' onclick='docSelAll(false);updateBatchBar()'>✕ ");
+    b.push_str(
+        "</button><button class='btn btn-o btn-sm' onclick='docSelAll(false);updateBatchBar()'>✕ ",
+    );
     b.push_str(t("Clear", zh));
     b.push_str("</button></div></div>");
     b.push_str("<div class='card'><h2>");
@@ -528,7 +596,9 @@ pub async fn kb_detail_page(
     b.push_str("<tr><td>");
     b.push_str(t("Vector Weight", zh));
     b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'></td></tr>");
-    b.push_str("</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>");
+    b.push_str(
+        "</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>",
+    );
     b.push_str(t("Save", zh));
     b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
     // Tab 2：测试（检索测试面板）
@@ -549,7 +619,9 @@ pub async fn kb_detail_page(
     b.push_str(t("Vector Weight", zh));
     b.push_str(": <span id='twV' class='co'>0.3</span></label><input type='range' id='tw' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"twV\\\").textContent=this.value'><label style='font-size:12px;display:block;margin-top:8px'><input type='checkbox' id='tr'> ");
     b.push_str(t("Rerank", zh));
-    b.push_str("</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>");
+    b.push_str(
+        "</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>",
+    );
     b.push_str(t("Test", zh));
     b.push_str("</button></div><div><h3>");
     b.push_str(t("Results", zh));
@@ -583,7 +655,6 @@ pub async fn kb_detail_page(
     b.push_str("loadDocs();loadConfig();</script>");
     Html(layout(&name, &b, zh))
 }
-
 
 pub async fn dataset_page(
     State(state): State<Arc<AppState>>,
@@ -653,7 +724,9 @@ pub async fn dataset_page(
     b.push_str(t("Enable", zh));
     b.push_str("</button><button class='btn btn-d btn-sm' onclick='batchDelete()'>");
     b.push_str(t("Delete", zh));
-    b.push_str("</button><button class='btn btn-o btn-sm' onclick='docSelAll(false);updateBatchBar()'>✕ ");
+    b.push_str(
+        "</button><button class='btn btn-o btn-sm' onclick='docSelAll(false);updateBatchBar()'>✕ ",
+    );
     b.push_str(t("Clear", zh));
     b.push_str("</button></div></div>");
     b.push_str("<div class='card'><h2>");
@@ -674,7 +747,9 @@ pub async fn dataset_page(
     b.push_str(t("Failed", zh));
     b.push_str("</option></select></div><div id='dl'>Loading...</div></div></div>");
     // Tab 1: Overview
-    b.push_str("<div id='tab1' style='display:none'><div class='st'><div class='sc'><span class='lbl'>");
+    b.push_str(
+        "<div id='tab1' style='display:none'><div class='st'><div class='sc'><span class='lbl'>",
+    );
     b.push_str(t("Total Docs", zh));
     b.push_str("</span><span class='val'>");
     b.push_str(&docs.to_string());
@@ -828,20 +903,28 @@ pub async fn dataset_page(
     b.push_str("<tr><td>");
     b.push_str(t("Vector Weight", zh));
     b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'></td></tr>");
-    b.push_str("</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>");
+    b.push_str(
+        "</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>",
+    );
     b.push_str(t("Save", zh));
     b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
     // Tab 4: Knowledge Graph
     b.push_str("<div id='tab4' style='display:none'><div class='card'><h2>");
     b.push_str(t("Knowledge Graph", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>");
-    b.push_str(t("Entity-relation graph extracted from indexed documents.", zh));
+    b.push_str(t(
+        "Entity-relation graph extracted from indexed documents.",
+        zh,
+    ));
     b.push_str("</p><button class='btn btn-p' onclick='buildGraph()'>");
     b.push_str(t("Build", zh));
     b.push_str(" ");
     b.push_str(t("Graph", zh));
     b.push_str("</button><div id='graphResult' style='margin-top:16px;background:var(--bg);padding:20px;border-radius:var(--r);min-height:200px;font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.8'><p style='color:var(--tm);text-align:center;padding:40px'>");
-    b.push_str(t("Click Build Graph to extract entities and relations.", zh));
+    b.push_str(t(
+        "Click Build Graph to extract entities and relations.",
+        zh,
+    ));
     b.push_str("</p></div></div></div>");
     b.push_str("</div></div>");
     // JS
@@ -881,7 +964,6 @@ pub async fn dataset_page(
     b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\'\'>All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\''+nm.replace(/'/g,'&#39;')+'\'>'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||'?';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\''+nm.replace(/'/g,'&#39;')+'\'><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div>");
     Html(layout(&name, &b, zh))
 }
-
 
 pub async fn chat_page(
     State(state): State<Arc<AppState>>,
@@ -980,8 +1062,13 @@ pub async fn chat_detail_page(
         b.push_str("<p style='font-size:11px;color:var(--tm)'>No knowledge base attached. Use the temporary chat to pick KBs.</p>");
     } else {
         for kb_id in conv_kb_ids.split(',') {
-            if kb_id.trim().is_empty() { continue; }
-            let kb_name = state.kbs.get(kb_id.trim()).map(|kb| kb.name.clone())
+            if kb_id.trim().is_empty() {
+                continue;
+            }
+            let kb_name = state
+                .kbs
+                .get(kb_id.trim())
+                .map(|kb| kb.name.clone())
                 .unwrap_or_else(|| kb_id.trim().to_string());
             b.push_str(&format!(
                 "<div style='display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg);border-radius:6px;margin-bottom:4px;font-size:12px'>📚 {}</div>",
@@ -1170,7 +1257,7 @@ pub async fn agents_page(
     b.push_str("</tbody></table></div>");
     b.push_str("<div class='modal-overlay' id='createModal'><div class='modal'><h2>");
     b.push_str(t("New Agent", zh));
-    b.push_str("</h2><input id='aname' placeholder='Name'><textarea id='adesc' placeholder='Description' style='margin-top:8px;min-height:60px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createA()'>");
+    b.push_str("</h2><fieldset style='border:0;padding:0;margin:0 0 12px'><legend style='font-weight:600;margin-bottom:8px'>Choose agent type</legend><label style='margin-right:18px'><input type='radio' name='agentType' value='agent_canvas' checked> Agent flow</label><label><input type='radio' name='agentType' value='dataflow_canvas'> Ingestion pipeline</label></fieldset><input id='aname' placeholder='Name'><textarea id='adesc' placeholder='Description' style='margin-top:8px;min-height:60px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createA()'>");
     b.push_str(t("Create", zh));
     b.push_str("</button><button class='btn btn-o' onclick='showTemplates()'>From Template</button><button class='btn btn-o' onclick=document.getElementById('agentJsonFile').click()>");
     b.push_str(t("Import JSON", zh));
@@ -1188,18 +1275,19 @@ pub async fn agents_page(
     for (slug, name, desc, dsl) in crate::agent_templates::AGENT_TEMPLATES {
         let name_j = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
         let desc_j = serde_json::to_string(desc).unwrap_or_else(|_| "\"\"".to_string());
+        let canvas_category = crate::agent_templates::template_canvas_category(slug);
         // `</` would close the <script> tag in the rendered HTML; `<\/` is a
         // no-op escape valid in both JS and JSON, so the DSL round-trips.
         let dsl_j = dsl.replace("</", "<\\/");
         tpls.push_str(&format!(
-            ",'{}':{{'name':{},'description':{},'dsl':{}}}",
-            slug, name_j, desc_j, dsl_j
+            ",'{}':{{'name':{},'description':{},'canvas_category':'{}','dsl':{}}}",
+            slug, name_j, desc_j, canvas_category, dsl_j
         ));
     }
     b.push_str(&tpls);
     b.push_str("};
-function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:(t.description?t.description:'Created from template: '+t.name),dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
-var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d,canvas_category:document.querySelector('input[name=agentType]:checked')?document.querySelector('input[name=agentType]:checked').value:'agent'})}).then(function(){location.reload()})};function importAgentJson(){var f=document.getElementById('agentJsonFile').files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var obj=JSON.parse(r.result);var nm=obj.title||obj.name||'Imported Agent';fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,description:obj.description||'',dsl:obj.dsl||obj.canvas||{}})}).then(function(res){return res.json()}).then(function(d){if(d.code===0){location.reload()}else{alert('Import failed: '+(d.message||'unknown'))}})}catch(e){alert('Invalid JSON: '+e.message)}};r.readAsText(f)};function editA(id){window.location.href='/agents/'+id};function runA(id){window.location.href='/agents/'+id};function renameA(id,cur){var n=prompt('New name:',cur);if(!n)return;fetch('/api/v1/agents/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Rename failed: '+(d.message||'unknown'))}})};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
+function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:(t.description?t.description:'Created from template: '+t.name),canvas_category:t.canvas_category||'agent_canvas',dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
+var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d,canvas_category:document.querySelector('input[name=agentType]:checked')?document.querySelector('input[name=agentType]:checked').value:'agent_canvas'})}).then(function(){location.reload()})};function importAgentJson(){var f=document.getElementById('agentJsonFile').files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var obj=JSON.parse(r.result);var nm=obj.title||obj.name||'Imported Agent';fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,description:obj.description||'',canvas_category:obj.canvas_category||'agent_canvas',dsl:obj.dsl||obj.canvas||{}})}).then(function(res){return res.json()}).then(function(d){if(d.code===0){location.reload()}else{alert('Import failed: '+(d.message||'unknown'))}})}catch(e){alert('Invalid JSON: '+e.message)}};r.readAsText(f)};function editA(id){window.location.href='/agents/'+id};function runA(id){window.location.href='/agents/'+id};function renameA(id,cur){var n=prompt('New name:',cur);if(!n)return;fetch('/api/v1/agents/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Rename failed: '+(d.message||'unknown'))}})};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],canvas_category:a.canvas_category||'agent_canvas',dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
     Html(layout(t("Agents", zh), &b, zh))
 }
 
@@ -1225,7 +1313,11 @@ pub async fn datasources_page(
     b.push_str("<button class='btn btn-p' onclick='addDs()'>+ Add</button></div>");
     b.push_str("<div class='card'><h2>Sources</h2><div style='margin-bottom:8px'><select id='dsKb'><option value=''>Sync to KB (optional)</option></select></div><div id='dsList'>Loading...</div></div>");
     b.push_str("<div class='card'><h2>");
-    b.push_str(if zh { "文件列表 / 同步预览" } else { "Files / Sync Preview" });
+    b.push_str(if zh {
+        "文件列表 / 同步预览"
+    } else {
+        "Files / Sync Preview"
+    });
     b.push_str("</h2><div id='dsPreview' style='color:var(--t2)'>Select a source, then List / Sync.</div></div><script>");
     b.push_str("function dsHint(){var m={gitlab:'url=https://gitlab.com, token=PAT, target=project id or owner/repo',blob:'url=https://acct.blob.core.windows.net, token=SAS, target=container',local:'url=absolute directory path, target=optional subdir',webdav:'url=https://webdav.example.com, token=user:password, target=/path',feishu:'token=app_id:app_secret, target=可选 folder_token',confluence:'url=https://xxx.atlassian.net/wiki, token=email:api_token, target=spaceKey'};document.getElementById('dsHint').textContent=m[document.getElementById('dsType').value]||'';}");
     b.push_str("function loadKbs(){fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];var sel=document.getElementById('dsKb');var h='<option value=\'\'>Sync to KB (optional)</option>';kbs.forEach(function(k){h=h+'<option value=\'\"+k.id+\"\'>'+(k.name||k.id)+'</option>';});sel.innerHTML=h;});}");
@@ -1275,7 +1367,9 @@ pub async fn memories_page(
     b.push_str(t("Clear All", zh));
     b.push_str("</button></div><div class='card'><h2>Memory Apps <span style='font-size:12px;color:var(--tm)' id='memCount'></span></h2><div id='memList'>Loading...</div></div>");
     // Add / edit memory modal (RAGFlow memory fields: name / memory_type / embd / llm)
-    b.push_str("<div class='modal-overlay' id='memModal'><div class='modal'><h2 id='memModalTitle'>");
+    b.push_str(
+        "<div class='modal-overlay' id='memModal'><div class='modal'><h2 id='memModalTitle'>",
+    );
     b.push_str(t("Create Memory", zh));
     b.push_str("</h2><input id='mname' placeholder='Name'><label style='font-size:12px;display:block;margin:8px 0 4px'>Memory Type</label><div style='font-size:12px;margin-bottom:4px'><a href='javascript:void(0)' onclick=\"document.querySelectorAll('.mtype').forEach(function(x){x.checked=true})\" style='color:var(--p)'>Select all</a></div><div style='display:flex;gap:10px;flex-wrap:wrap;font-size:12px'><label><input type='checkbox' class='mtype' value='raw'> raw</label><label><input type='checkbox' class='mtype' value='semantic'> semantic</label><label><input type='checkbox' class='mtype' value='episodic'> episodic</label><label><input type='checkbox' class='mtype' value='procedural'> procedural</label></div><label style='font-size:12px;display:block;margin:8px 0 4px'>Embedding Model</label><select id='membd'><option value='default'>default</option></select><label style='font-size:12px;display:block;margin:8px 0 4px'>Chat Model</label><select id='mllm'><option value='default'>default</option></select><textarea id='mdesc' placeholder='Description' style='margin-top:8px;min-height:50px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveMem()'>");
     b.push_str(t("Save", zh));
@@ -1295,6 +1389,236 @@ pub async fn memories_page(
         b.push_str("</tbody></table></div>");
     }
     Html(layout(t("Memories", zh), &b, zh))
+}
+
+/// Fixed-version Memory card surface. Business data is deliberately loaded
+/// through authenticated APIs rather than embedded in this public HTML shell.
+pub async fn memories_page_v2(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let mut b = String::new();
+    b.push_str("<div class='memory-list-head'><div><h1 style='margin-bottom:4px'>");
+    b.push_str(t("Memories", zh));
+    b.push_str("</h1><p style='color:var(--tm)'>Build durable context for your agents.</p></div><button class='btn btn-p' id='memCreate'>＋ ");
+    b.push_str(t("Create Memory", zh));
+    b.push_str("</button></div><div class='memory-filter card'><input id='memSearch' placeholder='Search memories' aria-label='Search memories'><details class='memory-filter-popover' id='memOwner'><summary class='btn btn-o'>Owner <span id='memOwnerCount'></span></summary><div class='memory-filter-panel'><strong>Owner</strong><div class='memory-agent-options' id='memOwnerOptions'><span class='sub'>Loading...</span></div><div class='memory-modal-actions'><button class='btn btn-o btn-sm' id='memOwnerClear' type='button'>Clear</button><button class='btn btn-p btn-sm' id='memOwnerApply' type='button'>Apply</button></div></div></details><select id='memType' aria-label='Memory type'><option value=''>All types</option><option value='raw'>Raw</option><option value='semantic'>Semantic</option><option value='episodic'>Episodic</option><option value='procedural'>Procedural</option></select><select id='memStorage' aria-label='Storage type'><option value=''>All storage</option><option value='table'>Table</option></select></div><div id='memList' class='kb-grid' aria-live='polite'><p style='color:var(--tm)'>Loading...</p></div><div class='memory-pager' id='memPager'></div>");
+    b.push_str("<div class='modal-overlay' id='memModal' role='dialog' aria-modal='true'><div class='modal'><h2 id='memModalTitle'>");
+    b.push_str(t("Create Memory", zh));
+    b.push_str("</h2><label>Name<input id='mname' maxlength='128'></label><div id='memCreateFields'><label>Memory Type</label><p class='sub'>Raw is required for the original dialogue envelope.</p><div class='memory-type-grid'><label><input type='checkbox' class='mtype' value='raw' checked disabled> Raw</label><label><input type='checkbox' class='mtype' value='semantic'> Semantic</label><label><input type='checkbox' class='mtype' value='episodic'> Episodic</label><label><input type='checkbox' class='mtype' value='procedural'> Procedural</label></div><label>Embedding Model<select id='membd'><option value='default'>default</option></select></label><label>Chat Model<select id='mllm'><option value='default'>default</option></select></label></div><div class='memory-modal-actions'><button class='btn btn-o' id='memCancel'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-p' id='memSave'>");
+    b.push_str(t("Save", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str(
+        r#"<script>
+const memState={page:1,size:12,total:0,edit:null,request:0,owners:new Set(),ownerOptions:new Map()};
+const byId=(id)=>document.getElementById(id);
+function node(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text);return n}
+function openMemory(memory){memState.edit=memory||null;byId('memModalTitle').textContent=memory?'Edit Memory':'Create Memory';byId('mname').value=memory?(memory.name||''):'';byId('memCreateFields').hidden=!!memory;document.querySelectorAll('.mtype').forEach((item)=>{item.checked=item.value==='raw'});byId('memModal').classList.add('show');byId('mname').focus()}
+function closeMemory(){byId('memModal').classList.remove('show');memState.edit=null}
+async function saveMemory(){const name=byId('mname').value.trim();if(!name){alert('Name required');return}let url='/api/v1/memories',method='POST',body;if(memState.edit){url+='/'+encodeURIComponent(memState.edit.id);method='PUT';body={name}}else{const types=Array.from(document.querySelectorAll('.mtype:checked')).map((item)=>item.value);body={name,memory_type:types,embd_id:byId('membd').value||'default',llm_id:byId('mllm').value||'default',description:''}}const button=byId('memSave');button.disabled=true;try{const response=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Save failed');closeMemory();await Promise.all([loadMemories(),loadOwners()])}catch(error){alert(error.message||String(error))}finally{button.disabled=false}}
+async function deleteMemory(memory){if(!confirm('Delete memory "'+(memory.name||'')+'"?\nAfter deletion, all messages in this memory are removed.'))return;const response=await fetch('/api/v1/memories/'+encodeURIComponent(memory.id),{method:'DELETE'});const data=await response.json();if(data.code!==0){alert(data.message||'Delete failed');return}await Promise.all([loadMemories(),loadOwners()])}
+function renderMemory(memory){const card=node('article','kb-card');card.tabIndex=0;card.addEventListener('click',()=>location.href='/memory/memory-message/'+encodeURIComponent(memory.id));card.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();card.click()}});card.appendChild(node('div','av-lg',(memory.name||'M').trim().charAt(0).toUpperCase()||'M'));card.appendChild(node('h3','',memory.name||'Memory'));card.appendChild(node('p','',memory.description||'No description'));const meta=node('div','memory-card-meta');meta.appendChild(node('span','badge bi',(memory.memory_type||[]).join(', ')||'raw'));meta.appendChild(node('span','sub',new Date(memory.created_at||Date.now()).toLocaleDateString()));card.appendChild(meta);const wrap=node('div','memory-more');const trigger=node('button','btn btn-o btn-sm','•••');trigger.type='button';trigger.title='More actions';trigger.setAttribute('aria-label','More actions');const menu=node('div','memory-menu');const rename=node('button','','Rename');rename.type='button';rename.addEventListener('click',(event)=>{event.stopPropagation();openMemory(memory)});const remove=node('button','danger','Delete');remove.type='button';remove.addEventListener('click',(event)=>{event.stopPropagation();deleteMemory(memory)});menu.append(rename,remove);trigger.addEventListener('click',(event)=>{event.stopPropagation();document.querySelectorAll('.memory-menu.show').forEach((item)=>{if(item!==menu)item.classList.remove('show')});menu.classList.toggle('show')});wrap.append(trigger,menu);card.appendChild(wrap);return card}
+function renderMemoryPager(){const pager=byId('memPager');pager.replaceChildren();const pages=Math.max(1,Math.ceil(memState.total/memState.size));const prev=node('button','btn btn-o btn-sm','Previous');prev.disabled=memState.page<=1;prev.onclick=()=>{memState.page--;loadMemories()};const next=node('button','btn btn-o btn-sm','Next');next.disabled=memState.page>=pages;next.onclick=()=>{memState.page++;loadMemories()};pager.append(node('span','sub',memState.total+' memories'),prev,node('span','badge bi',memState.page+' / '+pages),next)}
+async function loadMemories(){const generation=++memState.request;const params=new URLSearchParams({page:String(memState.page),page_size:String(memState.size)});const search=byId('memSearch').value.trim(),type=byId('memType').value,storage=byId('memStorage').value;if(search)params.set('keywords',search);if(memState.owners.size)params.set('owner_ids',Array.from(memState.owners).join(','));if(type)params.set('memory_type',type);if(storage)params.set('storage_type',storage);const list=byId('memList');list.replaceChildren(node('p','sub','Loading...'));try{const response=await fetch('/api/v1/memories?'+params);const data=await response.json();if(generation!==memState.request)return;if(data.code!==0)throw new Error(data.message||'Load failed');const memories=(data.data&&data.data.memory_list)||[];memState.total=(data.data&&data.data.total_count)||0;list.replaceChildren();if(!memories.length){const empty=node('div','card memory-empty');empty.append(node('div','memory-empty-icon','M'),node('h2','',search?'No matching memories':'Create your first memory'));const action=node('button','btn btn-p','+ Create Memory');action.onclick=()=>openMemory(null);empty.appendChild(action);list.appendChild(empty)}else{memories.forEach((memory)=>list.appendChild(renderMemory(memory)))}renderMemoryPager()}catch(error){list.replaceChildren(node('p','',error.message||String(error)))}}
+function renderOwnerOptions(){const host=byId('memOwnerOptions');host.replaceChildren();for(const [id,info] of memState.ownerOptions){const label=node('label');const input=node('input');input.type='checkbox';input.value=id;input.checked=memState.owners.has(id);label.append(input,document.createTextNode(' '+info.label+' ('+info.count+')'));host.appendChild(label)}if(!memState.ownerOptions.size)host.appendChild(node('span','sub','No owners'));byId('memOwnerCount').textContent=memState.owners.size?'('+memState.owners.size+')':''}
+async function loadOwners(){try{const response=await fetch('/api/v1/memories?page=1&page_size=200');const data=await response.json();if(data.code!==0)return;memState.ownerOptions.clear();for(const memory of ((data.data&&data.data.memory_list)||[])){const id=memory.tenant_id||'';if(!id)continue;const current=memState.ownerOptions.get(id)||{label:memory.owner_name||id,count:0};current.count++;memState.ownerOptions.set(id,current)}renderOwnerOptions()}catch(_error){}}
+function appendModelOptions(selectId,models,types){const select=byId(selectId);const groups=new Map();const seen=new Set(Array.from(select.options).map((option)=>option.value));for(const model of models){const capabilities=Array.isArray(model.model_type)?model.model_type:[model.model_type];if(!capabilities.some((type)=>types.includes(type))||!model.selector||seen.has(model.selector))continue;seen.add(model.selector);const label=(model.provider||model.provider_id||'Provider')+' / '+(model.instance_name||model.instance_id||'default');let group=groups.get(label);if(!group){group=document.createElement('optgroup');group.label=label;groups.set(label,group);select.appendChild(group)}const option=node('option','',model.name||model.selector);option.value=model.selector;group.appendChild(option)}}
+async function loadMemoryModels(){try{const [response,defaultsResponse]=await Promise.all([fetch('/api/v1/models'),fetch('/api/v1/models/default')]);const data=await response.json(),defaults=await defaultsResponse.json();if(data.code!==0)return;const models=data.data||[];appendModelOptions('membd',models,['embedding']);appendModelOptions('mllm',models,['chat','image2text']);for(const model of (((defaults.data||{}).models)||[])){if(!model.enable||!model.selector)continue;if(model.model_type==='embedding')byId('membd').value=model.selector;if(model.model_type==='chat'||model.model_type==='image2text')byId('mllm').value=model.selector}}catch(_error){}}
+let memorySearchTimer;byId('memSearch').addEventListener('input',()=>{clearTimeout(memorySearchTimer);memorySearchTimer=setTimeout(()=>{memState.page=1;loadMemories()},180)});byId('memType').onchange=byId('memStorage').onchange=()=>{memState.page=1;loadMemories()};byId('memOwnerApply').onclick=()=>{memState.owners=new Set(Array.from(byId('memOwnerOptions').querySelectorAll('input:checked')).map((item)=>item.value));memState.page=1;byId('memOwner').open=false;renderOwnerOptions();loadMemories()};byId('memOwnerClear').onclick=()=>{memState.owners.clear();memState.page=1;byId('memOwner').open=false;renderOwnerOptions();loadMemories()};byId('memCreate').onclick=()=>openMemory(null);byId('memCancel').onclick=closeMemory;byId('memSave').onclick=saveMemory;byId('memModal').addEventListener('click',(event)=>{if(event.target===byId('memModal'))closeMemory()});document.addEventListener('click',()=>document.querySelectorAll('.memory-menu.show').forEach((menu)=>menu.classList.remove('show')));loadOwners();loadMemories();loadMemoryModels();
+</script>"#,
+    );
+    Html(layout(t("Memories", zh), &b, zh))
+}
+
+/// `/memory/memory-message/:id` — the fixed Memory detail hierarchy and
+/// message operations, rendered as a data-free Rust shell. All mutable or
+/// tenant-scoped values enter the DOM via `textContent` after authenticated
+/// API calls, which keeps stored message text out of HTML/JavaScript contexts.
+pub async fn memory_message_page(
+    Path(memory_id): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let memory_id_json = json_script_string(&memory_id);
+    let mut b = String::new();
+    b.push_str("<a class='btn btn-o btn-sm' href='/memories' style='margin-bottom:12px'>← ");
+    b.push_str(t("Back to Memories", zh));
+    b.push_str("</a><section class='card memory-detail-card'><div class='ds-layout'><aside class='ds-sidebar'><div class='av-lg' id='memoryAvatar'>M</div><h3 id='memoryName'>Memory</h3><p class='stats' id='memoryDescription'></p><p class='stats' id='memoryCreated'></p><ul class='ds-nav'><li><a class='active' id='memoryMessagesLink' href='#'>");
+    b.push_str(t("Messages", zh));
+    b.push_str("</a></li><li><a id='memorySettingLink' href='#'>");
+    b.push_str(t("Configuration", zh));
+    b.push_str("</a></li></ul></aside><main class='memory-detail-main'><div class='memory-detail-title'><div><h1>");
+    b.push_str(t("Memory Messages", zh));
+    b.push_str("</h1><p class='sub'>");
+    b.push_str(t(
+        "Memory extract is configured with Prompts and Temperature from Advanced Settings.",
+        zh,
+    ));
+    b.push_str("</p></div><span class='badge bi' id='memoryStorage'>—</span></div><div class='memory-message-tools'><input id='messageSearch' placeholder='");
+    b.push_str(t("Search messages", zh));
+    b.push_str("' aria-label='Search messages'><details class='memory-filter-popover' id='agentFilter'><summary class='btn btn-o'>");
+    b.push_str(t("Agent", zh));
+    b.push_str(
+        " <span id='agentFilterCount'></span></summary><div class='memory-filter-panel'><strong>",
+    );
+    b.push_str(t("Agent", zh));
+    b.push_str("</strong><div class='memory-agent-options' id='agentOptions'></div><div class='memory-modal-actions'><button class='btn btn-o btn-sm' id='agentClear'>Clear</button><button class='btn btn-p btn-sm' id='agentApply'>Apply</button></div></div></details></div><div class='memory-table-wrap'><table class='memory-message-table'><thead><tr><th><button class='memory-expand' id='expandAll' title='Expand or collapse all' aria-label='Expand or collapse all'>+</button> ");
+    b.push_str(t("Session ID", zh));
+    b.push_str("</th>");
+    for heading in [
+        "Agent",
+        "Type",
+        "Valid date",
+        "Forget at",
+        "Enable",
+        "",
+        "Action",
+    ] {
+        b.push_str("<th>");
+        if !heading.is_empty() {
+            b.push_str(t(heading, zh));
+        }
+        b.push_str("</th>");
+    }
+    b.push_str("</tr></thead><tbody id='messageRows'><tr><td colspan='8'>");
+    b.push_str(t("Loading messages...", zh));
+    b.push_str("</td></tr></tbody></table></div><div class='memory-pager' id='messagePager'></div></main></div></section>");
+    b.push_str("<div class='modal-overlay' id='contentModal' role='dialog' aria-modal='true'><div class='modal' style='max-width:640px'><h2>");
+    b.push_str(t("Content", zh));
+    b.push_str("</h2><p class='sub' id='contentSession'></p><div class='memory-modal-content' id='messageContent'></div><div id='vectorArea' hidden><button class='btn btn-o btn-sm' id='copyVector'>");
+    b.push_str(t("Content embed", zh));
+    b.push_str(" ⧉</button><pre class='memory-vector' id='messageVector'></pre></div><div class='memory-modal-actions'><button class='btn btn-o' data-close='contentModal'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div><div class='modal-overlay' id='forgetModal' role='dialog' aria-modal='true'><div class='modal'><h2>");
+    b.push_str(t("Forget message", zh));
+    b.push_str("</h2><p>");
+    b.push_str(t("Are you sure you want to forget?", zh));
+    b.push_str("</p><p id='forgetSession' style='font-weight:600;margin-top:10px'></p><p class='sub' style='color:var(--d);margin-top:8px'>");
+    b.push_str(t(
+        "After forgetting, this message will not be retrieved by agents.",
+        zh,
+    ));
+    b.push_str(
+        "</p><div class='memory-modal-actions'><button class='btn btn-o' data-close='forgetModal'>",
+    );
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-d' id='confirmForget'>");
+    b.push_str(t("Forget", zh));
+    b.push_str("</button></div></div></div><div class='modal-overlay' id='taskModal' role='dialog' aria-modal='true'><div class='modal'><h2>Task Log</h2><div id='taskLog'></div><div class='memory-modal-actions'><button class='btn btn-o' data-close='taskModal'>");
+    b.push_str(t("Close", zh));
+    b.push_str(
+        "</button></div></div></div><div id='memoryToast' class='memory-toast' hidden></div>",
+    );
+    b.push_str("<script>const memoryId=");
+    b.push_str(&memory_id_json);
+    b.push_str(
+        r#";
+const byId=(id)=>document.getElementById(id);const allowedSizes=[10,20,50,100];const initial=new URLSearchParams(location.search);const initialAgents=initial.getAll('agent_id');
+const messageState={page:Math.max(1,Number(initial.get('page'))||1),size:allowedSizes.includes(Number(initial.get('size')))?Number(initial.get('size')):50,keywords:initial.get('keywords')||'',agents:new Set(initialAgents.length===1&&initialAgents[0].includes(',')?initialAgents[0].split(',').filter(Boolean):initialAgents),total:0,rows:[],expanded:new Set(),request:0,controller:null,forget:null,content:null};
+function node(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text);return n}
+function showToast(text){const toast=byId('memoryToast');toast.textContent=text;toast.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>toast.hidden=true,1600)}
+function openModal(id){byId(id).classList.add('show')}function closeModal(id){byId(id).classList.remove('show')}
+function messageRef(message){return encodeURIComponent(memoryId)+':'+encodeURIComponent(String(message.message_id))}
+function forgotten(message){return message.forget_at!==null&&message.forget_at!==undefined&&message.forget_at!=='None'&&String(message.forget_at).length>0}
+function typeLabel(value){const labels={raw:'Raw',semantic:'Semantic',episodic:'Episodic',procedural:'Procedural'};return labels[value]||value||''}
+function taskDisplayState(task){const status=String(task&&task.status||'').toLowerCase();const progress=Number(task&&task.progress);if(status==='failed'||status==='cancelled'||progress<0)return'failed';if(status==='done'||progress>=1)return'done';if(status==='running'||status==='processing'||(progress>0&&progress<1))return'running';return'failed'}
+function taskStartTime(value){if(value===null||value===undefined||value===''||value===0||value==='0')return'—';const started=new Date(value);return Number.isNaN(started.getTime())?'—':started.toLocaleString()}
+async function loadConfig(){try{const response=await fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'/config');const data=await response.json();if(data.code!==0)throw new Error(data.message||'Memory not found');const memory=data.data||{};byId('memoryName').textContent=memory.name||'Memory';byId('memoryDescription').textContent=memory.description||'';byId('memoryCreated').textContent='Created '+new Date(memory.created_at||Date.now()).toLocaleDateString();byId('memoryAvatar').textContent=(memory.name||'M').trim().charAt(0).toUpperCase()||'M';byId('memoryMessagesLink').href='/memory/memory-message/'+encodeURIComponent(memoryId);byId('memorySettingLink').href='/memory/memory-setting/'+encodeURIComponent(memoryId)}catch(error){byId('memoryName').textContent=error.message||String(error)}}
+function syncUrl(){const params=new URLSearchParams();if(messageState.keywords)params.set('keywords',messageState.keywords);for(const agent of messageState.agents)params.append('agent_id',agent);params.set('page',String(messageState.page));params.set('size',String(messageState.size));history.replaceState(null,'',location.pathname+'?'+params)}
+function renderAgentFilter(rows){const counts=new Map();for(const message of rows){const id=message.agent_id||'';if(!id)continue;const current=counts.get(id)||{name:message.agent_name||'Unknown',count:0};current.count++;counts.set(id,current)}for(const id of messageState.agents){if(!counts.has(id))counts.set(id,{name:id,count:0})}const options=byId('agentOptions');options.replaceChildren();if(!counts.size){options.appendChild(node('span','sub','No agents on this page'))}for(const [id,info] of counts){const label=node('label');const checkbox=node('input');checkbox.type='checkbox';checkbox.value=id;checkbox.checked=messageState.agents.has(id);label.append(checkbox,document.createTextNode(' '+info.name+' ('+info.count+')'));options.appendChild(label)}byId('agentFilterCount').textContent=messageState.agents.size?'('+messageState.agents.size+')':''}
+function actionButton(label,title,handler,danger){const button=node('button',danger?'btn btn-d btn-sm':'btn btn-o btn-sm',label);button.type='button';button.title=title;button.setAttribute('aria-label',title);button.onclick=handler;return button}
+function setCells(row,message,isExtract,parentId){row.className=isExtract?'extract-row':'';if(isExtract){row.dataset.parent=parentId;row.hidden=!messageState.expanded.has(parentId)}if(forgotten(message))row.classList.add('forgotten');const sessionCell=node('td');if(!isExtract&&Array.isArray(message.extract)&&message.extract.length){const toggle=actionButton(messageState.expanded.has(parentId)?'-':'+','Expand extracted messages',()=>{if(messageState.expanded.has(parentId))messageState.expanded.delete(parentId);else messageState.expanded.add(parentId);renderRows()},false);toggle.className='memory-expand';sessionCell.appendChild(toggle)}else if(isExtract){sessionCell.appendChild(node('span','sub','> '))}sessionCell.appendChild(document.createTextNode(message.session_id||''));row.appendChild(sessionCell);row.appendChild(node('td','',message.agent_name||'Unknown'));row.appendChild(node('td','',typeLabel(message.message_type)));row.appendChild(node('td','',message.valid_at||''));row.appendChild(node('td','',message.forget_at&&message.forget_at!=='None'?message.forget_at:'—'));const statusCell=node('td');const status=node('input','memory-switch');status.type='checkbox';status.checked=!!message.status;status.disabled=forgotten(message);status.setAttribute('aria-label','Enable message');status.onchange=()=>updateStatus(message,status);statusCell.appendChild(status);row.appendChild(statusCell);const taskCell=node('td');if(message.task){const taskState=taskDisplayState(message.task);const taskButton=actionButton('','Open task log',()=>showTask(message.task),false);taskButton.className='memory-task-button';taskButton.dataset.taskStatus=taskState;const taskDot=node('span','memory-task-dot');taskDot.setAttribute('aria-hidden','true');taskButton.appendChild(taskDot);taskCell.appendChild(taskButton)}row.appendChild(taskCell);const actions=node('td');const group=node('div','memory-actions');group.append(actionButton('View','View content',()=>showContent(message),false));const forget=actionButton('Forget','Forget message',()=>askForget(message),true);forget.disabled=forgotten(message);group.append(forget);actions.appendChild(group);row.appendChild(actions)}
+function renderRows(){const body=byId('messageRows');body.replaceChildren();if(!messageState.rows.length){const row=node('tr');const cell=node('td','', 'No messages yet');cell.colSpan=8;cell.style.textAlign='center';cell.style.padding='42px';row.appendChild(cell);body.appendChild(row);return}for(const message of messageState.rows){const parentId=String(message.message_id);const row=node('tr');setCells(row,message,false,parentId);body.appendChild(row);for(const extract of (message.extract||[])){const child=node('tr');setCells(child,extract,true,parentId);body.appendChild(child)}}}
+function renderPager(){const pager=byId('messagePager');pager.replaceChildren();const pages=Math.max(1,Math.ceil(messageState.total/messageState.size));pager.appendChild(node('span','sub',messageState.total+' messages'));const size=node('select','memory-page-size');for(const value of allowedSizes){const option=node('option','',value+' / page');option.value=String(value);option.selected=value===messageState.size;size.appendChild(option)}size.onchange=()=>{messageState.size=Number(size.value);messageState.page=1;loadMessages()};pager.appendChild(size);const previous=actionButton('Previous','Previous page',()=>{messageState.page--;loadMessages()},false);previous.disabled=messageState.page<=1;pager.appendChild(previous);const start=Math.max(1,Math.min(messageState.page-2,pages-4));const end=Math.min(pages,start+4);for(let page=start;page<=end;page++){const button=actionButton(String(page),'Page '+page,()=>{messageState.page=page;loadMessages()},false);if(page===messageState.page)button.className='btn btn-p btn-sm';pager.appendChild(button)}const next=actionButton('Next','Next page',()=>{messageState.page++;loadMessages()},false);next.disabled=messageState.page>=pages;pager.appendChild(next)}
+async function loadMessages(){syncUrl();const generation=++messageState.request;if(messageState.controller)messageState.controller.abort();messageState.controller=new AbortController();const params=new URLSearchParams({page:String(messageState.page),page_size:String(messageState.size)});if(messageState.keywords)params.set('keywords',messageState.keywords);for(const agent of messageState.agents)params.append('agent_id',agent);const body=byId('messageRows');body.replaceChildren();const loading=node('tr');const cell=node('td','', 'Loading messages...');cell.colSpan=8;loading.appendChild(cell);body.appendChild(loading);try{const response=await fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'?'+params,{signal:messageState.controller.signal});const data=await response.json();if(generation!==messageState.request)return;if(data.code!==0)throw new Error(data.message||'Load failed');const payload=data.data||{};messageState.rows=(payload.messages&&payload.messages.message_list)||[];messageState.total=(payload.messages&&payload.messages.total_count)||0;byId('memoryStorage').textContent=payload.storage_type||'—';renderAgentFilter(messageState.rows);renderRows();renderPager()}catch(error){if(error.name==='AbortError')return;body.replaceChildren();const row=node('tr');const errorCell=node('td','',error.message||String(error));errorCell.colSpan=8;row.appendChild(errorCell);body.appendChild(row)}}
+async function updateStatus(message,input){input.disabled=true;const previous=!input.checked;try{const response=await fetch('/api/v1/messages/'+messageRef(message),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:input.checked})});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Update failed');showToast('Updated');await loadMessages()}catch(error){input.checked=previous;input.disabled=false;alert(error.message||String(error))}}
+function askForget(message){messageState.forget=message;byId('forgetSession').textContent='Session ID: '+(message.session_id||'');openModal('forgetModal')}
+async function forgetSelected(){const message=messageState.forget;if(!message)return;const button=byId('confirmForget');button.disabled=true;try{const response=await fetch('/api/v1/messages/'+messageRef(message),{method:'DELETE'});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Forget failed');closeModal('forgetModal');showToast('Forgotten');await loadMessages()}catch(error){alert(error.message||String(error))}finally{button.disabled=false}}
+async function showContent(message){messageState.content=message;byId('contentSession').textContent='Session ID: '+(message.session_id||'');byId('messageContent').textContent='Loading...';byId('vectorArea').hidden=true;byId('messageVector').textContent='';openModal('contentModal');try{const response=await fetch('/api/v1/messages/'+messageRef(message)+'/content');const data=await response.json();if(data.code!==0)throw new Error(data.message||'Load failed');const content=data.data||{};byId('messageContent').textContent=content.content||'';if(Array.isArray(content.content_embed)&&content.content_embed.length){byId('messageVector').textContent=JSON.stringify(content.content_embed);byId('vectorArea').hidden=false}}catch(error){byId('messageContent').textContent=error.message||String(error)}}
+async function copyVector(){const value=byId('messageVector').textContent;try{await navigator.clipboard.writeText(value);showToast('Copied!')}catch(_error){const area=document.createElement('textarea');area.value=value;document.body.appendChild(area);area.select();document.execCommand('copy');area.remove();showToast('Copied!')}}
+function showTask(task){const taskState=taskDisplayState(task);const statusLabels={done:'Done',running:'Running',failed:'Failed'};const log=byId('taskLog');log.replaceChildren();log.append(node('p','','Status: '+statusLabels[taskState]),node('p','sub','Started: '+taskStartTime(task&&task.create_time)),node('div','memory-modal-content',task&&task.progress_msg||''));openModal('taskModal')}
+let searchTimer;byId('messageSearch').value=messageState.keywords;byId('messageSearch').addEventListener('input',(event)=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{messageState.keywords=event.target.value.trim();messageState.page=1;loadMessages()},180)});byId('agentApply').onclick=()=>{messageState.agents=new Set(Array.from(byId('agentOptions').querySelectorAll('input:checked')).map((item)=>item.value));messageState.page=1;byId('agentFilter').open=false;loadMessages()};byId('agentClear').onclick=()=>{messageState.agents.clear();messageState.page=1;byId('agentFilter').open=false;loadMessages()};byId('expandAll').onclick=()=>{const expandable=messageState.rows.filter((row)=>(row.extract||[]).length).map((row)=>String(row.message_id));if(expandable.every((id)=>messageState.expanded.has(id)))messageState.expanded.clear();else expandable.forEach((id)=>messageState.expanded.add(id));renderRows()};byId('confirmForget').onclick=forgetSelected;byId('copyVector').onclick=copyVector;document.querySelectorAll('[data-close]').forEach((button)=>button.onclick=()=>closeModal(button.dataset.close));document.querySelectorAll('.modal-overlay').forEach((modal)=>modal.addEventListener('click',(event)=>{if(event.target===modal)closeModal(modal.id)}));loadConfig();loadMessages();
+</script>"#,
+    );
+    Html(layout(t("Memory Messages", zh), &b, zh))
+}
+
+/// `/memory/memory-setting/:id` — fixed-version basic and advanced Memory
+/// configuration. The shell contains no tenant data; configuration is fetched
+/// through the authenticated API and written back with a single PUT.
+pub async fn memory_setting_page(
+    Path(memory_id): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let memory_id_json = json_script_string(&memory_id);
+    let mut b = String::new();
+    b.push_str("<a class='btn btn-o btn-sm' href='/memories' style='margin-bottom:12px'>← ");
+    b.push_str(t("Back to Memories", zh));
+    b.push_str("</a><section class='card memory-detail-card'><div class='ds-layout'><aside class='ds-sidebar'><div class='av-lg' id='memoryAvatar'><span id='memoryAvatarInitial'>M</span><img id='memoryAvatarImage' alt='' hidden></div><h3 id='memoryName'>Memory</h3><p class='stats' id='memoryDescription'></p><p class='stats' id='memoryCreated'></p><ul class='ds-nav'><li><a id='memoryMessagesLink' href='#'>");
+    b.push_str(t("Messages", zh));
+    b.push_str("</a></li><li><a class='active' id='memorySettingLink' href='#'>");
+    b.push_str(t("Configuration", zh));
+    b.push_str("</a></li></ul></aside><main class='memory-detail-main'><div class='memory-detail-title'><div><h1>");
+    b.push_str(t("Memory Configuration", zh));
+    b.push_str("</h1><p class='sub'>Configure models, capacity and extraction behavior.</p></div></div><form id='memorySettingForm'><h2>");
+    b.push_str(t("Basic settings", zh));
+    b.push_str("</h2><div class='memory-setting-form'><label>");
+    b.push_str(t("Name", zh));
+    b.push_str("<input id='cfgName' maxlength='128' required></label><label>");
+    b.push_str(t("Avatar", zh));
+    b.push_str("<input id='cfgAvatar' type='file' accept='image/png,image/jpeg,image/webp,image/gif'></label><label class='wide'>");
+    b.push_str(t("Description", zh));
+    b.push_str("<textarea id='cfgDescription' maxlength='2000'></textarea></label><label>");
+    b.push_str(t("Embedding Model", zh));
+    b.push_str(
+        "<select id='cfgEmbd'><option value='default'>default</option></select></label><label>",
+    );
+    b.push_str(t("Chat Model", zh));
+    b.push_str("<select id='cfgLlm'><option value='default'>default</option></select></label><fieldset class='wide memory-fieldset'><legend>");
+    b.push_str(t("Memory Type", zh));
+    b.push_str("</legend><div class='memory-type-grid'><label><input type='checkbox' class='cfg-type' value='raw' disabled> Raw (required)</label><label><input type='checkbox' class='cfg-type' value='semantic'> Semantic</label><label><input type='checkbox' class='cfg-type' value='episodic'> Episodic</label><label><input type='checkbox' class='cfg-type' value='procedural'> Procedural</label></div><p class='sub' id='cfgLockHint'></p></fieldset><label class='wide'>");
+    b.push_str(t("Memory capacity (bytes)", zh));
+    b.push_str("<input id='cfgSize' type='number' min='1' max='10485760' step='1'><span class='sub'>Default 5242880 bytes; maximum 10485760 bytes.</span></label></div><details class='memory-advanced'><summary>");
+    b.push_str(t("Advanced settings", zh));
+    b.push_str("</summary><div class='memory-setting-form'><label>");
+    b.push_str(t("Permissions", zh));
+    b.push_str("<select id='cfgPermissions'><option value='me'>");
+    b.push_str(t("Only me", zh));
+    b.push_str("</option><option value='team'>");
+    b.push_str(t("Team", zh));
+    b.push_str("</option></select></label><label>");
+    b.push_str(t("Storage type", zh));
+    b.push_str("<select id='cfgStorage' disabled><option value='table'>Table</option></select></label><label>");
+    b.push_str(t("Forgetting policy", zh));
+    b.push_str("<select id='cfgPolicy'><option value='FIFO'>FIFO</option></select></label><label>");
+    b.push_str(t("Temperature", zh));
+    b.push_str("<span class='memory-range'><input id='cfgTemperature' type='range' min='0' max='1' step='0.01'><input id='cfgTemperatureNumber' type='number' min='0' max='1' step='0.01'></span></label><label class='wide'>");
+    b.push_str(t("System prompt", zh));
+    b.push_str("<textarea id='cfgSystemPrompt'></textarea></label><label class='wide'>");
+    b.push_str(t("User prompt", zh));
+    b.push_str("<textarea id='cfgUserPrompt'></textarea></label></div></details><p class='sub' id='configStatus' role='status'></p><div class='memory-modal-actions'><button class='btn btn-o' type='button' id='cfgReset'>");
+    b.push_str(t("Reset", zh));
+    b.push_str("</button><button class='btn btn-p' type='submit' id='cfgSave'>");
+    b.push_str(t("Save", zh));
+    b.push_str("</button></div></form></main></div></section><div id='memoryToast' class='memory-toast' hidden></div><script>const memoryId=");
+    b.push_str(&memory_id_json);
+    b.push_str(
+        r#";
+const byId=(id)=>document.getElementById(id);let avatarValue='';let configRequest=0;
+function node(tag,text){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);return n}
+function showToast(text){const toast=byId('memoryToast');toast.textContent=text;toast.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>toast.hidden=true,1600)}
+function setAvatar(memory){const name=(memory.name||'M').trim();byId('memoryAvatarInitial').textContent=name.charAt(0).toUpperCase()||'M';const image=byId('memoryAvatarImage');if(memory.avatar&&(memory.avatar.startsWith('data:image/')||/^https?:\/\//i.test(memory.avatar))){image.src=memory.avatar;image.hidden=false;byId('memoryAvatarInitial').hidden=true}else{image.removeAttribute('src');image.hidden=true;byId('memoryAvatarInitial').hidden=false}}
+function ensureOption(id,value){const select=byId(id);if(!Array.from(select.options).some((option)=>option.value===value)){const option=node('option',value);option.value=value;select.appendChild(option)}select.value=value}
+function appendModelOptions(selectId,models,types){const select=byId(selectId);const groups=new Map();const seen=new Set(Array.from(select.options).map((option)=>option.value));for(const model of models){const capabilities=Array.isArray(model.model_type)?model.model_type:[model.model_type];if(!capabilities.some((type)=>types.includes(type))||!model.selector||seen.has(model.selector))continue;seen.add(model.selector);const label=(model.provider||model.provider_id||'Provider')+' / '+(model.instance_name||model.instance_id||'default');let group=groups.get(label);if(!group){group=document.createElement('optgroup');group.label=label;groups.set(label,group);select.appendChild(group)}const option=node('option',model.name||model.selector);option.value=model.selector;group.appendChild(option)}}
+async function loadModels(){try{const response=await fetch('/api/v1/models');const data=await response.json();if(data.code!==0)return;const models=data.data||[];appendModelOptions('cfgEmbd',models,['embedding']);appendModelOptions('cfgLlm',models,['chat','image2text'])}catch(_error){}}
+function populate(memory,messageCount){byId('memoryName').textContent=memory.name||'Memory';byId('memoryDescription').textContent=memory.description||'';byId('memoryCreated').textContent='Created '+new Date(memory.created_at||Date.now()).toLocaleDateString();byId('memoryMessagesLink').href='/memory/memory-message/'+encodeURIComponent(memoryId);byId('memorySettingLink').href='/memory/memory-setting/'+encodeURIComponent(memoryId);setAvatar(memory);avatarValue=memory.avatar||'';byId('cfgName').value=memory.name||'';byId('cfgDescription').value=memory.description||'';ensureOption('cfgEmbd',memory.embd_id||'default');ensureOption('cfgLlm',memory.llm_id||'default');for(const checkbox of document.querySelectorAll('.cfg-type'))checkbox.checked=(memory.memory_type||[]).includes(checkbox.value);document.querySelector('.cfg-type[value="raw"]').checked=true;byId('cfgSize').value=String(Number(memory.memory_size)||5242880);byId('cfgPermissions').value=memory.permissions==='team'?'team':'me';byId('cfgStorage').value=memory.storage_type||'table';byId('cfgPolicy').value='FIFO';const temperature=Math.min(1,Math.max(0,Number.isFinite(Number(memory.temperature))?Number(memory.temperature):0.5));byId('cfgTemperature').value=String(temperature);byId('cfgTemperatureNumber').value=String(temperature);byId('cfgSystemPrompt').value=memory.system_prompt||'';byId('cfgUserPrompt').value=memory.user_prompt||'';const locked=messageCount>0;byId('cfgEmbd').disabled=locked;byId('cfgLlm').disabled=false;for(const checkbox of document.querySelectorAll('.cfg-type'))checkbox.disabled=locked||checkbox.value==='raw';byId('cfgLockHint').textContent=locked?'Embedding and memory types are locked after messages are stored.':'Raw memory is required.'}
+async function loadSetting(){const generation=++configRequest;byId('configStatus').textContent='Loading...';try{await loadModels();const [configResponse,messagesResponse]=await Promise.all([fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'/config'),fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'?page=1&page_size=1')]);const configData=await configResponse.json();const messagesData=await messagesResponse.json();if(generation!==configRequest)return;if(configData.code!==0)throw new Error(configData.message||'Memory not found');if(messagesData.code!==0)throw new Error(messagesData.message||'Messages unavailable');const count=Number(messagesData.data&&messagesData.data.messages&&messagesData.data.messages.total_count)||0;populate(configData.data||{},count);byId('configStatus').textContent=''}catch(error){byId('configStatus').textContent=error.message||String(error)}}
+async function saveSetting(event){event.preventDefault();const name=byId('cfgName').value.trim();if(!name){byId('cfgName').focus();return}const memorySize=Number(byId('cfgSize').value);const temperature=Number(byId('cfgTemperatureNumber').value);if(!Number.isInteger(memorySize)||memorySize<1||memorySize>10485760){alert('Memory capacity must be an integer from 1 to 10485760 bytes.');return}if(!Number.isFinite(temperature)||temperature<0||temperature>1){alert('Temperature must be in range [0, 1].');return}const types=Array.from(document.querySelectorAll('.cfg-type:checked')).map((item)=>item.value);if(!types.includes('raw'))types.unshift('raw');const body={name,avatar:avatarValue,description:byId('cfgDescription').value,memory_size:memorySize,permissions:byId('cfgPermissions').value,forgetting_policy:'FIFO',temperature,llm_id:byId('cfgLlm').value,system_prompt:byId('cfgSystemPrompt').value,user_prompt:byId('cfgUserPrompt').value};if(!byId('cfgEmbd').disabled)body.embd_id=byId('cfgEmbd').value;if(!document.querySelector('.cfg-type[value="semantic"]').disabled)body.memory_type=types;const button=byId('cfgSave');button.disabled=true;byId('configStatus').textContent='Saving...';try{const response=await fetch('/api/v1/memories/'+encodeURIComponent(memoryId),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Save failed');showToast('Saved');await loadSetting()}catch(error){byId('configStatus').textContent=error.message||String(error)}finally{button.disabled=false}}
+byId('cfgAvatar').onchange=(event)=>{const file=event.target.files&&event.target.files[0];if(!file)return;if(!file.type.startsWith('image/')||file.size>2*1024*1024){alert('Choose a PNG, JPEG, WebP or GIF image up to 2 MiB.');event.target.value='';return}const reader=new FileReader();reader.onload=()=>{avatarValue=String(reader.result||'');setAvatar({name:byId('cfgName').value,avatar:avatarValue})};reader.readAsDataURL(file)};byId('cfgName').oninput=()=>{if(!avatarValue)setAvatar({name:byId('cfgName').value,avatar:''})};byId('cfgTemperature').oninput=()=>byId('cfgTemperatureNumber').value=byId('cfgTemperature').value;byId('cfgTemperatureNumber').oninput=()=>byId('cfgTemperature').value=byId('cfgTemperatureNumber').value;byId('cfgReset').onclick=loadSetting;byId('memorySettingForm').onsubmit=saveSetting;loadSetting();
+</script>"#,
+    );
+    Html(layout(t("Memory Configuration", zh), &b, zh))
 }
 
 pub async fn admin_page(
@@ -1331,6 +1655,7 @@ pub async fn admin_page(
     );
     b.push_str(&tr);
     b.push_str("</tbody></table></div>");
+    b.push_str("<div class='card'><h2>System Variables</h2><p style='color:var(--tm);font-size:12px;margin-bottom:10px'>Durable RAGFlow-compatible variables. Sandbox changes take effect on the next execution; secrets are never returned in plaintext.</p><div style='overflow-x:auto'><table><thead><tr><th>Name</th><th>Type</th><th>Value</th><th></th></tr></thead><tbody id='sysVarRows'><tr><td colspan='4' style='color:var(--tm)'>Loading administrator settings…</td></tr></tbody></table></div><p id='sysVarMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div><script>function sysVarCell(tr,text,cls){var td=document.createElement('td');td.textContent=text;if(cls)td.className=cls;tr.appendChild(td);return td}function loadSysVars(){var rows=document.getElementById('sysVarRows');var msg=document.getElementById('sysVarMsg');fetch('/api/v1/system/variables').then(async function(r){var d=await r.json();if(!r.ok||d.code!==0)throw new Error(d.message||'Administrator access required');rows.textContent='';(d.data||[]).forEach(function(s){var tr=document.createElement('tr');sysVarCell(tr,s.name,'co');var type=sysVarCell(tr,'');var badge=document.createElement('span');badge.className='badge bw';badge.textContent=s.data_type;type.appendChild(badge);var value=sysVarCell(tr,'');var input=document.createElement('input');input.type=s.name==='mail.password'?'password':'text';input.value=s.value;input.style='width:100%;min-width:260px;font-family:monospace;font-size:12px';value.appendChild(input);var action=sysVarCell(tr,'');var button=document.createElement('button');button.className='btn btn-p btn-sm';button.textContent='Save';button.dataset.name=s.name;button.onclick=function(){saveSysVar(button,input)};action.appendChild(button);rows.appendChild(tr)});if(!(d.data||[]).length)rows.textContent='No variables'}).catch(function(e){rows.textContent='';var tr=document.createElement('tr');var td=sysVarCell(tr,e.message);td.colSpan=4;td.style.color='var(--d)';rows.appendChild(tr);msg.textContent='Sign in with an administrator account to manage system variables.'})}function saveSysVar(button,input){var name=button.dataset.name;var msg=document.getElementById('sysVarMsg');msg.textContent='Saving…';fetch('/api/v1/system/variables',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({var_name:name,var_value:input.value})}).then(async function(r){var d=await r.json();if(!r.ok||d.code!==0)throw new Error(d.message||'Save failed');msg.textContent=name+' saved ✓';loadSysVars()}).catch(function(e){msg.textContent='Error: '+e.message})}loadSysVars()</script>");
     let users = state.users.list_users();
     let mut ur = String::new();
     for user in &users {
@@ -1404,49 +1729,35 @@ pub async fn document_page(
     Html(layout("Document", &b, zh))
 }
 
-pub async fn skills_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+pub async fn skills_page(
+    State(_state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let catalog = crate::runtime::component_catalog();
-    let mut by_category: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
-    for (name, category) in &catalog {
-        by_category.entry(category).or_default().push(name);
-    }
     let mut b = String::new();
     b.push_str("<h1>");
     b.push_str(t("Skills", zh));
     b.push_str("</h1><p style='color:var(--tm)'>");
     b.push_str(t(
-        "Available canvas components and built-in tools. Open an Agent to compose them into a workflow.",
+        "Index and search reusable skills by name, tags, description, and content.",
         zh,
     ));
-    b.push_str("</p><div class='card'><h2>");
-    b.push_str(t("Component Catalog", zh));
-    b.push_str(" <span style='font-size:13px;color:var(--tm)'>");
-    b.push_str(&catalog.len().to_string());
-    b.push_str("</span></h2>");
-    for (category, names) in &by_category {
-        b.push_str("<h3 style='margin-top:18px;text-transform:capitalize'>");
-        b.push_str(category);
-        b.push_str("</h3><div class='kb-grid'>");
-        for name in names {
-            let initial = name
-                .chars()
-                .next()
-                .unwrap_or('C')
-                .to_uppercase()
-                .collect::<String>();
-            b.push_str(&format!(
-                "<div class='kb-card'><div class='av-lg'>{initial}</div><h3>{name}</h3><p style='color:var(--tm);font-size:12px'>{}</p><div style='display:flex;gap:6px;margin-top:8px;flex-wrap:wrap'><button class='btn btn-p btn-sm' onclick='installSkill(&quot;{}&quot;)' >Install</button><button class='btn btn-d btn-sm' onclick='uninstallSkill(&quot;{}&quot;)' >Uninstall</button><a class='btn btn-o btn-sm' href='/agents'>Use in Agent →</a></div></div>",
-                t("canvas component", zh),
-                html_escape(name),
-                html_escape(name)
-            ));
-        }
-        b.push_str("</div>");
-    }
-    b.push_str("</div><a class='btn btn-p' href='/agents' style='margin-top:16px'>");
-    b.push_str(t("Open Agents", zh));
-    b.push_str("</a><script>function skillDsl(name){var key=name.replace(/[^A-Za-z0-9_]/g,'');var o={};o['begin']={'obj':{'component_name':'Begin','params':{}},'downstream':[key],'upstream':[]};o[key]={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':['begin']};return {'components':o}};function installSkill(name){var n=prompt('Agent name:',name+' Agent');if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:'Installed from skill: '+name,dsl:skillDsl(name)})}).then(r=>r.json()).then(d=>{if(d.code===0){location.href='/agents/'+(d.data&&d.data.id?d.data.id:'')}else{alert('Install failed: '+(d.message||'unknown'))}})};function uninstallSkill(name){fetch('/api/v1/agents').then(r=>r.json()).then(d=>{var list=(d.data||[]).filter(function(a){return a.description==='Installed from skill: '+name});if(!list.length){alert('No agents installed from this skill');return}if(!confirm('Uninstall skill? This deletes '+list.length+' agent(s) created from it.'))return;var done=0;list.forEach(function(a){fetch('/api/v1/agents/'+a.id,{method:'DELETE'}).then(function(){if(++done===list.length){location.reload()}})})})}</script>");
+    b.push_str("</p><div class='toolbar' style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'><input id='skillSpace' value='default' placeholder='Space ID' style='max-width:180px'><input id='skillQuery' placeholder='Search skills by meaning...' style='min-width:260px;flex:1' onkeydown='if(event.key===&quot;Enter&quot;)searchSkills()'><button class='btn btn-p' onclick='searchSkills()'>Search</button><button class='btn btn-o' onclick='openSkillModal()'>+ Add Skill</button><button class='btn btn-o' onclick='openSkillConfig()'>⚙ Configure Search</button><button class='btn btn-o' onclick='reindexSkills()'>↻ Reindex All</button></div><p id='skillMeta' style='color:var(--tm);font-size:12px'></p><div id='skillList' class='kb-grid'><p style='color:var(--tm)'>Loading...</p></div>");
+    b.push_str("<div class='modal-overlay' id='skillModal'><div class='modal' style='max-width:680px'><h2>Add Skill</h2><label>Skill ID</label><input id='skillId' placeholder='my-skill'><label>Name</label><input id='skillName' placeholder='My Skill'><label>Folder ID</label><input id='skillFolder' placeholder='optional folder id'><label>Version</label><input id='skillVersion' value='1.0.0'><label>Tags</label><input id='skillTags' placeholder='rag, rust, search'><label>Description</label><textarea id='skillDescription'></textarea><label>Content</label><textarea id='skillContent' style='min-height:160px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='indexSkill()'>Index</button><button class='btn btn-o' onclick='closeSkillModal()'>Cancel</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>Skill Search Configuration</h2><label>Embedding Model</label><input id='skillEmbd' value='default'><label>Vector Similarity Weight (0–1)</label><input id='skillVectorWeight' type='number' min='0' max='1' step='0.05' value='0.3'><label>Similarity Threshold (0–1)</label><input id='skillThreshold' type='number' min='0' max='1' step='0.05' value='0.2'><label>Top K</label><input id='skillTopK' type='number' min='1' value='10'><label><input id='skillContentEnabled' type='checkbox'> Include content in embedding text</label><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveSkillConfig()'>Save</button><button class='btn btn-o' onclick='document.getElementById(&quot;skillConfigModal&quot;).classList.remove(&quot;show&quot;)'>Cancel</button></div></div></div>");
+    b.push_str(r#"<script>
+function skillSpace(){return document.getElementById('skillSpace').value.trim()||'default'}
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function searchSkills(){var q=document.getElementById('skillQuery').value;fetch('/api/v1/skills/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space_id:skillSpace(),query:q,page:1,page_size:50})}).then(r=>r.json()).then(function(d){if(d.code!==0){throw new Error(d.message||'Search failed')}var data=d.data||{},skills=data.skills||[];document.getElementById('skillMeta').textContent=(data.total||0)+' skills · '+(data.search_type||'keyword');var h='';skills.forEach(function(s){h+='<div class="kb-card"><div class="av-lg">'+esc((s.name||'S').charAt(0).toUpperCase())+'</div><h3>'+esc(s.name)+'</h3><p style="color:var(--tm);font-size:12px">'+esc(s.description||'')+'</p><p style="font-size:12px">'+(s.tags||[]).map(function(t){return '<span class="badge">'+esc(t)+'</span>'}).join(' ')+'</p><p style="color:var(--tm);font-size:11px">v'+esc(s.version||'1.0.0')+' · score '+Number(s.score||0).toFixed(3)+'</p><button class="btn btn-d btn-sm" onclick="deleteSkill('+JSON.stringify(s.skill_id)+')">Delete index</button></div>'});document.getElementById('skillList').innerHTML=h||'<p style="color:var(--tm)">No skills indexed in this space.</p>'}).catch(function(e){document.getElementById('skillList').innerHTML='<p style="color:var(--danger)">'+esc(e.message)+'</p>'})}
+function openSkillModal(){document.getElementById('skillModal').classList.add('show')}
+function closeSkillModal(){document.getElementById('skillModal').classList.remove('show')}
+function indexSkill(){var tags=document.getElementById('skillTags').value.split(',').map(function(v){return v.trim()}).filter(Boolean);var body={space_id:skillSpace(),skills:[{id:document.getElementById('skillId').value,name:document.getElementById('skillName').value,folder_id:document.getElementById('skillFolder').value,version:document.getElementById('skillVersion').value,tags:tags,description:document.getElementById('skillDescription').value,content:document.getElementById('skillContent').value}]};fetch('/api/v1/skills/index',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Index failed');closeSkillModal();searchSkills()}).catch(function(e){alert(e.message)})}
+function deleteSkill(id){if(!confirm('Delete this skill index?'))return;fetch('/api/v1/skills/index?space_id='+encodeURIComponent(skillSpace())+'&skill_id='+encodeURIComponent(id),{method:'DELETE'}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Delete failed');searchSkills()}).catch(function(e){alert(e.message)})}
+function openSkillConfig(){fetch('/api/v1/skills/config?space_id='+encodeURIComponent(skillSpace())).then(r=>r.json()).then(function(d){var c=d.data||{};document.getElementById('skillEmbd').value=c.embd_id||'default';document.getElementById('skillVectorWeight').value=c.vector_similarity_weight==null?0.3:c.vector_similarity_weight;document.getElementById('skillThreshold').value=c.similarity_threshold==null?0.2:c.similarity_threshold;document.getElementById('skillTopK').value=c.top_k||10;document.getElementById('skillContentEnabled').checked=!!(c.field_config&&c.field_config.content&&c.field_config.content.enabled);document.getElementById('skillConfigModal').classList.add('show')})}
+function saveSkillConfig(){var fields={name:{enabled:true,weight:3},tags:{enabled:true,weight:2},description:{enabled:true,weight:1},content:{enabled:document.getElementById('skillContentEnabled').checked,weight:.5}};var body={space_id:skillSpace(),embd_id:document.getElementById('skillEmbd').value,vector_similarity_weight:Number(document.getElementById('skillVectorWeight').value),similarity_threshold:Number(document.getElementById('skillThreshold').value),top_k:Number(document.getElementById('skillTopK').value),field_config:fields};fetch('/api/v1/skills/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Save failed');document.getElementById('skillConfigModal').classList.remove('show');searchSkills()}).catch(function(e){alert(e.message)})}
+function reindexSkills(){if(!confirm('Re-embed all indexed skills in this space?'))return;fetch('/api/v1/skills/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space_id:skillSpace()})}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Reindex failed');alert('Reindexed '+(d.data.indexed_count||0)+' skills · '+d.data.version);searchSkills()}).catch(function(e){alert(e.message)})}
+searchSkills();
+</script>"#);
     Html(layout(t("Skills", zh), &b, zh))
 }
 
@@ -1461,7 +1772,7 @@ pub async fn providers_page(
         let factory = crate::model_meta::resolve_model_factory(&p.id, &p.name);
         // Capability kinds (aligned with RAGFlow Model providers type filter).
         let mut kinds = Vec::new();
-        use crate::providers::{provider_has_kind, ProviderKind};
+        use crate::providers::{ProviderKind, provider_has_kind};
         if provider_has_kind(&p.id, &p.name, ProviderKind::Chat) {
             kinds.push("llm");
         }
@@ -1631,7 +1942,7 @@ pub async fn settings_page(
     b.push_str(t("Invite", zh));
     b.push_str("</button><p id='invMsg' style='font-size:12px;color:var(--tm)'></p></div></div>");
     b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function loadKeys(){fetch('/api/v1/system/api_keys').then(r=>r.json()).then(d=>{var keys=d.data||[];var e=document.getElementById('akList');if(!keys.length){e.innerHTML='<p style=color:var(--tm)>No API keys yet.</p>';return}var h='<table><thead><tr><th>Key</th><th>Created</th><th></th></tr></thead><tbody>';keys.forEach(function(k){h+='<tr><td style=font-family:monospace;font-size:12px>'+k.token+'</td><td style=color:var(--tm);font-size:12px>'+k.create_date+'</td><td><button class=\\'btn btn-d btn-sm\\' onclick=\\'delKey(&quot;'+k.token+'&quot;)\\'>Delete</button></td></tr>'});e.innerHTML=h+'</tbody></table>'})};function genKey(){fetch('/api/v1/system/api_keys',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function delKey(k){if(!confirm('Delete this API key?'))return;fetch('/api/v1/system/api_keys/'+encodeURIComponent(k),{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function inviteUser(){var e=document.getElementById('invEmail').value;if(!e){document.getElementById('invMsg').textContent='Please enter an email';return}fetch('/api/v1/users/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e})}).then(r=>r.json()).then(d=>{document.getElementById('invMsg').textContent=d.code===0?'Invitation sent':'Error: '+(d.message||'unknown')})};loadKeys()</script>");
-    
+
     // Chat channels (RAGFlow user-setting parity): registered channel builders
     b.push_str("<div class='card' style='margin-top:16px'><h3>Chat Channels</h3>");
     let channel_ids = state.channels.registered_ids().await;
@@ -1660,7 +1971,7 @@ pub async fn settings_page(
 
 pub async fn api_docs(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let b = "<h1>📖 API Docs</h1><div class='card'><p style='color:var(--t2)'>45+ RESTful endpoints. Full RAG pipeline.</p><h3 style='margin-top:16px'>Auth & Users</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/auth/login</td><td>Login</td></tr><tr><td>POST</td><td class='co'>/api/v1/user/register</td><td>Register</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/user/password</td><td>Change password</td></tr><tr><td>DELETE/PATCH</td><td class='co'>/api/v1/admin/users/{id}</td><td>Delete user / reset password</td></tr></table><h3>Knowledge Bases</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/datasets</td><td>KB list/create</td></tr><tr><td>PUT/DELETE</td><td class='co'>/api/v1/datasets/{id}</td><td>Update config / delete</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents</td><td>Upload document</td></tr><tr><td>GET/DELETE/PATCH</td><td class='co'>/api/v1/datasets/{id}/documents/{did}</td><td>Get / delete / rename</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents/{did}/reparse</td><td>Reparse</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/build</td><td>Build knowledge graph</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/query</td><td>Query graph context</td></tr></table><h3>Search & Chat</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/retrieval</td><td>Vector/hybrid search</td></tr><tr><td>POST</td><td class='co'>/api/v1/completions</td><td>RAG chat</td></tr><tr><td>POST</td><td class='co'>/api/v1/chats/{id}/completions</td><td>RAG chat (history, SSE)</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/conversations/{id}</td><td>Delete conversation</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/conversations/{id}</td><td>Rename conversation</td></tr><tr><td>POST</td><td class='co'>/api/v1/conversations/{id}/clear</td><td>Clear messages</td></tr><tr><td>GET</td><td class='co'>/api/v1/conversations/{id}/export</td><td>Export Markdown</td></tr></table><h3>OpenAI-Compatible</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/chat/completions</td><td>Chat (stream + non-stream)</td></tr><tr><td>POST</td><td class='co'>/api/v1/embeddings</td><td>Embeddings</td></tr><tr><td>POST</td><td class='co'>/api/v1/rerank</td><td>Rerank (Jina format)</td></tr><tr><td>GET</td><td class='co'>/api/v1/models</td><td>Model list</td></tr></table><h3>Files & Memories</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/DELETE</td><td class='co'>/api/v1/files/{id}</td><td>Get / delete file</td></tr><tr><td>GET</td><td class='co'>/api/v1/files/{id}/download</td><td>Download file</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/memories/clear</td><td>Clear all conversations</td></tr></table><h3>Agents & System</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/agents</td><td>Agents CRUD</td></tr><tr><td>POST</td><td class='co'>/api/v1/agents/{id}/completions</td><td>Run agent</td></tr><tr><td>GET</td><td class='co'>/api/v1/stats</td><td>Stats</td></tr><tr><td>GET</td><td class='co'>/api/v1/system/healthz</td><td>Health check</td></tr></table></div>";
+    let b = "<h1>📖 API Docs</h1><div class='card'><p style='color:var(--t2)'>45+ RESTful endpoints. Full RAG pipeline.</p><h3 style='margin-top:16px'>Auth & Users</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET</td><td class='co'>/api/v1/system/password-public-key</td><td>Optional RSA password transport public key</td></tr><tr><td>POST</td><td class='co'>/api/v1/auth/login</td><td>Login</td></tr><tr><td>POST</td><td class='co'>/api/v1/user/register</td><td>Register</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/user/password</td><td>Change password</td></tr><tr><td>DELETE/PATCH</td><td class='co'>/api/v1/admin/users/{id}</td><td>Delete user / reset password</td></tr></table><h3>Knowledge Bases</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/datasets</td><td>KB list/create</td></tr><tr><td>PUT/DELETE</td><td class='co'>/api/v1/datasets/{id}</td><td>Update config / delete</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents</td><td>Upload document</td></tr><tr><td>GET/DELETE/PATCH</td><td class='co'>/api/v1/datasets/{id}/documents/{did}</td><td>Get / delete / rename</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/documents/{did}/reparse</td><td>Reparse</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/build</td><td>Build knowledge graph</td></tr><tr><td>POST</td><td class='co'>/api/v1/datasets/{id}/graphrag/query</td><td>Query graph context</td></tr></table><h3>Search & Chat</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/retrieval</td><td>Vector/hybrid search</td></tr><tr><td>POST</td><td class='co'>/api/v1/completions</td><td>RAG chat</td></tr><tr><td>POST</td><td class='co'>/api/v1/chats/{id}/completions</td><td>RAG chat (history, SSE)</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/conversations/{id}</td><td>Delete conversation</td></tr><tr><td>PATCH</td><td class='co'>/api/v1/conversations/{id}</td><td>Rename conversation</td></tr><tr><td>POST</td><td class='co'>/api/v1/conversations/{id}/clear</td><td>Clear messages</td></tr><tr><td>GET</td><td class='co'>/api/v1/conversations/{id}/export</td><td>Export Markdown</td></tr></table><h3>OpenAI-Compatible</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>POST</td><td class='co'>/api/v1/chat/completions</td><td>Chat (stream + non-stream)</td></tr><tr><td>POST</td><td class='co'>/api/v1/embeddings</td><td>Embeddings</td></tr><tr><td>POST</td><td class='co'>/api/v1/rerank</td><td>Rerank (Jina format)</td></tr><tr><td>GET</td><td class='co'>/api/v1/openai/models</td><td>OpenAI model list</td></tr></table><h3>Files & Memories</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/DELETE</td><td class='co'>/api/v1/files/{id}</td><td>Get / delete file</td></tr><tr><td>GET</td><td class='co'>/api/v1/files/{id}/download</td><td>Download file</td></tr><tr><td>GET</td><td class='co'>/api/v1/models</td><td>Tenant model selector catalog</td></tr><tr><td>DELETE</td><td class='co'>/api/v1/memories/clear</td><td>Clear all conversations</td></tr></table><h3>Agents & System</h3><table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td>GET/POST</td><td class='co'>/api/v1/agents</td><td>Agents CRUD</td></tr><tr><td>POST</td><td class='co'>/api/v1/agents/{id}/completions</td><td>Run agent</td></tr><tr><td>GET</td><td class='co'>/api/v1/stats</td><td>Stats</td></tr><tr><td>GET</td><td class='co'>/api/v1/system/healthz</td><td>Health check</td></tr></table></div>";
     Html(layout("API Docs", b, zh))
 }
 
@@ -1699,14 +2010,16 @@ pub async fn status_page(req: axum::http::Request<axum::body::Body>) -> impl Int
     Html(layout("Status", &b, zh))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn html_escape_escapes_special_chars() {
-        assert_eq!(html_escape("a&b<c>d\"e'f"), "a&amp;b&lt;c&gt;d&quot;e&#39;f");
+        assert_eq!(
+            html_escape("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&#39;f"
+        );
         assert_eq!(html_escape("plain"), "plain");
     }
 
@@ -1749,15 +2062,14 @@ mod tests {
 #[cfg(test)]
 mod kb_ui_tests {
     use super::*;
+    use crate::api::compilation_templates::CompilationTemplateStore;
     use crate::api::document::DocStore;
     use crate::api::document_metadata::DocumentMetadataStore;
     use crate::api::evaluation::EvaluationStore;
     use crate::api::features::{
-        AgentRunRegistry, AgentStore, CanvasVersionStore, MemoryStore,
-        ProviderStore, TaskQueue,
+        AgentRunRegistry, AgentStore, CanvasVersionStore, MemoryStore, ProviderStore, TaskQueue,
     };
     use crate::api::file_mgr::FileStore;
-    use crate::api::compilation_templates::CompilationTemplateStore;
     use crate::api::tenant_models::TenantModelStore;
     use crate::auth::UserStore;
     use crate::channels::ChannelRegistry;
@@ -1780,9 +2092,7 @@ mod kb_ui_tests {
         // 预写空 users.json，避免 UserStore::new 首次 bootstrap 依赖 RAYRAG_ADMIN_PASSWORD。
         let users_path = root.path().join("users.json");
         std::fs::write(&users_path, "[]").unwrap();
-        let users = Arc::new(
-            UserStore::new(users_path.to_str().unwrap()).unwrap(),
-        );
+        let users = Arc::new(UserStore::new(users_path.to_str().unwrap()).unwrap());
         let state = Arc::new(AppState {
             static_dir: static_dir.to_string_lossy().into_owned(),
             port: 0,
@@ -1800,21 +2110,24 @@ mod kb_ui_tests {
             graphs: Arc::new(crate::graph_store::GraphStore::in_memory()),
             engine: Arc::new(RwLock::new(SearchEngine::new())),
             vector_mirror: Arc::new(crate::store::OnlineVectorMirror::disabled()),
-            index_path: root.path().join("index.json").to_string_lossy().into_owned(),
+            index_path: root
+                .path()
+                .join("index.json")
+                .to_string_lossy()
+                .into_owned(),
             model_path: root.path().join("models").to_string_lossy().into_owned(),
             max_upload_bytes: 64 * 1024 * 1024,
-            docs: Arc::new(
-                DocStore::new(root.path().join("docs.json").to_str().unwrap()).unwrap(),
-            ),
+            docs: Arc::new(DocStore::new(root.path().join("docs.json").to_str().unwrap()).unwrap()),
             document_metadata: Arc::new(DocumentMetadataStore::in_memory()),
-            files: Arc::new(
-                FileStore::new(root.path().join("uploads").to_str().unwrap()).unwrap(),
-            ),
+            files: Arc::new(FileStore::new(root.path().join("uploads").to_str().unwrap()).unwrap()),
             data_sources: None,
             search_apps: None,
             providers: Arc::new(ProviderStore::in_memory()),
             tenant_models: Arc::new(TenantModelStore::in_memory()),
             memories: Arc::new(MemoryStore::in_memory()),
+            memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
+            skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
+            system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             tasks: Arc::new(TaskQueue::in_memory()),
             task_executor: Arc::new(TaskExecutor::new("test_executor", 4)),
             agents: Arc::new(AgentStore::in_memory()),
@@ -1828,6 +2141,7 @@ mod kb_ui_tests {
             chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
             channels: Arc::new(ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+            memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         (root, state)
     }
@@ -1837,6 +2151,148 @@ mod kb_ui_tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn english_request(uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[test]
+    fn inline_json_string_cannot_terminate_script() {
+        let encoded = json_script_string("</script>\u{2028}&>");
+        assert_eq!(encoded, "\"\\u003c/script\\u003e\\u2028\\u0026\\u003e\"");
+        assert!(!encoded.contains("</script>"));
+    }
+
+    #[tokio::test]
+    async fn memory_list_shell_uses_safe_dom_and_fixed_detail_route() {
+        let html = body_of(memories_page_v2(english_request("/memories")).await).await;
+        assert!(html.contains("id='memSearch'"));
+        assert!(html.contains("id='memCreate'"));
+        assert!(html.contains("id='memOwner'"));
+        assert!(html.contains("owner_ids"));
+        assert!(html.contains("/api/v1/models/default"));
+        assert!(html.contains("['chat','image2text']"));
+        assert!(html.contains("/memory/memory-message/"));
+        assert!(html.contains("document.createElement"));
+        assert!(html.contains("textContent"));
+        assert!(!html.contains("innerHTML"));
+        assert!(!html.contains("Recent Conversations"));
+    }
+
+    #[tokio::test]
+    async fn memory_message_shell_has_fixed_hierarchy_actions_and_safe_id() {
+        let malicious = "</script><script>alert(1)</script>\u{2028}&";
+        let html = body_of(
+            memory_message_page(
+                Path(malicious.into()),
+                english_request("/memory/memory-message/x"),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "memoryMessagesLink",
+            "memorySettingLink",
+            "messageSearch",
+            "agentFilter",
+            "contentModal",
+            "forgetModal",
+            "taskModal",
+            "copyVector",
+            "allowedSizes=[10,20,50,100]",
+            "/api/v1/messages/",
+            "taskDisplayState",
+            "taskStartTime",
+            "memory-task-button",
+            "memory-task-dot",
+            "taskButton.dataset.taskStatus=taskState",
+            "status==='failed'||status==='cancelled'||progress<0",
+            "[data-task-status=done]",
+            "[data-task-status=running]",
+            "[data-task-status=failed]",
+            "width:32px;height:32px",
+            ".memory-message-table tr:hover .memory-actions",
+        ] {
+            assert!(html.contains(marker), "missing message UI marker {marker}");
+        }
+        assert!(html.contains("\\u003c/script\\u003e"));
+        assert!(!html.contains(malicious));
+        assert!(html.contains("Started: '+taskStartTime(task&&task.create_time)"));
+        assert!(!html.contains("task.create_time||Date.now()"));
+        assert!(!html.contains("innerHTML"));
+    }
+
+    #[tokio::test]
+    async fn memory_task_log_static_contract_keeps_api_log_as_text() {
+        let malicious_log = r#"<img src=x onerror="alert(1)"></script><script>alert(2)</script>"#;
+        let html = body_of(
+            memory_message_page(
+                Path("memory-a".into()),
+                english_request("/memory/memory-message/memory-a"),
+            )
+            .await,
+        )
+        .await;
+
+        assert!(!html.contains(malicious_log));
+        assert!(html.contains(
+            "function node(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text)"
+        ));
+        assert!(html.contains("node('div','memory-modal-content',task&&task.progress_msg||'')"));
+        for unsafe_sink in [
+            "taskLog.innerHTML",
+            "log.innerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+        ] {
+            assert!(
+                !html.contains(unsafe_sink),
+                "task log must not use unsafe DOM sink {unsafe_sink}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_setting_shell_has_basic_advanced_and_safe_id() {
+        let malicious = "</script><script>alert(1)</script>";
+        let html = body_of(
+            memory_setting_page(
+                Path(malicious.into()),
+                english_request("/memory/memory-setting/x"),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "memoryMessagesLink",
+            "memorySettingLink",
+            "cfgName",
+            "cfgAvatar",
+            "cfgDescription",
+            "cfgEmbd",
+            "cfgLlm",
+            "cfgSize",
+            "cfgPermissions",
+            "cfgPolicy",
+            "cfgTemperature",
+            "cfgSystemPrompt",
+            "cfgUserPrompt",
+            "cfgReset",
+            "cfgSave",
+            "/api/v1/models",
+            "max='10485760'",
+            "value='me'",
+        ] {
+            assert!(html.contains(marker), "missing setting UI marker {marker}");
+        }
+        assert!(html.contains("\\u003c/script\\u003e"));
+        assert!(!html.contains(malicious));
+        assert!(!html.contains("innerHTML"));
     }
 
     #[tokio::test]
@@ -1849,25 +2305,63 @@ mod kb_ui_tests {
             .unwrap();
         let body = body_of(providers_page(axum::extract::State(state), req).await).await;
         // RAGFlow-style capability filter buttons.
-        for label in ["All", "LLM", "Embedding", "Rerank", "TTS", "ASR", "VLM", "OCR"] {
+        for label in [
+            "All",
+            "LLM",
+            "Embedding",
+            "Rerank",
+            "TTS",
+            "ASR",
+            "VLM",
+            "OCR",
+        ] {
             assert!(body.contains(label), "missing filter button {label}");
         }
         // Rows carry data-k kind attributes for filtering.
-        assert!(body.contains("data-k="), "rows must carry data-k kind attributes");
+        assert!(
+            body.contains("data-k="),
+            "rows must carry data-k kind attributes"
+        );
         // Add-provider modal + save wiring.
         assert!(body.contains("addProvModal"), "missing add-provider modal");
-        assert!(body.contains("saveAddProv"), "missing add-provider save handler");
-        assert!(body.contains("/api/v1/providers/"), "missing providers API wiring");
+        assert!(
+            body.contains("saveAddProv"),
+            "missing add-provider save handler"
+        );
+        assert!(
+            body.contains("/api/v1/providers/"),
+            "missing providers API wiring"
+        );
         assert!(body.contains("pf('all'"), "filter must initialize on All");
+    }
+
+    #[tokio::test]
+    async fn skills_page_uses_skill_index_apis_instead_of_agent_installation() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/skills")
+            .header("accept-language", "en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(skills_page(State(state), req).await).await;
+        for endpoint in [
+            "/api/v1/skills/config",
+            "/api/v1/skills/search",
+            "/api/v1/skills/index",
+            "/api/v1/skills/reindex",
+        ] {
+            assert!(html.contains(endpoint), "missing Skill endpoint {endpoint}");
+        }
+        assert!(html.contains("skillSpace"));
+        assert!(html.contains("skillContentEnabled"));
+        assert!(!html.contains("installSkill("));
+        assert!(!html.contains("component_catalog"));
     }
 
     #[tokio::test]
     async fn kbs_page_renders_create_search_and_card_action_menu() {
         let (_root, state) = test_state();
-        state
-            .kbs
-            .create_for("u1", "Test KB", "desc")
-            .unwrap();
+        state.kbs.create_for("u1", "Test KB", "desc").unwrap();
         let req = Request::builder().uri("/kbs").body(Body::empty()).unwrap();
         let html = body_of(kbs_page(State(state), req).await).await;
         // 创建按钮 + 搜索 + 排序（i18n：zh 默认渲染中文文案）
@@ -1886,15 +2380,22 @@ mod kb_ui_tests {
         assert!(html.contains("createModal"), "create modal missing");
         assert!(html.contains("renameModal"), "rename modal missing");
         assert!(html.contains("renameKb"), "rename handler missing");
-        assert!(html.contains("/api/v1/datasets"), "datasets API call missing");
+        assert!(
+            html.contains("/api/v1/datasets"),
+            "datasets API call missing"
+        );
     }
 
     #[tokio::test]
     async fn kb_detail_page_renders_document_batch_config_and_testing_buttons() {
         let (_root, state) = test_state();
         let kb = state.kbs.create_for("u1", "Detail KB", "d").unwrap();
-        let req = Request::builder().uri("/kbs/x").body(Body::empty()).unwrap();
-        let html = body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        let req = Request::builder()
+            .uri("/kbs/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
         // 文档列表页：上传 / 批量操作（解析/禁用/启用/删除）/ 状态列进度条 / 块数
         assert!(html.contains("uploadDoc"), "upload button missing");
         assert!(html.contains("batchParse"), "batch parse missing");
@@ -1925,8 +2426,12 @@ mod kb_ui_tests {
     async fn dataset_page_renders_five_tabs_with_all_required_buttons() {
         let (_root, state) = test_state();
         let kb = state.kbs.create_for("u1", "Five Tab KB", "d").unwrap();
-        let req = Request::builder().uri("/dataset/x").body(Body::empty()).unwrap();
-        let html = body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        let req = Request::builder()
+            .uri("/dataset/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
         // 5 个 tab
         for nav in ["nav0", "nav1", "nav2", "nav3", "nav4"] {
             assert!(html.contains(nav), "nav {} missing", nav);
@@ -1970,7 +2475,10 @@ mod kb_ui_tests {
     #[tokio::test]
     async fn files_page_renders_link_bulk_and_selection_buttons() {
         let (_root, state) = test_state();
-        let req = Request::builder().uri("/files").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/files")
+            .body(Body::empty())
+            .unwrap();
         let html = body_of(files_page(State(state), req).await).await;
         // 批量操作栏 + 勾选 + 关联知识库（RAGFlow: 上传/新建文件夹/批量移动/批量关联）
         assert!(html.contains("fileBatchBar"), "bulk bar missing");
@@ -1978,38 +2486,82 @@ mod kb_ui_tests {
         assert!(html.contains("batchLinkSel"), "bulk link missing");
         assert!(html.contains("fileSelAll"), "select-all missing");
         assert!(html.contains("linkFile"), "link-to-KB handler missing");
-        assert!(html.contains("/api/v1/file2document"), "file2document API missing");
+        assert!(
+            html.contains("/api/v1/file2document"),
+            "file2document API missing"
+        );
     }
 
     #[tokio::test]
     async fn agents_page_renders_import_json_button() {
         let (_root, state) = test_state();
-        let req = Request::builder().uri("/agents").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/agents")
+            .body(Body::empty())
+            .unwrap();
         let html = body_of(agents_page(State(state), req).await).await;
         // RAGFlow: 从空白创建 / 从模板创建 / 导入 JSON
-        assert!(html.contains("agentJsonFile"), "import JSON file input missing");
-        assert!(html.contains("importAgentJson"), "import JSON handler missing");
+        assert!(
+            html.contains("agentJsonFile"),
+            "import JSON file input missing"
+        );
+        assert!(
+            html.contains("importAgentJson"),
+            "import JSON handler missing"
+        );
+        assert!(
+            html.contains("Choose agent type"),
+            "agent type title missing"
+        );
+        assert!(
+            html.contains("name='agentType'"),
+            "agent type radios missing"
+        );
+        assert!(
+            html.contains("value='agent_canvas'"),
+            "agent wire category missing"
+        );
+        assert!(
+            html.contains("value='dataflow_canvas'"),
+            "dataflow wire category missing"
+        );
     }
 
     #[tokio::test]
     async fn agent_detail_page_renders_versions_and_export_json_buttons() {
         let (_root, state) = test_state();
-        let req = Request::builder().uri("/agents/a1").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/agents/a1")
+            .body(Body::empty())
+            .unwrap();
         let html = body_of(agent_detail_page(Path("a1".to_string()), req).await).await;
         // RAGFlow: 运行 / 探索 / 版本管理(发布生产+下载) / 导出 JSON
         assert!(html.contains("openVersions"), "versions button missing");
         assert!(html.contains("verModal"), "versions modal missing");
-        assert!(html.contains("downloadVersion"), "version download handler missing");
-        assert!(html.contains("exportAgentJson"), "export JSON handler missing");
-        assert!(html.contains("/api/v1/agents/'+aid+'/versions"), "versions API missing");
+        assert!(
+            html.contains("downloadVersion"),
+            "version download handler missing"
+        );
+        assert!(
+            html.contains("exportAgentJson"),
+            "export JSON handler missing"
+        );
+        assert!(
+            html.contains("/api/v1/agents/'+aid+'/versions"),
+            "versions API missing"
+        );
     }
 
     #[tokio::test]
     async fn kb_detail_page_renders_empty_all_button() {
         let (_root, state) = test_state();
         let kb = state.kbs.create_for("u1", "E KB", "d").unwrap();
-        let req = Request::builder().uri("/kbs/x").body(Body::empty()).unwrap();
-        let html = body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        let req = Request::builder()
+            .uri("/kbs/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
         // RAGFlow 添加文件下拉：上传文件 / 清空
         assert!(html.contains("emptyAllDocs"), "empty-all button missing");
     }
@@ -2017,13 +2569,22 @@ mod kb_ui_tests {
     #[tokio::test]
     async fn chat_detail_page_renders_temporary_conversation() {
         let (_root, state) = test_state();
-        let req = Request::builder().uri("/chat/c1").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/chat/c1")
+            .body(Body::empty())
+            .unwrap();
         let html = body_of(chat_detail_page(State(state), Path("c1".to_string()), req).await).await;
         // RAGFlow: 临时对话（不落库）+ 嵌入 / 分享
-        assert!(html.contains("tempConv"), "temp conversation button missing");
+        assert!(
+            html.contains("tempConv"),
+            "temp conversation button missing"
+        );
         assert!(html.contains("tempModal"), "temp modal missing");
         assert!(html.contains("sendTemp"), "temp send handler missing");
-        assert!(html.contains("/api/v1/completions"), "stateless completion API missing");
+        assert!(
+            html.contains("/api/v1/completions"),
+            "stateless completion API missing"
+        );
     }
 
     #[tokio::test]
@@ -2043,7 +2604,24 @@ mod kb_ui_tests {
         )
         .await;
         // RAGFlow chunk 页：保存 / 导出
-        assert!(html.contains("exportChunks"), "export chunks handler missing");
+        assert!(
+            html.contains("exportChunks"),
+            "export chunks handler missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_page_loads_system_variables_through_the_protected_api() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/admin")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(admin_page(State(state), req).await).await;
+        assert!(html.contains("/api/v1/system/variables"));
+        assert!(html.contains("Loading administrator settings"));
+        assert!(!html.contains("sandbox.self_managed"));
+        assert!(!html.contains("http://sandbox-executor-manager:9385"));
     }
 
     #[tokio::test]
@@ -2054,9 +2632,20 @@ mod kb_ui_tests {
         let files = body_of(files_page(State(state.clone()), req()).await).await;
         let agents = body_of(agents_page(State(state.clone()), req()).await).await;
         let ad = body_of(agent_detail_page(Path("a1".to_string()), req()).await).await;
-        let kbd = body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req()).await).await;
-        let cd = body_of(chat_detail_page(State(state.clone()), Path("c1".to_string()), req()).await).await;
-        let doc = body_of(document_page(State(state.clone()), Path(("k1".to_string(), "d1".to_string())), req()).await).await;
+        let kbd =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req()).await).await;
+        let cd =
+            body_of(chat_detail_page(State(state.clone()), Path("c1".to_string()), req()).await)
+                .await;
+        let doc = body_of(
+            document_page(
+                State(state.clone()),
+                Path(("k1".to_string(), "d1".to_string())),
+                req(),
+            )
+            .await,
+        )
+        .await;
         let set = body_of(settings_page(State(test_state().1), req()).await).await;
         std::fs::write("/tmp/dump_files.html", &files).unwrap();
         std::fs::write("/tmp/dump_agents.html", &agents).unwrap();
@@ -2071,11 +2660,13 @@ mod kb_ui_tests {
 
     #[tokio::test]
     async fn settings_page_renders_invite_button() {
-        let req = Request::builder().uri("/settings").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/settings")
+            .body(Body::empty())
+            .unwrap();
         let html = body_of(settings_page(State(test_state().1), req).await).await;
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
     }
 }
-

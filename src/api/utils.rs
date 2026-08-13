@@ -24,7 +24,11 @@ pub const MAX_BLOB_SIZE_THUMBNAIL: usize = 50 * 1024 * 1024;
 /// RAGFlow `file_utils.py::MAX_BLOB_SIZE_PDF` (100 MiB).
 pub const MAX_BLOB_SIZE_PDF: usize = 100 * 1024 * 1024;
 
-/// RAGFlow `api/db/__init__.py::FileType` (StrEnum subset used by `filename_type`).
+/// RAGFlow `api/db/__init__.py::FileType`.
+///
+/// `filename_type` derives only document/media classifications from a filename;
+/// `Virtual` and `Folder` are retained for database/API records created without
+/// a physical upload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileType {
@@ -32,6 +36,8 @@ pub enum FileType {
     Doc,
     Visual,
     Aural,
+    Virtual,
+    Folder,
     Other,
 }
 
@@ -42,6 +48,8 @@ impl FileType {
             Self::Doc => "doc",
             Self::Visual => "visual",
             Self::Aural => "aural",
+            Self::Virtual => "virtual",
+            Self::Folder => "folder",
             Self::Other => "other",
         }
     }
@@ -90,10 +98,10 @@ pub fn filename_type(filename: Option<&str>) -> FileType {
     }
 
     const DOC_EXTENSIONS: &[&str] = &[
-        "msg", "eml", "doc", "docx", "ppt", "pptx", "yml", "xml", "htm", "json", "jsonl",
-        "ldjson", "csv", "txt", "ini", "xls", "xlsx", "wps", "rtf", "hlp", "pages", "numbers",
-        "key", "md", "mdx", "py", "js", "java", "c", "cpp", "h", "php", "go", "ts", "sh", "cs",
-        "kt", "html", "sql", "epub",
+        "msg", "eml", "doc", "docx", "ppt", "pptx", "yml", "xml", "htm", "json", "jsonl", "ldjson",
+        "csv", "txt", "ini", "xls", "xlsx", "wps", "rtf", "hlp", "pages", "numbers", "key", "md",
+        "mdx", "py", "js", "java", "c", "cpp", "h", "php", "go", "ts", "sh", "cs", "kt", "html",
+        "sql", "epub",
     ];
     const AURAL_EXTENSIONS: &[&str] = &[
         "wav", "flac", "ape", "alac", "wavpack", "wv", "mp3", "aac", "ogg", "vorbis", "opus",
@@ -101,8 +109,8 @@ pub fn filename_type(filename: Option<&str>) -> FileType {
     const VISUAL_EXTENSIONS: &[&str] = &[
         "jpg", "jpeg", "png", "tif", "gif", "pcx", "tga", "exif", "fpx", "svg", "psd", "cdr",
         "pcd", "dxf", "ufo", "eps", "ai", "raw", "wmf", "webp", "avif", "apng", "icon", "ico",
-        "mpg", "mpeg", "avi", "rm", "rmvb", "mov", "wmv", "asf", "dat", "asx", "wvx", "mpe",
-        "mpa", "mp4", "mkv",
+        "mpg", "mpeg", "avi", "rm", "rmvb", "mov", "wmv", "asf", "dat", "asx", "wvx", "mpe", "mpa",
+        "mp4", "mkv",
     ];
 
     for ext in DOC_EXTENSIONS {
@@ -437,7 +445,10 @@ mod tests {
         assert_eq!(sanitize_path(Some("a/b/c.pdf")), "a/b/cpdf");
         assert_eq!(sanitize_path(Some("../../etc/passwd")), "etc/passwd");
         assert_eq!(sanitize_path(Some("a\\b\\c")), "a/b/c");
-        assert_eq!(sanitize_path(Some("/leading/trailing/")), "leading/trailing");
+        assert_eq!(
+            sanitize_path(Some("/leading/trailing/")),
+            "leading/trailing"
+        );
         assert_eq!(sanitize_path(Some("a b*c?d")), "abcd");
         assert_eq!(sanitize_path(Some(".")), "");
         assert_eq!(sanitize_path(Some("..")), "");
@@ -495,8 +506,7 @@ mod tests {
         assert_eq!(config["chunk_token_num"], 512);
 
         // explicit parser id is preserved
-        let (parser_id, config) =
-            init_dataset_defaults(Some("knowledge_graph"), None, None);
+        let (parser_id, config) = init_dataset_defaults(Some("knowledge_graph"), None, None);
         assert_eq!(parser_id, "knowledge_graph");
         assert_eq!(config["chunk_token_num"], 8192);
         assert!(config.get("llm_id").is_none());

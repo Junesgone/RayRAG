@@ -15,7 +15,10 @@
 
 use crate::api::common::ApiError;
 use crate::api::tenant_models::TenantModelInstance;
+use crate::generation_params::GenerationParamsPatch;
+use crate::llm::{ChatMessage, ChatModel};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -91,6 +94,7 @@ impl UserTenantRole {
 pub const MESSAGE_CONTENT_OVERHEAD: usize = 49;
 /// CPython `sys.getsizeof(float)` — per embedding dimension.
 pub const MESSAGE_EMBEDDING_DIM_SIZE: usize = 24;
+const MEMORY_BUDGET_ERROR: &str = "Failed to insert message into memory. Memory size reached limit and cannot decide which to delete.";
 
 /// `common/constants.py::MemoryType` bit flags.
 pub mod memory_type {
@@ -120,7 +124,7 @@ pub mod memory_type {
 }
 
 /// A single memory message row (RAGFlow `memory/services/messages.py`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryMessage {
     pub message_id: i64,
     /// `"raw"` | `"semantic"` | `"episodic"` | `"procedural"`.
@@ -137,7 +141,11 @@ pub struct MemoryMessage {
     pub invalid_at: Option<String>,
     pub forget_at: Option<String>,
     pub status: bool,
+    /// Fixed Infinity `zone_id` column; RAGFlow currently relies on its zero
+    /// default but it remains part of the physical storage contract.
     #[serde(default)]
+    pub zone_id: i64,
+    #[serde(default, skip_serializing)]
     pub content_embed: Vec<f32>,
 }
 
@@ -149,12 +157,177 @@ impl MemoryMessage {
             + MESSAGE_CONTENT_OVERHEAD
             + MESSAGE_EMBEDDING_DIM_SIZE * self.content_embed.len()
     }
+
+    /// RAGFlow/Infinity physical document id.
+    pub fn storage_id(&self) -> String {
+        format!("{}_{}", self.memory_id, self.message_id)
+    }
+}
+
+/// Filters applied by the Infinity-compatible message query path.
+pub struct MemoryMessageQuery<'a> {
+    pub memory_ids: &'a [String],
+    pub agent_id: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub status: Option<bool>,
+    pub top_n: Option<usize>,
+    pub hide_forgotten: bool,
+}
+
+/// Inputs for the in-process full-text + vector replacement search.
+pub struct MemoryMessageSearch<'a> {
+    pub memory_ids: &'a [String],
+    pub agent_id: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub question: &'a str,
+    pub query_vector: &'a [f32],
+    pub similarity_threshold: f64,
+    pub keywords_similarity_weight: f64,
+    pub top_n: usize,
 }
 
 /// `memory_message_service.py::save_to_memory` raw message content format:
 /// `"User Input: {user_input}\nAgent Response: {agent_response}"`.
 pub fn build_raw_message_content(user_input: &str, agent_response: &str) -> String {
     format!("User Input: {user_input}\nAgent Response: {agent_response}")
+}
+
+// ── Memory extraction (memory/utils/prompt_util.py + msg_util.py) ────────
+
+/// A flattened item returned by RAGFlow's
+/// `memory_message_service.extract_by_llm` list comprehension.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractedMemory {
+    pub content: String,
+    pub valid_at: String,
+    pub invalid_at: Option<String>,
+    /// The LLM response's top-level key. Unknown keys are intentionally kept,
+    /// matching the fixed Python service's lack of post-response filtering.
+    pub message_type: String,
+}
+
+/// RAGFlow `get_json_result_from_llm_response` followed by
+/// `extract_by_llm`'s flattening list comprehension.
+///
+/// JSON syntax errors are the fixed service's soft-empty case. Once valid JSON
+/// is present, an incompatible shape is a worker error rather than an empty
+/// extraction result.
+pub fn parse_memory_extraction_response(response: &str) -> anyhow::Result<Vec<ExtractedMemory>> {
+    let value = crate::memory::get_json_result_from_llm_response(response);
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("memory extraction response must be a JSON object"))?;
+    let mut extracted = Vec::new();
+    for (message_type, items) in object {
+        let items = items.as_array().ok_or_else(|| {
+            anyhow::anyhow!("memory extraction field {message_type:?} must be an array")
+        })?;
+        for (index, item) in items.iter().enumerate() {
+            let item = item.as_object().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "memory extraction field {message_type:?} item {index} must be an object"
+                )
+            })?;
+            let content = required_memory_extraction_string(item, message_type, index, "content")?;
+            let valid_at =
+                required_memory_extraction_string(item, message_type, index, "valid_at")?;
+            let invalid_at = match item.get("invalid_at") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) if value.is_empty() => None,
+                Some(Value::String(value)) => {
+                    Some(crate::common::time_utils::format_iso_8601_to_ymd_hms(value))
+                }
+                Some(_) => {
+                    anyhow::bail!(
+                        "memory extraction field {message_type:?} item {index} field \"invalid_at\" must be a string or null"
+                    )
+                }
+            };
+            extracted.push(ExtractedMemory {
+                content: content.to_owned(),
+                valid_at: crate::common::time_utils::format_iso_8601_to_ymd_hms(valid_at),
+                invalid_at,
+                message_type: message_type.clone(),
+            });
+        }
+    }
+    Ok(extracted)
+}
+
+/// Fixed-v0.26.4 Memory LLM extraction call, separated from persistence so the
+/// API/task worker can later batch-embed and save the returned items.
+#[allow(clippy::too_many_arguments)]
+pub async fn extract_memory_by_llm(
+    model: &dyn ChatModel,
+    memory_types: &[String],
+    user_input: &str,
+    agent_response: &str,
+    system_prompt: Option<&str>,
+    user_prompt: Option<&str>,
+    conversation_time: &str,
+    temperature: f32,
+) -> anyhow::Result<Vec<ExtractedMemory>> {
+    if !memory_types
+        .iter()
+        .any(|kind| matches!(kind.as_str(), "semantic" | "episodic" | "procedural"))
+    {
+        return Ok(Vec::new());
+    }
+
+    let default_system;
+    let system = match system_prompt.filter(|prompt| !prompt.is_empty()) {
+        Some(prompt) => prompt,
+        None => {
+            default_system = crate::memory::PromptAssembler::assemble_system_prompt(memory_types);
+            &default_system
+        }
+    };
+    let conversation = build_raw_message_content(user_input, agent_response);
+    let history = match user_prompt.filter(|prompt| !prompt.is_empty()) {
+        Some(prompt) => vec![
+            ChatMessage::new("user", prompt),
+            ChatMessage::new(
+                "user",
+                format!(
+                    "Conversation: {conversation}\nConversation Time: {conversation_time}\nCurrent Time: {conversation_time}"
+                ),
+            ),
+        ],
+        None => vec![ChatMessage::new(
+            "user",
+            crate::memory::PromptAssembler::assemble_user_prompt(
+                &conversation,
+                Some(conversation_time),
+                Some(conversation_time),
+            ),
+        )],
+    };
+    let response = model
+        .chat_with_generation(
+            system,
+            &history,
+            GenerationParamsPatch {
+                temperature: Some(temperature),
+                ..GenerationParamsPatch::default()
+            },
+        )
+        .await?;
+    parse_memory_extraction_response(&response)
+}
+
+fn required_memory_extraction_string<'a>(
+    item: &'a Map<String, Value>,
+    message_type: &str,
+    index: usize,
+    field: &str,
+) -> anyhow::Result<&'a str> {
+    item.get(field).and_then(Value::as_str).ok_or_else(|| {
+        anyhow::anyhow!(
+            "memory extraction field {message_type:?} item {index} requires string field {field:?}"
+        )
+    })
 }
 
 /// `MessageService.pick_messages_to_delete_by_fifo`: walk messages oldest
@@ -190,7 +363,7 @@ impl MemoryMessageService {
         let path = path.as_ref().to_path_buf();
         crate::persistence::restore_if_missing(&path)?;
         let messages: Vec<MemoryMessage> = if path.exists() {
-            serde_json::from_slice(&std::fs::read(&path)?)?
+            decode_message_snapshot(&std::fs::read(&path)?)?
         } else {
             Vec::new()
         };
@@ -225,11 +398,27 @@ impl MemoryMessageService {
     }
 
     pub fn insert_messages(&self, messages: Vec<MemoryMessage>) -> anyhow::Result<()> {
-        {
-            let mut all = self.messages.write().expect("message store lock poisoned");
-            all.extend(messages);
-        }
-        self.persist()
+        let highest_id = messages
+            .iter()
+            .map(|message| message.message_id)
+            .max()
+            .unwrap_or(0);
+        self.mutate(|all| {
+            for message in messages {
+                if let Some(existing) = all.iter_mut().find(|existing| {
+                    existing.memory_id == message.memory_id
+                        && existing.message_id == message.message_id
+                }) {
+                    *existing = message;
+                } else {
+                    all.push(message);
+                }
+            }
+            Ok(())
+        })?;
+        self.next_message_id
+            .fetch_max(highest_id.saturating_add(1), Ordering::SeqCst);
+        Ok(())
     }
 
     /// `search_message` semantics: filter (status defaults to active) and
@@ -243,21 +432,41 @@ impl MemoryMessageService {
         status: Option<bool>,
         top_n: Option<usize>,
     ) -> Vec<MemoryMessage> {
+        self.query_with_options(MemoryMessageQuery {
+            memory_ids,
+            agent_id,
+            session_id,
+            user_id,
+            status: Some(status.unwrap_or(true)),
+            top_n,
+            hide_forgotten: true,
+        })
+    }
+
+    /// Lower-level Infinity search filter. `status=None` means no status
+    /// predicate; `hide_forgotten=true` applies the connector's default
+    /// `NOT exists(forget_at_flt)` condition.
+    pub fn query_with_options(&self, query: MemoryMessageQuery<'_>) -> Vec<MemoryMessage> {
         let mut results: Vec<_> = self
             .messages
             .read()
             .expect("message store lock poisoned")
             .iter()
-            .filter(|message| memory_ids.contains(&message.memory_id))
-            .filter(|message| agent_id.is_none_or(|value| message.agent_id == value))
-            .filter(|message| session_id.is_none_or(|value| message.session_id == value))
-            .filter(|message| user_id.is_none_or(|value| message.user_id == value))
-            .filter(|message| status.unwrap_or(true) == message.status)
+            .filter(|message| query.memory_ids.contains(&message.memory_id))
+            .filter(|message| query.agent_id.is_none_or(|value| message.agent_id == value))
+            .filter(|message| {
+                query
+                    .session_id
+                    .is_none_or(|value| message.session_id == value)
+            })
+            .filter(|message| query.user_id.is_none_or(|value| message.user_id == value))
+            .filter(|message| query.status.is_none_or(|value| message.status == value))
+            .filter(|message| !query.hide_forgotten || message.forget_at.is_none())
             .cloned()
             .collect();
         // Order by valid_at desc — RAGFlow's OrderByExpr(desc).
         results.sort_by(|left, right| right.valid_at.cmp(&left.valid_at));
-        if let Some(top_n) = top_n {
+        if let Some(top_n) = query.top_n {
             results.truncate(top_n);
         }
         results
@@ -274,6 +483,59 @@ impl MemoryMessageService {
             .unwrap_or(0)
     }
 
+    /// In-process replacement for Infinity's content full-text + dense-vector
+    /// weighted-sum search. Search defaults to active and non-forgotten rows.
+    pub fn search_hybrid(&self, search: MemoryMessageSearch<'_>) -> Vec<MemoryMessage> {
+        let candidates = self.query_with_options(MemoryMessageQuery {
+            memory_ids: search.memory_ids,
+            agent_id: search.agent_id,
+            session_id: search.session_id,
+            user_id: search.user_id,
+            status: Some(true),
+            top_n: None,
+            hide_forgotten: true,
+        });
+        let (_, query_tokens) = crate::memory::MsgTextQuery::new()
+            .question(search.question, search.similarity_threshold);
+        let document_tokens: Vec<Vec<String>> = candidates
+            .iter()
+            .map(|message| {
+                crate::nlp::rag_fine_grained_tokenize(&crate::nlp::rag_tokenize(&message.content))
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .collect();
+        let document_vectors: Vec<Vec<f32>> = candidates
+            .iter()
+            .map(|message| message.content_embed.clone())
+            .collect();
+        let keyword_weight = search.keywords_similarity_weight.clamp(0.0, 1.0);
+        let (scores, _, _) = crate::nlp::TermWeightComputer::new().hybrid_similarity(
+            search.query_vector,
+            &document_vectors,
+            &query_tokens,
+            &document_tokens,
+            keyword_weight,
+            1.0 - keyword_weight,
+        );
+        let mut ranked: Vec<_> = candidates
+            .into_iter()
+            .zip(scores)
+            .filter(|(_, score)| *score >= search.similarity_threshold)
+            .collect();
+        ranked.sort_by(|(left_message, left_score), (right_message, right_score)| {
+            right_score
+                .total_cmp(left_score)
+                .then_with(|| right_message.valid_at.cmp(&left_message.valid_at))
+        });
+        ranked
+            .into_iter()
+            .take(search.top_n)
+            .map(|(message, _)| message)
+            .collect()
+    }
+
     /// `MessageService.calculate_memory_size` for one memory.
     pub fn calculate_memory_size(&self, memory_id: &str) -> usize {
         self.messages
@@ -285,30 +547,26 @@ impl MemoryMessageService {
             .sum()
     }
 
-    pub fn delete_messages(&self, ids: &[i64]) -> usize {
-        let deleted = {
-            let mut all = self.messages.write().expect("message store lock poisoned");
+    /// Delete message ids inside one memory. Message ids normally come from a
+    /// process-wide sequence, but the physical identity is the composite
+    /// `{memory_id}_{message_id}` and imported/legacy snapshots may reuse an
+    /// integer in another memory.
+    pub fn delete_messages(&self, memory_id: &str, ids: &[i64]) -> anyhow::Result<usize> {
+        self.mutate(|all| {
             let before = all.len();
-            all.retain(|message| !ids.contains(&message.message_id));
-            before - all.len()
-        };
-        if deleted > 0 {
-            let _ = self.persist();
-        }
-        deleted
+            all.retain(|message| {
+                message.memory_id != memory_id || !ids.contains(&message.message_id)
+            });
+            Ok(before - all.len())
+        })
     }
 
-    pub fn delete_by_memory(&self, memory_id: &str) -> usize {
-        let deleted = {
-            let mut all = self.messages.write().expect("message store lock poisoned");
+    pub fn delete_by_memory(&self, memory_id: &str) -> anyhow::Result<usize> {
+        self.mutate(|all| {
             let before = all.len();
             all.retain(|message| message.memory_id != memory_id);
-            before - all.len()
-        };
-        if deleted > 0 {
-            let _ = self.persist();
-        }
-        deleted
+            Ok(before - all.len())
+        })
     }
 
     /// `memory_message_service.py::embed_and_save` size-budget block: when the
@@ -322,45 +580,330 @@ impl MemoryMessageService {
         new_messages: Vec<MemoryMessage>,
     ) -> Result<(), ApiError> {
         let new_msg_size: usize = new_messages.iter().map(MemoryMessage::calculate_size).sum();
-        let current_memory_size = self.calculate_memory_size(memory_id);
-        if new_msg_size + current_memory_size > memory_size {
-            let size_to_delete = current_memory_size + new_msg_size - memory_size;
-            if forgetting_policy != "FIFO" {
-                return Err(ApiError::admin(
-                    "Failed to insert message into memory. Memory size reached limit and cannot decide which to delete.",
-                ));
-            }
-            let mut ordered: Vec<MemoryMessage> = {
-                let guard = self.messages.read().expect("message store lock poisoned");
-                guard
+        let highest_id = new_messages
+            .iter()
+            .map(|message| message.message_id)
+            .max()
+            .unwrap_or(0);
+        self.mutate(|all| {
+            let current_memory_size: usize = all
+                .iter()
+                .filter(|message| message.memory_id == memory_id)
+                .map(MemoryMessage::calculate_size)
+                .sum();
+            let projected_size = new_msg_size.saturating_add(current_memory_size);
+            if projected_size > memory_size {
+                if forgetting_policy != "FIFO" {
+                    anyhow::bail!(MEMORY_BUDGET_ERROR);
+                }
+                let size_to_delete = projected_size - memory_size;
+                let mut ordered: Vec<MemoryMessage> = all
                     .iter()
                     .filter(|message| message.memory_id == memory_id)
                     .cloned()
-                    .collect()
-            };
-            ordered.sort_by(|left, right| left.valid_at.cmp(&right.valid_at));
-            let (ids, _freed) = pick_messages_to_delete_by_fifo(ordered.iter(), size_to_delete);
-            if !ids.is_empty() {
-                self.delete_messages(&ids);
+                    .collect();
+                // Infinity first physically removes rows already soft-forgotten,
+                // then the oldest remaining rows by `valid_at_flt`.
+                ordered.sort_by(|left, right| match (&left.forget_at, &right.forget_at) {
+                    (Some(left), Some(right)) => left.cmp(right),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => left.valid_at.cmp(&right.valid_at),
+                });
+                let (ids, _freed) = pick_messages_to_delete_by_fifo(ordered.iter(), size_to_delete);
+                all.retain(|message| {
+                    message.memory_id != memory_id || !ids.contains(&message.message_id)
+                });
             }
-        }
-        self.insert_messages(new_messages).map_err(ApiError::from)?;
+            for message in new_messages {
+                if let Some(existing) = all.iter_mut().find(|existing| {
+                    existing.memory_id == message.memory_id
+                        && existing.message_id == message.message_id
+                }) {
+                    *existing = message;
+                } else {
+                    all.push(message);
+                }
+            }
+            Ok(())
+        })
+        .map_err(|error| {
+            if error.to_string() == MEMORY_BUDGET_ERROR {
+                ApiError::admin(MEMORY_BUDGET_ERROR)
+            } else {
+                ApiError::from(error)
+            }
+        })?;
+        self.next_message_id
+            .fetch_max(highest_id.saturating_add(1), Ordering::SeqCst);
         Ok(())
     }
 
-    fn persist(&self) -> anyhow::Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
+    fn mutate<T>(
+        &self,
+        mutation: impl FnOnce(&mut Vec<MemoryMessage>) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let _guard = self.save_lock.lock().expect("save lock poisoned");
+        let mut messages = self.messages.write().expect("message store lock poisoned");
+        let previous = messages.clone();
+        let value = match mutation(&mut messages) {
+            Ok(value) => value,
+            Err(error) => {
+                *messages = previous;
+                return Err(error);
+            }
         };
+        if let Err(error) = self.persist_snapshot(&messages) {
+            *messages = previous;
+            return Err(error);
+        }
+        Ok(value)
+    }
+
+    fn persist(&self) -> anyhow::Result<()> {
+        let _guard = self.save_lock.lock().expect("save lock poisoned");
         let snapshot = self
             .messages
             .read()
             .expect("message store lock poisoned")
             .clone();
-        let data = serde_json::to_vec_pretty(&snapshot)?;
-        let _guard = self.save_lock.lock().expect("save lock poisoned");
+        self.persist_snapshot(&snapshot)
+    }
+
+    fn persist_snapshot(&self, snapshot: &[MemoryMessage]) -> anyhow::Result<()> {
+        let data = encode_message_snapshot(snapshot)?;
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
         crate::persistence::atomic_write(path, &data)
     }
+}
+
+fn encode_message_snapshot(messages: &[MemoryMessage]) -> anyhow::Result<Vec<u8>> {
+    let mut ordered = messages.to_vec();
+    ordered.sort_by_key(MemoryMessage::storage_id);
+    let rows = ordered
+        .iter()
+        .map(message_to_storage_value)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(serde_json::to_vec_pretty(&rows)?)
+}
+
+fn decode_message_snapshot(bytes: &[u8]) -> anyhow::Result<Vec<MemoryMessage>> {
+    let rows: Vec<Value> = serde_json::from_slice(bytes)?;
+    rows.into_iter()
+        .map(|row| {
+            let physical = row.as_object().is_some_and(|object| {
+                object.contains_key("message_type_kwd")
+                    || object.contains_key("status_int")
+                    || object.keys().any(|field| vector_dimension(field).is_some())
+            });
+            if physical {
+                storage_value_to_message(row)
+            } else {
+                let message: MemoryMessage = serde_json::from_value(row)?;
+                validate_message(&message)?;
+                Ok(message)
+            }
+        })
+        .collect()
+}
+
+fn message_to_storage_value(message: &MemoryMessage) -> anyhow::Result<Value> {
+    validate_message(message)?;
+    let invalid_at = message.invalid_at.as_deref().unwrap_or_default();
+    let forget_at = message.forget_at.as_deref().unwrap_or_default();
+    let mut row = Map::new();
+    row.insert("id".into(), Value::String(message.storage_id()));
+    row.insert("message_id".into(), Value::from(message.message_id));
+    row.insert(
+        "message_type_kwd".into(),
+        Value::String(message.message_type.clone()),
+    );
+    row.insert("source_id".into(), Value::from(message.source_id));
+    row.insert("memory_id".into(), Value::String(message.memory_id.clone()));
+    row.insert("user_id".into(), Value::String(message.user_id.clone()));
+    row.insert("agent_id".into(), Value::String(message.agent_id.clone()));
+    row.insert(
+        "session_id".into(),
+        Value::String(message.session_id.clone()),
+    );
+    insert_storage_date(&mut row, "valid_at", &message.valid_at)?;
+    insert_storage_date(&mut row, "invalid_at", invalid_at)?;
+    insert_storage_date(&mut row, "forget_at", forget_at)?;
+    row.insert(
+        "status_int".into(),
+        Value::from(if message.status { 1 } else { 0 }),
+    );
+    row.insert("zone_id".into(), Value::from(message.zone_id));
+    row.insert("content".into(), Value::String(message.content.clone()));
+    row.insert(
+        format!("q_{}_vec", message.content_embed.len()),
+        serde_json::to_value(&message.content_embed)?,
+    );
+    Ok(Value::Object(row))
+}
+
+fn insert_storage_date(
+    row: &mut Map<String, Value>,
+    field: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    row.insert(field.into(), Value::String(value.into()));
+    row.insert(
+        format!("{field}_flt"),
+        Value::from(storage_timestamp(value)? as f64),
+    );
+    Ok(())
+}
+
+fn storage_value_to_message(row: Value) -> anyhow::Result<MemoryMessage> {
+    let object = row
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("memory message snapshot row must be an object"))?;
+    let allowed: std::collections::HashSet<&str> = crate::settings::MESSAGE_INFINITY_FIELDS
+        .iter()
+        .map(|field| field.name)
+        .collect();
+    for field in object.keys() {
+        if !allowed.contains(field.as_str()) && vector_dimension(field).is_none() {
+            anyhow::bail!("unexpected memory message storage field {field:?}");
+        }
+    }
+
+    let memory_id = storage_string(object, "memory_id")?;
+    let message_id = storage_i64(object, "message_id", 0)?;
+    let id = storage_string(object, "id")?;
+    let expected_id = format!("{memory_id}_{message_id}");
+    if id != expected_id {
+        anyhow::bail!("memory message storage id {id:?} does not match {expected_id:?}");
+    }
+
+    let valid_at = storage_date(object, "valid_at")?;
+    let invalid_at = storage_optional_date(object, "invalid_at")?;
+    let forget_at = storage_optional_date(object, "forget_at")?;
+    let status = match storage_i64(object, "status_int", 1)? {
+        0 => false,
+        1 => true,
+        other => anyhow::bail!("memory message status_int must be 0 or 1, got {other}"),
+    };
+
+    let mut vector = None;
+    for (field, value) in object {
+        let Some(dimension) = vector_dimension(field) else {
+            continue;
+        };
+        if vector.is_some() {
+            anyhow::bail!("memory message snapshot contains multiple vector fields");
+        }
+        let values: Vec<f32> = serde_json::from_value(value.clone())?;
+        if values.len() != dimension {
+            anyhow::bail!(
+                "memory message vector field {field:?} declares {dimension} values but stores {}",
+                values.len()
+            );
+        }
+        vector = Some(values);
+    }
+
+    let message = MemoryMessage {
+        message_id,
+        message_type: storage_string(object, "message_type_kwd")?,
+        source_id: storage_i64(object, "source_id", 0)?,
+        memory_id,
+        user_id: storage_string(object, "user_id")?,
+        agent_id: storage_string(object, "agent_id")?,
+        session_id: storage_string(object, "session_id")?,
+        content: storage_string(object, "content")?,
+        valid_at,
+        invalid_at,
+        forget_at,
+        status,
+        zone_id: storage_i64(object, "zone_id", 0)?,
+        content_embed: vector.unwrap_or_default(),
+    };
+    validate_message(&message)?;
+    Ok(message)
+}
+
+fn storage_string(object: &Map<String, Value>, field: &str) -> anyhow::Result<String> {
+    match object.get(field) {
+        None => Ok(String::new()),
+        Some(Value::String(value)) => Ok(value.clone()),
+        Some(_) => anyhow::bail!("memory message storage field {field:?} must be a string"),
+    }
+}
+
+fn storage_i64(object: &Map<String, Value>, field: &str, default: i64) -> anyhow::Result<i64> {
+    match object.get(field) {
+        None => Ok(default),
+        Some(value) => value.as_i64().ok_or_else(|| {
+            anyhow::anyhow!("memory message storage field {field:?} must be an integer")
+        }),
+    }
+}
+
+fn storage_date(object: &Map<String, Value>, field: &str) -> anyhow::Result<String> {
+    let value = storage_string(object, field)?;
+    let expected = storage_timestamp(&value)? as f64;
+    let physical_field = format!("{field}_flt");
+    let actual = object
+        .get(&physical_field)
+        .map(|value| {
+            value.as_f64().ok_or_else(|| {
+                anyhow::anyhow!("memory message storage field {physical_field:?} must be numeric")
+            })
+        })
+        .transpose()?
+        .unwrap_or(0.0);
+    if actual != expected {
+        anyhow::bail!(
+            "memory message storage field {physical_field:?} is {actual}, expected {expected}"
+        );
+    }
+    Ok(value)
+}
+
+fn storage_optional_date(
+    object: &Map<String, Value>,
+    field: &str,
+) -> anyhow::Result<Option<String>> {
+    let value = storage_date(object, field)?;
+    Ok((!value.is_empty()).then_some(value))
+}
+
+fn storage_timestamp(value: &str) -> anyhow::Result<i64> {
+    if value.is_empty() {
+        return Ok(0);
+    }
+    crate::common::time_utils::date_string_to_timestamp(
+        value,
+        crate::common::time_utils::DEFAULT_TIME_FORMAT,
+    )
+}
+
+fn vector_dimension(field: &str) -> Option<usize> {
+    field
+        .strip_prefix(crate::settings::MESSAGE_INFINITY_VECTOR_FIELD_PREFIX)?
+        .strip_suffix(crate::settings::MESSAGE_INFINITY_VECTOR_FIELD_SUFFIX)?
+        .parse()
+        .ok()
+}
+
+fn validate_message(message: &MemoryMessage) -> anyhow::Result<()> {
+    if message.memory_id.is_empty() {
+        anyhow::bail!("memory message memory_id must not be empty");
+    }
+    if message.message_id <= 0 {
+        anyhow::bail!("memory message message_id must be positive");
+    }
+    if message.content_embed.is_empty() {
+        anyhow::bail!("memory message content_embed must not be empty");
+    }
+    storage_timestamp(&message.valid_at)?;
+    storage_timestamp(message.invalid_at.as_deref().unwrap_or_default())?;
+    storage_timestamp(message.forget_at.as_deref().unwrap_or_default())?;
+    Ok(())
 }
 
 // ── TenantModelService (tenant_model_service.py) ───────────────────────────
@@ -754,13 +1297,14 @@ mod tests {
             invalid_at: None,
             forget_at: None,
             status: true,
+            zone_id: 0,
             content_embed: vec![0.1, 0.2],
         }
     }
 
     #[test]
     fn fifo_eviction_frees_oldest_messages_first() {
-        let messages = vec![
+        let messages = [
             message(1, "m1", "2026-08-01 00:00:00", "first"),
             message(2, "m1", "2026-08-02 00:00:00", "second"),
             message(3, "m1", "2026-08-03 00:00:00", "third"),
@@ -831,6 +1375,51 @@ mod tests {
             err.message
                 .contains("Memory size reached limit and cannot decide which to delete")
         );
+    }
+
+    #[test]
+    fn fifo_eviction_is_scoped_to_the_composite_message_identity() {
+        let service = MemoryMessageService::in_memory();
+        let old = message(1, "m1", "2026-08-01 00:00:00", "old");
+        let same_integer_other_memory = message(1, "m2", "2026-08-01 00:00:00", "keep");
+        service
+            .insert_messages(vec![old, same_integer_other_memory.clone()])
+            .unwrap();
+
+        let replacement = message(2, "m1", "2026-08-02 00:00:00", "new");
+        let budget = replacement.calculate_size();
+        service
+            .save_messages_with_budget("m1", "FIFO", budget, vec![replacement])
+            .unwrap();
+
+        assert!(service.get_by_message_id("m1", 1).is_none());
+        assert!(service.get_by_message_id("m1", 2).is_some());
+        assert_eq!(
+            service.get_by_message_id("m2", 1),
+            Some(same_integer_other_memory)
+        );
+    }
+
+    #[test]
+    fn invalid_budget_write_rolls_back_the_planned_fifo_eviction() {
+        let service = MemoryMessageService::in_memory();
+        let stable = message(1, "m1", "2026-08-01 00:00:00", "stable");
+        service.insert_messages(vec![stable.clone()]).unwrap();
+        let invalid = MemoryMessage {
+            message_id: 2,
+            content_embed: Vec::new(),
+            ..message(0, "m1", "2026-08-02 00:00:00", "invalid")
+        };
+
+        let result = service.save_messages_with_budget(
+            "m1",
+            "FIFO",
+            invalid.calculate_size(),
+            vec![invalid],
+        );
+        assert!(result.is_err());
+        assert_eq!(service.get_by_message_id("m1", 1), Some(stable));
+        assert!(service.get_by_message_id("m1", 2).is_none());
     }
 
     #[test]
@@ -1243,9 +1832,9 @@ pub fn normalize_canvas_template_categories(template: &serde_json::Value) -> ser
     let mut categories: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let mut push = |category: &str,
-                    categories: &mut Vec<String>,
-                    seen: &mut std::collections::HashSet<String>| {
+    let push = |category: &str,
+                categories: &mut Vec<String>,
+                seen: &mut std::collections::HashSet<String>| {
         let category = category.trim();
         if category.is_empty() || seen.contains(category) {
             return;
@@ -1899,7 +2488,19 @@ mod init_data_tests {
 
 /// `messages.py::MessageService.index_name` — one message index per user.
 pub fn message_index_name(uid: &str) -> String {
-    format!("memory_{uid}")
+    let prefix = std::env::var("ES_INDEX_PREFIX").unwrap_or_default();
+    message_index_name_with_prefix(uid, &prefix)
+}
+
+/// Pure form of the fixed index-name contract. Only the prefix is trimmed;
+/// the uid is preserved byte-for-byte, including whitespace and punctuation.
+pub fn message_index_name_with_prefix(uid: &str, raw_prefix: &str) -> String {
+    let prefix = raw_prefix.trim();
+    if prefix.is_empty() {
+        format!("memory_{uid}")
+    } else {
+        format!("memory_{prefix}_{uid}")
+    }
 }
 
 /// Condition accepted by `update_message` / `delete_message`
@@ -1915,10 +2516,20 @@ pub struct MessageCondition {
 
 impl MessageCondition {
     pub fn matches(&self, message: &MemoryMessage) -> bool {
-        self.memory_id.as_ref().is_none_or(|value| value == &message.memory_id)
-            && self.message_id.is_none_or(|value| value == message.message_id)
-            && self.agent_id.as_ref().is_none_or(|value| value == &message.agent_id)
-            && self.session_id.as_ref().is_none_or(|value| value == &message.session_id)
+        self.memory_id
+            .as_ref()
+            .is_none_or(|value| value == &message.memory_id)
+            && self
+                .message_id
+                .is_none_or(|value| value == message.message_id)
+            && self
+                .agent_id
+                .as_ref()
+                .is_none_or(|value| value == &message.agent_id)
+            && self
+                .session_id
+                .as_ref()
+                .is_none_or(|value| value == &message.session_id)
             && self.status.is_none_or(|value| value == message.status)
     }
 }
@@ -1937,10 +2548,13 @@ pub struct MessageUpdate {
 impl MemoryMessageService {
     /// `MessageService.update_message(condition, update_dict)` — update every
     /// message matching the condition. Returns the number of rows changed.
-    pub fn update_messages(&self, condition: &MessageCondition, update: &MessageUpdate) -> usize {
-        let mut updated = 0usize;
-        {
-            let mut all = self.messages.write().expect("message store lock poisoned");
+    pub fn update_messages(
+        &self,
+        condition: &MessageCondition,
+        update: &MessageUpdate,
+    ) -> anyhow::Result<usize> {
+        self.mutate(|all| {
+            let mut updated = 0usize;
             for message in all.iter_mut() {
                 if !condition.matches(message) {
                     continue;
@@ -1962,25 +2576,21 @@ impl MemoryMessageService {
                 }
                 updated += 1;
             }
-        }
-        if updated > 0 {
-            let _ = self.persist();
-        }
-        updated
+            Ok(updated)
+        })
     }
 
     /// `MessageService.delete_message(condition)` — remove every message
     /// matching the condition. Returns the number of rows deleted.
-    pub fn delete_messages_by_condition(&self, condition: &MessageCondition) -> usize {
-        let ids: Vec<i64> = self
-            .messages
-            .read()
-            .expect("message store lock poisoned")
-            .iter()
-            .filter(|message| condition.matches(message))
-            .map(|message| message.message_id)
-            .collect();
-        self.delete_messages(&ids)
+    pub fn delete_messages_by_condition(
+        &self,
+        condition: &MessageCondition,
+    ) -> anyhow::Result<usize> {
+        self.mutate(|all| {
+            let before = all.len();
+            all.retain(|message| !condition.matches(message));
+            Ok(before - all.len())
+        })
     }
 
     /// `MessageService.get_by_message_id` — the document id is
@@ -2014,7 +2624,7 @@ impl MemoryMessageService {
             .filter(|message| message.memory_id == memory_id)
             .filter(|message| message.message_type == "raw")
             .filter(|message| agent_ids.is_empty() || agent_ids.contains(&message.agent_id))
-            .filter(|message| keywords.is_none_or(|kw| message.session_id.contains(kw)))
+            .filter(|message| keywords.is_none_or(|kw| message.session_id == kw))
             .cloned()
             .collect();
         matching.sort_by(|left, right| right.valid_at.cmp(&left.valid_at));
@@ -2034,7 +2644,15 @@ impl MemoryMessageService {
         session_id: &str,
         limit: usize,
     ) -> Vec<MemoryMessage> {
-        self.query(memory_ids, Some(agent_id), Some(session_id), None, None, Some(limit))
+        self.query_with_options(MemoryMessageQuery {
+            memory_ids,
+            agent_id: (!agent_id.is_empty()).then_some(agent_id),
+            session_id: (!session_id.is_empty()).then_some(session_id),
+            user_id: None,
+            status: None,
+            top_n: Some(limit),
+            hide_forgotten: true,
+        })
     }
 }
 
@@ -2075,6 +2693,7 @@ mod message_service_extra_tests {
             invalid_at: None,
             forget_at: None,
             status: true,
+            zone_id: 0,
             content_embed: vec![0.1, 0.2],
         }
     }
@@ -2091,17 +2710,19 @@ mod message_service_extra_tests {
         service.insert_messages(vec![first, second]).unwrap();
 
         // Forget only agent a1's messages.
-        let updated = service.update_messages(
-            &MessageCondition {
-                agent_id: Some("a1".into()),
-                ..Default::default()
-            },
-            &MessageUpdate {
-                status: Some(false),
-                forget_at: Some("2026-08-10 00:00:00".into()),
-                ..Default::default()
-            },
-        );
+        let updated = service
+            .update_messages(
+                &MessageCondition {
+                    agent_id: Some("a1".into()),
+                    ..Default::default()
+                },
+                &MessageUpdate {
+                    status: Some(false),
+                    forget_at: Some("2026-08-10 00:00:00".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         assert_eq!(updated, 1);
         let row = service.get_by_message_id("m1", 1).unwrap();
         assert!(!row.status);
@@ -2110,18 +2731,23 @@ mod message_service_extra_tests {
         assert!(untouched.status);
 
         // message_id condition + content rewrite.
-        let updated = service.update_messages(
-            &MessageCondition {
-                message_id: Some(2),
-                ..Default::default()
-            },
-            &MessageUpdate {
-                content: Some("updated".into()),
-                ..Default::default()
-            },
-        );
+        let updated = service
+            .update_messages(
+                &MessageCondition {
+                    message_id: Some(2),
+                    ..Default::default()
+                },
+                &MessageUpdate {
+                    content: Some("updated".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         assert_eq!(updated, 1);
-        assert_eq!(service.get_by_message_id("m1", 2).unwrap().content, "updated");
+        assert_eq!(
+            service.get_by_message_id("m1", 2).unwrap().content,
+            "updated"
+        );
     }
 
     #[test]
@@ -2154,7 +2780,7 @@ mod message_service_extra_tests {
         assert_eq!(page[0].message_id, 1);
 
         // keywords maps to the session_id filter.
-        let (page, total) = service.list_message("m1", &[], Some("s1"), 1, 50);
+        let (_page, total) = service.list_message("m1", &[], Some("s1"), 1, 50);
         assert_eq!(total, 3);
         let (page, total) = service.list_message("m1", &[], Some("nope"), 1, 50);
         assert_eq!(total, 0);
@@ -2190,15 +2816,577 @@ mod message_service_extra_tests {
         assert_eq!(recent[1].message_id, 2);
 
         // delete_message(condition): drop agent a2's rows.
-        let deleted = service.delete_messages_by_condition(&MessageCondition {
-            agent_id: Some("a2".into()),
-            ..Default::default()
-        });
+        let deleted = service
+            .delete_messages_by_condition(&MessageCondition {
+                agent_id: Some("a2".into()),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(deleted, 1);
         assert!(service.get_by_message_id("m1", 4).is_none());
         assert!(service.get_by_message_id("m1", 1).is_some());
 
-        // index_name mirrors messages.py.
-        assert_eq!(message_index_name("u1"), "memory_u1");
+        // The pure helper avoids mutating the process environment in parallel
+        // tests while exercising the exact dynamic ES_INDEX_PREFIX contract.
+        assert_eq!(message_index_name_with_prefix("u1", ""), "memory_u1");
+        assert_eq!(message_index_name_with_prefix("u1", "   "), "memory_u1");
+        assert_eq!(
+            message_index_name_with_prefix(" u1 ", "  cn prod  "),
+            "memory_cn prod_ u1 "
+        );
+    }
+
+    #[test]
+    fn condition_delete_does_not_cross_memory_for_a_reused_integer_id() {
+        let service = MemoryMessageService::in_memory();
+        let first = message(7, "m1", "2026-08-01 00:00:00", "delete");
+        let second = message(7, "m2", "2026-08-01 00:00:00", "keep");
+        service
+            .insert_messages(vec![first, second.clone()])
+            .unwrap();
+
+        assert_eq!(
+            service
+                .delete_messages_by_condition(&MessageCondition {
+                    memory_id: Some("m1".into()),
+                    message_id: Some(7),
+                    ..Default::default()
+                })
+                .unwrap(),
+            1
+        );
+        assert!(service.get_by_message_id("m1", 7).is_none());
+        assert_eq!(service.get_by_message_id("m2", 7), Some(second));
+    }
+
+    #[test]
+    fn canonical_snapshot_uses_exact_infinity_fields_and_restores() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-snapshot-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        let service = MemoryMessageService::new(&path).unwrap();
+        let mut stored = message(7, "memory-a", "2026-08-10 12:34:56", "remember this");
+        stored.zone_id = 9;
+        service.insert_messages(vec![stored.clone()]).unwrap();
+
+        let rows: Vec<Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let row = rows[0].as_object().unwrap();
+        assert_eq!(row["id"], "memory-a_7");
+        assert_eq!(row["message_type_kwd"], "raw");
+        assert_eq!(row["status_int"], 1);
+        assert_eq!(row["zone_id"], 9);
+        assert_eq!(row["invalid_at"], "");
+        assert_eq!(row["invalid_at_flt"], 0.0);
+        assert_eq!(row["forget_at"], "");
+        assert_eq!(row["forget_at_flt"], 0.0);
+        assert_eq!(
+            row["q_2_vec"],
+            serde_json::to_value(vec![0.1_f32, 0.2_f32]).unwrap()
+        );
+        assert_eq!(
+            row["valid_at_flt"],
+            crate::common::time_utils::date_string_to_timestamp(
+                "2026-08-10 12:34:56",
+                crate::common::time_utils::DEFAULT_TIME_FORMAT,
+            )
+            .unwrap() as f64
+        );
+        for logical in ["message_type", "status", "content_embed"] {
+            assert!(!row.contains_key(logical));
+        }
+
+        drop(service);
+        let restored = MemoryMessageService::new(&path).unwrap();
+        assert_eq!(restored.get_by_message_id("memory-a", 7), Some(stored));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_logical_snapshot_migrates_to_canonical_storage() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-legacy-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!([{
+                "message_id": 3,
+                "message_type": "raw",
+                "source_id": 0,
+                "memory_id": "legacy-memory",
+                "user_id": "u1",
+                "agent_id": "a1",
+                "session_id": "s1",
+                "content": "legacy",
+                "valid_at": "2026-08-01 00:00:00",
+                "invalid_at": null,
+                "forget_at": null,
+                "status": true,
+                "content_embed": [1.0, 0.0]
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let service = MemoryMessageService::new(&path).unwrap();
+        assert_eq!(
+            service
+                .get_by_message_id("legacy-memory", 3)
+                .unwrap()
+                .content_embed,
+            vec![1.0, 0.0]
+        );
+        let rows: Vec<Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let row = rows[0].as_object().unwrap();
+        assert_eq!(row["id"], "legacy-memory_3");
+        assert!(row.contains_key("message_type_kwd"));
+        assert!(row.contains_key("q_2_vec"));
+        assert!(!row.contains_key("message_type"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_recent_and_list_apply_distinct_status_and_forget_rules() {
+        let service = MemoryMessageService::in_memory();
+        let active = message(1, "m1", "2026-08-01 00:00:00", "active rust");
+        let inactive = MemoryMessage {
+            message_id: 2,
+            status: false,
+            valid_at: "2026-08-02 00:00:00".into(),
+            content: "inactive rust".into(),
+            ..active.clone()
+        };
+        let forgotten = MemoryMessage {
+            message_id: 3,
+            valid_at: "2026-08-03 00:00:00".into(),
+            forget_at: Some("2026-08-04 00:00:00".into()),
+            content: "forgotten rust".into(),
+            ..active.clone()
+        };
+        service
+            .insert_messages(vec![active, inactive, forgotten])
+            .unwrap();
+
+        let search = service.query(&["m1".into()], None, None, None, None, None);
+        assert_eq!(search.len(), 1);
+        assert_eq!(search[0].message_id, 1);
+        let recent = service.recent_messages(&["m1".into()], "a1", "s1", 10);
+        assert_eq!(
+            recent
+                .iter()
+                .map(|message| message.message_id)
+                .collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+        let (listed, total) = service.list_message("m1", &[], None, 1, 10);
+        assert_eq!(total, 3);
+        assert_eq!(listed[0].message_id, 3);
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_message_update() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        let service = MemoryMessageService::new(&path).unwrap();
+        service
+            .insert_messages(vec![message(1, "m1", "2026-08-01 00:00:00", "stable")])
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            service
+                .update_messages(
+                    &MessageCondition {
+                        memory_id: Some("m1".into()),
+                        message_id: Some(1),
+                        ..Default::default()
+                    },
+                    &MessageUpdate {
+                        content: Some("must rollback".into()),
+                        ..Default::default()
+                    },
+                )
+                .is_err()
+        );
+        assert_eq!(
+            service.get_by_message_id("m1", 1).unwrap().content,
+            "stable"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_fifo_and_insert_as_one_transaction() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-fifo-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        let service = MemoryMessageService::new(&path).unwrap();
+        let stable = message(1, "m1", "2026-08-01 00:00:00", "stable");
+        service.insert_messages(vec![stable.clone()]).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let incoming = message(2, "m1", "2026-08-02 00:00:00", "incoming");
+        let result = service.save_messages_with_budget(
+            "m1",
+            "FIFO",
+            incoming.calculate_size(),
+            vec![incoming],
+        );
+        assert!(result.is_err());
+        assert_eq!(service.get_by_message_id("m1", 1), Some(stable));
+        assert!(service.get_by_message_id("m1", 2).is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+}
+
+#[cfg(test)]
+mod memory_extraction_tests {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct RecordedChatCall {
+        system: String,
+        history: Vec<(String, String)>,
+        temperature: Option<f32>,
+    }
+
+    struct FakeMemoryChatModel {
+        response: String,
+        fail: bool,
+        calls: Mutex<Vec<RecordedChatCall>>,
+    }
+
+    impl FakeMemoryChatModel {
+        fn returning(response: &str) -> Self {
+            Self {
+                response: response.into(),
+                fail: false,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                response: String::new(),
+                fail: true,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChatModel for FakeMemoryChatModel {
+        fn model_name(&self) -> &str {
+            "fake-memory-chat"
+        }
+
+        async fn chat(&self, _system: &str, _history: &[ChatMessage]) -> crate::Result<String> {
+            if self.fail {
+                anyhow::bail!("fake memory LLM failed")
+            }
+            Ok(self.response.clone())
+        }
+
+        async fn chat_with_generation(
+            &self,
+            system: &str,
+            history: &[ChatMessage],
+            generation: GenerationParamsPatch,
+        ) -> crate::Result<String> {
+            self.calls.lock().unwrap().push(RecordedChatCall {
+                system: system.into(),
+                history: history
+                    .iter()
+                    .map(|message| (message.role.clone(), message.content.clone()))
+                    .collect(),
+                temperature: generation.temperature,
+            });
+            self.chat(system, history).await
+        }
+
+        async fn chat_stream(
+            &self,
+            system: &str,
+            history: &[ChatMessage],
+            _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+        ) -> crate::Result<String> {
+            self.chat(system, history).await
+        }
+    }
+
+    struct LegacyFakeChatModel;
+
+    #[async_trait::async_trait]
+    impl ChatModel for LegacyFakeChatModel {
+        fn model_name(&self) -> &str {
+            "legacy"
+        }
+
+        async fn chat(&self, system: &str, history: &[ChatMessage]) -> crate::Result<String> {
+            Ok(format!("{system}:{}", history.len()))
+        }
+
+        async fn chat_stream(
+            &self,
+            system: &str,
+            history: &[ChatMessage],
+            _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+        ) -> crate::Result<String> {
+            self.chat(system, history).await
+        }
+    }
+
+    fn memory_types(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn extraction_helper_reuses_primary_prompt_assembler_contract() {
+        let types = memory_types(&["raw", "semantic", "episodic", "procedural", "semantic"]);
+        let prompt = crate::memory::PromptAssembler::assemble_system_prompt(&types);
+        assert_eq!(
+            prompt,
+            crate::memory::PromptAssembler::assemble_system_prompt(&types)
+        );
+        assert!(prompt.starts_with("**Memory Extraction Specialist**"));
+        assert_eq!(prompt.matches("**EXTRACT SEMANTIC KNOWLEDGE:**").count(), 1);
+        assert_eq!(prompt.matches("**EXTRACT EPISODIC KNOWLEDGE:**").count(), 1);
+        assert_eq!(
+            prompt.matches("**EXTRACT PROCEDURAL KNOWLEDGE:**").count(),
+            1
+        );
+        assert!(prompt.contains("Timestamps in ISO 8601 format"));
+        assert!(prompt.contains("Maximum 5 items per type"));
+        assert!(prompt.contains("\"semantic\": ["));
+        assert!(prompt.contains("\"episodic\": ["));
+        assert!(prompt.contains("\"procedural\": ["));
+        assert!(!prompt.contains("\"raw\": ["));
+
+        assert_eq!(
+            crate::memory::PromptAssembler::assemble_user_prompt(
+                "User Input: hello\nAgent Response: world",
+                Some("2026-08-12 12:34:56"),
+                Some("2026-08-12 12:34:56"),
+            ),
+            "\n**CONVERSATION:**\nUser Input: hello\nAgent Response: world\n\n**CONVERSATION TIME:** 2026-08-12 12:34:56\n**CURRENT TIME:** 2026-08-12 12:34:56\n"
+        );
+
+        let raw_prompt =
+            crate::memory::PromptAssembler::assemble_system_prompt(&memory_types(&["raw"]));
+        assert!(!raw_prompt.contains("**EXTRACT SEMANTIC KNOWLEDGE:**"));
+        assert!(raw_prompt.contains("```json\n{\n\n}\n```"));
+        assert!(!raw_prompt.contains("**EXAMPLES:**"));
+    }
+
+    #[test]
+    fn response_parser_flattens_all_types_preserves_unknown_and_normalizes_time() {
+        let response = r#"```json
+        {
+          "semantic": [{"content":"Paris is in France","valid_at":"2024-01-01T12:00:00Z","invalid_at":""}],
+          "episodic": [{"content":"Deployed","valid_at":"2024-01-02T14:15:16+08:00"}],
+          "procedural": [{"content":"Check logs","valid_at":"not-a-time","invalid_at":null}],
+          "future_type": [{"content":"Keep this key","valid_at":"2024-01-03"}]
+        }
+        ```"#;
+        let items = parse_memory_extraction_response(response).unwrap();
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].message_type, "semantic");
+        assert_eq!(items[0].valid_at, "2024-01-01 12:00:00");
+        assert_eq!(items[0].invalid_at, None);
+        assert_eq!(items[1].message_type, "episodic");
+        assert_eq!(items[1].valid_at, "2024-01-02 14:15:16");
+        assert_eq!(items[2].message_type, "procedural");
+        assert_eq!(items[2].valid_at, "not-a-time");
+        assert_eq!(items[3].message_type, "future_type");
+        assert_eq!(items[3].valid_at, "2024-01-03 00:00:00");
+    }
+
+    #[test]
+    fn response_parser_distinguishes_invalid_json_from_structural_errors() {
+        assert!(
+            parse_memory_extraction_response("not json")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_memory_extraction_response("{broken")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse_memory_extraction_response("[]").is_err());
+        assert!(parse_memory_extraction_response(r#"{"semantic":{}}"#).is_err());
+        assert!(parse_memory_extraction_response(r#"{"semantic":["fact"]}"#).is_err());
+        assert!(
+            parse_memory_extraction_response(r#"{"semantic":[{"valid_at":"2024-01-01"}]}"#)
+                .is_err()
+        );
+        assert!(parse_memory_extraction_response(r#"{"semantic":[{"content":"fact"}]}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn extraction_sends_default_system_history_and_temperature_then_flattens() {
+        let model = FakeMemoryChatModel::returning(
+            r#"{"semantic":[{"content":"fact","valid_at":"2026-08-12T10:00:00","invalid_at":""}],"episodic":[],"procedural":[]}"#,
+        );
+        let items = extract_memory_by_llm(
+            &model,
+            &memory_types(&["raw", "semantic", "episodic", "procedural"]),
+            "hello",
+            "world",
+            None,
+            None,
+            "2026-08-12 12:34:56",
+            0.7,
+        )
+        .await
+        .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].message_type, "semantic");
+        let calls = model.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].system,
+            crate::memory::PromptAssembler::assemble_system_prompt(&memory_types(&[
+                "raw",
+                "semantic",
+                "episodic",
+                "procedural",
+            ]))
+        );
+        assert!(calls[0].system.contains("**EXTRACT SEMANTIC KNOWLEDGE:**"));
+        assert!(calls[0].system.contains("**EXTRACT EPISODIC KNOWLEDGE:**"));
+        assert!(
+            calls[0]
+                .system
+                .contains("**EXTRACT PROCEDURAL KNOWLEDGE:**")
+        );
+        assert_eq!(calls[0].temperature, Some(0.7));
+        assert_eq!(calls[0].history.len(), 1);
+        assert_eq!(calls[0].history[0].0, "user");
+        assert_eq!(
+            calls[0].history[0].1,
+            crate::memory::PromptAssembler::assemble_user_prompt(
+                "User Input: hello\nAgent Response: world",
+                Some("2026-08-12 12:34:56"),
+                Some("2026-08-12 12:34:56"),
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn extraction_custom_prompts_raw_only_empty_and_failure_match_worker_boundaries() {
+        let custom = FakeMemoryChatModel::returning("{}");
+        let items = extract_memory_by_llm(
+            &custom,
+            &memory_types(&["semantic"]),
+            "question",
+            "answer",
+            Some("custom system"),
+            Some("custom user"),
+            "2026-08-12 01:02:03",
+            0.2,
+        )
+        .await
+        .unwrap();
+        assert!(items.is_empty());
+        {
+            let calls = custom.calls.lock().unwrap();
+            assert_eq!(calls[0].system, "custom system");
+            assert_eq!(calls[0].temperature, Some(0.2));
+            assert_eq!(
+                calls[0].history,
+                vec![
+                    ("user".into(), "custom user".into()),
+                    (
+                        "user".into(),
+                        "Conversation: User Input: question\nAgent Response: answer\nConversation Time: 2026-08-12 01:02:03\nCurrent Time: 2026-08-12 01:02:03".into(),
+                    ),
+                ]
+            );
+        }
+
+        let raw_only = FakeMemoryChatModel::failing();
+        assert!(
+            extract_memory_by_llm(
+                &raw_only,
+                &memory_types(&["raw"]),
+                "question",
+                "answer",
+                None,
+                None,
+                "2026-08-12 01:02:03",
+                0.5,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert!(raw_only.calls.lock().unwrap().is_empty());
+
+        let invalid_json = FakeMemoryChatModel::returning("provider preamble");
+        assert!(
+            extract_memory_by_llm(
+                &invalid_json,
+                &memory_types(&["semantic"]),
+                "question",
+                "answer",
+                None,
+                None,
+                "2026-08-12 01:02:03",
+                0.5,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+
+        let failing = FakeMemoryChatModel::failing();
+        assert!(
+            extract_memory_by_llm(
+                &failing,
+                &memory_types(&["semantic"]),
+                "question",
+                "answer",
+                None,
+                None,
+                "2026-08-12 01:02:03",
+                0.5,
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("fake memory LLM failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_model_generation_default_keeps_legacy_implementations_compatible() {
+        let answer = LegacyFakeChatModel
+            .chat_with_generation(
+                "system",
+                &[ChatMessage::new("user", "hello")],
+                GenerationParamsPatch {
+                    temperature: Some(0.9),
+                    ..GenerationParamsPatch::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer, "system:1");
     }
 }

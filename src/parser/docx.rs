@@ -513,8 +513,7 @@ pub fn extract_images(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
 
     let document_xml = read_zip_entry(&mut zf, "word/document.xml")
         .ok_or_else(|| anyhow::anyhow!("word/document.xml missing"))?;
-    let rels_xml = read_zip_entry(&mut zf, "word/_rels/document.xml.rels")
-        .unwrap_or_default();
+    let rels_xml = read_zip_entry(&mut zf, "word/_rels/document.xml.rels").unwrap_or_default();
 
     // rId → relationship target.
     let mut rels: HashMap<String, String> = HashMap::new();
@@ -556,9 +555,7 @@ pub fn extract_images(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
                 {
                     for attr in event.attributes().flatten() {
                         if attr.key.local_name().as_ref() == b"embed" {
-                            embeds.push(
-                                String::from_utf8_lossy(&attr.value).into_owned(),
-                            );
+                            embeds.push(String::from_utf8_lossy(&attr.value).into_owned());
                         }
                     }
                 }
@@ -595,10 +592,7 @@ pub fn extract_images(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
     Ok(images)
 }
 
-fn read_zip_entry_bytes(
-    zf: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    name: &str,
-) -> Option<Vec<u8>> {
+fn read_zip_entry_bytes(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Vec<u8>> {
     let Ok(mut file) = zf.by_name(name) else {
         return None;
     };
@@ -782,8 +776,11 @@ mod tests {
     <w:p><w:r><w:drawing><pic:pic><a:blip r:embed="rId5"/></pic:pic></w:drawing></w:r></w:p>
   </w:body>
 </w:document>"#;
-            zw.start_file("word/document.xml", zip::write::SimpleFileOptions::default())
-                .unwrap();
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(doc.as_bytes()).unwrap();
 
             let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -798,8 +795,11 @@ mod tests {
             .unwrap();
             zw.write_all(rels.as_bytes()).unwrap();
 
-            zw.start_file("word/media/image1.png", zip::write::SimpleFileOptions::default())
-                .unwrap();
+            zw.start_file(
+                "word/media/image1.png",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(&[0x89, b'P', b'N', b'G', 1, 2, 3]).unwrap();
             // image2 is referenced by rels but never blipped → not extracted.
             zw.finish().unwrap();
@@ -812,7 +812,10 @@ mod tests {
 
         // parse() surfaces the count as metadata.
         let doc = DocxParser::new().parse("pic.docx", &buf).unwrap();
-        assert_eq!(doc.metadata.get("image_count").map(String::as_str), Some("1"));
+        assert_eq!(
+            doc.metadata.get("image_count").map(String::as_str),
+            Some("1")
+        );
     }
 
     /// Build a minimal valid DOCX (document.xml + styles.xml + [Content_Types].xml).

@@ -437,7 +437,9 @@ impl QaMode {
 
     /// True when any knowledge base opts into the deep-research pipeline.
     pub fn is_advanced_mode(parser_ids: &[&str]) -> bool {
-        parser_ids.iter().any(|p| matches!(*p, "advanced" | "advanced_rag" | "deep_researcher"))
+        parser_ids
+            .iter()
+            .any(|p| matches!(*p, "advanced" | "advanced_rag" | "deep_researcher"))
     }
 
     /// Resolve the QA mode for a set of KB parser ids.
@@ -465,7 +467,10 @@ mod tests {
         // Mixed / non-KG parsers → naive hybrid retrieval.
         assert_eq!(QaMode::resolve(&["naive"]), QaMode::Naive);
         assert_eq!(QaMode::resolve(&["paper", "manual"]), QaMode::Naive);
-        assert_eq!(QaMode::resolve(&["knowledge_graph", "naive"]), QaMode::Naive);
+        assert_eq!(
+            QaMode::resolve(&["knowledge_graph", "naive"]),
+            QaMode::Naive
+        );
         assert_eq!(QaMode::resolve(&[]), QaMode::Naive);
         assert_eq!(QaMode::Naive.as_str(), "naive");
     }
@@ -488,7 +493,10 @@ mod tests {
     fn test_qa_mode_resolve_advanced() {
         // Explicit deep-research marker wins over naive but not over all-KG graph.
         assert_eq!(QaMode::resolve(&["advanced"]), QaMode::Advanced);
-        assert_eq!(QaMode::resolve(&["deep_researcher", "naive"]), QaMode::Advanced);
+        assert_eq!(
+            QaMode::resolve(&["deep_researcher", "naive"]),
+            QaMode::Advanced
+        );
         assert_eq!(QaMode::Advanced.as_str(), "advanced");
         // Mixed KG + advanced is not "all KG", so the explicit marker wins.
         assert_eq!(

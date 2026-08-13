@@ -8,7 +8,7 @@
     "kb_ids": [],
     "prompt_template": "You are a helpful assistant. Use the context to answer questions.",
     "dsl": {},
-    "canvas_category": "agent",
+    "canvas_category": "agent_canvas",
     "canvas_type": "",
     "tags": [],
     "avatar": "",

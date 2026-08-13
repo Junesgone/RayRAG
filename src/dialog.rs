@@ -232,9 +232,8 @@ pub fn add_kb_filter(sql: &str, kb_ids: &[String]) -> Result<String, crate::api:
 
 static AGGREGATE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(count|sum|avg|max|min|distinct)\s*\(").unwrap());
-static ROW_COUNT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\bhow many rows\b|\bnumber of rows\b|\brow count\b").unwrap()
-});
+static ROW_COUNT_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bhow many rows\b|\bnumber of rows\b|\brow count\b").unwrap());
 static ROW_COUNT_TARGET_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bdataset\b|\btable\b|\bspreadsheet\b|\bexcel\b").unwrap());
 static WHERE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bwhere\b ").unwrap());
@@ -289,7 +288,9 @@ mod use_sql_tests {
             &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
         )
         .unwrap();
-        assert!(sql.contains("where kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6' and doc_id = 'x'"));
+        assert!(
+            sql.contains("where kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6' and doc_id = 'x'")
+        );
         // Non-UUID kb_id is rejected with the RAGFlow guard message.
         let err = add_kb_filter("SELECT 1", &["not-a-uuid".into()]).unwrap_err();
         assert_eq!(err.code, 400);

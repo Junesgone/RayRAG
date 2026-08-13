@@ -287,12 +287,7 @@ impl<'a> ChatPipeline<'a> {
                 system.push_str("\n\n**Reflection**\n");
                 system.push_str(&reflection_text);
                 let mut msgs2 = vec![ChatMessage::new("system", system)];
-                msgs2.extend(
-                    history
-                        .iter()
-                        .filter(|m| m.role != "system")
-                        .cloned(),
-                );
+                msgs2.extend(history.iter().filter(|m| m.role != "system").cloned());
                 msgs2.push(ChatMessage::new("user", &final_question));
                 answer = self.llm.chat(&msgs2).await?;
             }
@@ -605,7 +600,12 @@ fn chunk_reference(hit: &HybridSearchResult) -> serde_json::Value {
 /// ISO date `YYYY-MM-DD` shifted by `days` from today (UTC).
 fn iso_date_shift(days: i64) -> String {
     let now = time::OffsetDateTime::now_utc() + time::Duration::days(days);
-    format!("{:04}-{:02}-{:02}", now.year(), now.month() as u8, now.day())
+    format!(
+        "{:04}-{:02}-{:02}",
+        now.year(),
+        now.month() as u8,
+        now.day()
+    )
 }
 
 fn env_flag(name: &str) -> bool {
@@ -790,7 +790,8 @@ mod tests {
         assert_eq!(msgs[1].content, "question?");
 
         // With citation formatting off, the guidelines are NOT appended.
-        let msgs = build_answer_messages(&ChatPipelineConfig::default(), "question?", &[], &sources);
+        let msgs =
+            build_answer_messages(&ChatPipelineConfig::default(), "question?", &[], &sources);
         assert!(!msgs[0].content.contains("add citations to the input text"));
     }
 
@@ -798,9 +799,14 @@ mod tests {
     fn answer_post_processing_canonicalizes_citations() {
         // repair_bad_citation_formats integration (dialog.rs): mixed bad
         // formats become canonical [ID:n] markers; out-of-range stay verbatim.
-        let (repaired, idx) =
-            repair_bad_citation_formats("答案见 (ID: 12)、[ID: 3] 与 ref9，但 (ID: 99) 超范围。", 20);
-        assert_eq!(repaired, "答案见 [ID:12]、[ID:3] 与 [ID:9]，但 (ID: 99) 超范围。");
+        let (repaired, idx) = repair_bad_citation_formats(
+            "答案见 (ID: 12)、[ID: 3] 与 ref9，但 (ID: 99) 超范围。",
+            20,
+        );
+        assert_eq!(
+            repaired,
+            "答案见 [ID:12]、[ID:3] 与 [ID:9]，但 (ID: 99) 超范围。"
+        );
         assert_eq!(idx, HashSet::from([12, 3, 9]));
 
         // extract_cited_indexes picks up canonical markers from raw output;
@@ -817,7 +823,10 @@ mod tests {
     fn reflect_prompt_renders_goal_and_tool_calls() {
         let rendered = build_reflect_prompt(
             "Answer the user question",
-            &[("retrieval".to_string(), "ID: 0\n└── Content: found it".to_string())],
+            &[(
+                "retrieval".to_string(),
+                "ID: 0\n└── Content: found it".to_string(),
+            )],
         );
         assert!(rendered.contains("To achieve the goal: Answer the user question"));
         assert!(rendered.contains("Tool call: `retrieval`"));

@@ -137,6 +137,7 @@ pub struct ResolvedTenantModel {
     pub provider_id: String,
     pub provider_name: String,
     pub instance_id: String,
+    pub instance_name: String,
     pub model_name: String,
     pub api_base: String,
     pub api_key: Option<String>,
@@ -149,6 +150,15 @@ impl ResolvedTenantModel {
         format!(
             "{}/{}/{}",
             self.provider_id, self.instance_id, self.model_name
+        )
+    }
+
+    /// RAGFlow's browser/API selector wire. Splitters must parse it from the
+    /// right because model names themselves are allowed to contain `@`.
+    pub fn ragflow_selector(&self) -> String {
+        format!(
+            "{}@{}@{}",
+            self.model_name, self.instance_name, self.provider_name
         )
     }
 
@@ -697,6 +707,7 @@ fn resolved_tenant_model(
         provider_id: instance.provider_id.clone(),
         provider_name: provider.name.clone(),
         instance_id: instance.instance_id.clone(),
+        instance_name: instance.instance_name.clone(),
         model_name: model.name.clone(),
         api_base: instance.api_base.clone(),
         api_key: instance.api_key.clone(),
@@ -850,6 +861,25 @@ pub struct TenantModelQuery {
     pub tenant_id: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct RagflowModelQuery {
+    pub tenant_id: Option<String>,
+    #[serde(rename = "type")]
+    pub model_type: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RagflowTenantModel {
+    name: String,
+    model_type: Vec<ModelCapability>,
+    provider: String,
+    provider_id: String,
+    instance_id: String,
+    instance_name: String,
+    selector: String,
+    max_tokens: Option<u64>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DefaultChatModelUpdate {
     pub tenant_id: Option<String>,
@@ -930,6 +960,108 @@ pub async fn list_tenant_models(
     }
     Json(serde_json::json!({ "code": 0, "data": state.tenant_models.list(tenant_id) }))
         .into_response()
+}
+
+/// GET `/api/v1/models` — RAGFlow tenant-added model catalog used by model
+/// tree selectors. The OpenAI protocol catalog lives at
+/// `/api/v1/openai/models`; these payloads intentionally have different
+/// contracts.
+pub async fn list_ragflow_models(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<RagflowModelQuery>,
+) -> Response {
+    let tenant_id = selected_tenant(&auth, query.tenant_id.as_deref());
+    if !can_read_tenant(&state, &auth, tenant_id) {
+        return forbidden("Tenant membership required");
+    }
+    let requested_types: HashSet<_> = query
+        .model_type
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect();
+    let providers: HashMap<_, _> = state
+        .providers
+        .list_configured()
+        .into_iter()
+        .filter(|provider| provider.enabled)
+        .map(|provider| (provider.id.clone(), provider))
+        .collect();
+    let mut models = Vec::new();
+    for instance in state.tenant_models.list_configured(tenant_id) {
+        let Some(provider) = providers.get(&instance.provider_id) else {
+            continue;
+        };
+        for model in instance.models.into_iter().filter(|model| model.enabled) {
+            let model_types: Vec<_> = model
+                .model_types
+                .into_iter()
+                .filter(|capability| {
+                    requested_types.is_empty() || requested_types.contains(capability.as_str())
+                })
+                .collect();
+            if model_types.is_empty() {
+                continue;
+            }
+            models.push(RagflowTenantModel {
+                selector: format!(
+                    "{}@{}@{}",
+                    model.name, instance.instance_name, provider.name
+                ),
+                name: model.name,
+                model_type: model_types,
+                provider: provider.name.clone(),
+                provider_id: instance.provider_id.clone(),
+                instance_id: instance.instance_id.clone(),
+                instance_name: instance.instance_name.clone(),
+                max_tokens: model.max_tokens,
+            });
+        }
+    }
+    models.sort_by(|left, right| {
+        left.provider
+            .cmp(&right.provider)
+            .then_with(|| left.instance_name.cmp(&right.instance_name))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Json(serde_json::json!({ "code": 0, "data": models })).into_response()
+}
+
+/// GET `/api/v1/models/default` — fixed-version default model descriptor.
+/// RayRAG currently persists an explicit tenant Chat default; capabilities
+/// without an explicit default are omitted instead of inventing one.
+pub async fn get_ragflow_default_models(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<TenantModelQuery>,
+) -> Response {
+    let tenant_id = selected_tenant(&auth, query.tenant_id.as_deref());
+    if !can_read_tenant(&state, &auth, tenant_id) {
+        return forbidden("Tenant membership required");
+    }
+    let mut models = Vec::new();
+    if let Some(selector) = state.tenant_models.default_chat_model(tenant_id)
+        && let Ok(Some(model)) = state.tenant_models.resolve(
+            &state.providers,
+            tenant_id,
+            ModelCapability::Chat,
+            Some(&selector),
+        )
+    {
+        let selector = model.ragflow_selector();
+        models.push(serde_json::json!({
+            "model_provider": model.provider_name,
+            "model_instance": model.instance_name,
+            "model_name": model.model_name,
+            "model_type": model.capability.as_str(),
+            "selector": selector,
+            "enable": true,
+        }));
+    }
+    Json(serde_json::json!({ "code": 0, "data": { "models": models } })).into_response()
 }
 
 pub async fn upsert_tenant_model_instance(
@@ -1333,6 +1465,11 @@ mod tests {
             .unwrap();
         assert_eq!(explicit.model_name, "text-embedding@nomic");
         assert_eq!(explicit.instance_id, "instance-east");
+        assert_eq!(explicit.instance_name, "prod-east");
+        assert_eq!(
+            explicit.ragflow_selector(),
+            "text-embedding@nomic@prod-east@SILICONFLOW"
+        );
 
         let legacy_default = store
             .resolve(

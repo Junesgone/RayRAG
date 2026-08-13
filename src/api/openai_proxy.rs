@@ -423,4 +423,3 @@ pub async fn openai_rag_chat_completions(
     }))
     .into_response()
 }
-

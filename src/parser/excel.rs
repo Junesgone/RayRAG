@@ -849,10 +849,8 @@ pub(crate) fn actual_row_count_from_xml(xml: &str, shared_strings: &[String]) ->
                 if let Some(reference) =
                     attribute_value(&event, b"ref", reader.decoder()).unwrap_or(None)
                 {
-                    if let Some((row, col)) = reference
-                        .rsplit(':')
-                        .next()
-                        .and_then(parse_cell_reference)
+                    if let Some((row, col)) =
+                        reference.rsplit(':').next().and_then(parse_cell_reference)
                     {
                         max_row = max_row.max(row as usize);
                         max_col = max_col.max(col as usize);
@@ -1191,7 +1189,10 @@ mod tests {
     fn row_number_sums_sheets_and_counts_csv_lines() {
         // "row_number" — excel_parser.py:294-312.
         let bytes = write_xlsx_sheets(&[
-            ("S1".into(), vec![vec![json!("a")], vec![json!("1")], vec![json!("2")]]),
+            (
+                "S1".into(),
+                vec![vec![json!("a")], vec![json!("1")], vec![json!("2")]],
+            ),
             ("S2".into(), vec![vec![json!("b")], vec![json!("3")]]),
         ])
         .unwrap();

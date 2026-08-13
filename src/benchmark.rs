@@ -31,8 +31,8 @@ pub enum BenchmarkDataset {
 
 /// MIRACL languages iterated by the Python benchmark (`__call__`).
 pub const MIRACL_LANGUAGES: &[&str] = &[
-    "ar", "bn", "de", "en", "es", "fa", "fi", "fr", "hi", "id", "ja", "ko", "ru", "sw", "te",
-    "th", "yo", "zh",
+    "ar", "bn", "de", "en", "es", "fa", "fi", "fr", "hi", "id", "ja", "ko", "ru", "sw", "te", "th",
+    "yo", "zh",
 ];
 
 impl BenchmarkDataset {
@@ -297,9 +297,16 @@ impl BenchmarkReport {
     pub fn to_markdown(&self) -> String {
         let mut out = String::from("## Score For Every Query\n");
         let mut rows = self.rows.clone();
-        rows.sort_by(|a, b| a.ndcg10.partial_cmp(&b.ndcg10).unwrap_or(std::cmp::Ordering::Equal));
+        rows.sort_by(|a, b| {
+            a.ndcg10
+                .partial_cmp(&b.ndcg10)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for row in &rows {
-            out.push_str(&format!("### query: {} ndcg@10:{}\n", row.query, row.ndcg10));
+            out.push_str(&format!(
+                "### query: {} ndcg@10:{}\n",
+                row.query, row.ndcg10
+            ));
             for (text, qrel) in &row.top_passages {
                 out.push_str(&format!("- text: {}\t qrel: {}\n", text, qrel));
             }
@@ -391,10 +398,8 @@ mod tests {
         let run = pairs(&[("d3", 0.9), ("d1", 0.8), ("d2", 0.7), ("d4", 0.1)]);
         assert!((reciprocal_rank_at_k(&qrels, &run, 10) - 0.5).abs() < 1e-9);
         // Rank order relevance: d3→0, d1→1, d2→1, d4→1.
-        let dcg = 0.0 / 2.0f64.log2()
-            + 1.0 / 3.0f64.log2()
-            + 1.0 / 4.0f64.log2()
-            + 1.0 / 5.0f64.log2();
+        let dcg =
+            0.0 / 2.0f64.log2() + 1.0 / 3.0f64.log2() + 1.0 / 4.0f64.log2() + 1.0 / 5.0f64.log2();
         let idcg = 1.0 / 2.0f64.log2() + 1.0 / 3.0f64.log2() + 1.0 / 4.0f64.log2();
         assert!((ndcg_at_k(&qrels, &run, 10) - dcg / idcg).abs() < 1e-9);
 
@@ -506,7 +511,10 @@ mod tests {
             BenchmarkDataset::parse("trivia_qa"),
             Some(BenchmarkDataset::TriviaQa)
         );
-        assert_eq!(BenchmarkDataset::parse("miracl"), Some(BenchmarkDataset::Miracl));
+        assert_eq!(
+            BenchmarkDataset::parse("miracl"),
+            Some(BenchmarkDataset::Miracl)
+        );
         assert_eq!(BenchmarkDataset::parse("nonsense"), None);
         assert_eq!(BenchmarkDataset::MsMarcoV11.name(), "ms_marco_v1.1");
         assert_eq!(MIRACL_LANGUAGES.len(), 18);

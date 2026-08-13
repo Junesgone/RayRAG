@@ -330,10 +330,7 @@ impl DocFileCache {
         for entry in std::fs::read_dir(cache_dir)? {
             let entry = entry?;
             if entry.file_type()?.is_file()
-                && entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("cache-")
+                && entry.file_name().to_string_lossy().starts_with("cache-")
             {
                 let _ = std::fs::remove_file(entry.path());
             }
@@ -421,7 +418,8 @@ impl DocFileCache {
         let mut entries = self.entries.write().unwrap();
         for entry in &expired {
             entries.remove(&entry.key);
-            let _ = std::fs::remove_file(std::path::Path::new(&self.cache_dir).join(&entry.file_name));
+            let _ =
+                std::fs::remove_file(std::path::Path::new(&self.cache_dir).join(&entry.file_name));
         }
         expired.len()
     }
@@ -502,9 +500,7 @@ mod tests {
             // Missing source file is skipped, not fatal (RAGFlow storage-error path).
             ("kb-1".to_string(), "missing.pdf".to_string()),
         ];
-        let cached = cache
-            .cache_ongoing(&locations, &source_dir, ttl)
-            .unwrap();
+        let cached = cache.cache_ongoing(&locations, &source_dir, ttl).unwrap();
         assert_eq!(cached, 2);
         assert_eq!(cache.len(), 2);
 
@@ -515,9 +511,7 @@ mod tests {
         assert!(cache.get("kb-2", "a.pdf", now).is_none());
 
         // Re-polling the same locations does not re-cache (Redis `exist` skip).
-        let cached = cache
-            .cache_ongoing(&locations, &source_dir, ttl)
-            .unwrap();
+        let cached = cache.cache_ongoing(&locations, &source_dir, ttl).unwrap();
         assert_eq!(cached, 0);
         assert_eq!(cache.len(), 2);
 

@@ -91,6 +91,7 @@ chrono = { version = "0.4", features = ["clock"] }
 
 # Auth (user system)
 argon2 = "0.5"
+rsa = { version = "0.9.8", features = ["pem"] }
 sha2 = "0.10" # legacy password migration only
 hmac = "0.12"
 hex = "0.4"
@@ -112,3 +113,7 @@ unicode-normalization = "0.1"                    # common/text_utils.py NFKC
 [[bin]]
 name = "rayrag"
 path = "src/main.rs"
+
+[[bin]]
+name = "ragflow-coverage"
+path = "src/bin/ragflow-coverage.rs"

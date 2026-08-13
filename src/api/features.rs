@@ -4,7 +4,7 @@
 use anyhow::Context;
 use axum::{
     Json,
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query, RawQuery, State},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -1143,8 +1143,6 @@ pub async fn list_providers(State(state): State<Arc<AppState>>) -> impl IntoResp
 /// GET /api/v1/providers/presets — provider catalog mirroring RAGFlow
 /// `conf/llm_factories.json`, annotated with mainland-China reachability.
 pub async fn list_provider_presets() -> impl IntoResponse {
-    use crate::providers::ProviderKind;
-
     let presets: Vec<serde_json::Value> = crate::providers::PROVIDER_PRESETS
         .iter()
         .map(|preset| {
@@ -1314,8 +1312,9 @@ fn provider_bad_request(error: anyhow::Error) -> axum::response::Response {
 
 // ── Memory System ───────────────────────────────────────────────
 
-const MEMORY_NAME_LIMIT: usize = 128;
-const MEMORY_SIZE_LIMIT: u64 = 128 * 1024 * 1024;
+const MEMORY_NAME_LIMIT: usize = crate::common::constants::MEMORY_NAME_LIMIT;
+const MEMORY_SIZE_LIMIT: u64 = crate::common::constants::MEMORY_SIZE_LIMIT as u64;
+const MEMORY_DEFAULT_SIZE: u64 = 5 * 1024 * 1024;
 const MEMORY_TYPES: [&str; 4] = ["raw", "semantic", "episodic", "procedural"];
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -1344,6 +1343,13 @@ pub struct MemoryEntry {
     pub user_prompt: String,
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct MemoryView {
+    #[serde(flatten)]
+    memory: MemoryEntry,
+    owner_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1393,11 +1399,19 @@ impl MemoryStore {
     pub fn new(path: impl AsRef<FsPath>) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
         crate::persistence::restore_if_missing(&path)?;
-        let entries: Vec<MemoryEntry> = if path.exists() {
+        let mut entries: Vec<MemoryEntry> = if path.exists() {
             serde_json::from_slice(&std::fs::read(&path)?)?
         } else {
             Vec::new()
         };
+        // `private` was RayRAG's pre-v0.3.3 wire value. RAGFlow exposes the
+        // same owner-only permission as `me`; migrate snapshots once so API
+        // responses and persisted values use the fixed-version contract.
+        for entry in &mut entries {
+            if entry.permissions.eq_ignore_ascii_case("private") {
+                entry.permissions = "me".into();
+            }
+        }
         validate_memory_entries(&entries)?;
         let store = Self {
             memories: RwLock::new(
@@ -1419,6 +1433,13 @@ impl MemoryStore {
             path: None,
             save_lock: Mutex::new(()),
         }
+    }
+
+    /// Internal, owner-independent lookup used by durable background workers.
+    /// HTTP routes must continue to use [`Self::get_accessible`] so restoring a
+    /// persisted task never weakens the external Memory ACL.
+    pub fn get(&self, id: &str) -> Option<MemoryEntry> {
+        self.memories.read().unwrap().get(id).cloned()
     }
 
     pub fn get_accessible(
@@ -1443,8 +1464,18 @@ impl MemoryStore {
         is_tenant_member: impl Fn(&str, &str) -> bool,
         query: &MemoryListQuery,
     ) -> (Vec<MemoryEntry>, usize) {
-        let requested_tenants =
-            split_filter_values(query.tenant_id.as_deref().or(query.owner_ids.as_deref()));
+        let requested_tenants = split_filter_values(
+            query
+                .tenant_id
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    query
+                        .owner_ids
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                }),
+        );
         let requested_types = split_filter_values(query.memory_type.as_deref());
         let keywords = query
             .keywords
@@ -1498,6 +1529,7 @@ impl MemoryStore {
     ) -> anyhow::Result<MemoryEntry> {
         let name = validate_memory_name(&request.name)?;
         let memory_type = normalize_memory_types(request.memory_type)?;
+        let system_prompt = crate::memory::PromptAssembler::assemble_system_prompt(&memory_type);
         validate_memory_selector("embedding", &request.embd_id)?;
         validate_memory_selector("chat", &request.llm_id)?;
         self.mutate(|entries| {
@@ -1514,13 +1546,13 @@ impl MemoryStore {
                 storage_type: "table".into(),
                 embd_id: request.embd_id.trim().into(),
                 llm_id: request.llm_id.trim().into(),
-                permissions: "private".into(),
+                permissions: "me".into(),
                 avatar: String::new(),
                 description: request.description,
-                memory_size: 0,
+                memory_size: MEMORY_DEFAULT_SIZE,
                 forgetting_policy: default_forgetting_policy(),
                 temperature: default_memory_temperature(),
-                system_prompt: String::new(),
+                system_prompt,
                 user_prompt: String::new(),
                 created_at: now,
                 updated_at: now,
@@ -1534,6 +1566,7 @@ impl MemoryStore {
         &self,
         id: &str,
         owner_id: &str,
+        has_content: bool,
         request: MemoryUpdateRequest,
     ) -> anyhow::Result<Option<MemoryEntry>> {
         self.mutate_if_changed(|entries| {
@@ -1543,13 +1576,24 @@ impl MemoryStore {
             if current.tenant_id != owner_id {
                 return Ok((None, false));
             }
-            if current.memory_size > 0
-                && (request.memory_type.is_some() || request.embd_id.is_some())
-            {
+            let changes_memory_type = request.memory_type.as_ref().is_some_and(|types| {
+                normalize_memory_types(types.clone())
+                    .is_ok_and(|types| types != current.memory_type)
+            });
+            let changes_embedding = request
+                .embd_id
+                .as_deref()
+                .is_some_and(|selector| selector.trim() != current.embd_id);
+            if has_content && (changes_memory_type || changes_embedding) {
                 anyhow::bail!(
                     "Memory embedding model and memory type cannot change after content is stored"
                 );
             }
+            let system_prompt_was_default = crate::memory::judge_system_prompt_is_default(
+                &current.system_prompt,
+                &current.memory_type,
+            );
+            let has_explicit_system_prompt = request.system_prompt.is_some();
             let mut updated = current.clone();
             if let Some(name) = request.name {
                 let name = validate_memory_name(&name)?;
@@ -1560,7 +1604,15 @@ impl MemoryStore {
                 );
             }
             if let Some(memory_type) = request.memory_type {
-                updated.memory_type = normalize_memory_types(memory_type)?;
+                let memory_type = normalize_memory_types(memory_type)?;
+                if memory_type != current.memory_type
+                    && !has_explicit_system_prompt
+                    && system_prompt_was_default
+                {
+                    updated.system_prompt =
+                        crate::memory::PromptAssembler::assemble_system_prompt(&memory_type);
+                }
+                updated.memory_type = memory_type;
             }
             if let Some(embd_id) = request.embd_id {
                 validate_memory_selector("embedding", &embd_id)?;
@@ -1574,8 +1626,8 @@ impl MemoryStore {
                 updated.permissions = normalize_memory_permission(&permission)?.into();
             }
             if let Some(memory_size) = request.memory_size {
-                if memory_size > MEMORY_SIZE_LIMIT {
-                    anyhow::bail!("Memory size must not exceed {MEMORY_SIZE_LIMIT} bytes");
+                if memory_size == 0 || memory_size > MEMORY_SIZE_LIMIT {
+                    anyhow::bail!("Memory size must be between 1 and {MEMORY_SIZE_LIMIT} bytes");
                 }
                 updated.memory_size = memory_size;
             }
@@ -1586,7 +1638,7 @@ impl MemoryStore {
                 updated.temperature = temperature;
             }
             if let Some(policy) = request.forgetting_policy {
-                if !matches!(policy.as_str(), "FIFO" | "LIFO" | "NONE") {
+                if policy != "FIFO" {
                     anyhow::bail!("Unsupported forgetting policy: {policy}");
                 }
                 updated.forgetting_policy = policy;
@@ -1622,6 +1674,16 @@ impl MemoryStore {
             }
             Ok((removable, removable))
         })
+    }
+
+    pub fn owned_ids(&self, owner_id: &str) -> Vec<String> {
+        self.memories
+            .read()
+            .unwrap()
+            .values()
+            .filter(|entry| entry.tenant_id == owner_id)
+            .map(|entry| entry.id.clone())
+            .collect()
     }
 
     /// Delete every memory owned by `owner_id`. Returns the number removed.
@@ -1695,6 +1757,10 @@ pub async fn list_memories(
         |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
         &query,
     );
+    let memory_list: Vec<_> = memory_list
+        .into_iter()
+        .map(|memory| memory_view(&state, memory))
+        .collect();
     Json(serde_json::json!({
         "code": 0,
         "data": { "memory_list": memory_list, "total_count": total_count }
@@ -1712,7 +1778,8 @@ pub async fn create_memory(
         return memory_bad_request(error);
     }
     match state.memories.create(&auth.user_id, request) {
-        Ok(entry) => Json(serde_json::json!({ "code": 0, "data": entry })).into_response(),
+        Ok(entry) => Json(serde_json::json!({ "code": 0, "data": memory_view(&state, entry) }))
+            .into_response(),
         Err(error) => memory_bad_request(error),
     }
 }
@@ -1728,7 +1795,8 @@ pub async fn get_memory_config(
         auth.is_admin,
         |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
     ) {
-        Some(entry) => Json(serde_json::json!({ "code": 0, "data": entry })).into_response(),
+        Some(entry) => Json(serde_json::json!({ "code": 0, "data": memory_view(&state, entry) }))
+            .into_response(),
         None => memory_not_found(),
     }
 }
@@ -1753,11 +1821,15 @@ pub async fn update_memory(
             return memory_bad_request(error);
         }
     }
+    let has_content = state.memory_messages.calculate_memory_size(&memory_id) > 0;
     match state
         .memories
-        .update_owned(&memory_id, &auth.user_id, request)
+        .update_owned(&memory_id, &auth.user_id, has_content, request)
     {
-        Ok(Some(entry)) => Json(serde_json::json!({ "code": 0, "data": entry })).into_response(),
+        Ok(Some(entry)) => {
+            Json(serde_json::json!({ "code": 0, "data": memory_view(&state, entry) }))
+                .into_response()
+        }
         Ok(None) => memory_not_found(),
         Err(error) => memory_bad_request(error),
     }
@@ -1768,6 +1840,28 @@ pub async fn delete_memory(
     Extension(auth): Extension<AuthContext>,
     Path(memory_id): Path<String>,
 ) -> axum::response::Response {
+    let owned = state
+        .memories
+        .get_accessible(&memory_id, &auth.user_id, false, |_, _| false)
+        .is_some_and(|entry| entry.tenant_id == auth.user_id);
+    if !owned {
+        return memory_not_found();
+    }
+    let _commit_guard = state.memory_commit_lock.lock().unwrap();
+    if let Err(error) = state.tasks.cancel_memory(&memory_id) {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response();
+    }
+    if let Err(error) = state.memory_messages.delete_by_memory(&memory_id) {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response();
+    }
     match state.memories.delete_owned(&memory_id, &auth.user_id) {
         Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
         Ok(false) => memory_not_found(),
@@ -1777,6 +1871,555 @@ pub async fn delete_memory(
         )
             .into_response(),
     }
+}
+
+const MEMORY_API_MAX_PAGE_SIZE: usize = 100;
+
+/// Quart's `request.args` is a multi-value mapping. Axum's ordinary typed
+/// query extractor rejects repeated scalar fields, so the memory routes parse
+/// their query string as an ordered multi-map and preserve RAGFlow's
+/// `getlist(...)` behavior for `agent_id` and `memory_id`.
+#[derive(Debug, Default)]
+struct MemoryApiQuery {
+    values: HashMap<String, Vec<String>>,
+}
+
+impl MemoryApiQuery {
+    fn parse(raw: Option<String>) -> Self {
+        let mut values: HashMap<String, Vec<String>> = HashMap::new();
+        for (key, value) in
+            url::form_urlencoded::parse(raw.as_deref().unwrap_or_default().as_bytes())
+        {
+            values
+                .entry(key.into_owned())
+                .or_default()
+                .push(value.into_owned());
+        }
+        Self { values }
+    }
+
+    fn first(&self, key: &str) -> Option<&str> {
+        self.values
+            .get(key)
+            .and_then(|values| values.first())
+            .map(String::as_str)
+    }
+
+    /// Match `args.getlist(key)`, including the fixed compatibility branch
+    /// that splits a single comma-delimited value but leaves repeated values
+    /// as distinct entries.
+    fn list(&self, key: &str) -> Vec<String> {
+        let Some(values) = self.values.get(key) else {
+            return Vec::new();
+        };
+        let values = if values.len() == 1 && values[0].contains(',') {
+            values[0].split(',').collect::<Vec<_>>()
+        } else {
+            values.iter().map(String::as_str).collect()
+        };
+        values
+            .into_iter()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn usize_or(&self, key: &str, default: usize) -> anyhow::Result<usize> {
+        self.first(key).map_or(Ok(default), |value| {
+            value
+                .parse()
+                .with_context(|| format!("{key} must be a non-negative integer"))
+        })
+    }
+
+    fn f64_or(&self, key: &str, default: f64) -> anyhow::Result<f64> {
+        self.first(key).map_or(Ok(default), |value| {
+            value
+                .parse()
+                .with_context(|| format!("{key} must be a number"))
+        })
+    }
+}
+
+fn memory_api_page_size(value: usize) -> anyhow::Result<usize> {
+    if value > MEMORY_API_MAX_PAGE_SIZE {
+        anyhow::bail!("page_size must be less than or equal to {MEMORY_API_MAX_PAGE_SIZE}");
+    }
+    Ok(value)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum MemoryIds {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl MemoryIds {
+    fn into_vec(self) -> Vec<String> {
+        let values = match self {
+            Self::One(value) => value.split(',').map(str::to_owned).collect(),
+            Self::Many(values) => values,
+        };
+        values
+            .into_iter()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddMemoryMessageRequest {
+    pub memory_id: MemoryIds,
+    pub agent_id: String,
+    pub session_id: String,
+    pub user_input: String,
+    pub agent_response: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMemoryMessageRequest {
+    pub status: bool,
+}
+
+/// GET /api/v1/memories/{memory_id} — raw messages plus grouped extracts.
+pub async fn get_memory_messages(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(memory_id): Path<String>,
+    RawQuery(raw_query): RawQuery,
+) -> axum::response::Response {
+    let Some(memory) = accessible_memory(&state, &auth, &memory_id) else {
+        return memory_not_found();
+    };
+    let query = MemoryApiQuery::parse(raw_query);
+    let agent_ids = query.list("agent_id");
+    let keyword = query
+        .first("keywords")
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let page = match query.usize_or("page", 1) {
+        Ok(value) => value.max(1),
+        Err(error) => return memory_bad_request(error),
+    };
+    let page_size = match query
+        .usize_or("page_size", 50)
+        .and_then(memory_api_page_size)
+    {
+        Ok(value) => value,
+        Err(error) => return memory_bad_request(error),
+    };
+    let (raw_messages, total_count) = state
+        .memory_messages
+        .list_message(&memory_id, &agent_ids, keyword, page, page_size);
+    let all_messages =
+        state
+            .memory_messages
+            .query_with_options(crate::api::joint_services::MemoryMessageQuery {
+                memory_ids: std::slice::from_ref(&memory_id),
+                agent_id: None,
+                session_id: None,
+                user_id: None,
+                status: None,
+                top_n: None,
+                hide_forgotten: false,
+            });
+    let extracts = crate::api::joint_services::group_extract_by_source(&all_messages);
+    let task_by_source = state.tasks.memory_tasks_by_digest(&memory_id);
+    let message_list: Vec<serde_json::Value> = raw_messages
+        .into_iter()
+        .map(|message| {
+            let mut value = serde_json::to_value(&message).expect("memory message serializes");
+            let object = value.as_object_mut().expect("memory message is an object");
+            let agent_name = state
+                .agents
+                .get_accessible(
+                    &message.agent_id,
+                    &auth.user_id,
+                    auth.is_admin,
+                    |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+                )
+                .map(|agent| agent.name)
+                .unwrap_or_else(|| "Unknown".into());
+            object.insert("agent_name".into(), serde_json::Value::String(agent_name));
+            object.insert(
+                "task".into(),
+                task_by_source
+                    .get(&message.message_id)
+                    .and_then(|task| serde_json::to_value(task).ok())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            let extract_values: Vec<serde_json::Value> = extracts
+                .get(&message.message_id)
+                .into_iter()
+                .flatten()
+                .map(|extract| {
+                    let mut value =
+                        serde_json::to_value(extract).expect("memory extract serializes");
+                    let agent_name = state
+                        .agents
+                        .get_accessible(
+                            &extract.agent_id,
+                            &auth.user_id,
+                            auth.is_admin,
+                            |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+                        )
+                        .map(|agent| agent.name)
+                        .unwrap_or_else(|| "Unknown".into());
+                    value
+                        .as_object_mut()
+                        .expect("memory extract is an object")
+                        .insert("agent_name".into(), serde_json::Value::String(agent_name));
+                    value
+                })
+                .collect();
+            object.insert("extract".into(), serde_json::Value::Array(extract_values));
+            value
+        })
+        .collect();
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "messages": { "message_list": message_list, "total_count": total_count },
+            "storage_type": memory.storage_type
+        }
+    }))
+    .into_response()
+}
+
+/// POST /api/v1/messages — persist RAW first, then publish a durable Memory
+/// extraction task. The worker performs non-RAW extraction asynchronously.
+pub async fn add_memory_message(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(request): Json<AddMemoryMessageRequest>,
+) -> axum::response::Response {
+    let memory_ids = request.memory_id.into_vec();
+    let memories: Vec<_> = memory_ids
+        .iter()
+        .filter_map(|memory_id| accessible_memory(&state, &auth, memory_id))
+        .collect();
+    if memories.is_empty() {
+        return memory_bad_request(anyhow::anyhow!("Memory not found."));
+    }
+    let content = crate::api::joint_services::build_raw_message_content(
+        &request.user_input,
+        &request.agent_response,
+    );
+    let valid_at = crate::common::time_utils::timestamp_to_date(
+        crate::common::time_utils::current_timestamp(),
+        crate::common::time_utils::DEFAULT_TIME_FORMAT,
+    );
+    for memory in memories {
+        let embedder = match memory_embedder_for(&state, &memory) {
+            Ok(embedder) => embedder,
+            Err(error) => return memory_bad_request(error),
+        };
+        let embedding = match embedder.embed(&[&content]).await {
+            Ok(mut embeddings) if embeddings.len() == 1 && !embeddings[0].is_empty() => {
+                embeddings.remove(0)
+            }
+            Ok(_) => {
+                return memory_bad_request(anyhow::anyhow!(
+                    "Embedding model returned an invalid vector"
+                ));
+            }
+            Err(error) => return memory_bad_request(anyhow::anyhow!(error.to_string())),
+        };
+        let source_message_id = state.memory_messages.next_message_id();
+        let message = crate::api::joint_services::MemoryMessage {
+            message_id: source_message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory.id.clone(),
+            user_id: auth.user_id.clone(),
+            agent_id: request.agent_id.clone(),
+            session_id: request.session_id.clone(),
+            content: content.clone(),
+            valid_at: valid_at.clone(),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: embedding,
+        };
+        let budget = if memory.memory_size == 0 {
+            usize::MAX
+        } else {
+            memory.memory_size as usize
+        };
+        let payload = MemoryTaskPayload::new(
+            &auth.user_id,
+            &request.agent_id,
+            &request.session_id,
+            &request.user_input,
+            &request.agent_response,
+        );
+        let _commit_guard = state.memory_commit_lock.lock().unwrap();
+        let task_id = match state.tasks.stage_memory_task(
+            &memory.tenant_id,
+            &memory.id,
+            source_message_id,
+            payload,
+        ) {
+            Ok(task_id) => task_id,
+            Err(error) => return memory_bad_request(error),
+        };
+        if let Err(error) = state.memory_messages.save_messages_with_budget(
+            &memory.id,
+            &memory.forgetting_policy,
+            budget,
+            vec![message],
+        ) {
+            if let Err(discard_error) = state.tasks.discard_staged_memory_task(&task_id) {
+                return memory_bad_request(anyhow::anyhow!(
+                    "{}; failed to discard staged Memory task: {discard_error}",
+                    error.message
+                ));
+            }
+            return memory_bad_request(anyhow::anyhow!(error.message));
+        }
+        match state.tasks.publish_memory_task(&task_id) {
+            Ok(true) => {}
+            Ok(false) => {
+                return memory_bad_request(anyhow::anyhow!("Failed to publish staged Memory task"));
+            }
+            // Keep RAW + staging durable: the dispatcher reconciles this
+            // crash window after restart instead of deleting an already
+            // committed dialogue (which could not restore FIFO evictions).
+            Err(error) => return memory_bad_request(error),
+        }
+    }
+    Json(serde_json::json!({ "code": 0, "message": "All add to task." })).into_response()
+}
+
+pub async fn forget_memory_message(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(message_ref): Path<String>,
+) -> axum::response::Response {
+    mutate_memory_message(&state, &auth, &message_ref, |condition| {
+        state.memory_messages.update_messages(
+            condition,
+            &crate::api::joint_services::MessageUpdate {
+                forget_at: Some(crate::common::time_utils::timestamp_to_date(
+                    crate::common::time_utils::current_timestamp(),
+                    crate::common::time_utils::DEFAULT_TIME_FORMAT,
+                )),
+                ..Default::default()
+            },
+        )
+    })
+}
+
+pub async fn update_memory_message(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(message_ref): Path<String>,
+    Json(request): Json<UpdateMemoryMessageRequest>,
+) -> axum::response::Response {
+    mutate_memory_message(&state, &auth, &message_ref, |condition| {
+        state.memory_messages.update_messages(
+            condition,
+            &crate::api::joint_services::MessageUpdate {
+                status: Some(request.status),
+                ..Default::default()
+            },
+        )
+    })
+}
+
+pub async fn get_memory_message_content(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(message_ref): Path<String>,
+) -> axum::response::Response {
+    let Ok((memory_id, message_id)) = parse_message_ref(&message_ref) else {
+        return memory_not_found();
+    };
+    if accessible_memory(&state, &auth, &memory_id).is_none() {
+        return memory_not_found();
+    }
+    match state
+        .memory_messages
+        .get_by_message_id(&memory_id, message_id)
+    {
+        Some(message) => {
+            let content_embed = message.content_embed.clone();
+            let mut data = serde_json::to_value(message).expect("memory message serializes");
+            data.as_object_mut()
+                .expect("memory message is an object")
+                .insert("content_embed".into(), serde_json::json!(content_embed));
+            Json(serde_json::json!({ "code": 0, "data": data })).into_response()
+        }
+        None => memory_not_found(),
+    }
+}
+
+pub async fn get_recent_memory_messages(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    RawQuery(raw_query): RawQuery,
+) -> axum::response::Response {
+    let query = MemoryApiQuery::parse(raw_query);
+    let memory_ids = query.list("memory_id");
+    if memory_ids.is_empty() {
+        return memory_bad_request(anyhow::anyhow!("memory_ids is required."));
+    }
+    let accessible: Vec<String> = memory_ids
+        .into_iter()
+        .filter(|memory_id| accessible_memory(&state, &auth, memory_id).is_some())
+        .collect();
+    let limit = match query.usize_or("limit", 10).and_then(memory_api_page_size) {
+        Ok(value) => value,
+        Err(error) => return memory_bad_request(error),
+    };
+    let messages = state.memory_messages.recent_messages(
+        &accessible,
+        query.first("agent_id").unwrap_or_default(),
+        query.first("session_id").unwrap_or_default(),
+        limit,
+    );
+    Json(serde_json::json!({ "code": 0, "data": messages })).into_response()
+}
+
+pub async fn search_memory_messages(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    RawQuery(raw_query): RawQuery,
+) -> axum::response::Response {
+    let query = MemoryApiQuery::parse(raw_query);
+    let question = query.first("query").unwrap_or_default().trim();
+    if question.is_empty() {
+        return memory_bad_request(anyhow::anyhow!("query is required."));
+    }
+    let memory_ids = query.list("memory_id");
+    let memories: Vec<_> = memory_ids
+        .iter()
+        .filter_map(|memory_id| accessible_memory(&state, &auth, memory_id))
+        .collect();
+    let Some(first_memory) = memories.first() else {
+        return Json(serde_json::json!({ "code": 0, "data": [] })).into_response();
+    };
+    let embedder = match memory_embedder_for(&state, first_memory) {
+        Ok(embedder) => embedder,
+        Err(error) => return memory_bad_request(error),
+    };
+    let query_vector = match embedder.embed(&[question]).await {
+        Ok(mut embeddings) if embeddings.len() == 1 && !embeddings[0].is_empty() => {
+            embeddings.remove(0)
+        }
+        Ok(_) => {
+            return memory_bad_request(anyhow::anyhow!(
+                "Embedding model returned an invalid vector"
+            ));
+        }
+        Err(error) => return memory_bad_request(anyhow::anyhow!(error.to_string())),
+    };
+    let similarity_threshold = match query.f64_or("similarity_threshold", 0.2) {
+        Ok(value) => value,
+        Err(error) => return memory_bad_request(error),
+    };
+    let keywords_similarity_weight = match query.f64_or("keywords_similarity_weight", 0.7) {
+        Ok(value) => value,
+        Err(error) => return memory_bad_request(error),
+    };
+    let top_n = match query.usize_or("top_n", 5).and_then(memory_api_page_size) {
+        Ok(value) => value,
+        Err(error) => return memory_bad_request(error),
+    };
+    let accessible_ids: Vec<String> = memories.iter().map(|memory| memory.id.clone()).collect();
+    let messages =
+        state
+            .memory_messages
+            .search_hybrid(crate::api::joint_services::MemoryMessageSearch {
+                memory_ids: &accessible_ids,
+                agent_id: query.first("agent_id").filter(|value| !value.is_empty()),
+                session_id: query.first("session_id").filter(|value| !value.is_empty()),
+                user_id: query.first("user_id").filter(|value| !value.is_empty()),
+                question,
+                query_vector: &query_vector,
+                similarity_threshold,
+                keywords_similarity_weight,
+                top_n,
+            });
+    Json(serde_json::json!({ "code": 0, "data": messages })).into_response()
+}
+
+fn accessible_memory(state: &AppState, auth: &AuthContext, memory_id: &str) -> Option<MemoryEntry> {
+    state.memories.get_accessible(
+        memory_id,
+        &auth.user_id,
+        auth.is_admin,
+        |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+    )
+}
+
+pub(crate) fn memory_embedder_for(
+    state: &AppState,
+    memory: &MemoryEntry,
+) -> anyhow::Result<crate::embed::SharedEmbedder> {
+    if memory.embd_id.trim().is_empty() || memory.embd_id == "default" {
+        return state
+            .embedder
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Embedding is not configured"));
+    }
+    state
+        .tenant_models
+        .resolve(
+            &state.providers,
+            &memory.tenant_id,
+            crate::api::tenant_models::ModelCapability::Embedding,
+            Some(&memory.embd_id),
+        )?
+        .map(|model| model.embedder())
+        .ok_or_else(|| anyhow::anyhow!("Embedding is not configured: {}", memory.embd_id))
+}
+
+fn mutate_memory_message(
+    state: &AppState,
+    auth: &AuthContext,
+    message_ref: &str,
+    mutation: impl FnOnce(&crate::api::joint_services::MessageCondition) -> anyhow::Result<usize>,
+) -> axum::response::Response {
+    let Ok((memory_id, message_id)) = parse_message_ref(message_ref) else {
+        return memory_not_found();
+    };
+    if accessible_memory(state, auth, &memory_id).is_none()
+        || state
+            .memory_messages
+            .get_by_message_id(&memory_id, message_id)
+            .is_none()
+    {
+        return memory_not_found();
+    }
+    let condition = crate::api::joint_services::MessageCondition {
+        memory_id: Some(memory_id),
+        message_id: Some(message_id),
+        ..Default::default()
+    };
+    match mutation(&condition) {
+        Ok(1..) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Ok(0) => memory_not_found(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn parse_message_ref(message_ref: &str) -> anyhow::Result<(String, i64)> {
+    let (memory_id, message_id) = message_ref
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow::anyhow!("invalid memory message id"))?;
+    if memory_id.is_empty() {
+        anyhow::bail!("invalid memory message id");
+    }
+    Ok((memory_id.into(), message_id.parse()?))
 }
 
 fn validate_memory_model_bindings(
@@ -1792,16 +2435,35 @@ fn validate_memory_model_bindings(
         }
         return Ok(());
     }
-    state
-        .tenant_models
-        .resolve(
-            &state.providers,
-            tenant_id,
-            crate::api::tenant_models::ModelCapability::Chat,
-            Some(llm_id),
-        )?
-        .ok_or_else(|| anyhow::anyhow!("Chat model is not configured: {llm_id}"))?;
+    let chat = state.tenant_models.resolve(
+        &state.providers,
+        tenant_id,
+        crate::api::tenant_models::ModelCapability::Chat,
+        Some(llm_id),
+    );
+    if !matches!(chat, Ok(Some(_))) {
+        state
+            .tenant_models
+            .resolve(
+                &state.providers,
+                tenant_id,
+                crate::api::tenant_models::ModelCapability::ImageToText,
+                Some(llm_id),
+            )?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Chat or image2text model is not configured: {llm_id}")
+            })?;
+    }
     Ok(())
+}
+
+fn memory_view(state: &AppState, memory: MemoryEntry) -> MemoryView {
+    let owner_name = state
+        .users
+        .get_user_by_id(&memory.tenant_id)
+        .map(|user| user.nickname)
+        .unwrap_or_else(|| memory.tenant_id.clone());
+    MemoryView { memory, owner_name }
 }
 
 fn validate_memory_entries(entries: &[MemoryEntry]) -> anyhow::Result<()> {
@@ -1869,9 +2531,9 @@ fn normalize_memory_types(types: Vec<String>) -> anyhow::Result<Vec<String>> {
 
 fn normalize_memory_permission(permission: &str) -> anyhow::Result<&'static str> {
     match permission.trim().to_ascii_lowercase().as_str() {
-        "private" | "me" => Ok("private"),
+        "private" | "me" => Ok("me"),
         "team" => Ok("team"),
-        _ => anyhow::bail!("Memory permission must be 'private' or 'team'"),
+        _ => anyhow::bail!("Memory permission must be 'me' or 'team'"),
     }
 }
 
@@ -1914,7 +2576,7 @@ fn default_forgetting_policy() -> String {
 }
 
 fn default_memory_temperature() -> f32 {
-    0.1
+    0.5
 }
 
 fn memory_not_found() -> axum::response::Response {
@@ -2449,7 +3111,16 @@ pub struct Task {
     pub kb_id: String,
     #[serde(default = "default_task_type")]
     pub task_type: String,
-    pub status: String, // "pending", "running", "done", "failed", "cancelled"
+    /// RAGFlow Task.digest. Memory tasks store their raw source message id here
+    /// so the message-list API can attach progress to the corresponding row.
+    #[serde(default)]
+    pub digest: String,
+    /// Durable replacement for the Redis-only memory task payload. This field
+    /// is persisted in the private queue snapshot, but every HTTP response is
+    /// built from an explicit public projection that omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) memory_payload: Option<MemoryTaskPayload>,
+    pub status: String, // "staging", "pending", "running", "done", "failed", "cancelled"
     pub progress: f32,
     pub message: String,
     #[serde(default)]
@@ -2473,6 +3144,120 @@ pub struct Task {
     pub started_at: u64,
     #[serde(default)]
     pub finished_at: u64,
+}
+
+/// The conversation envelope required to resume a Memory extraction task
+/// after process restart. It is intentionally crate-private and must never be
+/// serialized into an API response.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryTaskPayload {
+    pub(crate) user_id: String,
+    pub(crate) agent_id: String,
+    pub(crate) session_id: String,
+    pub(crate) user_input: String,
+    pub(crate) agent_response: String,
+}
+
+impl MemoryTaskPayload {
+    pub(crate) fn new(
+        user_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        session_id: impl Into<String>,
+        user_input: impl Into<String>,
+        agent_response: impl Into<String>,
+    ) -> Self {
+        Self {
+            user_id: user_id.into(),
+            agent_id: agent_id.into(),
+            session_id: session_id.into(),
+            user_input: user_input.into(),
+            agent_response: agent_response.into(),
+        }
+    }
+}
+
+/// Public task shape used by task-list and operation-log APIs. Keeping this
+/// projection separate from [`Task`] prevents the private Memory conversation
+/// payload from leaking when new internal fields are added.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct TaskView {
+    pub id: String,
+    pub name: String,
+    pub doc_id: String,
+    pub owner_id: String,
+    pub kb_id: String,
+    pub task_type: String,
+    pub digest: String,
+    pub status: String,
+    pub progress: f32,
+    pub message: String,
+    pub retry_count: u32,
+    pub max_retries: u32,
+    pub cancel_requested: bool,
+    pub priority: i32,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub started_at: u64,
+    pub finished_at: u64,
+}
+
+impl From<&Task> for TaskView {
+    fn from(task: &Task) -> Self {
+        Self {
+            id: task.id.clone(),
+            name: task.name.clone(),
+            doc_id: task.doc_id.clone(),
+            owner_id: task.owner_id.clone(),
+            kb_id: task.kb_id.clone(),
+            task_type: task.task_type.clone(),
+            digest: task.digest.clone(),
+            status: task.status.clone(),
+            progress: task.progress,
+            message: task.message.clone(),
+            retry_count: task.retry_count,
+            max_retries: task.max_retries,
+            cancel_requested: task.cancel_requested,
+            priority: task.priority,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            started_at: task.started_at,
+            finished_at: task.finished_at,
+        }
+    }
+}
+
+/// RAGFlow Memory message task wire. Field names intentionally follow
+/// `TaskService.get_tasks_progress_by_doc_ids`, not RayRAG's internal Task.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct MemoryTaskView {
+    pub id: String,
+    pub doc_id: String,
+    pub from_page: usize,
+    pub progress: f32,
+    pub progress_msg: String,
+    pub digest: String,
+    pub chunk_ids: String,
+    pub create_time: u64,
+}
+
+impl MemoryTaskView {
+    fn from_task(task: &Task) -> Self {
+        debug_assert_eq!(task.task_type, "memory");
+        Self {
+            id: task.id.clone(),
+            doc_id: task.doc_id.clone(),
+            from_page: 0,
+            progress: if matches!(task.status.as_str(), "failed" | "cancelled") {
+                -1.0
+            } else {
+                task.progress
+            },
+            progress_msg: task.message.clone(),
+            digest: task.digest.clone(),
+            chunk_ids: String::new(),
+            create_time: task.created_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2530,6 +3315,10 @@ impl TaskQueue {
         };
         let now = now_ms();
         for task in &mut tasks {
+            if task.task_type.is_empty() {
+                task.task_type = default_task_type();
+                task.updated_at = now;
+            }
             if task.status == "running" && task.lease_expires_at <= now {
                 clear_task_lease(task);
                 if task.retry_count >= task.max_retries {
@@ -2587,6 +3376,15 @@ impl TaskQueue {
         self.tasks.read().unwrap().clone()
     }
 
+    pub fn get(&self, id: &str) -> Option<Task> {
+        self.tasks
+            .read()
+            .unwrap()
+            .iter()
+            .find(|task| task.id == id)
+            .cloned()
+    }
+
     pub fn notified(&self) -> tokio::sync::futures::Notified<'_> {
         self.notify.notified()
     }
@@ -2597,6 +3395,55 @@ impl TaskQueue {
             .unwrap()
             .iter()
             .filter(|task| task.owner_id == owner_id || (is_admin && task.owner_id.is_empty()))
+            .cloned()
+            .collect()
+    }
+
+    pub fn public_list_for(&self, owner_id: &str, is_admin: bool) -> Vec<TaskView> {
+        self.list_for(owner_id, is_admin)
+            .iter()
+            .map(TaskView::from)
+            .collect()
+    }
+
+    /// Memory task progress keyed by the raw message id stored in `digest`.
+    /// Tasks are applied oldest-to-newest so a later retry/replacement wins,
+    /// matching `memory_api_service.get_memory_messages` in the fixed source.
+    pub fn memory_tasks_by_digest(
+        &self,
+        memory_id: &str,
+    ) -> std::collections::BTreeMap<i64, MemoryTaskView> {
+        let mut tasks: Vec<_> = self
+            .tasks
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|task| task.task_type == "memory" && task.doc_id == memory_id)
+            .cloned()
+            .collect();
+        tasks.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let mut by_digest = std::collections::BTreeMap::new();
+        for task in tasks {
+            if let Ok(source_id) = task.digest.parse::<i64>() {
+                by_digest.insert(source_id, MemoryTaskView::from_task(&task));
+            }
+        }
+        by_digest
+    }
+
+    /// Durable Memory tasks that have not yet been published to workers. A
+    /// startup reconciler checks whether the raw row exists and then calls
+    /// `publish_memory_task` or `discard_staged_memory_task`.
+    pub fn staged_memory_tasks(&self) -> Vec<Task> {
+        self.tasks
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|task| task.task_type == "memory" && task.status == "staging")
             .cloned()
             .collect()
     }
@@ -2657,7 +3504,8 @@ impl TaskQueue {
         let now = now_ms();
         let (id, created, changed) = self.mutate_if_changed(|tasks| {
             let result = if let Some(task) = tasks.iter_mut().find(|task| {
-                task.doc_id == doc_id
+                task.task_type == "document_parse"
+                    && task.doc_id == doc_id
                     && matches!(task.status.as_str(), "pending" | "running")
                     && !task.cancel_requested
             }) {
@@ -2667,10 +3515,6 @@ impl TaskQueue {
                 }
                 if task.kb_id.is_empty() && !kb_id.is_empty() {
                     task.kb_id = kb_id.into();
-                    changed = true;
-                }
-                if task.task_type.is_empty() {
-                    task.task_type = "document_parse".into();
                     changed = true;
                 }
                 if changed {
@@ -2698,6 +3542,78 @@ impl TaskQueue {
             self.notify.notify_one();
         }
         Ok((id, created))
+    }
+
+    /// Persist a non-claimable Memory extraction task before committing its raw
+    /// message. Staging is a tiny write-ahead record: publish only after the raw
+    /// message commit succeeds, or discard it when that commit is rolled back.
+    /// Calls never deduplicate by memory/doc id; every raw dialogue gets a task.
+    pub(crate) fn stage_memory_task(
+        &self,
+        owner_id: &str,
+        memory_id: &str,
+        source_message_id: i64,
+        payload: MemoryTaskPayload,
+    ) -> anyhow::Result<String> {
+        if memory_id.is_empty() || source_message_id <= 0 {
+            anyhow::bail!("Memory id and positive source message id are required");
+        }
+        let mut task = new_task(
+            owner_id,
+            "Extract memory",
+            memory_id,
+            "",
+            "memory",
+            TASK_PRIORITY_LOW,
+            now_ms(),
+        );
+        task.digest = source_message_id.to_string();
+        task.memory_payload = Some(payload);
+        task.status = "staging".into();
+        task.message = "Staging memory extraction".into();
+        let id = task.id.clone();
+        self.mutate(|tasks| {
+            tasks.push(task);
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    /// Make a staged Memory task claimable after its raw message is durable.
+    pub fn publish_memory_task(&self, id: &str) -> anyhow::Result<bool> {
+        let changed = self.mutate_if_changed(|tasks| {
+            let Some(task) = tasks
+                .iter_mut()
+                .find(|task| task.id == id && task.task_type == "memory")
+            else {
+                return Ok((false, false));
+            };
+            if task.status != "staging" {
+                return Ok((false, false));
+            }
+            task.status = "pending".into();
+            task.progress = 0.0;
+            task.message = "Queued".into();
+            task.updated_at = now_ms();
+            Ok((true, true))
+        })?;
+        if changed {
+            self.notify.notify_one();
+        }
+        Ok(changed)
+    }
+
+    /// Remove only an unpublished Memory task. Published/running history is
+    /// never erased by rollback compensation.
+    pub fn discard_staged_memory_task(&self, id: &str) -> anyhow::Result<bool> {
+        self.mutate_if_changed(|tasks| {
+            let before = tasks.len();
+            tasks.retain(|task| {
+                !(task.id == id && task.task_type == "memory" && task.status == "staging")
+            });
+            let changed = tasks.len() != before;
+            Ok((changed, changed))
+        })
     }
 
     pub fn push_with_priority(
@@ -2919,11 +3835,35 @@ impl TaskQueue {
     pub fn cancel_document(&self, doc_id: &str) -> anyhow::Result<usize> {
         self.mutate_if_changed(|tasks| {
             let mut cancelled = 0;
-            for task in tasks.iter_mut().filter(|task| task.doc_id == doc_id) {
+            for task in tasks
+                .iter_mut()
+                .filter(|task| task.task_type == "document_parse" && task.doc_id == doc_id)
+            {
                 if !matches!(task.status.as_str(), "done" | "failed" | "cancelled") {
                     task.cancel_requested = true;
                     task.status = "cancelled".into();
                     task.message = "Document deleted".into();
+                    task.updated_at = now_ms();
+                    task.finished_at = task.updated_at;
+                    clear_task_lease(task);
+                    cancelled += 1;
+                }
+            }
+            Ok((cancelled, cancelled > 0))
+        })
+    }
+
+    pub fn cancel_memory(&self, memory_id: &str) -> anyhow::Result<usize> {
+        self.mutate_if_changed(|tasks| {
+            let mut cancelled = 0;
+            for task in tasks
+                .iter_mut()
+                .filter(|task| task.task_type == "memory" && task.doc_id == memory_id)
+            {
+                if !matches!(task.status.as_str(), "done" | "failed" | "cancelled") {
+                    task.cancel_requested = true;
+                    task.status = "cancelled".into();
+                    task.message = "Memory deleted".into();
                     task.updated_at = now_ms();
                     task.finished_at = task.updated_at;
                     clear_task_lease(task);
@@ -2990,6 +3930,8 @@ fn new_task(
         owner_id: owner_id.into(),
         kb_id: kb_id.into(),
         task_type: task_type.into(),
+        digest: String::new(),
+        memory_payload: None,
         status: "pending".into(),
         progress: 0.0,
         message: "Queued".into(),
@@ -3055,7 +3997,7 @@ pub async fn list_tasks(
 ) -> impl IntoResponse {
     Json(serde_json::json!({
         "code": 0,
-        "data": state.tasks.list_for(&auth.user_id, auth.is_admin)
+        "data": state.tasks.public_list_for(&auth.user_id, auth.is_admin)
     }))
 }
 
@@ -3146,6 +4088,7 @@ pub async fn list_operation_logs(
         .into_iter()
         .skip(offset)
         .take(query.page_size)
+        .map(|task| TaskView::from(&task))
         .collect();
     Json(serde_json::json!({
         "code": 0,
@@ -3266,6 +4209,33 @@ mod memory_store_tests {
     }
 
     #[test]
+    fn memory_api_query_preserves_repeated_and_comma_delimited_values() {
+        let repeated = MemoryApiQuery::parse(Some(
+            "memory_id=memory-a&memory_id=memory-b&agent_id=agent-a&agent_id=agent-b".into(),
+        ));
+        assert_eq!(
+            repeated.list("memory_id"),
+            vec!["memory-a".to_string(), "memory-b".to_string()]
+        );
+        assert_eq!(
+            repeated.list("agent_id"),
+            vec!["agent-a".to_string(), "agent-b".to_string()]
+        );
+
+        let comma = MemoryApiQuery::parse(Some(
+            "memory_id=memory-a%2Cmemory-b&agent_id=agent-a%2Cagent-b".into(),
+        ));
+        assert_eq!(comma.list("memory_id"), repeated.list("memory_id"));
+        assert_eq!(comma.list("agent_id"), repeated.list("agent_id"));
+
+        assert_eq!(memory_api_page_size(100).unwrap(), 100);
+        assert_eq!(
+            memory_api_page_size(101).unwrap_err().to_string(),
+            "page_size must be less than or equal to 100"
+        );
+    }
+
+    #[test]
     fn memory_store_persists_deduplicates_and_filters() {
         let root = std::env::temp_dir().join(format!("rayrag-memories-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -3276,9 +4246,18 @@ mod memory_store_tests {
         assert_eq!(first.name, "Research");
         assert_eq!(second.name, "Research(1)");
         assert_eq!(first.memory_type, vec!["raw", "semantic"]);
+        assert_eq!(first.permissions, "me");
+        assert_eq!(first.memory_size, MEMORY_DEFAULT_SIZE);
+        assert_eq!(first.temperature, 0.5);
+        assert_eq!(first.forgetting_policy, "FIFO");
+        assert_eq!(
+            first.system_prompt,
+            crate::memory::PromptAssembler::assemble_system_prompt(&first.memory_type)
+        );
         drop(store);
 
         let restored = MemoryStore::new(&path).unwrap();
+        assert_eq!(restored.get(&first.id), Some(first.clone()));
         let query = MemoryListQuery {
             keywords: Some("research".into()),
             memory_type: Some("semantic".into()),
@@ -3295,6 +4274,46 @@ mod memory_store_tests {
         );
         assert_eq!(total, 2);
         assert_eq!(page.len(), 1);
+
+        let owner_query = MemoryListQuery {
+            tenant_id: Some("  ".into()),
+            owner_ids: Some("owner".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            restored
+                .list_accessible("owner", false, |_, _| false, &owner_query)
+                .1,
+            2
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_private_permission_migrates_to_me_wire_value() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-permission-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memories.json");
+        let store = MemoryStore::in_memory();
+        let mut entry = store.create("owner", create_request("Legacy")).unwrap();
+        entry.permissions = "private".into();
+        entry.system_prompt.clear();
+        std::fs::write(&path, serde_json::to_vec(&vec![entry]).unwrap()).unwrap();
+
+        let restored = MemoryStore::new(&path).unwrap();
+        assert_eq!(
+            restored.get_accessible("not-used", "owner", false, |_, _| false),
+            None
+        );
+        let (entries, _) =
+            restored.list_accessible("owner", false, |_, _| false, &MemoryListQuery::default());
+        assert_eq!(entries[0].permissions, "me");
+        // An empty prompt may have been explicitly saved through the fixed
+        // update API, so restart must not guess that it is legacy data.
+        assert!(entries[0].system_prompt.is_empty());
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -3306,6 +4325,7 @@ mod memory_store_tests {
             .update_owned(
                 &entry.id,
                 "owner",
+                false,
                 MemoryUpdateRequest {
                     permissions: Some("team".into()),
                     ..Default::default()
@@ -3326,6 +4346,7 @@ mod memory_store_tests {
                 .update_owned(
                     &entry.id,
                     "member",
+                    false,
                     MemoryUpdateRequest {
                         description: Some("forbidden".into()),
                         ..Default::default()
@@ -3353,6 +4374,7 @@ mod memory_store_tests {
                 .update_owned(
                     &entry.id,
                     "owner",
+                    false,
                     MemoryUpdateRequest {
                         description: Some("must rollback".into()),
                         ..Default::default()
@@ -3368,31 +4390,133 @@ mod memory_store_tests {
     }
 
     #[test]
-    fn non_empty_memory_rejects_embedding_and_type_changes() {
+    fn content_presence_not_capacity_budget_locks_embedding_and_type_changes() {
         let store = MemoryStore::in_memory();
         let entry = store.create("owner", create_request("Non-empty")).unwrap();
         let entry = store
             .update_owned(
                 &entry.id,
                 "owner",
+                false,
                 MemoryUpdateRequest {
-                    memory_size: Some(1),
+                    memory_size: Some(MEMORY_SIZE_LIMIT),
                     ..Default::default()
                 },
             )
             .unwrap()
             .unwrap();
+        let updated = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["episodic".into(), "raw".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.memory_type, vec!["episodic", "raw"]);
         let error = store
             .update_owned(
                 &entry.id,
                 "owner",
+                true,
                 MemoryUpdateRequest {
-                    memory_type: Some(vec!["episodic".into()]),
+                    memory_type: Some(vec!["raw".into(), "semantic".into()]),
                     ..Default::default()
                 },
             )
             .unwrap_err();
         assert!(error.to_string().contains("cannot change"));
+        assert!(
+            store
+                .update_owned(
+                    &entry.id,
+                    "owner",
+                    false,
+                    MemoryUpdateRequest {
+                        memory_size: Some(0),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("between 1")
+        );
+    }
+
+    #[test]
+    fn memory_type_change_refreshes_only_the_fixed_default_system_prompt() {
+        let store = MemoryStore::in_memory();
+        let entry = store.create("owner", create_request("Prompted")).unwrap();
+        assert!(crate::memory::judge_system_prompt_is_default(
+            &entry.system_prompt,
+            &entry.memory_type
+        ));
+
+        let episodic = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "episodic".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(episodic.system_prompt.contains("EXTRACT EPISODIC"));
+        assert!(!episodic.system_prompt.contains("EXTRACT SEMANTIC"));
+        assert!(crate::memory::judge_system_prompt_is_default(
+            &episodic.system_prompt,
+            &episodic.memory_type
+        ));
+
+        let customized = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    system_prompt: Some("keep my custom prompt".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(customized.system_prompt, "keep my custom prompt");
+
+        let procedural = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "procedural".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(procedural.system_prompt, "keep my custom prompt");
+
+        let explicit = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "semantic".into()]),
+                    system_prompt: Some(String::new()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(explicit.system_prompt.is_empty());
     }
 }
 
@@ -3517,6 +4641,16 @@ mod provider_store_tests {
 mod task_queue_tests {
     use super::*;
 
+    fn memory_payload(secret: &str) -> MemoryTaskPayload {
+        MemoryTaskPayload::new(
+            "memory-user",
+            "memory-agent",
+            "memory-session",
+            secret,
+            "private agent response",
+        )
+    }
+
     #[test]
     fn task_queue_persists_and_recovers_interrupted_tasks() {
         let root = std::env::temp_dir().join(format!("rayrag-tasks-{}", uuid::Uuid::new_v4()));
@@ -3543,7 +4677,7 @@ mod task_queue_tests {
     }
 
     #[test]
-    fn legacy_task_json_without_priority_defaults_to_low() {
+    fn legacy_task_json_defaults_new_memory_fields_and_task_type() {
         let root = std::env::temp_dir().join(format!("rayrag-tasks-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("tasks.json");
@@ -3553,7 +4687,11 @@ mod task_queue_tests {
 
         let mut tasks: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        tasks[0].as_object_mut().unwrap().remove("priority");
+        let legacy = tasks[0].as_object_mut().unwrap();
+        legacy.remove("priority");
+        legacy.remove("task_type");
+        legacy.remove("digest");
+        legacy.remove("memory_payload");
         std::fs::write(&path, serde_json::to_vec_pretty(&tasks).unwrap()).unwrap();
 
         let recovered = TaskQueue::new(path.to_str().unwrap()).unwrap();
@@ -3563,7 +4701,193 @@ mod task_queue_tests {
             .find(|task| task.id == id)
             .unwrap();
         assert_eq!(task.priority, TASK_PRIORITY_LOW);
+        assert_eq!(task.task_type, "document_parse");
+        assert!(task.digest.is_empty());
+        assert!(task.memory_payload.is_none());
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn memory_staging_survives_restart_and_can_publish_or_discard() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-memory-tasks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        let queue = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let staged_id = queue
+            .stage_memory_task("owner-1", "memory-1", 41, memory_payload("private input"))
+            .unwrap();
+        assert!(queue.pending().is_empty());
+        drop(queue);
+
+        let recovered = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let staged = recovered.get(&staged_id).unwrap();
+        assert_eq!(staged.status, "staging");
+        assert_eq!(staged.task_type, "memory");
+        assert_eq!(staged.digest, "41");
+        assert_eq!(
+            staged.memory_payload.as_ref().unwrap().user_input,
+            "private input"
+        );
+        assert_eq!(recovered.staged_memory_tasks().len(), 1);
+        assert!(recovered.publish_memory_task(&staged_id).unwrap());
+        assert!(!recovered.publish_memory_task(&staged_id).unwrap());
+
+        let discarded_id = recovered
+            .stage_memory_task("owner-1", "memory-1", 42, memory_payload("rollback"))
+            .unwrap();
+        assert!(recovered.discard_staged_memory_task(&discarded_id).unwrap());
+        assert!(!recovered.discard_staged_memory_task(&discarded_id).unwrap());
+        drop(recovered);
+
+        let restarted = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(restarted.get(&staged_id).unwrap().status, "pending");
+        assert!(restarted.get(&discarded_id).is_none());
+        assert!(
+            restarted
+                .pending()
+                .into_iter()
+                .any(|task| task.id == staged_id)
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn document_and_memory_dedupe_and_cancel_are_isolated_by_task_type() {
+        let queue = TaskQueue::in_memory();
+        let first_memory = queue
+            .stage_memory_task("owner-1", "shared-id", 51, memory_payload("first"))
+            .unwrap();
+        let second_memory = queue
+            .stage_memory_task("owner-1", "shared-id", 52, memory_payload("second"))
+            .unwrap();
+        assert_ne!(first_memory, second_memory);
+        assert!(queue.publish_memory_task(&first_memory).unwrap());
+        assert!(queue.publish_memory_task(&second_memory).unwrap());
+
+        let (document, created) = queue
+            .push_document_unique(
+                "owner-1",
+                "Parse shared",
+                "shared-id",
+                "kb-1",
+                TASK_PRIORITY_LOW,
+            )
+            .unwrap();
+        assert!(created);
+        let (duplicate, created) = queue
+            .push_document_unique(
+                "owner-1",
+                "Reparse shared",
+                "shared-id",
+                "kb-1",
+                TASK_PRIORITY_HIGH,
+            )
+            .unwrap();
+        assert!(!created);
+        assert_eq!(duplicate, document);
+        assert_eq!(queue.list().len(), 3);
+
+        assert_eq!(queue.cancel_document("shared-id").unwrap(), 1);
+        assert_eq!(queue.get(&document).unwrap().status, "cancelled");
+        assert_eq!(queue.get(&first_memory).unwrap().status, "pending");
+        assert_eq!(queue.get(&second_memory).unwrap().status, "pending");
+        assert_eq!(queue.cancel_memory("shared-id").unwrap(), 2);
+        assert_eq!(queue.get(&first_memory).unwrap().status, "cancelled");
+        assert_eq!(queue.get(&second_memory).unwrap().status, "cancelled");
+    }
+
+    #[test]
+    fn public_task_projections_hide_payload_and_worker_lease_credentials() {
+        let queue = TaskQueue::in_memory();
+        let id = queue
+            .stage_memory_task("owner-1", "memory-1", 61, memory_payload("top secret"))
+            .unwrap();
+        assert!(queue.publish_memory_task(&id).unwrap());
+        queue
+            .claim(&id, "private-worker", 10_000, "Extracting")
+            .unwrap()
+            .unwrap();
+
+        let internal = serde_json::to_value(queue.get(&id).unwrap()).unwrap();
+        assert!(internal.get("memory_payload").is_some());
+        assert_eq!(internal["worker_id"], "private-worker");
+        assert!(
+            internal["lease_token"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        let public = serde_json::to_value(&queue.public_list_for("owner-1", false)[0]).unwrap();
+        assert_eq!(public["digest"], "61");
+        assert!(public.get("memory_payload").is_none());
+        assert!(public.get("worker_id").is_none());
+        assert!(public.get("lease_token").is_none());
+        assert!(public.get("lease_expires_at").is_none());
+
+        let message_task =
+            serde_json::to_value(queue.memory_tasks_by_digest("memory-1").get(&61).unwrap())
+                .unwrap();
+        assert!(message_task.get("memory_payload").is_none());
+        assert!(message_task.get("worker_id").is_none());
+        assert!(message_task.get("lease_token").is_none());
+        assert!(message_task.get("lease_expires_at").is_none());
+    }
+
+    #[test]
+    fn memory_task_digest_query_uses_fixed_wire_and_latest_task() {
+        let queue = TaskQueue::in_memory();
+        let old = queue
+            .stage_memory_task("owner-1", "memory-1", 71, memory_payload("old"))
+            .unwrap();
+        let latest = queue
+            .stage_memory_task("owner-1", "memory-1", 71, memory_payload("latest"))
+            .unwrap();
+        queue.publish_memory_task(&old).unwrap();
+        queue.publish_memory_task(&latest).unwrap();
+        queue
+            .update(&latest, "failed", 1.0, "Extraction failed")
+            .unwrap();
+        {
+            let mut tasks = queue.tasks.write().unwrap();
+            tasks
+                .iter_mut()
+                .find(|task| task.id == old)
+                .unwrap()
+                .created_at = 10;
+            tasks
+                .iter_mut()
+                .find(|task| task.id == latest)
+                .unwrap()
+                .created_at = 20;
+        }
+
+        let task = queue
+            .memory_tasks_by_digest("memory-1")
+            .remove(&71)
+            .unwrap();
+        assert_eq!(task.id, latest);
+        assert_eq!(task.progress, -1.0);
+        let value = serde_json::to_value(task).unwrap();
+        let keys: std::collections::BTreeSet<_> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "chunk_ids",
+                "create_time",
+                "digest",
+                "doc_id",
+                "from_page",
+                "id",
+                "progress",
+                "progress_msg",
+            ])
+        );
     }
 
     #[test]
@@ -4275,6 +5599,9 @@ impl AgentStore {
         } else {
             Vec::new()
         };
+        for agent in &mut agents {
+            agent.canvas_category = normalize_agent_category(&agent.canvas_category)?.into();
+        }
         if !agents.iter().any(|agent| agent.id == "default") {
             agents.push(default_agent());
         }
@@ -4336,6 +5663,11 @@ impl AgentStore {
             anyhow::bail!("Only authorized owner_ids can be queried");
         }
         let requested_tags = split_filter_values(query.tags.as_deref());
+        let canvas_category = query
+            .canvas_category
+            .as_deref()
+            .map(normalize_agent_category)
+            .transpose()?;
         let keywords = query
             .keywords
             .as_deref()
@@ -4353,10 +5685,7 @@ impl AgentStore {
                 keywords.is_empty() || agent.name.to_ascii_lowercase().contains(&keywords)
             })
             .filter(|agent| {
-                query
-                    .canvas_category
-                    .as_deref()
-                    .is_none_or(|category| agent.canvas_category == category)
+                canvas_category.is_none_or(|category| agent.canvas_category == category)
             })
             .filter(|agent| {
                 query
@@ -4400,8 +5729,12 @@ impl AgentStore {
         crate::agent::validate_agent_dsl(&dsl)?;
         let permission =
             normalize_agent_permission(request.permission.as_deref().unwrap_or("private"))?;
-        let category =
-            normalize_agent_category(request.canvas_category.as_deref().unwrap_or("agent"))?;
+        let category = normalize_agent_category(
+            request
+                .canvas_category
+                .as_deref()
+                .unwrap_or(crate::api::db::CanvasCategory::Agent.as_str()),
+        )?;
         let tags = normalize_agent_tags(request.tags);
         self.mutate(|agents| {
             ensure_unique_agent_title(agents.values(), owner_id, category, &name, None)?;
@@ -4833,16 +6166,26 @@ pub async fn list_agent_tags(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Query(query): Query<AgentListQuery>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let category = match query
+        .canvas_category
+        .as_deref()
+        .map(normalize_agent_category)
+        .transpose()
+    {
+        Ok(category) => category,
+        Err(error) => return agent_bad_request(error),
+    };
     Json(serde_json::json!({
         "code": 0,
         "data": state.agents.tag_counts(
             &auth.user_id,
             auth.is_admin,
             |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
-            query.canvas_category.as_deref(),
+            category,
         )
     }))
+    .into_response()
 }
 
 pub async fn update_agent_tags(
@@ -6010,7 +7353,7 @@ fn default_agent_permission() -> String {
 }
 
 fn default_agent_category() -> String {
-    "agent".into()
+    crate::api::db::CanvasCategory::Agent.as_str().into()
 }
 
 fn agent_accessible(
@@ -6102,12 +7445,14 @@ fn normalize_agent_permission(permission: &str) -> anyhow::Result<&'static str> 
     }
 }
 
-fn normalize_agent_category(category: &str) -> anyhow::Result<&str> {
-    let category = category.trim();
-    if category.is_empty() {
-        anyhow::bail!("Agent canvas_category cannot be empty");
+fn normalize_agent_category(category: &str) -> anyhow::Result<&'static str> {
+    match category.trim().to_ascii_lowercase().as_str() {
+        "agent_canvas" | "agent" | "standard" => Ok(crate::api::db::CanvasCategory::Agent.as_str()),
+        "dataflow_canvas" | "dataflow" | "ingestion" | "ingestion_pipeline" => {
+            Ok(crate::api::db::CanvasCategory::DataFlow.as_str())
+        }
+        _ => anyhow::bail!("Agent canvas_category must be 'agent_canvas' or 'dataflow_canvas'"),
     }
-    Ok(category)
 }
 
 fn ensure_unique_agent_title<'a>(
@@ -6382,6 +7727,7 @@ mod agent_store_tests {
         let path = root.join("agents.json");
         let store = AgentStore::new(&path).unwrap();
         let agent = store.create("owner", create_request("Research")).unwrap();
+        assert_eq!(agent.canvas_category, "agent_canvas");
         assert_eq!(agent.kb_ids, vec!["kb-a"]);
         assert_eq!(agent.tags, vec!["Rust", "RAG Flow"]);
         assert!(store.create("owner", create_request("research")).is_err());
@@ -6404,6 +7750,48 @@ mod agent_store_tests {
         assert_eq!(total, 1);
         assert_eq!(agents[0].id, agent.id);
         assert!(restored.list().iter().any(|agent| agent.id == "default"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn canvas_categories_use_upstream_values_and_migrate_legacy_aliases() {
+        let store = AgentStore::in_memory();
+        let mut request = create_request("Pipeline");
+        request.canvas_category = Some("ingestion".into());
+        let pipeline = store.create("owner", request).unwrap();
+        assert_eq!(pipeline.canvas_category, "dataflow_canvas");
+
+        let query = AgentListQuery {
+            canvas_category: Some("dataflow".into()),
+            ..Default::default()
+        };
+        let (agents, total) = store
+            .list_accessible("owner", false, |_, _| false, &query)
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(agents[0].id, pipeline.id);
+
+        let mut invalid = create_request("Invalid category");
+        invalid.canvas_category = Some("workflow".into());
+        assert!(store.create("owner", invalid).is_err());
+
+        let root =
+            std::env::temp_dir().join(format!("rayrag-agent-category-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agents.json");
+        let mut legacy = default_agent();
+        legacy.canvas_category = "agent".into();
+        std::fs::write(&path, serde_json::to_vec_pretty(&vec![legacy]).unwrap()).unwrap();
+        let restored = AgentStore::new(&path).unwrap();
+        assert_eq!(
+            restored
+                .get_accessible("default", "owner", false, |_, _| false)
+                .unwrap()
+                .canvas_category,
+            "agent_canvas"
+        );
+        let persisted: Vec<Agent> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[0].canvas_category, "agent_canvas");
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -6551,7 +7939,7 @@ mod agent_store_tests {
             "member",
             false,
             |tenant_id, user_id| tenant_id == "owner" && user_id == "member",
-            Some("agent"),
+            Some("agent_canvas"),
         );
         assert_eq!(counts.len(), 2);
         assert_eq!(counts[0]["count"], 1);

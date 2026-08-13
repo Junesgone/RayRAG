@@ -3,6 +3,9 @@
 //! The JSON backend is the portable default. Build with `zvec-backend` and set
 //! `RAYRAG_VECTOR_BACKEND=zvec` to use the native `zvec-rust` collection.
 
+pub mod infinity_chunk;
+pub mod search_mapping;
+
 use crate::search::{IndexedChunk, SearchEngine};
 use crate::{Chunk, Result};
 use serde::{Deserialize, Serialize};
@@ -56,6 +59,17 @@ pub struct OnlineVectorMirror {
 
 impl OnlineVectorMirror {
     pub fn from_env() -> Result<Self> {
+        Self::from_env_subdirectory("online")
+    }
+
+    /// Build the independent native mirror used by the Skill index. Keeping
+    /// Skill collections under their own root prevents the online knowledge
+    /// base reconciliation pass from treating them as stale collections.
+    pub(crate) fn for_skill_index() -> Result<Self> {
+        Self::from_env_subdirectory("skills")
+    }
+
+    fn from_env_subdirectory(_subdirectory: &str) -> Result<Self> {
         let backend = std::env::var(VECTOR_BACKEND_ENV)
             .unwrap_or_else(|_| "json".into())
             .trim()
@@ -68,7 +82,7 @@ impl OnlineVectorMirror {
                     let root = std::env::var(ZVEC_ROOT_ENV)
                         .map(PathBuf::from)
                         .unwrap_or_else(|_| PathBuf::from("zvec-data"));
-                    let root = root.join("online");
+                    let root = root.join(_subdirectory);
                     std::fs::create_dir_all(&root)?;
                     if !std::fs::metadata(&root)?.is_dir() {
                         anyhow::bail!("zvec root is not a directory: {}", root.display());
@@ -304,7 +318,12 @@ impl OnlineVectorMirror {
                         .iter()
                         .find(|before| before.id == chunk.id)
                         .map(|before| {
-                            before.content != chunk.content || before.embedding != chunk.embedding
+                            before.doc_name != chunk.doc_name
+                                || before.content != chunk.content
+                                || before.embedding != chunk.embedding
+                                || before.token_count != chunk.token_count
+                                || before.position != chunk.position
+                                || before.metadata != chunk.metadata
                         })
                         .unwrap_or(true)
             })
@@ -348,6 +367,7 @@ pub fn persist_online_index(
     previous: Vec<IndexedChunk>,
 ) -> Result<()> {
     let current = engine.to_vec();
+    search_mapping::validate_replacement_snapshot(&current)?;
     if let Err(error) = mirror.sync_snapshot(&previous, &current) {
         *engine = SearchEngine::from_chunks(previous);
         return Err(error);
@@ -607,7 +627,9 @@ fn indexed_chunks(
                     embedding.len()
                 );
             }
+            let record = infinity_chunk::encode_chunk_record(chunk, collection)?;
             let mut metadata = chunk.metadata.clone();
+            metadata.extend(infinity_chunk::sparse_record_metadata(&record));
             metadata.insert("collection".into(), collection.into());
             metadata
                 .entry("doc_id".into())
@@ -615,9 +637,14 @@ fn indexed_chunks(
             metadata
                 .entry("content_type".into())
                 .or_insert_with(|| chunk.content_type.clone());
+            let doc_name = record
+                .get("docnm")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
             Ok(IndexedChunk {
                 id: chunk.id.clone(),
-                doc_name: chunk.metadata.get("file_name").cloned().unwrap_or_default(),
+                doc_name,
                 content: chunk.content.clone(),
                 embedding: embedding.clone(),
                 token_count: chunk.token_count,
@@ -629,6 +656,8 @@ fn indexed_chunks(
 }
 
 fn indexed_to_chunk(chunk: &IndexedChunk) -> Chunk {
+    let metadata = infinity_chunk::decode_sparse_metadata(&chunk.metadata)
+        .unwrap_or_else(|_| chunk.metadata.clone());
     Chunk {
         id: chunk.id.clone(),
         content: chunk.content.clone(),
@@ -645,7 +674,7 @@ fn indexed_to_chunk(chunk: &IndexedChunk) -> Chunk {
         position: chunk.position,
         token_count: chunk.token_count,
         embedding: Some(chunk.embedding.clone()),
-        metadata: chunk.metadata.clone(),
+        metadata,
     }
 }
 
@@ -725,7 +754,7 @@ mod zvec_backend {
                         "embedding",
                         DataType::VectorFp32,
                         u32::try_from(dimension)?,
-                        IndexParams::hnsw(MetricType::Cosine, 16, 200)?,
+                        IndexParams::hnsw(MetricType::Cosine, 16, 50)?,
                     )
                     .build()?;
                 Collection::create_and_open(path_text, &schema, None)?
@@ -998,6 +1027,27 @@ mod tests {
             ]),
         };
         store.insert(&[chunk]).unwrap();
+        let persisted: Vec<IndexedChunk> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(
+            persisted[0].metadata.get("kb_id").map(String::as_str),
+            Some("test")
+        );
+        assert_eq!(
+            persisted[0]
+                .metadata
+                .get("available_int")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            persisted[0]
+                .metadata
+                .get("position_int")
+                .map(String::as_str),
+            Some("00000001_0000000a_00000064_00000014_00000028")
+        );
         let results = store.search(&[1.0, 0.0], 1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].chunk.id, "chunk-1");

@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 
 /// RAGFlow-compatible document `run` status values.
 pub mod doc_status {
@@ -148,7 +148,12 @@ pub struct ExecTask {
 }
 
 impl ExecTask {
-    pub fn new(id: impl Into<String>, doc_id: impl Into<String>, kb_id: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        doc_id: impl Into<String>,
+        kb_id: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             doc_id: doc_id.into(),
@@ -206,7 +211,11 @@ impl ProgressCallback {
         }
         if task.to_page > 0 && task.from_page < task.to_page as usize {
             if !message.is_empty() {
-                message = format!("Page({}~{}): {message}", task.from_page + 1, task.to_page + 1);
+                message = format!(
+                    "Page({}~{}): {message}",
+                    task.from_page + 1,
+                    task.to_page + 1
+                );
             }
         }
         if !message.is_empty() {
@@ -333,7 +342,11 @@ impl TaskExecutor {
     /// Start the management loop (`handle_task`/`task_manager`): drain the
     /// queue, acquire a concurrency permit per task and run the handler in a
     /// spawned worker. Returns the loop's join handle.
-    pub fn spawn(self: &Arc<Self>, handler: TaskHandler, retry_backoff: Duration) -> tokio::task::JoinHandle<()> {
+    pub fn spawn(
+        self: &Arc<Self>,
+        handler: TaskHandler,
+        retry_backoff: Duration,
+    ) -> tokio::task::JoinHandle<()> {
         let Some(rx) = self.rx.lock().unwrap().take() else {
             tracing::warn!(executor = %self.name, "TaskExecutor::spawn called twice; loop already running");
             return tokio::spawn(async {});
@@ -398,10 +411,10 @@ impl TaskExecutor {
                 }
             })
         };
-        self.current
-            .lock()
-            .unwrap()
-            .insert(task.id.clone(), task.clone_with_state(TaskState::Processing));
+        self.current.lock().unwrap().insert(
+            task.id.clone(),
+            task.clone_with_state(TaskState::Processing),
+        );
 
         let result = handler(task.clone(), progress).await;
         let retry = match result {
@@ -420,7 +433,10 @@ impl TaskExecutor {
                 retry.state = TaskState::Pending;
                 retry.progress = 0.0;
                 retry.message = format!("Attempt {} failed: {}; retrying", retry.attempts, error);
-                self.current.lock().unwrap().insert(retry.id.clone(), retry.clone());
+                self.current
+                    .lock()
+                    .unwrap()
+                    .insert(retry.id.clone(), retry.clone());
                 Some(retry)
             }
             Err(error) => {
@@ -428,7 +444,10 @@ impl TaskExecutor {
                 failed.state = TaskState::Failed;
                 failed.progress = 1.0;
                 failed.message = error.to_string();
-                self.current.lock().unwrap().insert(failed.id.clone(), failed);
+                self.current
+                    .lock()
+                    .unwrap()
+                    .insert(failed.id.clone(), failed);
                 self.failed.fetch_add(1, Ordering::Relaxed);
                 tracing::error!(task_id = %task.id, %error, "Task failed");
                 None
@@ -509,7 +528,11 @@ pub struct SyncTask {
 }
 
 impl SyncTask {
-    pub fn new(id: impl Into<String>, connector_id: impl Into<String>, kb_id: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        connector_id: impl Into<String>,
+        kb_id: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             connector_id: connector_id.into(),
@@ -672,7 +695,10 @@ pub async fn run_sync_task(
             // `_BlobLikeBase._fingerprint_filtered_generator`: skip objects
             // whose listing fingerprint matches the persisted content hash.
             if let Some(fp) = &doc.fingerprint {
-                if existing_fingerprints.get(&doc.id).is_some_and(|stored| stored == fp) {
+                if existing_fingerprints
+                    .get(&doc.id)
+                    .is_some_and(|stored| stored == fp)
+                {
                     summary.skipped += 1;
                     continue;
                 }
@@ -704,13 +730,11 @@ pub async fn run_sync_task(
 
     // Stale-document reconciliation (`ConnectorService.cleanup_stale_documents_for_task`):
     // only on incremental runs with the snapshot flag enabled.
-    let expects_deleted_file_snapshot = !task.reindex
-        && task.poll_range_start.is_some()
-        && task.sync_deleted_files;
+    let expects_deleted_file_snapshot =
+        !task.reindex && task.poll_range_start.is_some() && task.sync_deleted_files;
     if expects_deleted_file_snapshot {
         if let Some(file_list) = &feed.file_list {
-            let snapshot: std::collections::HashSet<String> =
-                file_list.iter().cloned().collect();
+            let snapshot: std::collections::HashSet<String> = file_list.iter().cloned().collect();
             summary.deleted = known.iter().filter(|id| !snapshot.contains(*id)).count();
         }
     }
@@ -733,16 +757,19 @@ pub async fn execute_sync(
     let timeout = Duration::from_secs(task.timeout_secs.max(1));
     match tokio::time::timeout(
         timeout,
-        run_sync_task(task, connector, existing_doc_ids, existing_fingerprints, upsert),
+        run_sync_task(
+            task,
+            connector,
+            existing_doc_ids,
+            existing_fingerprints,
+            upsert,
+        ),
     )
     .await
     {
         Ok(Ok(summary)) => SyncOutcome::Success(summary),
         Ok(Err(message)) => SyncOutcome::Failed(message),
-        Err(_) => SyncOutcome::Timeout(format!(
-            "Task timeout after {} seconds",
-            task.timeout_secs
-        )),
+        Err(_) => SyncOutcome::Timeout(format!("Task timeout after {} seconds", task.timeout_secs)),
     }
 }
 
@@ -840,7 +867,14 @@ impl LlmCache {
 
     /// `get_llm_cache(llm_name, content, kind, params)` — `None` on miss or
     /// expiry (RAGFlow evicts by TTL, so an expired entry is a miss).
-    pub fn get(&self, model: &str, content: &str, kind: &str, params: &str, now: u64) -> Option<String> {
+    pub fn get(
+        &self,
+        model: &str,
+        content: &str,
+        kind: &str,
+        params: &str,
+        now: u64,
+    ) -> Option<String> {
         let key = Self::cache_key(model, content, kind, params);
         let entries = self.entries.lock().unwrap();
         let entry = entries.get(&key)?;
@@ -848,7 +882,15 @@ impl LlmCache {
     }
 
     /// `set_llm_cache(llm_name, content, value, kind, params)`.
-    pub fn set(&self, model: &str, content: &str, kind: &str, params: &str, value: impl Into<String>, now: u64) {
+    pub fn set(
+        &self,
+        model: &str,
+        content: &str,
+        kind: &str,
+        params: &str,
+        value: impl Into<String>,
+        now: u64,
+    ) {
         let key = Self::cache_key(model, content, kind, params);
         let entry = LlmCacheEntry {
             value: value.into(),
@@ -1109,10 +1151,12 @@ mod tests {
                 progress.set_progress(&task, 0.7, "Embedding chunks");
                 progress.set_progress(&task, 0.9, "Embedding chunks");
                 progress.set_progress(&task, 1.0, "Indexing done");
-                events
-                    .lock()
-                    .unwrap()
-                    .extend_from_slice(&[(0.05, String::new()), (0.7, String::new()), (0.9, String::new()), (1.0, String::new())]);
+                events.lock().unwrap().extend_from_slice(&[
+                    (0.05, String::new()),
+                    (0.7, String::new()),
+                    (0.9, String::new()),
+                    (1.0, String::new()),
+                ]);
                 Ok(chunk_count)
             })
         })
@@ -1123,7 +1167,10 @@ mod tests {
         let executor = Arc::new(TaskExecutor::new("test-executor", 2));
         let events: Arc<Mutex<Vec<(f32, String)>>> = Arc::new(Mutex::new(Vec::new()));
         let recorded = events.clone();
-        let handle = executor.spawn(mock_chunk_embedding_handler(events, 3), Duration::from_millis(5));
+        let handle = executor.spawn(
+            mock_chunk_embedding_handler(events, 3),
+            Duration::from_millis(5),
+        );
 
         let mut task = ExecTask::new("t-1", "doc-1", "kb-1", "a.txt");
         task.max_retries = 0;
@@ -1233,19 +1280,33 @@ mod tests {
 
         for i in 0..6 {
             executor
-                .submit(ExecTask::new(format!("t-{i}"), format!("doc-{i}"), "kb-4", "d.txt"))
+                .submit(ExecTask::new(
+                    format!("t-{i}"),
+                    format!("doc-{i}"),
+                    "kb-4",
+                    "d.txt",
+                ))
                 .unwrap();
         }
         wait_until(|| executor.stats().done == 6, Duration::from_secs(10)).await;
         assert_eq!(executor.stats().failed, 0);
-        assert!(peak.load(Ordering::SeqCst) <= 2, "peak concurrency {peak:?} exceeded limit");
-        assert_eq!(peak.load(Ordering::SeqCst), 2, "concurrency limit was never reached");
+        assert!(
+            peak.load(Ordering::SeqCst) <= 2,
+            "peak concurrency {peak:?} exceeded limit"
+        );
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            2,
+            "concurrency limit was never reached"
+        );
 
         // Shutdown closes the queue; further submissions are rejected.
         executor.shutdown(handle).await;
-        assert!(executor
-            .submit(ExecTask::new("t-late", "doc-late", "kb-4", "e.txt"))
-            .is_err());
+        assert!(
+            executor
+                .submit(ExecTask::new("t-late", "doc-late", "kb-4", "e.txt"))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1282,7 +1343,10 @@ mod tests {
         // Error progress: [ERROR] prefix, message kept.
         callback.set_progress(&task, -1.0, "chunking exploded");
         let message = events.lock().unwrap()[1].1.clone();
-        assert!(message.contains("[ERROR]chunking exploded"), "unexpected: {message}");
+        assert!(
+            message.contains("[ERROR]chunking exploded"),
+            "unexpected: {message}"
+        );
 
         // to_page == -1 (whole document): no page range prefix.
         let mut whole = task.clone();
@@ -1372,14 +1436,22 @@ mod tests {
         let existing_ids: std::collections::HashSet<String> =
             ["doc-2"].into_iter().map(str::to_string).collect();
         let existing_fps: std::collections::HashMap<String, String> =
-            [("doc-3".to_string(), "fp-3".to_string())].into_iter().collect();
+            [("doc-3".to_string(), "fp-3".to_string())]
+                .into_iter()
+                .collect();
 
         let changes: Arc<Mutex<Vec<(String, SyncChange)>>> = Arc::new(Mutex::new(Vec::new()));
         let recorded = changes.clone();
-        let summary = run_sync_task(&task, &connector, &existing_ids, &existing_fps, move |doc, change| {
-            recorded.lock().unwrap().push((doc.id.clone(), change));
-            Ok(())
-        })
+        let summary = run_sync_task(
+            &task,
+            &connector,
+            &existing_ids,
+            &existing_fps,
+            move |doc, change| {
+                recorded.lock().unwrap().push((doc.id.clone(), change));
+                Ok(())
+            },
+        )
         .await
         .expect("sync run succeeds");
 
@@ -1601,11 +1673,32 @@ mod tests {
         assert!(chunks[1].metadata.get("question_kwd").is_none());
 
         // build_chunks progress messages (start + completion) are emitted.
-        let messages: Vec<String> = events.lock().unwrap().iter().map(|(_, m)| m.clone()).collect();
-        assert!(messages.iter().any(|m| m.contains("Start to generate keywords")));
-        assert!(messages.iter().any(|m| m.contains("Keywords generation 1 chunks completed")));
-        assert!(messages.iter().any(|m| m.contains("Start to generate questions")));
-        assert!(messages.iter().any(|m| m.contains("Question generation 1 chunks completed")));
+        let messages: Vec<String> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, m)| m.clone())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Start to generate keywords"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Keywords generation 1 chunks completed"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Start to generate questions"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Question generation 1 chunks completed"))
+        );
 
         // Second pass reuses the LLM cache: identical results, no re-extraction.
         let mut chunks2 = vec![enrich_chunk(text)];
@@ -1620,7 +1713,11 @@ mod tests {
             chunks2[0].metadata.get("question_kwd"),
             chunks[0].metadata.get("question_kwd")
         );
-        assert_eq!(enrichment.cache.len(), 2, "keywords + question entries cached");
+        assert_eq!(
+            enrichment.cache.len(),
+            2,
+            "keywords + question entries cached"
+        );
     }
 
     #[test]
@@ -1629,20 +1726,45 @@ mod tests {
         let now = 1_000_000u64;
         assert!(cache.is_empty());
 
-        cache.set("chat-1", "some content", "keywords", "{\"topn\":2}", "a,b", now);
+        cache.set(
+            "chat-1",
+            "some content",
+            "keywords",
+            "{\"topn\":2}",
+            "a,b",
+            now,
+        );
         assert_eq!(
-            cache.get("chat-1", "some content", "keywords", "{\"topn\":2}", now).as_deref(),
+            cache
+                .get("chat-1", "some content", "keywords", "{\"topn\":2}", now)
+                .as_deref(),
             Some("a,b")
         );
         // Different kind / content / model → distinct cache keys.
-        assert!(cache.get("chat-1", "some content", "question", "{\"topn\":2}", now).is_none());
-        assert!(cache.get("chat-1", "other content", "keywords", "{\"topn\":2}", now).is_none());
-        assert!(cache.get("chat-2", "some content", "keywords", "{\"topn\":2}", now).is_none());
+        assert!(
+            cache
+                .get("chat-1", "some content", "question", "{\"topn\":2}", now)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get("chat-1", "other content", "keywords", "{\"topn\":2}", now)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get("chat-2", "some content", "keywords", "{\"topn\":2}", now)
+                .is_none()
+        );
         assert_eq!(cache.len(), 1);
 
         // TTL expiry: expired entries read as a miss and are swept.
         let later = now + 61_000;
-        assert!(cache.get("chat-1", "some content", "keywords", "{\"topn\":2}", later).is_none());
+        assert!(
+            cache
+                .get("chat-1", "some content", "keywords", "{\"topn\":2}", later)
+                .is_none()
+        );
         assert_eq!(cache.sweep_expired(later), 1);
         assert!(cache.is_empty());
     }

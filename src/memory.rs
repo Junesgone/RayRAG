@@ -204,10 +204,257 @@ fn push_count(counts: &mut Vec<(String, usize)>, index: &mut HashMap<String, usi
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// memory/utils/prompt_util.py + memory/utils/msg_util.py
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Fixed RAGFlow Memory extraction prompt builder.
+///
+/// Python builds the requested type set with a hash set, so the order of
+/// multiple type blocks varies with `PYTHONHASHSEED`. Rust deliberately uses
+/// the stable enum order semantic -> episodic -> procedural while preserving
+/// every instruction, output field and example from the fixed source.
+pub struct PromptAssembler;
+
+impl PromptAssembler {
+    pub const SYSTEM_BASE_TEMPLATE: &str = r#"**Memory Extraction Specialist**
+You are an expert at analyzing conversations to extract structured memory.
+
+{type_specific_instructions}
+
+
+**OUTPUT REQUIREMENTS:**
+1. Output MUST be valid JSON
+2. Follow the specified output format exactly
+3. Each extracted item MUST have: content, valid_at, invalid_at
+4. Timestamps in {timestamp_format} format
+5. Only extract memory types specified above
+6. Maximum {max_items} items per type
+"#;
+
+    pub const BASE_USER_PROMPT: &str = r#"
+**CONVERSATION:**
+{conversation}
+
+**CONVERSATION TIME:** {conversation_time}
+**CURRENT TIME:** {current_time}
+"#;
+
+    /// `PromptAssembler.assemble_system_prompt` with the Python defaults:
+    /// ISO-8601 timestamps and at most five items per requested non-RAW type.
+    pub fn assemble_system_prompt(memory_types: &[String]) -> String {
+        Self::assemble_system_prompt_with_options(memory_types, "ISO 8601", 5)
+    }
+
+    pub fn assemble_system_prompt_with_options(
+        memory_types: &[String],
+        timestamp_format: &str,
+        max_items_per_type: usize,
+    ) -> String {
+        let types = extraction_types(memory_types);
+        let type_specific_instructions = types
+            .iter()
+            .map(|memory_type| type_instruction(memory_type))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output_format = types
+            .iter()
+            .map(|memory_type| output_template(memory_type))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let mut prompt = Self::SYSTEM_BASE_TEMPLATE
+            .replace("{type_specific_instructions}", &type_specific_instructions)
+            .replace("{timestamp_format}", timestamp_format)
+            .replace("{max_items}", &max_items_per_type.to_string());
+        prompt.push_str("\n**REQUIRED OUTPUT FORMAT (JSON):**\n```json\n{\n");
+        prompt.push_str(&output_format);
+        prompt.push_str("\n}\n```\n");
+
+        let examples = types
+            .iter()
+            .map(|memory_type| extraction_example(memory_type))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !examples.is_empty() {
+            prompt.push_str("\n**EXAMPLES:**\n");
+            prompt.push_str(&examples);
+            prompt.push('\n');
+        }
+        prompt
+    }
+
+    pub fn assemble_user_prompt(
+        conversation: &str,
+        conversation_time: Option<&str>,
+        current_time: Option<&str>,
+    ) -> String {
+        let current_time = current_time
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::common::time_utils::current_timestamp().to_string());
+        Self::BASE_USER_PROMPT
+            .replace("{conversation}", conversation)
+            .replace(
+                "{conversation_time}",
+                conversation_time
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("Not specified"),
+            )
+            .replace("{current_time}", &current_time)
+    }
+
+    pub const fn get_raw_user_prompt() -> &'static str {
+        Self::BASE_USER_PROMPT
+    }
+}
+
+/// `msg_util.get_json_result_from_llm_response`.
+///
+/// Only a lowercase leading ` ```json ` fence and a trailing ` ``` ` fence
+/// are stripped. Invalid JSON becomes an empty object rather than surfacing an
+/// extraction failure, exactly as in the fixed worker.
+pub fn get_json_result_from_llm_response(response: &str) -> Value {
+    let mut clean = response.trim();
+    if let Some(stripped) = clean.strip_prefix("```json") {
+        clean = stripped;
+    }
+    if let Some(stripped) = clean.strip_suffix("```") {
+        clean = stripped;
+    }
+    serde_json::from_str(clean.trim()).unwrap_or_else(|_| Value::Object(Default::default()))
+}
+
+pub fn judge_system_prompt_is_default(system_prompt: &str, memory_types: &[String]) -> bool {
+    system_prompt == PromptAssembler::assemble_system_prompt(memory_types)
+}
+
+fn extraction_types(memory_types: &[String]) -> Vec<&'static str> {
+    ["semantic", "episodic", "procedural"]
+        .into_iter()
+        .filter(|candidate| memory_types.iter().any(|value| value == candidate))
+        .collect()
+}
+
+fn type_instruction(memory_type: &str) -> &'static str {
+    match memory_type {
+        "semantic" => {
+            r#"
+        **EXTRACT SEMANTIC KNOWLEDGE:**
+        - Universal facts, definitions, concepts, relationships
+        - Time-invariant, generally true information
+        - Examples: "The capital of France is Paris", "Water boils at 100°C"
+
+        **Timestamp Rules for Semantic Knowledge:**
+        - valid_at: When the fact became true (e.g., law enactment, discovery)
+        - invalid_at: When it becomes false (e.g., repeal, disproven) or empty if still true
+        - Default: valid_at = conversation time, invalid_at = "" for timeless facts
+        "#
+        }
+        "episodic" => {
+            r#"
+        **EXTRACT EPISODIC KNOWLEDGE:**
+        - Specific experiences, events, personal stories
+        - Time-bound, person-specific, contextual
+        - Examples: "Yesterday I fixed the bug", "User reported issue last week"
+
+        **Timestamp Rules for Episodic Knowledge:**
+        - valid_at: Event start/occurrence time
+        - invalid_at: Event end time or empty if instantaneous
+        - Extract explicit times: "at 3 PM", "last Monday", "from X to Y"
+        "#
+        }
+        "procedural" => {
+            r#"
+        **EXTRACT PROCEDURAL KNOWLEDGE:**
+        - Processes, methods, step-by-step instructions
+        - Goal-oriented, actionable, often includes conditions
+        - Examples: "To reset password, click...", "Debugging steps: 1)..."
+
+        **Timestamp Rules for Procedural Knowledge:**
+        - valid_at: When procedure becomes valid/effective
+        - invalid_at: When it expires/becomes obsolete or empty if current
+        - For version-specific: use release dates
+        - For best practices: invalid_at = ""
+        "#
+        }
+        _ => "",
+    }
+}
+
+fn output_template(memory_type: &str) -> &'static str {
+    match memory_type {
+        "semantic" => {
+            r#"
+        "semantic": [
+            {
+                "content": "Clear factual statement",
+                "valid_at": "timestamp or empty",
+                "invalid_at": "timestamp or empty"
+            }
+        ]
+        "#
+        }
+        "episodic" => {
+            r#"
+        "episodic": [
+            {
+                "content": "Narrative event description",
+                "valid_at": "event start timestamp",
+                "invalid_at": "event end timestamp or empty"
+            }
+        ]
+        "#
+        }
+        "procedural" => {
+            r#"
+        "procedural": [
+            {
+                "content": "Actionable instructions",
+                "valid_at": "procedure effective timestamp",
+                "invalid_at": "procedure expiration timestamp or empty"
+            }
+        ]
+        "#
+        }
+        _ => "",
+    }
+}
+
+fn extraction_example(memory_type: &str) -> &'static str {
+    match memory_type {
+        "semantic" => {
+            r#"
+            **Semantic Example:**
+            Input: "Python lists are mutable and support various operations."
+            Output: {"semantic": [{"content": "Python lists are mutable data structures", "valid_at": "2024-01-15T10:00:00", "invalid_at": ""}]}
+            "#
+        }
+        "episodic" => {
+            r#"
+            **Episodic Example:**
+            Input: "I deployed the new feature yesterday afternoon."
+            Output: {"episodic": [{"content": "User deployed new feature", "valid_at": "2024-01-14T14:00:00", "invalid_at": "2024-01-14T18:00:00"}]}
+            "#
+        }
+        "procedural" => {
+            r#"
+            **Procedural Example:**
+            Input: "To debug API errors: 1) Check logs 2) Verify endpoints 3) Test connectivity."
+            Output: {"procedural": [{"content": "API error debugging: 1. Check logs 2. Verify endpoints 3. Test connectivity", "valid_at": "2024-01-15T10:00:00", "invalid_at": ""}]}
+            "#
+        }
+        _ => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
+
+    fn sha256(value: &str) -> String {
+        hex::encode(Sha256::digest(value.as_bytes()))
+    }
 
     #[test]
     fn highlight_english_uses_word_boundaries() {
@@ -287,6 +534,136 @@ mod tests {
         );
         assert!(aggregate_by_field(&[], "tags").is_empty());
     }
+
+    #[test]
+    fn prompt_assembler_filters_raw_deduplicates_and_emits_each_requested_type() {
+        let prompt = PromptAssembler::assemble_system_prompt(&[
+            "raw".into(),
+            "semantic".into(),
+            "procedural".into(),
+            "semantic".into(),
+            "unknown".into(),
+        ]);
+        assert!(prompt.starts_with("**Memory Extraction Specialist**\n"));
+        assert_eq!(prompt.matches("**EXTRACT SEMANTIC KNOWLEDGE:**").count(), 1);
+        assert_eq!(
+            prompt.matches("**EXTRACT PROCEDURAL KNOWLEDGE:**").count(),
+            1
+        );
+        assert!(!prompt.contains("EXTRACT RAW"));
+        assert!(!prompt.contains("EXTRACT EPISODIC"));
+        assert!(prompt.contains("\"semantic\": ["));
+        assert!(prompt.contains("\"procedural\": ["));
+        assert!(prompt.contains("Maximum 5 items per type"));
+        assert!(prompt.contains("**Procedural Example:**"));
+    }
+
+    #[test]
+    fn prompt_assembler_matches_raw_only_and_custom_option_contracts() {
+        let raw = PromptAssembler::assemble_system_prompt(&["raw".into()]);
+        assert_eq!(raw.chars().count(), 435);
+        assert_eq!(
+            sha256(&raw),
+            "0353e9f4f62134073050a0a1cd362100c935c9a65bed6e34c605dfa658ed8f70"
+        );
+        assert!(raw.contains("\n\n\n\n**OUTPUT REQUIREMENTS:**"));
+        assert!(raw.contains("```json\n{\n\n}\n```\n"));
+        assert!(!raw.contains("**EXAMPLES:**"));
+
+        let configured = PromptAssembler::assemble_system_prompt_with_options(
+            &["episodic".into()],
+            "RFC 3339",
+            2,
+        );
+        assert!(configured.contains("Timestamps in RFC 3339 format"));
+        assert!(configured.contains("Maximum 2 items per type"));
+        assert!(configured.contains("**Episodic Example:**"));
+
+        for (memory_type, expected_len, expected_sha256) in [
+            (
+                "semantic",
+                1497,
+                "d941d0ad4fe092d493e3978ac2c38c37fd5a77eb375c71d1527b91100bfe6d59",
+            ),
+            (
+                "episodic",
+                1432,
+                "d518bb2605636b6d3b1dbdc8a12fe1f5f1eb8fc62e7c807fdf228edb83780ecb",
+            ),
+            (
+                "procedural",
+                1569,
+                "8adfd8ba68e430144a92ee58be1bc826ec4ce7df5dcb907b41e6329d56363eaa",
+            ),
+        ] {
+            let prompt = PromptAssembler::assemble_system_prompt(&[memory_type.into()]);
+            assert_eq!(
+                prompt.chars().count(),
+                expected_len,
+                "{memory_type} prompt drifted"
+            );
+            assert_eq!(sha256(&prompt), expected_sha256);
+            assert!(prompt.ends_with("\n            \n"));
+        }
+    }
+
+    #[test]
+    fn prompt_assembler_user_prompt_and_raw_template_match_fixed_shape() {
+        let prompt = PromptAssembler::assemble_user_prompt(
+            "User Input: hi\nAgent Response: hello",
+            Some("2026-08-12 10:00:00"),
+            Some("2026-08-12 10:00:01"),
+        );
+        assert_eq!(
+            prompt,
+            "\n**CONVERSATION:**\nUser Input: hi\nAgent Response: hello\n\n**CONVERSATION TIME:** 2026-08-12 10:00:00\n**CURRENT TIME:** 2026-08-12 10:00:01\n"
+        );
+        assert_eq!(
+            sha256(&PromptAssembler::assemble_user_prompt(
+                "x",
+                Some("conversation"),
+                Some("current")
+            )),
+            "2b71b613730f9096ebe4990468e857a03144e06cc6d8c4c3452e0da93664a6bd"
+        );
+        assert_eq!(
+            PromptAssembler::get_raw_user_prompt(),
+            PromptAssembler::BASE_USER_PROMPT
+        );
+        assert!(
+            PromptAssembler::assemble_user_prompt("x", Some(""), Some("now"))
+                .contains("**CONVERSATION TIME:** Not specified")
+        );
+    }
+
+    #[test]
+    fn memory_llm_json_parser_only_strips_fixed_lowercase_fence() {
+        let expected = json!({
+            "semantic": [{
+                "content": "Rust is memory safe",
+                "valid_at": "2026-08-12T10:00:00",
+                "invalid_at": ""
+            }]
+        });
+        assert_eq!(
+            get_json_result_from_llm_response(&expected.to_string()),
+            expected
+        );
+        assert_eq!(
+            get_json_result_from_llm_response(&format!("```json\n{expected}\n```")),
+            expected
+        );
+        assert_eq!(get_json_result_from_llm_response("not json"), json!({}));
+        assert_eq!(
+            get_json_result_from_llm_response(&format!("```JSON\n{expected}\n```")),
+            json!({})
+        );
+        assert_eq!(
+            get_json_result_from_llm_response(&format!("prefix {expected} suffix")),
+            json!({})
+        );
+        assert_eq!(get_json_result_from_llm_response("[1, 2]"), json!([1, 2]));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -355,10 +732,7 @@ impl MsgTextQuery {
         normalized = tradi2simp(&normalized);
         let collapse = Regex::new(r"[ :|\r\n\t,，。？?/`!！&^%%()\[\]{}<>]+")
             .expect("collapse regex is valid");
-        normalized = collapse
-            .replace_all(&normalized, " ")
-            .trim()
-            .to_string();
+        normalized = collapse.replace_all(&normalized, " ").trim().to_string();
         let otxt = normalized.clone();
         let cleaned = rm_www(&normalized);
 
@@ -423,10 +797,7 @@ impl MsgTextQuery {
         // `(tk^w syn)` terms; skip tokens starting with `.^+()-`.
         let mut q: Vec<String> = Vec::new();
         for ((tk, w), syn) in tks_w.iter().zip(syns.iter()) {
-            let starts_bad = tk
-                .chars()
-                .next()
-                .is_some_and(|c| ".^+()-".contains(c));
+            let starts_bad = tk.chars().next().is_some_and(|c| ".^+()-".contains(c));
             if !tk.is_empty() && !starts_bad {
                 q.push(format!("({}^{:.4} {})", tk, w, syn));
             }

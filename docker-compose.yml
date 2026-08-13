@@ -95,6 +95,9 @@ services:
       SOMARK_POLL_BUDGET_SECONDS: ${SOMARK_POLL_BUDGET_SECONDS:-600}
       RAYRAG_ADMIN_EMAIL: ${RAYRAG_ADMIN_EMAIL:-admin@rayrag.local}
       RAYRAG_ADMIN_PASSWORD: ${RAYRAG_ADMIN_PASSWORD:?set RAYRAG_ADMIN_PASSWORD}
+      # Optional RAGFlow-compatible RSA password transport. The path must be
+      # mounted into the container by an operator-owned Compose override.
+      RAYRAG_PASSWORD_PRIVATE_KEY_FILE: ${RAYRAG_PASSWORD_PRIVATE_KEY_FILE:-}
     command: ["serve", "--port", "8080"]
     ports:
       - "${RAYRAG_PORT:-9380}:8080"

@@ -99,13 +99,9 @@ pub trait Connector: Send + Sync {
             match self.fetch_file(&file).await {
                 Ok(raw) => match self.normalize(&file, raw) {
                     Ok(doc) => batch.docs.push(doc),
-                    Err(error) => batch
-                        .failures
-                        .push(format!("{}: {error:#}", file.name)),
+                    Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
                 },
-                Err(error) => batch
-                    .failures
-                    .push(format!("{}: {error:#}", file.name)),
+                Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
             }
         }
         Ok(batch)
@@ -241,8 +237,7 @@ impl Connector for LocalConnector {
 
     async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
         let path = self.resolve(&file.path);
-        std::fs::read(&path)
-            .with_context(|| format!("local: read failed: {}", path.display()))
+        std::fs::read(&path).with_context(|| format!("local: read failed: {}", path.display()))
     }
 
     fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
@@ -293,8 +288,7 @@ fn walk_dir(base: &Path, dir: &Path, out: &mut Vec<RemoteFile>) -> Result<()> {
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| {
-                    chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + d)
-                        .to_rfc3339()
+                    chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + d).to_rfc3339()
                 })
                 .unwrap_or_default();
             let mut meta = HashMap::new();
@@ -356,7 +350,10 @@ impl WebDavConnector {
 
     fn auth_header(&self) -> String {
         let raw = format!("{}:{}", self.username, self.password);
-        format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw.as_bytes()))
+        format!(
+            "Basic {}",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw.as_bytes())
+        )
     }
 
     fn url_for(&self, href: &str) -> String {
@@ -423,7 +420,10 @@ impl Connector for WebDavConnector {
         let url = self.url_for(&self.remote_path);
         let mut request = self
             .client
-            .request(reqwest::Method::from_bytes(b"PROPFIND").expect("PROPFIND"), &url)
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").expect("PROPFIND"),
+                &url,
+            )
             .header("Authorization", self.auth_header())
             .header("Depth", "1");
         request = request
@@ -473,8 +473,8 @@ impl Connector for WebDavConnector {
 /// Non-collection (file) resources only, mirroring RAGFlow's WebDAV client
 /// `ls` behaviour.
 fn parse_propfind(xml: &str, base_url: &str) -> Result<Vec<RemoteFile>> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
 
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -619,7 +619,11 @@ impl BlobAdapter {
     }
 
     async fn list_containers(&self) -> Result<Vec<String>> {
-        let url = format!("{}/?comp=list&restype=container&{}", self.endpoint()?, self.sas()?);
+        let url = format!(
+            "{}/?comp=list&restype=container&{}",
+            self.endpoint()?,
+            self.sas()?
+        );
         let body = self.get_xml(&url).await?;
         Ok(parse_xml_names(&body, "Container", "Name"))
     }
@@ -635,7 +639,12 @@ impl BlobAdapter {
     }
 
     async fn get_xml(&self, url: &str) -> Result<String> {
-        let response = self.client.get(url).send().await.context("blob: request failed")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("blob: request failed")?;
         let status = response.status();
         let body = response.text().await?;
         if !status.is_success() {
@@ -649,7 +658,12 @@ impl BlobAdapter {
     }
 
     async fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
-        let response = self.client.get(url).send().await.context("blob: request failed")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("blob: request failed")?;
         let status = response.status();
         let bytes = response.bytes().await?;
         if !status.is_success() {
@@ -724,7 +738,10 @@ impl Connector for BlobAdapter {
         let url = format!(
             "{}/{}/{}?{}",
             self.endpoint()?,
-            file.metadata.get("container").map(|s| s.as_str()).unwrap_or_default(),
+            file.metadata
+                .get("container")
+                .map(|s| s.as_str())
+                .unwrap_or_default(),
             file.path,
             self.sas()?
         );
@@ -804,11 +821,7 @@ impl FeishuConnector {
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .expect("reqwest client"),
-            base_url: options
-                .url
-                .trim()
-                .trim_end_matches('/')
-                .to_string(),
+            base_url: options.url.trim().trim_end_matches('/').to_string(),
             app_id,
             app_secret,
             folder_token: options.target.trim().to_string(),
@@ -817,7 +830,12 @@ impl FeishuConnector {
     }
 
     async fn tenant_access_token(&self) -> Result<String> {
-        if let Some(token) = self.token.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        if let Some(token) = self
+            .token
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+        {
             return Ok(token.clone());
         }
         if self.app_id.is_empty() || self.app_secret.is_empty() {
@@ -846,7 +864,10 @@ impl FeishuConnector {
             bail!(
                 "feishu: auth failed ({}): {}",
                 status.as_u16(),
-                value.get("msg").and_then(serde_json::Value::as_str).unwrap_or_default()
+                value
+                    .get("msg")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
             );
         }
         let token = value
@@ -879,14 +900,22 @@ impl FeishuConnector {
             bail!(
                 "feishu: API error ({}): {}",
                 status.as_u16(),
-                value.get("msg").and_then(serde_json::Value::as_str).unwrap_or_default()
+                value
+                    .get("msg")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
             );
         }
         Ok(value)
     }
 
     /// Enumerate folder children (files + folders), recursing into folders.
-    async fn list_folder(&self, folder_token: &str, depth: usize, out: &mut Vec<RemoteFile>) -> Result<()> {
+    async fn list_folder(
+        &self,
+        folder_token: &str,
+        depth: usize,
+        out: &mut Vec<RemoteFile>,
+    ) -> Result<()> {
         if depth > 8 {
             return Ok(());
         }
@@ -1122,10 +1151,7 @@ impl ConfluenceConnector {
             let raw = format!("{}:{}", self.username, self.password);
             format!(
                 "Basic {}",
-                base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    raw.as_bytes()
-                )
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw.as_bytes())
             )
         }
     }
@@ -1239,7 +1265,10 @@ impl Connector for ConfluenceConnector {
                     metadata,
                 });
             }
-            let size = value.get("size").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let size = value
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             start += fetched;
             if fetched == 0 || start >= size as usize {
                 break;

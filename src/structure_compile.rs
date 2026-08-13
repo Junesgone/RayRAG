@@ -2855,8 +2855,7 @@ pub async fn validate_and_correct_chain(
 // ---------------------------------------------------------------------------
 
 /// `DEFAULT_ENTITY_TYPES` — extractor.py default when none configured.
-pub const DEFAULT_ENTITY_TYPES: [&str; 5] =
-    ["organization", "person", "geo", "event", "category"];
+pub const DEFAULT_ENTITY_TYPES: [&str; 5] = ["organization", "person", "geo", "event", "category"];
 
 /// `ENTITY_EXTRACTION_MAX_GLEANINGS` — extractor.py:47.
 pub const ENTITY_EXTRACTION_MAX_GLEANINGS: usize = 2;
@@ -3222,12 +3221,20 @@ pub fn merge_entity_records(records: &[Value]) -> Option<Value> {
     }
     let types: Vec<String> = records
         .iter()
-        .filter_map(|r| r.get("entity_type").and_then(Value::as_str).map(String::from))
+        .filter_map(|r| {
+            r.get("entity_type")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
         .collect();
     let entity_type = most_common_value(&types).unwrap_or_else(|| "UNKNOWN".to_string());
     let mut descs: Vec<String> = records
         .iter()
-        .filter_map(|r| r.get("description").and_then(Value::as_str).map(String::from))
+        .filter_map(|r| {
+            r.get("description")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
         .collect();
     descs.sort();
     descs.dedup();
@@ -3258,7 +3265,11 @@ pub fn merge_relation_records(records: &[Value]) -> Option<Value> {
         .sum();
     let mut descs: Vec<String> = records
         .iter()
-        .filter_map(|r| r.get("description").and_then(Value::as_str).map(String::from))
+        .filter_map(|r| {
+            r.get("description")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
         .collect();
     descs.sort();
     descs.dedup();
@@ -3473,7 +3484,8 @@ fn quote_unquoted_keys(input: &str) -> String {
                 j += 1;
             }
             let key_start = j;
-            if j < chars.len() && (chars[j].is_ascii_alphabetic() || chars[j] == '_' || chars[j] == '$')
+            if j < chars.len()
+                && (chars[j].is_ascii_alphabetic() || chars[j] == '_' || chars[j] == '$')
             {
                 j += 1;
                 while j < chars.len()
@@ -3788,7 +3800,10 @@ mod tests {
             ];
             let merged = merge_entity_records(&ents).unwrap();
             assert_eq!(merged["entity_type"], "PERSON"); // majority type
-            assert_eq!(merged["description"], format!("a desc{GRAPH_FIELD_SEP}b desc"));
+            assert_eq!(
+                merged["description"],
+                format!("a desc{GRAPH_FIELD_SEP}b desc")
+            );
             assert_eq!(merged["source_id"], json!(["c1", "c2"]));
             assert_eq!(merged["entity_name"], "ALICE");
 
@@ -3805,7 +3820,10 @@ mod tests {
                 most_common_value(&["a".into(), "b".into(), "a".into()]),
                 Some("a".into())
             );
-            assert_eq!(flat_uniq_list(&rels, "keywords"), vec!["k1".to_string(), "k2".to_string()]);
+            assert_eq!(
+                flat_uniq_list(&rels, "keywords"),
+                vec!["k1".to_string(), "k2".to_string()]
+            );
             assert!(merge_entity_records(&[]).is_none());
             assert!(merge_relation_records(&[]).is_none());
         }
@@ -3866,14 +3884,20 @@ mod tests {
                 upsert_row_by_id(&store, "kb-1", &row).await.unwrap(),
                 PersistOutcome::Updated
             );
-            let rows = store.search("kb-1", &CompileFilter::default(), 100).await.unwrap();
+            let rows = store
+                .search("kb-1", &CompileFilter::default(), 100)
+                .await
+                .unwrap();
             assert_eq!(rows.len(), 1);
             // different kb → independent insert
             assert_eq!(
                 upsert_row_by_id(&store, "kb-2", &row).await.unwrap(),
                 PersistOutcome::Inserted
             );
-            let rows = store.search("kb-2", &CompileFilter::default(), 100).await.unwrap();
+            let rows = store
+                .search("kb-2", &CompileFilter::default(), 100)
+                .await
+                .unwrap();
             assert_eq!(rows.len(), 1);
         }
     }

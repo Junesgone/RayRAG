@@ -562,10 +562,7 @@ impl Default for ServiceConf {
 }
 
 /// Look up a top-level section of a service_conf document as a JSON object.
-fn service_section<'a>(
-    root: &'a Value,
-    key: &str,
-) -> Option<&'a serde_json::Map<String, Value>> {
+fn service_section<'a>(root: &'a Value, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
     root.as_object()
         .and_then(|map| map.get(key))
         .and_then(Value::as_object)
@@ -606,8 +603,7 @@ impl ServiceConf {
         if let Some(mysql) = service_section(value, "mysql") {
             conf.mysql.name = str_field(Some(mysql), "name").unwrap_or(conf.mysql.name);
             conf.mysql.user = str_field(Some(mysql), "user").unwrap_or(conf.mysql.user);
-            conf.mysql.password =
-                str_field(Some(mysql), "password").unwrap_or(conf.mysql.password);
+            conf.mysql.password = str_field(Some(mysql), "password").unwrap_or(conf.mysql.password);
             conf.mysql.host = str_field(Some(mysql), "host").unwrap_or(conf.mysql.host);
             conf.mysql.port = u16_field(Some(mysql), "port").unwrap_or(conf.mysql.port);
             conf.mysql.max_connections =
@@ -617,8 +613,7 @@ impl ServiceConf {
         }
         if let Some(minio) = service_section(value, "minio") {
             conf.minio.user = str_field(Some(minio), "user").unwrap_or(conf.minio.user);
-            conf.minio.password =
-                str_field(Some(minio), "password").unwrap_or(conf.minio.password);
+            conf.minio.password = str_field(Some(minio), "password").unwrap_or(conf.minio.password);
             conf.minio.host = str_field(Some(minio), "host").unwrap_or(conf.minio.host);
             conf.minio.bucket = str_field(Some(minio), "bucket").unwrap_or(conf.minio.bucket);
             conf.minio.prefix_path =
@@ -643,16 +638,13 @@ impl ServiceConf {
         }
         if let Some(redis) = service_section(value, "redis") {
             conf.redis.db = i64_field(Some(redis), "db").unwrap_or(conf.redis.db);
-            conf.redis.username =
-                str_field(Some(redis), "username").unwrap_or(conf.redis.username);
-            conf.redis.password =
-                str_field(Some(redis), "password").unwrap_or(conf.redis.password);
+            conf.redis.username = str_field(Some(redis), "username").unwrap_or(conf.redis.username);
+            conf.redis.password = str_field(Some(redis), "password").unwrap_or(conf.redis.password);
             conf.redis.host = str_field(Some(redis), "host").unwrap_or(conf.redis.host);
         }
         if let Some(task_executor) = service_section(value, "task_executor") {
-            conf.message_queue_type =
-                str_field(Some(task_executor), "message_queue_type")
-                    .unwrap_or(conf.message_queue_type);
+            conf.message_queue_type = str_field(Some(task_executor), "message_queue_type")
+                .unwrap_or(conf.message_queue_type);
         }
         if let Some(llm) = service_section(value, "user_default_llm") {
             conf.user_default_llm.factory =
@@ -663,10 +655,9 @@ impl ServiceConf {
                 str_field(Some(llm), "base_url").unwrap_or(conf.user_default_llm.base_url);
             if let Some(default_models) = llm.get("default_models").and_then(Value::as_object) {
                 for (capability, entry) in default_models {
-                    conf.user_default_llm.default_models.insert(
-                        capability.clone(),
-                        parse_model_entry(entry),
-                    );
+                    conf.user_default_llm
+                        .default_models
+                        .insert(capability.clone(), parse_model_entry(entry));
                 }
             }
         }
@@ -707,28 +698,26 @@ impl ServiceConf {
 //   - conf/skill_es_mapping.json + conf/skill_infinity_mapping.json —
 //     skill-store fields (name/tags/description/content + q_<dims>_vec).
 //
-// RayRAG persists chunks and metadata in PostgreSQL with the zvec extension,
-// so the ES/Infinity mappings are **N/A by design** — no ES/Infinity index is
-// ever created. What is ported is the *field schema*: the suffix rules below
-// reproduce the ES dynamic-template semantics so chunk fields keep the same
-// names and types across engines, and [`zvec_column_kind`] gives the
-// Postgres/zvec column type for each field.
+// RayRAG replaces these engines rather than deploying their schemas verbatim.
+// Exact doc-meta, message-Infinity and Skill ES/Infinity schemas are fixed below;
+// their JSON/PostgreSQL/zvec ownership is documented at each replacement
+// boundary. Other engine mapping contracts retain their independently audited
+// coverage status.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Why RayRAG does not ship ES/Infinity index mappings (documented, N/A).
-pub const ENGINE_MAPPING_NOTE: &str =
-    "RayRAG stores chunks/metadata in PostgreSQL + zvec; ES/OpenSearch/Infinity \
-     index mappings from conf/mapping*.json are N/A-by-design (no such index is \
-     created). The field-suffix schema below preserves cross-engine field names \
-     and types; zvec_column_kind maps each field onto its Postgres column type.";
+/// Why the fixed ES/Infinity document-metadata mappings are replaced.
+pub const ENGINE_MAPPING_NOTE: &str = "RayRAG replaces ES/OpenSearch/Infinity mappings: document metadata uses an \
+     atomic JSON snapshot with an optional opaque PostgreSQL 18 mirror, and \
+     zvec-rust stores chunk and Skill vectors in isolated collections. No ES/Infinity metadata index is \
+     created; typed Rust schemas preserve the fixed wire names, types and defaults.";
 
-/// Why the PEM signing keys are not ported (documented, N/A).
-pub const SIGNING_KEYS_POLICY: &str =
-    "RAGFlow conf/private.pem + public.pem (JWT signing keys) are NOT ported: \
-     shipping private keys is a security hazard. RayRAG manages signing keys \
-     through environment variables (RAGFLOW_SECRET_KEY for symmetric crypto, \
-     RAYRAG_JWT_PRIVATE_KEY / RAYRAG_JWT_PUBLIC_KEY for asymmetric JWT signing), \
-     generated per deployment.";
+/// Why the fixed password-transport PEM pair is replaced, not copied.
+pub const PASSWORD_TRANSPORT_KEYS_POLICY: &str = "RAGFlow conf/private.pem + public.pem are an \
+     RSAES-PKCS1-v1_5 password-transport pair, not JWT signing keys. RayRAG never ships the \
+     globally known private key. A deployment-specific RSA private key may be mounted through \
+     RAYRAG_PASSWORD_PRIVATE_KEY_FILE; RayRAG derives its public key and accepts the compatible \
+     base64(RSA(base64(UTF-8))) wire form. Plaintext compatibility remains available and requires \
+     TLS at the deployment boundary; stored passwords use salted Argon2id hashes.";
 
 /// Field kinds derived from the ES/OpenSearch dynamic-template suffix rules
 /// (conf/mapping.json / conf/os_mapping.json).
@@ -761,6 +750,8 @@ pub enum FieldKind {
     DenseVector(u64),
     /// `*_bin` — binary blob.
     Binary,
+    /// Explicit fixed `lat_lon` geo_point property.
+    GeoPoint,
     /// Unmatched field (dynamic string default in ES).
     Text,
 }
@@ -784,14 +775,22 @@ impl FieldKind {
             FieldKind::RankFeatures => "rank_features".to_owned(),
             FieldKind::DenseVector(dims) => format!("dense_vector({dims})"),
             FieldKind::Binary => "binary".to_owned(),
+            FieldKind::GeoPoint => "geo_point".to_owned(),
             FieldKind::Text => "text".to_owned(),
         }
     }
 }
 
-/// Suffix → [`FieldKind`] rules from conf/mapping.json (ES) and
-/// conf/os_mapping.json (OpenSearch adds the larger knn_vector dims).
-pub const ES_FIELD_SUFFIX_RULES: &[(&str, FieldKind)] = &[
+/// Search-engine mapping whose dynamic-template order is being evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMappingFlavor {
+    Elasticsearch,
+    OpenSearch,
+}
+
+/// Common non-vector suffix rules shared by the fixed ES and OpenSearch files.
+/// Regex templates and vectors are kept separate because the two files differ.
+pub const SEARCH_FIELD_SUFFIX_RULES: &[(&str, FieldKind)] = &[
     ("_int", FieldKind::Int),
     ("_ulong", FieldKind::Ulong),
     ("_long", FieldKind::Long),
@@ -806,57 +805,109 @@ pub const ES_FIELD_SUFFIX_RULES: &[(&str, FieldKind)] = &[
     ("_list", FieldKind::UnindexedText),
     ("_fea", FieldKind::RankFeature),
     ("_feas", FieldKind::RankFeatures),
-    ("_512_vec", FieldKind::DenseVector(512)),
-    ("_768_vec", FieldKind::DenseVector(768)),
-    ("_1024_vec", FieldKind::DenseVector(1024)),
-    ("_1536_vec", FieldKind::DenseVector(1536)),
-    // Skill-index explicit properties (conf/skill_es_mapping.json q_*_vec).
-    ("_2560_vec", FieldKind::DenseVector(2560)),
-    ("_3072_vec", FieldKind::DenseVector(3072)),
-    // OpenSearch-only dims (conf/os_mapping.json knn_vector templates).
-    ("_2048_vec", FieldKind::DenseVector(2048)),
-    ("_4096_vec", FieldKind::DenseVector(4096)),
-    ("_6144_vec", FieldKind::DenseVector(6144)),
-    ("_8192_vec", FieldKind::DenseVector(8192)),
-    ("_10240_vec", FieldKind::DenseVector(10240)),
     ("_bin", FieldKind::Binary),
 ];
 
-/// Regex rules from the ES `kwd` / `dt` dynamic templates. Kept as exact
-/// string patterns for documentation; `es_field_kind` applies them when no
-/// suffix rule matches.
-pub const ES_FIELD_REGEX_RULES: &[(&str, FieldKind)] = &[
-    (r"^(.*_(kwd|id|ids|uid|uids)|uid|id)$", FieldKind::Keyword),
-    (r"^.*(_dt|_time|_at)$", FieldKind::DateTime),
-];
+/// Exact vector dimensions from fixed `conf/mapping.json`.
+pub const ES_CHUNK_VECTOR_DIMENSIONS: &[u64] = &[512, 768, 1024, 1536];
 
-/// Resolve an ES/OpenSearch field kind for a chunk field name, mirroring the
-/// dynamic-template evaluation order (regex templates are tried in order).
-pub fn es_field_kind(field: &str) -> FieldKind {
-    for (suffix, kind) in ES_FIELD_SUFFIX_RULES {
+/// Exact vector dimensions from fixed `conf/os_mapping.json`.
+pub const OPENSEARCH_CHUNK_VECTOR_DIMENSIONS: &[u64] =
+    &[512, 768, 1024, 1536, 2048, 4096, 6144, 8192, 10240];
+
+/// Exact keyword regex from fixed `conf/mapping.json`.
+pub const ES_CHUNK_KEYWORD_PATTERN: &str = r"^(.*_(kwd|id|ids|uid|uids)|uid|id)$";
+
+/// Exact keyword regex from fixed `conf/os_mapping.json`. Unlike ES, a bare
+/// `id` is not captured and therefore remains dynamically mapped text.
+pub const OPENSEARCH_CHUNK_KEYWORD_PATTERN: &str = r"^(.*_(kwd|id|ids|uid|uids)|uid)$";
+
+pub const SEARCH_CHUNK_DATE_PATTERN: &str = r"^.*(_dt|_time|_at)$";
+pub const SEARCH_CHUNK_DATE_FORMAT: &str = "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||yyyy-MM-dd_HH:mm:ss";
+pub const SEARCH_CHUNK_SCRIPTED_SIMILARITY: &str = "double idf = Math.log(1+(field.docCount-term.docFreq+0.5)/(term.docFreq + 0.5))/Math.log(1+((field.docCount-0.5)/1.5)); return query.boost * idf * Math.min(doc.freq, 1);";
+pub const SEARCH_CHUNK_NUMBER_OF_SHARDS: u8 = 2;
+pub const SEARCH_CHUNK_NUMBER_OF_REPLICAS: u8 = 0;
+pub const SEARCH_CHUNK_REFRESH_INTERVAL: &str = "1000ms";
+pub const SEARCH_CHUNK_DATE_DETECTION: &str = "true";
+
+pub const ES_CHUNK_MAPPING_UPSTREAM_BLOB: &str = "495f7c7763cfbfd6ad1847df63005d8b86be339a";
+pub const ES_CHUNK_MAPPING_UPSTREAM_SHA256: &str =
+    "c6991ef11034289e79d9b7b8dabb37f650b041b7e215e17357d4f167660f7b82";
+pub const ES_CHUNK_MAPPING_UPSTREAM_BYTES: usize = 4_453;
+pub const ES_CHUNK_MAPPING_UPSTREAM_LINES: usize = 212;
+pub const OPENSEARCH_CHUNK_MAPPING_UPSTREAM_BLOB: &str = "47b7c24b0f53a6e9cea08b7b10d2bf8027cad6bb";
+pub const OPENSEARCH_CHUNK_MAPPING_UPSTREAM_SHA256: &str =
+    "e06d7f2d9e2d39d70dc791a88118d328743b5bbd52adb1fd9deb4e58e730f97d";
+pub const OPENSEARCH_CHUNK_MAPPING_UPSTREAM_BYTES: usize = 5_766;
+pub const OPENSEARCH_CHUNK_MAPPING_UPSTREAM_LINES: usize = 268;
+
+/// Resolve a fixed ES/OpenSearch field kind, mirroring dynamic-template order.
+pub fn search_field_kind(flavor: SearchMappingFlavor, field: &str) -> FieldKind {
+    if field == "lat_lon" {
+        return FieldKind::GeoPoint;
+    }
+    for (suffix, kind) in SEARCH_FIELD_SUFFIX_RULES {
         if field.ends_with(suffix) {
             return *kind;
         }
     }
-    for (pattern, kind) in ES_FIELD_REGEX_RULES {
-        if regex_matches(pattern, field) {
-            return *kind;
-        }
+    let keyword_pattern = match flavor {
+        SearchMappingFlavor::Elasticsearch => ES_CHUNK_KEYWORD_PATTERN,
+        SearchMappingFlavor::OpenSearch => OPENSEARCH_CHUNK_KEYWORD_PATTERN,
+    };
+    if regex_matches(keyword_pattern, field) {
+        return FieldKind::Keyword;
+    }
+    if regex_matches(SEARCH_CHUNK_DATE_PATTERN, field) {
+        return FieldKind::DateTime;
+    }
+    let dimensions = match flavor {
+        SearchMappingFlavor::Elasticsearch => ES_CHUNK_VECTOR_DIMENSIONS,
+        SearchMappingFlavor::OpenSearch => OPENSEARCH_CHUNK_VECTOR_DIMENSIONS,
+    };
+    if let Some(dims) = vector_field_dimension(field)
+        && dimensions.contains(&dims)
+    {
+        return FieldKind::DenseVector(dims);
     }
     FieldKind::Text
 }
 
-/// Postgres/zvec column type for a chunk field (RayRAG's storage backend).
+pub fn es_field_kind(field: &str) -> FieldKind {
+    search_field_kind(SearchMappingFlavor::Elasticsearch, field)
+}
+
+pub fn opensearch_field_kind(field: &str) -> FieldKind {
+    search_field_kind(SearchMappingFlavor::OpenSearch, field)
+}
+
+/// PostgreSQL/zvec replacement column kind. The replacement deliberately
+/// accepts any positive `q_<dimension>_vec`, while the fixed native mappings
+/// remain restricted to their respective dimension lists above.
 pub fn zvec_column_kind(field: &str) -> String {
-    match es_field_kind(field) {
+    let kind = vector_field_dimension(field)
+        .map(FieldKind::DenseVector)
+        .unwrap_or_else(|| es_field_kind(field));
+    match kind {
         FieldKind::Int | FieldKind::Short => "INTEGER".to_owned(),
         FieldKind::Ulong | FieldKind::Long => "BIGINT".to_owned(),
         FieldKind::Float => "REAL".to_owned(),
         FieldKind::DenseVector(dims) => format!("VECTOR({dims})"),
         FieldKind::Binary => "BYTEA".to_owned(),
+        FieldKind::GeoPoint => "JSONB".to_owned(),
         FieldKind::Nested | FieldKind::Object => "JSONB".to_owned(),
         _ => "TEXT".to_owned(),
     }
+}
+
+fn vector_field_dimension(field: &str) -> Option<u64> {
+    field
+        .strip_suffix("_vec")?
+        .rsplit('_')
+        .next()?
+        .parse::<u64>()
+        .ok()
+        .filter(|dimension| *dimension > 0)
 }
 
 /// Tiny regex subset for the two documented ES templates (`^...$` anchors,
@@ -871,9 +922,12 @@ fn regex_matches(pattern: &str, field: &str) -> bool {
     }
     // ^(.*_(kwd|id|ids|uid|uids)|uid|id)$ — the ES `kwd` template: any field
     // ending in one of the keyword suffixes, or exactly `uid` / `id`.
-    if body == "(.*_(kwd|id|ids|uid|uids)|uid|id)" {
+    if matches!(
+        body,
+        "(.*_(kwd|id|ids|uid|uids)|uid|id)" | "(.*_(kwd|id|ids|uid|uids)|uid)"
+    ) {
         return field == "uid"
-            || field == "id"
+            || (body.ends_with("|id)") && field == "id")
             || ["_kwd", "_id", "_ids", "_uid", "_uids"]
                 .iter()
                 .any(|suffix| field.ends_with(suffix));
@@ -888,106 +942,928 @@ fn regex_matches(pattern: &str, field: &str) -> bool {
     body == field
 }
 
-/// doc_meta index fields — ES (conf/doc_meta_es_mapping.json) and Infinity
-/// (conf/doc_meta_infinity_mapping.json): `(field, type)`.
-pub const DOC_META_FIELDS: &[(&str, &str)] = &[
-    ("id", "keyword | varchar"),
-    ("kb_id", "keyword | varchar"),
-    ("meta_fields", "object(dynamic) | json"),
+/// Exact fixed-version settings from `conf/doc_meta_es_mapping.json`.
+pub const DOC_META_ES_NUMBER_OF_SHARDS: u8 = 2;
+pub const DOC_META_ES_NUMBER_OF_REPLICAS: u8 = 0;
+pub const DOC_META_ES_REFRESH_INTERVAL: &str = "1000ms";
+pub const DOC_META_ES_SOURCE_ENABLED: bool = true;
+pub const DOC_META_ES_DYNAMIC: &str = "runtime";
+
+/// One field shared by the ES and Infinity document-metadata schemas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocMetaFieldSchema {
+    pub name: &'static str,
+    pub es_type: &'static str,
+    pub es_store: bool,
+    pub es_dynamic: bool,
+    pub infinity_type: &'static str,
+    pub infinity_default: &'static str,
+}
+
+/// Exact field/type/default contract shared by
+/// `conf/doc_meta_es_mapping.json` and `conf/doc_meta_infinity_mapping.json`.
+pub const DOC_META_FIELDS: &[DocMetaFieldSchema] = &[
+    DocMetaFieldSchema {
+        name: "id",
+        es_type: "keyword",
+        es_store: true,
+        es_dynamic: false,
+        infinity_type: "varchar",
+        infinity_default: "",
+    },
+    DocMetaFieldSchema {
+        name: "kb_id",
+        es_type: "keyword",
+        es_store: true,
+        es_dynamic: false,
+        infinity_type: "varchar",
+        infinity_default: "",
+    },
+    DocMetaFieldSchema {
+        name: "meta_fields",
+        es_type: "object",
+        es_store: false,
+        es_dynamic: true,
+        infinity_type: "json",
+        infinity_default: "{}",
+    },
 ];
 
-/// Infinity chunk fields — conf/infinity_mapping.json: `(field, type)`.
-pub const INFINITY_CHUNK_FIELDS: &[(&str, &str)] = &[
-    ("id", "varchar"),
-    ("doc_id", "varchar"),
-    ("kb_id", "varchar, secondary idx"),
-    ("mom_id", "varchar"),
-    ("mom", "varchar"),
-    ("create_time", "varchar"),
-    ("create_timestamp_flt", "float"),
-    ("img_id", "varchar"),
-    ("docnm", "varchar, analyzer rag-coarse|rag-fine"),
-    ("name_kwd", "varchar, whitespace-#"),
-    ("tag_kwd", "varchar, whitespace-#"),
-    ("important_kwd_empty_count", "integer"),
-    ("important_keywords", "varchar, analyzer"),
-    ("questions", "varchar, analyzer"),
-    ("content", "varchar, analyzer"),
-    ("authors", "varchar, analyzer"),
-    ("page_num_int", "varchar"),
-    ("top_int", "varchar"),
-    ("position_int", "varchar"),
-    ("weight_int", "integer"),
-    ("weight_flt", "float"),
-    ("chunk_order_int", "integer"),
-    ("rank_int", "integer"),
-    ("rank_flt", "float"),
-    ("available_int", "integer, secondary idx"),
-    ("knowledge_graph_kwd", "varchar"),
-    ("entities_kwd", "varchar, whitespace-#"),
-    ("pagerank_fea", "integer"),
-    ("tag_feas", "varchar, rankfeatures"),
-    ("from_entity_kwd", "varchar, whitespace-#"),
-    ("to_entity_kwd", "varchar, whitespace-#"),
-    ("entity_kwd", "varchar, whitespace-#"),
-    ("entity_type_kwd", "varchar, whitespace-#"),
-    ("source_id", "varchar, whitespace-#"),
-    ("n_hop_with_weight", "varchar"),
-    ("mom_with_weight", "varchar"),
-    ("removed_kwd", "varchar, whitespace-#"),
-    ("doc_type_kwd", "varchar, whitespace-#"),
-    ("toc_kwd", "varchar, whitespace-#"),
-    ("raptor_kwd", "varchar, whitespace-#"),
-    ("raptor_layer_int", "integer"),
+/// Fixed Git identity of `conf/infinity_mapping.json`.
+pub const INFINITY_CHUNK_UPSTREAM_BLOB: &str = "dfc07d2e44814c392929301ae71e3972bca14748";
+pub const INFINITY_CHUNK_UPSTREAM_BYTES: usize = 5_413;
+pub const INFINITY_CHUNK_UPSTREAM_LINES: usize = 76;
+
+/// Exact JSON default kind used by one base Infinity chunk column.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InfinityChunkDefault {
+    Text(&'static str),
+    Integer(i64),
+    Float(f64),
+}
+
+/// The mapping distinguishes a single analyzer string from an analyzer array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InfinityChunkAnalyzer {
+    None,
+    Single(&'static str),
+    Multiple(&'static [&'static str]),
+}
+
+/// One ordered base column from `conf/infinity_mapping.json`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InfinityChunkFieldSchema {
+    pub name: &'static str,
+    pub infinity_type: &'static str,
+    pub default: InfinityChunkDefault,
+    pub analyzer: InfinityChunkAnalyzer,
+    /// Comma-separated logical aliases used by Infinity's SQL rewriter.
+    pub comment: Option<&'static str>,
+    /// Present only for the two `secondary` indexes in the fixed mapping.
+    pub secondary_cardinality: Option<&'static str>,
+}
+
+const INFINITY_RAG_ANALYZERS: &[&str] = &["rag-coarse", "rag-fine"];
+const INFINITY_WHITESPACE_HASH: InfinityChunkAnalyzer =
+    InfinityChunkAnalyzer::Single("whitespace-#");
+
+const fn infinity_chunk_field(
+    name: &'static str,
+    infinity_type: &'static str,
+    default: InfinityChunkDefault,
+    analyzer: InfinityChunkAnalyzer,
+    comment: Option<&'static str>,
+    secondary_cardinality: Option<&'static str>,
+) -> InfinityChunkFieldSchema {
+    InfinityChunkFieldSchema {
+        name,
+        infinity_type,
+        default,
+        analyzer,
+        comment,
+        secondary_cardinality,
+    }
+}
+
+const fn infinity_text(name: &'static str) -> InfinityChunkFieldSchema {
+    infinity_chunk_field(
+        name,
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::None,
+        None,
+        None,
+    )
+}
+
+const fn infinity_whitespace(name: &'static str) -> InfinityChunkFieldSchema {
+    infinity_chunk_field(
+        name,
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        INFINITY_WHITESPACE_HASH,
+        None,
+        None,
+    )
+}
+
+const fn infinity_integer(name: &'static str, default: i64) -> InfinityChunkFieldSchema {
+    infinity_chunk_field(
+        name,
+        "integer",
+        InfinityChunkDefault::Integer(default),
+        InfinityChunkAnalyzer::None,
+        None,
+        None,
+    )
+}
+
+const fn infinity_float(name: &'static str, default: f64) -> InfinityChunkFieldSchema {
+    infinity_chunk_field(
+        name,
+        "float",
+        InfinityChunkDefault::Float(default),
+        InfinityChunkAnalyzer::None,
+        None,
+        None,
+    )
+}
+
+/// All 73 ordered base columns from the fixed mapping. The dimension-specific
+/// vector and optional table-parser `chunk_data` columns are added at runtime.
+pub const INFINITY_CHUNK_FIELDS: &[InfinityChunkFieldSchema] = &[
+    infinity_text("id"),
+    infinity_text("doc_id"),
+    infinity_chunk_field(
+        "kb_id",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::None,
+        None,
+        Some("low"),
+    ),
+    infinity_text("mom_id"),
+    infinity_text("mom"),
+    infinity_text("create_time"),
+    infinity_float("create_timestamp_flt", 0.0),
+    infinity_text("img_id"),
+    infinity_chunk_field(
+        "docnm",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS),
+        Some("docnm_kwd, title_tks, title_sm_tks"),
+        None,
+    ),
+    infinity_whitespace("name_kwd"),
+    infinity_whitespace("tag_kwd"),
+    infinity_integer("important_kwd_empty_count", 0),
+    infinity_chunk_field(
+        "important_keywords",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS),
+        Some("important_kwd, important_tks"),
+        None,
+    ),
+    infinity_chunk_field(
+        "questions",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS),
+        Some("question_kwd, question_tks"),
+        None,
+    ),
+    infinity_chunk_field(
+        "content",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS),
+        Some("content_with_weight, content_ltks, content_sm_ltks"),
+        None,
+    ),
+    infinity_chunk_field(
+        "authors",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS),
+        Some("authors_tks, authors_sm_tks"),
+        None,
+    ),
+    infinity_text("page_num_int"),
+    infinity_text("top_int"),
+    infinity_text("position_int"),
+    infinity_integer("weight_int", 0),
+    infinity_float("weight_flt", 0.0),
+    infinity_integer("chunk_order_int", 0),
+    infinity_integer("rank_int", 0),
+    infinity_float("rank_flt", 0.0),
+    infinity_chunk_field(
+        "available_int",
+        "integer",
+        InfinityChunkDefault::Integer(1),
+        InfinityChunkAnalyzer::None,
+        None,
+        Some("low"),
+    ),
+    infinity_text("knowledge_graph_kwd"),
+    infinity_whitespace("entities_kwd"),
+    infinity_integer("pagerank_fea", 0),
+    infinity_chunk_field(
+        "tag_feas",
+        "varchar",
+        InfinityChunkDefault::Text(""),
+        InfinityChunkAnalyzer::Single("rankfeatures"),
+        None,
+        None,
+    ),
+    infinity_whitespace("from_entity_kwd"),
+    infinity_whitespace("to_entity_kwd"),
+    infinity_whitespace("entity_kwd"),
+    infinity_whitespace("entity_type_kwd"),
+    infinity_whitespace("source_id"),
+    infinity_text("n_hop_with_weight"),
+    infinity_text("mom_with_weight"),
+    infinity_whitespace("removed_kwd"),
+    infinity_whitespace("doc_type_kwd"),
+    infinity_whitespace("toc_kwd"),
+    infinity_whitespace("raptor_kwd"),
+    infinity_integer("raptor_layer_int", 0),
+    infinity_text("extra"),
+    infinity_whitespace("compile_kwd"),
+    infinity_whitespace("source_chunk_ids"),
+    infinity_whitespace("source_doc_ids"),
+    infinity_whitespace("compilation_template_ids"),
+    infinity_whitespace("compilation_template_kind_kwd"),
+    infinity_whitespace("chunk_hash_kwd"),
+    infinity_whitespace("input_hash_kwd"),
+    infinity_whitespace("artifact_slug_kwd"),
+    infinity_text("md_with_weight"),
+    infinity_text("summary_with_weight"),
+    infinity_text("skill_with_weight"),
+    infinity_whitespace("skill_kwd"),
+    infinity_whitespace("children_kwd"),
+    infinity_whitespace("doc_ids_kwd"),
+    infinity_whitespace("slug_kwd"),
+    infinity_whitespace("title_kwd"),
+    infinity_whitespace("page_type_kwd"),
+    infinity_whitespace("entity_names_kwd"),
+    infinity_whitespace("outlinks_kwd"),
+    infinity_whitespace("related_kb_pages_kwd"),
+    infinity_whitespace("type_kwd"),
+    infinity_whitespace("from_kwd"),
+    infinity_whitespace("to_kwd"),
+    infinity_whitespace("rechunk_kwd"),
+    infinity_text("rechunked_from_template_id"),
+    infinity_whitespace("rechunked_from_chunk_ids"),
+    infinity_text("superseded_by_chunk_id"),
+    infinity_integer("doc_count_int", 0),
+    infinity_integer("depth_int", 0),
+    infinity_integer("outlinks_int", 0),
+    infinity_integer("token_num", 0),
 ];
 
-/// Infinity memory-message fields — conf/message_infinity_mapping.json.
-pub const MESSAGE_INFINITY_FIELDS: &[(&str, &str)] = &[
-    ("id", "varchar"),
-    ("message_id", "integer"),
-    ("message_type_kwd", "varchar"),
-    ("source_id", "integer"),
-    ("memory_id", "varchar"),
-    ("user_id", "varchar"),
-    ("agent_id", "varchar"),
-    ("session_id", "varchar"),
-    ("valid_at", "varchar"),
-    ("valid_at_flt", "float"),
-    ("invalid_at", "varchar"),
-    ("invalid_at_flt", "float"),
-    ("forget_at", "varchar"),
-    ("forget_at_flt", "float"),
-    ("status_int", "integer"),
-    ("zone_id", "integer"),
-    ("content", "varchar, analyzer"),
+pub const INFINITY_CHUNK_VECTOR_FIELD_PREFIX: &str = "q_";
+pub const INFINITY_CHUNK_VECTOR_FIELD_SUFFIX: &str = "_vec";
+pub const INFINITY_CHUNK_VECTOR_ELEMENT_TYPE: &str = "float";
+pub const INFINITY_CHUNK_VECTOR_INDEX_SUFFIX: &str = "_idx";
+/// Fixed Python connector index name. Go deliberately uses the dimensioned
+/// name returned by [`infinity_chunk_vector_index`].
+pub const INFINITY_CHUNK_PYTHON_VECTOR_INDEX: &str = "q_vec_idx";
+pub const INFINITY_CHUNK_VECTOR_INDEX_TYPE: &str = "hnsw";
+pub const INFINITY_CHUNK_VECTOR_INDEX_M: u8 = 16;
+pub const INFINITY_CHUNK_VECTOR_INDEX_EF_CONSTRUCTION: u8 = 50;
+pub const INFINITY_CHUNK_VECTOR_INDEX_METRIC: &str = "cosine";
+pub const INFINITY_CHUNK_VECTOR_INDEX_ENCODING: &str = "lvq";
+pub const INFINITY_CHUNK_DATA_FIELD: &str = "chunk_data";
+pub const INFINITY_CHUNK_DATA_TYPE: &str = "json";
+pub const INFINITY_CHUNK_DATA_DEFAULT: &str = "{}";
+
+pub fn infinity_chunk_vector_field(dimension: usize) -> String {
+    format!("{INFINITY_CHUNK_VECTOR_FIELD_PREFIX}{dimension}{INFINITY_CHUNK_VECTOR_FIELD_SUFFIX}")
+}
+
+pub fn infinity_chunk_vector_index(dimension: usize) -> String {
+    format!(
+        "{}{INFINITY_CHUNK_VECTOR_INDEX_SUFFIX}",
+        infinity_chunk_vector_field(dimension)
+    )
+}
+
+pub fn infinity_chunk_secondary_index(field: &str) -> String {
+    format!("sec_{field}")
+}
+
+fn infinity_index_fragment(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+pub fn infinity_chunk_fulltext_index(field: &str, analyzer: &str) -> String {
+    format!(
+        "ft_{}_{}",
+        infinity_index_fragment(field),
+        infinity_index_fragment(analyzer)
+    )
+}
+
+/// Resolve a SQL-facing logical alias (for example `content_ltks`) to the
+/// physical base column (`content`) declared by the mapping comment.
+pub fn infinity_chunk_field_for_alias(alias: &str) -> Option<&'static str> {
+    INFINITY_CHUNK_FIELDS.iter().find_map(|field| {
+        field.comment.and_then(|comment| {
+            comment
+                .split(',')
+                .map(str::trim)
+                .any(|candidate| candidate == alias)
+                .then_some(field.name)
+        })
+    })
+}
+
+/// JSON default value used by one fixed Infinity message field.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MessageInfinityDefault {
+    Text(&'static str),
+    Integer(i64),
+    Float(f64),
+}
+
+/// One exact base column from `conf/message_infinity_mapping.json`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MessageInfinityFieldSchema {
+    pub name: &'static str,
+    pub infinity_type: &'static str,
+    pub default: MessageInfinityDefault,
+    pub analyzers: &'static [&'static str],
+    pub comment: Option<&'static str>,
+}
+
+const NO_ANALYZERS: &[&str] = &[];
+const MESSAGE_CONTENT_ANALYZERS: &[&str] = &["rag-coarse", "rag-fine"];
+
+/// Exact 17-column base schema from the fixed-version message mapping.
+/// Infinity adds the dimension-specific vector column at table creation.
+pub const MESSAGE_INFINITY_FIELDS: &[MessageInfinityFieldSchema] = &[
+    MessageInfinityFieldSchema {
+        name: "id",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "message_id",
+        infinity_type: "integer",
+        default: MessageInfinityDefault::Integer(0),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "message_type_kwd",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "source_id",
+        infinity_type: "integer",
+        default: MessageInfinityDefault::Integer(0),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "memory_id",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "user_id",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "agent_id",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "session_id",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "valid_at",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "valid_at_flt",
+        infinity_type: "float",
+        default: MessageInfinityDefault::Float(0.0),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "invalid_at",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "invalid_at_flt",
+        infinity_type: "float",
+        default: MessageInfinityDefault::Float(0.0),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "forget_at",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "forget_at_flt",
+        infinity_type: "float",
+        default: MessageInfinityDefault::Float(0.0),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "status_int",
+        infinity_type: "integer",
+        default: MessageInfinityDefault::Integer(1),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "zone_id",
+        infinity_type: "integer",
+        default: MessageInfinityDefault::Integer(0),
+        analyzers: NO_ANALYZERS,
+        comment: None,
+    },
+    MessageInfinityFieldSchema {
+        name: "content",
+        infinity_type: "varchar",
+        default: MessageInfinityDefault::Text(""),
+        analyzers: MESSAGE_CONTENT_ANALYZERS,
+        comment: Some("content_ltks"),
+    },
 ];
 
-/// Skill-store fields — ES (conf/skill_es_mapping.json) and Infinity
-/// (conf/skill_infinity_mapping.json): `(field, type)`.
-pub const SKILL_FIELDS: &[(&str, &str)] = &[
-    ("skill_id", "keyword | varchar, secondary idx"),
-    ("space_id", "keyword | varchar, secondary idx"),
-    ("folder_id", "keyword | varchar"),
-    ("name", "text(index=false) | varchar, analyzer"),
-    ("name_tks", "text(whitespace,scripted_sim) | —"),
-    ("tags", "text(index=false) | varchar, analyzer"),
-    ("tags_tks", "text(whitespace,scripted_sim) | —"),
-    ("description", "text(index=false) | varchar, analyzer"),
-    ("description_tks", "text(whitespace,scripted_sim) | —"),
-    ("content", "text(index=false) | varchar, analyzer"),
-    ("content_tks", "text(whitespace,scripted_sim) | —"),
-    ("q_256_vec", "dense_vector(256) | —"),
-    ("q_512_vec", "dense_vector(512) | —"),
-    ("q_768_vec", "dense_vector(768) | —"),
-    ("q_1024_vec", "dense_vector(1024) | —"),
-    ("q_1536_vec", "dense_vector(1536) | —"),
-    ("q_2560_vec", "dense_vector(2560) | —"),
-    ("q_3072_vec", "dense_vector(3072) | —"),
-    ("version", "keyword | varchar"),
-    ("status", "keyword | varchar"),
-    ("create_time", "long | bigint"),
-    ("update_time", "long | bigint"),
+pub const MESSAGE_INFINITY_VECTOR_FIELD_PREFIX: &str = "q_";
+pub const MESSAGE_INFINITY_VECTOR_FIELD_SUFFIX: &str = "_vec";
+pub const MESSAGE_INFINITY_VECTOR_ELEMENT_TYPE: &str = "float";
+pub const MESSAGE_INFINITY_VECTOR_INDEX_NAME: &str = "q_vec_idx";
+pub const MESSAGE_INFINITY_VECTOR_INDEX_TYPE: &str = "hnsw";
+pub const MESSAGE_INFINITY_VECTOR_INDEX_M: u8 = 16;
+pub const MESSAGE_INFINITY_VECTOR_INDEX_EF_CONSTRUCTION: u8 = 50;
+pub const MESSAGE_INFINITY_VECTOR_INDEX_METRIC: &str = "cosine";
+pub const MESSAGE_INFINITY_VECTOR_INDEX_ENCODING: &str = "lvq";
+
+/// One explicit property kind from the fixed `conf/skill_es_mapping.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillEsFieldType {
+    Keyword,
+    Text,
+    DenseVector(usize),
+    Long,
+}
+
+impl SkillEsFieldType {
+    fn es_name(self) -> &'static str {
+        match self {
+            Self::Keyword => "keyword",
+            Self::Text => "text",
+            Self::DenseVector(_) => "dense_vector",
+            Self::Long => "long",
+        }
+    }
+}
+
+/// One exact property declaration from the fixed Skill ES mapping. `None`
+/// means the key is omitted so Elasticsearch applies its native default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkillEsFieldSchema {
+    pub name: &'static str,
+    pub field_type: SkillEsFieldType,
+    pub indexed: Option<bool>,
+    pub stored: Option<bool>,
+    pub analyzer: Option<&'static str>,
+    pub similarity: Option<&'static str>,
+}
+
+pub const SKILL_ES_NUMBER_OF_SHARDS: u8 = 1;
+pub const SKILL_ES_NUMBER_OF_REPLICAS: u8 = 0;
+pub const SKILL_ES_REFRESH_INTERVAL: &str = "1000ms";
+pub const SKILL_ES_DYNAMIC: bool = false;
+pub const SKILL_ES_TOKEN_ANALYZER: &str = "whitespace";
+pub const SKILL_ES_TOKEN_SIMILARITY: &str = "scripted_sim";
+pub const SKILL_ES_SIMILARITY_TYPE: &str = "scripted";
+pub const SKILL_ES_SIMILARITY_SCRIPT: &str = "double idf = Math.log(1+(field.docCount-term.docFreq+0.5)/(term.docFreq + 0.5))/Math.log(1+((field.docCount-0.5)/1.5)); return query.boost * idf * Math.min(doc.freq, 1);";
+pub const SKILL_ES_VECTOR_SIMILARITY: &str = "cosine";
+pub const SKILL_ES_VECTOR_DIMS: &[usize] = &[3072, 2560, 1536, 1024, 768, 512, 256];
+
+const fn skill_es_field(
+    name: &'static str,
+    field_type: SkillEsFieldType,
+    indexed: Option<bool>,
+    stored: Option<bool>,
+    analyzer: Option<&'static str>,
+    similarity: Option<&'static str>,
+) -> SkillEsFieldSchema {
+    SkillEsFieldSchema {
+        name,
+        field_type,
+        indexed,
+        stored,
+        analyzer,
+        similarity,
+    }
+}
+
+/// Exact ordered 22-property schema from `conf/skill_es_mapping.json`.
+pub const SKILL_ES_FIELDS: &[SkillEsFieldSchema] = &[
+    skill_es_field(
+        "skill_id",
+        SkillEsFieldType::Keyword,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "space_id",
+        SkillEsFieldType::Keyword,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "folder_id",
+        SkillEsFieldType::Keyword,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "name",
+        SkillEsFieldType::Text,
+        Some(false),
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "name_tks",
+        SkillEsFieldType::Text,
+        None,
+        Some(true),
+        Some(SKILL_ES_TOKEN_ANALYZER),
+        Some(SKILL_ES_TOKEN_SIMILARITY),
+    ),
+    skill_es_field(
+        "tags",
+        SkillEsFieldType::Text,
+        Some(false),
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "tags_tks",
+        SkillEsFieldType::Text,
+        None,
+        Some(true),
+        Some(SKILL_ES_TOKEN_ANALYZER),
+        Some(SKILL_ES_TOKEN_SIMILARITY),
+    ),
+    skill_es_field(
+        "description",
+        SkillEsFieldType::Text,
+        Some(false),
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "description_tks",
+        SkillEsFieldType::Text,
+        None,
+        Some(true),
+        Some(SKILL_ES_TOKEN_ANALYZER),
+        Some(SKILL_ES_TOKEN_SIMILARITY),
+    ),
+    skill_es_field(
+        "content",
+        SkillEsFieldType::Text,
+        Some(false),
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "content_tks",
+        SkillEsFieldType::Text,
+        None,
+        Some(true),
+        Some(SKILL_ES_TOKEN_ANALYZER),
+        Some(SKILL_ES_TOKEN_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_3072_vec",
+        SkillEsFieldType::DenseVector(3072),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_2560_vec",
+        SkillEsFieldType::DenseVector(2560),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_1536_vec",
+        SkillEsFieldType::DenseVector(1536),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_1024_vec",
+        SkillEsFieldType::DenseVector(1024),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_768_vec",
+        SkillEsFieldType::DenseVector(768),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_512_vec",
+        SkillEsFieldType::DenseVector(512),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "q_256_vec",
+        SkillEsFieldType::DenseVector(256),
+        Some(true),
+        None,
+        None,
+        Some(SKILL_ES_VECTOR_SIMILARITY),
+    ),
+    skill_es_field(
+        "version",
+        SkillEsFieldType::Keyword,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "status",
+        SkillEsFieldType::Keyword,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "create_time",
+        SkillEsFieldType::Long,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
+    skill_es_field(
+        "update_time",
+        SkillEsFieldType::Long,
+        None,
+        Some(true),
+        None,
+        None,
+    ),
 ];
+
+/// Materialize the exact fixed Skill ES mapping. RayRAG does not deploy ES;
+/// this value is the audited schema contract used by the Rust replacement.
+pub fn skill_es_mapping() -> Value {
+    let mut properties = serde_json::Map::new();
+    for field in SKILL_ES_FIELDS {
+        let mut property = serde_json::Map::new();
+        property.insert(
+            "type".into(),
+            Value::String(field.field_type.es_name().into()),
+        );
+        if let SkillEsFieldType::DenseVector(dims) = field.field_type {
+            property.insert("dims".into(), Value::from(dims));
+        }
+        if let Some(indexed) = field.indexed {
+            property.insert("index".into(), Value::Bool(indexed));
+        }
+        if let Some(stored) = field.stored {
+            property.insert("store".into(), Value::Bool(stored));
+        }
+        if let Some(analyzer) = field.analyzer {
+            property.insert("analyzer".into(), Value::String(analyzer.into()));
+        }
+        if let Some(similarity) = field.similarity {
+            property.insert("similarity".into(), Value::String(similarity.into()));
+        }
+        properties.insert(field.name.into(), Value::Object(property));
+    }
+    serde_json::json!({
+        "settings": {
+            "index": {
+                "number_of_shards": SKILL_ES_NUMBER_OF_SHARDS,
+                "number_of_replicas": SKILL_ES_NUMBER_OF_REPLICAS,
+                "refresh_interval": SKILL_ES_REFRESH_INTERVAL,
+            },
+            "similarity": {
+                SKILL_ES_TOKEN_SIMILARITY: {
+                    "type": SKILL_ES_SIMILARITY_TYPE,
+                    "script": { "source": SKILL_ES_SIMILARITY_SCRIPT },
+                },
+            },
+        },
+        "mappings": {
+            "dynamic": SKILL_ES_DYNAMIC,
+            "properties": properties,
+        },
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SkillInfinityDefault {
+    Text(&'static str),
+    BigInt(i64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkillInfinityFieldSchema {
+    pub name: &'static str,
+    pub infinity_type: &'static str,
+    pub default: SkillInfinityDefault,
+    pub analyzers: &'static [&'static str],
+    pub index_type: Option<&'static str>,
+}
+
+pub const SKILL_INFINITY_ANALYZERS: &[&str] = &["rag-coarse", "rag-fine"];
+
+/// Exact ordered columns from `conf/skill_infinity_mapping.json`.
+pub const SKILL_INFINITY_FIELDS: &[SkillInfinityFieldSchema] = &[
+    SkillInfinityFieldSchema {
+        name: "skill_id",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        index_type: Some("secondary"),
+    },
+    SkillInfinityFieldSchema {
+        name: "space_id",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        index_type: Some("secondary"),
+    },
+    SkillInfinityFieldSchema {
+        name: "folder_id",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: NO_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "name",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: SKILL_INFINITY_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "tags",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: SKILL_INFINITY_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "description",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: SKILL_INFINITY_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "content",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text(""),
+        analyzers: SKILL_INFINITY_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "version",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text("1.0.0"),
+        analyzers: NO_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "status",
+        infinity_type: "varchar",
+        default: SkillInfinityDefault::Text("1"),
+        analyzers: NO_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "create_time",
+        infinity_type: "bigint",
+        default: SkillInfinityDefault::BigInt(0),
+        analyzers: NO_ANALYZERS,
+        index_type: None,
+    },
+    SkillInfinityFieldSchema {
+        name: "update_time",
+        infinity_type: "bigint",
+        default: SkillInfinityDefault::BigInt(0),
+        analyzers: NO_ANALYZERS,
+        index_type: None,
+    },
+];
+
+pub const SKILL_INFINITY_VECTOR_FIELD_PREFIX: &str = "q_";
+pub const SKILL_INFINITY_VECTOR_FIELD_SUFFIX: &str = "_vec";
+pub const SKILL_INFINITY_VECTOR_ELEMENT_TYPE: &str = "float";
+pub const SKILL_INFINITY_VECTOR_INDEX_SUFFIX: &str = "_idx";
+pub const SKILL_INFINITY_VECTOR_INDEX_TYPE: &str = "hnsw";
+pub const SKILL_INFINITY_VECTOR_INDEX_M: u8 = 16;
+pub const SKILL_INFINITY_VECTOR_INDEX_EF_CONSTRUCTION: u8 = 50;
+pub const SKILL_INFINITY_VECTOR_INDEX_METRIC: &str = "cosine";
+pub const SKILL_INFINITY_VECTOR_INDEX_ENCODING: &str = "lvq";
+pub const SKILL_INFINITY_SECONDARY_INDEX_PREFIX: &str = "sec_";
+pub const SKILL_INFINITY_FULLTEXT_INDEX_PREFIX: &str = "ft_";
+
+pub fn skill_infinity_vector_field(dimension: usize) -> String {
+    format!("{SKILL_INFINITY_VECTOR_FIELD_PREFIX}{dimension}{SKILL_INFINITY_VECTOR_FIELD_SUFFIX}")
+}
+
+pub fn skill_infinity_vector_index_name(dimension: usize) -> String {
+    format!(
+        "{}{SKILL_INFINITY_VECTOR_INDEX_SUFFIX}",
+        skill_infinity_vector_field(dimension)
+    )
+}
+
+pub fn skill_infinity_secondary_index_name(field: &str) -> String {
+    format!("{SKILL_INFINITY_SECONDARY_INDEX_PREFIX}{field}")
+}
+
+pub fn skill_infinity_fulltext_index_name(field: &str, analyzer: &str) -> String {
+    format!(
+        "{SKILL_INFINITY_FULLTEXT_INDEX_PREFIX}{field}_{}",
+        analyzer.replace('-', "_")
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -1102,10 +1978,7 @@ mod tests {
             padded.push('x');
         }
         // padded != today and len >= 32 → accepted (Python: key != str(date.today())).
-        assert_eq!(
-            init_secret_key(None, Some(&padded)),
-            Some(padded.clone())
-        );
+        assert_eq!(init_secret_key(None, Some(&padded)), Some(padded.clone()));
         let configured = "abcdef0123456789abcdef0123456789";
         assert_eq!(
             init_secret_key(None, Some(configured)),
@@ -1145,7 +2018,10 @@ mod tests {
         assert_eq!(resolved.name, "qwen-max@volcengine");
         assert_eq!(resolved.factory.as_deref(), Some("volcengine"));
         assert_eq!(resolved.api_key.as_deref(), Some("k"));
-        assert_eq!(resolved.base_url.as_deref(), Some("https://ark.cn-beijing.volces.com"));
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://ark.cn-beijing.volces.com")
+        );
 
         // A bare-name entry picks up the backup factory and composes name@factory.
         let bare = parse_model_entry(&Value::String("bge-m3".into()));
@@ -1228,7 +2104,10 @@ mod tests {
         assert!(settings.llm_factory.is_empty());
         conf.apply_to_settings(&mut settings);
         assert_eq!(settings.llm_factory, "ZHIPU-AI");
-        assert_eq!(settings.llm_base_url, "https://open.bigmodel.cn/api/paas/v4");
+        assert_eq!(
+            settings.llm_base_url,
+            "https://open.bigmodel.cn/api/paas/v4"
+        );
         let embedding = settings.default_models.get("embedding_model").unwrap();
         assert_eq!(embedding.name, "embedding-3@ZHIPU-AI");
         assert_eq!(embedding.factory.as_deref(), Some("ZHIPU-AI"));
@@ -1242,17 +2121,26 @@ mod tests {
         assert_eq!(es_field_kind("rank_flt"), FieldKind::Float);
         assert_eq!(es_field_kind("content_ltks"), FieldKind::LongTokens);
         assert_eq!(es_field_kind("content_tks"), FieldKind::Tokens);
-        assert_eq!(es_field_kind("content_with_weight"), FieldKind::UnindexedText);
+        assert_eq!(
+            es_field_kind("content_with_weight"),
+            FieldKind::UnindexedText
+        );
         assert_eq!(es_field_kind("tag_list"), FieldKind::UnindexedText);
         assert_eq!(es_field_kind("pagerank_fea"), FieldKind::RankFeature);
         assert_eq!(es_field_kind("tag_feas"), FieldKind::RankFeatures);
+        assert_eq!(es_field_kind("q_256_vec"), FieldKind::Text);
         assert_eq!(es_field_kind("q_768_vec"), FieldKind::DenseVector(768));
-        assert_eq!(es_field_kind("q_3072_vec"), FieldKind::DenseVector(3072));
-        assert_eq!(es_field_kind("q_10240_vec"), FieldKind::DenseVector(10240));
+        assert_eq!(es_field_kind("q_3072_vec"), FieldKind::Text);
+        assert_eq!(es_field_kind("q_10240_vec"), FieldKind::Text);
+        assert_eq!(
+            opensearch_field_kind("q_10240_vec"),
+            FieldKind::DenseVector(10240)
+        );
         assert_eq!(es_field_kind("blob_bin"), FieldKind::Binary);
         // Regex templates: *_(kwd|id|ids|uid|uids)|uid|id → keyword.
         assert_eq!(es_field_kind("docnm_kwd"), FieldKind::Keyword);
         assert_eq!(es_field_kind("id"), FieldKind::Keyword);
+        assert_eq!(opensearch_field_kind("id"), FieldKind::Text);
         assert_eq!(es_field_kind("kb_id"), FieldKind::Keyword);
         assert_eq!(es_field_kind("user_id"), FieldKind::Keyword);
         // Regex templates: *(_dt|_time|_at) → date.
@@ -1267,14 +2155,341 @@ mod tests {
         assert_eq!(zvec_column_kind("q_768_vec"), "VECTOR(768)");
         assert_eq!(zvec_column_kind("content_tks"), "TEXT");
         assert_eq!(zvec_column_kind("blob_bin"), "BYTEA");
-        // Field tables match the conf files' field counts.
-        assert_eq!(INFINITY_CHUNK_FIELDS.len(), 41);
+        // All 73 ordered base fields from conf/infinity_mapping.json.
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .map(|field| field.name)
+                .collect::<Vec<_>>(),
+            vec![
+                "id",
+                "doc_id",
+                "kb_id",
+                "mom_id",
+                "mom",
+                "create_time",
+                "create_timestamp_flt",
+                "img_id",
+                "docnm",
+                "name_kwd",
+                "tag_kwd",
+                "important_kwd_empty_count",
+                "important_keywords",
+                "questions",
+                "content",
+                "authors",
+                "page_num_int",
+                "top_int",
+                "position_int",
+                "weight_int",
+                "weight_flt",
+                "chunk_order_int",
+                "rank_int",
+                "rank_flt",
+                "available_int",
+                "knowledge_graph_kwd",
+                "entities_kwd",
+                "pagerank_fea",
+                "tag_feas",
+                "from_entity_kwd",
+                "to_entity_kwd",
+                "entity_kwd",
+                "entity_type_kwd",
+                "source_id",
+                "n_hop_with_weight",
+                "mom_with_weight",
+                "removed_kwd",
+                "doc_type_kwd",
+                "toc_kwd",
+                "raptor_kwd",
+                "raptor_layer_int",
+                "extra",
+                "compile_kwd",
+                "source_chunk_ids",
+                "source_doc_ids",
+                "compilation_template_ids",
+                "compilation_template_kind_kwd",
+                "chunk_hash_kwd",
+                "input_hash_kwd",
+                "artifact_slug_kwd",
+                "md_with_weight",
+                "summary_with_weight",
+                "skill_with_weight",
+                "skill_kwd",
+                "children_kwd",
+                "doc_ids_kwd",
+                "slug_kwd",
+                "title_kwd",
+                "page_type_kwd",
+                "entity_names_kwd",
+                "outlinks_kwd",
+                "related_kb_pages_kwd",
+                "type_kwd",
+                "from_kwd",
+                "to_kwd",
+                "rechunk_kwd",
+                "rechunked_from_template_id",
+                "rechunked_from_chunk_ids",
+                "superseded_by_chunk_id",
+                "doc_count_int",
+                "depth_int",
+                "outlinks_int",
+                "token_num",
+            ]
+        );
+        assert_eq!(INFINITY_CHUNK_UPSTREAM_BYTES, 5_413);
+        assert_eq!(INFINITY_CHUNK_UPSTREAM_LINES, 76);
+        assert_eq!(INFINITY_CHUNK_UPSTREAM_BLOB.len(), 40);
+        assert_eq!(INFINITY_CHUNK_FIELDS.len(), 73);
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.infinity_type == "varchar")
+                .count(),
+            59
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.infinity_type == "integer")
+                .count(),
+            11
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.infinity_type == "float")
+                .count(),
+            3
+        );
+        let fulltext_indexes = INFINITY_CHUNK_FIELDS
+            .iter()
+            .map(|field| match field.analyzer {
+                InfinityChunkAnalyzer::None => 0,
+                InfinityChunkAnalyzer::Single(_) => 1,
+                InfinityChunkAnalyzer::Multiple(analyzers) => analyzers.len(),
+            })
+            .sum::<usize>();
+        assert_eq!(fulltext_indexes, 45);
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.secondary_cardinality.is_some())
+                .count(),
+            2
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.comment.is_some())
+                .count(),
+            5
+        );
+        assert_eq!(INFINITY_CHUNK_FIELDS[2].secondary_cardinality, Some("low"));
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[24].default,
+            InfinityChunkDefault::Integer(1)
+        );
+        assert_eq!(INFINITY_CHUNK_FIELDS[24].secondary_cardinality, Some("low"));
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[8].analyzer,
+            InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS)
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[9].analyzer,
+            InfinityChunkAnalyzer::Single("whitespace-#")
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[28].analyzer,
+            InfinityChunkAnalyzer::Single("rankfeatures")
+        );
+        assert_eq!(
+            infinity_chunk_field_for_alias("content_ltks"),
+            Some("content")
+        );
+        assert_eq!(
+            infinity_chunk_field_for_alias("title_sm_tks"),
+            Some("docnm")
+        );
+        assert_eq!(infinity_chunk_field_for_alias("missing"), None);
+        assert_eq!(infinity_chunk_vector_field(1024), "q_1024_vec");
+        assert_eq!(infinity_chunk_vector_index(1024), "q_1024_vec_idx");
+        assert_eq!(INFINITY_CHUNK_PYTHON_VECTOR_INDEX, "q_vec_idx");
+        assert_eq!(infinity_chunk_secondary_index("kb_id"), "sec_kb_id");
+        assert_eq!(
+            infinity_chunk_fulltext_index("content", "whitespace-#"),
+            "ft_content_whitespace__"
+        );
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_TYPE, "hnsw");
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_M, 16);
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_EF_CONSTRUCTION, 50);
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_METRIC, "cosine");
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_ENCODING, "lvq");
+        assert_eq!(INFINITY_CHUNK_DATA_FIELD, "chunk_data");
+        assert_eq!(INFINITY_CHUNK_DATA_TYPE, "json");
+        assert_eq!(INFINITY_CHUNK_DATA_DEFAULT, "{}");
         assert_eq!(MESSAGE_INFINITY_FIELDS.len(), 17);
-        assert_eq!(SKILL_FIELDS.len(), 22);
+        assert_eq!(MESSAGE_INFINITY_FIELDS[0].name, "id");
+        assert_eq!(MESSAGE_INFINITY_FIELDS[0].infinity_type, "varchar");
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[0].default,
+            MessageInfinityDefault::Text("")
+        );
+        assert_eq!(MESSAGE_INFINITY_FIELDS[9].name, "valid_at_flt");
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[9].default,
+            MessageInfinityDefault::Float(0.0)
+        );
+        assert_eq!(MESSAGE_INFINITY_FIELDS[14].name, "status_int");
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[14].default,
+            MessageInfinityDefault::Integer(1)
+        );
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[16].analyzers,
+            ["rag-coarse", "rag-fine"]
+        );
+        assert_eq!(MESSAGE_INFINITY_FIELDS[16].comment, Some("content_ltks"));
+        assert_eq!(MESSAGE_INFINITY_VECTOR_FIELD_PREFIX, "q_");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_FIELD_SUFFIX, "_vec");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_ELEMENT_TYPE, "float");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_NAME, "q_vec_idx");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_TYPE, "hnsw");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_M, 16);
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_EF_CONSTRUCTION, 50);
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_METRIC, "cosine");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_ENCODING, "lvq");
+        let skill_es = skill_es_mapping();
+        assert_eq!(skill_es["settings"]["index"]["number_of_shards"], 1);
+        assert_eq!(skill_es["settings"]["index"]["number_of_replicas"], 0);
+        assert_eq!(skill_es["settings"]["index"]["refresh_interval"], "1000ms");
+        assert_eq!(
+            skill_es["settings"]["similarity"]["scripted_sim"]["type"],
+            "scripted"
+        );
+        assert_eq!(
+            skill_es["settings"]["similarity"]["scripted_sim"]["script"]["source"],
+            SKILL_ES_SIMILARITY_SCRIPT
+        );
+        assert_eq!(skill_es["mappings"]["dynamic"], false);
+        let skill_es_properties = skill_es["mappings"]["properties"].as_object().unwrap();
+        assert_eq!(skill_es_properties.len(), 22);
+        assert_eq!(SKILL_ES_FIELDS.len(), 22);
+        assert_eq!(
+            skill_es_properties
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::HashSet<_>>(),
+            SKILL_ES_FIELDS
+                .iter()
+                .map(|field| field.name)
+                .collect::<std::collections::HashSet<_>>()
+        );
+        for field in ["name", "tags", "description", "content"] {
+            assert_eq!(skill_es_properties[field]["type"], "text");
+            assert_eq!(skill_es_properties[field]["index"], false);
+            assert_eq!(skill_es_properties[field]["store"], true);
+            let token_field = format!("{field}_tks");
+            assert_eq!(skill_es_properties[&token_field]["analyzer"], "whitespace");
+            assert_eq!(
+                skill_es_properties[&token_field]["similarity"],
+                "scripted_sim"
+            );
+            assert_eq!(skill_es_properties[&token_field]["store"], true);
+        }
+        assert_eq!(
+            SKILL_ES_VECTOR_DIMS,
+            [3072, 2560, 1536, 1024, 768, 512, 256]
+        );
+        for dims in SKILL_ES_VECTOR_DIMS {
+            let vector_field = format!("q_{dims}_vec");
+            assert_eq!(skill_es_properties[&vector_field]["type"], "dense_vector");
+            assert_eq!(skill_es_properties[&vector_field]["dims"], *dims);
+            assert_eq!(skill_es_properties[&vector_field]["index"], true);
+            assert_eq!(skill_es_properties[&vector_field]["similarity"], "cosine");
+            assert!(skill_es_properties[&vector_field].get("store").is_none());
+        }
+        assert_eq!(SKILL_INFINITY_FIELDS.len(), 11);
+        assert_eq!(SKILL_INFINITY_FIELDS[0].name, "skill_id");
+        assert_eq!(SKILL_INFINITY_FIELDS[0].infinity_type, "varchar");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[0].default,
+            SkillInfinityDefault::Text("")
+        );
+        assert_eq!(SKILL_INFINITY_FIELDS[0].index_type, Some("secondary"));
+        assert_eq!(SKILL_INFINITY_FIELDS[1].name, "space_id");
+        assert_eq!(SKILL_INFINITY_FIELDS[1].index_type, Some("secondary"));
+        for field in &SKILL_INFINITY_FIELDS[3..=6] {
+            assert_eq!(field.analyzers, ["rag-coarse", "rag-fine"]);
+        }
+        assert_eq!(SKILL_INFINITY_FIELDS[7].name, "version");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[7].default,
+            SkillInfinityDefault::Text("1.0.0")
+        );
+        assert_eq!(SKILL_INFINITY_FIELDS[8].name, "status");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[8].default,
+            SkillInfinityDefault::Text("1")
+        );
+        assert_eq!(SKILL_INFINITY_FIELDS[9].infinity_type, "bigint");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[9].default,
+            SkillInfinityDefault::BigInt(0)
+        );
+        assert_eq!(SKILL_INFINITY_VECTOR_FIELD_PREFIX, "q_");
+        assert_eq!(SKILL_INFINITY_VECTOR_FIELD_SUFFIX, "_vec");
+        assert_eq!(SKILL_INFINITY_VECTOR_ELEMENT_TYPE, "float");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_SUFFIX, "_idx");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_TYPE, "hnsw");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_M, 16);
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_EF_CONSTRUCTION, 50);
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_METRIC, "cosine");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_ENCODING, "lvq");
+        assert_eq!(SKILL_INFINITY_SECONDARY_INDEX_PREFIX, "sec_");
+        assert_eq!(SKILL_INFINITY_FULLTEXT_INDEX_PREFIX, "ft_");
+        assert_eq!(skill_infinity_vector_field(1024), "q_1024_vec");
+        assert_eq!(skill_infinity_vector_index_name(1024), "q_1024_vec_idx");
+        assert_eq!(
+            skill_infinity_secondary_index_name("skill_id"),
+            "sec_skill_id"
+        );
+        assert_eq!(
+            skill_infinity_secondary_index_name("space_id"),
+            "sec_space_id"
+        );
+        for field in ["name", "tags", "description", "content"] {
+            for analyzer in SKILL_INFINITY_ANALYZERS {
+                assert_eq!(
+                    skill_infinity_fulltext_index_name(field, analyzer),
+                    format!("ft_{field}_{}", analyzer.replace('-', "_"))
+                );
+            }
+        }
         assert_eq!(DOC_META_FIELDS.len(), 3);
-        // N/A-by-design markers are documented, not code.
-        assert!(ENGINE_MAPPING_NOTE.contains("N/A-by-design"));
-        assert!(SIGNING_KEYS_POLICY.contains("NOT ported"));
-        assert!(SIGNING_KEYS_POLICY.contains("RAGFLOW_SECRET_KEY"));
+        assert_eq!(DOC_META_ES_NUMBER_OF_SHARDS, 2);
+        assert_eq!(DOC_META_ES_NUMBER_OF_REPLICAS, 0);
+        assert_eq!(DOC_META_ES_REFRESH_INTERVAL, "1000ms");
+        assert_eq!(
+            serde_json::to_value(DOC_META_ES_SOURCE_ENABLED).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(DOC_META_ES_DYNAMIC, "runtime");
+        assert_eq!(DOC_META_FIELDS[0].name, "id");
+        assert_eq!(DOC_META_FIELDS[0].es_type, "keyword");
+        assert!(DOC_META_FIELDS[0].es_store);
+        assert_eq!(DOC_META_FIELDS[0].infinity_type, "varchar");
+        assert_eq!(DOC_META_FIELDS[0].infinity_default, "");
+        assert_eq!(DOC_META_FIELDS[2].name, "meta_fields");
+        assert_eq!(DOC_META_FIELDS[2].es_type, "object");
+        assert!(DOC_META_FIELDS[2].es_dynamic);
+        assert_eq!(DOC_META_FIELDS[2].infinity_type, "json");
+        assert_eq!(DOC_META_FIELDS[2].infinity_default, "{}");
+        // Replacement markers document the actual JSON/PostgreSQL/zvec split.
+        assert!(ENGINE_MAPPING_NOTE.contains("optional opaque PostgreSQL 18 mirror"));
+        assert!(ENGINE_MAPPING_NOTE.contains("isolated collections"));
+        assert!(PASSWORD_TRANSPORT_KEYS_POLICY.contains("not JWT signing keys"));
+        assert!(PASSWORD_TRANSPORT_KEYS_POLICY.contains("RAYRAG_PASSWORD_PRIVATE_KEY_FILE"));
+        assert!(PASSWORD_TRANSPORT_KEYS_POLICY.contains("Argon2id"));
     }
 }

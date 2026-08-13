@@ -173,6 +173,7 @@ impl SearchEngine {
         crate::persistence::restore_if_missing(std::path::Path::new(path))?;
         let data = std::fs::read_to_string(path)?;
         let chunks: Vec<IndexedChunk> = serde_json::from_str(&data)?;
+        crate::store::search_mapping::validate_replacement_snapshot(&chunks)?;
         tracing::info!("Loaded {} chunks from {}", chunks.len(), path);
         Ok(Self { chunks })
     }

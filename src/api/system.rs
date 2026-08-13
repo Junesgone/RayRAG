@@ -492,6 +492,7 @@ pub struct ModelConfig {
     pub provider_id: String,
     pub instance_id: String,
     pub instance_name: String,
+    pub selector: String,
     pub max_tokens: Option<u64>,
 }
 
@@ -509,15 +510,22 @@ pub async fn list_models(
         )
             .into_response();
     }
-    let providers = state.providers.list_configured();
+    let providers: Vec<_> = state
+        .providers
+        .list_configured()
+        .into_iter()
+        .filter(|provider| provider.enabled)
+        .collect();
     let instances = state.tenant_models.list_configured(tenant_id);
     let mut models = Vec::new();
     for instance in instances {
-        let provider_name = providers
+        let Some(provider_name) = providers
             .iter()
             .find(|provider| provider.id == instance.provider_id)
             .map(|provider| provider.name.clone())
-            .unwrap_or_else(|| instance.provider_id.clone());
+        else {
+            continue;
+        };
         for model in instance.models.into_iter().filter(|model| model.enabled) {
             for model_type in model.model_types {
                 models.push(ModelConfig {
@@ -531,6 +539,10 @@ pub async fn list_models(
                     provider_id: instance.provider_id.clone(),
                     instance_id: instance.instance_id.clone(),
                     instance_name: instance.instance_name.clone(),
+                    selector: format!(
+                        "{}@{}@{}",
+                        model.name, instance.instance_name, provider_name
+                    ),
                     max_tokens: model.max_tokens,
                 });
             }

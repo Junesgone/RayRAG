@@ -2425,7 +2425,6 @@ pub const RAGFLOW_META_FILTER_PROMPT: &str = r#"You are a metadata filtering con
 - User query: "{user_question}"
 - Operator constraints: {constraints}"#;
 
-
 // ── Fallback LLM ────────────────────────────────────────────────
 
 /// Multi-LLM client with fallback strategy.
@@ -3806,8 +3805,30 @@ mod tests {
     fn test_ragflow_qa_prompts_registered() {
         // Every RAGFlow QA-stage port is resolvable via get() and listed by list().
         let listed = PromptLibrary::list();
-        for name in ["citation_prompt", "citation_plus", "full_question", "multi_queries_gen", "next_step", "reflect", "rank_memory", "content_tagging_prompt", "cross_languages_sys", "cross_languages_user", "analyze_task_system", "analyze_task_user", "ask_summary", "assign_toc_levels", "keyword_prompt", "question_prompt", "meta_data", "meta_filter"] {
-            assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+        for name in [
+            "citation_prompt",
+            "citation_plus",
+            "full_question",
+            "multi_queries_gen",
+            "next_step",
+            "reflect",
+            "rank_memory",
+            "content_tagging_prompt",
+            "cross_languages_sys",
+            "cross_languages_user",
+            "analyze_task_system",
+            "analyze_task_user",
+            "ask_summary",
+            "assign_toc_levels",
+            "keyword_prompt",
+            "question_prompt",
+            "meta_data",
+            "meta_filter",
+        ] {
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
             assert!(listed.contains(&name), "not listed: {name}");
         }
     }
@@ -3825,7 +3846,10 @@ mod tests {
 
         // full_question: conversation + relative-date variables.
         let mut v2 = HashMap::new();
-        v2.insert("conversation", "USER: What is the capital of France?\nASSISTANT: Paris.");
+        v2.insert(
+            "conversation",
+            "USER: What is the capital of France?\nASSISTANT: Paris.",
+        );
         v2.insert("today", "2026-08-05");
         v2.insert("yesterday", "2026-08-04");
         v2.insert("tomorrow", "2026-08-06");
@@ -3850,7 +3874,10 @@ mod tests {
         let mut v4 = HashMap::new();
         v4.insert("topn", "3");
         v4.insert("all_tags", "tech, business, tutorial");
-        v4.insert("examples", "# Examples 0\n### Text Content\nExample text\n\nOutput:\n{\"tech\": 9}");
+        v4.insert(
+            "examples",
+            "# Examples 0\n### Text Content\nExample text\n\nOutput:\n{\"tech\": 9}",
+        );
         v4.insert("content", "Rust systems programming.");
         let out4 = PromptLibrary::content_tagging_prompt().render(&v4);
         assert!(out4.contains("tech, business, tutorial"));
@@ -3874,13 +3901,20 @@ mod tests {
         // Verbatim RAGFlow originals: citation rules + Chinese text preserved.
         let citation = PromptLibrary::citation_prompt();
         assert!(citation.content().contains("[ID:i] [ID:j]"));
-        assert!(citation.content().contains("Maximum 4 citations per sentence"));
+        assert!(
+            citation
+                .content()
+                .contains("Maximum 4 citations per sentence")
+        );
 
         let cross = PromptLibrary::cross_languages_sys();
         assert!(cross.content().contains("你好世界")); // zh example kept verbatim
 
         let ask = PromptLibrary::ask_summary();
-        assert!(ask.content().contains("Sorry, no relevant information provided"));
+        assert!(
+            ask.content()
+                .contains("Sorry, no relevant information provided")
+        );
         assert!(ask.content().contains("Miss R"));
 
         let meta = PromptLibrary::meta_data();
@@ -3928,7 +3962,10 @@ mod tests {
             "vision_llm_figure_describe",
             "vision_llm_figure_describe_with_context",
         ] {
-            assert!(PromptLibrary::get(name).is_some(), "missing template: {name}");
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
             assert!(listed.contains(&name), "not listed: {name}");
         }
     }
@@ -3986,21 +4023,31 @@ mod tests {
         let sys_zh = PromptLibrary::resume_system();
         assert!(sys_zh.content().contains("专业的简历分析助手"));
         let sys_en = PromptLibrary::resume_system_en();
-        assert!(sys_en.content().contains("professional resume analysis assistant"));
+        assert!(
+            sys_en
+                .content()
+                .contains("professional resume analysis assistant")
+        );
         // resume_work_exp (zh) keeps the stop-heading list.
         let work_zh = PromptLibrary::resume_work_exp();
         assert!(work_zh.content().contains("个人评价"));
         assert!(work_zh.content().contains("desc_lines"));
         // toc_from_text_system keeps the heading-numbering regexes verbatim.
         let toc_fts = PromptLibrary::toc_from_text_system();
-        assert!(toc_fts.content().contains("第[一二三四五六七八九十百]+(篇|章|节|条)"));
+        assert!(
+            toc_fts
+                .content()
+                .contains("第[一二三四五六七八九十百]+(篇|章|节|条)")
+        );
         // summary4memory keeps the response template.
         let s4m = PromptLibrary::summary4memory();
-        assert!(s4m.content().contains("[Status] + [Key Outcome] + [Critical Constraints]"));
+        assert!(
+            s4m.content()
+                .contains("[Status] + [Key Outcome] + [Critical Constraints]")
+        );
         // sufficiency_check keeps the JSON output keys.
         let suff = PromptLibrary::sufficiency_check();
         assert!(suff.content().contains("is_sufficient"));
         assert!(suff.content().contains("missing_information"));
     }
-
 }

@@ -73,11 +73,37 @@ pub struct SandboxClient {
 
 impl Default for SandboxClient {
     fn default() -> Self {
-        // executor_manager_url 配置优先，其次旧环境变量 RAYRAG_SANDBOX_HOST
+        let setting = crate::api::runtime_config::system_settings_get("sandbox.self_managed")
+            .and_then(|value| value.as_object().cloned());
+        // Existing RayRAG environment overrides stay authoritative; the
+        // durable RAGFlow system setting is the production fallback.
         let url = std::env::var("RAYRAG_EXECUTOR_MANAGER_URL")
             .or_else(|_| std::env::var("RAYRAG_SANDBOX_HOST"))
-            .unwrap_or_else(|_| "http://127.0.0.1:9385".to_string());
-        Self::new(&url)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                setting.as_ref().and_then(|config| {
+                    config
+                        .get("endpoint")
+                        .or_else(|| config.get("EXECUTOR_MANAGER_URL"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+            })
+            .unwrap_or_else(|| "http://127.0.0.1:9385".to_string());
+        let timeout = std::env::var("RAYRAG_SANDBOX_TIMEOUT")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .or_else(|| {
+                setting.as_ref().and_then(|config| {
+                    config
+                        .get("timeout")
+                        .or_else(|| config.get("EXECUTOR_MANAGER_TIMEOUT"))
+                        .and_then(json_u64)
+                })
+            })
+            .unwrap_or(30);
+        Self::with_timeout(&url, timeout)
     }
 }
 
@@ -87,6 +113,10 @@ impl SandboxClient {
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .unwrap_or(30);
+        Self::with_timeout(base_url, timeout_secs)
+    }
+
+    fn with_timeout(base_url: &str, timeout_secs: u64) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
@@ -143,6 +173,12 @@ impl SandboxClient {
         let body: Value = response.json().await?;
         Ok(parse_run_response(&body))
     }
+}
+
+fn json_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
 /// 语言规范化（对齐 SelfManagedProvider._normalize_language：python/python3 → python，

@@ -220,7 +220,10 @@ impl ChannelRegistry {
 
     /// Register a channel builder by platform name (RAGFlow `register_channel`).
     pub async fn register(&self, name: &str, builder: ChannelBuilder) {
-        self.builders.write().await.insert(name.to_string(), builder);
+        self.builders
+            .write()
+            .await
+            .insert(name.to_string(), builder);
     }
 
     /// Sorted platform names with a registered builder
@@ -290,9 +293,9 @@ impl ChannelRegistry {
                 }
                 match builder(&account_id, &serde_json::Value::Object(merged)) {
                     Ok(channel) => instances.push(channel),
-                    Err(error) => error!(
-                        "failed to build channel '{name}' account '{account_id}': {error:#}"
-                    ),
+                    Err(error) => {
+                        error!("failed to build channel '{name}' account '{account_id}': {error:#}")
+                    }
                 }
             }
         }
@@ -321,9 +324,9 @@ impl ChannelRegistry {
                     info!("started chat channel {platform}:{account}");
                     started.push((platform, account));
                 }
-                Err(error) => error!(
-                    "failed to start chat channel {platform}:{account}: {error:#}"
-                ),
+                Err(error) => {
+                    error!("failed to start chat channel {platform}:{account}: {error:#}")
+                }
             }
         }
         started
@@ -763,8 +766,12 @@ impl Channel for FeishuChannel {
     }
 
     async fn send_markdown(&self, message: &OutgoingMessage) -> anyhow::Result<()> {
-        self.send_content("interactive", &Self::markdown_content(&message.text), message)
-            .await
+        self.send_content(
+            "interactive",
+            &Self::markdown_content(&message.text),
+            message,
+        )
+        .await
     }
 
     /// Feishu inbound: URL-verification challenge + v2.0 message event
@@ -1034,7 +1041,10 @@ mod tests {
             }
         });
         let started = registry.start_all(&config).await;
-        assert_eq!(started, vec![("webhook".to_string(), "default".to_string())]);
+        assert_eq!(
+            started,
+            vec![("webhook".to_string(), "default".to_string())]
+        );
         assert!(registry.get_running("default").await.is_some());
 
         let received = Arc::new(StdMutex::new(Vec::<IncomingMessage>::new()));

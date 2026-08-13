@@ -1513,7 +1513,10 @@ impl CodeExecutionResult {
             memory_used_kb: self.memory_used_kb,
             detail: self.detail,
             artifacts: self.artifacts,
-            result_present: structured.as_ref().map(|result| result.present).unwrap_or(false),
+            result_present: structured
+                .as_ref()
+                .map(|result| result.present)
+                .unwrap_or(false),
             result_value: structured.as_ref().and_then(|result| result.value.clone()),
             result_type: structured.map(|result| result.r#type),
         }
@@ -1599,8 +1602,8 @@ impl RemoteSandboxConfig {
             .ok()
             .filter(|value| !value.trim().is_empty());
         if let Some(host) = host {
-            let port =
-                std::env::var("SANDBOX_EXECUTOR_MANAGER_PORT").unwrap_or_else(|_| "9385".to_string());
+            let port = std::env::var("SANDBOX_EXECUTOR_MANAGER_PORT")
+                .unwrap_or_else(|_| "9385".to_string());
             config.endpoint = format!("http://{host}:{port}");
         }
         if let Ok(pool) = std::env::var("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE") {
@@ -1775,7 +1778,10 @@ mod remote_tests {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(payload["code_b64"].as_str().unwrap())
             .unwrap();
-        assert_eq!(String::from_utf8(decoded).unwrap(), "def main():\n    return 1\n");
+        assert_eq!(
+            String::from_utf8(decoded).unwrap(),
+            "def main():\n    return 1\n"
+        );
     }
 
     #[test]
@@ -1801,14 +1807,20 @@ mod remote_tests {
         assert_eq!(remote.memory_used_kb, Some(2048.0));
         assert!(remote.result_present);
         assert_eq!(remote.result_type.as_deref(), Some("json"));
-        assert_eq!(remote.result_value.as_ref().unwrap().get("sum"), Some(&json!(103)));
+        assert_eq!(
+            remote.result_value.as_ref().unwrap().get("sum"),
+            Some(&json!(103))
+        );
     }
 
     #[test]
     fn handler_failure_results_match_run_code_handler() {
         // 安全检查分支（对齐 handlers.py：-999 / program_runner_error / "Code is unsafe"）
         let unsafe_result = unsafe_code_result("Line 1: Import: os");
-        assert_eq!(unsafe_result.status, ResultStatus::ProgramRunnerError.as_str());
+        assert_eq!(
+            unsafe_result.status,
+            ResultStatus::ProgramRunnerError.as_str()
+        );
         assert_eq!(unsafe_result.exit_code, exit_codes::UNSAFE_CODE);
         assert_eq!(unsafe_result.detail.as_deref(), Some("Code is unsafe"));
         assert_eq!(unsafe_result.stderr, "Line 1: Import: os");

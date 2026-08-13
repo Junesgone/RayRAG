@@ -402,7 +402,10 @@ pub async fn download_doc(
             let disposition = format!("attachment; filename=\"{filename}\"");
             let headers = [
                 (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
-                (axum::http::header::CONTENT_DISPOSITION, disposition.as_str()),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    disposition.as_str(),
+                ),
             ];
             (headers, bytes).into_response()
         }

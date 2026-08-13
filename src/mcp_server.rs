@@ -197,14 +197,18 @@ impl McpServerConfig {
         if let Ok(value) = std::env::var("RAGFLOW_MCP_HOST_API_KEY") {
             config.host_api_key = value;
         }
-        config.sse_enabled =
-            Self::parse_bool_flag(&std::env::var("RAGFLOW_MCP_TRANSPORT_SSE_ENABLED").unwrap_or_default(), true);
+        config.sse_enabled = Self::parse_bool_flag(
+            &std::env::var("RAGFLOW_MCP_TRANSPORT_SSE_ENABLED").unwrap_or_default(),
+            true,
+        );
         config.streamable_http_enabled = Self::parse_bool_flag(
             &std::env::var("RAGFLOW_MCP_TRANSPORT_STREAMABLE_ENABLED").unwrap_or_default(),
             true,
         );
-        config.json_response =
-            Self::parse_bool_flag(&std::env::var("RAGFLOW_MCP_JSON_RESPONSE").unwrap_or_default(), true);
+        config.json_response = Self::parse_bool_flag(
+            &std::env::var("RAGFLOW_MCP_JSON_RESPONSE").unwrap_or_default(),
+            true,
+        );
         // server.py: json-response is ignored when streamable HTTP is off.
         if !config.streamable_http_enabled {
             config.json_response = false;
@@ -387,10 +391,18 @@ impl RetrievalBackend for InMemoryRetrievalBackend {
             })
             .filter(|chunk| chunk.score >= request.similarity_threshold)
             .collect();
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let total = hits.len();
         let start = request.page.saturating_sub(1) * request.page_size;
-        let page_hits: Vec<&RetrievedChunk> = hits.into_iter().skip(start).take(request.page_size).collect();
+        let page_hits: Vec<&RetrievedChunk> = hits
+            .into_iter()
+            .skip(start)
+            .take(request.page_size)
+            .collect();
 
         let dataset_names: HashMap<&str, &str> = self
             .datasets
@@ -649,7 +661,10 @@ impl McpServerCore {
                 if is_notification {
                     None
                 } else {
-                    Some(JsonRpcResponseBody::ok(id, json!({ "tools": self.tools() })))
+                    Some(JsonRpcResponseBody::ok(
+                        id,
+                        json!({ "tools": self.tools() }),
+                    ))
                 }
             }
             method::TOOLS_CALL => {
@@ -858,7 +873,10 @@ impl McpSseState {
     /// A state with the default core (in-memory backend) and config — handy
     /// for mounting the router standalone.
     pub fn default() -> Self {
-        Self::new(Arc::new(McpServerCore::default()), McpServerConfig::default())
+        Self::new(
+            Arc::new(McpServerCore::default()),
+            McpServerConfig::default(),
+        )
     }
 
     fn register_session(&self, tx: mpsc::Sender<Event>) -> String {
@@ -1064,17 +1082,22 @@ mod tests {
         let response = core
             .handle_jsonrpc(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
             .expect("tools/list answered");
-        let tools = response.result.unwrap()["tools"].as_array().unwrap().clone();
+        let tools = response.result.unwrap()["tools"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert!(tools.len() >= 3);
         let retrieval = tools
             .iter()
             .find(|tool| tool["name"] == "ragflow_retrieval")
             .expect("ragflow_retrieval registered");
         assert_eq!(retrieval["inputSchema"]["required"][0], "question");
-        assert!(retrieval["description"]
-            .as_str()
-            .unwrap()
-            .contains("Below is the list of all available datasets"));
+        assert!(
+            retrieval["description"]
+                .as_str()
+                .unwrap()
+                .contains("Below is the list of all available datasets")
+        );
 
         // ping → empty result.
         let response = core
@@ -1084,8 +1107,10 @@ mod tests {
 
         // Notifications (no id) never get a response.
         assert!(
-            core.handle_jsonrpc(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
-                .is_none()
+            core.handle_jsonrpc(
+                &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+            )
+            .is_none()
         );
 
         // Unknown method → -32601; malformed envelope → -32600.
@@ -1152,7 +1177,10 @@ mod tests {
                 "params": { "name": "list_datasets", "arguments": {} }
             }))
             .unwrap();
-        let content = response.result.unwrap()["content"].as_array().unwrap().clone();
+        let content = response.result.unwrap()["content"]
+            .as_array()
+            .unwrap()
+            .clone();
         let rows = content[0]["text"].as_str().unwrap();
         assert!(rows.contains("\"id\":\"ds1\""));
 
@@ -1183,18 +1211,27 @@ mod tests {
         assert!(extract_token_from_headers(&headers).is_none());
 
         headers.insert("authorization", header("Bearer abc123"));
-        assert_eq!(extract_token_from_headers(&headers).as_deref(), Some("abc123"));
+        assert_eq!(
+            extract_token_from_headers(&headers).as_deref(),
+            Some("abc123")
+        );
         // Lowercase scheme + surrounding whitespace.
         headers.insert("authorization", header("bearer xyz  "));
         assert_eq!(extract_token_from_headers(&headers).as_deref(), Some("xyz"));
 
         headers.remove("authorization");
         headers.insert("x-api-key", header("key-1"));
-        assert_eq!(extract_token_from_headers(&headers).as_deref(), Some("key-1"));
+        assert_eq!(
+            extract_token_from_headers(&headers).as_deref(),
+            Some("key-1")
+        );
 
         headers.remove("x-api-key");
         headers.insert("api_key", header("key-2"));
-        assert_eq!(extract_token_from_headers(&headers).as_deref(), Some("key-2"));
+        assert_eq!(
+            extract_token_from_headers(&headers).as_deref(),
+            Some("key-2")
+        );
 
         // Host mode without a token → 401; self-host mode never needs one.
         let config = McpServerConfig {
@@ -1203,10 +1240,7 @@ mod tests {
         };
         assert!(resolve_api_key(&config, &HeaderMap::new()).is_err());
         let config = McpServerConfig::default();
-        assert_eq!(
-            resolve_api_key(&config, &HeaderMap::new()).unwrap(),
-            ""
-        );
+        assert_eq!(resolve_api_key(&config, &HeaderMap::new()).unwrap(), "");
         let config = McpServerConfig {
             host_api_key: "ragflow-xxx".into(),
             ..Default::default()
@@ -1220,7 +1254,10 @@ mod tests {
     #[test]
     fn sse_framing_and_endpoint_events_round_trip() {
         let endpoint = sse_endpoint_event("sse-1");
-        assert_eq!(endpoint, "event: endpoint\ndata: /messages/?session_id=sse-1\n\n");
+        assert_eq!(
+            endpoint,
+            "event: endpoint\ndata: /messages/?session_id=sse-1\n\n"
+        );
 
         let payload = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#;
         let frame = sse_message_event(payload);

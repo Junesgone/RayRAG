@@ -160,3 +160,41 @@ pub const AGENT_TEMPLATES: &[(&str, &str, &str, &str)] = &[
 
 /// Number of seeded templates.
 pub const AGENT_TEMPLATE_COUNT: usize = AGENT_TEMPLATES.len();
+
+/// Fixed template metadata uses `canvas_type = "Ingestion Pipeline"` for
+/// these ten templates; the Agent API persists that distinction through
+/// `CanvasCategory.DataFlow` (`dataflow_canvas`).
+pub fn template_canvas_category(slug: &str) -> &'static str {
+    match slug {
+        "advanced_ingestion_pipeline"
+        | "chunk_summary"
+        | "ingestion_pipeline_book"
+        | "ingestion_pipeline_general"
+        | "ingestion_pipeline_laws"
+        | "ingestion_pipeline_manual"
+        | "ingestion_pipeline_one"
+        | "ingestion_pipeline_paper"
+        | "ingestion_pipeline_resume"
+        | "title_chunker" => "dataflow_canvas",
+        _ => "agent_canvas",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_template_categories_preserve_ingestion_pipelines() {
+        assert_eq!(
+            template_canvas_category("advanced_ingestion_pipeline"),
+            "dataflow_canvas"
+        );
+        assert_eq!(template_canvas_category("chunk_summary"), "dataflow_canvas");
+        assert_eq!(template_canvas_category("title_chunker"), "dataflow_canvas");
+        assert_eq!(
+            template_canvas_category("customer_feedback_dispatcher"),
+            "agent_canvas"
+        );
+    }
+}

@@ -6845,7 +6845,14 @@ async fn execute_code_exec_with_provider(
             arguments = map.clone();
         }
     }
-    let provider = std::env::var("RAYRAG_SANDBOX_PROVIDER").unwrap_or_default();
+    let provider = std::env::var("RAYRAG_SANDBOX_PROVIDER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            crate::api::runtime_config::system_settings_get("sandbox.provider_type")
+                .and_then(|value| value.as_str().map(str::to_owned))
+        })
+        .unwrap_or_else(|| "self_managed".into());
     if provider.eq_ignore_ascii_case("local") {
         // 本地沙箱（对齐 RAGFlow LocalProvider）：无外部服务依赖；
         // 本地执行不可用（缺解释器/语言不支持）时回退到远程 executor_manager（local→remote 回退）
@@ -6882,7 +6889,7 @@ async fn execute_code_exec_with_provider(
                 }
             },
         }
-    } else {
+    } else if provider.eq_ignore_ascii_case("self_managed") {
         match run_remote_sandbox(&code, &language, &arguments).await {
             Ok(result) => Ok(process_result(&result)),
             Err(error) => {
@@ -6890,6 +6897,13 @@ async fn execute_code_exec_with_provider(
                 Ok(Map::from_iter([("_ERROR".into(), Value::String(message))]))
             }
         }
+    } else {
+        Ok(Map::from_iter([(
+            "_ERROR".into(),
+            Value::String(format!(
+                "**ERROR**: Unsupported sandbox provider: {provider}"
+            )),
+        )]))
     }
 }
 
@@ -22555,7 +22569,9 @@ pub fn add_retrieval_reference(
     if retrieval.is_empty() {
         retrieval.push(empty_retrieval_slot());
     }
-    let slot = retrieval.last_mut().expect("retrieval slot was just seeded");
+    let slot = retrieval
+        .last_mut()
+        .expect("retrieval slot was just seeded");
     let chunks_map = slot
         .entry("chunks".to_owned())
         .or_insert_with(|| Value::Object(Map::new()));
@@ -22641,7 +22657,10 @@ impl ToolUseTrace {
     pub fn to_value(&self) -> Value {
         let mut entry = Map::new();
         entry.insert("path".to_owned(), Value::String(self.path.clone()));
-        entry.insert("tool_name".to_owned(), Value::String(self.tool_name.clone()));
+        entry.insert(
+            "tool_name".to_owned(),
+            Value::String(self.tool_name.clone()),
+        );
         entry.insert("arguments".to_owned(), self.arguments.clone());
         entry.insert("result".to_owned(), self.result.clone());
         entry.insert(
@@ -22832,7 +22851,10 @@ mod canvas_semantics_tests {
             !end.contains_key("attachment"),
             "non-object attachment skipped"
         );
-        assert!(!end.contains_key("reference"), "no retrieval → no reference");
+        assert!(
+            !end.contains_key("reference"),
+            "no retrieval → no reference"
+        );
     }
 
     #[test]
@@ -22861,7 +22883,10 @@ mod canvas_semantics_tests {
         assert_eq!(clean_tts_text("plain text"), "plain text");
         assert_eq!(clean_tts_text("a\u{0007}b\u{007f}c"), "abc");
         assert_eq!(clean_tts_text("hi 😀 there 🚀"), "hi there");
-        assert_eq!(clean_tts_text("  multi \n  line \t text "), "multi line text");
+        assert_eq!(
+            clean_tts_text("  multi \n  line \t text "),
+            "multi line text"
+        );
         let long = "x".repeat(600);
         assert_eq!(clean_tts_text(&long).chars().count(), 500);
     }

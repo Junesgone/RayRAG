@@ -543,11 +543,13 @@ impl ResearchChunkInfo {
         }
         self.doc_aggs = counts
             .into_iter()
-            .map(|(doc_id, (doc_name, count))| crate::search::DocumentAggregation {
-                doc_name,
-                doc_id,
-                count,
-            })
+            .map(
+                |(doc_id, (doc_name, count))| crate::search::DocumentAggregation {
+                    doc_name,
+                    doc_id,
+                    count,
+                },
+            )
             .collect();
         self.total = self.chunks.len();
     }
@@ -570,7 +572,12 @@ pub fn kb_prompt(
 ) -> String {
     let mut out = String::new();
     for (i, result) in results.iter().take(max_chunks).enumerate() {
-        let content: String = result.chunk.content.chars().take(max_chars_per_chunk).collect();
+        let content: String = result
+            .chunk
+            .content
+            .chars()
+            .take(max_chars_per_chunk)
+            .collect();
         out.push_str(&format!("[{}] {}\n", i + 1, content));
     }
     out
@@ -611,9 +618,9 @@ impl DeepResearchRetriever {
     pub fn new(
         chat: Arc<dyn crate::llm::ChatModel>,
         retrieve: impl Fn(&str) -> anyhow::Result<Vec<crate::search::SearchResult>>
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self {
             chat,
@@ -633,7 +640,11 @@ impl DeepResearchRetriever {
     }
 
     /// Ask the LLM whether the retrieved evidence answers `question`.
-    async fn check_sufficiency(&self, question: &str, evidence: &str) -> anyhow::Result<SufficiencyVerdict> {
+    async fn check_sufficiency(
+        &self,
+        question: &str,
+        evidence: &str,
+    ) -> anyhow::Result<SufficiencyVerdict> {
         let prompt = self
             .sufficiency_prompt
             .replace("{question}", question)
@@ -706,7 +717,11 @@ impl DeepResearchRetriever {
             return Ok(ResearchOutcome::default());
         }
         let results = (self.retrieve)(query)?;
-        let evidence = kb_prompt(&results, self.max_chunks_in_prompt, self.max_chars_per_chunk);
+        let evidence = kb_prompt(
+            &results,
+            self.max_chunks_in_prompt,
+            self.max_chars_per_chunk,
+        );
         let mut outcome = ResearchOutcome {
             text: evidence.clone(),
             chunks: results,
@@ -714,12 +729,7 @@ impl DeepResearchRetriever {
         let verdict = self.check_sufficiency(question, &evidence).await?;
         if !verdict.is_sufficient {
             let plan = self
-                .gen_followups(
-                    question,
-                    query,
-                    &verdict.missing_information,
-                    &evidence,
-                )
+                .gen_followups(question, query, &verdict.missing_information, &evidence)
                 .await?;
             let futures: Vec<_> = plan
                 .questions
@@ -752,7 +762,6 @@ impl DeepResearchRetriever {
         info.merge(&outcome.chunks);
         Ok((outcome, info))
     }
-
 }
 
 /// Default sufficiency-check prompt, ported from
@@ -793,9 +802,9 @@ Retrieved Documents:
 #[cfg(test)]
 mod deep_research_tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use crate::llm::{ChatMessage, ChatModel};
     use crate::search::{IndexedChunk, SearchResult};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FakeChatModel {
         calls: Arc<AtomicUsize>,
@@ -829,7 +838,9 @@ mod deep_research_tests {
         }
     }
 
-    fn fake_retrieve(calls: Arc<AtomicUsize>) -> impl Fn(&str) -> anyhow::Result<Vec<SearchResult>> {
+    fn fake_retrieve(
+        calls: Arc<AtomicUsize>,
+    ) -> impl Fn(&str) -> anyhow::Result<Vec<SearchResult>> {
         move |query: &str| {
             let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
             Ok(vec![SearchResult {
@@ -861,7 +872,11 @@ mod deep_research_tests {
             .deep_research("what is x", "x")
             .await
             .expect("deep research runs");
-        assert_eq!(chat_calls.load(Ordering::SeqCst), 1, "only sufficiency check");
+        assert_eq!(
+            chat_calls.load(Ordering::SeqCst),
+            1,
+            "only sufficiency check"
+        );
         assert_eq!(ret_calls.load(Ordering::SeqCst), 1, "only one retrieval");
         assert!(outcome.text.contains("content for x"));
         assert_eq!(info.total, 1);

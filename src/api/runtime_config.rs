@@ -68,10 +68,16 @@ impl ReloadConfig for RuntimeConfig {
             configs.insert("HTTP_PORT".into(), Value::Number(http_port.into()));
         }
         if let Some(job_server_host) = &self.job_server_host {
-            configs.insert("JOB_SERVER_HOST".into(), Value::String(job_server_host.clone()));
+            configs.insert(
+                "JOB_SERVER_HOST".into(),
+                Value::String(job_server_host.clone()),
+            );
         }
         if let Some(job_server_vip) = &self.job_server_vip {
-            configs.insert("JOB_SERVER_VIP".into(), Value::String(job_server_vip.clone()));
+            configs.insert(
+                "JOB_SERVER_VIP".into(),
+                Value::String(job_server_vip.clone()),
+            );
         }
         if let Some(service_db) = &self.service_db {
             configs.insert("SERVICE_DB".into(), Value::String(service_db.clone()));
@@ -126,12 +132,18 @@ pub fn init_config(entries: &[(&str, Value)]) {
 
 /// `ReloadConfigBase.get_all()` on the global instance.
 pub fn get_all() -> BTreeMap<String, Value> {
-    global().read().expect("runtime config lock poisoned").get_all()
+    global()
+        .read()
+        .expect("runtime config lock poisoned")
+        .get_all()
 }
 
 /// `ReloadConfigBase.get(config_name)` on the global instance.
 pub fn get(name: &str) -> Option<Value> {
-    global().read().expect("runtime config lock poisoned").get(name)
+    global()
+        .read()
+        .expect("runtime config lock poisoned")
+        .get(name)
 }
 
 /// `RuntimeConfig.init_env()` — seed the environment map (version etc.).
@@ -202,6 +214,12 @@ pub fn set_service_db(service_db: String) {
 
 /// The 14 seed rows of RAGFlow `conf/system_settings.json`, verbatim
 /// `(name, source, data_type, value)`.
+pub const SYSTEM_SETTINGS_UPSTREAM_BLOB: &str = "f546aa1436b0d262679a0567b7a61167bfcd43bb";
+pub const SYSTEM_SETTINGS_UPSTREAM_SHA256: &str =
+    "2d58065525cbba3e1e796b73be822547dd991dcab90cb71e342750b4867f3402";
+pub const SYSTEM_SETTINGS_UPSTREAM_BYTES: usize = 1_843;
+pub const SYSTEM_SETTINGS_UPSTREAM_LINES: usize = 88;
+
 pub const SYSTEM_SETTINGS_SEED: &[(&str, &str, &str, &str)] = &[
     ("enable_whitelist", "variable", "bool", "true"),
     ("default_role", "variable", "string", ""),
@@ -213,7 +231,12 @@ pub const SYSTEM_SETTINGS_SEED: &[(&str, &str, &str, &str)] = &[
     ("mail.password", "variable", "string", ""),
     ("mail.timeout", "variable", "integer", "10"),
     ("mail.default_sender", "variable", "string", ""),
-    ("sandbox.provider_type", "variable", "string", "self_managed"),
+    (
+        "sandbox.provider_type",
+        "variable",
+        "string",
+        "self_managed",
+    ),
     (
         "sandbox.self_managed",
         "variable",
@@ -229,14 +252,16 @@ pub const SYSTEM_SETTINGS_SEED: &[(&str, &str, &str, &str)] = &[
 pub fn system_settings_seed_records() -> Vec<crate::api::joint_services::SystemSetting> {
     SYSTEM_SETTINGS_SEED
         .iter()
-        .map(|(name, source, data_type, value)| crate::api::joint_services::SystemSetting {
-            name: (*name).to_owned(),
-            source: (*source).to_owned(),
-            data_type: (*data_type).to_owned(),
-            value: (*value).to_owned(),
-            create_time: 0,
-            update_time: 0,
-        })
+        .map(
+            |(name, source, data_type, value)| crate::api::joint_services::SystemSetting {
+                name: (*name).to_owned(),
+                source: (*source).to_owned(),
+                data_type: (*data_type).to_owned(),
+                value: (*value).to_owned(),
+                create_time: 0,
+                update_time: 0,
+            },
+        )
         .collect()
 }
 
@@ -248,7 +273,9 @@ pub fn parse_system_settings_file(value: &Value) -> Vec<crate::api::joint_servic
         return records;
     };
     for entry in list {
-        let Some(entry) = entry.as_object() else { continue };
+        let Some(entry) = entry.as_object() else {
+            continue;
+        };
         let Some(name) = entry.get("name").and_then(Value::as_str) else {
             continue;
         };
@@ -282,7 +309,10 @@ pub fn parse_system_settings_file(value: &Value) -> Vec<crate::api::joint_servic
 /// (`bool` / `integer` / `json` / anything else → string).
 pub fn coerce_setting_value(data_type: &str, raw: &str) -> Value {
     match data_type {
-        "bool" => Value::Bool(matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true")),
+        "bool" => Value::Bool(matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true"
+        )),
         "integer" => raw
             .trim()
             .parse::<i64>()
@@ -343,6 +373,26 @@ pub fn system_settings_get(name: &str) -> Option<Value> {
         .cloned()
 }
 
+/// Replace the runtime mirror after a durable system-settings snapshot is
+/// loaded or committed. Unlike boot seeding this removes stale names too.
+pub fn replace_system_settings<'a>(
+    records: impl IntoIterator<Item = &'a crate::api::joint_services::SystemSetting>,
+) {
+    let values = records
+        .into_iter()
+        .map(|record| {
+            (
+                record.name.clone(),
+                coerce_setting_value(&record.data_type, &record.value),
+            )
+        })
+        .collect();
+    global()
+        .write()
+        .expect("runtime config lock poisoned")
+        .system_settings = values;
+}
+
 /// Test-only: reset the global to a clean default.
 pub fn reset_for_tests() {
     *global().write().expect("runtime config lock poisoned") = RuntimeConfig::default();
@@ -352,8 +402,16 @@ pub fn reset_for_tests() {
 mod tests {
     use super::*;
 
+    fn global_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap()
+    }
+
     #[test]
     fn init_config_only_sets_known_fields() {
+        let _guard = global_test_guard();
         reset_for_tests();
         init_config(&[
             ("HTTP_PORT", Value::Number(9380.into())),
@@ -369,6 +427,7 @@ mod tests {
 
     #[test]
     fn get_all_returns_only_reloadable_config_attributes() {
+        let _guard = global_test_guard();
         reset_for_tests();
         init_config(&[
             ("DEBUG", Value::Bool(true)),
@@ -389,6 +448,7 @@ mod tests {
 
     #[test]
     fn env_map_supports_version_seed_and_upsert() {
+        let _guard = global_test_guard();
         reset_for_tests();
         init_env("v0.14.0");
         assert_eq!(get_env("version"), Some("v0.14.0".into()));
@@ -400,6 +460,7 @@ mod tests {
 
     #[test]
     fn service_db_and_config_manager_flags() {
+        let _guard = global_test_guard();
         reset_for_tests();
         assert_eq!(get("SERVICE_DB"), None);
         set_service_db("postgres://snapshot".into());
@@ -416,6 +477,39 @@ mod tests {
     fn system_settings_seed_matches_conf_file_shape() {
         // The embedded seed mirrors the real conf/system_settings.json: 14
         // rows with the exact names / data types of the shipped file.
+        assert_eq!(
+            SYSTEM_SETTINGS_SEED,
+            &[
+                ("enable_whitelist", "variable", "bool", "true"),
+                ("default_role", "variable", "string", ""),
+                ("mail.server", "variable", "string", ""),
+                ("mail.port", "variable", "integer", ""),
+                ("mail.use_ssl", "variable", "bool", "false"),
+                ("mail.use_tls", "variable", "bool", "false"),
+                ("mail.username", "variable", "string", ""),
+                ("mail.password", "variable", "string", ""),
+                ("mail.timeout", "variable", "integer", "10"),
+                ("mail.default_sender", "variable", "string", ""),
+                (
+                    "sandbox.provider_type",
+                    "variable",
+                    "string",
+                    "self_managed"
+                ),
+                (
+                    "sandbox.self_managed",
+                    "variable",
+                    "json",
+                    r#"{"endpoint": "http://localhost:9385", "timeout": 30, "max_retries": 3, "pool_size": 10}"#
+                ),
+                ("sandbox.aliyun_codeinterpreter", "variable", "json", "{}"),
+                ("sandbox.e2b", "variable", "json", "{}"),
+            ]
+        );
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_BYTES, 1_843);
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_LINES, 88);
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_BLOB.len(), 40);
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_SHA256.len(), 64);
         let records = system_settings_seed_records();
         assert_eq!(records.len(), 14);
         assert_eq!(records[0].name, "enable_whitelist");
@@ -440,7 +534,9 @@ mod tests {
         assert_eq!(parsed[1].name, "mail.timeout");
         // Lenient: missing wrapper or malformed entries yield empty / skip.
         assert!(parse_system_settings_file(&Value::Null).is_empty());
-        assert!(parse_system_settings_file(&serde_json::json!({"system_settings": [42]})).is_empty());
+        assert!(
+            parse_system_settings_file(&serde_json::json!({"system_settings": [42]})).is_empty()
+        );
     }
 
     #[test]
@@ -451,10 +547,7 @@ mod tests {
         assert_eq!(count, 14);
         assert_eq!(additions.len(), 14);
         // Typed coercion by data_type.
-        assert_eq!(
-            additions.get("enable_whitelist"),
-            Some(&Value::Bool(true))
-        );
+        assert_eq!(additions.get("enable_whitelist"), Some(&Value::Bool(true)));
         assert_eq!(
             additions.get("mail.timeout"),
             Some(&Value::Number(10.into()))

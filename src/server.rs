@@ -67,6 +67,9 @@ pub struct AppState {
     pub providers: Arc<crate::api::features::ProviderStore>,
     pub tenant_models: Arc<crate::api::tenant_models::TenantModelStore>,
     pub memories: Arc<crate::api::features::MemoryStore>,
+    pub memory_messages: Arc<crate::api::joint_services::MemoryMessageService>,
+    pub skill_index: Arc<crate::api::skill_index::SkillIndexStore>,
+    pub system_settings: Arc<crate::api::system_settings::SystemSettingsStore>,
     pub tasks: Arc<crate::api::features::TaskQueue>,
     /// Async document task executor (RAGFlow `task_executor.py` port): the
     /// queue + worker pool that runs document processing off the request path.
@@ -84,9 +87,27 @@ pub struct AppState {
     /// builders registered at startup, running instances tracked by account id.
     pub channels: Arc<crate::channels::ChannelRegistry>,
     pub(crate) document_commit_lock: Arc<std::sync::Mutex<()>>,
+    /// Serializes the cross-snapshot Memory task/message commit protocol.
+    /// Model and embedding requests must finish before taking this lock.
+    pub(crate) memory_commit_lock: Arc<std::sync::Mutex<()>>,
 }
 
 // ── Auth ────────────────────────────────────────────────────────
+
+async fn password_public_key(State(state): State<Arc<AppState>>) -> Response {
+    let public_key = state.users.password_public_key();
+    Json(ApiResponse {
+        code: 0,
+        message: "ok".into(),
+        data: Some(serde_json::json!({
+            "enabled": public_key.is_some(),
+            "algorithm": "RSAES-PKCS1-v1_5",
+            "encoding": "base64(RSA(base64(UTF-8)))",
+            "public_key": public_key,
+        })),
+    })
+    .into_response()
+}
 
 async fn login(State(state): State<Arc<AppState>>, Json(b): Json<serde_json::Value>) -> Response {
     let email = b.get("email").and_then(|v| v.as_str()).unwrap_or("");
@@ -182,7 +203,8 @@ static SELF_API_KEYS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, Vec<SelfApiKey>>>,
 > = std::sync::OnceLock::new();
 
-fn self_api_keys() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<SelfApiKey>>> {
+fn self_api_keys() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<SelfApiKey>>>
+{
     SELF_API_KEYS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -313,8 +335,9 @@ async fn copy_file(
     copied.created_at = unix_ms();
     match state.files.add_unique(copied) {
         Ok(record) => Json(serde_json::json!({ "code": 0, "data": record })).into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() }))
-            .into_response(),
+        Err(error) => {
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response()
+        }
     }
 }
 
@@ -1629,7 +1652,340 @@ pub(crate) fn persist_index_change(
         .map_err(|error| anyhow::anyhow!("Failed to commit online search index: {error}"))
 }
 
+fn memory_llm_for(
+    state: &AppState,
+    memory: &crate::api::features::MemoryEntry,
+) -> anyhow::Result<Arc<dyn crate::llm::ChatModel>> {
+    if memory.llm_id.trim().is_empty() || memory.llm_id == "default" {
+        return state
+            .llm
+            .clone()
+            .map(|model| model as Arc<dyn crate::llm::ChatModel>)
+            .ok_or_else(|| anyhow::anyhow!("Global chat model is not configured"));
+    }
+    let chat = state.tenant_models.resolve(
+        &state.providers,
+        &memory.tenant_id,
+        crate::api::tenant_models::ModelCapability::Chat,
+        Some(&memory.llm_id),
+    );
+    if let Ok(Some(model)) = chat {
+        return Ok(Arc::new(model.llm_client()));
+    }
+    state
+        .tenant_models
+        .resolve(
+            &state.providers,
+            &memory.tenant_id,
+            crate::api::tenant_models::ModelCapability::ImageToText,
+            Some(&memory.llm_id),
+        )?
+        .map(|model| Arc::new(model.llm_client()) as Arc<dyn crate::llm::ChatModel>)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Chat or image2text model is not configured: {}",
+                memory.llm_id
+            )
+        })
+}
+
+fn update_memory_task_progress(
+    state: &AppState,
+    task_id: &str,
+    lease_token: &str,
+    progress: f32,
+    message: &str,
+) -> anyhow::Result<()> {
+    if state
+        .tasks
+        .update_claimed(task_id, lease_token, "running", progress, message)?
+    {
+        Ok(())
+    } else {
+        anyhow::bail!("Memory task lease lost")
+    }
+}
+
+fn retryable_memory_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    !message.contains("Memory not found")
+        && !message.contains("Memory task payload is missing")
+        && !message.contains("Invalid Memory task digest")
+        && !message.contains("model is not configured")
+        && !message.contains("Provider is disabled")
+        && !message.contains("memory extraction response")
+        && !message.contains("memory extraction field")
+        && !message.contains("Memory task lease lost")
+        && !message.contains("Processing cancelled")
+}
+
+async fn process_memory_task(state: Arc<AppState>, task: crate::api::features::Task) {
+    let task_id = task.id.clone();
+    let worker_id = format!("rayrag-memory-worker-{}", uuid::Uuid::new_v4());
+    let lease = match state.tasks.claim(
+        &task_id,
+        &worker_id,
+        TASK_LEASE_DURATION_MS,
+        "Preparing Memory extraction",
+    ) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::error!(%task_id, %error, "Failed to claim Memory task");
+            return;
+        }
+    };
+    let processing = async {
+        let payload = task
+            .memory_payload
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Memory task payload is missing"))?;
+        let source_id = task
+            .digest
+            .parse::<i64>()
+            .ok()
+            .filter(|source_id| *source_id > 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid Memory task digest: {}", task.digest))?;
+        let memory = state
+            .memories
+            .get(&task.doc_id)
+            .ok_or_else(|| anyhow::anyhow!("Memory not found: {}", task.doc_id))?;
+        let needs_extraction = memory
+            .memory_type
+            .iter()
+            .any(|kind| matches!(kind.as_str(), "semantic" | "episodic" | "procedural"));
+        if !needs_extraction {
+            return Ok::<(usize, &'static str), anyhow::Error>((
+                0,
+                "Memory does not need extraction",
+            ));
+        }
+
+        update_memory_task_progress(
+            &state,
+            &task_id,
+            &lease.token,
+            0.15,
+            "Prepared prompts and LLM",
+        )?;
+        let llm = memory_llm_for(&state, &memory)?;
+        let conversation_time = crate::common::time_utils::timestamp_to_date(
+            crate::common::time_utils::current_timestamp(),
+            crate::common::time_utils::DEFAULT_TIME_FORMAT,
+        );
+        // The fixed v0.26.4 worker does not forward Memory's stored custom
+        // system/user prompt fields at either extraction call site. Keep that
+        // runtime contract explicit rather than silently claiming they work.
+        let extracted = crate::api::joint_services::extract_memory_by_llm(
+            llm.as_ref(),
+            &memory.memory_type,
+            &payload.user_input,
+            &payload.agent_response,
+            None,
+            None,
+            &conversation_time,
+            memory.temperature,
+        )
+        .await?;
+        update_memory_task_progress(
+            &state,
+            &task_id,
+            &lease.token,
+            0.35,
+            "Got extracted result from LLM",
+        )?;
+        if extracted.is_empty() {
+            return Ok((0, "No memory extracted from raw message"));
+        }
+        update_memory_task_progress(
+            &state,
+            &task_id,
+            &lease.token,
+            0.5,
+            &format!("Extracted {} messages from raw dialogue", extracted.len()),
+        )?;
+
+        let embedder = crate::api::features::memory_embedder_for(&state, &memory)?;
+        update_memory_task_progress(
+            &state,
+            &task_id,
+            &lease.token,
+            0.65,
+            "Prepared embedding model",
+        )?;
+        let contents: Vec<&str> = extracted.iter().map(|item| item.content.as_str()).collect();
+        let embeddings = embedder.embed(&contents).await?;
+        if embeddings.len() != extracted.len() || embeddings.iter().any(Vec::is_empty) {
+            anyhow::bail!("Embedding model returned an invalid vector batch");
+        }
+        update_memory_task_progress(
+            &state,
+            &task_id,
+            &lease.token,
+            0.85,
+            "Embedded extracted content",
+        )?;
+        if state.tasks.is_cancelled(&task_id) {
+            anyhow::bail!("Processing cancelled");
+        }
+
+        let messages: Vec<_> = extracted
+            .into_iter()
+            .zip(embeddings)
+            .map(
+                |(item, content_embed)| crate::api::joint_services::MemoryMessage {
+                    message_id: state.memory_messages.next_message_id(),
+                    message_type: item.message_type,
+                    source_id,
+                    memory_id: memory.id.clone(),
+                    user_id: payload.user_id.clone(),
+                    agent_id: payload.agent_id.clone(),
+                    session_id: payload.session_id.clone(),
+                    content: item.content,
+                    valid_at: item.valid_at,
+                    invalid_at: item.invalid_at,
+                    forget_at: None,
+                    status: true,
+                    zone_id: 0,
+                    content_embed,
+                },
+            )
+            .collect();
+        let count = messages.len();
+        let budget = if memory.memory_size == 0 {
+            usize::MAX
+        } else {
+            memory.memory_size as usize
+        };
+        {
+            let _commit_guard = state.memory_commit_lock.lock().unwrap();
+            if !state.tasks.owns_lease(&task_id, &lease.token) {
+                anyhow::bail!("Memory task lease lost");
+            }
+            if state.memories.get(&memory.id).is_none() {
+                anyhow::bail!("Memory not found: {}", memory.id);
+            }
+            let memory_ids = [memory.id.clone()];
+            let children_exist = state
+                .memory_messages
+                .query_with_options(crate::api::joint_services::MemoryMessageQuery {
+                    memory_ids: &memory_ids,
+                    agent_id: None,
+                    session_id: None,
+                    user_id: None,
+                    status: None,
+                    top_n: None,
+                    hide_forgotten: false,
+                })
+                .iter()
+                .any(|message| message.source_id == source_id);
+            if !children_exist {
+                state
+                    .memory_messages
+                    .save_messages_with_budget(
+                        &memory.id,
+                        &memory.forgetting_policy,
+                        budget,
+                        messages,
+                    )
+                    .map_err(|error| anyhow::anyhow!(error.message))?;
+            }
+            update_memory_task_progress(
+                &state,
+                &task_id,
+                &lease.token,
+                0.95,
+                "Saved messages to storage",
+            )?;
+        }
+        Ok((count, "Message saved successfully"))
+    };
+    tokio::pin!(processing);
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(
+        TASK_LEASE_RENEW_INTERVAL_MS,
+    ));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
+    let result = loop {
+        tokio::select! {
+            result = &mut processing => break result,
+            _ = heartbeat.tick() => {
+                match state.tasks.renew_lease(&task_id, &lease.token, TASK_LEASE_DURATION_MS) {
+                    Ok(true) => {}
+                    Ok(false) => break Err(anyhow::anyhow!("Memory task lease lost")),
+                    Err(error) => break Err(error),
+                }
+            }
+        }
+    };
+
+    match result {
+        Ok((_count, message)) => {
+            if let Err(error) =
+                state
+                    .tasks
+                    .update_claimed(&task_id, &lease.token, "done", 1.0, message)
+            {
+                tracing::error!(%task_id, %error, "Failed to persist completed Memory task");
+            }
+        }
+        Err(_error) if state.tasks.is_cancelled(&task_id) => {
+            let _ = state.tasks.update_claimed(
+                &task_id,
+                &lease.token,
+                "cancelled",
+                1.0,
+                "Processing cancelled",
+            );
+        }
+        Err(error) if retryable_memory_error(&error) && state.tasks.can_retry(&task_id) => {
+            let message = format!("Attempt {} failed: {error}; retrying", lease.attempt);
+            if let Err(save_error) =
+                state
+                    .tasks
+                    .update_claimed(&task_id, &lease.token, "pending", 0.0, &message)
+            {
+                tracing::error!(%task_id, %save_error, "Failed to persist Memory retry state");
+            }
+        }
+        Err(error) => {
+            if let Err(save_error) = state.tasks.update_claimed(
+                &task_id,
+                &lease.token,
+                "failed",
+                1.0,
+                &error.to_string(),
+            ) {
+                tracing::error!(%task_id, %save_error, "Failed to persist failed Memory task");
+            }
+            tracing::error!(%task_id, %error, "Memory extraction failed");
+        }
+    }
+}
+
+fn reconcile_staged_memory_tasks(state: &AppState) {
+    let _commit_guard = state.memory_commit_lock.lock().unwrap();
+    for task in state.tasks.staged_memory_tasks() {
+        let source_id = task.digest.parse::<i64>().ok().filter(|value| *value > 0);
+        let raw_exists = source_id.is_some_and(|source_id| {
+            state
+                .memory_messages
+                .get_by_message_id(&task.doc_id, source_id)
+                .is_some()
+        });
+        let result = if raw_exists && state.memories.get(&task.doc_id).is_some() {
+            state.tasks.publish_memory_task(&task.id)
+        } else {
+            state.tasks.discard_staged_memory_task(&task.id)
+        };
+        if let Err(error) = result {
+            tracing::error!(task_id = %task.id, %error, "Failed to reconcile staged Memory task");
+        }
+    }
+}
+
 fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::sync::Semaphore>) {
+    reconcile_staged_memory_tasks(&state);
     for task in state.tasks.pending() {
         let permit = match task_slots.clone().try_acquire_owned() {
             Ok(permit) => permit,
@@ -1640,6 +1996,26 @@ fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::
             drop(permit);
             continue;
         };
+        if task.task_type == "memory" {
+            let state_for_worker = state.clone();
+            tokio::spawn(async move {
+                let _active_guard = active_guard;
+                let _permit = permit;
+                process_memory_task(state_for_worker, task).await;
+            });
+            continue;
+        }
+        if task.task_type != "document_parse" {
+            let _ = state.tasks.update(
+                &task.id,
+                "failed",
+                1.0,
+                &format!("Unsupported persisted task type: {}", task.task_type),
+            );
+            drop(active_guard);
+            drop(permit);
+            continue;
+        }
         let Some(doc) = state.docs.get(&task.doc_id) else {
             let _ = state.tasks.update(
                 &task.id,
@@ -2026,6 +2402,16 @@ async fn clear_memories(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
 ) -> Response {
+    let memory_ids = state.memories.owned_ids(&auth.user_id);
+    let _commit_guard = state.memory_commit_lock.lock().unwrap();
+    for memory_id in &memory_ids {
+        if let Err(error) = state.tasks.cancel_memory(memory_id) {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+        }
+        if let Err(error) = state.memory_messages.delete_by_memory(memory_id) {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+        }
+    }
     match state.memories.clear_all_owned(&auth.user_id) {
         Ok(count) => Json(ApiResponse {
             code: 0,
@@ -2376,6 +2762,7 @@ fn public_api_path(path: &str) -> bool {
         path,
         "/api/v1/auth/login"
             | "/api/v1/user/register"
+            | "/api/v1/system/password-public-key"
             | "/api/v1/system/healthz"
             | "/api/v1/version"
             // Chat channel inbound endpoints: platform webhook callbacks must
@@ -2585,7 +2972,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/files", get(crate::web::files_page))
         .route("/agents", get(crate::web::agents_page))
         .route("/agents/{agent_id}", get(crate::web::agent_detail_page))
-        .route("/memories", get(crate::web::memories_page))
+        .route("/memories", get(crate::web::memories_page_v2))
+        .route(
+            "/memory/memory-message/{memory_id}",
+            get(crate::web::memory_message_page),
+        )
+        .route(
+            "/memory/memory-setting/{memory_id}",
+            get(crate::web::memory_setting_page),
+        )
         .route("/admin", get(crate::web::admin_page))
         .route("/login", get(crate::web::login_page))
         .route("/metrics", get(prometheus_metrics))
@@ -2606,6 +3001,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/user/register", post(register))
+        .route(
+            "/api/v1/system/password-public-key",
+            get(password_public_key),
+        )
         .route("/api/v1/user/info", get(user_info))
         .route("/api/v1/components", get(component_catalog))
         .route("/api/v1/datasets", get(list_datasets).post(create_dataset))
@@ -2626,7 +3025,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/datasets/{id}/documents/{did}/reparse",
             post(crate::api::document::reparse_doc),
-        )        .route(
+        )
+        .route(
             "/api/v1/datasets/{id}/documents/{did}/download",
             get(crate::api::document::download_doc),
         )
@@ -2716,12 +3116,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/admin/users/{username}/keys/{key}",
             axum::routing::delete(crate::api::admin::delete_user_api_key),
         )
-        .route("/api/v1/admin/version", get(crate::api::admin::show_version))
+        .route(
+            "/api/v1/admin/version",
+            get(crate::api::admin::show_version),
+        )
         .route(
             "/api/v1/admin/variables",
-            get(crate::api::admin::get_variable).put(crate::api::admin::set_variable),
+            get(crate::api::system_settings::list_variables)
+                .put(crate::api::system_settings::set_variable),
         )
         .route("/api/v1/admin/configs", get(crate::api::admin::get_config))
+        .route(
+            "/api/v1/admin/variables/{var_name}",
+            get(crate::api::system_settings::show_variable),
+        )
         .route(
             "/api/v1/admin/environments",
             get(crate::api::admin::get_environments),
@@ -2813,10 +3221,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/files/{file_id}",
             axum::routing::delete(crate::api::file_mgr::delete_file).patch(rename_file),
         )
-        .route(
-            "/api/v1/files/{file_id}/copy",
-            post(copy_file),
-        )
+        .route("/api/v1/files/{file_id}/copy", post(copy_file))
         .route(
             "/api/v1/files/{file_id}/download",
             axum::routing::get(crate::api::file_mgr::download_file),
@@ -2867,7 +3272,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/openai/{chat_id}/chat/completions",
             post(crate::api::openai_proxy::openai_rag_chat_completions),
         )
-        .route("/api/v1/models", get(crate::api::openai_proxy::list_models))
+        .route(
+            "/api/v1/models",
+            get(crate::api::tenant_models::list_ragflow_models),
+        )
+        .route(
+            "/api/v1/models/default",
+            get(crate::api::tenant_models::get_ragflow_default_models),
+        )
+        .route(
+            "/api/v1/openai/models",
+            get(crate::api::openai_proxy::list_models),
+        )
         .route(
             "/api/v1/embeddings",
             post(crate::api::openai_proxy::embeddings),
@@ -3002,13 +3418,49 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/memories/{memory_id}",
-            get(crate::api::features::get_memory_config)
+            get(crate::api::features::get_memory_messages)
                 .put(crate::api::features::update_memory)
                 .delete(crate::api::features::delete_memory),
         )
         .route(
             "/api/v1/memories/{memory_id}/config",
             get(crate::api::features::get_memory_config),
+        )
+        .route(
+            "/api/v1/messages",
+            get(crate::api::features::get_recent_memory_messages)
+                .post(crate::api::features::add_memory_message),
+        )
+        .route(
+            "/api/v1/messages/search",
+            get(crate::api::features::search_memory_messages),
+        )
+        .route(
+            "/api/v1/messages/{message_ref}",
+            put(crate::api::features::update_memory_message)
+                .delete(crate::api::features::forget_memory_message),
+        )
+        .route(
+            "/api/v1/messages/{message_ref}/content",
+            get(crate::api::features::get_memory_message_content),
+        )
+        .route(
+            "/api/v1/skills/config",
+            get(crate::api::skill_index::get_skill_config)
+                .post(crate::api::skill_index::update_skill_config),
+        )
+        .route(
+            "/api/v1/skills/search",
+            post(crate::api::skill_index::search_skills),
+        )
+        .route(
+            "/api/v1/skills/index",
+            post(crate::api::skill_index::index_skills)
+                .delete(crate::api::skill_index::delete_skill_index),
+        )
+        .route(
+            "/api/v1/skills/reindex",
+            post(crate::api::skill_index::reindex_skills),
         )
         .route("/api/v1/users", get(crate::api::system::list_users))
         .route("/api/v1/users/{id}", put(crate::api::system::update_user))
@@ -3058,6 +3510,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/system/config/log",
             get(crate::api::system::get_log_levels).put(crate::api::system::set_log_level),
+        )
+        .route(
+            "/api/v1/system/variables",
+            get(crate::api::system_settings::list_variables)
+                .put(crate::api::system_settings::set_variable),
+        )
+        .route(
+            "/api/v1/system/variables/{var_name}",
+            get(crate::api::system_settings::show_variable),
         )
         .route("/api/v1/system/healthz", get(crate::api::system::healthz))
         .route(
@@ -3166,6 +3627,9 @@ pub async fn run(
     let p = format!("{}/../providers.json", static_dir);
     let tenant_models_path = format!("{}/../tenant_models.json", static_dir);
     let memories_path = format!("{}/../memories.json", static_dir);
+    let memory_messages_path = format!("{}/../memory_messages.json", static_dir);
+    let skill_index_path = format!("{}/../skill_index.json", static_dir);
+    let system_settings_path = format!("{}/../system_settings.json", static_dir);
     let agents_path = format!("{}/../agents.json", static_dir);
     let agent_checkpoints_path = format!("{}/../agent_checkpoints.json", static_dir);
     let canvas_versions_path = format!("{}/../canvas_versions.json", static_dir);
@@ -3282,6 +3746,15 @@ pub async fn run(
         providers,
         tenant_models,
         memories: Arc::new(crate::api::features::MemoryStore::new(&memories_path)?),
+        memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::new(
+            &memory_messages_path,
+        )?),
+        skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::new(
+            &skill_index_path,
+        )?),
+        system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::new(
+            &system_settings_path,
+        )?),
         tasks: Arc::new(crate::api::features::TaskQueue::new(&t)?),
         task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
             "task_executor_0",
@@ -3306,6 +3779,7 @@ pub async fn run(
         chunk_feedback_weighting: crate::chunk_feedback::feedback_weighting_from_env(),
         channels: channels.clone(),
         document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+        memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
     });
 
     start_document_task_dispatcher(state.clone());
@@ -3383,6 +3857,33 @@ mod tests {
         }
     }
 
+    async fn mock_memory_llm(response: &str) -> LlmClient {
+        let response = response.to_owned();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let response = response.clone();
+                async move {
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": response}}],
+                        "usage": {"total_tokens": 3}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        LlmClient::new(LlmConfig {
+            api_base: format!("http://{address}/v1"),
+            api_key: "test".into(),
+            model: "memory-test".into(),
+            ..LlmConfig::default()
+        })
+    }
+
     struct TestEnv {
         root: std::path::PathBuf,
         state: Arc<AppState>,
@@ -3453,11 +3954,11 @@ mod tests {
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
+            memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
+            skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
+            system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
-            task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
-                "test_executor",
-                4,
-            )),
+            task_executor: Arc::new(crate::task_executor::TaskExecutor::new("test_executor", 4)),
             agents: Arc::new(crate::api::features::AgentStore::in_memory()),
             agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
             agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),
@@ -3471,6 +3972,7 @@ mod tests {
             chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
             channels: Arc::new(crate::channels::ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+            memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         TestEnv { root, state, token }
     }
@@ -3612,11 +4114,11 @@ mod tests {
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
             memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
+            memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
+            skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
+            system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
-            task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
-                "test_executor",
-                4,
-            )),
+            task_executor: Arc::new(crate::task_executor::TaskExecutor::new("test_executor", 4)),
             agents: Arc::new(crate::api::features::AgentStore::in_memory()),
             agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
             agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),
@@ -3630,6 +4132,7 @@ mod tests {
             chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
             channels: Arc::new(crate::channels::ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+            memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         TestEnv { root, state, token }
     }
@@ -3637,6 +4140,813 @@ mod tests {
     async fn response_json(response: Response) -> serde_json::Value {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn memory_web_detail_routes_render_live_shells() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (path, marker) in [
+            ("/memories", "id='memCreate'"),
+            ("/memory/memory-message/memory-a", "id='messageSearch'"),
+            ("/memory/memory-setting/memory-a", "id='memorySettingForm'"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::COOKIE, "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            assert!(html.contains(marker), "route {path} missing {marker}");
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_owner_and_ragflow_model_catalog_contracts_are_live() {
+        let env = test_env();
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Owned memory".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        env.state
+            .tenant_models
+            .upsert(
+                &env.state.providers,
+                "test-user",
+                "minimax",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: Some("http://127.0.0.1:9/v1".into()),
+                    api_key: Some("must-not-leak".into()),
+                    clear_api_key: false,
+                    models: vec![
+                        TenantModelSpec {
+                            name: "MiniMax-M3".into(),
+                            model_types: vec![ModelCapability::Chat],
+                            max_tokens: Some(4096),
+                            enabled: true,
+                        },
+                        TenantModelSpec {
+                            name: "MiniMax-M2".into(),
+                            model_types: vec![ModelCapability::Embedding],
+                            max_tokens: None,
+                            enabled: true,
+                        },
+                    ],
+                },
+            )
+            .unwrap();
+        env.state
+            .tenant_models
+            .set_default_chat_model(
+                &env.state.providers,
+                "test-user",
+                Some("minimax/primary/MiniMax-M3"),
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let authorization = format!("Bearer {}", env.token);
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/memories?tenant_id=&owner_ids={}",
+                        memory.tenant_id
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        let memory_json = &listed["data"]["memory_list"][0];
+        assert_eq!(memory_json["owner_name"], "Test");
+        assert_eq!(memory_json["permissions"], "me");
+        assert_eq!(memory_json["memory_size"], 5 * 1024 * 1024);
+        assert_eq!(memory_json["temperature"], 0.5);
+
+        let catalog = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let catalog = response_json(catalog).await;
+        let models = catalog["data"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0]["selector"], "MiniMax-M2@Primary@MiniMax");
+        assert!(models.iter().all(|model| model.get("api_key").is_none()));
+        assert!(models.iter().any(|model| {
+            model["name"] == "MiniMax-M2" && model["model_type"] == serde_json::json!(["embedding"])
+        }));
+
+        let defaults = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models/default")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let defaults = response_json(defaults).await;
+        assert_eq!(
+            defaults["data"]["models"][0]["selector"],
+            "MiniMax-M3@Primary@MiniMax"
+        );
+        assert_eq!(defaults["data"]["models"][0]["enable"], true);
+
+        let openai = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/openai/models")
+                    .header(header::AUTHORIZATION, authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(openai).await["object"], "list");
+    }
+
+    #[tokio::test]
+    async fn memory_message_routes_persist_search_forget_and_cascade() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Route memory".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let added = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/messages")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "memory_id": [memory.id.clone()],
+                            "agent_id": "agent-1",
+                            "session_id": "session-1",
+                            "user_input": "Rust memory",
+                            "agent_response": "Stored"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(added.status(), StatusCode::OK);
+        assert_eq!(response_json(added).await["message"], "All add to task.");
+        let queued = env.state.tasks.pending();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].task_type, "memory");
+        assert_eq!(queued[0].doc_id, memory.id);
+        assert_eq!(queued[0].digest, "1");
+        dispatch_pending_document_tasks(
+            env.state.clone(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+        );
+        for _ in 0..50 {
+            if env.state.tasks.get(&queued[0].id).unwrap().status == "done" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(env.state.tasks.get(&queued[0].id).unwrap().status, "done");
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/memories/{}", memory.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        let message = &listed["data"]["messages"]["message_list"][0];
+        assert_eq!(message["user_id"], "test-user");
+        assert!(message.get("content_embed").is_none());
+        assert_eq!(message["extract"], serde_json::json!([]));
+        assert_eq!(message["task"]["digest"], message["message_id"].to_string());
+        assert_eq!(message["task"]["progress"], 1.0);
+        let message_id = message["message_id"].as_i64().unwrap();
+        let message_ref = format!("{}:{message_id}", memory.id);
+
+        let disabled = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/messages/{message_ref}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::OK);
+
+        let recent = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/messages?memory_id={}&agent_id=agent-1&session_id=session-1",
+                        memory.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(recent).await["data"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let hidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/messages/search?memory_id={}&query=Rust",
+                        memory.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response_json(hidden).await["data"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        let enabled = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/messages/{message_ref}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(enabled.status(), StatusCode::OK);
+
+        let content = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/messages/{message_ref}/content"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response_json(content).await["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Rust memory")
+        );
+
+        let forgotten = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/messages/{message_ref}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forgotten.status(), StatusCode::OK);
+        assert!(
+            env.state
+                .memory_messages
+                .get_by_message_id(&memory.id, message_id)
+                .unwrap()
+                .forget_at
+                .is_some()
+        );
+
+        let deleted = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/memories/{}", memory.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert!(
+            env.state
+                .memory_messages
+                .get_by_message_id(&memory.id, message_id)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_worker_extracts_children_and_structural_failure_keeps_raw() {
+        async fn run(response: &str) -> (TestEnv, String, String, i64) {
+            let mut env = test_env();
+            let llm = mock_memory_llm(response).await;
+            let mutable = Arc::get_mut(&mut env.state).unwrap();
+            mutable.embedder = Some(Arc::new(TestEmbedder));
+            mutable.llm = Some(Arc::new(llm));
+            let memory = env
+                .state
+                .memories
+                .create(
+                    "test-user",
+                    crate::api::features::MemoryCreateRequest {
+                        name: "Worker memory".into(),
+                        memory_type: vec!["raw".into(), "semantic".into()],
+                        embd_id: "default".into(),
+                        llm_id: "default".into(),
+                        description: String::new(),
+                    },
+                )
+                .unwrap();
+            let source_id = env.state.memory_messages.next_message_id();
+            env.state
+                .memory_messages
+                .insert_messages(vec![crate::api::joint_services::MemoryMessage {
+                    message_id: source_id,
+                    message_type: "raw".into(),
+                    source_id: 0,
+                    memory_id: memory.id.clone(),
+                    user_id: "test-user".into(),
+                    agent_id: "agent-1".into(),
+                    session_id: "session-1".into(),
+                    content: crate::api::joint_services::build_raw_message_content(
+                        "Rust is memory safe",
+                        "Stored",
+                    ),
+                    valid_at: "2026-08-12 10:00:00".into(),
+                    invalid_at: None,
+                    forget_at: None,
+                    status: true,
+                    zone_id: 0,
+                    content_embed: vec![1.0, 0.0],
+                }])
+                .unwrap();
+            let task_id = env
+                .state
+                .tasks
+                .stage_memory_task(
+                    "test-user",
+                    &memory.id,
+                    source_id,
+                    crate::api::features::MemoryTaskPayload::new(
+                        "test-user",
+                        "agent-1",
+                        "session-1",
+                        "Rust is memory safe",
+                        "Stored",
+                    ),
+                )
+                .unwrap();
+            assert!(env.state.tasks.publish_memory_task(&task_id).unwrap());
+            let task = env.state.tasks.get(&task_id).unwrap();
+            process_memory_task(env.state.clone(), task).await;
+            (env, memory.id, task_id, source_id)
+        }
+
+        let (success, memory_id, task_id, source_id) = run(
+            r#"{"semantic":[{"content":"Rust prevents data races","valid_at":"2026-08-12T10:00:00Z","invalid_at":""}]}"#,
+        )
+        .await;
+        let rows = success.state.memory_messages.query_with_options(
+            crate::api::joint_services::MemoryMessageQuery {
+                memory_ids: std::slice::from_ref(&memory_id),
+                agent_id: None,
+                session_id: None,
+                user_id: None,
+                status: None,
+                top_n: None,
+                hide_forgotten: false,
+            },
+        );
+        assert_eq!(success.state.tasks.get(&task_id).unwrap().status, "done");
+        assert_eq!(rows.len(), 2);
+        let child = rows.iter().find(|row| row.source_id == source_id).unwrap();
+        assert_eq!(child.message_type, "semantic");
+        assert_eq!(child.valid_at, "2026-08-12 10:00:00");
+
+        let (failed, memory_id, task_id, source_id) = run(r#"{"semantic":{}}"#).await;
+        let task = failed.state.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, "failed");
+        assert!(task.message.contains("must be an array"));
+        assert!(
+            failed
+                .state
+                .memory_messages
+                .get_by_message_id(&memory_id, source_id)
+                .is_some(),
+            "the synchronous RAW phase must survive extraction failure"
+        );
+        assert!(
+            failed
+                .state
+                .memory_messages
+                .query_with_options(crate::api::joint_services::MemoryMessageQuery {
+                    memory_ids: std::slice::from_ref(&memory_id),
+                    agent_id: None,
+                    session_id: None,
+                    user_id: None,
+                    status: None,
+                    top_n: None,
+                    hide_forgotten: false,
+                })
+                .iter()
+                .all(|row| row.source_id == 0)
+        );
+    }
+
+    #[test]
+    fn memory_task_reconciler_publishes_only_when_raw_and_memory_exist() {
+        let env = test_env();
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Reconcile memory".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        env.state
+            .memory_messages
+            .insert_messages(vec![crate::api::joint_services::MemoryMessage {
+                message_id: 91,
+                message_type: "raw".into(),
+                source_id: 0,
+                memory_id: memory.id.clone(),
+                user_id: "test-user".into(),
+                agent_id: "agent".into(),
+                session_id: "session".into(),
+                content: "raw".into(),
+                valid_at: "2026-08-12 10:00:00".into(),
+                invalid_at: None,
+                forget_at: None,
+                status: true,
+                zone_id: 0,
+                content_embed: vec![1.0],
+            }])
+            .unwrap();
+        let payload = || {
+            crate::api::features::MemoryTaskPayload::new(
+                "test-user",
+                "agent",
+                "session",
+                "input",
+                "response",
+            )
+        };
+        let recoverable = env
+            .state
+            .tasks
+            .stage_memory_task("test-user", &memory.id, 91, payload())
+            .unwrap();
+        let orphan = env
+            .state
+            .tasks
+            .stage_memory_task("test-user", &memory.id, 92, payload())
+            .unwrap();
+        reconcile_staged_memory_tasks(&env.state);
+        assert_eq!(env.state.tasks.get(&recoverable).unwrap().status, "pending");
+        assert!(env.state.tasks.get(&orphan).is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_routes_accept_repeated_filters_and_reject_oversized_pages() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Query contract".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        let message = |message_id, agent_id: &str| crate::api::joint_services::MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory.id.clone(),
+            user_id: "test-user".into(),
+            agent_id: agent_id.into(),
+            session_id: "session".into(),
+            content: format!("content {message_id}"),
+            valid_at: format!("2026-08-12 00:00:0{message_id}"),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: vec![1.0, 0.0],
+        };
+        env.state
+            .memory_messages
+            .insert_messages(vec![message(1, "agent-a"), message(2, "agent-b")])
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let authorization = format!("Bearer {}", env.token);
+
+        let repeated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/memories/{}?agent_id=agent-a&agent_id=agent-b&page_size=100",
+                        memory.id
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repeated.status(), StatusCode::OK);
+        let repeated_json = response_json(repeated).await;
+        let repeated_messages = repeated_json["data"]["messages"]["message_list"]
+            .as_array()
+            .unwrap();
+        assert_eq!(repeated_messages.len(), 2);
+        assert_eq!(repeated_messages[0]["agent_name"], "Unknown");
+        assert!(repeated_messages[0]["task"].is_null());
+
+        let content = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/messages/{}:{}/content", memory.id, 1))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(content.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(content).await["data"]["content_embed"],
+            serde_json::json!([1.0, 0.0])
+        );
+
+        let repeated_memory_ids = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/messages?memory_id={}&memory_id={}&limit=100",
+                        memory.id, memory.id
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repeated_memory_ids.status(), StatusCode::OK);
+
+        let too_large = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/memories/{}?page_size=101", memory.id))
+                    .header(header::AUTHORIZATION, authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(too_large.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(too_large).await["message"],
+            "page_size must be less than or equal to 100"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_index_config_search_reindex_and_delete_routes_are_live() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let router = build_router(env.state.clone());
+        let authorization = format!("Bearer {}", env.token);
+
+        let configured = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/config")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "space_id": "engineering",
+                            "embd_id": "default",
+                            "vector_similarity_weight": 0.4,
+                            "similarity_threshold": 0.0,
+                            "top_k": 10,
+                            "field_config": {
+                                "name": {"enabled": true, "weight": 3.0},
+                                "tags": {"enabled": true, "weight": 2.0},
+                                "description": {"enabled": true, "weight": 1.0},
+                                "content": {"enabled": false, "weight": 0.5}
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(configured.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(configured).await["data"]["embd_id"],
+            "default"
+        );
+
+        let indexed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/index")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "space_id": "engineering",
+                            "skills": [{
+                                "id": "rust/search",
+                                "folder_id": "folder-1",
+                                "name": "Rust Search",
+                                "description": "Hybrid retrieval in Rust",
+                                "tags": ["rust", "rag"],
+                                "content": "Implementation notes",
+                                "version": "1.2.3"
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexed.status(), StatusCode::OK);
+        assert_eq!(response_json(indexed).await["data"]["indexed_count"], 1);
+
+        let searched = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/search")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"space_id":"engineering","query":"Rust retrieval","page":1,"page_size":10}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(searched.status(), StatusCode::OK);
+        let searched = response_json(searched).await;
+        assert_eq!(searched["data"]["total"], 1);
+        assert_eq!(searched["data"]["search_type"], "hybrid");
+        assert_eq!(searched["data"]["skills"][0]["skill_id"], "rust_search");
+
+        let reindexed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/reindex")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"space_id":"engineering"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reindexed.status(), StatusCode::OK);
+        let reindexed = response_json(reindexed).await;
+        assert_eq!(reindexed["data"]["indexed_count"], 1);
+        assert_eq!(reindexed["data"]["version"], "1.0.1");
+
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/skills/index?space_id=engineering&skill_id=rust/search")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert!(response_json(deleted).await["data"].as_bool().unwrap());
+
+        let listed = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/search")
+                    .header(header::AUTHORIZATION, authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"space_id":"engineering","query":""}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(listed).await["data"]["total"], 0);
     }
 
     async fn response_sse_json(response: Response) -> (Vec<serde_json::Value>, String) {
@@ -4973,6 +6283,22 @@ mod tests {
         assert_eq!(health["data"]["postgres"], "disabled");
         assert_eq!(health["data"]["zvec"], "disabled");
 
+        let password_key = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/password-public-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(password_key.status(), StatusCode::OK);
+        let password_key = response_json(password_key).await;
+        assert_eq!(password_key["data"]["enabled"], false);
+        assert!(password_key["data"]["public_key"].is_null());
+        assert_eq!(password_key["data"]["algorithm"], "RSAES-PKCS1-v1_5");
+
         let status_unauthenticated = router
             .clone()
             .oneshot(
@@ -5025,6 +6351,121 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(authenticated.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn system_variables_are_typed_durable_admin_settings() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        let unauthenticated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 14);
+        assert_eq!(listed["data"][0]["name"], "default_role");
+        assert_eq!(listed["data"][0]["setting_type"], "config");
+
+        let invalid = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/system/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"var_name":"mail.timeout","var_value":"1.5"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        for (name, value) in [("mail.timeout", "45"), ("mail.password", "secret-123")] {
+            let updated = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/api/v1/system/variables")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"var_name": name, "var_value": value}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.status(), StatusCode::OK);
+        }
+
+        let shown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables/bWFpbC50aW1lb3V0")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(shown).await["data"][0]["value"], "45");
+
+        // Python admin CLI SHOW VAR sends a JSON body on GET; preserve that
+        // contract while the Go-style path uses a base64 name segment.
+        let shown_from_body = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"var_name":"mail.password"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let shown_from_body = response_json(shown_from_body).await;
+        assert_eq!(shown_from_body["data"].as_array().unwrap().len(), 1);
+        assert_eq!(shown_from_body["data"][0]["value"], "<redacted>");
+
+        let non_admin = non_admin_env();
+        let forbidden = build_router(non_admin.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", non_admin.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -7727,7 +9168,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
-                    .uri("/api/v1/agents/tags?canvas_category=agent")
+                    .uri("/api/v1/agents/tags?canvas_category=agent_canvas")
                     .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
                     .body(Body::empty())
                     .unwrap(),

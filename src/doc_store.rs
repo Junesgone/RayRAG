@@ -14,7 +14,7 @@
 //! hybrid ranking.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -134,7 +134,12 @@ impl MatchExpr {
         }
     }
 
-    pub fn dense(vector_column_name: &str, embedding_data: Vec<f32>, distance_type: &str, topn: usize) -> Self {
+    pub fn dense(
+        vector_column_name: &str,
+        embedding_data: Vec<f32>,
+        distance_type: &str,
+        topn: usize,
+    ) -> Self {
         Self::Dense {
             vector_column_name: vector_column_name.to_string(),
             embedding_data,
@@ -229,19 +234,45 @@ pub trait DocStore: Send + Sync {
     fn health(&self) -> crate::Result<HealthStatus>;
 
     // ── Index operations ────────────────────────────────────────
-    fn create_idx(&self, index_name: &str, dataset_id: &str, vector_size: usize) -> crate::Result<()>;
+    fn create_idx(
+        &self,
+        index_name: &str,
+        dataset_id: &str,
+        vector_size: usize,
+    ) -> crate::Result<()>;
     fn delete_idx(&self, index_name: &str, dataset_id: &str) -> crate::Result<()>;
     fn index_exist(&self, index_name: &str, dataset_id: &str) -> crate::Result<bool>;
 
     // ── CRUD operations ─────────────────────────────────────────
     /// Bulk upsert; returns the ids of the stored rows.
-    fn insert(&self, rows: &[DocRow], index_name: &str, dataset_id: &str) -> crate::Result<Vec<String>>;
+    fn insert(
+        &self,
+        rows: &[DocRow],
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<Vec<String>>;
     /// Get a single row by id.
-    fn get(&self, data_id: &str, index_name: &str, dataset_ids: &[String]) -> crate::Result<Option<DocRow>>;
+    fn get(
+        &self,
+        data_id: &str,
+        index_name: &str,
+        dataset_ids: &[String],
+    ) -> crate::Result<Option<DocRow>>;
     /// Update rows matching the conjunctive condition; returns whether any matched.
-    fn update(&self, condition: &FilterCondition, new_value: &DocRow, index_name: &str, dataset_id: &str) -> crate::Result<bool>;
+    fn update(
+        &self,
+        condition: &FilterCondition,
+        new_value: &DocRow,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<bool>;
     /// Delete rows matching the conjunctive condition; returns the deleted count.
-    fn delete(&self, condition: &FilterCondition, index_name: &str, dataset_id: &str) -> crate::Result<usize>;
+    fn delete(
+        &self,
+        condition: &FilterCondition,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<usize>;
     /// Search with match expressions, filtering, ordering and pagination.
     fn search(&self, query: &SearchQuery) -> crate::Result<SearchResponse>;
 
@@ -274,15 +305,28 @@ pub trait DocStore: Send + Sync {
         out
     }
 
-    fn get_highlight(&self, res: &SearchResponse, keywords: &[String], field_name: &str) -> HashMap<String, String> {
-        let docs: Vec<Value> = res.docs.iter().map(|row| Value::Object(row.clone())).collect();
+    fn get_highlight(
+        &self,
+        res: &SearchResponse,
+        keywords: &[String],
+        field_name: &str,
+    ) -> HashMap<String, String> {
+        let docs: Vec<Value> = res
+            .docs
+            .iter()
+            .map(|row| Value::Object(row.clone()))
+            .collect();
         crate::memory::get_highlight_from_messages(&docs, keywords, field_name, None)
             .into_iter()
             .collect()
     }
 
     fn get_aggregation(&self, res: &SearchResponse, field_name: &str) -> Vec<(String, usize)> {
-        let docs: Vec<Value> = res.docs.iter().map(|row| Value::Object(row.clone())).collect();
+        let docs: Vec<Value> = res
+            .docs
+            .iter()
+            .map(|row| Value::Object(row.clone()))
+            .collect();
         crate::memory::aggregate_by_field(&docs, field_name)
     }
 }
@@ -382,14 +426,8 @@ fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
 
 /// Sort scored rows, apply pagination, then build the response (shared by
 /// every backend so search semantics stay identical across them).
-fn finalize_search(
-    mut scored: Vec<(f32, StoredRow)>,
-    query: &SearchQuery,
-) -> SearchResponse {
-    scored.sort_by(|a, b| {
-        b.0.total_cmp(&a.0)
-            .then_with(|| a.1.id.cmp(&b.1.id))
-    });
+fn finalize_search(mut scored: Vec<(f32, StoredRow)>, query: &SearchQuery) -> SearchResponse {
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
     let total = scored.len();
     let mut aggregations = HashMap::new();
     for field in &query.agg_fields {
@@ -397,9 +435,16 @@ fn finalize_search(
             .iter()
             .map(|(_, row)| Value::Object(row.row.clone()))
             .collect();
-        aggregations.insert(field.clone(), crate::memory::aggregate_by_field(&docs, field));
+        aggregations.insert(
+            field.clone(),
+            crate::memory::aggregate_by_field(&docs, field),
+        );
     }
-    let limit = if query.limit == 0 { usize::MAX } else { query.limit };
+    let limit = if query.limit == 0 {
+        usize::MAX
+    } else {
+        query.limit
+    };
     let docs: Vec<DocRow> = scored
         .into_iter()
         .skip(query.offset)
@@ -453,7 +498,12 @@ impl DocStore for MemoryDocStore {
         Ok(HealthStatus::green("memory-1.0"))
     }
 
-    fn create_idx(&self, index_name: &str, dataset_id: &str, _vector_size: usize) -> crate::Result<()> {
+    fn create_idx(
+        &self,
+        index_name: &str,
+        dataset_id: &str,
+        _vector_size: usize,
+    ) -> crate::Result<()> {
         self.indexes
             .lock()
             .unwrap()
@@ -477,7 +527,12 @@ impl DocStore for MemoryDocStore {
             .contains(&(index_name.to_string(), dataset_id.to_string())))
     }
 
-    fn insert(&self, rows: &[DocRow], index_name: &str, dataset_id: &str) -> crate::Result<Vec<String>> {
+    fn insert(
+        &self,
+        rows: &[DocRow],
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<Vec<String>> {
         let mut store = self.rows.lock().unwrap();
         let mut ids = Vec::with_capacity(rows.len());
         for row in rows {
@@ -500,7 +555,12 @@ impl DocStore for MemoryDocStore {
         Ok(ids)
     }
 
-    fn get(&self, data_id: &str, index_name: &str, dataset_ids: &[String]) -> crate::Result<Option<DocRow>> {
+    fn get(
+        &self,
+        data_id: &str,
+        index_name: &str,
+        dataset_ids: &[String],
+    ) -> crate::Result<Option<DocRow>> {
         let store = self.rows.lock().unwrap();
         Ok(store
             .iter()
@@ -512,7 +572,13 @@ impl DocStore for MemoryDocStore {
             .map(|stored| stored.row.clone()))
     }
 
-    fn update(&self, condition: &FilterCondition, new_value: &DocRow, index_name: &str, dataset_id: &str) -> crate::Result<bool> {
+    fn update(
+        &self,
+        condition: &FilterCondition,
+        new_value: &DocRow,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<bool> {
         let mut store = self.rows.lock().unwrap();
         let mut changed = false;
         for stored in store.iter_mut() {
@@ -529,7 +595,12 @@ impl DocStore for MemoryDocStore {
         Ok(changed)
     }
 
-    fn delete(&self, condition: &FilterCondition, index_name: &str, dataset_id: &str) -> crate::Result<usize> {
+    fn delete(
+        &self,
+        condition: &FilterCondition,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<usize> {
         let mut store = self.rows.lock().unwrap();
         let before = store.len();
         store.retain(|stored| {
@@ -553,7 +624,12 @@ impl DocStore for MemoryDocStore {
                             .any(|name| name == &stored.index_name))
                     && condition_matches(&stored.row, &query.condition)
             })
-            .map(|stored| (score_doc(&stored.row, &stored.embedding, query), stored.clone()))
+            .map(|stored| {
+                (
+                    score_doc(&stored.row, &stored.embedding, query),
+                    stored.clone(),
+                )
+            })
             .filter(|(score, _)| query.match_expressions.is_empty() || *score > 0.0)
             .collect();
         Ok(finalize_search(scored, query))
@@ -624,12 +700,14 @@ impl PostgresDocStore {
             let row_value: Value = row.get(3);
             let embedding: Option<Value> = row.get(4);
             let embedding = embedding
-                .and_then(|value| value.as_array().map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_f64().map(|f| f as f32))
-                        .collect()
-                }))
+                .and_then(|value| {
+                    value.as_array().map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
+                })
                 .unwrap_or_default();
             out.push(StoredRow {
                 id,
@@ -665,7 +743,12 @@ impl DocStore for PostgresDocStore {
         Ok(HealthStatus::green(format!("postgresql-{version}")))
     }
 
-    fn create_idx(&self, index_name: &str, dataset_id: &str, vector_size: usize) -> crate::Result<()> {
+    fn create_idx(
+        &self,
+        index_name: &str,
+        dataset_id: &str,
+        vector_size: usize,
+    ) -> crate::Result<()> {
         let mut client = self.client.lock().unwrap();
         client.execute(
             "INSERT INTO doc_store_indexes (index_name, dataset_id, vector_size, created_at)
@@ -705,7 +788,12 @@ impl DocStore for PostgresDocStore {
         Ok(exists)
     }
 
-    fn insert(&self, rows: &[DocRow], index_name: &str, dataset_id: &str) -> crate::Result<Vec<String>> {
+    fn insert(
+        &self,
+        rows: &[DocRow],
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<Vec<String>> {
         let mut client = self.client.lock().unwrap();
         let mut ids = Vec::with_capacity(rows.len());
         for row in rows {
@@ -724,7 +812,12 @@ impl DocStore for PostgresDocStore {
         Ok(ids)
     }
 
-    fn get(&self, data_id: &str, index_name: &str, dataset_ids: &[String]) -> crate::Result<Option<DocRow>> {
+    fn get(
+        &self,
+        data_id: &str,
+        index_name: &str,
+        dataset_ids: &[String],
+    ) -> crate::Result<Option<DocRow>> {
         let mut client = self.client.lock().unwrap();
         let row = client.query_opt(
             "SELECT row FROM doc_store_chunks WHERE id = $1 AND index_name = $2 AND dataset_id = ANY($3)",
@@ -735,7 +828,13 @@ impl DocStore for PostgresDocStore {
             .and_then(|value| value.as_object().cloned()))
     }
 
-    fn update(&self, condition: &FilterCondition, new_value: &DocRow, index_name: &str, dataset_id: &str) -> crate::Result<bool> {
+    fn update(
+        &self,
+        condition: &FilterCondition,
+        new_value: &DocRow,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<bool> {
         let condition_value = Value::Object(condition.clone());
         let new_value = Value::Object(new_value.clone());
         let mut client = self.client.lock().unwrap();
@@ -748,7 +847,12 @@ impl DocStore for PostgresDocStore {
         Ok(affected > 0)
     }
 
-    fn delete(&self, condition: &FilterCondition, index_name: &str, dataset_id: &str) -> crate::Result<usize> {
+    fn delete(
+        &self,
+        condition: &FilterCondition,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<usize> {
         let condition_value = Value::Object(condition.clone());
         let mut client = self.client.lock().unwrap();
         let affected = client.execute(
@@ -865,7 +969,12 @@ impl DocStore for ZvecDocStore {
         Ok(HealthStatus::green(format!("zvec-{}", zvec.backend_name())))
     }
 
-    fn create_idx(&self, index_name: &str, dataset_id: &str, vector_size: usize) -> crate::Result<()> {
+    fn create_idx(
+        &self,
+        index_name: &str,
+        dataset_id: &str,
+        vector_size: usize,
+    ) -> crate::Result<()> {
         self.memory.create_idx(index_name, dataset_id, vector_size)
     }
 
@@ -877,7 +986,12 @@ impl DocStore for ZvecDocStore {
         self.memory.index_exist(index_name, dataset_id)
     }
 
-    fn insert(&self, rows: &[DocRow], index_name: &str, dataset_id: &str) -> crate::Result<Vec<String>> {
+    fn insert(
+        &self,
+        rows: &[DocRow],
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<Vec<String>> {
         let ids = self.memory.insert(rows, index_name, dataset_id)?;
         let chunks: Vec<crate::Chunk> = rows
             .iter()
@@ -890,15 +1004,32 @@ impl DocStore for ZvecDocStore {
         Ok(ids)
     }
 
-    fn get(&self, data_id: &str, index_name: &str, dataset_ids: &[String]) -> crate::Result<Option<DocRow>> {
+    fn get(
+        &self,
+        data_id: &str,
+        index_name: &str,
+        dataset_ids: &[String],
+    ) -> crate::Result<Option<DocRow>> {
         self.memory.get(data_id, index_name, dataset_ids)
     }
 
-    fn update(&self, condition: &FilterCondition, new_value: &DocRow, index_name: &str, dataset_id: &str) -> crate::Result<bool> {
-        self.memory.update(condition, new_value, index_name, dataset_id)
+    fn update(
+        &self,
+        condition: &FilterCondition,
+        new_value: &DocRow,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<bool> {
+        self.memory
+            .update(condition, new_value, index_name, dataset_id)
     }
 
-    fn delete(&self, condition: &FilterCondition, index_name: &str, dataset_id: &str) -> crate::Result<usize> {
+    fn delete(
+        &self,
+        condition: &FilterCondition,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<usize> {
         self.memory.delete(condition, index_name, dataset_id)
     }
 
@@ -906,9 +1037,9 @@ impl DocStore for ZvecDocStore {
         // Boost dense scores with the native zvec index when a dense
         // expression is present; fall back to the in-memory scoring otherwise.
         let dense = query.match_expressions.iter().find_map(|expr| match expr {
-            MatchExpr::Dense {
-                embedding_data, ..
-            } if !embedding_data.is_empty() => Some(embedding_data),
+            MatchExpr::Dense { embedding_data, .. } if !embedding_data.is_empty() => {
+                Some(embedding_data)
+            }
             _ => None,
         });
         if let Some(embedding) = dense {
@@ -1022,10 +1153,8 @@ impl DocStorePool {
                         return Ok(conn);
                     }
                     Ok(health) => {
-                        last_error = Some(anyhow::anyhow!(
-                            "doc store unhealthy: {:?}",
-                            health.error
-                        ));
+                        last_error =
+                            Some(anyhow::anyhow!("doc store unhealthy: {:?}", health.error));
                     }
                     Err(error) => last_error = Some(error),
                 },
@@ -1116,7 +1245,9 @@ mod tests {
     #[test]
     fn memory_doc_store_update_and_get() {
         let store = MemoryDocStore::new();
-        store.insert(&[row("c1", "original")], "idx1", "kb1").unwrap();
+        store
+            .insert(&[row("c1", "original")], "idx1", "kb1")
+            .unwrap();
 
         let mut condition = Map::new();
         condition.insert("id".into(), json!("c1"));
@@ -1134,7 +1265,12 @@ mod tests {
         assert!(!store.update(&missed, &update, "idx1", "kb1").unwrap());
 
         // Dataset-scoped get.
-        assert!(store.get("c1", "idx1", &["other".into()]).unwrap().is_none());
+        assert!(
+            store
+                .get("c1", "idx1", &["other".into()])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1153,7 +1289,10 @@ mod tests {
         assert_eq!(store.get_doc_ids(&res), vec!["c1", "c2"]);
 
         let fields = store.get_fields(&res, &["content".into()]);
-        assert_eq!(fields["c1"]["content"], json!("Rust is a systems language."));
+        assert_eq!(
+            fields["c1"]["content"],
+            json!("Rust is a systems language.")
+        );
 
         let highlights = store.get_highlight(&res, &["rust".into()], "content");
         assert_eq!(highlights.len(), 1);
@@ -1178,15 +1317,25 @@ mod tests {
         assert_eq!(pool.backend_name(), "memory");
         let conn = pool.get_conn().unwrap();
         assert_eq!(conn.db_type(), "memory");
-        conn.insert(&[row("c1", "pooled row")], "idx1", "kb1").unwrap();
+        conn.insert(&[row("c1", "pooled row")], "idx1", "kb1")
+            .unwrap();
 
         // Same shared connection is returned on repeated acquire.
         let again = pool.get_conn().unwrap();
         assert!(Arc::ptr_eq(&conn, &again));
-        assert_eq!(again.get("c1", "idx1", &["kb1".into()]).unwrap().is_some(), true);
+        assert_eq!(
+            again.get("c1", "idx1", &["kb1".into()]).unwrap().is_some(),
+            true
+        );
 
         // refresh_conn keeps a healthy connection untouched.
         let refreshed = pool.refresh_conn().unwrap();
-        assert_eq!(refreshed.get("c1", "idx1", &["kb1".into()]).unwrap().is_some(), true);
+        assert_eq!(
+            refreshed
+                .get("c1", "idx1", &["kb1".into()])
+                .unwrap()
+                .is_some(),
+            true
+        );
     }
 }

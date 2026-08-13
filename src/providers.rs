@@ -930,7 +930,12 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
             ProviderKind::SpeechToText,
             ProviderKind::TextToSpeech,
         ],
-        models: &["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-tts"],
+        models: &[
+            "mimo-v2.5-pro",
+            "mimo-v2.5",
+            "mimo-v2.5-asr",
+            "mimo-v2.5-tts",
+        ],
         note: "小米 MiMo (国内直连)",
     },
     ProviderPreset {
@@ -1290,7 +1295,16 @@ mod tests {
             );
         }
         // Domestic CN providers must stay marked reachable without a proxy.
-        for id in ["aliyun", "baidu", "hunyuan", "xunfei", "gitee", "xiaomi", "qiniu", "huaweicloud"] {
+        for id in [
+            "aliyun",
+            "baidu",
+            "hunyuan",
+            "xunfei",
+            "gitee",
+            "xiaomi",
+            "qiniu",
+            "huaweicloud",
+        ] {
             assert!(
                 provider_is_domestic(id, id),
                 "{id} must be classified domestic (CN provider)"

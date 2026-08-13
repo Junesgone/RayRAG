@@ -70,7 +70,10 @@ impl ApiError {
 
     /// `UserNotFoundError(username)` — `"User '{username}' not found"`, 404.
     pub fn user_not_found(username: &str) -> Self {
-        Self::new(ApiErrorKind::UserNotFound, format!("User '{username}' not found"))
+        Self::new(
+            ApiErrorKind::UserNotFound,
+            format!("User '{username}' not found"),
+        )
     }
 
     /// `UserAlreadyExistsError(username)` — `"User '{username}' already exists"`, 409.
@@ -83,12 +86,18 @@ impl ApiError {
 
     /// `CannotDeleteAdminError` — `"Cannot delete admin account"`, 403.
     pub fn cannot_delete_admin() -> Self {
-        Self::new(ApiErrorKind::CannotDeleteAdmin, "Cannot delete admin account")
+        Self::new(
+            ApiErrorKind::CannotDeleteAdmin,
+            "Cannot delete admin account",
+        )
     }
 
     /// `NotAdminError(username)` — `"User '{username}' is not admin"`, 403.
     pub fn not_admin(username: &str) -> Self {
-        Self::new(ApiErrorKind::NotAdmin, format!("User '{username}' is not admin"))
+        Self::new(
+            ApiErrorKind::NotAdmin,
+            format!("User '{username}' is not admin"),
+        )
     }
 
     /// Internal failure — RAGFlow surfaces these as HTTP 500.
@@ -212,8 +221,12 @@ pub fn check_file_team_permission(
         let Some((kb_tenant_id, kb_permission)) = kb_info(&kb_id) else {
             continue;
         };
-        if check_kb_team_permission(&kb_tenant_id, &kb_permission, other_user_id, &is_joined_tenant)
-        {
+        if check_kb_team_permission(
+            &kb_tenant_id,
+            &kb_permission,
+            other_user_id,
+            &is_joined_tenant,
+        ) {
             return true;
         }
     }
@@ -257,7 +270,10 @@ mod tests {
         use base64::Engine as _;
         assert_eq!(ApiError::admin("boom").code, 400);
         assert_eq!(ApiError::user_not_found("alice").code, 404);
-        assert_eq!(ApiError::user_not_found("alice").message, "User 'alice' not found");
+        assert_eq!(
+            ApiError::user_not_found("alice").message,
+            "User 'alice' not found"
+        );
         assert_eq!(ApiError::user_already_exists("alice").code, 409);
         assert_eq!(
             ApiError::user_already_exists("alice").message,
@@ -265,7 +281,10 @@ mod tests {
         );
         assert_eq!(ApiError::cannot_delete_admin().code, 403);
         assert_eq!(ApiError::not_admin("alice").code, 403);
-        assert_eq!(ApiError::not_admin("alice").message, "User 'alice' is not admin");
+        assert_eq!(
+            ApiError::not_admin("alice").message,
+            "User 'alice' is not admin"
+        );
     }
 
     #[test]
@@ -285,14 +304,27 @@ mod tests {
         // user-x has joined tenant-a; user-y has not joined anything.
         let joined_x = |tenant: &str| tenant == "tenant-a";
         // Owner always passes.
-        assert!(check_kb_team_permission("tenant-a", "team", "tenant-a", joined_x));
-        assert!(check_kb_team_permission("tenant-a", "me", "tenant-a", joined_x));
+        assert!(check_kb_team_permission(
+            "tenant-a", "team", "tenant-a", joined_x
+        ));
+        assert!(check_kb_team_permission(
+            "tenant-a", "me", "tenant-a", joined_x
+        ));
         // Non-team permission blocks cross-tenant access even when joined.
-        assert!(!check_kb_team_permission("tenant-a", "me", "user-x", joined_x));
+        assert!(!check_kb_team_permission(
+            "tenant-a", "me", "user-x", joined_x
+        ));
         // Team permission + joined owning tenant passes.
-        assert!(check_kb_team_permission("tenant-a", "team", "user-x", joined_x));
+        assert!(check_kb_team_permission(
+            "tenant-a", "team", "user-x", joined_x
+        ));
         // Team permission without membership is denied.
-        assert!(!check_kb_team_permission("tenant-a", "team", "user-y", |_| false));
+        assert!(!check_kb_team_permission(
+            "tenant-a",
+            "team",
+            "user-y",
+            |_| false
+        ));
     }
 
     #[test]
@@ -309,11 +341,19 @@ mod tests {
         };
         let joined = |tenant: &str| tenant == "tenant-b";
         // Owner passes regardless of KB permissions.
-        assert!(check_file_team_permission("tenant-a", "file-1", "tenant-a", &kbs, &kb_info, joined));
+        assert!(check_file_team_permission(
+            "tenant-a", "file-1", "tenant-a", &kbs, &kb_info, joined
+        ));
         // Cross-tenant: only a team-permissioned linked KB grants access.
-        assert!(!check_file_team_permission("tenant-a", "file-1", "user-x", &kbs, &kb_info, joined));
-        assert!(check_file_team_permission("tenant-a", "file-2", "user-x", &kbs, &kb_info, joined));
+        assert!(!check_file_team_permission(
+            "tenant-a", "file-1", "user-x", &kbs, &kb_info, joined
+        ));
+        assert!(check_file_team_permission(
+            "tenant-a", "file-2", "user-x", &kbs, &kb_info, joined
+        ));
         // No linked KBs → denied.
-        assert!(!check_file_team_permission("tenant-a", "file-3", "user-x", &kbs, &kb_info, joined));
+        assert!(!check_file_team_permission(
+            "tenant-a", "file-3", "user-x", &kbs, &kb_info, joined
+        ));
     }
 }

@@ -55,11 +55,58 @@ fn is_cjk(ch: char) -> bool {
 fn is_cjk_function_char(ch: char) -> bool {
     matches!(
         ch,
-        '的' | '是' | '也' | '了' | '在' | '和' | '与' | '及' | '或' | '而' | '之' | '于'
-            | '为' | '从' | '对' | '把' | '被' | '就' | '都' | '还' | '又' | '再' | '但'
-            | '并' | '且' | '若' | '因' | '所' | '以' | '中' | '上' | '下' | '内' | '外'
-            | '前' | '后' | '个' | '等' | '将' | '由' | '向' | '往' | '到' | '让' | '使'
-            | '给' | '这' | '那' | '其' | '每' | '各' | '该' | '本'
+        '的' | '是'
+            | '也'
+            | '了'
+            | '在'
+            | '和'
+            | '与'
+            | '及'
+            | '或'
+            | '而'
+            | '之'
+            | '于'
+            | '为'
+            | '从'
+            | '对'
+            | '把'
+            | '被'
+            | '就'
+            | '都'
+            | '还'
+            | '又'
+            | '再'
+            | '但'
+            | '并'
+            | '且'
+            | '若'
+            | '因'
+            | '所'
+            | '以'
+            | '中'
+            | '上'
+            | '下'
+            | '内'
+            | '外'
+            | '前'
+            | '后'
+            | '个'
+            | '等'
+            | '将'
+            | '由'
+            | '向'
+            | '往'
+            | '到'
+            | '让'
+            | '使'
+            | '给'
+            | '这'
+            | '那'
+            | '其'
+            | '每'
+            | '各'
+            | '该'
+            | '本'
     )
 }
 
@@ -90,10 +137,7 @@ fn tokenize(text: &str) -> Vec<(String, usize)> {
         alpha.clear();
         let offset = *start;
         *start = 0;
-        if word.is_empty()
-            || word.chars().all(|c| c.is_ascii_digit())
-            || is_stop_word(&word)
-        {
+        if word.is_empty() || word.chars().all(|c| c.is_ascii_digit()) || is_stop_word(&word) {
             return;
         }
         out.push((word, offset));
@@ -368,7 +412,12 @@ mod tests {
         eprintln!("CJK_TERMS {:?}", terms.iter().take(15).collect::<Vec<_>>());
         // 2 字片段与 4 字短语都进入前排（重要/分支 tf=2，排名确定）。
         assert!(terms.iter().take(5).any(|t| t == "学习"));
-        assert!(terms.iter().take(12).any(|t| t.contains("重要") && t.contains("分支")));
+        assert!(
+            terms
+                .iter()
+                .take(12)
+                .any(|t| t.contains("重要") && t.contains("分支"))
+        );
         // 4 字短语（人工智能）也能被提取（用大 top_n 避免默认截断遮蔽）。
         let wide = extract_key_terms_with_top_n(text, 60);
         assert!(wide.iter().any(|t| t.contains("人工智能")));

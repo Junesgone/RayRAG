@@ -2,13 +2,13 @@
 //!
 //! System-administration endpoints under `/api/v1/admin`: ping, user
 //! management (list / create / details / delete / password / activation /
-//! admin grant-revoke / API keys), version, runtime variables, configs,
+//! admin grant-revoke / API keys), version, configs,
 //! environments and log levels. Every handler requires an admin `AuthContext`
 //! (`check_admin_auth` in RAGFlow).
 //!
-//! State that RAGFlow keeps in admin tables (activation flags, API keys,
-//! variables) lives in a process-local registry here; user records themselves
-//! are the shared `UserStore` (`src/auth.rs`).
+//! Activation flags and API keys live in a process-local registry here; durable
+//! runtime variables are implemented by `api::system_settings`, and user
+//! records themselves are the shared `UserStore` (`src/auth.rs`).
 
 use crate::server::{AppState, AuthContext};
 use axum::{
@@ -62,7 +62,6 @@ fn now_ms() -> u64 {
 struct AdminRegistry {
     activate_status: Mutex<HashMap<String, bool>>,
     api_keys: Mutex<HashMap<String, Vec<ApiKeyEntry>>>,
-    variables: Mutex<HashMap<String, String>>,
 }
 
 fn admin_registry() -> &'static AdminRegistry {
@@ -285,12 +284,7 @@ pub async fn alter_user_activate_status(
     )
 }
 
-fn grant_or_revoke(
-    state: &AppState,
-    auth: &AuthContext,
-    username: &str,
-    role: &str,
-) -> Response {
+fn grant_or_revoke(state: &AppState, auth: &AuthContext, username: &str, role: &str) -> Response {
     let Some(user) = resolve_user(state, username) else {
         return error_response(StatusCode::NOT_FOUND, 404, "User not found");
     };
@@ -365,7 +359,10 @@ pub async fn generate_user_api_key(
         .entry(user.email.clone())
         .or_default()
         .push(entry.clone());
-    ok_with_message("API key generated successfully", serde_json::to_value(entry).unwrap_or_default())
+    ok_with_message(
+        "API key generated successfully",
+        serde_json::to_value(entry).unwrap_or_default(),
+    )
 }
 
 /// GET /api/v1/admin/users/{username}/keys
@@ -404,69 +401,29 @@ pub async fn delete_user_api_key(
     };
     let mut keys = admin_registry().api_keys.lock().unwrap();
     let Some(entries) = keys.get_mut(&user.email) else {
-        return error_response(StatusCode::NOT_FOUND, 404, "API key not found or could not be deleted");
+        return error_response(
+            StatusCode::NOT_FOUND,
+            404,
+            "API key not found or could not be deleted",
+        );
     };
     let before = entries.len();
     entries.retain(|entry| entry.token != key);
     if entries.len() == before {
-        return error_response(StatusCode::NOT_FOUND, 404, "API key not found or could not be deleted");
+        return error_response(
+            StatusCode::NOT_FOUND,
+            404,
+            "API key not found or could not be deleted",
+        );
     }
     ok_with_message("API key deleted successfully", serde_json::json!(true))
 }
 
-// ── Version / variables / configs / environments ────────────────
+// ── Version / configs / environments ────────────────────────────
 
 /// GET /api/v1/admin/version
 pub async fn show_version() -> Response {
     ok(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
-}
-
-#[derive(Deserialize)]
-pub struct VariableUpdate {
-    var_name: String,
-    var_value: String,
-}
-
-/// PUT /api/v1/admin/variables — set a runtime variable.
-pub async fn set_variable(
-    Extension(auth): Extension<AuthContext>,
-    Json(body): Json<VariableUpdate>,
-) -> Response {
-    if let Some(response) = require_admin(&auth) {
-        return response;
-    }
-    admin_registry()
-        .variables
-        .lock()
-        .unwrap()
-        .insert(body.var_name.clone(), body.var_value);
-    ok_with_message("Set variable successfully", serde_json::json!(true))
-}
-
-/// GET /api/v1/admin/variables — list variables, or read one when the body
-/// carries `var_name` (RAGFlow behaviour).
-pub async fn get_variable(
-    Extension(auth): Extension<AuthContext>,
-    body: Option<Json<serde_json::Value>>,
-) -> Response {
-    if let Some(response) = require_admin(&auth) {
-        return response;
-    }
-    let variables = admin_registry().variables.lock().unwrap();
-    let data = match body {
-        Some(Json(payload)) => match payload.get("var_name").and_then(serde_json::Value::as_str) {
-            Some(name) => serde_json::json!([{ "var_name": name, "var_value": variables.get(name) }]),
-            None => serde_json::json!([]),
-        },
-        None => {
-            let list: Vec<serde_json::Value> = variables
-                .iter()
-                .map(|(name, value)| serde_json::json!({ "var_name": name, "var_value": value }))
-                .collect();
-            serde_json::json!(list)
-        }
-    };
-    ok(data)
 }
 
 /// GET /api/v1/admin/configs — static system configuration snapshot.
@@ -507,11 +464,7 @@ pub async fn get_environments() -> Response {
         };
         list.push(serde_json::json!({ "name": key, "value": masked }));
     }
-    list.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .cmp(&b["name"].as_str())
-    });
+    list.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     ok(serde_json::json!(list))
 }
 
@@ -528,19 +481,29 @@ pub async fn set_log_level(
     Json(update): Json<serde_json::Value>,
 ) -> Response {
     let Some(pkg_name) = update.get("pkg_name").and_then(serde_json::Value::as_str) else {
-        return error_response(StatusCode::BAD_REQUEST, 102, "pkg_name and level are required");
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            102,
+            "pkg_name and level are required",
+        );
     };
     let Some(level) = update.get("level").and_then(serde_json::Value::as_str) else {
-        return error_response(StatusCode::BAD_REQUEST, 102, "pkg_name and level are required");
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            102,
+            "pkg_name and level are required",
+        );
     };
     match state.log_levels.set_level(pkg_name, level) {
         Ok(level) => ok_with_message(
             "Log level updated successfully",
             serde_json::json!({ "pkg_name": pkg_name, "level": level }),
         ),
-        Err(crate::logging::SetLogLevelError::InvalidLevel) => {
-            error_response(StatusCode::BAD_REQUEST, 102, format!("Invalid log level: {level}"))
-        }
+        Err(crate::logging::SetLogLevelError::InvalidLevel) => error_response(
+            StatusCode::BAD_REQUEST,
+            102,
+            format!("Invalid log level: {level}"),
+        ),
         Err(error) => error_response(StatusCode::INTERNAL_SERVER_ERROR, 500, error.to_string()),
     }
 }

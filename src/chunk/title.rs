@@ -215,7 +215,9 @@ impl TitleChunker {
         // （含点，如 `1.1 背景`）接受，避免把 `2024 年报告` 这类数字开头
         // 的正文行误判为标题。
         let after = line[head.len()..].chars().next()?;
-        let ok = after == '.' || after == '、' || after == '：'
+        let ok = after == '.'
+            || after == '、'
+            || after == '：'
             || (after.is_whitespace() && segments.len() > 1);
         if !ok {
             return None;

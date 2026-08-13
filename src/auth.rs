@@ -9,7 +9,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// A registered user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,11 +44,21 @@ pub struct UserStore {
     /// Path to users.json file
     file_path: String,
     save_lock: Mutex<()>,
+    password_transport: Option<Arc<crate::password_transport::PasswordTransport>>,
 }
 
 impl UserStore {
     /// Create or load user store from file.
     pub fn new(file_path: &str) -> Result<Self> {
+        let password_transport =
+            crate::password_transport::PasswordTransport::from_env()?.map(Arc::new);
+        Self::new_with_password_transport(file_path, password_transport)
+    }
+
+    fn new_with_password_transport(
+        file_path: &str,
+        password_transport: Option<Arc<crate::password_transport::PasswordTransport>>,
+    ) -> Result<Self> {
         crate::persistence::restore_if_missing(std::path::Path::new(file_path))?;
         let users = if std::path::Path::new(file_path).exists() {
             let data = std::fs::read_to_string(file_path)?;
@@ -87,6 +97,7 @@ impl UserStore {
             tokens: RwLock::new(HashMap::new()),
             file_path: file_path.to_string(),
             save_lock: Mutex::new(()),
+            password_transport,
         };
         store.persist_current()?;
         Ok(store)
@@ -94,20 +105,21 @@ impl UserStore {
 
     /// Authenticate with email + password. Returns token on success.
     pub fn login(&self, email: &str, password: &str) -> Result<Option<String>> {
+        let password = self.decode_password(password)?;
         let (user_id, needs_upgrade) = {
             let users = self.users.read().unwrap();
             let user = match users.get(email) {
                 Some(user) => user,
                 None => return Ok(None),
             };
-            match verify_password(password, &user.password_hash) {
+            match verify_password(password.as_ref(), &user.password_hash) {
                 PasswordVerification::Valid { needs_upgrade } => (user.id.clone(), needs_upgrade),
                 PasswordVerification::Invalid => return Ok(None),
             }
         };
 
         if needs_upgrade {
-            let password_hash = hash_password(password)?;
+            let password_hash = hash_password(password.as_ref())?;
             self.mutate_if_changed(|users| {
                 let Some(user) = users.get_mut(email) else {
                     return Ok(((), false));
@@ -130,6 +142,8 @@ impl UserStore {
 
     /// 修改密码（校验当前密码后更新哈希）。
     pub fn change_password(&self, user_id: &str, current: &str, new_password: &str) -> Result<()> {
+        let current = self.decode_password(current)?;
+        let new_password = self.decode_password(new_password)?;
         if new_password.len() < 6 {
             anyhow::bail!("New password must be at least 6 characters");
         }
@@ -138,12 +152,12 @@ impl UserStore {
             let Some(user) = users.values().find(|user| user.id == user_id) else {
                 anyhow::bail!("User not found");
             };
-            match verify_password(current, &user.password_hash) {
+            match verify_password(current.as_ref(), &user.password_hash) {
                 PasswordVerification::Valid { .. } => user.email.clone(),
                 PasswordVerification::Invalid => anyhow::bail!("Current password is incorrect"),
             }
         };
-        let password_hash = hash_password(new_password)?;
+        let password_hash = hash_password(new_password.as_ref())?;
         self.mutate_if_changed(|users| {
             let Some(user) = users.get_mut(&email) else {
                 return Ok(((), false));
@@ -173,10 +187,11 @@ impl UserStore {
 
     /// 管理员：重置指定用户密码。
     pub fn reset_password(&self, user_id: &str, new_password: &str) -> Result<bool> {
+        let new_password = self.decode_password(new_password)?;
         if new_password.len() < 6 {
             anyhow::bail!("New password must be at least 6 characters");
         }
-        let password_hash = hash_password(new_password)?;
+        let password_hash = hash_password(new_password.as_ref())?;
         self.mutate_if_changed(|users| {
             let Some(user) = users.values_mut().find(|user| user.id == user_id) else {
                 return Ok((false, false));
@@ -192,6 +207,7 @@ impl UserStore {
     /// 最小长度策略。
     pub fn create_user(&self, username: &str, password: &str, role: &str) -> Result<User> {
         let username = username.trim();
+        let password = self.decode_password(password)?;
         if username.is_empty() {
             anyhow::bail!("Username is required");
         }
@@ -203,7 +219,7 @@ impl UserStore {
             id: uuid::Uuid::new_v4().to_string(),
             nickname: username.to_string(),
             email: username.to_ascii_lowercase(),
-            password_hash: hash_password(password)?,
+            password_hash: hash_password(password.as_ref())?,
             role: role.to_string(),
             created_at: now_ms(),
         };
@@ -245,6 +261,7 @@ impl UserStore {
     pub fn register(&self, nickname: &str, email: &str, password: &str) -> Result<User> {
         let nickname = nickname.trim();
         let email = email.trim().to_ascii_lowercase();
+        let password = self.decode_password(password)?;
         if nickname.is_empty() {
             anyhow::bail!("Nickname is required");
         }
@@ -263,7 +280,7 @@ impl UserStore {
             id: uuid::Uuid::new_v4().to_string(),
             nickname: nickname.to_string(),
             email: email.clone(),
-            password_hash: hash_password(password)?,
+            password_hash: hash_password(password.as_ref())?,
             role: "normal".into(),
             created_at: now_ms(),
         };
@@ -307,9 +324,23 @@ impl UserStore {
         self.users.read().unwrap().values().cloned().collect()
     }
 
+    /// Public half of the optional deployment-specific password transport key.
+    pub fn password_public_key(&self) -> Option<&str> {
+        self.password_transport
+            .as_deref()
+            .map(crate::password_transport::PasswordTransport::public_key_pem)
+    }
+
     /// Logout (invalidate token).
     pub fn logout(&self, token: &str) {
         self.tokens.write().unwrap().remove(token);
+    }
+
+    fn decode_password<'a>(&self, value: &'a str) -> Result<std::borrow::Cow<'a, str>> {
+        match self.password_transport.as_deref() {
+            Some(transport) => transport.decode(value),
+            None => Ok(std::borrow::Cow::Borrowed(value)),
+        }
     }
 
     fn mutate<T>(
@@ -441,12 +472,58 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use rsa::pkcs8::{DecodePublicKey, EncodePrivateKey, LineEnding};
+    use rsa::rand_core::OsRng;
+    use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 
     fn temp_path(name: &str) -> String {
         std::env::temp_dir()
             .join(format!("rayrag-{name}-{}.json", uuid::Uuid::new_v4()))
             .to_string_lossy()
             .into_owned()
+    }
+
+    fn encrypt_ragflow_password(public_key_pem: &str, password: &str) -> String {
+        let public_key = RsaPublicKey::from_public_key_pem(public_key_pem).unwrap();
+        let inner = STANDARD.encode(password);
+        let encrypted = public_key
+            .encrypt(&mut OsRng, Pkcs1v15Encrypt, inner.as_bytes())
+            .unwrap();
+        STANDARD.encode(encrypted)
+    }
+
+    #[test]
+    fn encrypted_ragflow_passwords_reach_all_user_store_auth_boundaries() {
+        let path = temp_path("rsa-password-transport");
+        std::fs::write(&path, b"[]").unwrap();
+        let private_key = RsaPrivateKey::new(&mut OsRng, 2_048).unwrap();
+        let private_pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
+        let transport = Arc::new(
+            crate::password_transport::PasswordTransport::from_private_key_pem(
+                private_pem.as_str(),
+            )
+            .unwrap(),
+        );
+        let public_key = transport.public_key_pem().to_owned();
+        let store = UserStore::new_with_password_transport(&path, Some(transport)).unwrap();
+
+        let initial = encrypt_ragflow_password(&public_key, "correct horse battery staple");
+        let user = store
+            .register("RSA User", "rsa@example.com", &initial)
+            .unwrap();
+        assert!(store.login("rsa@example.com", &initial).unwrap().is_some());
+
+        let next = encrypt_ragflow_password(&public_key, "another correct horse battery staple");
+        store.change_password(&user.id, &initial, &next).unwrap();
+        assert!(
+            store
+                .login("rsa@example.com", "another correct horse battery staple")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(store.password_public_key(), Some(public_key.as_str()));
+        std::fs::remove_file(path).ok();
     }
 
     #[test]

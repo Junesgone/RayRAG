@@ -656,7 +656,10 @@ mod tests {
         assert_eq!(doc.important_keywords, vec!["rust", "rag", "pipeline"]);
         assert_eq!(doc.tag_kwd, vec!["好公司", "行业好公司"]);
         assert!(doc.available);
-        assert_eq!(doc.positions, vec![vec![1, 1, 3, 2, 4], vec![2, 2, 4, 3, 5]]);
+        assert_eq!(
+            doc.positions,
+            vec![vec![1, 1, 3, 2, 4], vec![2, 2, 4, 3, 5]]
+        );
         doc.validate_positions().expect("all positions length 5");
 
         // available_int = "0" hides the chunk from retrieval.

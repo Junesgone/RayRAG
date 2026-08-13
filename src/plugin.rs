@@ -30,17 +30,17 @@ pub struct LLMToolParameter {
     #[serde(rename = "type")]
     pub r#type: String,
     pub description: String,
-    #[serde(rename = "displayDescription", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "displayDescription",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub display_description: Option<String>,
     pub required: bool,
 }
 
 impl LLMToolParameter {
-    pub fn new(
-        r#type: impl Into<String>,
-        description: impl Into<String>,
-        required: bool,
-    ) -> Self {
+    pub fn new(r#type: impl Into<String>, description: impl Into<String>, required: bool) -> Self {
         Self {
             r#type: r#type.into(),
             description: description.into(),
@@ -57,7 +57,11 @@ pub struct LLMToolMetadata {
     #[serde(rename = "displayName")]
     pub display_name: String,
     pub description: String,
-    #[serde(rename = "displayDescription", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "displayDescription",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub display_description: Option<String>,
     /// 参数表（保序，对齐 dict[str, LLMToolParameter] 的插入序）。
     pub parameters: Vec<(String, LLMToolParameter)>,
@@ -244,9 +248,8 @@ impl BadCalculatorPlugin {
             metadata: LLMToolMetadata {
                 name: "bad_calculator".to_string(),
                 display_name: "$t:bad_calculator.name".to_string(),
-                description:
-                    "A tool to calculate the sum of two numbers (will give wrong answer)"
-                        .to_string(),
+                description: "A tool to calculate the sum of two numbers (will give wrong answer)"
+                    .to_string(),
                 display_description: Some("$t:bad_calculator.description".to_string()),
                 parameters: vec![
                     (
@@ -357,10 +360,8 @@ mod tests {
         assert!(manager.get_llm_tool_by_name("missing").is_none());
         assert_eq!(manager.get_llm_tools().len(), 2);
         // 按名称列表过滤（对齐 get_llm_tools_by_names：缺失名称跳过）
-        let tools = manager.get_llm_tools_by_names(&[
-            "bad_calculator".to_string(),
-            "missing".to_string(),
-        ]);
+        let tools =
+            manager.get_llm_tools_by_names(&["bad_calculator".to_string(), "missing".to_string()]);
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].metadata().name.as_str(), "bad_calculator");
     }
@@ -372,7 +373,9 @@ mod tests {
         // 1 + 2 + 100 = 103（对齐 bad_calculator.py：str(a + b + 100)）
         let args = Map::from_iter([("a".into(), json!(1)), ("b".into(), json!(2))]);
         assert_eq!(
-            manager.invoke_llm_tool("bad_calculator", &args, &env).unwrap(),
+            manager
+                .invoke_llm_tool("bad_calculator", &args, &env)
+                .unwrap(),
             "103"
         );
         // 缺参 → Err（错误隔离，不 panic）
@@ -384,7 +387,9 @@ mod tests {
         // 失败后管理器与其他插件不受影响
         let args = Map::from_iter([("text".into(), json!("abc"))]);
         assert_eq!(
-            manager.invoke_llm_tool("text_reverse", &args, &env).unwrap(),
+            manager
+                .invoke_llm_tool("text_reverse", &args, &env)
+                .unwrap(),
             "cba"
         );
         // 未知插件名 → Err
@@ -403,17 +408,25 @@ mod tests {
             tool["function"]["description"].as_str(),
             Some("A tool to calculate the sum of two numbers (will give wrong answer)")
         );
-        assert_eq!(tool["function"]["parameters"]["type"].as_str(), Some("object"));
+        assert_eq!(
+            tool["function"]["parameters"]["type"].as_str(),
+            Some("object")
+        );
         assert_eq!(
             tool["function"]["parameters"]["properties"]["a"]["type"].as_str(),
             Some("number")
         );
-        let required = tool["function"]["parameters"]["required"].as_array().unwrap();
+        let required = tool["function"]["parameters"]["required"]
+            .as_array()
+            .unwrap();
         assert!(required.contains(&json!("a")) && required.contains(&json!("b")));
         // 参数元数据（对齐 LLMToolParameter / LLMToolMetadata 语义）
         let metadata = plugin.metadata();
         assert!(metadata.get_parameter("a").unwrap().required);
-        assert_eq!(metadata.get_parameter("b").unwrap().r#type.as_str(), "number");
+        assert_eq!(
+            metadata.get_parameter("b").unwrap().r#type.as_str(),
+            "number"
+        );
         assert_eq!(metadata.display_name.as_str(), "$t:bad_calculator.name");
         assert_eq!(metadata.get_parameter("z"), None);
     }
@@ -447,7 +460,10 @@ mod tests {
         let mut env = PluginEnv::new();
         env.insert("RAYRAG_TEST_SUFFIX", "!");
         let args = Map::from_iter([("text".into(), json!("hi"))]);
-        assert_eq!(manager.invoke_llm_tool("suffix", &args, &env).unwrap(), "hi!");
+        assert_eq!(
+            manager.invoke_llm_tool("suffix", &args, &env).unwrap(),
+            "hi!"
+        );
         // 全量快照包含进程环境（如 PATH/HOME）；不存在的前缀 → 空快照
         let snapshot = PluginEnv::snapshot(None);
         assert!(snapshot.get("PATH").is_some() || snapshot.get("HOME").is_some());
@@ -489,7 +505,9 @@ mod tests {
         manager.load_embedded_plugins();
         let args = Map::from_iter([("text".into(), json!("ab"))]);
         assert_eq!(
-            manager.invoke_llm_tool("text_reverse", &args, &PluginEnv::new()).unwrap(),
+            manager
+                .invoke_llm_tool("text_reverse", &args, &PluginEnv::new())
+                .unwrap(),
             "ba"
         );
     }

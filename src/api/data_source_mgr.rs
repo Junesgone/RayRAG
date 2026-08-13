@@ -257,9 +257,10 @@ pub async fn sync_data_source(
     let batch = match record.kind.as_str() {
         // Legacy path: GitLab connector lives in src/data_source/.
         "gitlab" => {
-            let docs = GitLabConnector::new().fetch(&options).await.map_err(|error| {
-                (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}"))
-            })?;
+            let docs = GitLabConnector::new()
+                .fetch(&options)
+                .await
+                .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))?;
             crate::connectors::SyncBatch {
                 docs,
                 failures: Vec::new(),
@@ -368,15 +369,19 @@ pub async fn connect_data_source(
     let options = record.to_options();
     let mut connector = crate::connectors::ConnectorRegistry::create(&record.kind, options)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    connector
-        .load_credentials()
-        .await
-        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("connect failed: {error:#}")))?;
+    connector.load_credentials().await.map_err(|error| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("connect failed: {error:#}"),
+        )
+    })?;
     record.connected = true;
     store
         .insert(record.clone())
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(serde_json::json!({ "code": 0, "data": record.redacted() })))
+    Ok(Json(
+        serde_json::json!({ "code": 0, "data": record.redacted() }),
+    ))
 }
 
 /// POST /api/v1/data_sources/{id}/disconnect — mark the data source
@@ -396,7 +401,9 @@ pub async fn disconnect_data_source(
     store
         .insert(record.clone())
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(serde_json::json!({ "code": 0, "data": record.redacted() })))
+    Ok(Json(
+        serde_json::json!({ "code": 0, "data": record.redacted() }),
+    ))
 }
 
 /// POST /api/v1/data_sources/{id}/files — 拉取列表: run `list_files` and

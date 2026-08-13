@@ -483,11 +483,7 @@ impl LlmClient {
     }
 
     /// Raw JSON POST returning bytes — used by TTS (`/audio/speech`).
-    pub async fn raw_post_bytes(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> Result<Vec<u8>> {
+    pub async fn raw_post_bytes(&self, url: &str, body: &serde_json::Value) -> Result<Vec<u8>> {
         let mut request = self.client.post(url).json(body);
         if !self.config.api_key.is_empty() {
             request = request.bearer_auth(&self.config.api_key);
@@ -2248,6 +2244,21 @@ pub trait ChatModel: Send + Sync {
     }
     /// One-shot chat: system prompt + history → answer text.
     async fn chat(&self, system: &str, history: &[ChatMessage]) -> Result<String>;
+    /// One-shot chat with per-call generation overrides.
+    ///
+    /// The default deliberately delegates to [`ChatModel::chat`] and ignores
+    /// the patch so existing non-OpenAI/fake implementations remain source
+    /// compatible. Backends that support request-scoped generation settings
+    /// override this method; [`LlmClient`] forwards the patch to its
+    /// OpenAI-compatible completion request.
+    async fn chat_with_generation(
+        &self,
+        system: &str,
+        history: &[ChatMessage],
+        _generation: GenerationParamsPatch,
+    ) -> Result<String> {
+        self.chat(system, history).await
+    }
     /// Streaming chat, delivering each SSE delta to `on_chunk`.
     async fn chat_stream(
         &self,
@@ -2268,6 +2279,21 @@ impl ChatModel for LlmClient {
         messages.push(ChatMessage::new("system", system));
         messages.extend(history.iter().cloned());
         Ok(self.chat_completion(&messages).await?.content)
+    }
+
+    async fn chat_with_generation(
+        &self,
+        system: &str,
+        history: &[ChatMessage],
+        generation: GenerationParamsPatch,
+    ) -> Result<String> {
+        let mut messages = Vec::with_capacity(history.len() + 1);
+        messages.push(ChatMessage::new("system", system));
+        messages.extend(history.iter().cloned());
+        Ok(self
+            .chat_completion_with_generation(&messages, generation)
+            .await?
+            .content)
     }
 
     async fn chat_stream(
@@ -2404,10 +2430,7 @@ impl OpenAiCvModel {
         let prompt = if context_above.is_empty() && context_below.is_empty() {
             crate::parser::figure::figure_describe_prompt()
         } else {
-            crate::parser::figure::figure_describe_prompt_with_context(
-                context_above,
-                context_below,
-            )
+            crate::parser::figure::figure_describe_prompt_with_context(context_above, context_below)
         };
         self.describe_with_prompt(image, &prompt).await
     }
@@ -2580,9 +2603,7 @@ impl TtsModel for UnsupportedModel {
 fn resolve_base_url(provider: &str, api_base: Option<&str>, fallback: &str) -> String {
     api_base
         .map(str::to_string)
-        .or_else(|| {
-            crate::providers::provider_default_base(provider, provider).map(str::to_string)
-        })
+        .or_else(|| crate::providers::provider_default_base(provider, provider).map(str::to_string))
         .unwrap_or_else(|| fallback.to_string())
 }
 
@@ -2724,8 +2745,7 @@ pub fn model_kind_supported(kind: ModelKind, provider: &str) -> bool {
 /// Minimal standard base64 encoder (RFC 4648, padded) — avoids pulling the
 /// `base64` crate for image data URLs and audio payloads.
 fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -2770,6 +2790,64 @@ mod model_factory_tests {
         assert_eq!(chat.model_name(), "gpt-4o");
         assert_eq!(chat.max_length(), 8192);
         assert!(model_kind_supported(ModelKind::Chat, "OpenAI"));
+    }
+
+    #[tokio::test]
+    async fn llm_client_chat_model_forwards_generation_patch_and_prompt_envelope() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let requests: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().await.push(body);
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "extracted"}}],
+                        "usage": {"total_tokens": 3}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: "key".into(),
+            model: "memory-model".into(),
+            ..LlmConfig::default()
+        });
+        let answer = client
+            .chat_with_generation(
+                "memory system",
+                &[ChatMessage::new("user", "memory history")],
+                GenerationParamsPatch {
+                    temperature: Some(0.73),
+                    ..GenerationParamsPatch::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer, "extracted");
+
+        let requests = requests.lock().await;
+        let body = &requests[0];
+        assert!(
+            (body["temperature"].as_f64().unwrap() - 0.73).abs() < 1e-6,
+            "temperature patch must be serialized into the provider request: {body}"
+        );
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][0]["content"], "memory system");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "memory history");
     }
 
     #[test]

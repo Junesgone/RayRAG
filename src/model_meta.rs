@@ -824,26 +824,50 @@ const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
         include_str!("api/fixtures/models/zhipu-ai.json"),
     ),
     ("302ai", include_str!("api/fixtures/models/302ai.json")),
-    ("anthropic", include_str!("api/fixtures/models/anthropic.json")),
-    ("astraflow", include_str!("api/fixtures/models/astraflow.json")),
+    (
+        "anthropic",
+        include_str!("api/fixtures/models/anthropic.json"),
+    ),
+    (
+        "astraflow",
+        include_str!("api/fixtures/models/astraflow.json"),
+    ),
     ("avian", include_str!("api/fixtures/models/avian.json")),
     (
         "azure-openai",
         include_str!("api/fixtures/models/azure-openai.json"),
     ),
-    ("baichuan", include_str!("api/fixtures/models/baichuan.json")),
+    (
+        "baichuan",
+        include_str!("api/fixtures/models/baichuan.json"),
+    ),
     ("bedrock", include_str!("api/fixtures/models/bedrock.json")),
-    ("cometapi", include_str!("api/fixtures/models/cometapi.json")),
-    ("deepinfra", include_str!("api/fixtures/models/deepinfra.json")),
-    ("futurmix", include_str!("api/fixtures/models/futurmix.json")),
-    ("gpustack", include_str!("api/fixtures/models/gpustack.json")),
+    (
+        "cometapi",
+        include_str!("api/fixtures/models/cometapi.json"),
+    ),
+    (
+        "deepinfra",
+        include_str!("api/fixtures/models/deepinfra.json"),
+    ),
+    (
+        "futurmix",
+        include_str!("api/fixtures/models/futurmix.json"),
+    ),
+    (
+        "gpustack",
+        include_str!("api/fixtures/models/gpustack.json"),
+    ),
     ("groq", include_str!("api/fixtures/models/groq.json")),
     (
         "huaweicloud",
         include_str!("api/fixtures/models/huaweicloud.json"),
     ),
     ("hunyuan", include_str!("api/fixtures/models/hunyuan.json")),
-    ("jiekouai", include_str!("api/fixtures/models/jiekouai.json")),
+    (
+        "jiekouai",
+        include_str!("api/fixtures/models/jiekouai.json"),
+    ),
     ("jina", include_str!("api/fixtures/models/jina.json")),
     ("localai", include_str!("api/fixtures/models/localai.json")),
     ("longcat", include_str!("api/fixtures/models/longcat.json")),
@@ -863,21 +887,33 @@ const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
         "orcarouter",
         include_str!("api/fixtures/models/orcarouter.json"),
     ),
-    ("paddleocr", include_str!("api/fixtures/models/paddleocr.json")),
+    (
+        "paddleocr",
+        include_str!("api/fixtures/models/paddleocr.json"),
+    ),
     (
         "paddleocr_local",
         include_str!("api/fixtures/models/paddleocr_local.json"),
     ),
-    ("perplexity", include_str!("api/fixtures/models/perplexity.json")),
+    (
+        "perplexity",
+        include_str!("api/fixtures/models/perplexity.json"),
+    ),
     ("ppio", include_str!("api/fixtures/models/ppio.json")),
     ("qiniu", include_str!("api/fixtures/models/qiniu.json")),
-    ("replicate", include_str!("api/fixtures/models/replicate.json")),
+    (
+        "replicate",
+        include_str!("api/fixtures/models/replicate.json"),
+    ),
     ("stepfun", include_str!("api/fixtures/models/stepfun.json")),
     (
         "togetherai",
         include_str!("api/fixtures/models/togetherai.json"),
     ),
-    ("tokenhub", include_str!("api/fixtures/models/tokenhub.json")),
+    (
+        "tokenhub",
+        include_str!("api/fixtures/models/tokenhub.json"),
+    ),
     (
         "tokenpony",
         include_str!("api/fixtures/models/tokenpony.json"),

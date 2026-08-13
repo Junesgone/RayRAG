@@ -688,10 +688,7 @@ const DOC_GENERATOR_INPUTS: &[(&str, &str)] = &[
         "Markdown/text body with Canvas variable selectors",
     ),
     ("filename", "Optional sanitized output filename"),
-    (
-        "output_format",
-        "pdf, docx, txt, markdown, html, or md",
-    ),
+    ("output_format", "pdf, docx, txt, markdown, html, or md"),
     (
         "header_text",
         "RAGFlow DocGeneratorParam header overlay text",
@@ -708,10 +705,7 @@ const DOC_GENERATOR_INPUTS: &[(&str, &str)] = &[
         "add_page_numbers",
         "Render page numbers in generated documents",
     ),
-    (
-        "add_timestamp",
-        "Stamp generation time into the document",
-    ),
+    ("add_timestamp", "Stamp generation time into the document"),
     (
         "include_download_info_in_content",
         "Embed the download descriptor JSON into the content",
@@ -860,10 +854,7 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
                 "category_description",
                 "RAGFlow CategorizeParam: category name -> {to, description, examples}",
             ),
-            (
-                "query",
-                "Query variable reference; defaults to sys.query",
-            ),
+            ("query", "Query variable reference; defaults to sys.query"),
             (
                 "message_history_window_size",
                 "Prior conversation turns included before the query",
@@ -917,7 +908,10 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
                 "Single inline file descriptor or Canvas selector",
             ),
             ("file_refs", "Multiple inline files for merge"),
-            ("input_files", "RAGFlow ExcelProcessorParam variable references"),
+            (
+                "input_files",
+                "RAGFlow ExcelProcessorParam variable references",
+            ),
             ("operation", "read, merge, transform, or output"),
             ("output_data", "Go-compatible grid for write"),
             (
@@ -997,7 +991,10 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
             ("n", "Item index or head/tail count"),
             ("strict", "Raise instead of returning an empty result"),
             ("sort_method", "asc or desc"),
-            ("filter", "Object with operator (=, contains, ...) and value"),
+            (
+                "filter",
+                "Object with operator (=, contains, ...) and value",
+            ),
         ],
         outputs: &[
             ("result", "Operation result array"),
@@ -1018,10 +1015,7 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
                 "RAGFlow IterationParam per-item variable schema",
             ),
         ],
-        outputs: &[(
-            "_ERROR",
-            "Terminal non-array items_ref or iteration error",
-        )],
+        outputs: &[("_ERROR", "Terminal non-array items_ref or iteration error")],
     },
     StaticComponentDescriptor {
         name: "iterationitem",
@@ -1151,14 +1145,8 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
                 "memory_ids",
                 "Memory retrieval ids; non-empty values fail closed",
             ),
-            (
-                "use_kg",
-                "Knowledge-graph mode; true fails closed",
-            ),
-            (
-                "toc_enhance",
-                "TOC enhancement; true fails closed",
-            ),
+            ("use_kg", "Knowledge-graph mode; true fails closed"),
+            ("toc_enhance", "TOC enhancement; true fails closed"),
             (
                 "cross_languages",
                 "Cross-language expansion ids; non-empty values fail closed",
@@ -2046,7 +2034,14 @@ mod tests {
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            ["filter", "n", "operations", "query", "sort_method", "strict"]
+            [
+                "filter",
+                "n",
+                "operations",
+                "query",
+                "sort_method",
+                "strict"
+            ]
         );
         assert_eq!(
             list_operations
@@ -2293,11 +2288,7 @@ mod tests {
         // RAGFlow Jin10Param canvas fields (secret_key via env fallback) plus
         // the shared DSL retry fields must all be documented.
         assert_eq!(
-            jin10
-                .inputs
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
+            jin10.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
             [
                 "calendar_datatype",
                 "calendar_type",
@@ -2314,11 +2305,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            jin10
-                .outputs
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
+            jin10.outputs.keys().map(String::as_str).collect::<Vec<_>>(),
             ["_ERROR", "doc_aggs", "formalized_content", "json"]
         );
     }

@@ -461,8 +461,7 @@ impl KbStore {
             let Some(kb) = kbs.get_mut(id) else {
                 return Ok((None, false));
             };
-            let name_changed =
-                name.is_some_and(|value| kb.name != value.trim());
+            let name_changed = name.is_some_and(|value| kb.name != value.trim());
             let desc_changed = description.is_some_and(|value| kb.description != value);
             if !name_changed && !desc_changed {
                 return Ok((Some(kb.clone()), false));

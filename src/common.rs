@@ -440,15 +440,19 @@ pub mod constants {
         GraphRag,
         Mindmap,
         Memory,
+        Artifact,
+        Skill,
     }
 
     /// `VALID_PIPELINE_TASK_TYPES` — `Memory` is deliberately excluded.
-    pub const VALID_PIPELINE_TASK_TYPES: [PipelineTaskType; 5] = [
+    pub const VALID_PIPELINE_TASK_TYPES: [PipelineTaskType; 7] = [
         PipelineTaskType::Parse,
         PipelineTaskType::Download,
         PipelineTaskType::Raptor,
         PipelineTaskType::GraphRag,
         PipelineTaskType::Mindmap,
+        PipelineTaskType::Artifact,
+        PipelineTaskType::Skill,
     ];
 
     impl PipelineTaskType {
@@ -460,6 +464,21 @@ pub mod constants {
                 Self::GraphRag => "GraphRAG",
                 Self::Mindmap => "Mindmap",
                 Self::Memory => "Memory",
+                Self::Artifact => "Artifact",
+                Self::Skill => "Skill",
+            }
+        }
+
+        pub fn as_lower_str(self) -> &'static str {
+            match self {
+                Self::Parse => "parse",
+                Self::Download => "download",
+                Self::Raptor => "raptor",
+                Self::GraphRag => "graphrag",
+                Self::Mindmap => "mindmap",
+                Self::Memory => "memory",
+                Self::Artifact => "artifact",
+                Self::Skill => "skill",
             }
         }
 
@@ -471,6 +490,8 @@ pub mod constants {
                 "GraphRAG" => Some(Self::GraphRag),
                 "Mindmap" => Some(Self::Mindmap),
                 "Memory" => Some(Self::Memory),
+                "Artifact" => Some(Self::Artifact),
+                "Skill" => Some(Self::Skill),
                 _ => None,
             }
         }
@@ -669,8 +690,9 @@ pub mod time_utils {
     /// `date_string_to_timestamp` — local-time date string -> ms timestamp
     /// (Python `time.strptime` + `time.mktime`).
     pub fn date_string_to_timestamp(time_str: &str, format_string: &str) -> anyhow::Result<i64> {
-        let naive = NaiveDateTime::parse_from_str(time_str, format_string)
-            .with_context(|| format!("cannot parse date string {time_str:?} with {format_string:?}"))?;
+        let naive = NaiveDateTime::parse_from_str(time_str, format_string).with_context(|| {
+            format!("cannot parse date string {time_str:?} with {format_string:?}")
+        })?;
         let local = Local
             .from_local_datetime(&naive)
             .single()
@@ -1035,7 +1057,10 @@ pub mod ssrf_guard {
     /// loopback check cannot be bypassed (Python `_effective_ip`).
     fn effective_ip(ip: IpAddr) -> IpAddr {
         match ip {
-            IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+            IpAddr::V6(v6) => v6
+                .to_ipv4_mapped()
+                .map(IpAddr::V4)
+                .unwrap_or(IpAddr::V6(v6)),
             other => other,
         }
     }
@@ -1053,26 +1078,26 @@ pub mod ssrf_guard {
     fn is_global_v4(v4: Ipv4Addr) -> bool {
         let octets = v4.octets();
         match octets[0] {
-            0 => false,                        // 0.0.0.0/8 unspecified
-            10 => false,                       // 10/8 private
-            100 => octets[1] != 64,            // 100.64/10 CGNAT -> false
-            127 => false,                      // 127/8 loopback
-            169 => octets[1] != 254,           // 169.254/16 link-local -> false
+            0 => false,                             // 0.0.0.0/8 unspecified
+            10 => false,                            // 10/8 private
+            100 => octets[1] != 64,                 // 100.64/10 CGNAT -> false
+            127 => false,                           // 127/8 loopback
+            169 => octets[1] != 254,                // 169.254/16 link-local -> false
             172 => !(16..=31).contains(&octets[1]), // 172.16/12 private
             192 => match octets[1] {
-                0 => octets[2] != 2,           // 192.0.0/24 + 192.0.2/24 doc -> false
-                168 => false,                  // 192.168/16 private
-                169 => false,                  // 192.169/16 shared address space
+                0 => octets[2] != 2, // 192.0.0/24 + 192.0.2/24 doc -> false
+                168 => false,        // 192.168/16 private
+                169 => false,        // 192.169/16 shared address space
                 _ => true,
             },
             198 => match octets[1] {
-                18 => false,                   // 198.18/15 benchmarking
-                51 => octets[2] != 100,        // 198.51.100/24 doc -> false
+                18 => false,            // 198.18/15 benchmarking
+                51 => octets[2] != 100, // 198.51.100/24 doc -> false
                 _ => true,
             },
             203 => octets[1] != 0 || octets[2] != 113, // 203.0.113/24 doc -> false
-            224..=239 => false,                // multicast
-            240..=255 => false,                // reserved
+            224..=239 => false,                        // multicast
+            240..=255 => false,                        // reserved
             _ => true,
         }
     }
@@ -1397,7 +1422,10 @@ pub mod query_base {
     /// `is_chinese` — a line is "Chinese" when it has ≤3 space-separated
     /// tokens, or ≥70% of its tokens are non-ASCII-alpha.
     pub fn is_chinese(line: &str) -> bool {
-        let arr: Vec<&str> = Regex::new(r"[ \t]+").expect("valid regex").split(line).collect();
+        let arr: Vec<&str> = Regex::new(r"[ \t]+")
+            .expect("valid regex")
+            .split(line)
+            .collect();
         if arr.len() <= 3 {
             return true;
         }
@@ -1420,11 +1448,13 @@ pub mod query_base {
     /// `add_space_between_eng_zh` — insert a space between English (optionally
     /// followed by digits) and CJK runs.
     pub fn add_space_between_eng_zh(txt: &str) -> String {
-        let en_digits_zh = Regex::new(r"([A-Za-z]+[0-9]+)([\u{4e00}-\u{9fa5}]+)").expect("valid regex");
+        let en_digits_zh =
+            Regex::new(r"([A-Za-z]+[0-9]+)([\u{4e00}-\u{9fa5}]+)").expect("valid regex");
         let step1 = en_digits_zh.replace_all(txt, "$1 $2");
         let en_zh = Regex::new(r"([A-Za-z])([\u{4e00}-\u{9fa5}]+)").expect("valid regex");
         let step2 = en_zh.replace_all(&step1, "$1 $2");
-        let zh_en_digits = Regex::new(r"([\u{4e00}-\u{9fa5}]+)([A-Za-z]+[0-9]+)").expect("valid regex");
+        let zh_en_digits =
+            Regex::new(r"([\u{4e00}-\u{9fa5}]+)([A-Za-z]+[0-9]+)").expect("valid regex");
         let step3 = zh_en_digits.replace_all(&step2, "$1 $2");
         let zh_en = Regex::new(r"([\u{4e00}-\u{9fa5}]+)([A-Za-z])").expect("valid regex");
         zh_en.replace_all(&step3, "$1 $2").into_owned()
@@ -1505,9 +1535,33 @@ mod tests {
 
         assert_eq!(constants::FileSource::Local.as_str(), "");
         assert_eq!(constants::FileSource::Github.as_str(), "github");
-        assert_eq!(constants::FileSource::from_str("postgresql"), Some(constants::FileSource::Postgresql));
+        assert_eq!(
+            constants::FileSource::from_str("postgresql"),
+            Some(constants::FileSource::Postgresql)
+        );
 
         assert_eq!(constants::PipelineTaskType::GraphRag.as_str(), "GraphRAG");
+        assert_eq!(constants::PipelineTaskType::Artifact.as_str(), "Artifact");
+        assert_eq!(constants::PipelineTaskType::Skill.as_lower_str(), "skill");
+        assert_eq!(
+            constants::PipelineTaskType::from_str("Skill"),
+            Some(constants::PipelineTaskType::Skill)
+        );
+        assert_eq!(
+            constants::VALID_PIPELINE_TASK_TYPES,
+            [
+                constants::PipelineTaskType::Parse,
+                constants::PipelineTaskType::Download,
+                constants::PipelineTaskType::Raptor,
+                constants::PipelineTaskType::GraphRag,
+                constants::PipelineTaskType::Mindmap,
+                constants::PipelineTaskType::Artifact,
+                constants::PipelineTaskType::Skill,
+            ]
+        );
+        assert!(
+            !constants::VALID_PIPELINE_TASK_TYPES.contains(&constants::PipelineTaskType::Memory)
+        );
         assert_eq!(constants::Storage::Minio.as_i32(), 1);
         assert!(constants::memory_type::contains(
             constants::memory_type::RAW | constants::memory_type::SEMANTIC,
@@ -1529,11 +1583,23 @@ mod tests {
         assert_eq!(string_utils::remove_redundant_spaces("world !"), "world!");
         // Verified against the Python reference: consecutive spaces are
         // collapsed because `[^a-z0-9.,)>]` also matches a space.
-        assert_eq!(string_utils::remove_redundant_spaces("hello  world"), "hello world");
+        assert_eq!(
+            string_utils::remove_redundant_spaces("hello  world"),
+            "hello world"
+        );
 
-        assert_eq!(string_utils::clean_markdown_block("```markdown\nhello\n```"), "hello");
-        assert_eq!(string_utils::clean_markdown_block("```markdown\nhello"), "hello");
-        assert_eq!(string_utils::clean_markdown_block("  ```python\ncode\n```  "), "```python\ncode");
+        assert_eq!(
+            string_utils::clean_markdown_block("```markdown\nhello\n```"),
+            "hello"
+        );
+        assert_eq!(
+            string_utils::clean_markdown_block("```markdown\nhello"),
+            "hello"
+        );
+        assert_eq!(
+            string_utils::clean_markdown_block("  ```python\ncode\n```  "),
+            "```python\ncode"
+        );
 
         assert!(string_utils::is_content_empty(""));
         assert!(string_utils::is_content_empty("   \n\t "));
@@ -1547,7 +1613,10 @@ mod tests {
         assert_eq!(text_utils::normalize_arabic_digits("۴۵۶"), "456");
         assert_eq!(text_utils::normalize_arabic_digits("abc123"), "abc123");
         // No presentation forms -> unchanged; with forms -> NFKC.
-        assert_eq!(text_utils::normalize_arabic_presentation_forms("plain"), "plain");
+        assert_eq!(
+            text_utils::normalize_arabic_presentation_forms("plain"),
+            "plain"
+        );
         assert_eq!(
             text_utils::normalize_arabic_presentation_forms("\u{FB50}"),
             "\u{0671}"
@@ -1601,7 +1670,10 @@ mod tests {
             "2024-01-01 00:00:00"
         );
         // Unparseable input returned unchanged.
-        assert_eq!(time_utils::format_iso_8601_to_ymd_hms("not-a-date"), "not-a-date");
+        assert_eq!(
+            time_utils::format_iso_8601_to_ymd_hms("not-a-date"),
+            "not-a-date"
+        );
     }
 
     #[test]
@@ -1729,7 +1801,11 @@ mod tests {
 
         // misc utils
         assert_eq!(misc_utils::get_uuid().len(), 32);
-        assert!(misc_utils::get_uuid().chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(
+            misc_utils::get_uuid()
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        );
         assert_eq!(misc_utils::convert_bytes(0), "0 B");
         assert_eq!(misc_utils::convert_bytes(1024), "1.00 KB");
         assert_eq!(misc_utils::convert_bytes(10 * 1024), "10.0 KB");
@@ -1767,9 +1843,18 @@ mod tests {
             "this is a long english sentence with many words here"
         ));
         assert_eq!(query_base::sub_special_char("a:b'c"), "a\\:bc");
-        assert_eq!(query_base::add_space_between_eng_zh("hello世界"), "hello 世界");
-        assert_eq!(query_base::add_space_between_eng_zh("世界hello"), "世界 hello");
-        assert_eq!(query_base::add_space_between_eng_zh("abc123中文"), "abc123 中文");
+        assert_eq!(
+            query_base::add_space_between_eng_zh("hello世界"),
+            "hello 世界"
+        );
+        assert_eq!(
+            query_base::add_space_between_eng_zh("世界hello"),
+            "世界 hello"
+        );
+        assert_eq!(
+            query_base::add_space_between_eng_zh("abc123中文"),
+            "abc123 中文"
+        );
 
         // versions: unset -> unknown (no VERSION file / env in tests).
         // SAFETY: single-threaded test; only this test reads the variable.
