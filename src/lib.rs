@@ -232,6 +232,18 @@ pub struct ParserConfig {
     pub raptor_depth: usize,
     /// Cosine threshold used while clustering RAPTOR nodes.
     pub raptor_threshold: f32,
+    /// RAPTOR summarization scope: Dataset | Single file.
+    pub raptor_scope: String,
+    /// Custom RAPTOR summarization prompt (empty = built-in prompt).
+    pub raptor_prompt: String,
+    /// Max tokens per RAPTOR summary.
+    pub raptor_max_token: usize,
+    /// RAPTOR clustering method: GMM | AHC.
+    pub raptor_cluster_method: String,
+    /// Max clusters per RAPTOR level.
+    pub raptor_max_cluster: usize,
+    /// Random seed for clustering.
+    pub raptor_random_seed: usize,
     /// Build a document GraphRAG checkpoint and merge it into the KB graph.
     #[serde(alias = "graphEn")]
     pub graphrag_enabled: bool,
@@ -241,6 +253,12 @@ pub struct ParserConfig {
     /// Graph extraction mode retained in artifact metadata.
     #[serde(alias = "graphMethod")]
     pub graphrag_method: String,
+    /// Batch chunk token size for GraphRAG extraction.
+    pub graphrag_batch_chunk_size: usize,
+    /// Resolve entities across the knowledge graph.
+    pub graphrag_entity_resolution: bool,
+    /// Generate community reports (Leiden clustering).
+    pub graphrag_community_reports: bool,
     /// Chunking method: naive | token | title (RAGFlow chunk_method).
     #[serde(alias = "chunkMethod")]
     pub chunk_method: String,
@@ -305,9 +323,18 @@ impl Default for ParserConfig {
             raptor_enabled: false,
             raptor_depth: 5,
             raptor_threshold: 0.7,
+            raptor_scope: "Dataset".into(),
+            raptor_prompt: String::new(),
+            raptor_max_token: 512,
+            raptor_cluster_method: "GMM".into(),
+            raptor_max_cluster: 64,
+            raptor_random_seed: 0,
             graphrag_enabled: false,
             graphrag_entity_types: Vec::new(),
             graphrag_method: "light".to_string(),
+            graphrag_batch_chunk_size: 8196,
+            graphrag_entity_resolution: false,
+            graphrag_community_reports: false,
             chunk_method: "naive".to_string(),
             delimiter_mode: "token_size".to_string(),
             delimiters: Vec::new(),
@@ -323,6 +350,52 @@ impl Default for ParserConfig {
 
 /// Result type alias for RayRAG operations.
 pub type Result<T> = anyhow::Result<T>;
+
+#[cfg(test)]
+mod raptor_graphrag_config_tests {
+    use super::*;
+
+    #[test]
+    fn raptor_and_graphrag_fields_roundtrip_through_json() {
+        let json = serde_json::json!({
+            "raptor_enabled": true,
+            "raptor_depth": 5,
+            "raptor_threshold": 0.6,
+            "raptor_scope": "Single file",
+            "raptor_prompt": "Summarize this:",
+            "raptor_max_token": 1024,
+            "raptor_cluster_method": "AHC",
+            "raptor_max_cluster": 32,
+            "raptor_random_seed": 42,
+            "graphrag_enabled": true,
+            "graphrag_method": "general",
+            "graphrag_batch_chunk_size": 4096,
+            "graphrag_entity_resolution": true,
+            "graphrag_community_reports": true,
+        });
+        let cfg: ParserConfig = serde_json::from_value(json).unwrap();
+        assert!(cfg.raptor_enabled);
+        assert_eq!(cfg.raptor_scope, "Single file");
+        assert_eq!(cfg.raptor_cluster_method, "AHC");
+        assert_eq!(cfg.raptor_random_seed, 42);
+        assert_eq!(cfg.graphrag_batch_chunk_size, 4096);
+        assert!(cfg.graphrag_entity_resolution);
+        assert!(cfg.graphrag_community_reports);
+    }
+
+    #[test]
+    fn defaults_match_ragflow_shipping_values() {
+        let cfg = ParserConfig::default();
+        assert!(!cfg.raptor_enabled);
+        assert_eq!(cfg.raptor_depth, 5);
+        assert_eq!(cfg.raptor_threshold, 0.7);
+        assert_eq!(cfg.raptor_scope, "Dataset");
+        assert_eq!(cfg.raptor_cluster_method, "GMM");
+        assert_eq!(cfg.raptor_max_cluster, 64);
+        assert_eq!(cfg.graphrag_batch_chunk_size, 8196);
+        assert_eq!(cfg.graphrag_method, "light");
+    }
+}
 
 #[cfg(test)]
 mod parser_config_tests {

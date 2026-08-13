@@ -1,3 +1,21 @@
+## 2026-08-13 v0.3.3as：RAPTOR/KG 高级参数组 UI（对齐实测配置页字段清单）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 依据 v0.3.3ar 浏览器点击实测的配置页字段清单，补齐 RAPTOR 与
+  Knowledge Graph 高级参数组：
+- **后端 ParserConfig +9 字段**：raptor_scope/prompt/max_token/
+  cluster_method(GMM|AHC)/max_cluster/random_seed + graphrag_batch_chunk_size/
+  entity_resolution/community_reports；默认值对齐上游（scope=Dataset、
+  threshold=0.7、depth=5、cluster=GMM、max_cluster=64、batch=8196、
+  method=light）。
+- **UI 配置表单**：RAPTOR 段 +7 行（Threshold/Generation scope/Prompt/
+  Max token/Clustering method/Max cluster/Random seed，随 Enable 禁用态）；
+  KG 段 +3 行（Batch chunk token size/Entity resolution/Community
+  reports）+ Method 恢复；load/save 全接线；PUT 白名单 +10 键。
+- 新测试：raptor_graphrag_config_tests 2（JSON roundtrip + 默认值）。
+- 剩余缺口（下批）：Page rank/Tag sets/Avatar 字段 UI + 数据源页
+  （国内替代源飞书/钉钉/微信文档）。
+
 ## 2026-08-13 v0.3.3ar：建库弹窗对齐（浏览器点击实测）+ KB 配置页补 3 字段
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
