@@ -3282,6 +3282,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .patch(crate::api::tenant_models::set_ragflow_default_models),
         )
         .route(
+            "/api/v1/models/search",
+            get(crate::api::tenant_models::search_ragflow_models),
+        )
+        .route(
             "/api/v1/openai/models",
             get(crate::api::openai_proxy::list_models),
         )

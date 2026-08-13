@@ -1779,6 +1779,35 @@ pub async fn get_ragflow_default_models(
     Json(serde_json::json!({ "code": 0, "data": { "models": models } })).into_response()
 }
 
+/// GET `/api/v1/models/search?q=&limit=` — flat all-models alias autocomplete
+/// (RAGFlow conf/all_models.json, used by the internal Go SDK alias index).
+#[derive(Debug, Default, Deserialize)]
+pub struct ModelSearchQuery {
+    pub q: Option<String>,
+    pub limit: Option<usize>,
+}
+
+pub async fn search_ragflow_models(
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<ModelSearchQuery>,
+) -> Response {
+    let _ = auth; // catalog is read-only but still requires a session
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let matches =
+        crate::model_meta::search_model_aliases(query.q.as_deref().unwrap_or(""), limit);
+    let data: Vec<serde_json::Value> = matches
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "name": entry.name,
+                "alias": entry.alias,
+                "model_types": entry.model_types,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "code": 0, "data": data })).into_response()
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct RagflowDefaultModelUpdate {
     pub tenant_id: Option<String>,

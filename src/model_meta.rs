@@ -1242,6 +1242,88 @@ fn fixture_object<'a>(
         .find_map(|key| value.get(*key).and_then(Value::as_object))
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RAGFlow conf/all_models.json — flat model alias index. The internal Go SDK
+// (internal/entity/models/model.go ProviderManager) builds `alias2ModelIndex`
+// from this file (name + display aliases → canonical entry); the Python API
+// and the React UI do not consume it. RayRAG ports the same alias-resolution
+// semantics plus a UI-autocomplete search.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One entry of the flat all-models catalog (`name` + display `alias` list).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllModelEntry {
+    pub name: String,
+    #[serde(default)]
+    pub alias: Vec<String>,
+    #[serde(default)]
+    pub model_types: Vec<String>,
+}
+
+static ALL_MODELS: std::sync::OnceLock<Vec<AllModelEntry>> = std::sync::OnceLock::new();
+static ALL_MODEL_ALIASES: std::sync::OnceLock<BTreeMap<String, usize>> =
+    std::sync::OnceLock::new();
+
+fn all_models() -> &'static Vec<AllModelEntry> {
+    ALL_MODELS.get_or_init(|| {
+        serde_json::from_str::<serde_json::Value>(include_str!(
+            "api/fixtures/models/all_models.json"
+        ))
+        .ok()
+        .and_then(|value| value.get("models").cloned())
+        .and_then(|models| serde_json::from_value::<Vec<AllModelEntry>>(models).ok())
+        .unwrap_or_default()
+    })
+}
+
+/// Lowercased alias → entry index. The Go SDK rejects duplicate aliases across
+/// models; RayRAG keeps the first occurrence deterministically instead.
+fn alias_index() -> &'static BTreeMap<String, usize> {
+    ALL_MODEL_ALIASES.get_or_init(|| {
+        let mut map = BTreeMap::new();
+        for (idx, model) in all_models().iter().enumerate() {
+            for alias in std::iter::once(&model.name).chain(model.alias.iter()) {
+                let alias = alias.trim();
+                if alias.is_empty() {
+                    continue;
+                }
+                map.entry(alias.to_lowercase()).or_insert(idx);
+            }
+        }
+        map
+    })
+}
+
+/// Resolve a model name or display alias (case-insensitive) onto its canonical
+/// flat-catalog entry, mirroring the Go SDK `alias2ModelIndex`.
+pub fn resolve_model_alias(name: &str) -> Option<&'static AllModelEntry> {
+    let idx = *alias_index().get(&name.trim().to_lowercase())?;
+    all_models().get(idx)
+}
+
+/// Case-insensitive substring search over model names + aliases for the
+/// Add-model autocomplete. Returns at most `limit` distinct entries.
+pub fn search_model_aliases(query: &str, limit: usize) -> Vec<&'static AllModelEntry> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut seen: BTreeMap<usize, &'static AllModelEntry> = BTreeMap::new();
+    for (idx, model) in all_models().iter().enumerate() {
+        let matched = std::iter::once(&model.name)
+            .chain(model.alias.iter())
+            .any(|alias| alias.to_lowercase().contains(&query));
+        if matched {
+            seen.entry(idx).or_insert(model);
+        }
+        if seen.len() >= limit {
+            break;
+        }
+    }
+    seen.into_values().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1616,4 +1698,32 @@ mod tests {
         assert_eq!(deer_url, "https://api.deerapi.com/v1");
         assert!(*deer_count >= 37);
     }
+    #[test]
+    fn all_models_alias_index_resolves_names_and_aliases() {
+        // Case-insensitive name resolution.
+        let entry = resolve_model_alias("gpt-4o").expect("gpt-4o is in all_models.json");
+        assert_eq!(entry.name, "gpt-4o");
+        assert!(entry.model_types.iter().any(|t| t == "chat"));
+        // Case-insensitive.
+        assert_eq!(resolve_model_alias("GPT-4O").map(|e| &e.name), Some(&"gpt-4o".to_string()));
+        // Unknown alias resolves to nothing.
+        assert!(resolve_model_alias("definitely-not-a-real-model-xyz").is_none());
+    }
+
+    #[test]
+    fn all_models_search_finds_substrings_and_respects_limit() {
+        let hits = search_model_aliases("deepseek", 10);
+        assert!(!hits.is_empty(), "deepseek models must be searchable");
+        assert!(hits.iter().all(|entry| {
+            std::iter::once(&entry.name)
+                .chain(entry.alias.iter())
+                .any(|a| a.to_lowercase().contains("deepseek"))
+        }));
+        assert!(hits.len() <= 10);
+        // Empty query short-circuits.
+        assert!(search_model_aliases("", 10).is_empty());
+        // Limit is honored.
+        assert!(search_model_aliases("gpt", 3).len() <= 3);
+    }
+
 }
