@@ -543,6 +543,7 @@ impl ConnectorRegistry {
             "feishu" => Ok(Box::new(FeishuConnector::new(options))),
             "confluence" => Ok(Box::new(ConfluenceConnector::new(options))),
             "yuque" => Ok(Box::new(YuqueConnector::new(options)?)),
+            "dingtalk" => Ok(Box::new(DingTalkConnector::new(options)?)),
             // S3 协议家族：S3 / GCS-interop / Oracle S3-compat 共用 SigV4 连接器。
             "s3" | "gcs" | "oracle" => Ok(Box::new(S3Connector::new(options))),
             other => bail!("unsupported connector kind: {other}"),
@@ -2015,6 +2016,397 @@ impl Connector for YuqueConnector {
     }
 }
 
+// ── Concrete connector: DingTalk / 钉钉云盘 ───────────────────────────────────
+
+/// DingTalk (钉钉) cloud-drive connector — mirrors the DingTalk OpenAPI
+/// (https://open.dingtalk.com).
+///
+/// Auth: `token = "appKey:appSecret"` → accessToken
+/// (POST `/v1.0/oauth2/accessToken`, body `{"appKey","appSecret"}`, response
+/// `{"accessToken","expireIn"}`; cached in the connector).
+/// List spaces: POST `/v1.0/storage/spaces/list` (paginated by `nextToken`).
+/// List files:  POST `/v1.0/storage/spaces/{spaceId}/files` (paginated by
+///              `nextToken`, first page sends the empty string).
+/// Download:    GET `/v1.0/storage/spaces/{spaceId}/files/{fileId}/download`
+///              → `headers.Location` → GET that URL for the bytes.
+///
+/// All authenticated calls carry `x-acs-dingtalk-access-token: <token>`.
+///
+/// Source options:
+///   * `url`    = optional API base override (default
+///                `https://api.dingtalk.com`)
+///   * `token`  = `appKey:appSecret`
+///   * `target` = optional `spaceId` (empty = enumerate all spaces)
+#[derive(Debug)]
+pub struct DingTalkConnector {
+    client: reqwest::Client,
+    base_url: String,
+    app_key: String,
+    app_secret: String,
+    space_id: String,
+    access_token: std::sync::Mutex<Option<String>>,
+}
+
+impl DingTalkConnector {
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let (app_key, app_secret) = split_credentials(&options.token);
+        if app_key.is_empty() || app_secret.is_empty() {
+            bail!("dingtalk: appKey:appSecret required (token)");
+        }
+        let base_url = {
+            let raw = options.url.trim().trim_end_matches('/');
+            if raw.is_empty() {
+                "https://api.dingtalk.com".to_string()
+            } else {
+                raw.to_string()
+            }
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            base_url,
+            app_key,
+            app_secret,
+            space_id: options.target.trim().to_string(),
+            access_token: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Exchange appKey/appSecret for an accessToken (cached in the struct).
+    async fn access_token(&self) -> Result<String> {
+        if let Some(token) = self
+            .access_token
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+        {
+            return Ok(token.clone());
+        }
+        let url = format!("{}/v1.0/oauth2/accessToken", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({
+                "appKey": self.app_key,
+                "appSecret": self.app_secret,
+            }))
+            .send()
+            .await
+            .context("dingtalk: accessToken request failed")?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "dingtalk: accessToken upstream error ({}): {}",
+                status.as_u16(),
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        let token = value
+            .get("accessToken")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("dingtalk: accessToken missing in response"))?
+            .to_string();
+        *self.access_token.lock().unwrap_or_else(|p| p.into_inner()) = Some(token.clone());
+        Ok(token)
+    }
+
+    /// POST `path` with the DingTalk auth header; parse the JSON response.
+    async fn post_json(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value> {
+        let token = self.access_token().await?;
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .client
+            .post(&url)
+            .header("x-acs-dingtalk-access-token", &token)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("dingtalk: request failed: {url}"))?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "dingtalk: upstream error ({}): {}",
+                status.as_u16(),
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        Ok(value)
+    }
+
+    /// GET raw bytes; `with_auth` attaches the access-token header (used for
+    /// the download metadata call, NOT for the resolved signed CDN URL).
+    async fn get_bytes(&self, url: &str, with_auth: bool) -> Result<Vec<u8>> {
+        let mut request = self.client.get(url);
+        if with_auth {
+            let token = self.access_token().await?;
+            request = request.header("x-acs-dingtalk-access-token", &token);
+        }
+        let response = request
+            .send()
+            .await
+            .context("dingtalk: download request failed")?;
+        let status = response.status();
+        let bytes = response.bytes().await?;
+        if !status.is_success() {
+            bail!(
+                "dingtalk: download upstream error ({}): {}",
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            );
+        }
+        Ok(bytes.to_vec())
+    }
+
+    /// Resolve the download `Location` for a file (RAGFlow download flow).
+    async fn download_location(&self, space_id: &str, file_id: &str) -> Result<String> {
+        let token = self.access_token().await?;
+        let url = format!(
+            "{}/v1.0/storage/spaces/{space_id}/files/{file_id}/download",
+            self.base_url
+        );
+        let response = self
+            .client
+            .get(&url)
+            .header("x-acs-dingtalk-access-token", &token)
+            .send()
+            .await
+            .context("dingtalk: download metadata request failed")?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "dingtalk: download metadata upstream error ({}): {}",
+                status.as_u16(),
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        value
+            .get("headers")
+            .and_then(|h| h.get("Location"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("dingtalk: download Location missing in response"))
+    }
+
+    /// Enumerate spaces (a configured `target` spaceId short-circuits the
+    /// spaces/list call).
+    async fn spaces(&self) -> Result<Vec<(String, String)>> {
+        if !self.space_id.is_empty() {
+            return Ok(vec![(self.space_id.clone(), self.space_id.clone())]);
+        }
+        let mut spaces = Vec::new();
+        let mut next_token = String::new();
+        let mut pages = 0usize;
+        loop {
+            let body = if next_token.is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::json!({ "nextToken": next_token })
+            };
+            let value = self.post_json("/v1.0/storage/spaces/list", body).await?;
+            for space in value
+                .get("spaces")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let id = space
+                    .get("spaceId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let name = space
+                    .get("spaceName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if !id.is_empty() {
+                    spaces.push((id, name));
+                }
+            }
+            next_token = value
+                .get("nextToken")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if next_token.is_empty() {
+                break;
+            }
+            pages += 1;
+            if pages > 100 {
+                bail!("dingtalk: spaces pagination exceeded 100 pages — aborting");
+            }
+        }
+        Ok(spaces)
+    }
+
+    /// Enumerate files for one space (paginated by `nextToken`).
+    async fn space_files(&self, space_id: &str) -> Result<Vec<RemoteFile>> {
+        let mut files = Vec::new();
+        let mut next_token = String::new();
+        let mut pages = 0usize;
+        loop {
+            let value = self
+                .post_json(
+                    &format!("/v1.0/storage/spaces/{space_id}/files"),
+                    serde_json::json!({ "nextToken": next_token }),
+                )
+                .await?;
+            for file in value
+                .get("files")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let file_id = file
+                    .get("fileId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if file_id.is_empty() {
+                    continue;
+                }
+                let name = file
+                    .get("fileName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let size_bytes = file
+                    .get("fileSize")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                let updated_at = file
+                    .get("modifyTime")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let extension = Path::new(&name)
+                    .extension()
+                    .map(|e| format!(".{}", e.to_string_lossy()))
+                    .unwrap_or_default();
+                let mut metadata = HashMap::new();
+                metadata.insert("type".into(), "File".into());
+                metadata.insert("source".into(), "dingtalk".into());
+                metadata.insert("space".into(), space_id.to_string());
+                metadata.insert("fileId".into(), file_id.clone());
+                files.push(RemoteFile {
+                    id: file_id.clone(),
+                    name,
+                    path: format!("{space_id}/{file_id}"),
+                    extension,
+                    size_bytes,
+                    updated_at: updated_at.clone(),
+                    fingerprint: updated_at,
+                    metadata,
+                });
+            }
+            next_token = value
+                .get("nextToken")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if next_token.is_empty() {
+                break;
+            }
+            pages += 1;
+            if pages > 100 {
+                bail!("dingtalk: files pagination exceeded 100 pages — aborting");
+            }
+        }
+        Ok(files)
+    }
+}
+
+#[async_trait]
+impl Connector for DingTalkConnector {
+    fn kind(&self) -> &'static str {
+        "dingtalk"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        if self.app_key.is_empty() || self.app_secret.is_empty() {
+            bail!("dingtalk: appKey:appSecret required (token)");
+        }
+        // 换 token（缓存），然后探针列空间首页验证凭证可用。
+        self.access_token().await?;
+        let _ = self.spaces().await?;
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let mut files = Vec::new();
+        for (space_id, _space_name) in self.spaces().await? {
+            files.extend(self.space_files(&space_id).await?);
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let space_id = file
+            .metadata
+            .get("space")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let file_id = file
+            .metadata
+            .get("fileId")
+            .map(String::as_str)
+            .unwrap_or(file.id.as_str());
+        let location = self.download_location(space_id, file_id).await?;
+        // Upstream Location may be absolute or path-only (relative to base).
+        let url = if location.starts_with("http://") || location.starts_with("https://") {
+            location
+        } else {
+            format!("{}{}", self.base_url, location)
+        };
+        // The resolved download URL is a signed CDN link — no auth header.
+        self.get_bytes(&url, false).await
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        metadata.insert("type".into(), "File".into());
+        metadata.insert("source".into(), "dingtalk".into());
+        if let Some(space) = file.metadata.get("space") {
+            metadata.insert("space".into(), space.clone());
+        }
+        if let Some(file_id) = file.metadata.get("fileId") {
+            metadata.insert("fileId".into(), file_id.clone());
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            // `DocumentSource` 尚无 DingTalk 变体 — 复用 Local 占位，
+            // metadata.source=dingtalk 携带真实来源（枚举扩展为后续工作）。
+            source: DocumentSource::Local,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Split "user:password" (or "app_id:app_secret") credential strings.
@@ -2585,5 +2977,367 @@ mod yuque_connector_tests {
         assert_eq!(doc.blob, "# One body");
         assert_eq!(doc.semantic_identifier, "One.md");
         assert_eq!(doc.metadata.get("source").map(String::as_str), Some("yuque"));
+    }
+}
+
+#[cfg(test)]
+mod dingtalk_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, body)`. `header_block` is the raw request-header
+    /// section so tests can assert the `x-acs-dingtalk-access-token` header;
+    /// `body` is the request body (DingTalk POST endpoints carry JSON). No
+    /// real network — the connector's `options.url` override points here.
+    fn mock_dingtalk_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                // Read until the full header block + declared body arrived.
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base_url: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base_url;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// `new()` requires `token = "appKey:appSecret"` (a colon-separated pair).
+    #[test]
+    fn new_requires_app_key_and_app_secret() {
+        let error = DingTalkConnector::new(options(String::new(), "no-colon", "")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+        let error = DingTalkConnector::new(options(String::new(), "", "")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+    }
+
+    /// load_credentials exchanges appKey/appSecret for an accessToken, caches
+    /// it, and probes the spaces/list first page. Subsequent calls reuse the
+    /// cached token — exactly ONE accessToken request.
+    #[tokio::test]
+    async fn load_credentials_acquires_and_caches_access_token() {
+        let token_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = token_calls.clone();
+        let base = mock_dingtalk_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"accessToken": "acc-abc", "expireIn": 7200}).to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/list") => {
+                    if headers.contains("x-acs-dingtalk-access-token: acc-abc") {
+                        (
+                            200,
+                            json!({"spaces": [{"spaceId": "sp1", "spaceName": "Space One"}],
+                                   "nextToken": ""})
+                            .to_string(),
+                        )
+                    } else {
+                        (403, json!({"message": "missing token"}).to_string())
+                    }
+                }
+                ("POST", "/v1.0/storage/spaces/sp1/files") => {
+                    (200, json!({"files": [], "nextToken": ""}).to_string())
+                }
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let mut connector = DingTalkConnector::new(options(base, "appk:apps", "")).unwrap();
+        connector.load_credentials().await.unwrap();
+        // list_files reuses the cached token — no second accessToken request.
+        let files = connector.list_files().await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(
+            token_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "accessToken must be cached after load_credentials"
+        );
+    }
+
+    /// list_files paginates spaces (nextToken) and files per space, mapping
+    /// each entry onto a RemoteFile (id=fileId, path=spaceId/fileId,
+    /// fingerprint=modifyTime, metadata carries space/fileId/source).
+    #[tokio::test]
+    async fn list_files_paginates_spaces_and_files() {
+        let space_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sc = space_calls.clone();
+        let file_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fc = file_calls.clone();
+        let base = mock_dingtalk_server(move |method, path, _query, _headers, body| {
+            let body = body.trim();
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
+                }
+                // Spaces page 1 (empty body) → sp1 + nextToken; page 2 → sp2.
+                ("POST", "/v1.0/storage/spaces/list") if body == "{}" => {
+                    sc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"spaces": [{"spaceId": "sp1", "spaceName": "One"}],
+                               "nextToken": "nt-2"})
+                        .to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/list") if body.contains("nt-2") => {
+                    sc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"spaces": [{"spaceId": "sp2", "spaceName": "Two"}],
+                               "nextToken": ""})
+                        .to_string(),
+                    )
+                }
+                // sp1 files page 1 (nextToken "") → 2 files + nextToken ft2.
+                ("POST", "/v1.0/storage/spaces/sp1/files") if body.contains("\"nextToken\":\"\"") => {
+                    fc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"files": [
+                            {"fileId": "f1", "fileName": "readme.md", "fileSize": 10,
+                             "createTime": "2026-01-01T00:00:00Z",
+                             "modifyTime": "2026-02-01T00:00:00Z"},
+                            {"fileId": "f2", "fileName": "notes", "fileSize": 20,
+                             "createTime": "2026-01-02T00:00:00Z",
+                             "modifyTime": "2026-02-02T00:00:00Z"}
+                        ], "nextToken": "ft2"})
+                        .to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/sp1/files") if body.contains("ft2") => {
+                    fc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"files": [
+                            {"fileId": "f3", "fileName": "extra.txt", "fileSize": 30,
+                             "createTime": "2026-01-03T00:00:00Z",
+                             "modifyTime": "2026-02-03T00:00:00Z"}
+                        ], "nextToken": ""})
+                        .to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/sp2/files") => {
+                    (200, json!({"files": [], "nextToken": ""}).to_string())
+                }
+                _ => (404, format!(r#"{{"path":"{path}","body":"{body}"}}"#)),
+            }
+        });
+
+        let connector = DingTalkConnector::new(options(base, "appk:apps", "")).unwrap();
+        let files = connector.list_files().await.unwrap();
+
+        assert_eq!(space_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(file_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(files.len(), 3);
+
+        let first = &files[0];
+        assert_eq!(first.id, "f1");
+        assert_eq!(first.name, "readme.md");
+        assert_eq!(first.path, "sp1/f1");
+        assert_eq!(first.extension, ".md");
+        assert_eq!(first.size_bytes, 10);
+        assert_eq!(first.updated_at, "2026-02-01T00:00:00Z");
+        assert_eq!(first.fingerprint, "2026-02-01T00:00:00Z");
+        assert_eq!(first.metadata.get("space").map(String::as_str), Some("sp1"));
+        assert_eq!(
+            first.metadata.get("fileId").map(String::as_str),
+            Some("f1")
+        );
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("dingtalk")
+        );
+        // Extension-less name → empty extension.
+        assert_eq!(files[1].name, "notes");
+        assert_eq!(files[1].extension, "");
+        assert_eq!(files[1].size_bytes, 20);
+        // Second file page belongs to the same space.
+        assert_eq!(files[2].id, "f3");
+        assert_eq!(files[2].path, "sp1/f3");
+    }
+
+    /// fetch_file resolves the download Location (auth header attached) and
+    /// fetches the bytes from it (no auth header on the signed link).
+    #[tokio::test]
+    async fn fetch_file_follows_download_location() {
+        let base = mock_dingtalk_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
+                }
+                ("GET", "/v1.0/storage/spaces/sp1/files/f1/download") => {
+                    if headers.contains("x-acs-dingtalk-access-token: tok") {
+                        (
+                            200,
+                            json!({"headers": {"Location": "/dl-target"}, "result": {}})
+                                .to_string(),
+                        )
+                    } else {
+                        (403, json!({"message": "no token"}).to_string())
+                    }
+                }
+                ("GET", "/dl-target") => (200, "hello dingtalk file".to_string()),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector = DingTalkConnector::new(options(base, "appk:apps", "sp1")).unwrap();
+        let file = RemoteFile {
+            id: "f1".into(),
+            name: "readme.md".into(),
+            path: "sp1/f1".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: String::new(),
+            fingerprint: String::new(),
+            metadata: HashMap::from([
+                ("space".into(), "sp1".into()),
+                ("fileId".into(), "f1".into()),
+            ]),
+        };
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "hello dingtalk file");
+    }
+
+    /// normalize marks the doc with source=dingtalk metadata; the
+    /// `DocumentSource` field falls back to `Local` until the enum gains a
+    /// DingTalk variant.
+    #[test]
+    fn normalize_marks_dingtalk_metadata() {
+        let connector = DingTalkConnector::new(options(String::new(), "appk:apps", "sp1")).unwrap();
+        let file = RemoteFile {
+            id: "f1".into(),
+            name: "readme.md".into(),
+            path: "sp1/f1".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+            fingerprint: String::new(),
+            metadata: HashMap::from([
+                ("space".into(), "sp1".into()),
+                ("fileId".into(), "f1".into()),
+            ]),
+        };
+        let doc = connector.normalize(&file, b"# Body".to_vec()).unwrap();
+        assert_eq!(doc.blob, "# Body");
+        assert_eq!(doc.semantic_identifier, "readme.md");
+        assert_eq!(doc.extension, ".md");
+        assert_eq!(doc.doc_updated_at, "2026-02-01T00:00:00Z");
+        assert_eq!(doc.size_bytes, 6);
+        assert_eq!(doc.source, DocumentSource::Local);
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("dingtalk")
+        );
+        assert_eq!(doc.metadata.get("space").map(String::as_str), Some("sp1"));
+        assert_eq!(doc.metadata.get("fileId").map(String::as_str), Some("f1"));
+    }
+
+    /// Registry dispatch end-to-end: `create("dingtalk", …)` → fetch_all over
+    /// the mock server produces a normalized ConnectorDoc. With a `target`
+    /// spaceId configured, spaces/list is skipped entirely.
+    #[tokio::test]
+    async fn registry_creates_and_fetches_all() {
+        let base = mock_dingtalk_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
+                }
+                ("POST", "/v1.0/storage/spaces/sp1/files") => (
+                    200,
+                    json!({"files": [
+                        {"fileId": "f1", "fileName": "one.md", "fileSize": 8,
+                         "createTime": "2026-01-01T00:00:00Z",
+                         "modifyTime": "2026-01-01T00:00:00Z"}
+                    ], "nextToken": ""})
+                    .to_string(),
+                ),
+                ("GET", "/v1.0/storage/spaces/sp1/files/f1/download") => (
+                    200,
+                    json!({"headers": {"Location": "/dl-target"}, "result": {}}).to_string(),
+                ),
+                ("GET", "/dl-target") => (200, "# One body".to_string()),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector =
+            ConnectorRegistry::create("dingtalk", options(base, "appk:apps", "sp1")).unwrap();
+        assert_eq!(connector.kind(), "dingtalk");
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.failures.is_empty());
+        let doc = &batch.docs[0];
+        assert_eq!(doc.blob, "# One body");
+        assert_eq!(doc.semantic_identifier, "one.md");
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("dingtalk")
+        );
     }
 }
