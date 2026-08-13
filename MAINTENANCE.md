@@ -1,3 +1,23 @@
+## 2026-08-14 v0.3.3bh：meta_data_filter 表单 + DocumentSource::AirTable
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **meta_data_filter（Chat 设置表单最后缺口，MetadataFilterSchema）**：
+  - 溯源 constants/chat.ts DatasetMetadata = disabled / auto / semi_auto
+    / manual；metadata-filter.tsx = method 下拉 + Manual 时 manual
+    fields、SemiAutomatic 时 semi 字段。
+  - 表单新增：Metadata Filter 4 选下拉（默认 disabled）+ Manual
+    Fields 输入（逗号分隔）。
+  - saveSettings 写入 prompt_config.meta_data_filter {method, manual[]}。
+  - i18n 7 条；web 测试 +1（chat_app_detail_page 全字段断言，
+    test_state 的 chat_apps 由 None 改为真实 ChatAppStore，seed 后
+    验证抽屉含 f_rerank/sw_refmeta/f_mfmethod/f_mfmanual/
+    sw_refine_multiturn/sw_reasoning/f_vsw）。
+- **DocumentSource::AirTable 正式变体**（53ff13b）：AirtableConnector
+  移除 Local 占位，as_str/from_str 接线；connectors 49/49。
+- 至此 use-chat-setting-schema.tsx 全部字段在 RayRAG 表单有落点
+  （tavily_api_key/parameters 保留 API 能力、UI 简化）。
+- 门禁：1347 passed / 0 failed / 27 ignored。
+
 ## 2026-08-14 v0.3.3bg：Agent 画布 toolbar 对齐（CDP 点击遍历）+ Airtable 连接器
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

@@ -44,6 +44,12 @@ fn t(k: &str, zh: bool) -> &str {
         "Vector Weight" => "向量权重",
         "Show Chunk Metadata" => "显示切片元数据",
         "Metadata Fields" => "元数据字段",
+        "Metadata Filter" => "元数据过滤",
+        "Disabled" => "禁用",
+        "Automatic" => "自动",
+        "Semi Automatic" => "半自动",
+        "Manual" => "手动",
+        "Manual Fields" => "手动字段",
         "Search apps" => "检索应用",
         "Create search" => "创建检索应用",
         "No search app created yet" => "尚未创建检索应用",
@@ -2298,6 +2304,17 @@ pub async fn chat_app_detail_page(
                 .join(",")
         })
         .unwrap_or_default();
+    let meta_filter = pc.and_then(|o| o.get("meta_data_filter")).and_then(|v| v.as_object());
+    let mf_method = meta_filter
+        .and_then(|o| o.get("method"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("disabled")
+        .to_string();
+    let mf_manual = meta_filter
+        .and_then(|o| o.get("manual"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(","))
+        .unwrap_or_default();
     let rerank_id = app.rerank_id.clone().unwrap_or_default();
     let rtop_k = app.top_k.map(|v| v.to_string()).unwrap_or_else(|| "1024".into());
     let cross: Vec<String> = pc
@@ -2383,6 +2400,16 @@ pub async fn chat_app_detail_page(
         "<label class='set-switch' style='margin-top:8px'><input type='checkbox' id='sw_refmeta'{}><span class='set-sw-label'>{}</span></label><label class='set-label'>{}</label><input id='f_reffields' value='{}' placeholder='title,author' style='width:100%'>",
         if ref_include { " checked" } else { "" }, t("Show Chunk Metadata", zh), t("Metadata Fields", zh), html_esc(&ref_fields, 200)
     ));
+    let mf_sel = |v: &str| if v == mf_method { " selected" } else { "" };
+    b.push_str(&format!(
+        "<label class='set-label' style='margin-top:8px'>{}</label><select id='f_mfmethod' style='width:100%'><option value='disabled'{}>{}</option><option value='auto'{}>{}</option><option value='semi_auto'{}>{}</option><option value='manual'{}>{}</option></select><label class='set-label'>{}</label><input id='f_mfmanual' value='{}' placeholder='field1,field2' style='width:100%'>",
+        t("Metadata Filter", zh),
+        mf_sel("disabled"), t("Disabled", zh),
+        mf_sel("auto"), t("Automatic", zh),
+        mf_sel("semi_auto"), t("Semi Automatic", zh),
+        mf_sel("manual"), t("Manual", zh),
+        t("Manual Fields", zh), html_esc(&mf_manual, 300)
+    ));
     b.push_str("</div>");
     // Footer buttons
     b.push_str(&format!(
@@ -2392,7 +2419,7 @@ pub async fn chat_app_detail_page(
     b.push_str("</div>");
     // JS
     b.push_str(&format!(
-        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,refine_multiturn:document.getElementById('sw_refine_multiturn').checked,reasoning:document.getElementById('sw_reasoning').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,vector_similarity_weight:parseFloat(document.getElementById('f_vsw').value)||0.3,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value,reference_metadata:{{include:document.getElementById('sw_refmeta').checked,fields:document.getElementById('f_reffields').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}}}},rerank_id:document.getElementById('f_rerank').value.trim()||null,top_k:parseInt(document.getElementById('f_rtopk').value)||1024}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,refine_multiturn:document.getElementById('sw_refine_multiturn').checked,reasoning:document.getElementById('sw_reasoning').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,vector_similarity_weight:parseFloat(document.getElementById('f_vsw').value)||0.3,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value,reference_metadata:{{include:document.getElementById('sw_refmeta').checked,fields:document.getElementById('f_reffields').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}},meta_data_filter:{{method:document.getElementById('f_mfmethod').value,manual:document.getElementById('f_mfmanual').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}}}},rerank_id:document.getElementById('f_rerank').value.trim()||null,top_k:parseInt(document.getElementById('f_rtopk').value)||1024}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
     Html(layout(&t("Chat apps", zh), &b, zh))
@@ -2637,7 +2664,12 @@ mod kb_ui_tests {
             files: Arc::new(FileStore::new(root.path().join("uploads").to_str().unwrap()).unwrap()),
             data_sources: None,
             search_apps: None,
-            chat_apps: None,
+            chat_apps: Some(Arc::new(
+                crate::api::chatapp_mgr::ChatAppStore::new(
+                    root.path().join("chat_apps.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            )),
             providers: Arc::new(ProviderStore::in_memory()),
             tenant_models: Arc::new(TenantModelStore::in_memory()),
             memories: Arc::new(MemoryStore::in_memory()),
@@ -3122,6 +3154,41 @@ mod kb_ui_tests {
             "stream status / stop testids missing"
         );
     }
+
+    #[tokio::test]
+    async fn chat_app_detail_page_renders_full_settings_drawer_with_meta_filter() {
+        let (_root, state) = test_state();
+        let app_id = "a1".to_string();
+        // seed a chat app via the store (insert a minimal ChatApp)
+        if let Some(store) = &state.chat_apps {
+            let app: crate::api::chatapp_mgr::ChatApp = serde_json::from_value(
+                serde_json::json!({
+                    "id": "a1",
+                    "name": "设置抽屉",
+                    "owner_id": "t1",
+                    "kb_ids": [],
+                    "created_at": 1,
+                }),
+            )
+            .unwrap();
+            let _ = store.insert(app);
+        }
+        let req = Request::builder()
+            .uri("/chats/a1")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_app_detail_page(State(state), Path(app_id), req).await).await;
+        // settings drawer shell + prompt engine fields incl. meta_data_filter
+        assert!(html.contains("settingsDrawer"), "drawer missing");
+        assert!(html.contains("f_rerank"), "rerank field missing");
+        assert!(html.contains("sw_refmeta"), "reference metadata switch missing");
+        assert!(html.contains("f_mfmethod"), "meta filter method select missing");
+        assert!(html.contains("f_mfmanual"), "meta filter manual fields missing");
+        assert!(html.contains("sw_refine_multiturn"), "refine multiturn missing");
+        assert!(html.contains("sw_reasoning"), "reasoning switch missing");
+        assert!(html.contains("f_vsw"), "vector weight missing");
+    }
+
 
     #[tokio::test]
     async fn document_page_renders_export_chunks_button() {
