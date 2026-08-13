@@ -166,6 +166,60 @@ impl ConnectorRegistry {
                 label: "Confluence",
                 hint: "url=https://xxx.atlassian.net/wiki, token=email:api_token, target=spaceKey",
             },
+            // RAGFlow 数据源对齐（v0.3.3au）：Notion/Google Drive/Gmail/
+            // Google Cloud Storage/Oracle Storage/S3。S3 协议三源（s3/gcs/
+            // oracle）暂以 blob 风格占位，其余连接时明确报未实现。
+            ConnectorTypeInfo {
+                kind: "notion",
+                label: "Notion",
+                hint: "token=integration_token, target=database/page id",
+            },
+            ConnectorTypeInfo {
+                kind: "google_drive",
+                label: "Google Drive",
+                hint: "token=service_account_json, target=folder id",
+            },
+            ConnectorTypeInfo {
+                kind: "gmail",
+                label: "Gmail",
+                hint: "token=service_account_json, target=query",
+            },
+            ConnectorTypeInfo {
+                kind: "gcs",
+                label: "Google Cloud Storage",
+                hint: "url=https://storage.googleapis.com, token=access_token, target=bucket",
+            },
+            ConnectorTypeInfo {
+                kind: "oracle",
+                label: "Oracle Storage",
+                hint: "url=https://objectstorage.region.oraclecloud.com, token=access_token, target=bucket",
+            },
+            ConnectorTypeInfo {
+                kind: "s3",
+                label: "S3",
+                hint: "url=https://s3.region.amazonaws.com, token=access:secret, target=bucket",
+            },
+            // 中国大陆网络环境替代源（v0.3.3au）。
+            ConnectorTypeInfo {
+                kind: "dingtalk",
+                label: "钉钉文档 (DingTalk Docs)",
+                hint: "token=app_key:app_secret, target=可选 space_id",
+            },
+            ConnectorTypeInfo {
+                kind: "tencent_docs",
+                label: "腾讯文档 (Tencent Docs)",
+                hint: "token=access_token, target=可选 folder_id",
+            },
+            ConnectorTypeInfo {
+                kind: "yuque",
+                label: "语雀 (Yuque)",
+                hint: "token=access_token, target=namespace/repo slug",
+            },
+            ConnectorTypeInfo {
+                kind: "wechat_docs",
+                label: "微信文档 (WeChat Docs)",
+                hint: "token=access_token, target=可选 folder_id",
+            },
         ]
     }
 }
@@ -1364,6 +1418,33 @@ fn urlencode(input: &str) -> String {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod registry_kind_tests {
+    use super::*;
+
+    #[test]
+    fn kinds_covers_ragflow_sources_and_china_alternatives() {
+        let kinds: Vec<&str> = ConnectorRegistry::kinds()
+            .iter()
+            .map(|info| info.kind)
+            .collect();
+        // RAGFlow 7 源
+        for expected in [
+            "confluence", "notion", "google_drive", "gmail", "gcs", "oracle", "s3",
+        ] {
+            assert!(kinds.contains(&expected), "missing RAGFlow source: {expected}");
+        }
+        // 中国大陆替代源
+        for expected in ["feishu", "dingtalk", "tencent_docs", "yuque", "wechat_docs"] {
+            assert!(kinds.contains(&expected), "missing China source: {expected}");
+        }
+        // 现有源不受影响
+        for expected in ["gitlab", "blob", "local", "webdav"] {
+            assert!(kinds.contains(&expected), "missing legacy kind: {expected}");
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

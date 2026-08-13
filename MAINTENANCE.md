@@ -1,3 +1,20 @@
+## 2026-08-13 v0.3.3au：数据源类型全量登记（RAGFlow 7 源 + 国内替代源）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 浏览器实测 RAGFlow 数据源页 7 种外部源：Confluence/Notion/Google
+  Drive/Gmail/GCS/Oracle Storage/S3。RayRAG 原仅 6 种（gitlab/blob/
+  local/webdav/feishu/confluence）。
+- **注册表 +10 种**：`ConnectorRegistry::kinds()` 补 RAGFlow 剩余 6 种
+  （notion/google_drive/gmail/gcs/oracle/s3）+ 中国大陆替代源 4 种
+  （dingtalk 钉钉文档/tencent_docs 腾讯文档/yuque 语雀/wechat_docs
+  微信文档），共 16 种。所有新类型可创建（is_supported_kind 走注册表），
+  连接时未实现的连接器会明确报 `unsupported connector kind`（诚实占位，
+  非静默失败）。
+- **UI**：dsType 下拉 +10 选项（中文标签）+ dsHint 全量提示。
+- 新测试：registry_kind_tests 1（RAGFlow 7 + 国内 5 + 旧 4 全覆盖断言）。
+- 后续批次：实现 S3 协议连接器（SigV4，可覆盖 s3/gcs/oracle 三源）与
+  钉钉/腾讯文档/语雀 REST 连接器。
+
 ## 2026-08-13 v0.3.3at：Page rank / Tag sets / Avatar 三字段（对齐实测配置页基础段）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
