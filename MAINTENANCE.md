@@ -1,3 +1,19 @@
+## 2026-08-13 v0.3.3am：dark-first 设计 token 移植 + 22 个 UI 行转 aligned + crypt.py 行转 full
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 经 fygo Chrome CDP 实测参考部署（v0.26.2 Tailwind 重写版）：深色主题为**固定设计**
+  （`html.dark` 类 + `--background: rgba(11,10,18,1)`），非 prefers-color-scheme 跟随。
+- 提取完整设计 token：页面底 #0b0a12、主文本 #f6f6f7（246 246 247）、次要文本
+  #b2b5b7（178 181 183）、弱文本/输入提示 #75787a、卡片 rgba(255,255,255,.05)、
+  头部栏 #0b0b0c、主强调紫 #9276ff、圆角 .5rem、字体 InterVariable 16px。
+- RayRAG 全局 CSS（src/web_css.txt）由浅色默认+`.dark` 覆写**反转为 dark-first**：
+  `:root` 装载 RAGFlow token 板，经典浅色板收进可选 `.light` 类；body 换
+  InterVariable 16px 字栈；toggleTheme 语义同步（light/dark 键互换）。
+- crypt.py 行转 full：上游 v0.26.2 login-next 页明文发送密码（Tailwind 重写时
+  移除了客户端加密助手），RayRAG 无客户端加密 = 上游对齐。
+- 覆盖矩阵：22 个 web/src 记忆页 UI 行 partial→aligned（功能完整 + token 级
+  视觉对齐，微间距保留近似而非逐字 React 转译）。
+
 ## 2026-08-13 v0.3.3ak：task_executor 多任务类型分发对齐 + 行转 full
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
