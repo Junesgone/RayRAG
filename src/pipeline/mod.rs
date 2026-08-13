@@ -34,6 +34,7 @@ pub struct Pipeline {
     mineru: Option<crate::parser::mineru::MinerUClient>,
     somark: Option<crate::parser::somark::SoMarkClient>,
     stt: Option<crate::audio::AsrClient>,
+    vision: Option<crate::vision::VisionClient>,
 }
 
 impl Pipeline {
@@ -50,6 +51,7 @@ impl Pipeline {
             mineru: None,
             somark: None,
             stt: None,
+            vision: None,
         }
     }
 
@@ -132,6 +134,14 @@ impl Pipeline {
     pub fn with_asr_from_env(mut self) -> Result<Self> {
         self.stt = crate::audio::asr_from_env()?;
         Ok(self)
+    }
+
+    /// Attach an OpenAI-compatible vision (image-to-text) client for raster
+    /// image parsing — mirrors RAGFlow `picture.py` / `naive.py` resolving the
+    /// tenant default IMAGE2TEXT model and handing it to `VisionFigureParser`.
+    pub fn with_vision_client(mut self, vision: crate::vision::VisionClient) -> Self {
+        self.vision = Some(vision);
+        self
     }
 
     /// Resolve all optional HTTP-backed document providers from environment.
@@ -285,6 +295,41 @@ impl Pipeline {
             return Ok(parser::new_document(name, content, mime, data.len()));
         }
 
+        // 图片 + 租户默认 image2text 模型：走视觉描述（对齐 RAGFlow
+        // `picture.py vision_llm_chunk`：JPEG 优先、PNG 回退、小图跳过，用
+        // `vision_llm_figure_describe_prompt.md` 提示词让多模态模型直接输出
+        // Markdown）。视觉模型未配置时静默落到下方 FigureParser（无 OCR 时
+        // 输出元数据占位，与上游 naive figure 行为一致）。
+        if crate::ocr::supports_ocr(mime) {
+            if let Some(vision) = &self.vision {
+                if data.len() >= 100 {
+                    let prompt = crate::parser::figure::figure_describe_prompt();
+                    let image = crate::vision::VisionClient::normalize_image(data, mime);
+                    match vision.describe_with_prompt(&image, &prompt).await {
+                        Ok(description) if !description.content.trim().is_empty() => {
+                            return Ok(parser::new_document(
+                                name,
+                                format!(
+                                    "<!--IMAGE_START-->\n[DOCUMENT_LAYOUT: VisionLLM]\n{}\n<!--IMAGE_END-->\n",
+                                    description.content.trim()
+                                ),
+                                mime,
+                                data.len(),
+                            ));
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                %name,
+                                "Vision model returned empty description; falling back to figure parser"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, %name, "Vision description failed; falling back to figure parser");
+                        }
+                    }
+                }
+            }
+        }
         // 音频：配置 ASR 时转录（OpenAI 兼容 /audio/transcriptions），否则落到元数据占位
         if (mime.starts_with("audio/") || mime == "application/ogg") && self.stt.is_some() {
             if let Some(stt) = &self.stt {
@@ -732,5 +777,48 @@ mod tests {
                 .metadata
                 .contains_key(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
         );
+    }
+
+    #[tokio::test]
+    async fn vision_client_describes_raster_images_when_configured() {
+        use axum::routing::post;
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                Json(json!({
+                    "choices": [{
+                        "message": {
+                            "content": "溶解氧低于3毫克每升时鱼类会浮头。"
+                        }
+                    }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let vision = crate::vision::VisionClient::new(crate::vision::VisionConfig {
+            api_base: format!("http://{address}/v1"),
+            api_key: String::new(),
+            model: "mock-vision".into(),
+            lang: "Chinese".into(),
+        });
+        let pipeline = Pipeline::new(ParserConfig::default()).with_vision_client(vision);
+        // 1x1 PNG (68 bytes) padded to 128 with trailing zeros — the vision
+        // branch only checks `data.len() >= 100`; the mock server ignores bytes.
+        use base64::Engine;
+        let mut png = base64::engine::general_purpose::STANDARD
+            .decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            )
+            .unwrap();
+        png.resize(128, 0);
+        let document = pipeline
+            .parse_document("sample.png", "image/png", &png)
+            .await
+            .unwrap();
+        server.abort();
+        assert!(document.content.contains("[DOCUMENT_LAYOUT: VisionLLM]"));
+        assert!(document.content.contains("溶解氧低于3毫克"));
     }
 }

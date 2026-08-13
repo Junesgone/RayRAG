@@ -4,11 +4,11 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本里程碑：**v0.3.3af**（2026-08-13，见 MAINTENANCE.md）
-- 测试基线：**1281 passed / 0 failed / 27 ignored**（2026-08-13 postgres-backend 特性复核；
+- 版本里程碑：**v0.3.3ao**（2026-08-13，见 MAINTENANCE.md）
+- 测试基线：**1282 passed / 0 failed / 27 ignored**（2026-08-13 postgres-backend 特性复核；
   27 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试）
 - 覆盖矩阵（RAGFlow v0.26.4 固定快照，4441 文件，`docs/ragflow-v0.26.4-coverage.md`）：
-  aligned **126** / full **552** / partial **0** / aligned **148** / replaced **101** / N/A **61** /
+  full **553** / aligned **147** / replaced **101** / N/A **61** / partial **0** /
   reference **3579** / unmapped **0**
 
 ## 架构

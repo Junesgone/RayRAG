@@ -1,3 +1,31 @@
+## 2026-08-13 v0.3.3ao：图片解析 vision 模型生产接线（对齐 picture.py/naive.py）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **发现的真缺口**：`CvModel`/`VisionClient`/`vision_llm_chunk_sync` 在
+  `src/llm.rs`、`src/vision.rs`、`src/parser/figure.rs` 全部完备且有测试，但
+  **生产零引用**——`pipeline.parse_document` 走 `parser::get_parser(mime)` 时
+  `FigureParser::new()` 恒 `vision: None`，图片文档永远拿不到租户默认
+  image2text 模型（上游 naive.py:160-165 会解析
+  `get_tenant_default_model_by_type(LLMType.IMAGE2TEXT)` 注入
+  VisionFigureParser）。
+- **接线**：① `Pipeline` 加 `vision: Option<VisionClient>` 字段 +
+  `with_vision_client()` 建造器；② `parse_document` 在 PaddleOCR 分支后、
+  ASR/兜底前加 vision 分支（`supports_ocr(mime)` && data≥100B →
+  `figure_describe_prompt` 描述，输出 `[DOCUMENT_LAYOUT: VisionLLM]` 包装，
+  空结果/异常 warn 后静默落回 FigureParser）；③ `server.rs` 加
+  `kb_vision_for()`（resolve 租户默认 ImageToText 能力，None=无配置静默跳过），
+  `process_document` 构造管线时注入。
+- 新测试：`vision_client_describes_raster_images_when_configured`（mock
+  OpenAI vision 服务 + 1×1 PNG 补 128B → 断言 VisionLLM 标记 + 描述文本）。
+- **真机 E2E 全通**：宿主 PaddleOCR-VL-1.6-GGUF @ 8090 注册为 image2text
+  provider → 上传中文 PNG → GPU 视觉识别落库为 chunk（`[Image: <id>]
+  池塘溶解氧低于3毫克每升时 鱼类会出现浮头现象`）→ retrieval 命中 ✓。
+- **坑**：租户实例/提供的 model 名必须与 llama-server 实际服务名一致
+  （`PaddleOCR-VL-1.6-GGUF`，`/v1/models` 实测），自定义别名会导致
+  vision 返回空描述（warn 落回 figure parser）。改实例 models[].name 即愈。
+- **宿主 rerank 阻塞仍挂起**（见 v0.3.3an）：rerank 服务缺 `--reranking`
+  标志且只绑 127.0.0.1，Boss 重启该服务加参数后即可直连验证。
+
 ## 2026-08-13 v0.3.3an：真机 GPU 端到端验证（宿主三模型全链路）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

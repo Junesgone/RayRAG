@@ -456,6 +456,42 @@ pub(crate) fn kb_embedder_for(
         .ok_or_else(|| anyhow::anyhow!("Embedding is not configured: {binding}"))
 }
 
+/// Resolve a tenant's default image-to-text (vision) model for image parsing —
+/// mirrors RAGFlow `get_tenant_default_model_by_type(tenant_id, LLMType.IMAGE2TEXT)`.
+/// Returns `None` when no image2text model is configured for the KB owner, so
+/// image parsing silently falls back to the OCR/metadata figure path.
+pub(crate) fn kb_vision_for(
+    state: &AppState,
+    kb_ids: &[String],
+) -> anyhow::Result<Option<crate::vision::VisionClient>> {
+    let Some(first_kb_id) = kb_ids.first() else {
+        return Ok(None);
+    };
+    let kb = state
+        .kbs
+        .get(first_kb_id)
+        .ok_or_else(|| anyhow::anyhow!("Knowledge base not found: {first_kb_id}"))?;
+    let Some(model) = state
+        .tenant_models
+        .resolve(
+            &state.providers,
+            &kb.owner_id,
+            crate::api::tenant_models::ModelCapability::ImageToText,
+            None,
+        )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(crate::vision::VisionClient::new(
+        crate::vision::VisionConfig {
+            api_base: model.api_base,
+            api_key: model.api_key.unwrap_or_default(),
+            model: model.model_name,
+            lang: "Chinese".into(),
+        },
+    )))
+}
+
 pub(crate) fn kb_reranker_for(
     state: &AppState,
     kb_ids: &[String],
@@ -1352,9 +1388,20 @@ async fn process_document(
         let graphrag_method = config.graphrag_method.clone();
         let graphrag_entity_types = config.graphrag_entity_types.clone();
         let embedder = kb_embedder_for(&state, std::slice::from_ref(&doc.kb_id))?;
-        let pipeline = crate::pipeline::Pipeline::new(config)
-            .with_shared_embedder(embedder)
-            .with_document_parsers_from_env()?;
+        // Vision enrichment for image documents: attach the tenant default
+        // image2text model when configured (RAGFlow picture.py / naive.py
+        // `get_tenant_default_model_by_type(LLMType.IMAGE2TEXT)`).
+        let vision = kb_vision_for(&state, std::slice::from_ref(&doc.kb_id))
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "Vision model resolution failed; image parsing continues without vision");
+                None
+            });
+        let mut pipeline_builder = crate::pipeline::Pipeline::new(config)
+            .with_shared_embedder(embedder);
+        if let Some(vision) = vision {
+            pipeline_builder = pipeline_builder.with_vision_client(vision);
+        }
+        let pipeline = pipeline_builder.with_document_parsers_from_env()?;
         let path_str = path
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid upload path"))?;
