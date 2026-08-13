@@ -34,6 +34,12 @@ pub struct ChatApp {
     /// mirrors RAGFlow `llm_setting` in the chat-app settings form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_setting: Option<serde_json::Value>,
+    /// Rerank model name (RAGFlow rerankFormSchema.rerank_id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank_id: Option<String>,
+    /// Number of chunks fed into the reranker (rerankFormSchema.top_k).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
     /// Prompt configuration (system/prologue/cross_languages/quote/keyword/
     /// tts/toc_enhance/use_kg/reference_metadata/empty_response);
     /// mirrors RAGFlow `prompt_config` (chat-prompt-engine.tsx).
@@ -168,6 +174,10 @@ pub struct UpdateChatAppRequest {
     pub llm_setting: Option<serde_json::Value>,
     #[serde(default)]
     pub prompt_config: Option<serde_json::Value>,
+    #[serde(default)]
+    pub rerank_id: Option<Option<String>>,
+    #[serde(default)]
+    pub top_k: Option<u32>,
 }
 
 pub async fn list_chat_apps(
@@ -209,6 +219,8 @@ pub async fn create_chat_app(
         llm_id: None,
         llm_setting: body.llm_setting,
         prompt_config: body.prompt_config,
+        rerank_id: None,
+        top_k: None,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -279,6 +291,18 @@ pub async fn update_chat_app(
         app.prompt_config = Some(prompt_config);
         changed = true;
     }
+    if let Some(rerank_id) = body.rerank_id {
+        if rerank_id != app.rerank_id {
+            app.rerank_id = rerank_id;
+            changed = true;
+        }
+    }
+    if let Some(top_k) = body.top_k {
+        if Some(top_k) != app.top_k {
+            app.top_k = Some(top_k);
+            changed = true;
+        }
+    }
     if changed {
         store
             .insert(app)
@@ -322,6 +346,8 @@ mod tests {
             llm_id: None,
             llm_setting: None,
             prompt_config: None,
+            rerank_id: None,
+            top_k: None,
             created_at: 1,
         };
         store.insert(app).unwrap();

@@ -545,6 +545,8 @@ impl ConnectorRegistry {
             "yuque" => Ok(Box::new(YuqueConnector::new(options)?)),
             "dingtalk" => Ok(Box::new(DingTalkConnector::new(options)?)),
             "dingtalk_ai_table" => Ok(Box::new(DingTalkAiTableConnector::new(options)?)),
+            // Box 云盘（RAGFlow 官方源 box：OAuth2 refresh token → 递归列表 → 下载）。
+            "box" => Ok(Box::new(BoxConnector::new(options)?)),
             // S3 协议家族：S3 / GCS-interop / Oracle S3-compat / Cloudflare R2
             // 共用 SigV4 连接器（R2 为 S3 兼容协议，端点经 options.url 指定）。
             "s3" | "gcs" | "oracle" | "r2" => Ok(Box::new(S3Connector::new(options))),
@@ -553,7 +555,7 @@ impl ConnectorRegistry {
             "rss" => Ok(Box::new(RssConnector::new(options)?)),
             // 以下 RAGFlow 源已登记，连接器按域逐步实装。
             // 未实装前 connect 明确报错，避免静默失败。
-            "github" | "bitbucket" | "jira" | "box" | "dropbox" | "onedrive"
+            "github" | "bitbucket" | "jira" | "dropbox" | "onedrive"
             | "outlook" | "sharepoint" | "teams" | "slack" | "discord" | "zendesk"
             | "salesforce" | "moodle" | "airtable" | "asana" | "imap"
             | "seafile" | "rest_api" | "mysql"
@@ -640,7 +642,7 @@ impl ConnectorRegistry {
             ConnectorTypeInfo {
                 kind: "box",
                 label: "Box",
-                hint: "token=access_token (OAuth), target=folder id",
+                hint: "token=OAuth JSON {client_id,client_secret,refresh_token[,access_token]}, target=folder id (默认 0=根目录)",
             },
             ConnectorTypeInfo {
                 kind: "dropbox",
@@ -2982,6 +2984,480 @@ impl Connector for DingTalkAiTableConnector {
     }
 }
 
+// ── Concrete connector: Box (cloud drive) ────────────────────────────────────
+//
+// Mirrors RAGFlow `common/data_source/box_connector.py` (box_sdk_gen):
+//   * OAuth2 credentials live in `options.token` as JSON — the RAGFlow web
+//     `box-token-field.tsx` stores exactly this shape:
+//     `{client_id, client_secret, redirect_uri, access_token, refresh_token}`.
+//     A non-JSON token is treated as a legacy raw access token.
+//   * `access_token` is used directly when present; `refresh_token` +
+//     `client_id`/`client_secret` enable the refresh flow
+//     (POST {base}/oauth2/token, grant_type=refresh_token, form-encoded) —
+//     performed lazily on cache expiry AND once on a 401 response.
+//   * folder_id = options.target (default "0" = root; Python
+//     `folder_id = "0" if not folder_id else folder_id`).
+//   * list_files → GET /2.0/folders/{id}/items, marker-based pagination
+//     (`usemarker=true`), recursive over subfolders — mirrors
+//     `_iter_files_recursive`. `next_marker` empty ⇒ end of folder.
+//   * fetch_file → GET /2.0/files/{id}/content (binary).
+//   * load_credentials → acquire/refresh token, probe GET /2.0/users/me
+//     (RAGFlow `validate_connector_settings` calls `get_user_me`).
+//   * normalize → ConnectorDoc; `DocumentSource::Box` has no variant yet, so
+//     the stand-in is `DocumentSource::Local` + metadata `("source","box")`
+//     (parent will add the enum variant, same precedent as Rss/Yuque).
+
+/// Mutable OAuth state: cached access token + rotated refresh token.
+#[derive(Debug, Clone)]
+struct BoxAuthState {
+    access_token: String,
+    expires_at: std::time::Instant,
+    /// Box rotates refresh tokens on use; keep the latest one here.
+    refresh_token: String,
+    /// False for legacy raw access tokens (no refresh credentials).
+    refreshable: bool,
+}
+
+/// One entry of a Box folder listing (type=file/folder).
+#[derive(Debug, Clone)]
+struct BoxEntry {
+    kind: String,
+    id: String,
+    name: String,
+    size: u64,
+    modified_at: String,
+}
+
+impl BoxEntry {
+    fn from_value(value: serde_json::Value) -> Option<Self> {
+        let id = value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if id.is_empty() {
+            return None;
+        }
+        Some(Self {
+            kind: value
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            id,
+            name: value
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            size: value
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            modified_at: value
+                .get("modified_at")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
+
+    /// Map onto the metadata-only listing primitive (id=file id, path=id,
+    /// extension from the file name, size/updated_at from the entry).
+    fn to_remote_file(&self) -> RemoteFile {
+        let mut metadata = HashMap::new();
+        metadata.insert("source".into(), "box".into());
+        metadata.insert("file_id".into(), self.id.clone());
+        RemoteFile {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            path: self.id.clone(),
+            extension: box_file_extension(&self.name),
+            size_bytes: self.size,
+            updated_at: self.modified_at.clone(),
+            fingerprint: self.modified_at.clone(),
+            metadata,
+        }
+    }
+}
+
+/// Box cloud-drive connector — RAGFlow `BoxConnector`.
+#[derive(Debug)]
+pub struct BoxConnector {
+    client: reqwest::Client,
+    /// API base (default https://api.box.com; test override via options.url).
+    base_url: String,
+    /// Root folder to walk (default "0" = All Files).
+    folder_id: String,
+    client_id: String,
+    client_secret: String,
+    /// Cached access token + refresh token (Mutex: &self interior mutability).
+    auth: std::sync::Mutex<BoxAuthState>,
+}
+
+impl BoxConnector {
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let base_url = {
+            let raw = options.url.trim().trim_end_matches('/');
+            if raw.is_empty() {
+                "https://api.box.com".to_string()
+            } else {
+                raw.to_string()
+            }
+        };
+        let folder_id = {
+            let raw = options.target.trim();
+            if raw.is_empty() {
+                "0".to_string()
+            } else {
+                raw.to_string()
+            }
+        };
+        let token_raw = options.token.trim();
+        let mut client_id = String::new();
+        let mut client_secret = String::new();
+        let mut refresh_token = String::new();
+        let mut access_token = String::new();
+        let mut refreshable = false;
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(token_raw) {
+            let get = |key: &str| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            };
+            client_id = get("client_id");
+            client_secret = get("client_secret");
+            refresh_token = get("refresh_token");
+            access_token = get("access_token");
+            refreshable =
+                !client_id.is_empty() && !client_secret.is_empty() && !refresh_token.is_empty();
+        } else if !token_raw.is_empty() {
+            // Legacy shape: the token IS the access token (pre-OAuth UI).
+            access_token = token_raw.to_string();
+        }
+        if access_token.is_empty() && !refreshable {
+            bail!(
+                "box: credentials required — token must be OAuth JSON \
+                 (client_id/client_secret/refresh_token[, access_token]) or a raw access token"
+            );
+        }
+        let auth = BoxAuthState {
+            access_token,
+            expires_at: std::time::Instant::now()
+                + std::time::Duration::from_secs(3600u64.saturating_sub(60)),
+            refresh_token,
+            refreshable,
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            base_url,
+            folder_id,
+            client_id,
+            client_secret,
+            auth: std::sync::Mutex::new(auth),
+        })
+    }
+
+    /// Cached access token; refreshed lazily when expired or absent.
+    async fn access_token(&self) -> Result<String> {
+        {
+            let guard = self.auth.lock().unwrap_or_else(|p| p.into_inner());
+            let state = &*guard;
+            if !state.access_token.is_empty() && std::time::Instant::now() < state.expires_at {
+                return Ok(state.access_token.clone());
+            }
+        }
+        self.force_refresh().await
+    }
+
+    /// Exchange the refresh token for a fresh access token (bypasses the
+    /// cache) — POST {base}/oauth2/token, grant_type=refresh_token. Box
+    /// rotates the refresh token; the rotated one is stored for next time.
+    async fn force_refresh(&self) -> Result<String> {
+        let refresh_token = {
+            let guard = self.auth.lock().unwrap_or_else(|p| p.into_inner());
+            let state = &*guard;
+            if !state.refreshable || state.refresh_token.is_empty() {
+                bail!("box: access token rejected (401) and no refresh credentials available");
+            }
+            state.refresh_token.clone()
+        };
+        let url = format!("{}/oauth2/token", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token.as_str()),
+                ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
+            ])
+            .send()
+            .await
+            .with_context(|| format!("box: oauth2/token request failed: {url}"))?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "{}",
+                box_error_message(&value, status.as_u16(), "oauth2/token")
+            );
+        }
+        let token = value
+            .get("access_token")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("box: oauth2/token: access_token missing in response"))?
+            .to_string();
+        let expire_in = value
+            .get("expires_in")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(3600);
+        let rotated = value
+            .get("refresh_token")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&refresh_token)
+            .to_string();
+        let state = BoxAuthState {
+            access_token: token.clone(),
+            expires_at: std::time::Instant::now()
+                + std::time::Duration::from_secs(expire_in.saturating_sub(60).max(1)),
+            refresh_token: rotated,
+            refreshable: true,
+        };
+        *self.auth.lock().unwrap_or_else(|p| p.into_inner()) = state;
+        Ok(token)
+    }
+
+    /// Bearer-authenticated GET; on 401, refresh the access token once and
+    /// retry (RAGFlow Box SDK auto-refresh semantics).
+    async fn authed_request(&self, method: reqwest::Method, url: String) -> Result<reqwest::Response> {
+        let token = self.access_token().await?;
+        let mut response = self
+            .client
+            .request(method.clone(), &url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .with_context(|| format!("box: request failed: {url}"))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let refreshed = self.force_refresh().await?;
+            response = self
+                .client
+                .request(method, &url)
+                .bearer_auth(&refreshed)
+                .send()
+                .await
+                .with_context(|| format!("box: retry request failed: {url}"))?;
+        }
+        Ok(response)
+    }
+
+    /// One folder-items page: `(entries, next_marker)` — marker-based
+    /// pagination (`usemarker=true`, limit 1000, RAGFlow INDEX_BATCH_SIZE
+    /// spirit with the SDK default).
+    async fn list_folder_page(&self, folder_id: &str, marker: &str) -> Result<(Vec<BoxEntry>, String)> {
+        let mut query = vec![
+            ("usemarker", "true".to_string()),
+            ("limit", "1000".to_string()),
+        ];
+        if !marker.is_empty() {
+            query.push(("marker", marker.to_string()));
+        }
+        let query_str = query
+            .iter()
+            .map(|(key, value)| format!("{}={}", urlencode(key), urlencode(value)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let url = format!(
+            "{}/2.0/folders/{}/items?{}",
+            self.base_url,
+            urlencode(folder_id),
+            query_str
+        );
+        let response = self.authed_request(reqwest::Method::GET, url).await?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "{}",
+                box_error_message(
+                    &value,
+                    status.as_u16(),
+                    &format!("folders/{folder_id}/items")
+                )
+            );
+        }
+        let entries = value
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(BoxEntry::from_value)
+            .collect();
+        let next_marker = value
+            .get("next_marker")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok((entries, next_marker))
+    }
+
+    /// Recursive walk mirroring `_iter_files_recursive`: files become
+    /// RemoteFiles, subfolders recurse inline (same folder order as the
+    /// Python generator).
+    async fn walk_folder(&self, folder_id: &str, out: &mut Vec<RemoteFile>) -> Result<()> {
+        let mut marker = String::new();
+        let mut pages = 0usize;
+        loop {
+            let (entries, next) = self.list_folder_page(folder_id, &marker).await?;
+            for entry in entries {
+                match entry.kind.as_str() {
+                    "file" => out.push(entry.to_remote_file()),
+                    "folder" => {
+                        // async recursion must be boxed (E0733).
+                        Box::pin(self.walk_folder(&entry.id, out)).await?;
+                    }
+                    _ => {}
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            marker = next;
+            pages += 1;
+            if pages > 1000 {
+                bail!("box: folder listing exceeded 1000 pages — aborting");
+            }
+        }
+        Ok(())
+    }
+}
+
+/// File extension from the entry name — RAGFlow `get_file_ext`
+/// (`os.path.splitext(name)[1].lower()`); empty when the name has no dot.
+fn box_file_extension(name: &str) -> String {
+    Path::new(name)
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy().to_lowercase()))
+        .unwrap_or_default()
+}
+
+/// Render a Box upstream error (RAGFlow Box SDK error envelope:
+/// `{type, status, code, message, …}`) into a readable message.
+fn box_error_message(value: &serde_json::Value, status: u16, context: &str) -> String {
+    let code = value
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let message = value
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("error_description")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or_default();
+    format!(
+        "box: {context} upstream error ({status}): code={code}, message={message}"
+    )
+}
+
+#[async_trait]
+impl Connector for BoxConnector {
+    fn kind(&self) -> &'static str {
+        "box"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        // 换/取 access token，然后探针 users/me 验证凭证可用
+        // （RAGFlow `validate_connector_settings` 调 get_user_me）。
+        self.access_token().await?;
+        let url = format!("{}/2.0/users/me", self.base_url);
+        let response = self.authed_request(reqwest::Method::GET, url).await?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "{}",
+                box_error_message(&value, status.as_u16(), "users/me")
+            );
+        }
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let mut files = Vec::new();
+        let root = self.folder_id.clone();
+        self.walk_folder(&root, &mut files).await?;
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}/2.0/files/{}/content",
+            self.base_url,
+            urlencode(&file.id)
+        );
+        let response = self.authed_request(reqwest::Method::GET, url).await?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            let parsed: serde_json::Value =
+                serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+            if parsed.is_null() {
+                bail!(
+                    "box: files/{}/content upstream error ({}): {}",
+                    file.id,
+                    status.as_u16(),
+                    text
+                );
+            }
+            bail!(
+                "{}",
+                box_error_message(
+                    &parsed,
+                    status.as_u16(),
+                    &format!("files/{}/content", file.id)
+                )
+            );
+        }
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        for key in ["source", "file_id"] {
+            if let Some(value) = file.metadata.get(key) {
+                metadata.insert(key.to_string(), value.clone());
+            }
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            // Stand-in: DocumentSource has no Box variant yet (parent adds it
+            // later, same precedent as Rss/Yuque); metadata carries
+            // source=box provenance.
+            source: DocumentSource::Local,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Split "user:password" (or "app_id:app_secret") credential strings.
@@ -5127,5 +5603,479 @@ mod dingtalk_ai_table_tests {
                 .kind(),
             "dingtalk"
         );
+    }
+}
+
+#[cfg(test)]
+mod box_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, content_type, body)`; the connector's `options.url`
+    /// override points here — no real network. `Connection: close` makes every
+    /// request land on a fresh connection, matching the one-request-per-
+    /// connection loop.
+    fn mock_box_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String)
+            + Send
+            + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, content_type, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// RAGFlow `box-token-field.tsx` credential shape stored in the token
+    /// field. `with_access_token` adds the OAuth result payload.
+    fn oauth_json(with_access_token: bool) -> String {
+        if with_access_token {
+            json!({
+                "client_id": "cid-1",
+                "client_secret": "csec-1",
+                "refresh_token": "rt-1",
+                "access_token": "at-init",
+            })
+            .to_string()
+        } else {
+            json!({
+                "client_id": "cid-1",
+                "client_secret": "csec-1",
+                "refresh_token": "rt-1",
+            })
+            .to_string()
+        }
+    }
+
+    fn remote_file(id: &str, name: &str, extension: &str) -> RemoteFile {
+        RemoteFile {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: id.to_string(),
+            extension: extension.to_string(),
+            size_bytes: 5,
+            updated_at: "2025-08-01T09:00:00Z".to_string(),
+            fingerprint: "2025-08-01T09:00:00Z".to_string(),
+            metadata: [
+                ("source".to_string(), "box".to_string()),
+                ("file_id".to_string(), id.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    /// `new()` credential parsing: OAuth JSON (with/without access_token),
+    /// legacy raw access token, empty/malformed tokens rejected, target
+    /// defaults to root folder "0".
+    #[test]
+    fn new_accepts_oauth_json_and_legacy_access_token() {
+        assert!(BoxConnector::new(options(String::new(), &oauth_json(true), "123")).is_ok());
+        assert!(BoxConnector::new(options(String::new(), &oauth_json(false), "123")).is_ok());
+
+        // Legacy raw access token + empty target → folder "0".
+        let connector = BoxConnector::new(options(String::new(), "raw-token", "")).unwrap();
+        assert_eq!(connector.folder_id, "0");
+        let guard = connector.auth.lock().unwrap_or_else(|p| p.into_inner());
+        let state = &*guard;
+        assert_eq!(state.access_token, "raw-token");
+        assert!(!state.refreshable);
+
+        // Empty token rejected with a readable error.
+        let error = BoxConnector::new(options(String::new(), "", "")).unwrap_err();
+        assert!(error.to_string().contains("credentials"), "{error:#}");
+
+        // JSON without access_token and without the refresh triple rejected.
+        let bad = json!({"client_id": "cid-only"}).to_string();
+        let error = BoxConnector::new(options(String::new(), &bad, "")).unwrap_err();
+        assert!(error.to_string().contains("credentials"), "{error:#}");
+    }
+
+    /// load_credentials: no initial access token → ONE refresh_token grant
+    /// (form fields verified), then GET /2.0/users/me probe with the fresh
+    /// bearer; a later list_files reuses the cached token (no second refresh).
+    #[tokio::test]
+    async fn load_credentials_refreshes_token_and_probes_user() {
+        let refresh_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls = refresh_calls.clone();
+        let base = mock_box_server(move |method, path, _query, headers, body| {
+            match (method, path) {
+                ("POST", "/oauth2/token") => {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let lower = headers.to_ascii_lowercase();
+                    for required in [
+                        "grant_type=refresh_token",
+                        "refresh_token=rt-1",
+                        "client_id=cid-1",
+                        "client_secret=csec-1",
+                    ] {
+                        if !body.contains(required) {
+                            return (
+                                400,
+                                "application/json",
+                                json!({"code": "missing_form_field",
+                                       "message": required}).to_string(),
+                            );
+                        }
+                    }
+                    let _ = lower;
+                    (
+                        200,
+                        "application/json",
+                        json!({"access_token": "at-fresh", "expires_in": 3600}).to_string(),
+                    )
+                }
+                ("GET", "/2.0/users/me") => {
+                    if headers.to_ascii_lowercase().contains("authorization: bearer at-fresh") {
+                        (
+                            200,
+                            "application/json",
+                            json!({"type": "user", "id": "u1", "name": "Me"}).to_string(),
+                        )
+                    } else {
+                        (
+                            401,
+                            "application/json",
+                            json!({"code": "unauthorized", "message": "bad token"}).to_string(),
+                        )
+                    }
+                }
+                ("GET", "/2.0/folders/0/items") => (
+                    200,
+                    "application/json",
+                    json!({"entries": [], "next_marker": ""}).to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let mut connector =
+            BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
+        connector.load_credentials().await.unwrap();
+
+        // list_files reuses the cached token — still exactly one refresh.
+        let files = connector.list_files().await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(
+            refresh_calls.load(Ordering::SeqCst),
+            1,
+            "access token must be cached after load_credentials"
+        );
+    }
+
+    /// list_files: marker pagination across pages AND recursive descent into
+    /// subfolders (mirrors `_iter_files_recursive`): root page 1 yields
+    /// f1 + folder `sub` (recurse → f3) before root page 2 yields f2.
+    /// Entry mapping: id/name/path/extension(lowercased)/size/updated_at.
+    #[tokio::test]
+    async fn list_files_paginates_and_recurses_subfolders() {
+        let base = mock_box_server(move |method, path, query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/oauth2/token") => (
+                    200,
+                    "application/json",
+                    json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                ),
+                ("GET", "/2.0/folders/0/items") => {
+                    if query.contains("marker=m1") {
+                        (
+                            200,
+                            "application/json",
+                            json!({
+                                "entries": [
+                                    {"type": "file", "id": "f2", "name": "second.md",
+                                     "size": 22, "modified_at": "2025-08-01T10:00:00Z"}
+                                ],
+                                "next_marker": ""
+                            })
+                            .to_string(),
+                        )
+                    } else {
+                        (
+                            200,
+                            "application/json",
+                            json!({
+                                "entries": [
+                                    {"type": "file", "id": "f1", "name": "report.PDF",
+                                     "size": 11, "modified_at": "2025-08-01T09:00:00Z"},
+                                    {"type": "folder", "id": "sub", "name": "Sub Folder",
+                                     "size": 0, "modified_at": "2025-08-01T08:00:00Z"}
+                                ],
+                                "next_marker": "m1"
+                            })
+                            .to_string(),
+                        )
+                    }
+                }
+                ("GET", "/2.0/folders/sub/items") => (
+                    200,
+                    "application/json",
+                    json!({
+                        "entries": [
+                            {"type": "file", "id": "f3", "name": "nested.docx",
+                             "size": 33, "modified_at": "2025-08-02T00:00:00Z"}
+                        ],
+                        "next_marker": ""
+                    })
+                    .to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let connector = BoxConnector::new(options(base, &oauth_json(true), "0")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 3, "f1 + f3 (recursed) + f2 (page 2)");
+
+        let first = &files[0];
+        assert_eq!(first.id, "f1");
+        assert_eq!(first.name, "report.PDF");
+        assert_eq!(first.path, "f1");
+        assert_eq!(first.extension, ".pdf"); // lowercased like get_file_ext
+        assert_eq!(first.size_bytes, 11);
+        assert_eq!(first.updated_at, "2025-08-01T09:00:00Z");
+        assert_eq!(first.fingerprint, first.updated_at);
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("box")
+        );
+        assert_eq!(
+            first.metadata.get("file_id").map(String::as_str),
+            Some("f1")
+        );
+
+        // Recursion happens inline before the root folder's page 2.
+        assert_eq!(files[1].id, "f3");
+        assert_eq!(files[1].extension, ".docx");
+        assert_eq!(files[2].id, "f2");
+        assert_eq!(files[2].extension, ".md");
+        assert_eq!(files[2].size_bytes, 22);
+        assert_eq!(files[2].updated_at, "2025-08-01T10:00:00Z");
+    }
+
+    /// fetch_file downloads `/2.0/files/{id}/content`; normalize maps the raw
+    /// bytes onto a ConnectorDoc (Local stand-in + metadata source=box).
+    #[tokio::test]
+    async fn fetch_file_and_normalize_build_box_doc() {
+        let base = mock_box_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/oauth2/token") => (
+                    200,
+                    "application/json",
+                    json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                ),
+                ("GET", "/2.0/files/f1/content") => (
+                    200,
+                    "application/octet-stream",
+                    "# Hello Box\n\nbody text".to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+        let file = remote_file("f1", "hello.md", ".md");
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw.clone()).unwrap(),
+            "# Hello Box\n\nbody text"
+        );
+
+        let doc = connector.normalize(&file, raw).unwrap();
+        assert_eq!(doc.id, "f1");
+        assert_eq!(doc.blob, "# Hello Box\n\nbody text");
+        assert_eq!(doc.semantic_identifier, "hello.md");
+        assert_eq!(doc.extension, ".md");
+        assert_eq!(doc.doc_updated_at, "2025-08-01T09:00:00Z");
+        // Stand-in until the parent adds a DocumentSource::Box variant.
+        assert_eq!(doc.source, DocumentSource::Local);
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("box"));
+        assert_eq!(doc.metadata.get("file_id").map(String::as_str), Some("f1"));
+    }
+
+    /// 401 on an API call → exactly one refresh-token grant → retry with the
+    /// fresh bearer succeeds; the refreshed token is then cached (a second
+    /// download issues no further refresh).
+    #[tokio::test]
+    async fn unauthorized_response_triggers_single_refresh_then_retry() {
+        let refresh_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls = refresh_calls.clone();
+        let base = mock_box_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/oauth2/token") => {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    (
+                        200,
+                        "application/json",
+                        json!({"access_token": "at-refreshed", "expires_in": 3600}).to_string(),
+                    )
+                }
+                ("GET", "/2.0/files/f1/content") => {
+                    if headers
+                        .to_ascii_lowercase()
+                        .contains("authorization: bearer at-refreshed")
+                    {
+                        (
+                            200,
+                            "application/octet-stream",
+                            "retried-content".to_string(),
+                        )
+                    } else {
+                        (
+                            401,
+                            "application/json",
+                            json!({"code": "unauthorized",
+                                   "message": "token expired"}).to_string(),
+                        )
+                    }
+                }
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+        // Initial cached token is "at-init" → first download 401 → refresh →
+        // retry with "at-refreshed" → 200.
+        let file = remote_file("f1", "hello.md", ".md");
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "retried-content");
+        assert_eq!(refresh_calls.load(Ordering::SeqCst), 1);
+
+        // Second download uses the cached refreshed token — no new refresh.
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "retried-content");
+        assert_eq!(refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Non-2xx upstream responses surface the Box code/message envelope
+    /// (users/me probe and oauth2/token alike).
+    #[tokio::test]
+    async fn upstream_error_reports_code_and_message() {
+        // Probe fails with a structured Box error.
+        let base = mock_box_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/oauth2/token") => (
+                    200,
+                    "application/json",
+                    json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                ),
+                ("GET", "/2.0/users/me") => (
+                    403,
+                    "application/json",
+                    json!({"type": "error", "status": 403,
+                           "code": "access_denied_insufficient_permissions",
+                           "message": "Access denied"}).to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+        let mut connector =
+            BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("403"), "{error}");
+        assert!(
+            error.contains("access_denied_insufficient_permissions"),
+            "{error}"
+        );
+        assert!(error.contains("Access denied"), "{error}");
+
+        // A failing token exchange reports code/message as well.
+        let base = mock_box_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/oauth2/token") => (
+                    400,
+                    "application/json",
+                    json!({"code": "invalid_grant",
+                           "error_description": "Refresh token has expired"}).to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+        let mut connector =
+            BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("400"), "{error}");
+        assert!(error.contains("invalid_grant"), "{error}");
+        assert!(error.contains("Refresh token has expired"), "{error}");
+    }
+
+    /// Registry dispatch: `create("box", …)` returns a BoxConnector instead
+    /// of bailing with "not implemented"; a legacy raw access token works too.
+    #[test]
+    fn registry_dispatches_box_connector() {
+        let connector =
+            ConnectorRegistry::create("box", options(String::new(), &oauth_json(true), "0"))
+                .unwrap();
+        assert_eq!(connector.kind(), "box");
+
+        let connector =
+            ConnectorRegistry::create("box", options(String::new(), "legacy-raw-token", ""))
+                .unwrap();
+        assert_eq!(connector.kind(), "box");
     }
 }

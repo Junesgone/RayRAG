@@ -37,6 +37,13 @@ fn t(k: &str, zh: bool) -> &str {
         "Similarity Threshold" => "相似度阈值",
         "Top N" => "检索条数",
         "Empty Response" => "空回复文案",
+        "Rerank Model" => "重排模型",
+        "Rerank Top K" => "重排条数",
+        "Refine Multiturn" => "多轮精炼",
+        "Reasoning" => "推理模式",
+        "Vector Weight" => "向量权重",
+        "Show Chunk Metadata" => "显示切片元数据",
+        "Metadata Fields" => "元数据字段",
         "Search apps" => "检索应用",
         "Create search" => "创建检索应用",
         "No search app created yet" => "尚未创建检索应用",
@@ -2254,6 +2261,23 @@ pub async fn chat_app_detail_page(
     let toc_enhance = getb("toc_enhance", false);
     let similarity = getn("similarity_threshold", 0.2);
     let top_n = getn("top_n", 8.0) as i64;
+    let refine_multiturn = getb("refine_multiturn", true);
+    let reasoning = getb("reasoning", false);
+    let vector_similarity_weight = getn("vector_similarity_weight", 0.3);
+    let ref_meta = pc.and_then(|o| o.get("reference_metadata")).and_then(|v| v.as_object());
+    let ref_include = ref_meta.and_then(|o| o.get("include")).and_then(|v| v.as_bool()).unwrap_or(false);
+    let ref_fields = ref_meta
+        .and_then(|o| o.get("fields"))
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let rerank_id = app.rerank_id.clone().unwrap_or_default();
+    let rtop_k = app.top_k.map(|v| v.to_string()).unwrap_or_else(|| "1024".into());
     let cross: Vec<String> = pc
         .and_then(|o| o.get("cross_languages"))
         .and_then(|v| v.as_array())
@@ -2318,9 +2342,24 @@ pub async fn chat_app_detail_page(
         let on = match k { "quote" => quote, "keyword" => keyword, "tts" => tts, "use_kg" => use_kg, _ => toc_enhance };
         b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
     }
+    for (k, label) in [("quote", "Quote"), ("keyword", "Keyword"), ("tts", "TTS"), ("use_kg", "Use KG"), ("toc_enhance", "TOC Enhance")] {
+        let on = match k { "quote" => quote, "keyword" => keyword, "tts" => tts, "use_kg" => use_kg, _ => toc_enhance };
+        b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
+    }
+    for (k, label, on) in [("refine_multiturn", "Refine Multiturn", refine_multiturn), ("reasoning", "Reasoning", reasoning)] {
+        b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
+    }
     b.push_str(&format!(
-        "<div style='display:flex;gap:12px;margin-top:8px'><div style='flex:1'><label class='set-label'>{}</label><input id='f_sim' type='number' step='0.05' min='0' max='1' value='{similarity}' style='width:100%'></div><div style='flex:1'><label class='set-label'>{}</label><input id='f_topn' type='number' step='1' min='1' max='128' value='{top_n}' style='width:100%'></div></div><label class='set-label' style='margin-top:8px'>{}</label><textarea id='f_empty' rows='2' style='width:100%'>{}</textarea>",
-        t("Similarity Threshold", zh), t("Top N", zh), t("Empty Response", zh), html_esc(&empty_response, 1000)
+        "<label class='set-label' style='margin-top:8px'>{}</label><input id='f_rerank' value='{}' placeholder='BAAI/bge-reranker-v2-m3' style='width:100%'><label class='set-label'>{}</label><input id='f_rtopk' type='number' min='1' max='4096' value='{}' style='width:120px'>",
+        t("Rerank Model", zh), html_esc(&rerank_id, 80), t("Rerank Top K", zh), rtop_k
+    ));
+    b.push_str(&format!(
+        "<div style='display:flex;gap:12px;margin-top:8px'><div style='flex:1'><label class='set-label'>{}</label><input id='f_sim' type='number' step='0.05' min='0' max='1' value='{similarity}' style='width:100%'></div><div style='flex:1'><label class='set-label'>{}</label><input id='f_topn' type='number' step='1' min='1' max='128' value='{top_n}' style='width:100%'></div><div style='flex:1'><label class='set-label'>{}</label><input id='f_vsw' type='number' step='0.05' min='0' max='1' value='{vector_similarity_weight}' style='width:100%'></div></div><label class='set-label' style='margin-top:8px'>{}</label><textarea id='f_empty' rows='2' style='width:100%'>{}</textarea>",
+        t("Similarity Threshold", zh), t("Top N", zh), t("Vector Weight", zh), t("Empty Response", zh), html_esc(&empty_response, 1000)
+    ));
+    b.push_str(&format!(
+        "<label class='set-switch' style='margin-top:8px'><input type='checkbox' id='sw_refmeta'{}><span class='set-sw-label'>{}</span></label><label class='set-label'>{}</label><input id='f_reffields' value='{}' placeholder='title,author' style='width:100%'>",
+        if ref_include { " checked" } else { "" }, t("Show Chunk Metadata", zh), t("Metadata Fields", zh), html_esc(&ref_fields, 200)
     ));
     b.push_str("</div>");
     // Footer buttons
@@ -2331,7 +2370,7 @@ pub async fn chat_app_detail_page(
     b.push_str("</div>");
     // JS
     b.push_str(&format!(
-        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value}}}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,refine_multiturn:document.getElementById('sw_refine_multiturn').checked,reasoning:document.getElementById('sw_reasoning').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,vector_similarity_weight:parseFloat(document.getElementById('f_vsw').value)||0.3,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value,reference_metadata:{{include:document.getElementById('sw_refmeta').checked,fields:document.getElementById('f_reffields').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}}}},rerank_id:document.getElementById('f_rerank').value.trim()||null,top_k:parseInt(document.getElementById('f_rtopk').value)||1024}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
     Html(layout(&t("Chat apps", zh), &b, zh))

@@ -1,3 +1,23 @@
+## 2026-08-13 v0.3.3bd：Chat 表单补齐 + Box 连接器
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **Chat 设置表单补齐（use-chat-setting-schema.tsx 全字段对齐）**：
+  - ChatApp 加顶层 `rerank_id` + `top_k`（rerankFormSchema），
+    UpdateChatAppRequest 同步接受。
+  - 表单新增：Rerank Model 文本输入 + Rerank Top K、Refine Multiturn
+    （默认 true）、Reasoning、Vector Weight（0.3）、Show Chunk Metadata
+    开关 + Metadata Fields（逗号分隔）。
+  - saveSettings JS 同步写 prompt_config.refine_multiturn/reasoning/
+    vector_similarity_weight/reference_metadata{include,fields} + 顶层
+    rerank_id/top_k。
+  - i18n 7 条新键。
+- **Box 连接器**（子agent 并行，仅改 src/connectors.rs）：BoxConnector
+  —— OAuth2 refresh token 换 access_token → 递归列 folders/0/items →
+  下载文件；401 自动重试一次；本地 mock 测试 ≥3。kind "box" 分发。
+- 对话区（chat-box）结构已 map（index.tsx）：back + 多模型标题(N/3) +
+  会话侧栏 + chat-box + 设置；列入下批。
+
+
 ## 2026-08-13 v0.3.3bc：检索应用页对齐（/searches）
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
