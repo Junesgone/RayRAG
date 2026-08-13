@@ -2802,9 +2802,7 @@ impl Connector for RssConnector {
         Ok(ConnectorDoc {
             id: file.id.clone(),
             blob,
-            // `DocumentSource` has no Rss variant yet — fall back to `Local`
-            // and carry the real source in metadata (source=rss).
-            source: DocumentSource::Local,
+            source: DocumentSource::Rss,
             semantic_identifier: file.name.clone(),
             extension: file.extension.clone(),
             doc_updated_at: file.updated_at.clone(),
@@ -4204,7 +4202,7 @@ mod rss_connector_tests {
         assert_eq!(doc.extension, ".html");
         assert_eq!(doc.metadata.get("source").map(String::as_str), Some("rss"));
         assert_eq!(doc.metadata.get("feed").map(String::as_str), Some(feed_url.as_str()));
-        assert_eq!(doc.source, DocumentSource::Local); // enum fallback until an Rss variant exists
+        assert_eq!(doc.source, DocumentSource::Rss);
 
         // Unknown id → error.
         let ghost = RemoteFile {

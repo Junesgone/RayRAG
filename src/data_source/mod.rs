@@ -28,6 +28,8 @@ pub enum DocumentSource {
     Yuque,
     /// 钉钉云盘 (DingTalk Drive) — mainland cloud disk via OpenAPI.
     DingTalk,
+    /// RSS/Atom feed (RAGFlow `rss_connector.py` parity).
+    Rss,
 }
 
 impl DocumentSource {
@@ -42,6 +44,7 @@ impl DocumentSource {
             DocumentSource::S3 => "s3",
             DocumentSource::Yuque => "yuque",
             DocumentSource::DingTalk => "dingtalk",
+            DocumentSource::Rss => "rss",
         }
     }
 
@@ -56,6 +59,7 @@ impl DocumentSource {
             "s3" => Some(DocumentSource::S3),
             "yuque" => Some(DocumentSource::Yuque),
             "dingtalk" => Some(DocumentSource::DingTalk),
+            "rss" => Some(DocumentSource::Rss),
             _ => None,
         }
     }
