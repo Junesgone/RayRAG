@@ -1,3 +1,20 @@
+## 2026-08-13 v0.3.3ak：task_executor 多任务类型分发对齐 + 行转 full
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 逐分支溯源 rag/svr/task_executor.py 的 7 种任务类型：
+  - dataflow=文档解析 → RayRAG document_parse ✓；
+  - memory → RayRAG process_memory_task ✓；
+  - **raptor/graphrag**：RayRAG 在解析管线内联构建（build_raptor_chunks /
+    graphrag index at parse time），上游用独立任务类型——管线相同、分发不同；
+  - **mindmap 是上游占位符**（progress 1 "place holder" 后 pass）——无实现可移植；
+  - **skill 依赖重构版 executor**（TE_RUN_MODE=0）——固定版 executor 直接失败；
+  - **artifact 在固定版 executor 无执行分支**（与 skill 同走 SAAS 版）。
+- RayRAG worker 循环对未知类型的处理由笼统 failed 改为**逐类型上游对齐**：
+  mindmap→done"place holder"、skill→failed（上游原句）、raptor/graphrag→done
+  （注明解析时已内联构建）、artifact/未知→failed（注明无上游执行分支）。
+- 覆盖矩阵 rag/svr/task_executor.py 行 partial→full（Redis 消费/心跳传输由
+  进程内队列取代，属架构替换）。
+
 ## 2026-08-13 v0.3.3aj：messages.py missing-token 修复闭环 + 行转 full
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

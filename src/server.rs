@@ -2006,12 +2006,33 @@ fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::
             continue;
         }
         if task.task_type != "document_parse" {
-            let _ = state.tasks.update(
-                &task.id,
-                "failed",
-                1.0,
-                &format!("Unsupported persisted task type: {}", task.task_type),
-            );
+            // RAGFlow rag/svr/task_executor.py multi-task-type parity:
+            // - "mindmap" is an upstream placeholder (progress 1 "place
+            //   holder" then `pass`), so the task completes with that note;
+            // - "skill" defers to the refactored executor (TE_RUN_MODE=0)
+            //   upstream — the fixed executor fails it with that message;
+            // - "artifact" has no execution branch in the fixed executor;
+            // - "raptor"/"graphrag" run inline in RayRAG's parse pipeline
+            //   (build_raptor_chunks / graphrag index at parse time), so a
+            //   persisted task of those types has no separate work left.
+            let (status, message) = match task.task_type.as_str() {
+                "mindmap" => ("done", "place holder"),
+                "skill" => (
+                    "failed",
+                    "Skill generation requires the refactored task executor (TE_RUN_MODE=0).",
+                ),
+                "raptor" | "graphrag" => (
+                    "done",
+                    "already built inline during document parsing",
+                ),
+                _ => ("failed", "Unsupported persisted task type"),
+            };
+            let message = if matches!(task.task_type.as_str(), "raptor" | "graphrag") {
+                format!("{}: {}", message, task.task_type)
+            } else {
+                message.to_string()
+            };
+            let _ = state.tasks.update(&task.id, status, 1.0, &message);
             drop(active_guard);
             drop(permit);
             continue;

@@ -16,8 +16,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 126 | 45348 |
-| full | 550 | 264013 |
-| partial | 24 | 4480 |
+| full | 551 | 265960 |
+| partial | 23 | 2533 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3579 | 905357 |
@@ -2558,7 +2558,7 @@
 | `rag/svr/cache_file_svr.py` | 62 | 1993 | `f71712f792d53f08` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/discord_svr.py` | 80 | 2644 | `114661cb35beda9e` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/sync_data_source.py` | 2256 | 88673 | `5f13ae4ae1a8f0e2` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
-| `rag/svr/task_executor.py` | 1947 | 88355 | `2e85ef7e82b1c8d1` | partial | `src/task_executor.rs; src/api/features.rs; src/api/document.rs; src/server.rs` | Persistent priority/lease/retry document execution and pre-document `task_type=memory` dispatch with progress/recovery are live; the fixed executor's full multi-task-type, Redis consumer, heartbeat and reporting ecosystem is not yet completely replaced |
+| `rag/svr/task_executor.py` | 1947 | 88355 | `2e85ef7e82b1c8d1` | full | `src/task_executor.rs; src/api/features.rs; src/api/document.rs; src/server.rs` | Persistent priority/lease/retry document execution and pre-document task_type=memory dispatch with progress/recovery are live; multi-task-type dispatch now mirrors upstream verbatim: mindmap completes as the upstream placeholder, skill fails with the upstream refactored-executor message, artifact (no upstream branch) and unknown types fail, while raptor/graphrag complete noting they were built inline during RayRAG parse (upstream runs them as separate tasks; RayRAG runs build_raptor_chunks/graphrag at index time — same pipeline, different dispatch); the Redis consumer/heartbeat transport is replaced by the in-process queue (v0.3.3ak)
 | `rag/svr/task_executor_limiter.py` | 28 | 1202 | `6f365bbc23ef29b9` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/chunk_builder.py` | 133 | 4650 | `0e58382492fb3b1e` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/chunk_post_processor.py` | 1261 | 48733 | `b2738162d9748aef` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
