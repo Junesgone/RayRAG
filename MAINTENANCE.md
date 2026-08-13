@@ -1,3 +1,20 @@
+## 2026-08-14 v0.3.3be：对话输入区 RAGFlow testid 对齐
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 溯源 message-input/next + single-chat-box.tsx 的 testid 清单：
+  chat-detail-attach / chat-detail-internet-toggle / chat-detail-send /
+  chat-detail-thinking-toggle / chat-stream-status / chat-textarea。
+- RayRAG chat_detail_page 对齐：
+  - chatInput → data-testid=chat-textarea
+  - Send → chat-detail-send；Stop → chat-detail-stop
+  - 新增流式状态指示 span（testid chat-stream-status）：
+    sendMsg 显示 ● Streaming，pump done / stopGen 清除。
+  - web 测试补 2 组 testid 断言。
+- 待接线（下批）：internet-toggle / thinking-toggle 需要后端
+  GenerationParamsPatch 加 reasoning + 网络检索开关。
+- DocumentSource::Box 正式变体（eb938b8）：BoxConnector 移除
+  Local 占位，as_str/from_str 接线。
+
 ## 2026-08-13 v0.3.3bd：Chat 表单补齐 + Box 连接器
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
