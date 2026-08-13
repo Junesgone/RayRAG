@@ -1,3 +1,23 @@
+## 2026-08-13 v0.3.3av：S3 协议连接器（SigV4，真 MinIO E2E 通过）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **S3Connector**（`src/connectors.rs`，对齐 RAGFlow `s3_connector.py`）：
+  手写 AWS SigV4 签名链（HMAC-SHA256 密钥派生 + canonical request/
+  string-to-sign/signature），ListObjectsV2（quick-xml 解析 + 分页
+  continuation-token）、GET object、load_credentials 探针。
+- **注册表接线**：`s3 | gcs | oracle` 三种 kind 共用 S3Connector（S3 协议
+  家族：GCS-interop、Oracle S3-compat、MinIO 全覆盖）。
+- `DocumentSource::S3` 变体 + as_str/from_str roundtrip。
+- **测试 7 个**：AWS 官方 SigV4 测试向量（canonical hash=7344ae5b…、
+  签名=f0e8bdb…，与 Python hmac 独立复核一致）、canonical URI/query
+  编码、region 猜测（aws/cn/minio）、ListBucket XML 解析（含分页 token）。
+- **真机 E2E**：MinIO（rag_flow@172.22.0.3:9000，RAGFlow 栈容器）建桶
+  `rayrag-s3-e2e` + 对象 `docs/hello.md` → RayRAG 建数据源 kind=s3 →
+  connect 探针 code:0 → POST /files 列出 1 文件（name/extension/size/
+  updated_at 精确一致）。E2E 后已清理数据源 + 网络连接。
+- 注意：RayRAG 容器需 `docker network connect docker_ragflow rayrag-1`
+  才能直连 MinIO（跨 compose 网络不互通；E2E 后已 disconnect）。
+
 ## 2026-08-13 v0.3.3au：数据源类型全量登记（RAGFlow 7 源 + 国内替代源）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

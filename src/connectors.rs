@@ -108,6 +108,418 @@ pub trait Connector: Send + Sync {
     }
 }
 
+// ── S3-protocol connector (SigV4) ─────────────────────────────────────────────
+
+/// S3-protocol object storage connector — mirrors RAGFlow `s3_connector.py`.
+/// Covers S3 / GCS-interop / Oracle S3-compat / MinIO via a single
+/// S3-compatible endpoint + AWS Signature Version 4 signing.
+///
+/// Source options:
+///   * `url`    = endpoint, e.g. `https://s3.cn-north-1.amazonaws.com.cn`
+///                or `http://minio:9000` (path-style)
+///   * `token`  = `access_key:secret_key`
+///   * `target` = `bucket` or `bucket/prefix`
+pub struct S3Connector {
+    client: reqwest::Client,
+    endpoint: String,
+    region: String,
+    access_key: String,
+    secret_key: String,
+    bucket: String,
+    prefix: String,
+}
+
+impl S3Connector {
+    pub fn new(options: SourceOptions) -> Self {
+        let (access_key, secret_key) = split_credentials(&options.token);
+        let (bucket, prefix) = match options.target.split_once('/') {
+            Some((bucket, prefix)) => (bucket.trim().to_string(), prefix.trim().trim_matches('/').to_string()),
+            None => (options.target.trim().to_string(), String::new()),
+        };
+        let endpoint = options.url.trim().trim_end_matches('/').to_string();
+        // Region guess from the endpoint host (AWS + GCS interop + cn endpoints).
+        let region = guess_s3_region(&endpoint);
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            endpoint,
+            region,
+            access_key,
+            secret_key,
+            bucket,
+            prefix,
+        }
+    }
+
+    /// Host part of the endpoint (signing + Host header).
+    fn host(&self) -> Result<String> {
+        let url = url::Url::parse(&self.endpoint)
+            .with_context(|| format!("s3: invalid endpoint url: {}", self.endpoint))?;
+        Ok(url.host_str().unwrap_or_default().to_string())
+    }
+
+    /// Object URL: `{endpoint}/{bucket}/{key}` (path-style, compatible with
+    /// MinIO and China-region endpoints).
+    fn object_url(&self, key: &str) -> String {
+        format!(
+            "{}/{}/{}",
+            self.endpoint,
+            urlencode_path(&self.bucket),
+            key.split('/')
+                .map(urlencode_path)
+                .collect::<Vec<_>>()
+                .join("/")
+        )
+    }
+
+    /// Build a SigV4-signed request for `method` on `path` (e.g. `/bucket`
+    /// for ListObjectsV2, `/bucket/key` for GET).
+    async fn signed_request(
+        &self,
+        method: &str,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<reqwest::Response> {
+        let host = self.host()?;
+        let now = chrono::Utc::now();
+        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let date_stamp = now.format("%Y%m%d").to_string();
+        let payload_hash = EMPTY_SHA256;
+        let canonical_query = canonical_query_string(query);
+        let canonical_uri = canonical_uri(path);
+        let canonical_headers = format!("host:{}\nx-amz-content-sha256:{}\nx-amz-date:{}\n", host, payload_hash, amz_date);
+        let signed_headers = "host;x-amz-content-sha256;x-amz-date";
+        let canonical_request = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            method, canonical_uri, canonical_query, canonical_headers, signed_headers, payload_hash
+        );
+        let scope = format!("{}/{}/s3/aws4_request", date_stamp, self.region);
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            amz_date,
+            scope,
+            sha256_hex(canonical_request.as_bytes())
+        );
+        let signature = sigv4_signature(&self.secret_key, &self.region, &date_stamp, &amz_date, &string_to_sign);
+        let authorization = format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            self.access_key, scope, signed_headers, signature
+        );
+        let url = format!(
+            "{}{}{}",
+            self.endpoint,
+            path,
+            if canonical_query.is_empty() {
+                String::new()
+            } else {
+                format!("?{}", canonical_query)
+            }
+        );
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(method.as_bytes()).context("s3: bad method")?, &url)
+            .header("Host", host)
+            .header("x-amz-date", &amz_date)
+            .header("x-amz-content-sha256", payload_hash)
+            .header("Authorization", &authorization)
+            .send()
+            .await
+            .with_context(|| format!("s3: request failed: {method} {url}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "s3: upstream returned {}: {}",
+                status.as_u16(),
+                body.chars().take(300).collect::<String>()
+            );
+        }
+        Ok(response)
+    }
+
+    /// ListObjectsV2 — mirrors `s3_client.list_objects_v2`.
+    async fn list_objects(&self) -> Result<Vec<(String, u64, String, String)>> {
+        let path = format!("/{}", urlencode_path(&self.bucket));
+        let mut out = Vec::new();
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut query: Vec<(&str, &str)> = vec![("list-type", "2"), ("max-keys", "1000")];
+            if !self.prefix.is_empty() {
+                query.push(("prefix", &self.prefix));
+            }
+            if let Some(token) = continuation.as_deref() {
+                query.push(("continuation-token", token));
+            }
+            let response = self.signed_request("GET", &path, &query).await?;
+            let body = response.bytes().await.context("s3: read list response")?;
+            let text = String::from_utf8_lossy(&body).to_string();
+            let parsed = parse_list_objects(&text)?;
+            continuation = parsed.next_token;
+            out.extend(parsed.objects);
+            if continuation.is_none() || continuation.as_deref() == Some("") {
+                break;
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl Connector for S3Connector {
+    fn kind(&self) -> &'static str {
+        "s3"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        if self.endpoint.is_empty() {
+            bail!("s3: endpoint URL is required (source url)");
+        }
+        if self.access_key.is_empty() || self.secret_key.is_empty() {
+            bail!("s3: credentials required (token = access_key:secret_key)");
+        }
+        if self.bucket.is_empty() {
+            bail!("s3: bucket required (target = bucket[/prefix])");
+        }
+        // Probe: list at most 1 key to validate credentials + reachability.
+        self.signed_request("GET", &format!("/{}", urlencode_path(&self.bucket)), &[
+            ("list-type", "2"),
+            ("max-keys", "1"),
+        ])
+        .await?;
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let objects = self.list_objects().await?;
+        Ok(objects
+            .into_iter()
+            .map(|(key, size, updated, etag)| RemoteFile {
+                id: format!("s3://{}/{}", self.bucket, key),
+                name: key.rsplit('/').next().unwrap_or(&key).to_string(),
+                path: key.clone(),
+                extension: Path::new(&key)
+                    .extension()
+                    .map(|e| format!(".{}", e.to_string_lossy()))
+                    .unwrap_or_default(),
+                size_bytes: size,
+                updated_at: updated,
+                fingerprint: etag,
+                metadata: HashMap::from([
+                    ("bucket".into(), self.bucket.clone()),
+                    ("key".into(), key),
+                ]),
+            })
+            .collect())
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let path = format!(
+            "/{}/{}",
+            urlencode_path(&self.bucket),
+            file.path
+                .split('/')
+                .map(urlencode_path)
+                .collect::<Vec<_>>()
+                .join("/")
+        );
+        let response = self.signed_request("GET", &path, &[]).await?;
+        response.bytes().await.context("s3: read object").map(|b| b.to_vec())
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        metadata.insert("type".into(), "File".into());
+        metadata.insert("source".into(), "s3".into());
+        metadata.insert("bucket".into(), self.bucket.clone());
+        metadata.insert("key".into(), file.path.clone());
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            source: DocumentSource::S3,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
+/// Guess an S3 region from the endpoint host; defaults to `us-east-1`.
+/// Covers `s3.<region>.amazonaws.com(.cn)`, GCS interop, and cn endpoints.
+fn guess_s3_region(endpoint: &str) -> String {
+    let host = url::Url::parse(endpoint)
+        .map(|u| u.host_str().unwrap_or_default().to_string())
+        .unwrap_or_default();
+    for candidate in ["amazonaws.com.cn", "amazonaws.com"] {
+        if let Some(rest) = host.strip_prefix("s3.").and_then(|h| h.strip_suffix(candidate)) {
+            let region = rest.trim_end_matches('.');
+            if !region.is_empty() {
+                return region.to_string();
+            }
+        }
+    }
+    // GCS interop + others: default region.
+    "us-east-1".to_string()
+}
+
+/// AWS SigV4 empty-payload hash (SHA-256 of the empty string).
+const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/// AWS SigV4 key-derivation chain + signature (extracted for test vectors).
+fn sigv4_signature(
+    secret_key: &str,
+    region: &str,
+    date_stamp: &str,
+    amz_date: &str,
+    string_to_sign: &str,
+) -> String {
+    let k_date = hmac_sha256(format!("AWS4{}", secret_key).as_bytes(), date_stamp.as_bytes());
+    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_service = hmac_sha256(&k_region, b"s3");
+    let k_signing = hmac_sha256(&k_service, b"aws4_request");
+    hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()))
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input);
+    hex::encode(hasher.finalize())
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// RFC3986 percent-encode a URI path segment (S3 canonical URI keeps `/`).
+fn urlencode_path(input: &str) -> String {
+    const SAFE: &[u8] = b"-._~/";
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || SAFE.contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    out
+}
+
+/// Canonical query string: sorted, percent-encoded, joined with `&`.
+fn canonical_query_string(query: &[(&str, &str)]) -> String {
+    let mut pairs: Vec<(String, String)> = query
+        .iter()
+        .map(|(k, v)| (urlencode_query(k), urlencode_query(v)))
+        .collect();
+    pairs.sort();
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn urlencode_query(input: &str) -> String {
+    const SAFE: &[u8] = b"-._~";
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || SAFE.contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    out
+}
+
+/// Canonical URI: RFC3986-encode every path segment.
+fn canonical_uri(path: &str) -> String {
+    path.split('/')
+        .map(urlencode_path)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+struct ListObjectsPage {
+    objects: Vec<(String, u64, String, String)>, // key, size, updated, etag
+    next_token: Option<String>,
+}
+
+/// Minimal ListBucketResult XML parser (quick-xml) — Key/Size/LastModified/ETag
+/// + IsTruncated/NextContinuationToken.
+fn parse_list_objects(xml: &str) -> Result<ListObjectsPage> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut objects = Vec::new();
+    let mut next_token = None;
+    let mut in_contents = false;
+    let mut key = String::new();
+    let mut size: u64 = 0;
+    let mut updated = String::new();
+    let mut etag = String::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(tag)) => {
+                let name = tag.local_name().as_ref().to_vec();
+                if name == b"Contents" {
+                    in_contents = true;
+                    key.clear();
+                    size = 0;
+                    updated.clear();
+                    etag.clear();
+                } else if in_contents && name == b"Key" {
+                    key = reader.read_text(tag.name()).context("s3: Key text")?.to_string();
+                } else if in_contents && name == b"Size" {
+                    size = reader
+                        .read_text(tag.name())
+                        .context("s3: Size text")?
+                        .parse()
+                        .unwrap_or(0);
+                } else if in_contents && name == b"LastModified" {
+                    updated = reader
+                        .read_text(tag.name())
+                        .context("s3: LastModified text")?
+                        .to_string();
+                } else if in_contents && name == b"ETag" {
+                    etag = reader
+                        .read_text(tag.name())
+                        .context("s3: ETag text")?
+                        .to_string();
+                } else if name == b"NextContinuationToken" {
+                    next_token = Some(
+                        reader
+                            .read_text(tag.name())
+                            .context("s3: NextContinuationToken text")?
+                            .to_string(),
+                    );
+                }
+            }
+            Ok(Event::End(tag)) => {
+                if tag.local_name().as_ref() == b"Contents" {
+                    in_contents = false;
+                    objects.push((key.clone(), size, updated.clone(), etag.clone()));
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => bail!("s3: XML parse error: {error}"),
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(ListObjectsPage { objects, next_token })
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 /// Connector type descriptor for UI / docs.
@@ -129,6 +541,8 @@ impl ConnectorRegistry {
             "blob" => Ok(Box::new(BlobAdapter::new(options))),
             "feishu" => Ok(Box::new(FeishuConnector::new(options))),
             "confluence" => Ok(Box::new(ConfluenceConnector::new(options))),
+            // S3 协议家族：S3 / GCS-interop / Oracle S3-compat 共用 SigV4 连接器。
+            "s3" | "gcs" | "oracle" => Ok(Box::new(S3Connector::new(options))),
             other => bail!("unsupported connector kind: {other}"),
         }
     }
@@ -1443,6 +1857,110 @@ mod registry_kind_tests {
         for expected in ["gitlab", "blob", "local", "webdav"] {
             assert!(kinds.contains(&expected), "missing legacy kind: {expected}");
         }
+    }
+}
+
+#[cfg(test)]
+mod s3_connector_tests {
+    use super::*;
+
+    /// AWS SigV4 official test vector (docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html).
+    #[test]
+    fn sigv4_matches_aws_official_vector() {
+        // GET /test.txt on examplebucket.s3.amazonaws.com, 2013-05-24.
+        let canonical_request = "GET\n/test.txt\n\nhost:examplebucket.s3.amazonaws.com\nrange:bytes=0-9\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20130524T000000Z\n\nhost;range;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/us-east-1/s3/aws4_request\n{}",
+            sha256_hex(canonical_request.as_bytes())
+        );
+        // AWS 文档：canonical request 的 SHA-256 = 7344ae5b…，
+        // 最终签名 = f0e8bdb…（独立用 Python hmac 复核一致）。
+        assert_eq!(
+            sha256_hex(canonical_request.as_bytes()),
+            "7344ae5b7ee6c3e7e6b0fe0640412a37625d1fbfff95c48bbb2dc43964946972"
+        );
+        let signature = sigv4_signature(
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+            "20130524",
+            "20130524T000000Z",
+            &string_to_sign,
+        );
+        assert_eq!(
+            signature,
+            "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+        );
+    }
+
+    #[test]
+    fn canonical_uri_encodes_segments_but_keeps_slashes() {
+        assert_eq!(canonical_uri("/bucket/key with spaces.txt"), "/bucket/key%20with%20spaces.txt");
+        assert_eq!(canonical_uri("/plain/path"), "/plain/path");
+    }
+
+    #[test]
+    fn canonical_query_is_sorted_and_encoded() {
+        let q = canonical_query_string(&[("list-type", "2"), ("prefix", "a b/文件")]);
+        assert_eq!(q, "list-type=2&prefix=a%20b%2F%E6%96%87%E4%BB%B6");
+    }
+
+    #[test]
+    fn guess_region_handles_aws_and_cn_endpoints() {
+        assert_eq!(
+            guess_s3_region("https://s3.cn-north-1.amazonaws.com.cn"),
+            "cn-north-1"
+        );
+        assert_eq!(
+            guess_s3_region("https://s3.ap-southeast-1.amazonaws.com"),
+            "ap-southeast-1"
+        );
+        assert_eq!(guess_s3_region("http://minio:9000"), "us-east-1");
+    }
+
+    #[test]
+    fn parse_list_objects_extracts_keys_sizes_and_etags() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>bucket</Name>
+  <IsTruncated>false</IsTruncated>
+  <Contents>
+    <Key>docs/readme.md</Key>
+    <LastModified>2026-08-13T10:00:00.000Z</LastModified>
+    <ETag>"f1c9645dbc14efddc7d8a322685f26eb"</ETag>
+    <Size>1204</Size>
+  </Contents>
+  <Contents>
+    <Key>docs/guide.pdf</Key>
+    <LastModified>2026-08-12T09:00:00.000Z</LastModified>
+    <ETag>"abc"</ETag>
+    <Size>4096</Size>
+  </Contents>
+</ListBucketResult>"#;
+        let page = parse_list_objects(xml).unwrap();
+        assert_eq!(page.objects.len(), 2);
+        assert_eq!(page.objects[0].0, "docs/readme.md");
+        assert_eq!(page.objects[0].1, 1204);
+        assert_eq!(page.objects[0].2, "2026-08-13T10:00:00.000Z");
+        assert_eq!(page.objects[0].3, "\"f1c9645dbc14efddc7d8a322685f26eb\"");
+        assert_eq!(page.objects[1].0, "docs/guide.pdf");
+        assert!(page.next_token.is_none());
+    }
+
+    #[test]
+    fn parse_list_objects_reads_continuation_token() {
+        let xml = r#"<ListBucketResult>
+  <IsTruncated>true</IsTruncated>
+  <NextContinuationToken>tok123</NextContinuationToken>
+  <Contents><Key>a.txt</Key><Size>1</Size></Contents>
+</ListBucketResult>"#;
+        let page = parse_list_objects(xml).unwrap();
+        assert_eq!(page.next_token.as_deref(), Some("tok123"));
+    }
+
+    #[test]
+    fn s3_source_roundtrips_via_str() {
+        assert_eq!(DocumentSource::S3.as_str(), "s3");
+        assert_eq!(DocumentSource::from_str("s3").unwrap().as_str(), "s3");
     }
 }
 

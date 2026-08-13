@@ -20,6 +20,9 @@ pub enum DocumentSource {
     Feishu,
     /// Atlassian Confluence (RAGFlow `DocumentSource.CONFLUENCE`).
     Confluence,
+    /// S3-protocol object storage (S3 / GCS-interop / Oracle S3-compat / MinIO;
+    /// RAGFlow `DocumentSource.S3`).
+    S3,
 }
 
 impl DocumentSource {
@@ -31,6 +34,7 @@ impl DocumentSource {
             DocumentSource::WebDav => "webdav",
             DocumentSource::Feishu => "feishu",
             DocumentSource::Confluence => "confluence",
+            DocumentSource::S3 => "s3",
         }
     }
 
@@ -42,6 +46,7 @@ impl DocumentSource {
             "webdav" => Some(DocumentSource::WebDav),
             "feishu" => Some(DocumentSource::Feishu),
             "confluence" => Some(DocumentSource::Confluence),
+            "s3" => Some(DocumentSource::S3),
             _ => None,
         }
     }
