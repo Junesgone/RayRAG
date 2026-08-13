@@ -16,6 +16,12 @@
   三者后端 ParserConfig 早已支持但 UI 缺失；PUT 白名单同步补 3 键；
   顺带修复 loadConfig 不恢复 excel_to_html 的小 bug。
 - 新测试：create_seed_tests 2（自定义种子 + 默认种子）。
+- **别名路由 E2E 通过**：`/dataset/{files|retrieval|logs|configuration}/{id}`
+  四路由全部 200；建库 parser_config 种子实测
+  `{"chunk_token_num":2048,"overlapped_percent":0.05,"chunk_method":"paper","parse_type":"Built-in"}`。
+- **修复 kb_detail_page 真 bug**：showTab 循环 `i<3` 而页面有 6 个标签，
+  点 Configuration/Knowledge Graph/Logs 时旧标签不隐藏（多标签同时显示）；
+  改 `i<6` + URL pathname 映射选标签。
 - 上游 v0.26.2 侧栏实测：Dataset/Chat/Search/Agent/Memory/File +
   用户设置页（Data sources/Chat channels/Model providers/MCP/Team/
   Profile/API/Log out）；Data sources 页含 7 种外部数据源（Confluence/
