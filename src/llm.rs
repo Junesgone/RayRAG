@@ -227,6 +227,9 @@ pub struct Conversation {
     /// Agent/canvas identifier for agent-originated sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canvas_id: Option<String>,
+    /// Chat app this conversation belongs to (RAGFlow 0.26.4 chat-app model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
     #[serde(default)]
     pub kb_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -915,6 +918,7 @@ impl ConvStore {
             tenant_id: tenant_id.to_string(),
             source: default_conversation_source(),
             canvas_id: None,
+            app_id: None,
             kb_ids,
             chat_model,
             embedding_model,
@@ -926,6 +930,16 @@ impl ConvStore {
         self.mutate(|convs| {
             convs.insert(conv.id.clone(), conv.clone());
             Ok(conv)
+        })
+    }
+
+    /// Bind a conversation to a chat app (RAGFlow 0.26.4 chat-app model).
+    pub fn set_app_id(&self, id: &str, app_id: &str) -> Result<()> {
+        self.mutate(|convs| {
+            if let Some(c) = convs.get_mut(id) {
+                c.app_id = Some(app_id.to_string());
+            }
+            Ok(())
         })
     }
 
@@ -946,6 +960,7 @@ impl ConvStore {
             tenant_id: tenant_id.to_string(),
             source: "agent".into(),
             canvas_id: Some(canvas_id.to_string()),
+            app_id: None,
             kb_ids,
             chat_model: None,
             embedding_model: None,

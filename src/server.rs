@@ -64,6 +64,7 @@ pub struct AppState {
     pub files: Arc<crate::api::file_mgr::FileStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
+    pub chat_apps: Option<Arc<crate::api::chatapp_mgr::ChatAppStore>>,
     pub providers: Arc<crate::api::features::ProviderStore>,
     pub tenant_models: Arc<crate::api::tenant_models::TenantModelStore>,
     pub memories: Arc<crate::api::features::MemoryStore>,
@@ -3167,6 +3168,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api-docs", get(crate::web::api_docs))
         .route("/status", get(crate::web::status_page))
         .route("/chat", get(crate::web::chat_page))
+        // RAGFlow 0.26.4 route parity: /chats (chat apps) and /searches (search apps).
+        .route("/chats", get(crate::web::chat_apps_page))
+        .route("/chats/{id}", get(crate::web::chat_app_detail_page))
+        .route("/searches", get(crate::web::search_page))
         .route("/chat/{id}", get(crate::web::chat_detail_page))
         .route("/dataset/{id}", get(crate::web::dataset_page))
         .route("/datasources", get(crate::web::datasources_page))
@@ -3431,6 +3436,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/data_sources",
             get(crate::api::data_source_mgr::list_data_sources)
                 .post(crate::api::data_source_mgr::create_data_source),
+        )
+        .route(
+            "/api/v1/chatapps",
+            get(crate::api::chatapp_mgr::list_chat_apps)
+                .post(crate::api::chatapp_mgr::create_chat_app),
+        )
+        .route(
+            "/api/v1/chatapps/{id}",
+            axum::routing::put(crate::api::chatapp_mgr::rename_chat_app)
+                .delete(crate::api::chatapp_mgr::delete_chat_app),
         )
         .route(
             "/api/v1/data_sources/{id}",
@@ -3861,6 +3876,9 @@ pub async fn run(
     let search_apps = Some(Arc::new(crate::api::searchapp_mgr::SearchAppStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
+    let chat_apps = Some(Arc::new(crate::api::chatapp_mgr::ChatAppStore::new(
+        &format!("{}/../uploads/", static_dir),
+    )?));
 
     let llm = std::env::var("LLM_API_KEY")
         .ok()
@@ -3949,6 +3967,7 @@ pub async fn run(
         files,
         data_sources,
         search_apps,
+        chat_apps,
         providers,
         tenant_models,
         memories: Arc::new(crate::api::features::MemoryStore::new(&memories_path)?),
@@ -4168,6 +4187,7 @@ mod tests {
                     .unwrap(),
             ),
             data_sources: None,
+            chat_apps: None,
             search_apps: None,
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
@@ -4328,6 +4348,7 @@ mod tests {
                     .unwrap(),
             ),
             data_sources: None,
+            chat_apps: None,
             search_apps: None,
             providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
             tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),

@@ -142,6 +142,9 @@ pub struct ChatRequest {
     pub embedding_model: Option<String>,
     #[serde(default)]
     pub tenant_id: Option<String>,
+    /// Bind the new conversation to a chat app (RAGFlow 0.26.4 /chats model).
+    #[serde(default)]
+    pub app_id: Option<String>,
     #[serde(flatten)]
     pub generation: crate::generation_params::GenerationParamsPatch,
     #[serde(default)]
@@ -249,10 +252,15 @@ pub async fn create_chat(
         body.chat_model,
         body.embedding_model,
     ) {
-        Ok(session) => Json(
-            serde_json::json!({ "code": 0, "data": { "id": session.id, "name": session.name } }),
-        )
-        .into_response(),
+        Ok(session) => {
+            if let Some(app_id) = body.app_id.as_deref().filter(|a| !a.is_empty()) {
+                let _ = state.conversations.set_app_id(&session.id, app_id);
+            }
+            Json(
+                serde_json::json!({ "code": 0, "data": { "id": session.id, "name": session.name } }),
+            )
+            .into_response()
+        }
         Err(error) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
@@ -3111,6 +3119,7 @@ mod stats_tests {
             tenant_id: owner_id.into(),
             source: "chat".into(),
             canvas_id: None,
+            app_id: None,
             kb_ids: Vec::new(),
             chat_model: None,
             embedding_model: None,

@@ -1,3 +1,35 @@
+## 2026-08-13 v0.3.3ba：Chat 应用体系 Stage 1（RAGFlow 0.26.4 /chats 对齐）
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **溯源**：RAGFlow 0.26.4 Chat 页为应用列表（`web/src/pages/next-chats/index.tsx`，
+  路由 `/chats`），非会话列表。结构：ListFilterBar（标题 "Chat apps" +
+  搜索框 + Create chat 按钮，仅列表非空或搜索态显示）→ 卡片网格
+  （ChatCard：icon/name/description + 悬停 ChatDropdown Rename/Delete）
+  → 分页 footer；空态为可点击大卡片（EmptyAppCard，testId
+  chats-empty-create）；创建弹窗复用 RenameDialog（425px，仅名称字段，
+  save 按钮 testId rename-save）。
+- **新增 ChatApp 层**（此前 RayRAG 只有裸 Conversation）：
+  - `src/api/chatapp_mgr.rs`：ChatApp 结构（id/name/description/icon/
+    tenant_id/kb_ids/llm_id/created_at）+ ChatAppStore（JSON 持久化，
+    list/get/insert/rename/remove）+ 4 handler（list/create/rename/delete），
+    路由 `/api/v1/chatapps[/{id}]`。
+  - `AppState.chat_apps`（主构造 + server.rs/web.rs 测试构造各补）。
+  - `Conversation.app_id`（serde default 兼容旧记录）+ `ConvStore::set_app_id`。
+  - `ChatRequest.app_id`：create_chat 后绑定（/api/v1/chats POST 可传 app_id）。
+- **web.rs 新增两页**：
+  - `chat_apps_page`（/chats）：标题+搜索+Create 按钮、卡片带悬停
+    ✏️/🗑 操作、空态可点大卡片、创建/重命名双弹窗（纯名称，425px）。
+  - `chat_app_detail_page`（/chats/{id}）：应用头部 + New conversation
+    按钮（POST /api/v1/chats 带 app_id）→ 绑定会话列表。
+  - 新增 `html_esc` 辅助 + 13 条 i18n 中文键。
+- **路由别名对齐**：/chats、/chats/{id}、/searches（RAGFlow 0.26.4
+  路由为 /datasets /chats /searches /agents /memories /files）。
+- **RSS 连接器**（子agent 并行，仅改 src/connectors.rs）：quick-xml
+  解析 RSS 2.0 + Atom、SSRF 私网防护、feed 探针、list/fetch/normalize，
+  本地 TcpListener mock 测试。kind "rss" 分发替换 bail。
+- 测试：web 28、chatapp_mgr 1、connectors 增至 26+（RSS 3+）。
+
+
 ## 2026-08-13 v0.3.3az：数据源注册表对齐 RAGFlow 0.26.4 全量 35 源
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

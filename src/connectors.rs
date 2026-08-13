@@ -549,12 +549,13 @@ impl ConnectorRegistry {
             "s3" | "gcs" | "oracle" | "r2" => Ok(Box::new(S3Connector::new(options))),
             // Azure Blob Storage（RAGFlow 官方源名；与旧 "blob" 同一 SAS 适配器）。
             "azure_blob" => Ok(Box::new(BlobAdapter::new(options))),
-            // 以下 24 个 RAGFlow 源已登记，连接器按域逐步实装。
+            "rss" => Ok(Box::new(RssConnector::new(options)?)),
+            // 以下 RAGFlow 源已登记，连接器按域逐步实装。
             // 未实装前 connect 明确报错，避免静默失败。
             "github" | "bitbucket" | "jira" | "box" | "dropbox" | "onedrive"
             | "outlook" | "sharepoint" | "teams" | "slack" | "discord" | "zendesk"
             | "salesforce" | "moodle" | "airtable" | "asana" | "imap"
-            | "dingtalk_ai_table" | "seafile" | "rss" | "rest_api" | "mysql"
+            | "dingtalk_ai_table" | "seafile" | "rest_api" | "mysql"
             | "postgresql" | "bigquery" => {
                 bail!("connector not implemented yet: {kind} (registered, coming soon)")
             }
@@ -2564,6 +2565,570 @@ fn urlencode(input: &str) -> String {
     output
 }
 
+// ── Concrete connector: RSS / Atom feeds ──────────────────────────────────────
+//
+// Mirrors RAGFlow `common/data_source/rss_connector.py`:
+//   * `feed_url`   = options.url (required, http/https only)
+//   * `batch_size` = options.max_items (default 50, RAGFlow INDEX_BATCH_SIZE)
+//   * SSRF guard: reject private / loopback / link-local targets (RAGFlow
+//     `assert_url_is_safe` spirit). IP literals are checked directly;
+//     hostnames are resolved fail-closed (private address or resolution
+//     failure ⇒ rejection).
+//   * list_files → fetch the feed once, map entries onto `RemoteFile`
+//   * fetch_file → refetch the feed, find the entry by id, return content
+//   * normalize  → `ConnectorDoc` with metadata source=rss / feed=feed_url
+//
+// Both RSS 2.0 (`<rss><channel><item>`) and Atom (`<feed><entry>`) are
+// parsed; the XML layer matches `local_name()` so prefixed extensions
+// (`dc:creator`, `content:encoded`) work too.
+
+/// One parsed RSS/Atom entry (RSS `<item>` / Atom `<entry>`).
+#[derive(Debug, Default, Clone)]
+struct RssEntry {
+    title: String,
+    link: String,
+    /// Stable key: guid (RSS) / id (Atom).
+    key: String,
+    /// Concatenated body blocks: description / summary / content / encoded.
+    body: String,
+    /// Raw timestamp: pubDate / updated / published / dc:date.
+    date_raw: String,
+    author: String,
+    categories: Vec<String>,
+}
+
+impl RssEntry {
+    /// Stable id — link > guid/id > title (RAGFlow `_resolve_stable_key`).
+    fn stable_key(&self) -> String {
+        for candidate in [&self.link, &self.key, &self.title] {
+            if !candidate.is_empty() {
+                return candidate.clone();
+            }
+        }
+        String::new()
+    }
+
+    /// Assembled content: semantic identifier + body blocks (RAGFlow
+    /// `_build_content` joins the title with description/summary/content).
+    fn content(&self) -> String {
+        let identifier = if self.title.is_empty() {
+            self.stable_key()
+        } else {
+            self.title.clone()
+        };
+        let mut parts: Vec<&str> = Vec::new();
+        if !identifier.is_empty() {
+            parts.push(identifier.as_str());
+        }
+        if !self.body.is_empty() {
+            parts.push(self.body.as_str());
+        }
+        parts.join("\n\n")
+    }
+
+    /// Map onto the metadata-only listing primitive.
+    fn to_remote_file(&self, feed_url: &str) -> Option<RemoteFile> {
+        let id = self.stable_key();
+        if id.is_empty() {
+            return None;
+        }
+        let content = self.content();
+        let updated_at = parse_feed_date(&self.date_raw);
+        let mut metadata = HashMap::new();
+        metadata.insert("source".into(), "rss".into());
+        metadata.insert("feed".into(), feed_url.to_string());
+        if !self.link.is_empty() {
+            metadata.insert("link".into(), self.link.clone());
+        }
+        if !self.author.is_empty() {
+            metadata.insert("author".into(), self.author.clone());
+        }
+        if !self.categories.is_empty() {
+            metadata.insert("categories".into(), self.categories.join(", "));
+        }
+        Some(RemoteFile {
+            id: id.clone(),
+            name: if self.title.is_empty() {
+                id.clone()
+            } else {
+                self.title.clone()
+            },
+            path: id,
+            extension: extension_from_link(&self.link),
+            size_bytes: content.len() as u64,
+            updated_at: updated_at.clone(),
+            fingerprint: updated_at,
+            metadata,
+        })
+    }
+}
+
+/// RSS/Atom feed connector — RAGFlow `RSSConnector`.
+#[derive(Debug)]
+pub struct RssConnector {
+    client: reqwest::Client,
+    feed_url: String,
+    /// `options.max_items` (default 50, RAGFlow `INDEX_BATCH_SIZE`).
+    batch_size: usize,
+    /// Test-only SSRF exemption so mocks bound to 127.0.0.1 are reachable.
+    allow_private_hosts: bool,
+}
+
+impl RssConnector {
+    /// RAGFlow `RSSConnector.__init__` — explicit batch_size; <1 is rejected.
+    pub fn with_batch_size(options: SourceOptions, batch_size: usize) -> Result<Self> {
+        if batch_size < 1 {
+            bail!("rss: batch_size must be greater than 0");
+        }
+        let feed_url = options.url.trim().to_string();
+        validate_feed_url(&feed_url, false)?;
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            feed_url,
+            batch_size,
+            allow_private_hosts: false,
+        })
+    }
+
+    /// Registry entry point — `batch_size` defaults to 50 when
+    /// `options.max_items` is unset (0).
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let batch_size = if options.max_items == 0 {
+            50
+        } else {
+            options.max_items
+        };
+        Self::with_batch_size(options, batch_size)
+    }
+
+    /// Test-only constructor: skips the private-host guard so the connector
+    /// can talk to a `127.0.0.1` TcpListener mock (the yuque/dingtalk tests
+    /// exercise their local HTTP mocks the same way).
+    #[cfg(test)]
+    pub fn new_for_test(options: SourceOptions) -> Result<Self> {
+        let batch_size = if options.max_items == 0 {
+            50
+        } else {
+            options.max_items
+        };
+        if batch_size < 1 {
+            bail!("rss: batch_size must be greater than 0");
+        }
+        let feed_url = options.url.trim().to_string();
+        validate_feed_url(&feed_url, true)?;
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            feed_url,
+            batch_size,
+            allow_private_hosts: true,
+        })
+    }
+
+    /// Fetch the feed body (non-2xx ⇒ error), re-validating the SSRF guard
+    /// on every fetch (RAGFlow re-validates every hop of a redirect chain).
+    async fn fetch_feed(&self) -> Result<String> {
+        validate_feed_url(&self.feed_url, self.allow_private_hosts)?;
+        let response = self
+            .client
+            .get(&self.feed_url)
+            .send()
+            .await
+            .with_context(|| format!("rss: request failed: {}", self.feed_url))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "rss: upstream returned {}: {}",
+                status.as_u16(),
+                body.chars().take(300).collect::<String>()
+            );
+        }
+        let bytes = response.bytes().await.context("rss: read feed body")?;
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
+}
+
+#[async_trait]
+impl Connector for RssConnector {
+    fn kind(&self) -> &'static str {
+        "rss"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        // 验证 URL 格式 + SSRF，然后探针拉取首页（非 2xx 报错）。
+        validate_feed_url(&self.feed_url, self.allow_private_hosts)?;
+        self.fetch_feed().await?;
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let body = self.fetch_feed().await?;
+        let entries = parse_feed(&body)?;
+        Ok(entries
+            .iter()
+            .filter_map(|entry| entry.to_remote_file(&self.feed_url))
+            .collect())
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        // 重新拉 feed，按 RemoteFile.id（link/guid）定位 entry。
+        let body = self.fetch_feed().await?;
+        let entries = parse_feed(&body)?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.stable_key() == file.id)
+            .with_context(|| format!("rss: entry not found in feed: {}", file.id))?;
+        Ok(entry.content().into_bytes())
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        metadata.insert("type".into(), "Feed".into());
+        metadata.insert("source".into(), "rss".into());
+        metadata.insert("feed".into(), self.feed_url.clone());
+        if let Some(link) = file.metadata.get("link") {
+            metadata.insert("link".into(), link.clone());
+        }
+        if let Some(author) = file.metadata.get("author") {
+            metadata.insert("author".into(), author.clone());
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            // `DocumentSource` has no Rss variant yet — fall back to `Local`
+            // and carry the real source in metadata (source=rss).
+            source: DocumentSource::Local,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
+// ── RSS/Atom parsing helpers ─────────────────────────────────────────────────
+
+/// Validate an RSS/Atom feed URL: http/https scheme + host, and (unless
+/// `allow_private`, which is test-only) reject private/loopback/link-local
+/// targets — RAGFlow `assert_url_is_safe` spirit. IP-literal hosts are
+/// checked directly; hostnames are resolved fail-closed (any private
+/// address ⇒ rejection, resolution failure ⇒ rejection).
+fn validate_feed_url(url: &str, allow_private: bool) -> Result<()> {
+    let parsed =
+        url::Url::parse(url).with_context(|| format!("rss: invalid feed URL: {url}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => bail!("rss: feed_url must be http or https, got scheme: {other}"),
+    }
+    let host = parsed
+        .host_str()
+        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+        .filter(|host| !host.is_empty())
+        .with_context(|| format!("rss: feed_url must include a host: {url}"))?;
+    if allow_private {
+        return Ok(());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_private_ip(ip) {
+            bail!("rss: feed_url targets a private/loopback address (SSRF blocked): {host}");
+        }
+        return Ok(());
+    }
+    // Hostname: resolve and require every resolved address to be public.
+    use std::net::ToSocketAddrs;
+    let addrs: Vec<std::net::SocketAddr> = (host, 80)
+        .to_socket_addrs()
+        .with_context(|| format!("rss: cannot resolve feed host: {host}"))?
+        .collect();
+    if let Some(bad) = addrs.iter().find(|addr| is_private_ip(addr.ip())) {
+        bail!(
+            "rss: feed_url resolves to a private address (SSRF blocked): {host} -> {}",
+            bad.ip()
+        );
+    }
+    Ok(())
+}
+
+/// RAGFlow `assert_url_is_safe` address policy: reject loopback, RFC1918
+/// private, link-local and unspecified addresses.
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            octets[0] == 127 // 127.0.0.0/8    loopback
+                || octets[0] == 0 // 0.0.0.0/8      unspecified
+                || octets[0] == 10 // 10.0.0.0/8     private
+                || (octets[0] == 172 && (16..=31).contains(&octets[1])) // 172.16.0.0/12
+                || (octets[0] == 192 && octets[1] == 168) // 192.168.0.0/16
+                || (octets[0] == 169 && octets[1] == 254) // 169.254.0.0/16 link-local
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback() // ::1
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+        }
+    }
+}
+
+/// Parse an RSS 2.0 (`<rss><channel><item>…`) or Atom (`<feed><entry>…`)
+/// document into entries. Handles the RSS tag set (item/title/link/guid/
+/// description/pubDate/category/author) and the Atom tag set (entry/title/
+/// link@href/id/summary/content/updated) via `local_name()`.
+fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut reader = Reader::from_str(xml);
+    // NOTE: `trim_text(true)` would collapse interleaved whitespace around
+    // nested inline elements (`<summary>Summary <em>text</em> here</summary>`),
+    // gluing words together. Keep raw text (default) and trim at assign time.
+
+    let mut entries = Vec::new();
+    let mut current: Option<RssEntry> = None;
+    let mut field: Option<Vec<u8>> = None;
+    let mut text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(tag)) => {
+                let name = tag.local_name().as_ref().to_vec();
+                if name.as_slice() == b"item" || name.as_slice() == b"entry" {
+                    current = Some(RssEntry::default());
+                    field = None;
+                    text.clear();
+                } else if current.is_some() {
+                    match name.as_slice() {
+                        b"title" | b"guid" | b"id" | b"description" | b"summary"
+                        | b"content" | b"encoded" | b"pubDate" | b"updated"
+                        | b"published" | b"date" | b"author" | b"creator"
+                        | b"category" | b"term" | b"name" => {
+                            field = Some(name.clone());
+                            text.clear();
+                        }
+                        b"link" => {
+                            // Atom: `<link href="…"/>` — prefer the attribute.
+                            for attr in tag.attributes().flatten() {
+                                if attr.key.local_name().as_ref() == b"href" {
+                                    if let Some(entry) = current.as_mut() {
+                                        if entry.link.is_empty() {
+                                            entry.link = attr
+                                                .decode_and_unescape_value(reader.decoder())
+                                                .unwrap_or_default()
+                                                .trim()
+                                                .to_string();
+                                        }
+                                    }
+                                }
+                            }
+                            // RSS: `<link>http://…</link>` — capture text too.
+                            field = Some(name.clone());
+                            text.clear();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(Event::Empty(tag)) => {
+                let name = tag.local_name().as_ref().to_vec();
+                if current.is_some() && name.as_slice() == b"link" {
+                    for attr in tag.attributes().flatten() {
+                        if attr.key.local_name().as_ref() == b"href" {
+                            if let Some(entry) = current.as_mut() {
+                                if entry.link.is_empty() {
+                                    entry.link = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .unwrap_or_default()
+                                        .trim()
+                                        .to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Text(t)) => {
+                if current.is_some() && field.is_some() {
+                    text.push_str(&t.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::CData(t)) => {
+                if current.is_some() && field.is_some() {
+                    text.push_str(&String::from_utf8_lossy(t.as_ref()));
+                }
+            }
+            Ok(Event::End(tag)) => {
+                let name = tag.local_name().as_ref().to_vec();
+                if name.as_slice() == b"item" || name.as_slice() == b"entry" {
+                    if let Some(entry) = current.take() {
+                        entries.push(entry);
+                    }
+                    field = None;
+                    text.clear();
+                } else if current.is_some() && field.as_deref() == Some(name.as_slice()) {
+                    let value = text.trim().to_string();
+                    if !value.is_empty() {
+                        if let Some(entry) = current.as_mut() {
+                            assign_field(entry, &name, value);
+                        }
+                    }
+                    field = None;
+                    text.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => bail!("rss: XML parse error: {error}"),
+            _ => {}
+        }
+    }
+    Ok(entries)
+}
+
+/// Route a captured leaf-field value into the current entry.
+fn assign_field(entry: &mut RssEntry, name: &[u8], value: String) {
+    match name {
+        b"title" => {
+            if entry.title.is_empty() {
+                entry.title = strip_html(&value);
+            }
+        }
+        b"guid" | b"id" => {
+            if entry.key.is_empty() {
+                entry.key = value;
+            }
+        }
+        b"link" => {
+            if entry.link.is_empty() {
+                entry.link = value;
+            }
+        }
+        b"description" | b"summary" | b"content" | b"encoded" => {
+            let cleaned = strip_html(&value);
+            if !cleaned.is_empty() {
+                if !entry.body.is_empty() {
+                    entry.body.push_str("\n\n");
+                }
+                entry.body.push_str(&cleaned);
+            }
+        }
+        b"pubDate" | b"updated" | b"published" | b"date" => {
+            if entry.date_raw.is_empty() {
+                entry.date_raw = value;
+            }
+        }
+        b"author" | b"creator" | b"name" => {
+            if entry.author.is_empty() {
+                entry.author = strip_html(&value);
+            }
+        }
+        b"category" | b"term" => {
+            let cleaned = strip_html(&value);
+            if !cleaned.is_empty() {
+                entry.categories.push(cleaned);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Minimal HTML-to-text: strip tags. RAGFlow uses BeautifulSoup.get_text —
+/// this is a dependency-free approximation: `<br>/<p>/<div>/<li>/<hN>`
+/// become newlines, everything else is dropped. No entity handling is
+/// needed because the XML layer already unescaped text nodes (CDATA is
+/// raw by definition and needs none either).
+fn strip_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    let mut tag_name = String::new();
+    for ch in input.chars() {
+        if ch == '<' {
+            in_tag = true;
+            tag_name.clear();
+        } else if ch == '>' {
+            if in_tag {
+                tag_name.retain(|c: char| !c.is_whitespace());
+                match tag_name.as_str() {
+                    "br" | "br/" | "p" | "p/" | "div" | "div/" | "li" | "li/"
+                    | "tr" | "tr/" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                    | "h1/" | "h2/" | "h3/" | "h4/" | "h5/" | "h6/" | "blockquote" => {
+                        out.push('\n');
+                    }
+                    _ => {}
+                }
+                in_tag = false;
+                tag_name.clear();
+            } else {
+                out.push('>');
+            }
+        } else if in_tag {
+            tag_name.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    // Collapse runs of blank lines and trim.
+    let mut collapsed = String::with_capacity(out.len());
+    for line in out.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            if !collapsed.is_empty() && !collapsed.ends_with('\n') {
+                collapsed.push('\n');
+            }
+        } else {
+            if !collapsed.is_empty() {
+                collapsed.push('\n');
+            }
+            collapsed.push_str(line);
+        }
+    }
+    collapsed.trim().to_string()
+}
+
+/// File extension from the entry link (RAGFlow maps RSS docs onto text
+/// blobs); falls back to `.html` when the link carries no plausible
+/// extension.
+fn extension_from_link(link: &str) -> String {
+    if let Ok(parsed) = url::Url::parse(link) {
+        if let Some(ext) = Path::new(parsed.path()).extension() {
+            let ext = ext.to_string_lossy();
+            if !ext.is_empty()
+                && ext.len() <= 12
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                return format!(".{ext}");
+            }
+        }
+    }
+    ".html".to_string()
+}
+
+/// RAGFlow `_resolve_entry_time`: RFC822 (pubDate) or ISO8601 (Atom
+/// updated); anything else falls back to epoch 0.
+fn parse_feed_date(raw: &str) -> String {
+    const EPOCH: &str = "1970-01-01T00:00:00Z";
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return EPOCH.to_string();
+    }
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc2822(raw) {
+        return parsed
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    }
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return parsed
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    }
+    EPOCH.to_string()
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3475,5 +4040,301 @@ mod dingtalk_connector_tests {
             doc.metadata.get("source").map(String::as_str),
             Some("dingtalk")
         );
+    }
+}
+
+#[cfg(test)]
+mod rss_connector_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    const RSS2_FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>http://example.com/</link>
+    <description>channel description</description>
+    <item>
+      <title>Post One</title>
+      <link>http://example.com/posts/one</link>
+      <guid>http://example.com/posts/one</guid>
+      <description>&lt;p&gt;Hello &amp; welcome&lt;/p&gt;</description>
+      <pubDate>Tue, 10 Jun 2025 09:00:00 GMT</pubDate>
+      <author>alice@example.com</author>
+      <category>rust</category>
+    </item>
+    <item>
+      <title>Post Two</title>
+      <link>http://example.com/posts/two.php</link>
+      <description><![CDATA[Second <b>post</b>]]></description>
+      <pubDate>Wed, 11 Jun 2025 09:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
+"#;
+
+    const ATOM_FEED: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Feed</title>
+  <id>urn:uuid:feed-1</id>
+  <updated>2025-06-01T00:00:00Z</updated>
+  <entry>
+    <title>Atom One</title>
+    <link href="https://blog.example.com/atom-one.html"/>
+    <id>urn:uuid:entry-aaa</id>
+    <updated>2025-07-01T12:34:56Z</updated>
+    <summary>Summary <em>text</em> here</summary>
+    <author><name>Bob</name></author>
+  </entry>
+  <entry>
+    <title>Atom Two</title>
+    <link href="https://blog.example.com/atom-two"/>
+    <id>urn:uuid:entry-bbb</id>
+    <updated>2025-07-02T00:00:00+02:00</updated>
+    <content type="html">&lt;p&gt;Full &lt;b&gt;content&lt;/b&gt;&lt;/p&gt;</content>
+  </entry>
+</feed>
+"#;
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives the request path and returns `(status,
+    /// content_type, body)`; every connection serves exactly one request
+    /// (`Connection: close`), which matches the RSS connector's behaviour of
+    /// refetching the feed per file. No real network — the connector's
+    /// `options.url` points here.
+    fn mock_feed_server(
+        handler: impl Fn(&str) -> (u16, &'static str, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            data.extend_from_slice(&chunk[..n]);
+                            if data.windows(4).any(|window| window == b"\r\n\r\n") {
+                                break;
+                            }
+                            if data.len() > 1_000_000 {
+                                break;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let head = request.split("\r\n\r\n").next().unwrap_or_default();
+                let path = head
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or_default();
+                let (status, content_type, body) = handler(path);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(feed_url: String) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = feed_url;
+        options.max_items = 50;
+        options
+    }
+
+    /// RSS 2.0: list_files maps `<item>`s onto RemoteFile (id=link,
+    /// name=title, extension from link / `.html` fallback, pubDate → ISO),
+    /// fetch_file refetches and returns the assembled content, normalize
+    /// tags the doc with source=rss + feed metadata.
+    #[tokio::test]
+    async fn list_fetch_normalize_rss2_feed() {
+        let base = mock_feed_server(|_path| (200, "application/rss+xml", RSS2_FEED.to_string()));
+        let feed_url = format!("{base}/feed.xml");
+        let connector = RssConnector::new_for_test(options(feed_url.clone())).unwrap();
+
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 2);
+
+        let first = &files[0];
+        assert_eq!(first.id, "http://example.com/posts/one");
+        assert_eq!(first.name, "Post One");
+        assert_eq!(first.path, "http://example.com/posts/one");
+        assert_eq!(first.extension, ".html"); // link carries no extension
+        assert_eq!(first.updated_at, "2025-06-10T09:00:00Z");
+        assert_eq!(first.fingerprint, first.updated_at);
+        assert_eq!(first.size_bytes, "Post One\n\nHello & welcome".len() as u64);
+        assert_eq!(first.metadata.get("source").map(String::as_str), Some("rss"));
+        assert_eq!(first.metadata.get("feed").map(String::as_str), Some(feed_url.as_str()));
+        assert_eq!(
+            first.metadata.get("author").map(String::as_str),
+            Some("alice@example.com")
+        );
+        assert_eq!(
+            first.metadata.get("categories").map(String::as_str),
+            Some("rust")
+        );
+
+        // Extension taken from the link when present.
+        assert_eq!(files[1].extension, ".php");
+
+        // fetch_file refetches the feed and returns the assembled content.
+        let raw = connector.fetch_file(first).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "Post One\n\nHello & welcome");
+
+        // normalize produces a ConnectorDoc with source=rss metadata.
+        let raw = connector.fetch_file(first).await.unwrap();
+        let doc = connector.normalize(first, raw).unwrap();
+        assert_eq!(doc.blob, "Post One\n\nHello & welcome");
+        assert_eq!(doc.semantic_identifier, "Post One");
+        assert_eq!(doc.extension, ".html");
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("rss"));
+        assert_eq!(doc.metadata.get("feed").map(String::as_str), Some(feed_url.as_str()));
+        assert_eq!(doc.source, DocumentSource::Local); // enum fallback until an Rss variant exists
+
+        // Unknown id → error.
+        let ghost = RemoteFile {
+            id: "http://example.com/missing".into(),
+            ..first.clone()
+        };
+        let error = connector.fetch_file(&ghost).await.unwrap_err();
+        assert!(error.to_string().contains("not found"), "{error:#}");
+    }
+
+    /// Atom: default-namespace `<feed><entry>` documents parse via
+    /// `local_name()`; link@href becomes the id, summary/content become the
+    /// body, `updated` (ISO8601 with offset) normalizes to UTC.
+    #[tokio::test]
+    async fn list_fetch_normalize_atom_feed() {
+        let base = mock_feed_server(|_path| (200, "application/atom+xml", ATOM_FEED.to_string()));
+        let feed_url = format!("{base}/feed.xml");
+        let connector = RssConnector::new_for_test(options(feed_url.clone())).unwrap();
+
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 2);
+
+        let first = &files[0];
+        assert_eq!(first.id, "https://blog.example.com/atom-one.html");
+        assert_eq!(first.name, "Atom One");
+        assert_eq!(first.extension, ".html");
+        assert_eq!(first.updated_at, "2025-07-01T12:34:56Z");
+        assert_eq!(
+            first.metadata.get("author").map(String::as_str),
+            Some("Bob")
+        );
+        let raw = connector.fetch_file(first).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "Atom One\n\nSummary text here");
+
+        // Offset timestamp → UTC; link without extension → .html fallback.
+        let second = &files[1];
+        assert_eq!(second.id, "https://blog.example.com/atom-two");
+        assert_eq!(second.extension, ".html");
+        assert_eq!(second.updated_at, "2025-07-01T22:00:00Z");
+        let raw = connector.fetch_file(second).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "Atom Two\n\nFull content");
+    }
+
+    /// SSRF guard: private / loopback / link-local / unspecified targets are
+    /// rejected; non-http(s) schemes are rejected; a public IP literal passes
+    /// with no network access.
+    #[test]
+    fn ssrf_rejects_private_and_loopback_urls() {
+        for url in [
+            "http://127.0.0.1/feed.xml",
+            "http://127.8.8.8/feed.xml",
+            "http://10.1.2.3/feed.xml",
+            "http://172.16.0.1/feed.xml",
+            "http://172.31.255.255/feed.xml",
+            "http://192.168.1.10/feed.xml",
+            "http://169.254.169.254/latest/meta-data",
+            "http://0.0.0.0/feed.xml",
+            "http://[::1]/feed.xml",
+            "http://[fe80::1]/feed.xml",
+        ] {
+            let error = validate_feed_url(url, false).unwrap_err();
+            assert!(
+                error.to_string().contains("private"),
+                "expected SSRF rejection for {url}, got: {error:#}"
+            );
+        }
+        // Non-http(s) schemes are rejected outright.
+        assert!(validate_feed_url("ftp://example.com/feed.xml", false).is_err());
+        assert!(validate_feed_url("file:///etc/passwd", false).is_err());
+        // A public IP literal passes without any network access.
+        assert!(validate_feed_url("https://8.8.8.8/feed.xml", false).is_ok());
+        assert!(validate_feed_url("https://1.1.1.1/feed.xml", false).is_ok());
+        // Test-only exemption permits loopback (local mock servers).
+        assert!(validate_feed_url("http://127.0.0.1:1234/feed.xml", true).is_ok());
+    }
+
+    /// Constructor validation: scheme enforced, private hosts rejected at
+    /// construction, `max_items=0` defaults to batch 50, explicit
+    /// batch_size < 1 rejected.
+    #[test]
+    fn new_validates_feed_url_and_batch_size() {
+        let mut options = SourceOptions::default();
+        options.url = "ftp://example.com/feed".into();
+        let error = RssConnector::new(options.clone()).unwrap_err();
+        assert!(error.to_string().contains("http"), "{error:#}");
+
+        options.url = "http://10.0.0.1/feed.xml".into();
+        assert!(
+            RssConnector::new(options.clone())
+                .unwrap_err()
+                .to_string()
+                .contains("private")
+        );
+
+        // Public IP literal constructs fine; max_items=0 → default batch 50.
+        options.url = "https://8.8.8.8/feed.xml".into();
+        options.max_items = 0;
+        assert!(RssConnector::new(options.clone()).is_ok());
+
+        // Explicit batch_size < 1 rejected.
+        assert!(
+            RssConnector::with_batch_size(options, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("batch_size")
+        );
+    }
+
+    /// load_credentials probes the feed: non-2xx upstream is an error, a
+    /// healthy feed passes.
+    #[tokio::test]
+    async fn load_credentials_probes_feed_and_rejects_non_2xx() {
+        let base = mock_feed_server(|_path| (500, "text/plain", "boom".to_string()));
+        let mut connector =
+            RssConnector::new_for_test(options(format!("{base}/feed.xml"))).unwrap();
+        let error = connector.load_credentials().await.unwrap_err();
+        assert!(error.to_string().contains("500"), "{error:#}");
+
+        let base = mock_feed_server(|_path| (200, "application/rss+xml", RSS2_FEED.to_string()));
+        let mut connector =
+            RssConnector::new_for_test(options(format!("{base}/feed.xml"))).unwrap();
+        connector.load_credentials().await.unwrap();
+    }
+
+    /// Registry dispatch: `create("rss", …)` now returns an RssConnector
+    /// instead of bailing with "not implemented".
+    #[test]
+    fn registry_dispatches_rss_connector() {
+        let connector =
+            ConnectorRegistry::create("rss", options("https://8.8.8.8/feed.xml".into())).unwrap();
+        assert_eq!(connector.kind(), "rss");
     }
 }

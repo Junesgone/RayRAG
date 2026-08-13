@@ -3,6 +3,7 @@
 //! Each module replaces a RAGFlow API component.
 
 pub mod admin;
+pub mod chatapp_mgr;
 pub mod chunks;
 pub mod common;
 pub mod compilation_templates;

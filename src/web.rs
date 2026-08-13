@@ -17,6 +17,14 @@ fn t(k: &str, zh: bool) -> &str {
         "Knowledge Bases" => "知识库",
         "Search" => "搜索",
         "Chat" => "对话",
+        "Chat apps" => "对话应用",
+        "Create chat" => "创建对话应用",
+        "No chat app created yet" => "尚未创建对话应用",
+        "Click to create your first chat app" => "点击创建你的第一个对话应用",
+        "New conversation" => "新建对话",
+        "No conversations yet" => "暂无对话",
+        "Chat app not found" => "对话应用不存在",
+
         "Agents" => "智能体",
         "Memories" => "记忆",
         "Files" => "文件",
@@ -2092,6 +2100,147 @@ pub async fn status_page(req: axum::http::Request<axum::body::Body>) -> impl Int
     Html(layout("Status", &b, zh))
 }
 
+
+
+/// RAGFlow 0.26.4 parity: chat-apps list page (`/chats`).
+pub async fn chat_apps_page(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let apps = state
+        .chat_apps
+        .as_ref()
+        .map(|s| s.list())
+        .unwrap_or_default();
+    let mut cards = String::new();
+    for a in &apps {
+        let initial = if a.icon.is_empty() {
+            a.name.chars().next().unwrap_or('C').to_uppercase().to_string()
+        } else {
+            a.icon.clone()
+        };
+        let desc = if a.description.is_empty() { "-".to_string() } else { a.description.clone() };
+        cards.push_str(&format!(
+            "<div class='chat-card' data-name='{name}' data-testid='chat-card' onclick=\"location.href='/chats/{id}'\"><div class='cc-top'><div class='av' style='width:40px;height:40px;font-size:18px'>{icon}</div><div class='cc-meta'><h3 style='font-size:15px;margin:0'>{name}</h3><p style='font-size:12px;color:var(--tm);margin:2px 0 0'>{desc}</p></div><div class='cc-actions' onclick='event.stopPropagation()'><button class='btn btn-o btn-sm' onclick=\"renApp('{id}','{name}')\">✏️</button><button class='btn btn-d btn-sm' onclick=\"delApp('{id}')\">🗑</button></div></div></div>",
+            id = a.id, icon = initial, name = html_esc(&a.name, 30), desc = html_esc(&desc, 40)
+        ));
+    }
+    let mut b = String::new();
+    // Header: title + search + create button (ListFilterBar parity).
+    b.push_str("<div style='display:flex;align-items:center;gap:12px;margin-bottom:24px'>");
+    b.push_str(&format!("<h1 style='margin:0'>{}</h1>", t("Chat apps", zh)));
+    b.push_str(&format!(
+        "<input id='appSearch' placeholder='{}' style='margin-left:auto;width:240px' oninput='filterApps(this.value)'>",
+        t("Search", zh)
+    ));
+    b.push_str(&format!(
+        "<button class='btn btn-p' data-testid='create-chat' onclick='openNewApp()'>+ {}</button></div>",
+        t("Create chat", zh)
+    ));
+    b.push_str("<div class='chat-list' id='appList'>");
+    if apps.is_empty() {
+        // EmptyAppCard parity: clickable large card.
+        b.push_str(&format!(
+            "<div class='empty-card' data-testid='chats-empty-create' onclick='openNewApp()'><div style='font-size:44px'>💬</div><p style='margin:12px 0 4px;font-size:15px'>{}</p><p style='color:var(--tm);font-size:12px;margin:0'>{}</p></div>",
+            t("No chat app created yet", zh),
+            t("Click to create your first chat app", zh),
+        ));
+    } else {
+        b.push_str(&cards);
+    }
+    b.push_str("</div>");
+    // Create dialog (RenameDialog parity: name only, 425px).
+    b.push_str(&format!("<div class='modal-overlay' id='newAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='appName' placeholder='{}' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeNewApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveNewApp()'>{}</button></div></div></div>",
+        t("Create chat", zh), t("Name", zh), t("Cancel", zh), t("Save", zh)));
+    // Rename dialog.
+    b.push_str(&format!("<div class='modal-overlay' id='renAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='renAppName' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeRenApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveRenApp()'>{}</button></div></div></div>",
+        t("Rename", zh), t("Cancel", zh), t("Save", zh)));
+    b.push_str("<input id='renAppId' type='hidden'>");
+    // JS
+    b.push_str("<script>");
+    b.push_str("function filterApps(v){v=(v||'').toLowerCase();document.querySelectorAll('#appList .chat-card').forEach(function(c){c.style.display=(!v||(c.getAttribute('data-name')||'').toLowerCase().indexOf(v)>=0)?'':'none'})}");
+    b.push_str("function openNewApp(){document.getElementById('appName').value='';document.getElementById('newAppModal').classList.add('show')}");
+    b.push_str("function closeNewApp(){document.getElementById('newAppModal').classList.remove('show')}");
+    b.push_str("function saveNewApp(){var n=document.getElementById('appName').value.trim();if(!n){alert('Name required');return}fetch('/api/v1/chatapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'create failed')}})}");
+    b.push_str("function renApp(id,name){document.getElementById('renAppId').value=id;document.getElementById('renAppName').value=name;document.getElementById('renAppModal').classList.add('show')}");
+    b.push_str("function closeRenApp(){document.getElementById('renAppModal').classList.remove('show')}");
+    b.push_str("function saveRenApp(){var n=document.getElementById('renAppName').value.trim();var id=document.getElementById('renAppId').value;if(!n)return;fetch('/api/v1/chatapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
+    b.push_str("function delApp(id){if(!confirm('Delete this chat app?'))return;fetch('/api/v1/chatapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
+    b.push_str("</script>");
+    Html(layout(&t("Chat apps", zh), &b, zh))
+}
+
+/// RAGFlow 0.26.4 parity: chat-app detail page (`/chats/{id}`).
+pub async fn chat_app_detail_page(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Path(app_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let app = state
+        .chat_apps
+        .as_ref()
+        .and_then(|s| s.get(&app_id));
+    let (name, icon, desc) = match &app {
+        Some(a) => {
+            let ic = if a.icon.is_empty() {
+                a.name.chars().next().unwrap_or('C').to_uppercase().to_string()
+            } else {
+                a.icon.clone()
+            };
+            (a.name.clone(), ic, if a.description.is_empty() { "-".into() } else { a.description.clone() })
+        }
+        None => {
+            return Html(format!(
+                "<h1>404</h1><p>{}: {app_id}</p>",
+                t("Chat app not found", zh)
+            ));
+        }
+    };
+    let convs: Vec<_> = state
+        .conversations
+        .list()
+        .into_iter()
+        .filter(|c| c.app_id.as_deref() == Some(app_id.as_str()))
+        .collect();
+    let mut cards = String::new();
+    for c in convs.iter().rev() {
+        let preview = c.messages.last().map(|m| m.content.chars().take(80).collect::<String>()).unwrap_or_else(|| "No messages".into());
+        cards.push_str(&format!(
+            "<div class='chat-card' onclick=\"location.href='/chat/{0}'\"><h3 style='font-size:14px;margin:0'>{1}</h3><p style='font-size:12px;color:var(--t2);margin:6px 0 0'>{2} msgs</p><p style='font-size:12px;color:var(--tm);margin:6px 0 0'>{3}</p></div>",
+            c.id, html_esc(&c.name, 30), c.messages.len(), html_esc(&preview, 60)
+        ));
+    }
+    if convs.is_empty() {
+        cards = format!("<p style='color:var(--tm);text-align:center;padding:32px'>{}</p>", t("No conversations yet", zh));
+    }
+    let mut b = String::new();
+    b.push_str(&format!(
+        "<div style='display:flex;align-items:center;gap:12px;margin-bottom:20px'><div class='av' style='width:44px;height:44px;font-size:20px'>{}</div><div><h1 style='margin:0;font-size:18px'>{}</h1><p style='color:var(--tm);font-size:12px;margin:2px 0 0'>{}</p></div><button class='btn btn-p' style='margin-left:auto' onclick='newConv(\"{}\")'>+ {}</button></div>",
+        icon, html_esc(&name, 40), html_esc(&desc, 60), app_id, t("New conversation", zh)
+    ));
+    b.push_str("<div class='chat-list'>");
+    b.push_str(&cards);
+    b.push_str("</div>");
+    b.push_str("<script>");
+    b.push_str(&format!(
+        "function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}"
+    ));
+    b.push_str("</script>");
+    Html(layout(&t("Chat apps", zh), &b, zh))
+}
+
+/// Minimal HTML escape for user-controlled strings.
+fn html_esc(input: &str, max_chars: usize) -> String {
+    let s: String = input.chars().take(max_chars).collect();
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2204,6 +2353,7 @@ mod kb_ui_tests {
             files: Arc::new(FileStore::new(root.path().join("uploads").to_str().unwrap()).unwrap()),
             data_sources: None,
             search_apps: None,
+            chat_apps: None,
             providers: Arc::new(ProviderStore::in_memory()),
             tenant_models: Arc::new(TenantModelStore::in_memory()),
             memories: Arc::new(MemoryStore::in_memory()),
