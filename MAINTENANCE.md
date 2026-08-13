@@ -1,3 +1,24 @@
+## 2026-08-13 v0.3.3aw：检索页 ⓘ 悬停提示 + 检索四字段（cross_languages/use_kg/keyword/size）+ 语雀连接器
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **悬停遍历方法**：JS 合成 mouseover 不触发 Radix tooltip，必须 CDP
+  `Input.dispatchMouseEvent` 真实鼠标移动 + 1.2s 停留；捕获检索页 3 条
+  官方 tooltip（相似度阈值/KG/语言）。UI 两个配置表单的 Top K/Threshold/
+  Vector weight/KG 开关加 `ⓘ`（纯 CSS `.tip` data-tip，无 JS）。
+- **检索四字段**（对齐 v0.26.4 SearchDatasetReq 实测字段）：
+  - `keyword` → vector_weight 强制 0（纯关键词检索）；
+  - `size` → 分页大小（0=回退 top_k）；
+  - `use_kg` → 门控 graph_context（此前无条件返回）；
+  - `cross_languages` → 真实翻译管线：tenant LLM 按
+    cross_languages_sys/user prompt 批量翻译 → 逐语言 hybrid 检索 →
+    按 chunk.id 去重合并；翻译失败优雅降级为原语言结果。
+  - 新测试 search_request_schema_tests 2。
+- **语雀连接器**（子agent 并行，文件隔离：子agent 仅 src/connectors.rs，
+  主 agent 仅 web.rs/search.rs）：X-Auth-Token 鉴权、列仓库文档分页、
+  拉 Markdown 正文、本地 TcpListener mock 测试 7 个。
+- 工具脚本：/tmp/ui_traverse/hover_tips.py。
+
+
 ## 2026-08-13 v0.3.3av：S3 协议连接器（SigV4，真 MinIO E2E 通过）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

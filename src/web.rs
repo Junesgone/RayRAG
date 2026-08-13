@@ -195,7 +195,9 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str(title);
     h.push_str(" · RayRAG</title><style>");
     h.push_str(CSS);
-    h.push_str("</style></head><body>");
+    h.push_str(".tip{display:inline-block;width:15px;height:15px;line-height:15px;border-radius:50%;background:var(--tm);color:var(--bg,#fff);font-size:11px;text-align:center;cursor:help;position:relative;vertical-align:middle}
+.tip:hover::after{content:attr(data-tip);position:absolute;left:22px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
+</style></head><body>");
     h.push_str("<header class='hdr'><a href='/dashboard' class='logo'><svg width='28' height='28'><circle cx='14' cy='14' r='12' fill='#4f46e5'/><text x='14' y='19' text-anchor='middle' fill='#fff' font-size='13' font-weight='700'>R</text></svg>RayRAG</a>");
     h.push_str("<nav class='np'><a href='/dashboard'>");
     h.push_str(db);
@@ -607,7 +609,7 @@ pub async fn kb_detail_page(
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>GraphRAG（实体抽取）</h3></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Enable GraphRAG", zh));
-    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgGraph'> ");
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgGraph'> <span class='tip' data-tip='Whether to use knowledge graph(s) in the specified dataset(s) during retrieval for multi-hop question answering. When enabled, the system will first use knowledge graph(s) and then fall back to ordinary retrieval if there is no answer.'></span>");
     b.push_str(t("Enable GraphRAG", zh));
     b.push_str("</label></td></tr>");
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
@@ -615,13 +617,13 @@ pub async fn kb_detail_page(
     b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Top K", zh));
-    b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'></td></tr>");
+    b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'> <span class='tip' data-tip='The number of retrieved chunks to be fed into the LLM for answer generation. Higher values improve accuracy at the cost of retrieval speed.'>?</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Similarity Threshold", zh));
-    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'></td></tr>");
+    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'> <span class='tip' data-tip='Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity. If you set it to 0.2, the system will only use weighted keyword similarity.'></span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Vector Weight", zh));
-    b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'></td></tr>");
+    b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'> <span class='tip' data-tip='Weight of the vector cosine similarity in the combined hybrid score. Remaining weight goes to keyword similarity.'></span></td></tr>");
     b.push_str(
         "</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>",
     );
@@ -955,13 +957,13 @@ pub async fn dataset_page(
     b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Top K", zh));
-    b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'></td></tr>");
+    b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'> <span class='tip' data-tip='The number of retrieved chunks to be fed into the LLM for answer generation. Higher values improve accuracy at the cost of retrieval speed.'>?</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Similarity Threshold", zh));
-    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'></td></tr>");
+    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'> <span class='tip' data-tip='Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity. If you set it to 0.2, the system will only use weighted keyword similarity.'></span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Vector Weight", zh));
-    b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'></td></tr>");
+    b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'> <span class='tip' data-tip='Weight of the vector cosine similarity in the combined hybrid score. Remaining weight goes to keyword similarity.'></span></td></tr>");
     b.push_str(
         "</table><div style='margin-top:16px'><button class='btn btn-p' onclick='saveConfig()'>",
     );

@@ -46,6 +46,20 @@ pub struct SearchRequest {
     pub include_metadata: Option<bool>,
     #[serde(default)]
     pub metadata_fields: Option<Vec<String>>,
+    /// RAGFlow `cross_languages` — translate the question into these languages
+    /// (locale codes, e.g. "en", "zh") via the tenant chat model and merge the
+    /// extra-language results into the answer set.
+    #[serde(default)]
+    pub cross_languages: Vec<String>,
+    /// RAGFlow `use_kg` — include knowledge-graph context in the response.
+    #[serde(default)]
+    pub use_kg: bool,
+    /// RAGFlow `keyword` — keyword-only search (vector weight forced to 0).
+    #[serde(default)]
+    pub keyword: bool,
+    /// RAGFlow `size` — page size; 0 falls back to `top_k`.
+    #[serde(default)]
+    pub size: usize,
 }
 
 fn default_top_k() -> usize {
@@ -90,7 +104,11 @@ pub async fn weighted_search(
             .into_response();
     }
     let threshold = body.similarity_threshold.unwrap_or(0.2).clamp(0.0, 1.0);
-    let vector_weight = body.vector_similarity_weight.unwrap_or(0.3).clamp(0.0, 1.0);
+    let mut vector_weight = body.vector_similarity_weight.unwrap_or(0.3).clamp(0.0, 1.0);
+    // RAGFlow keyword toggle: pure keyword retrieval.
+    if body.keyword {
+        vector_weight = 0.0;
+    }
 
     let embedding: Option<Vec<f32>> = if vector_weight > 0.0 {
         match kb_embedder_for(&state, kb_ids) {
@@ -258,12 +276,74 @@ pub async fn weighted_search(
         };
     }
     results.retain(|result| result.score >= post_threshold);
+
+    // RAGFlow cross_languages: translate the question via the tenant chat model
+    // and merge extra-language results (deduped by chunk id). Translation
+    // failure degrades gracefully to the original-language result set.
+    if !body.cross_languages.is_empty() {
+        if let Some(llm) = state.llm.clone() {
+            let langs = body.cross_languages.join(", ");
+            let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+            vars.insert("query", &body.question);
+            vars.insert("languages", langs.as_str());
+            let sys = crate::prompts::PromptLibrary::cross_languages_sys()
+                .render(&std::collections::HashMap::new());
+            let user = crate::prompts::PromptLibrary::cross_languages_user().render(&vars);
+            let translated = match llm
+                .chat_completion(&[
+                    crate::llm::ChatMessage::new("system", &sys),
+                    crate::llm::ChatMessage::new("user", &user),
+                ])
+                .await
+            {
+                Ok(completion) => completion.content,
+                Err(error) => {
+                    tracing::warn!(%error, "cross_languages translation failed; original results returned");
+                    String::new()
+                }
+            };
+            let mut seen: std::collections::HashSet<String> =
+                results.iter().map(|result| result.chunk.id.clone()).collect();
+            for translation in translated
+                .split("###")
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && *text != body.question)
+            {
+                let embedding = match kb_embedder_for(&state, kb_ids) {
+                    Ok(embedder) => match embedder.embed(&[translation]).await {
+                        Ok(mut embeddings) => embeddings.pop(),
+                        Err(_) => None,
+                    },
+                    Err(_) => None,
+                };
+                let extra = state
+                    .engine
+                    .read()
+                    .unwrap()
+                    .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                        query: translation,
+                        query_embedding: embedding.as_deref(),
+                        top_k: usize::MAX,
+                        kb_ids,
+                        vector_weight,
+                        doc_ids: filtered_doc_ids.as_deref(),
+                        rank_feature: body.rank_feature.as_ref(),
+                    });
+                for candidate in extra.into_iter().filter(|c| c.score >= post_threshold) {
+                    if seen.insert(candidate.chunk.id.clone()) {
+                        results.push(candidate);
+                    }
+                }
+            }
+        }
+    }
+
     let begin = global_offset % window;
 
     let weighted: Vec<serde_json::Value> = results
         .into_iter()
         .skip(begin)
-        .take(body.top_k)
+        .take(if body.size > 0 { body.size } else { body.top_k })
         .map(|r| {
             let doc_id = r
                 .chunk
@@ -300,7 +380,11 @@ pub async fn weighted_search(
             })
         })
         .collect();
-    let graph_context = state.graphs.context_for_query(kb_ids, &body.question);
+    let graph_context = if body.use_kg {
+        state.graphs.context_for_query(kb_ids, &body.question)
+    } else {
+        Vec::new()
+    };
 
     Json(serde_json::json!({"code":0,"data":{"total":total,"chunks":weighted,"doc_aggs":doc_aggs,"graph_context":graph_context}}))
         .into_response()
@@ -526,4 +610,39 @@ pub async fn dify_retrieval(
         "query": {"content": body.query}
     }))
     .into_response()
+}
+
+
+#[cfg(test)]
+mod search_request_schema_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_ragflow_single_dataset_request() {
+        let request: SearchRequest = serde_json::from_value(serde_json::json!({"question": "q"})).unwrap();
+        assert_eq!(request.top_k, 10);
+        assert_eq!(request.page, 1);
+        assert!(request.cross_languages.is_empty());
+        assert!(!request.use_kg);
+        assert!(!request.keyword);
+        assert_eq!(request.size, 0);
+        assert!(request.similarity_threshold.is_none());
+        assert!(request.vector_similarity_weight.is_none());
+    }
+
+    #[test]
+    fn new_fields_parse_and_roundtrip() {
+        let value = serde_json::json!({
+            "question": "水质",
+            "cross_languages": ["en", "ja"],
+            "use_kg": true,
+            "keyword": true,
+            "size": 30,
+        });
+        let request: SearchRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(request.cross_languages, vec!["en", "ja"]);
+        assert!(request.use_kg);
+        assert!(request.keyword);
+        assert_eq!(request.size, 30);
+    }
 }

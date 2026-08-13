@@ -15,7 +15,8 @@
 //! Included connectors:
 //!   * base:  [`LocalConnector`] (本地文件), [`WebDavConnector`],
 //!            [`BlobAdapter`] (Azure blob storage, SAS auth)
-//!   * cloud: [`FeishuConnector`] (飞书云空间), [`ConfluenceConnector`]
+//!   * cloud: [`FeishuConnector`] (飞书云空间), [`ConfluenceConnector`],
+//!            [`YuqueConnector`] (语雀)
 //!
 //! [`ConnectorRegistry`] dispatches by type key (RAGFlow data-source type).
 
@@ -541,6 +542,7 @@ impl ConnectorRegistry {
             "blob" => Ok(Box::new(BlobAdapter::new(options))),
             "feishu" => Ok(Box::new(FeishuConnector::new(options))),
             "confluence" => Ok(Box::new(ConfluenceConnector::new(options))),
+            "yuque" => Ok(Box::new(YuqueConnector::new(options)?)),
             // S3 协议家族：S3 / GCS-interop / Oracle S3-compat 共用 SigV4 连接器。
             "s3" | "gcs" | "oracle" => Ok(Box::new(S3Connector::new(options))),
             other => bail!("unsupported connector kind: {other}"),
@@ -1805,6 +1807,217 @@ impl Connector for ConfluenceConnector {
     }
 }
 
+// ── Concrete connector: Yuque / 语雀 ─────────────────────────────────────────
+
+/// Yuque (语雀) knowledge-base connector — mirrors the Yuque OpenAPI
+/// (https://www.yuque.com/yuque/developer).
+///
+/// Auth: `X-Auth-Token: <token>` header (`token` = 语雀 personal access token,
+/// no colon splitting).
+///
+///   * list:   GET `/api/v2/repos/{namespace}/docs?offset=N` (paginated)
+///   * fetch:  GET `/api/v2/repos/{namespace}/docs/{slug}` → `data.body`
+///             (Markdown string)
+///   * probe:  GET `/api/v2/user` (validates the token)
+///
+/// Source options:
+///   * `url`    = optional API base override (default
+///                `https://www.yuque.com/api/v2`)
+///   * `token`  = 语雀 personal access token
+///   * `target` = namespace `user/repo_slug`
+#[derive(Debug)]
+pub struct YuqueConnector {
+    client: reqwest::Client,
+    base_url: String,
+    token: String,
+    namespace: String,
+}
+
+impl YuqueConnector {
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let namespace = options.target.trim().to_string();
+        if namespace.is_empty() {
+            bail!("yuque: namespace required (target = user/repo_slug)");
+        }
+        let base_url = {
+            let raw = options.url.trim().trim_end_matches('/');
+            if raw.is_empty() {
+                "https://www.yuque.com/api/v2".to_string()
+            } else {
+                raw.to_string()
+            }
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            base_url,
+            token: options.token.trim().to_string(),
+            namespace,
+        })
+    }
+
+    /// GET `path` with the `X-Auth-Token` header, parsed as JSON envelope
+    /// `{ "data": ... }`.
+    async fn get_json(&self, path: &str) -> Result<serde_json::Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .client
+            .get(&url)
+            .header("X-Auth-Token", &self.token)
+            .send()
+            .await
+            .with_context(|| format!("yuque: request failed: {url}"))?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        if !status.is_success() {
+            bail!(
+                "yuque: upstream returned {}: {}",
+                status.as_u16(),
+                String::from_utf8_lossy(&body)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            );
+        }
+        serde_json::from_slice(&body).context("yuque: invalid JSON")
+    }
+}
+
+#[async_trait]
+impl Connector for YuqueConnector {
+    fn kind(&self) -> &'static str {
+        "yuque"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        if self.token.is_empty() {
+            bail!("yuque: X-Auth-Token required (token)");
+        }
+        if self.namespace.is_empty() {
+            bail!("yuque: namespace required (target = user/repo_slug)");
+        }
+        // Probe: GET /user validates the token (RAGFlow-style credential check).
+        let value = self.get_json("/user").await?;
+        if value.get("data").is_none() {
+            bail!("yuque: /user probe returned no data — token may be invalid");
+        }
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        // Paginate with `offset` (0/20/40/…) until an empty `data` array.
+        let mut files = Vec::new();
+        let mut offset = 0usize;
+        const PAGE_SIZE: usize = 20;
+        loop {
+            let value = self
+                .get_json(&format!(
+                    "/repos/{}/docs?offset={offset}",
+                    self.namespace
+                ))
+                .await?;
+            let docs = value
+                .get("data")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let fetched = docs.len();
+            for doc in &docs {
+                let id = doc
+                    .get("id")
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                let title = doc
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let slug = doc
+                    .get("slug")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let updated_at = doc
+                    .get("updated_at")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        doc.get("created_at")
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .unwrap_or_default()
+                    .to_string();
+                let mut metadata = HashMap::new();
+                metadata.insert("type".into(), "Doc".into());
+                metadata.insert("source".into(), "yuque".into());
+                metadata.insert("namespace".into(), self.namespace.clone());
+                metadata.insert("slug".into(), slug.clone());
+                metadata.insert("id".into(), id.clone());
+                files.push(RemoteFile {
+                    id: format!("yuque:{id}"),
+                    name: format!("{title}.md"),
+                    path: slug,
+                    extension: ".md".into(),
+                    size_bytes: 0, // body length unknown until fetch
+                    updated_at: updated_at.clone(),
+                    fingerprint: updated_at,
+                    metadata,
+                });
+            }
+            offset += PAGE_SIZE;
+            if fetched == 0 {
+                break;
+            }
+            // Safety bound against a misbehaving upstream (RAGFlow
+            // `_ITERATION_LIMIT` spirit).
+            if offset > 10_000 {
+                bail!("yuque: pagination exceeded 10000 docs — aborting");
+            }
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let value = self
+            .get_json(&format!(
+                "/repos/{}/docs/{}",
+                self.namespace,
+                urlencode(&file.path)
+            ))
+            .await?;
+        let body = value
+            .get("data")
+            .and_then(|d| d.get("body"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok(body.into_bytes())
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        metadata.insert("type".into(), "Doc".into());
+        metadata.insert("source".into(), "yuque".into());
+        metadata.insert("namespace".into(), self.namespace.clone());
+        metadata.insert("slug".into(), file.path.clone());
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            // DocumentSource has no Yuque variant yet — Confluence is the
+            // stand-in; the `source=yuque` metadata carries the real
+            // provenance until the enum is extended.
+            source: DocumentSource::Confluence,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Split "user:password" (or "app_id:app_secret") credential strings.
@@ -2131,5 +2344,249 @@ mod tests {
         assert_eq!(batch.docs.len(), 2);
         assert!(batch.failures.is_empty());
         std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod yuque_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives the request path (query string stripped) and the
+    /// raw query string, and returns `(status, json_body)`. No real network —
+    /// the connector's `options.url` override points at this base.
+    fn mock_yuque_server(
+        handler: impl Fn(&str, &str) -> (u16, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 8192];
+                let n = match stream.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(_) => return,
+                };
+                if n == 0 {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let first_line = request.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let _method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, body) = handler(path, query);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base_url: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base_url;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// Listing paginates with `offset` (0/20/40/…) and maps each doc onto a
+    /// `RemoteFile` (name = title + \".md\", path = slug, fingerprint =
+    /// updated_at, metadata carries namespace/slug/source).
+    #[tokio::test]
+    async fn list_files_paginates_across_pages() {
+        let list_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = list_calls.clone();
+        let base = mock_yuque_server(move |path, query| match (path, query) {
+            ("/repos/team/kb/docs", "offset=0") => {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (
+                    200,
+                    json!({"data": [
+                        {"id": 101, "title": "Doc One", "slug": "doc-one",
+                         "created_at": "2026-01-01T00:00:00.000Z",
+                         "updated_at": "2026-02-01T00:00:00.000Z"},
+                        {"id": 102, "title": "Doc Two", "slug": "doc-two",
+                         "created_at": "2026-01-02T00:00:00.000Z",
+                         "updated_at": "2026-02-02T00:00:00.000Z"}
+                    ]})
+                    .to_string(),
+                )
+            }
+            ("/repos/team/kb/docs", "offset=20") => {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (
+                    200,
+                    json!({"data": [
+                        {"id": 103, "title": "Doc Three", "slug": "doc-three",
+                         "created_at": "2026-01-03T00:00:00.000Z",
+                         "updated_at": "2026-02-03T00:00:00.000Z"}
+                    ]})
+                    .to_string(),
+                )
+            }
+            ("/repos/team/kb/docs", "offset=40") => {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (200, json!({"data": []}).to_string())
+            }
+            _ => (404, "{}".to_string()),
+        });
+
+        let connector = YuqueConnector::new(options(base, "tok-123", "team/kb")).unwrap();
+        let files = connector.list_files().await.unwrap();
+
+        // Three requests: offset=0, offset=20, offset=40 (empty → stop).
+        assert_eq!(list_calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(files.len(), 3);
+
+        let first = &files[0];
+        assert_eq!(first.id, "yuque:101");
+        assert_eq!(first.name, "Doc One.md");
+        assert_eq!(first.path, "doc-one");
+        assert_eq!(first.extension, ".md");
+        assert_eq!(first.size_bytes, 0);
+        assert_eq!(first.updated_at, "2026-02-01T00:00:00.000Z");
+        assert_eq!(first.fingerprint, "2026-02-01T00:00:00.000Z");
+        assert_eq!(
+            first.metadata.get("namespace").map(String::as_str),
+            Some("team/kb")
+        );
+        assert_eq!(first.metadata.get("source").map(String::as_str), Some("yuque"));
+        assert_eq!(first.metadata.get("slug").map(String::as_str), Some("doc-one"));
+        assert_eq!(files[2].name, "Doc Three.md");
+        assert_eq!(files[2].id, "yuque:103");
+    }
+
+    /// fetch_file hits `/repos/{namespace}/docs/{slug}` and returns the
+    /// Markdown `data.body`.
+    #[tokio::test]
+    async fn fetch_file_returns_markdown_body() {
+        let base = mock_yuque_server(move |path, _query| match path {
+            "/repos/team/kb/docs/doc-one" => (
+                200,
+                json!({"data": {"id": 101, "slug": "doc-one", "title": "Doc One",
+                                "body": "# Hello\n\nYuque markdown body."}})
+                    .to_string(),
+            ),
+            _ => (404, "{}".to_string()),
+        });
+
+        let connector = YuqueConnector::new(options(base, "tok-123", "team/kb")).unwrap();
+        let file = RemoteFile {
+            id: "yuque:101".into(),
+            name: "Doc One.md".into(),
+            path: "doc-one".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: "2026-02-01T00:00:00.000Z".into(),
+            fingerprint: String::new(),
+            metadata: HashMap::new(),
+        };
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "# Hello\n\nYuque markdown body.");
+    }
+
+    /// load_credentials rejects an empty token before any network call.
+    #[tokio::test]
+    async fn load_credentials_rejects_empty_token() {
+        let mut connector =
+            YuqueConnector::new(options("http://127.0.0.1:1".into(), "", "team/kb")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err();
+        assert!(error.to_string().contains("token"), "got: {error:#}");
+    }
+
+    /// load_credentials probes `GET /user` to validate the token.
+    #[tokio::test]
+    async fn load_credentials_probes_user_endpoint() {
+        let base = mock_yuque_server(move |path, _query| match path {
+            "/user" => (
+                200,
+                json!({"data": {"id": 7, "name": "tester"}}).to_string(),
+            ),
+            _ => (404, "{}".to_string()),
+        });
+        let mut connector = YuqueConnector::new(options(base, "tok-123", "team/kb")).unwrap();
+        connector.load_credentials().await.unwrap();
+    }
+
+    /// new() requires the `target` namespace.
+    #[test]
+    fn new_requires_namespace() {
+        let error = YuqueConnector::new(options(String::new(), "tok-123", "")).unwrap_err();
+        assert!(error.to_string().contains("namespace"));
+    }
+
+    /// normalize marks the doc with source=yuque metadata; the
+    /// `DocumentSource` field falls back to `Confluence` until the enum gains
+    /// a Yuque variant.
+    #[test]
+    fn normalize_marks_yuque_metadata() {
+        let connector =
+            YuqueConnector::new(options(String::new(), "tok-123", "team/kb")).unwrap();
+        let file = RemoteFile {
+            id: "yuque:101".into(),
+            name: "Doc One.md".into(),
+            path: "doc-one".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: "2026-02-01T00:00:00.000Z".into(),
+            fingerprint: String::new(),
+            metadata: HashMap::new(),
+        };
+        let doc = connector.normalize(&file, b"# Body".to_vec()).unwrap();
+        assert_eq!(doc.blob, "# Body");
+        assert_eq!(doc.semantic_identifier, "Doc One.md");
+        assert_eq!(doc.extension, ".md");
+        assert_eq!(doc.size_bytes, 6);
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("yuque"));
+        assert_eq!(doc.metadata.get("namespace").map(String::as_str), Some("team/kb"));
+        assert_eq!(doc.metadata.get("slug").map(String::as_str), Some("doc-one"));
+        assert_eq!(doc.source, DocumentSource::Confluence);
+    }
+
+    /// Registry dispatch end-to-end: `create("yuque", …)` → fetch_all over the
+    /// mock server produces a normalized ConnectorDoc.
+    #[tokio::test]
+    async fn registry_creates_and_fetches_all() {
+        let base = mock_yuque_server(move |path, query| match (path, query) {
+            ("/repos/team/kb/docs", "offset=0") => (
+                200,
+                json!({"data": [
+                    {"id": 1, "title": "One", "slug": "one",
+                     "updated_at": "2026-01-01T00:00:00Z"}
+                ]})
+                .to_string(),
+            ),
+            ("/repos/team/kb/docs", "offset=20") => {
+                (200, json!({"data": []}).to_string())
+            }
+            ("/repos/team/kb/docs/one", _) => (
+                200,
+                json!({"data": {"body": "# One body"}}).to_string(),
+            ),
+            _ => (404, "{}".to_string()),
+        });
+
+        let connector =
+            ConnectorRegistry::create("yuque", options(base, "tok-123", "team/kb")).unwrap();
+        assert_eq!(connector.kind(), "yuque");
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.failures.is_empty());
+        let doc = &batch.docs[0];
+        assert_eq!(doc.blob, "# One body");
+        assert_eq!(doc.semantic_identifier, "One.md");
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("yuque"));
     }
 }
