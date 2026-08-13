@@ -774,7 +774,7 @@ pub struct ProviderModels {
     pub features: Option<Value>,
 }
 
-/// All 20 RAGFlow provider fixtures, embedded at compile time.
+/// All 61 RAGFlow provider fixtures, embedded at compile time.
 const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
     ("aliyun", include_str!("api/fixtures/models/aliyun.json")),
     ("baidu", include_str!("api/fixtures/models/baidu.json")),
@@ -783,6 +783,7 @@ const PROVIDER_MODEL_FIXTURES: &[(&str, &str)] = &[
         "deepseek",
         include_str!("api/fixtures/models/deepseek.json"),
     ),
+    ("deerapi", include_str!("api/fixtures/models/deerapi.json")),
     (
         "fishaudio",
         include_str!("api/fixtures/models/fishaudio.json"),
@@ -998,6 +999,8 @@ pub fn resolve_model_factory(provider_id: &str, provider_name: &str) -> Option<S
         ("longcat", "longcat"),
         ("jiekouai", "jiekouai"),
         ("astraflow", "astraflow"),
+        ("astraflow-cn", "astraflow"),
+        ("deerapi", "deerapi"),
         ("avian", "avian"),
         ("futurmix", "futurmix"),
         ("orcarouter", "orcarouter"),
@@ -1461,9 +1464,10 @@ mod tests {
     #[test]
     fn seeded_provider_catalog_covers_all_ragflow_fixtures() {
         let catalog = provider_model_catalog();
-        // All 60 RAGFlow conf/models fixtures parse into catalog entries
-        // (20 baseline + 40 added 2026-08-06 from the live v0.26.2 container).
-        assert_eq!(catalog.len(), 60);
+        // All 61 RAGFlow conf/models fixtures parse into catalog entries
+        // (20 baseline + 40 added 2026-08-06 from the live v0.26.2 container,
+        // plus deerapi added 2026-08-13 from llm_factories.json).
+        assert_eq!(catalog.len(), 61);
         let total_models: usize = catalog.iter().map(|p| p.models.len()).sum();
         assert!(
             total_models > 500,
@@ -1553,6 +1557,7 @@ mod tests {
         assert!(has("gitee", "BAAI/bge-m3"));
         assert!(has("nvidia", "nvidia/nv-embedqa-mistral-7b-v2"));
         assert!(has("huggingface", "openai/gpt-oss-120b:fastest"));
+        assert!(has("deerapi", "gpt-5-chat-latest"));
         // The nvidia catalog is the largest fixture (46 models).
         let nvidia = catalog.iter().find(|p| p.factory == "nvidia").unwrap();
         assert!(nvidia.models.len() >= 46);
@@ -1561,7 +1566,7 @@ mod tests {
     #[test]
     fn factory_llm_infos_maps_factory_to_endpoint_and_models() {
         let infos = factory_llm_infos();
-        assert_eq!(infos.len(), 60);
+        assert_eq!(infos.len(), 61);
         // Most factories carry a default endpoint (fixture url or preset);
         // self-hosted engines (ollama/vllm/lmstudio/localai/...) legitimately
         // resolve to empty until the user configures them.
@@ -1602,9 +1607,13 @@ mod tests {
         );
         // Summary rows are (factory, endpoint, model count).
         let summary = factory_mapping_summary();
-        assert_eq!(summary.len(), 60);
+        assert_eq!(summary.len(), 61);
         let (name, url, count) = summary.iter().find(|(n, _, _)| n == "Nvidia").unwrap();
         assert_eq!(url, "https://integrate.api.nvidia.com/v1");
         assert!(*count >= 46);
+        // The DeerAPI relay resolves to its public OpenAI-compatible base.
+        let (_, deer_url, deer_count) = summary.iter().find(|(n, _, _)| n == "DeerAPI").unwrap();
+        assert_eq!(deer_url, "https://api.deerapi.com/v1");
+        assert!(*deer_count >= 37);
     }
 }
