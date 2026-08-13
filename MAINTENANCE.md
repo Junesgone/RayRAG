@@ -1,3 +1,32 @@
+## 2026-08-13 v0.3.3af：per-capability 模型默认值、memory 原生索引生命周期与 Infinity 查询语义
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批由
+  3 个并行子 agent 分别完成 models / memory / infinity 三个域，主 agent 合并并修绿门禁。
+- **models（tenant_models.rs/system.rs）**：按 `models_api.py`/`models_api_service.py`
+  port 了 per-capability 默认值（embedding/vision/rerank/ASR/TTS 均可 PATCH
+  `/api/v1/models/default` 持久化，带上游三重/型号校验）；`plan_added_models` 实现工厂目录
+  展开（factory ∪ active − inactive − unsupported）+ rank 键回退；遗留 `/api/v1/llm/models`
+  同步切换为 upstream `list_tenant_added_models` 语义（目录展开），其唯一断言随语义更新。
+- **memory（features.rs/joint_services.rs/memory.rs）**：`MessageIndexLifecycle`
+  （create/delete/has_index，prefix 应用到原生资源名）、`MemorySizeCache`、missing-token
+  修复（无 tokenize 引擎时按 Python 语义 no-op）；joined-tenant mutation
+  （owner 或 team 成员可改/可删，外部人等价 404）；两阶段跨 store 删除（先删 memory 行，
+  `has_index` 门控再删 messages，两 store 各自独立事务与 Python 一致）；digest 富化。
+- **infinity（store/infinity_query.rs + infinity_table.rs + search.rs）**：analyzer/index
+  选择、通用 filter/sort/aggregation、dense threshold、atan Fusion（`atan(x)*2/pi`）与
+  同表多维度向量生命周期（旧维度与新维度共存至表删除）。
+- 主 agent 合并修复：models 子 agent 超时留下的 3 个失败测试——(1) server.rs 能力展开断言随
+  目录展开语义更新；(2)(3) 测试夹具撞 ProviderStore 大小写契约（store id 一律小写、name
+  保留目录原案；`check_model_available` 按 name 匹配、selector 扫描按小写 id 匹配），测试
+  以 delete-then-create + `provider_id = factory_name.to_ascii_lowercase()` 修正。
+- 覆盖矩阵 8 行 partial→full（models_api、models_api_service、memory_api、
+  memory_api_service、memory_message_service、memory_service、memory_utils、
+  infinity_mapping）；messages.py 保留 partial（missing-token 真实 tokenize 分支待分词引擎）。
+- 本批同时完成 RAGFlow v0.26.2 真实 UI 全量遍历（fygo Chrome CDP + Playwright）并回写
+  `docs/ragflow-ui-inventory.md`：确认知识库详情为左侧边栏导航（Tailwind 重写版）、
+  Model providers 页六能力默认选择器/Added models/Available models 区块、Agent 画布
+  顶栏（Save/Run/Launch/Publish/Management）、Memory 详情双 Tab 等增量结论。
+
 ## 2026-08-12 v0.3.3ae：Memory 持久任务、LLM 抽取与消息任务 UI
 
 - 固定上游仍为 RAGFlow v0.26.4 commit
