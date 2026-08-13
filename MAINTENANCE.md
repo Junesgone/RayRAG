@@ -26,6 +26,10 @@
   `docs/ragflow-ui-inventory.md`：确认知识库详情为左侧边栏导航（Tailwind 重写版）、
   Model providers 页六能力默认选择器/Added models/Available models 区块、Agent 画布
   顶栏（Save/Run/Launch/Publish/Management）、Memory 详情双 Tab 等增量结论。
+- 内存基准更新（v0.3.3af，postgres-backend + 容器实测）：rayrag 容器
+  **552 MiB cgroup / 228 MB VmRSS / 0.01% CPU**（稳态无泄漏，20s 采样不变）；
+  postgres 79 MiB。旧基准 65.25 MiB 是 JSON 本地存储时代；现含 Postgres 连接池、
+  zvec 客户端与 60 提供商工厂目录常驻。仍约为 RAGFlow（16.6 GiB）的 1/60。
 
 ## 2026-08-12 v0.3.3ae：Memory 持久任务、LLM 抽取与消息任务 UI
 
