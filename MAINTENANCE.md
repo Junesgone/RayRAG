@@ -1,3 +1,660 @@
+## 2026-08-12 v0.3.3ae：Memory 持久任务、LLM 抽取与消息任务 UI
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批沿
+  `api/db/joint_services/memory_message_service.py`（458 行、20,272 bytes、blob
+  `2e773bb06ca0454a`）、`api/apps/services/memory_api_service.py`（389 行、16,655 bytes、
+  blob `a12eb1594675678c`）、`rag/svr/task_executor.py`（1,947 行、88,355 bytes、blob
+  `2e85ef7e82b1c8d1`）和 Memory message React hook/interface/table 复核正式 RAW-first
+  queue/worker、digest 回绑、进度和按钮合同。
+- `POST /api/v1/messages` 现在先解析可见 Memory、调用其 embedding、同步保存 RAW 对话，
+  再发布持久 `task_type=memory`。Task 增加向后兼容 `digest` 与私有 conversation payload；
+  公开 `/tasks`、operation log 与 message task 都通过显式 view 投影，绝不返回 payload、
+  worker id、lease token 或 lease expiry。document dedupe/cancel 限定
+  `task_type=document_parse`，同一 Memory 的连续对话永不按 `doc_id` 错误去重。
+- task/message 是两个原子 snapshot，不能假装一个数据库事务。本批增加 staging write-ahead
+  协议：先持久不可 claim 的 task，再在同一 Memory coordinator 内保存 RAW 并 publish；
+  RAW 失败会 discard staging，publish 持久化失败则保留 RAW+staging，启动/周期 reconciler
+  只在 RAW 与 Memory 均存在时恢复为 pending，否则清理孤儿。Memory 删除/清空先取消相关
+  worker，并与 worker 最终提交共用 coordinator。私有 payload 目前仍以明文存在内部 task
+  snapshot；HTTP 已隔离，但 at-rest 加密需要后续独立密钥管理批次。
+- dispatcher 在任何文档 metadata 查询前按 `task_type` 分流。Memory worker 使用持久 lease、
+  heartbeat、retry/cancel，按固定 0.15/0.35/0.5/0.65/0.85/0.95/1 节点追加日志；选择
+  tenant Chat，找不到时兼容 image2text，`default` 使用全局 LLM。`ChatModel` 新增带默认实现的
+  `chat_with_generation`，`LlmClient` 把 Memory temperature 送入现有
+  `chat_completion_with_generation`，fake/其他 provider 实现保持源码兼容。
+- extraction 直接复用上批已按 Python SHA 锁定的 `PromptAssembler`，没有复制第二套 prompt。
+  JSON 语法错误按固定版变为空抽取并成功；合法但顶层/数组/字段结构错误令 worker 失败；
+  unknown 顶层 key 保留为 `message_type`，缺失/空/null `invalid_at` 变 None，ISO-8601 时间
+  规范为本地 wire。抽取内容整批 embedding、一次预算/FIFO mutation 保存为
+  `source_id=RAW id` 子消息；失败不回滚已成功的 RAW，重试若已有任一 source child 则不重复
+  插入。固定 commit 的两个正式调用点都没有传存储的 `system_prompt/user_prompt`，Rust
+  有意复现此缺陷，而不是把可编辑字段虚报为已生效。
+- message GET 按 `(task_type=memory,doc_id,digest)` 取同 source 最新 task，仅挂 RAW 父行；
+  failed/cancelled 公开为 `progress=-1`，无任务使用 `null`，避免固定空对象在 JS 中误显示红点。
+  UI 任务点未 hover 也始终可见，独立 32x32 点击区和 4px 圆点；Done/Running/Failed 为
+  绿/黄/红，View/Forget 仍在 row hover/focus 出现，缺失/非法开始时间显示 `—`。task log
+  与动态内容继续用 `textContent`/text node，恶意 HTML 不形成 DOM sink。
+- 定向回归覆盖 6 条 extraction、25 条 TaskQueue、6 条 Memory server、4 条 Memory web，
+  包括 legacy task 反序列化、staging 重启、document/memory 隔离、敏感投影、最新 digest、
+  RAW-only dispatcher、semantic 子行、结构失败保留 RAW 和 reconciler。默认和
+  `postgres-backend,zvec-backend` 的 all-target locked check 均通过；默认单线程全量为
+  **1,216 passed / 0 failed / 27 ignored**（lib 1,214 + coverage bin 2），双特性为
+  **1,223 passed / 0 failed / 27 ignored**（lib 1,221 + coverage bin 2）。双特性中的
+  PostgreSQL snapshot 与 zvec native collection 测试通过；本批没有设置
+  `RAYRAG_POSTGRES_TEST_URL`、也没有新启 PostgreSQL 18.4 容器，不能把 feature gate
+  冒充数据库实机 smoke。coverage 固定 commit/4,441 files/unmapped=0、Compose config、
+  全仓 `cargo fmt --all -- --check`、本批五个 Rust 文件定向 rustfmt 与 `git diff --check`
+  通过。严格双特性 all-target Clippy 回到全仓既有 **369** 个 error header 基线，本批新增的
+  async lock 命中已清零。
+- FnOS Chrome 149/CDP 16002 对 `/tmp/rayrag-v033ae-browser-K3lIDo` 隔离 RayRAG 完成真实
+  登录和 Memory 消息页点击。使用本机 loopback fake OpenAI-compatible chat/embed 生成
+  semantic child；浏览器实测两个任务点均常驻、点击区 32x32、绿色 Done、row action opacity
+  由 0→1、日志 modal 完整显示七段进度、父行展开后出现 Semantic 子行，page error、业务
+  4xx/5xx、dialog 均为 0。截图 `/tmp/rayrag-v033ae-memory-task.png`（1280x900，SHA-256
+  `0961a2b32f144bb30da1dfcc3a4459a5c3d1783f884d09043b611c0f2cd0046c`）。该 smoke 验证的是
+  本批 RayRAG UI/worker，不冒充固定上游 live 服务；临时服务和隔离数据已在门禁后清理。
+- coverage 将三个 Memory API/service 和三个 message UI 条目的已实现边界更新；同时把此前
+  仅凭文档 executor 就宽泛声称 **full** 的 `rag/svr/task_executor.py` 纠正为 **partial**：
+  Memory/document 分流已生产接线，但固定 executor 的完整 Redis consumer、多 task type、
+  heartbeat/reporting 生态尚未逐项替代。
+
+## 2026-08-12 v0.3.3ad：Memory PromptAssembler 与 LLM JSON 边界
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批逐函数复核
+  `memory/utils/prompt_util.py`（190 行、7,421 bytes、blob `422f45cd48eea264`）、
+  `memory/utils/msg_util.py`（37 行、1,425 bytes、blob `0f4e90e8ca0275a0`），并沿
+  `memory_service.py:create_memory`、`memory_api_service.py:update_memory` 与正式
+  message worker 调用链核对默认 prompt 的持久化和刷新时机。
+- `src/memory.rs` 新增纯 Rust `PromptAssembler`：精确保留 system base、semantic/
+  episodic/procedural instruction、required JSON schema、examples、user conversation
+  template、`ISO 8601`/最多 5 项默认值，并过滤 RAW、未知值和重复类型。固定 Python 使用
+  `set`，混合类型块会随 `PYTHONHASHSEED` 漂移；Rust 有意稳定为 semantic、episodic、
+  procedural，同时用固定 Python 输出的字符数和 SHA-256 锁定 RAW 及三个单类型全文：
+  `0353e9f4...ed8f70`、`d941d0ad...bfe6d59`、`d518bb26...3780ecb`、
+  `8adfd8ba...363eaa`，user prompt 为 `2b71b613...64a6bd`。
+- JSON helper 复现固定版的实际行为而非其过度宽泛 docstring：只 trim 全文、剥精确小写
+  ` ```json ` 起始 fence 与尾 ` ``` `，语法失败静默回退 `{}`，不从 prose 中搜花括号，
+  但合法 array 等非 object JSON 仍原样返回。回归覆盖纯 JSON、fenced JSON、大写 fence、
+  prose、非法语法和合法 array。
+- 新建 Memory 会把按类型生成的固定 system prompt 持久化，不调用或探测 LLM。更新类型时
+  仅在旧 prompt 精确等于旧类型默认、请求没有显式提交 `system_prompt` 且类型确有变化时
+  生成新默认；自定义 prompt 原样保留，显式空 prompt 也不会被悄悄覆盖。旧 snapshot 的空
+  prompt 不做猜测性迁移，因为它可能是用户通过 API 明确保存的值。
+- coverage 保留 `prompt_util.py`/`msg_util.py` 的 **full**，但纠正原来错误的
+  “highlight + aggregation”映射说明，并把真实 lifecycle 写入两个仍为 **partial** 的
+  Memory service 条目。本批没有虚报完整消息链：固定 `POST /messages` 是 RAW 先落盘、
+  持久 `task_type=memory` 后台抽取；当前 Rust dispatcher 尚未按 task type 分流，若直接入队
+  会被文档 worker 误判失败。因此非 RAW LLM、task digest/progress、失败后 RAW 保留和
+  worker 重启恢复仍留待下一纵向批次。
+- 九条 prompt/JSON 定向测试与七条 Memory store 测试通过。默认与
+  `postgres-backend,zvec-backend` 的 all-target locked check 均通过；默认单线程全量为
+  **1,202 passed / 0 failed / 27 ignored**（lib 1,200 + coverage bin 2），双特性为
+  **1,209 passed / 0 failed / 27 ignored**（lib 1,207 + coverage bin 2），其中
+  PostgreSQL snapshot 与 zvec native collection 回归通过。本批没有设置
+  `RAYRAG_POSTGRES_TEST_URL`、也没有新启 PostgreSQL 18.4 容器，不能把 feature gate
+  冒充数据库实机 smoke。coverage 固定 commit/4,441 files/unmapped=0、Compose config、
+  定向 rustfmt 与 `git diff --check` 通过。严格双特性 all-target Clippy 仍由全仓既有
+  **369** 个 error header 阻断；相关文件命中均位于本批前的 Memory tokenizer/chat 代码，
+  新 PromptAssembler/config lifecycle 无命中。全仓 fmt 仍首先受既有
+  `src/advanced_rag.rs:543` 等累计格式差异阻断。本批不改 UI，故不重复浏览器 smoke；
+  上批已经过 FnOS Chrome 149 的 Memory 创建/配置页面验证，但不把它当作本批 prompt
+  文本的 live 证据。
+
+## 2026-08-12 v0.3.3ac：Memory Owner、模型 selector 与固定配置合同
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批逐字段复核
+  `memory_service.py`、`memory_api_service.py`、`memory_utils.py`、`models_api.py`、
+  `models_api_service.py`、`model-tree-select.tsx`、Memory create/setting form 与 Owner filter。
+  `tenant_id` 是 Owner id，`owner_name` 来自用户 nickname；模型选择 wire 是从右解析的
+  `model@instance@provider`，模型名自身允许含 `@`；embedding 与 chat/image2text 选项必须按
+  capability 分流。
+- Memory list/config/create/update 响应新增实时 `owner_name`，列表页新增 Owner 多选、计数、
+  clear/apply，并发送逗号分隔 `owner_ids`。修复空 `tenant_id` 抢占 `owner_ids` 的查询优先级
+  缺口。Owner 仍从当前用户可见集合构建，未授权值被可见性过滤自然求交；Rust 保留
+  accepted-membership 与 owner-only config/delete 的安全硬化，不冒充固定版团队成员可写。
+- `/api/v1/models` 从原来错误返回 OpenAI `rayrag-v1` 改为受 tenant membership 约束的
+  enabled provider/instance/model 目录，返回 secret-free capability、instance metadata 与
+  fixed selector；新增 `/api/v1/models/default` 返回已显式配置的 Chat default。OpenAI
+  protocol 模型目录迁到兼容别名 `/api/v1/openai/models`，`/api/v1/llm/models` 同步过滤
+  disabled provider 并补 selector。Memory 创建/设置页改从固定目录构造 provider/instance
+  optgroup，embedding 仅接 embedding，LLM 接 chat/image2text，彻底移除不可解析的
+  `provider_id:model` wire。embedding 等非 Chat 默认的持久化/修改 API 仍保持 **partial**。
+- 新 Memory 固定使用 `permissions=me`、5 MiB capacity、FIFO 与 temperature 0.5；旧
+  `private` snapshot 启动时原子迁移为 `me`。容量校验统一复用 10 MiB 常量并拒绝 0，遗忘
+  策略只接受 FIFO。embedding/type 的后端与 UI 冻结条件改为实际消息内容存在，不再把
+  非零容量预算误判为已有内容；LLM 按固定渲染行为保持可编辑，并接受 chat 或
+  image2text capability。上游创建时的系统提示词拼装、旧异常容量/策略 snapshot 迁移、
+  source-message task digest 与跨 Memory/config store 删除事务仍明确未完成。
+- coverage 纠正四条既有过度声明：`models_api.py`、`models_api_service.py`、
+  `memory_service.py`、`memory_utils.py` 均降为 **partial** 并映射到真实 Rust 模块；
+  `model-tree-select.tsx` 从泛化 reference 改为本批已实现切片的 **partial**；
+  `memory/constant.tsx` 注释纠正为三个 API action key，不再虚构路由常量语义。
+- 定向门禁覆盖 6 个 Memory store 合同、含 `@` 模型名的右锚 selector、Owner/default/
+  secret-free model catalog/OpenAI alias 的真实 HTTP 生命周期，以及 Memory list/setting 两个
+  safe-DOM shell。默认与 `postgres-backend,zvec-backend` 的 all-target locked check 均通过；
+  默认单线程全量为 **1,197 passed / 0 failed / 27 ignored**（lib 1,195 + coverage bin 2），
+  双特性为 **1,204 passed / 0 failed / 27 ignored**（lib 1,202 + coverage bin 2），其中
+  PostgreSQL 18 snapshot 与 zvec native collection 测试通过。本批没有另启 PostgreSQL 18.4
+  容器，不能把 feature 测试写成数据库实机 smoke。coverage 对固定 checkout 的 4,441 个
+  Git 文件/commit/blob/bytes/lines 校验通过，`unmapped=0`；当前摘要为 aligned 126、full
+  540、partial 34、replaced 101、N/A 61、reference 3,579。Compose config 与
+  `git diff --check` 通过；本批 Rust 文件定向 rustfmt 通过。全仓 `cargo fmt --all -- --check`
+  仍首先被既有 `src/advanced_rag.rs:543` 等累计未格式化代码阻断；严格双特性 all-target
+  Clippy 在修正本批三个简单命中后仍由全仓既有 **354** 项告警阻断，未借机重排用户的
+  大范围未提交工作树。
+- FnOS Chrome 149/CDP 16002 对 `/tmp` 隔离数据上的本批 RayRAG 完成真实登录、创建
+  Memory、按 capability 选择 embedding/chat 模型、Owner 筛选、列表进入消息/配置页并保存；
+  实测 selector、5 MiB、`me`、FIFO、0.5、零消息时模型可编辑，以及 secret-free/default/
+  OpenAI alias 响应，JS exception/dialog/业务失败均为 0，唯一 404 是 `/favicon.ico`。截图：
+  `/tmp/rayrag-v033ac-memory-owner-model-list.png`（1280x900，SHA-256
+  `f0c9fcdbea8b05aa365de8e6de50fcfa8e777bf21f1eeb1a51a9e83fd2f27db9`）与
+  `/tmp/rayrag-v033ac-memory-setting.png`（1265x1015，SHA-256
+  `6eba8473a97064a3313db7058817eac097ee9d9dfc2e62740fcff71a9cf3d695`）。固定上游服务当时
+  未运行（无对应标签页/容器，9380/9390 拒绝连接），所以只做固定源码审计，不冒充上游
+  live click-through；临时 RayRAG 服务、标签页与数据已清理，截图保留。
+
+## 2026-08-12 v0.3.3ab：Memory 列表、消息详情与配置详情生产路由
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批继续逐文件复核固定 React：
+  `web/src/pages/memories/index.tsx`（164 行、5,279 bytes、blob
+  `d37c5dadf9efccf3`）、`memory-message/hook.ts`（197 行、6,002 bytes、blob
+  `899439c679192252`）、`memory-message/message-table.tsx`（479 行、14,909 bytes、blob
+  `2ee6e80b856db347`）、`memory-setting/index.tsx`（113 行、4,127 bytes、blob
+  `e290574a8573faba`）、三份 setting form 与 sidebar。固定 Git blob 而非 checkout
+  工作目录继续作为 UI 语义证据。
+- `/memories` 改接不预嵌 tenant/conversation 数据的生产 Rust shell；运行时通过鉴权 API
+  加载卡片，并提供搜索、类型/存储筛选、服务端分页、创建、名称编辑、More 菜单、删除
+  确认、空态和 canonical 详情导航。动态 Memory 名称/描述全部经 `textContent` 进入 DOM，
+  不再由旧页面的 `innerHTML` 拼接；旧 handler 未再注册为线上路由。
+- 新注册 `/memory/memory-message/:id`：共享 sidebar 显示头像、名称、描述、创建日期与
+  Messages/Configuration active state；消息页具备 debounced 会话搜索、重复 Agent 参数、
+  abortable 请求、raw/extract 展开、受控启用开关及失败回滚、遗忘确认、内容/embedding
+  查看与复制、任务日志入口、空态和 10/20/50/100 服务端分页。API 响应补入
+  `agent_name` 与 `content_embed`；由于 Rust task queue 还没有固定 source-message digest，
+  `task` 明确返回 null，不把无关任务错误绑定到消息行。
+- 新注册 `/memory/memory-setting/:id`：共享 sidebar 下提供名称、图片头像、描述、embedding、
+  LLM、四类 Memory（raw 必选）、字节容量，以及折叠高级设置中的 private/team 权限、
+  Table、FIFO、0..1 温度和 system/user prompts；支持 reset、单次 PUT save、范围校验和错误
+  状态。Owner 筛选、provider capability 精确选项、固定头像上传服务协议、精确 content
+  lock 规则与逐像素组件仍保持 **partial**。
+- 路径参数进入内联脚本前使用 script-safe JSON 编码，显式转义 `<`、`>`、`&` 与
+  U+2028/U+2029；恶意 `</script>` Memory ID 回归同时覆盖消息页和配置页。三份新 shell
+  的业务 DOM 均不使用 `innerHTML`。
+- 浏览器环境只读核验 `/vol1/@appdata/fygo-browser/run/runtime-ports.env`：KASM 16000、RFB
+  16001、CDP 16002；CDP `/json/version` 为 Chrome 149.0.7827.155 / protocol 1.3，但标签页
+  只有 New Tab，9380/9390 均拒绝连接，也没有 ragflow/rayrag 容器。因此固定上游 UI 无法
+  做 live click-through，不能冒充上游实机。随后用 `/tmp` 隔离数据启动本批 RayRAG，CDP
+  实际完成登录、创建 Memory、列表卡片进入消息页、消息空态/8 列表头、sidebar 进入配置页、
+  基础字段与展开高级设置检查；page error 为 0，业务页面/API 响应无 4xx/5xx。截图为
+  `/tmp/rayrag-v033ab-memory-list.png`（1280x632，SHA-256 `e40a0f06cf92c83`）、
+  `memory-message.png`（1265x765，`b04392fc798c3b7c`）和 `memory-setting.png`
+  （1265x1434，`64b0d23c23c93bc9`）；临时服务与隔离数据目录已停止并删除。
+- coverage 相关 21 个生产 UI 文件继续保持 **partial**，仅把 audit note 更新为已经可达的
+  live Rust 行为和剩余差距；库存仍为 aligned 128、full 542、partial 29、replaced 101、
+  N/A 61、reference 3,580、unmapped 0，没有因页面可达就冒充逐组件 full/aligned。
+- 七条新增/扩展定向回归、默认与 `postgres-backend,zvec-backend` 的
+  `cargo check --all-targets --locked`、coverage 固定 commit/4,441 files/unmapped=0、
+  `docker compose --env-file .env.example config --quiet`、三份改动 Rust 文件的定向
+  rustfmt 和 `git diff --check` 均通过。默认单线程全量为 **1,195 passed / 0 failed /
+  27 ignored**（lib 1,193 + coverage bin 2），双特性为 **1,202 passed / 0 failed /
+  27 ignored**（lib 1,200 + coverage bin 2）；本批未新启 PostgreSQL 18.4 容器，不把
+  feature gate 冒充实机 smoke。`cargo fmt --all -- --check` 仍首先失败于既有
+  `src/advanced_rag.rs:543`；严格双特性 all-target Clippy 仍由全仓既有 **371** 个 error
+  header 阻断，相关三文件的 14 个 path hit 均在历史代码行，新 Memory 代码/测试行无命中。
+
+## 2026-08-12 v0.3.3aa：Memory 消息隔离、原子 FIFO 与查询参数兼容
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批逐行审计
+  `api/apps/restful_apis/memory_api.py`（311 行、12,777 bytes、blob
+  `763befeb3d572285add2ff11364bba4b546dd86e`）与 `memory/services/messages.py`
+  （300 行、12,043 bytes、blob `8863f5a2f5974926c07cdbe0e7518134f14b68fe`），固定 Git tree
+  而非 checkout 工作目录继续作为证据源。
+- Memory GET 路由改用 raw query multi-map，精确保留 Quart `args.getlist` 语义：重复的
+  `agent_id`/`memory_id` 保持多个值，仅在恰好一个值时解析逗号分隔；`page_size`、
+  `limit`、`top_n` 统一执行固定公开 API 的 100 条上限并返回兼容错误文本。新增 unit 与
+  HTTP 回归覆盖重复参数、逗号参数、边界 100 和拒绝 101。
+- 修复真实跨 Memory 数据隔离缺口：物理/upsert 身份本来是
+  `(memory_id,message_id)`，删除、条件删除和 FIFO 驱逐现在也使用同一复合身份；两个
+  Memory 复用相同整数 `message_id` 时不再越界删除。`save_messages_with_budget` 将预算
+  计算、forgotten-first/oldest 选择、scoped eviction、upsert、序号提交和 snapshot
+  persistence 合并到同一个写锁 mutation；closure 或 persistence 失败都会恢复 mutation
+  前快照。回归覆盖跨 Memory 重号、预算拒绝和故障注入下的整批回滚。
+- `message_index_name` 在调用时动态读取 `ES_INDEX_PREFIX`，仅 trim 前缀并生成固定
+  `memory_{prefix}_{uid}` / `memory_{uid}` 名称。但 JSON/可选 PostgreSQL snapshot 和
+  zvec-rust replacement 尚未用该名称创建原生 engine resource；native index
+  has/create/delete、missing-token repair、非 RAW LLM extraction 与 task/cache 生命周期
+  仍明确保持 **partial**。
+- 同批 UI 审计确认，生产 Rust server 仅注册 `/memories` SSR 列表/创建/编辑/删除；固定
+  React 的 `/memory/memory-message/:id`、`/memory/memory-setting/:id`、详情 sidebar、
+  消息表筛选/分页/悬浮操作/tooltip 和完整配置表单均未接线，`web/static` 也不是这些被
+  SSR 路由遮蔽的页面已可达的证据。因此 coverage 将相关 21 个生产 UI 文件从泛化
+  `reference` 纠正为 **partial**，不冒充 UI 逐像素完成。
+- coverage 两条后端目标文件保持 **partial** 并更新已落地/待办边界；`--write` 后
+  `--check` 通过固定 commit、4,441 files、unmapped=0。库存实算为 aligned
+  128/45,967 行、full 542/224,202 行、partial 29/43,482 行、replaced 101/38,058 行、
+  N/A 61/10,262 行、reference 3,580/905,547 行、unmapped 0。
+- 默认与 `postgres-backend,zvec-backend` 的 `cargo check --all-targets --locked` 均通过；
+  默认单线程全量为 **1,190 passed / 0 failed / 27 ignored**（lib 1,188 + coverage bin
+  2），双特性单线程全量为 **1,197 passed / 0 failed / 27 ignored**（lib 1,195 +
+  coverage bin 2）。本批环境未设置 `RAYRAG_POSTGRES_TEST_URL`、未新启 PostgreSQL 18.4
+  容器，不把 feature-gated snapshot 测试冒充新的 PG18 实机 smoke。
+- 六条新增 Memory 定向回归、定向 rustfmt、coverage bin 2 tests、
+  `docker compose --env-file .env.example config --quiet` 与 `git diff --check` 均通过。
+  `cargo fmt --all -- --check` 仍首先失败于既有 `src/advanced_rag.rs:543`；严格双特性
+  all-target Clippy 仍由全仓既有 **371** 个 error header 阻断，相关三文件虽有 13 个
+  历史 path hit，但本批 Memory 代码/测试行无命中，未把历史格式/lint 债务伪报为通过。
+
+## 2026-08-11 v0.3.3z：ES/OpenSearch chunk mapping 精确替代与提交前类型门禁
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。逐字节核验
+  `conf/mapping.json`：blob `495f7c7763cfbfd6ad1847df63005d8b86be339a`、SHA-256
+  `c6991ef11034289e79d9b7b8dabb37f650b041b7e215e17357d4f167660f7b82`、
+  4,453 bytes、212 个显示行；`conf/os_mapping.json`：blob
+  `47b7c24b0f53a6e9cea08b7b10d2bf8027cad6bb`、SHA-256
+  `e06d7f2d9e2d39d70dc791a88118d328743b5bbd52adb1fd9deb4e58e730f97d`、
+  5,766 bytes、268 个显示行。两份文件末字节均为 `}`、无末尾 LF。
+- 审计固定 Python `common/doc_store/es_conn_base.py`、`rag/utils/opensearch_conn.py`
+  与 Go `internal/engine/elasticsearch/client.go` 的真实加载链：Python ES 每次建索引把
+  `settings/mappings` 原样提交，OpenSearch 把完整 body 交给 indices create；Go 启动时把
+  `mapping.json` 拆成 composable index template。OpenSearch 的 hybrid normalization
+  pipeline 是连接器另建的运行服务，不属于 mapping JSON 自身。
+- 新增纯 Rust `src/store/search_mapping.rs` 的 executable schema builder，并在
+  `src/settings.rs` 拆开固定 ES、固定 OpenSearch 与 RayRAG replacement 三层规则：精确
+  保留 shards=2、replicas=0、refresh=1000ms、scripted similarity 全源码及不同嵌套层级、
+  字符串 `"true"`/`"false"` 与 JSON bool 的原始区别、`date_detection="true"`、
+  19/24 个有序 dynamic templates、ES/OpenSearch 不同 keyword regex、4/9 个原生
+  dense/knn vector 维度、cosine/cosinesimil 属性和显式 `lat_lon` geo_point。Skill 的
+  256/2560/3072 维不再污染这两份 chunk mapping classifier；OpenSearch 裸 `id` 保持
+  fixed source 的动态 text 方言。
+- `SearchEngine::from_file` 在恢复现有索引时、`persist_online_index` 在 zvec mirror 与
+  原子 JSON/可选 PostgreSQL snapshot 写入前，都会把 metadata 同时投影到两份 fixed
+  mapping 的 integer/unsigned/float/keyword/object/nested/rank/vector/geo 类型并拒绝非法
+  值。RayRAG 不创建 native ES/OpenSearch；固定文件未声明的 384 等正维度不会伪装成
+  native vector field，而是继续由每 KB 隔离的 zvec collection 和 JSON source-of-truth
+  承载。native whitespace analyzer、scripted-IDF、动态类型推断与 OpenSearch pipeline
+  属明确的服务方言，不把它们冒充为本 mapping 文件已执行。
+- 五条 mapping 回归覆盖完整 settings/template 差异、原生维度隔离、metadata typed
+  projection、非法值失败和 384 维 replacement；设置
+  `RAGFLOW_SOURCE_DIR=/tmp/ragflow-v0.26.4` 的结构等价门禁把两个 Rust builder 结果与固定
+  文件解析后的完整 JSON `Value` 逐字段比较，均通过。
+- coverage 将 `conf/mapping.json` 与 `conf/os_mapping.json` 从 partial 升为
+  **replaced**，并改为真实 Rust 消费链。Git 门禁重算库存为 aligned 128/45,967 行、
+  full 542/224,202 行、partial 8/41,205 行、replaced 101/38,058 行、N/A 61/10,262 行、
+  reference 3,601/907,824 行、unmapped 0。
+- 默认与 `postgres-backend,zvec-backend` 的 `cargo check --locked` 均通过；默认全量为
+  **1,184 passed / 0 failed / 27 ignored**（lib 1,182 + coverage bin 2），双特性单线程
+  全量为 **1,191 passed / 0 failed / 27 ignored**（lib 1,189 + coverage bin 2），其中
+  PostgreSQL snapshot failure/restore 与 native zvec create/upsert/query/reopen、online
+  isolation/reconcile 均回归通过。本批未设置 `RAYRAG_POSTGRES_TEST_URL`、未新启
+  PostgreSQL 18.4 容器，不把 feature-gated 测试冒充新的 PG18 实机 smoke。
+- coverage `--write` 后 `--check`（固定 commit、4,441 files、unmapped=0）、
+  `docker compose --env-file .env.example config --quiet`、`git diff --check`、定向
+  rustfmt 均通过。`cargo fmt --all -- --check` 仍首先失败于既有
+  `src/advanced_rag.rs:543` 并列出全仓历史格式差异；严格双特性 all-target Clippy 仍由
+  全仓既有 **371** 个 error header 阻断，本批 `src/store/search_mapping.rs` path hit 为 0，
+  未把历史格式/lint 债务伪报为本批失败或全仓通过。
+
+## 2026-08-11 v0.3.3y：固定 PEM 密码传输契约与部署密钥替代
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。逐字节核验
+  `conf/private.pem`：blob `ff333058d0d8087fadb09295c369a59f1d46a166`、SHA-256
+  `41cf8fb7e403f76f884e516392e12c2c8cc9c7b45d3ff1dc70359ee320b16ee5`、
+  1,743 bytes、30 行；`conf/public.pem`：blob
+  `3fbcfe189593c174d9893721839dcffadf7bcce8`、SHA-256
+  `6745cb2fb7215142aca36a2b0b7d4794a7a21894b991263c715fa26367f11e8d`、
+  451 bytes、9 行。两者是 RSAES-PKCS1-v1_5 **密码传输**密钥，不是 JWT signing key；
+  已删除原 `SIGNING_KEYS_POLICY` 中不存在的 `RAYRAG_JWT_*` 说法。
+- 完整审计 `api/utils/crypt.py`（66 行、blob `53afcbec0dbc7194...`）以及固定
+  Python user API、React `rsaPsw`、Playwright helper、Go `internal/common/password.go`
+  和 CLI callers：客户端先 base64 UTF-8 密码，再 PKCS#1 v1.5 加密并外层 base64；
+  Python `decrypt` 返回内层 base64，`decrypt2` 另有 127-byte 前导零修复；Go 解密失败时
+  明确回退原明文。Web 和 Go CLI 都内嵌同一公钥，固定私钥只以已知 `Welcome` 口令保护，
+  因此复制这对密钥不会增加真实安全性。
+- 新增纯 Rust `src/password_transport.rs` 与 `rsa` 0.9 依赖：
+  `RAYRAG_PASSWORD_PRIVATE_KEY_FILE` 未设置/为空时关闭；设置后从 operator-mounted secret
+  读取未加密 PKCS#1/PKCS#8 PEM，启动即校验 RSA key 且拒绝小于 2048 bit，派生 SPKI
+  public key。解密严格接受 `base64(RSA(base64(UTF-8)))`，长度/解密失败按固定 Go 方言
+  回退明文；有效 padding 后若内层 base64/UTF-8 非法则明确报错。私钥操作使用随机
+  blinding，固定 blob/SHA/bytes 只作为不含 key material 的审计常量。
+- `UserStore` 在注册、登录、自助改密、管理员创建/重置用户的统一边界解密，逻辑密码再走
+  现有随机盐 Argon2id；不会把 RSA 内层 base64 当作新的存储格式。新增无需认证的
+  `GET /api/v1/system/password-public-key`，返回 `enabled/algorithm/encoding/public_key`，
+  未配置时安全返回 `enabled=false/public_key=null`。README、API Docs、`.env.example` 与
+  Compose 均记录 secret mount 和 TLS 边界；默认 Compose 的 HTTP 端口只适用于本机/受信
+  网络，未启 RSA wrapper 的生产认证必须由反向代理终止 HTTPS。
+- coverage 将两条 PEM 从 partial 升为 **replaced**；同时纠正历史过度声明，把
+  `api/utils/crypt.py` 从 full 降为 **partial**：服务端常用 wire 已接线，但固定
+  key/passphrase、`decrypt2` 的 127-byte legacy repair 和生产客户端 encrypt helper
+  没有冒充完成。Git 门禁重算库存为 aligned 128/45,967 行、full 542/224,202 行、
+  partial 10/41,685 行、replaced 99/37,578 行、N/A 61/10,262 行、reference
+  3,601/907,824 行、unmapped 0。
+- 默认与 `postgres-backend,zvec-backend` 的 `cargo check --locked` 均通过；默认全量为
+  **1,179 passed / 0 failed / 27 ignored**（lib 1,177 + coverage bin 2），双特性单线程
+  全量为 **1,186 passed / 0 failed / 27 ignored**（lib 1,184 + coverage bin 2），其中
+  zvec native create/upsert/query/reopen 与 online isolation/reconcile 回归通过。最终随机
+  blinding 与 public route 改动后，RSA 两条定向测试、加密注册/登录/改密集成测试和公开
+  route 鉴权测试分别复跑通过。本批没有设置 `RAYRAG_POSTGRES_TEST_URL`、也没有新启
+  PostgreSQL 18.4 容器，不把 feature-gated snapshot 测试冒充新的 PG18 实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、coverage `--check`（固定 commit、
+  4,441 文件、unmapped=0）、`git diff --check` 和新模块 `rustfmt --check` 通过。
+  `cargo fmt --all -- --check` 仍首先失败于既有 `src/advanced_rag.rs:543`；严格双特性
+  all-target Clippy 仍有既有 **371** 个 error header，
+  `src/password_transport.rs` path hit 为 0，均未伪报全仓通过。
+
+## 2026-08-11 v0.3.3x：Infinity chunk mapping 精确 schema 与持久化 codec
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐行核验
+  `conf/infinity_mapping.json` 完整 blob
+  `dfc07d2e44814c392929301ae71e3972bca14748`、SHA-256
+  `6e7e48bf1554f77eaaeb8de9e77d1ba6b2bab36dc2ae563e0fa93aa5643ca95d`、
+  5,413 bytes、76 个显示行、末尾 LF。实际基础列是 **73**（59 varchar、11 integer、
+  3 float），不是此前 Rust 只声明前 41 列时推测的 74；`page_num_int`、`top_int`、
+  `position_int` 虽有 `_int` 后缀，固定物理类型仍是 varchar。
+- `src/settings.rs` 现在按 JSON 顺序固定全部 73 列的类型、精确默认值（包括
+  `available_int=1`）、single/multiple analyzer 形状、5 组 comment aliases 与两个
+  low-cardinality secondary；测试实算 45 个 fulltext、2 个 secondary、5 组 aliases。
+  同时固定动态 `q_{dimension}_vec`、cosine HNSW M=16/ef=50/LVQ、table parser
+  `chunk_data`，并明确记录 Python 固定 `q_vec_idx` 与 Go `q_{dimension}_vec_idx` 的上游
+  方言差异，未把二者伪装成同一行为。
+- 新增纯 Rust `store/infinity_chunk.rs` canonical codec：写入时先物化 schema 默认值，
+  再按固定优先级折叠 doc/title、important、question、content、authors aliases；实现
+  important 空项计数、keyword `###`、question 换行、`*_feas`/`extra`/`chunk_data` JSON、
+  KB 列表首项和 position/page/top 八位十六进制编码，并生成唯一合法的动态向量列。
+  反向 codec 恢复 logical alias、important 尾部空项、keyword 数组和坐标数组。
+- `ZvecStore::insert` 在任何 JSON 或 zvec 写入前先完成整个 batch 的维度与 typed codec
+  校验；持久层保存非默认 physical 字段和显式 `kb_id/available_int`，搜索结果再解码为
+  logical metadata。回归直接读取落盘 JSON，验证 active 默认、KB、十六进制坐标确已
+  进入物理 snapshot，而 API 回读仍得到数组形状；非法 integer/负坐标在写入前失败。
+- coverage 的 `conf/infinity_mapping.json` 仍保持 **partial**，但映射文件改为真实消费链：
+  `settings.rs`、codec、store/search/persistence 与 chunk/search/server API。RayRAG 当前
+  仍没有 Infinity 的 analyzer/index 选择、通用 filter/sort/aggregation、dense threshold、
+  atan Fusion、SQL comment 重写和同表多向量生命周期；zvec 继续采用每 KB 单一维度并由
+  JSON/PostgreSQL snapshot 持有 canonical metadata，因此不声称 aligned/replaced/full。
+- 默认与 `postgres-backend,zvec-backend` 的 `cargo check --locked` 均通过；默认全量为
+  **1,176 passed / 0 failed / 27 ignored**（lib 1,174 + coverage bin 2），双特性为
+  **1,183 passed / 0 failed / 27 ignored**（lib 1,181 + coverage bin 2）。本批没有设置
+  `RAYRAG_POSTGRES_TEST_URL`、也没有新启 PostgreSQL 18.4 容器，因此不把 feature-gated
+  snapshot 单测冒充新的 PG18 实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、coverage `--check`、
+  `git diff --check` 与 `settings.rs`/`store/mod.rs`/新 codec 的定向 `rustfmt --check`
+  均通过。`cargo fmt --all -- --check` 仍首先失败于既有 `src/advanced_rag.rs:543` 并列出
+  全仓历史格式差异；严格双特性 all-target Clippy 仍被既有 **371** 个 error header
+  阻断，修正本批 6 个 collapsible-if 后 `src/store/infinity_chunk.rs` 命中数为 0，未把
+  旧债务伪报为通过。
+
+## 2026-08-11 v0.3.3w：system settings 持久生命周期与 coverage Git 门禁恢复
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐字节核验
+  `conf/system_settings.json`：完整 Git blob
+  `f546aa1436b0d262679a0567b7a61167bfcd43bb`、SHA-256
+  `2d58065525cbba3e1e796b73be822547dd991dcab90cb71e342750b4867f3402`、
+  1,843 bytes、88 个显示行、无末尾 LF，并固定全部 14 条
+  `(name, source, data_type, raw string value)`。同时审计 Python 启动 seed、admin
+  CLI、Go variables/base64 SHOW、sandbox manager 与设置 UI 调用链；固定树中只有
+  `sandbox.*` 真正消费该文件，`mail.*` 实际仍来自 `service_conf.yaml`，
+  `enable_whitelist`/`default_role` 没有运行期消费者，未虚构接线。
+- 新增纯 Rust `SystemSettingsStore`：严格要求 `system_settings` wrapper，校验名称唯一和
+  声明类型，启动保留 raw string 并只插入缺失 seed，管理员写入时再严格校验值；按名称
+  稳定排序，并以独立原子 JSON snapshot 作为真源；该 store 当前没有接入通用 PostgreSQL
+  snapshot mirror。写入先持久化再替换内存，失败保持旧值；更新后刷新 runtime typed
+  mirror。回归覆盖完整 14 tuple、重开、
+  exact→prefix、非法 integer/bool/json、重复名/错误 wrapper、持久化失败回滚。
+- `/api/v1/admin/variables` 与 `/api/v1/system/variables` 统一到该 store，保留 Python
+  GET JSON body 的 SHOW 和 Go base64 path 方言；公开 row shape 为
+  `data_type/name/setting_type/value`。RayRAG 有意收紧为管理员 ACL，并对
+  password/private_key/passphrase/access_key_secret/api_key/secret/token 递归脱敏；
+  `<redacted>` 回写保留原秘密。旧 process-local `{var_name,var_value}` registry/handler
+  已删除，避免双真源和重复 Axum route。
+- CodeExec 现在按「RayRAG 环境覆盖 > system settings > 默认」解析
+  `sandbox.provider_type` 与 `sandbox.self_managed` 的 endpoint/timeout，兼容
+  固定 JSON 的 lower-case key 和 Go 的 uppercase alias；仅 `local` 与
+  `self_managed` 进入既有运行链，其他 provider 明确报 unsupported；固定 schema 中
+  未被上游 `/run` 实际使用的 max_retries/pool_size 不虚构重试语义。管理页变量卡通过
+  受保护 API 动态加载，不把 sandbox 值 SSR 给匿名页面；秘密值始终保持脱敏。
+- 本批只把 `conf/system_settings.json` 从 partial 升为 **aligned**。RAGFlow 更宽的
+  provider/schema/config/test 专用 API、SSH/Aliyun/E2B runtime 和 React Sandbox
+  Settings 页尚未完成；上游自身 seed/Python lower-case 与 Go/E2B 配置源也有方言断裂，
+  因此不声称 replaced/full。
+- 恢复 `src/bin/ragflow-coverage.rs` 与 Cargo binary：`--check` 直接校验固定 commit、
+  4,441 个 Git path/blob/byte/text-line、唯一 inventory 状态及摘要，`--write` 只在有意
+  改状态后按 Git tree 修复元数据并重算。首次运行抓出历史伪元数据（例如
+  `agent/sandbox/providers/local.py` 曾写成 2,986 行/4,457 bytes/blob `local`，实际为
+  354 行/13,981 bytes/blob `6a9ac516bdba74c7`）并全部回填；最终库存为 aligned
+  128/45,967 行、full 543/224,268 行、partial 11/41,658 行、replaced 97/37,539 行、
+  N/A 61/10,262 行、reference 3,601/907,824 行、unmapped 0。
+- 默认与 `postgres-backend,zvec-backend` 的 `cargo check --locked` 均通过；默认全量为
+  **1,174 passed / 0 failed / 27 ignored**（lib 1,172 + coverage bin 2），双特性为
+  **1,181 passed / 0 failed / 27 ignored**（lib 1,179 + coverage bin 2）。本批未设置
+  `RAYRAG_POSTGRES_TEST_URL`、也未新启 PostgreSQL 18.4 容器，因此不冒充新的 PG18
+  实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、coverage `--check`、
+  `git diff --check` 以及新 `system_settings.rs`/`ragflow-coverage.rs` 定向
+  `rustfmt --check` 通过。`cargo fmt --all -- --check` 仍首先失败于既有
+  `src/advanced_rag.rs:543`；严格双特性 Clippy 仍被既有全仓债务阻断（371 条 error，
+  本批两个新文件无 lint），均未伪报通过。
+
+## 2026-08-11 v0.3.3v：Skill Elasticsearch 映射契约与 Rust/zvec 替代
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐行审计
+  `conf/skill_es_mapping.json`（完整 blob
+  `a9d3cba86991e8986bc32eb8eb3fc1bc82ec1580`，136 行/3016 bytes）以及 Go
+  `CreateChunkStore`/`loadSkillMapping`、`SkillIndexerService`、ES bool/query_string/KNN
+  构造和实际 REST 调用链。loader 的三个查找路径、非等价内置 fallback、已存在
+  index 不修补 mapping、静态七维 mapping 不随传入 dimension 扩展均已记录。
+- `src/settings.rs` 新增独立 `SkillEsFieldSchema`，精确固定 shards=1、replicas=0、
+  refresh=1000ms、`dynamic=false`、完整 `scripted_sim` 源码，以及 22 个显式属性：
+  3 个 stored keyword、4 个 stored 但不索引的 raw text、4 个 whitespace +
+  scripted similarity token text、7 个 indexed cosine dense vector（3072/2560/1536/
+  1024/768/512/256）、2 个 stored keyword 和 2 个 stored long。mapping 构造测试
+  同时断言属性全集、key omission/default 边界和七个维度；通用 suffix 表遗漏的
+  `q_256_vec` 也已补齐。
+- `src/api/skill_index.rs` 新增 Go-compatible ES document projection：ES `_id` 把 `/`
+  改为 `_`，但 `_source.skill_id` 保留原始 wire 值；space 空值归一为 `default`，
+  tags 用 `, ` 拼接，version/status/Unix-ms time 与动态 `q_{dimension}_vec` 对齐。
+  name/tags 始终写 RAG token，description/content token 是否存在受索引时 field config
+  控制（默认 description 开、content 关）。Rust keyword scorer 现在也不再错误地让
+  默认关闭的 content 参与匹配。
+- RayRAG 不部署或冒充 Elasticsearch：真实 Skill 真源仍是 tenant/space 原子 JSON，
+  可选 PostgreSQL 18 镜像完整 snapshot，向量写入隔离的 zvec-rust Skill collection，
+  keyword/vector/hybrid 在 Rust 内完成。ES mapping 中并未声明 HNSW M/ef/量化参数，
+  因此不把 zvec/Infinity 的 M=16、ef=50、LVQ 反写成 ES 契约；ES 的 corpus
+  scripted-IDF/best_fields、所有查询强制 `status=1`、实际 hybrid boost、embedding
+  失败后的 text-only 写入、固定七维之外的 mapping/rebuild 行为均作为明确的
+  service/dialect 差异保留，不借单一 mapping 文件声称完整 Skill service 等价。
+- 本批仅把 `conf/skill_es_mapping.json` 从 partial 升为 **replaced**，宽泛 Go Skill
+  services、filesystem bundle/space/version history、reranker 和跨维度原生 collection
+  重建状态均不抬高。按 4,441 条 File Inventory 逐行实算为 aligned 127/45,879 行、
+  full 543/254,320 行、partial 12/41,746 行、replaced 97/37,539 行、N/A
+  61/10,262 行、reference 3,601/908,046 行、unmapped 0；历史 generator 已移除，
+  本批继续只报告 inventory/summary 可执行自校验，不声称 generator gate。
+- 保持纯 Rust、zvec-rust 0.5.1、PostgreSQL 18.4、Linux/Docker、国内镜像优先和
+  零 MySQL。默认与 `postgres-backend,zvec-backend` 的 `cargo check --locked` 均通过；
+  默认全量测试 **1,163 passed / 0 failed / 27 ignored**。双特性并行首次因既有
+  `runtime_config` 全局测试状态竞态出现 1 条失败（其余 1,169 通过），该用例定向
+  复跑通过，随后用 `--test-threads=1` 完整复核为 **1,170 passed / 0 failed /
+  27 ignored**。本批未设置 `RAYRAG_POSTGRES_TEST_URL`、也未新启 PostgreSQL 18.4
+  容器，因此不冒充新的 PG18 实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、`git diff --check`、
+  `settings.rs`/`skill_index.rs` 定向 `rustfmt --check`、固定 HEAD/blob/136 行/3016
+  bytes 核验，以及 coverage summary 对 4,441 条 inventory 的可执行自校验均通过。
+  `cargo fmt --all -- --check` 仍首先失败于既有 `src/advanced_rag.rs:543` 并列出大量
+  未格式化旧文件；严格双特性 Clippy 仍被既有全仓债务阻断（lib 322、tests 373
+  条 error 记录），本批新增 Skill ES schema/document 代码无定向 lint。历史
+  `ragflow-coverage` binary 已移除，未声称 generator gate 通过。
+
+## 2026-08-11 v0.3.3u：Skill Infinity 映射、索引检索与 zvec Rust 替代
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐行审计
+  `conf/skill_infinity_mapping.json`（完整 blob
+  `4e4766ea8f5bd07b15855c5dea32e53d88399396`），并复核 Go
+  `skill_indexer`/`skill_search`、Infinity connector、handler/router 与 Python
+  文件夹删除调用链。
+- `src/settings.rs` 以 typed Rust schema 固定 11 个有序物理字段及默认值：
+  `skill_id`/`space_id`/`folder_id`/`name`/`tags`/`description`/`content`/
+  `version`/`status`/`create_time`/`update_time`；同时固定四个文本字段的
+  `rag-coarse`/`rag-fine` analyzer、动态 `q_{dimension}_vec`、
+  `q_{dimension}_vec_idx`、HNSW cosine M=16/ef_construction=50/LVQ 契约、
+  `sec_skill_id`/`sec_space_id` 和八个 fulltext index 名称。
+- 新增纯 Rust `SkillIndexStore`：以 tenant/space 分区的原子 JSON 物理快照保存
+  精确字段，可选 PostgreSQL 18 继续镜像完整 snapshot；启用
+  `RAYRAG_VECTOR_BACKEND=zvec` 时，向量同步到独立 `zvec-data/skills` collection
+  tree，避免知识库 online reconcile 把 Skill 集合当作 stale 删除。zvec HNSW
+  同步使用 cosine、M=16、ef_construction=50，JSON 写失败时反向同步并恢复内存状态。
+- 索引写入按上游把 `/` 规范为 `_`、tags 以 `, ` 存储、同 ID/同名覆盖，默认
+  version/status/time 与物理映射一致。搜索实现固定 name/tags/description/content
+  的 10/5/3/1 keyword boost、cosine vector、可配 hybrid 权重、阈值、top-K、
+  分页排序与向量/embedding 失败后的 keyword fallback；回归测试明确固定了一个
+  容易误读的 connector 语义：纯 keyword/空查询不过滤 status，vector/hybrid
+  只看 `status=1`。
+- 新增受认证租户隔离的 `/api/v1/skills/config`、`search`、`index`、`reindex`
+  REST 生命周期，并把 `/skills` 从误用 Agent Canvas component catalog 的安装页
+  改为真实 Skill space 搜索、索引、删除、配置和重建页面；HTTP 与 HTML 接线均有
+  回归测试。
+- 本批只把 `conf/skill_infinity_mapping.json` 从 partial 升为 **replaced**。
+  文件系统 Skill bundle/space/version history、精确 Infinity BM25/atan fusion、
+  reranker、后台全量扫描，以及向量维度变化时的原生 collection 重建仍未完成；
+  `skill_es_mapping.json` 与宽泛 Go Skill services 状态均未抬高。
+- 按 4,441 条 File Inventory 逐行实算为 aligned 127/45,879 行、full
+  543/254,320 行、partial 13/41,882 行、replaced 96/37,403 行、N/A
+  61/10,262 行、reference 3,601/908,046 行、unmapped 0；历史 generator
+  已移除，本批不声称通过 coverage generator gate。
+- 保持纯 Rust、zvec-rust 0.5.1、PostgreSQL 18.4、Linux/Docker、国内镜像优先和
+  零 MySQL。`cargo check --locked` 与双特性 check 均通过；默认全量测试为
+  **1,162 passed / 0 failed / 27 ignored**，双特性为 **1,169 passed / 0 failed /
+  27 ignored**，其中原生 zvec create/upsert/query/reopen 和分区 reconcile 通过。
+  本批未设置 `RAYRAG_POSTGRES_TEST_URL`、也未新启 PostgreSQL 18.4 容器，因此不
+  冒充新的 PG18 实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、`git diff --check`、
+  coverage inventory/summary 自校验以及 `skill_index.rs`/`store/mod.rs` 定向
+  `rustfmt --check` 通过。严格双特性 Clippy 仍被既有全仓债务阻断（lib 321、
+  tests 370 个错误），本批 `skill_index.rs`/`store/mod.rs` 新增 lint 为零；
+  `cargo fmt --all -- --check` 仍首先失败于既有 `src/advanced_rag.rs:543`，没有
+  批量格式化无关代码，也不把两项基线写成通过。
+
+## 2026-08-10 v0.3.3t：message Infinity 映射与消息生命周期 Rust 替代
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐行审计
+  `conf/message_infinity_mapping.json`（blob `17e7307e89f7fa3d`）以及
+  Infinity connector、message service 和 REST 调用链。
+- `src/settings.rs` 以 typed Rust schema 固定 17 个物理列的类型、默认值、
+  `content` 的 `rag-coarse`/`rag-fine` analyzers 与 `content_ltks` comment，并记录
+  动态 `q_{dimension}_vec`、HNSW `q_vec_idx`、Cosine、M=16、
+  ef_construction=50、LVQ 的上游索引契约。
+- `MemoryMessageService` 现在把逻辑消息规范化为复合 `memory_id_message_id` 主键、
+  文本日期及本地时区毫秒 float 镜像、`status_int`、`zone_id` 和动态向量列；旧逻辑
+  JSON 在启动时迁移为规范物理快照。插入按复合键 upsert，更新/删除/预算淘汰均在
+  原子持久化失败时回滚；FIFO 先清 forgotten，再按最早 `valid_at` 清理。
+- production `AppState` 已接入持久化 `memory_messages.json`。新增受 ACL 保护的
+  RAW message 保存、消息列表/recent/hybrid search、状态更新、soft forget、content
+  和级联删除 REST 生命周期；保存按 memory 绑定 embedder 生成向量，检索复用纯 Rust
+  分词及 keyword/vector 加权。search 默认只看 active 且未忘记，recent 忽略 status
+  但隐藏 forgotten，普通 list 保留 forgotten，语义分别测试。
+- 本批没有部署或冒充 Infinity。JSON 是消息真源，可选 PostgreSQL 18 仅镜像完整
+  snapshot；message 全文/向量融合目前在进程内完成。非 RAW LLM 抽取、后台 task/
+  progress/cache、原生引擎 index 生命周期、重复 query 参数和 agent/task 响应 enrichment
+  仍未实现，因此四个宽泛 memory API/service 文件由 aligned/full 诚实降为 partial。
+- 覆盖矩阵将 `conf/message_infinity_mapping.json` 从 partial 升为 **replaced**。
+  按 4,441 条 File Inventory 实算为 aligned 127/45,879 行、full 543/254,320 行、
+  partial 14/41,946 行、replaced 95/37,339 行、N/A 61/10,262 行、reference
+  3,601/908,046 行、unmapped 0；历史 generator 仍不存在，本批不声称通过
+  coverage generator gate。
+- 保持纯 Rust、zvec-rust、PostgreSQL 18.4、Linux/Docker、国内镜像优先和零
+  MySQL；没有修改镜像、compose 或数据库 schema。
+- 复验：`cargo test --locked` 为 1,156 passed / 0 failed / 27 ignored；
+  `cargo test --locked --features postgres-backend,zvec-backend` 为 1,163 passed /
+  0 failed / 27 ignored。双特性门禁覆盖 zvec-rust 原生 collection，但本批未设置
+  `RAYRAG_POSTGRES_TEST_URL`、也未新启 PostgreSQL 18.4 容器，因此不冒充新的 PG18
+  实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、`git diff --check`、
+  当前批次四个主要 Rust 文件的定向 `rustfmt --check` 和 message HTTP 生命周期测试
+  均通过。严格双特性 Clippy 仍被既有全仓债务阻断（lib 321、lib-test 358 个错误），
+  但本批新增 lint 已清零；`cargo fmt --all -- --check` 仍从既有
+  `src/advanced_rag.rs` 开始失败，未批量格式化无关代码，也不把两项基线写成通过。
+
+## 2026-08-10 v0.3.3s：doc_meta ES/Infinity 映射的 Rust 替代契约
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐字节核对
+  `conf/doc_meta_es_mapping.json`（blob `eeab3b985a74b29e`）和
+  `conf/doc_meta_infinity_mapping.json`（blob `471912c6e20c2747`）。
+- `src/settings.rs` 以 typed Rust 常量固定 ES shards=2、replicas=0、
+  refresh=`1000ms`、`_source.enabled=true`、dynamic=`runtime`，并逐字段固定
+  `id`/`kb_id` 的 keyword+store / varchar+空串默认值，以及 dynamic object / JSON
+  `meta_fields` 的 `{}` 默认值。
+- `DocumentMetadataRecord` 的规范序列化字段改为上游 `id`，读取时继续接受旧
+  `doc_id` 快照；`meta_fields` 缺失仍默认空对象，任意动态键可原样持久化。批量更新
+  现在会为无 metadata row 的文档创建非空记录、删除被清空的记录，并保持有
+  `match` 条件时不凭空创建字段；数值 0 等值与上游一样属于已提供的 match。
+- 存储边界纠正为真实实现：`document_metadata.json` 原子快照是主存储，可选
+  PostgreSQL 18 只按 checksum 镜像完整快照；zvec-rust 只保存 chunk vectors，检索
+  前的 metadata 过滤和返回结果 enrichment 在 Rust 进程内独立完成。未部署、也未
+  冒充 ES/Infinity metadata index。
+- 覆盖矩阵将上述两条 mapping 从 partial 升为 **replaced**。按 4,441 条 File
+  Inventory 实算为 aligned 129/46,579 行、full 545/255,078 行、partial
+  11/40,507 行、replaced 94/37,320 行、N/A 61/10,262 行、reference
+  3,601/908,046 行、unmapped 0；历史 generator 仍不存在，本批不声称通过
+  coverage generator gate。
+- 保持纯 Rust、zvec-rust、PostgreSQL 18.4、Linux/Docker、国内镜像优先和零
+  MySQL；本批没有修改镜像、compose 或数据库 schema。
+- 复验：`cargo test --locked` 为 1,151 passed / 0 failed / 27 ignored；
+  `cargo test --locked --features postgres-backend,zvec-backend` 为 1,158 passed /
+  0 failed / 27 ignored。双特性门禁覆盖 zvec-rust 原生 collection，但本批未设置
+  `RAYRAG_POSTGRES_TEST_URL`、也未新启 PostgreSQL 18.4 容器，因此不冒充新的 PG18
+  实机 smoke。
+- `docker compose --env-file .env.example config --quiet`、`git diff --check`、
+  `src/api/document_metadata.rs` 的定向 `rustfmt --check` 均通过。严格双特性 Clippy
+  仍被既有全仓 lint 债务阻断（lib 321、lib-test 360 个错误），`cargo fmt --all
+  -- --check` 也从既有 `src/advanced_rag.rs` 等文件开始失败；本批新增 Clippy 债务已
+  清零，未批量格式化无关代码，也不把这两个门禁写成通过。
+
+## 2026-08-10 v0.3.3r：api/db 固定值与 Canvas 类别端到端对齐
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；逐行审计
+  `api/db/__init__.py` 92 行，并复核 `common/constants.py` 的
+  `PipelineTaskType`。
+- 新增纯 Rust `src/api/db.rs`：补齐 `SerializedType` 1/2 数字协议、
+  `InputType` 四值、`CanvasCategory` 两个 wire 值、七种 `FileType`、七种有效
+  pipeline task、五种 lowercase progress-freeze task 与两个保留文件夹名；
+  `common::PipelineTaskType` 补回固定版 `Artifact`/`Skill`。
+- Agent 持久化和 API 统一写入 `agent_canvas`/`dataflow_canvas`；旧
+  `agent`/`standard`/`ingestion`/`dataflow` 值启动时原子迁移，未知值 fail
+  closed。创建、导入、复制和固定 ingestion template 都保留规范类别；知识库重命名
+  不再误发无关的 `canvas_category`。
+- 覆盖库存将 `api/db/__init__.py` 从 partial 升为 aligned，并按 4441 条
+  File Inventory 实算纠正旧摘要漂移：aligned 129/46,579 行、full
+  545/255,078 行、partial 13/40,541 行、replaced 92/37,286 行、N/A
+  61/10,262 行、reference 3,601/908,046 行、unmapped 0。
+- README 删除已不存在的 `ragflow-coverage` 可执行命令；当前矩阵是固定快照，
+  每批必须先核验上游 commit，再逐行实算摘要。未恢复生成器，因此本批不声称通过
+  coverage generator gate。
+- 保持纯 Rust、zvec-rust、PostgreSQL 18.4、Linux/Docker 和国内镜像优先路线；
+  未引入 MySQL，未改镜像或容器。
+- 复验：`cargo test --locked` 为 1149 passed / 0 failed / 27 ignored；
+  `cargo test --locked --features postgres-backend,zvec-backend` 为 1156 passed /
+  0 failed / 27 ignored，包含 zvec-rust 0.5.1 原生 collection
+  create/upsert/query/reopen；本批未启动新的 PostgreSQL 18.4 容器，故不冒充实机
+  PostgreSQL smoke。`docker compose --env-file .env.example config --quiet`、
+  `git diff --check` 以及新增 `api/db.rs`/template helper 的 `rustfmt --check`
+  通过。
+- 仓库当前严格
+  `cargo clippy --all-targets --locked --features postgres-backend,zvec-backend -- -D warnings`
+  仍被既有全仓 lint 债务阻断（lib 321、lib-test 360 个错误）；
+  `cargo fmt --all -- --check` 也因大量既有未格式化文件失败。本批未批量重排无关
+  文件，且不把这两个门禁写成通过。
+
 ## 2026-08-06 v0.3.3：Provider 目录 20→60 + RAGFlow UI 逐页实测清单
 
 - 从 docker-ragflow-cpu-1（v0.26.2）`/ragflow/conf/models/` 拷出 60 个
@@ -595,7 +1252,8 @@
 ## 2026-08-04 UI 第 39 轮：chat 模型选择器
 
 - `web.rs` chat_detail_page：模型下拉（从 /api/v1/providers 拉 provider:model 复合 selector）→ sendMsg 带 chat_model——对齐 RAGFlow 对话模型切换
-- 注意：/api/v1/models 的 rayrag-v1 不是有效 tenant selector（resolve 会 400）——必须用 providers 源
+- 当时注意：/api/v1/models 的 rayrag-v1 不是有效 tenant selector（resolve 会 400）；
+  此缺口已由 2026-08-12 v0.3.3ac 的 tenant catalog 与固定 selector wire 取代
 - 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 UI 第 38 轮：files 搜索
 
@@ -792,7 +1450,9 @@
 
 - `openai_proxy.rs`：`embeddings` handler——input（string/array）→ tenant_models.resolve(Embedding) → embed → OpenAI 格式响应（object/list + data[{object,index,embedding}] + model + usage）
 - `server.rs`：POST /api/v1/embeddings 路由
-- OpenAI 兼容端点全集：/api/v1/chat/completions + /api/v1/models + /api/v1/embeddings + /api/v1/reranker
+- 当时 OpenAI 兼容端点全集：/api/v1/chat/completions + /api/v1/models +
+  /api/v1/embeddings + /api/v1/reranker；v0.3.3ac 起 OpenAI 模型目录迁至
+  /api/v1/openai/models，/api/v1/models 恢复为 RAGFlow tenant selector catalog
 - 测试基线：**844 passed / 0 failed / 26 ignored**
 ## 2026-08-04 ASR 透传 + 上传格式提示
 
@@ -3844,7 +4504,9 @@ GET  /api/v1/channels                频道列表
 ### OpenAI 代理 / Dify / Langfuse
 ```
 POST /api/v1/chat/completions        OpenAI 兼容
-GET  /api/v1/models                  模型列表
+GET  /api/v1/models                  RAGFlow tenant 模型 selector 目录
+GET  /api/v1/models/default          tenant 显式默认模型
+GET  /api/v1/openai/models           OpenAI protocol 模型列表
 POST /api/v1/dify/retrieval          Dify 协议
 GET  /api/v1/langfuse                Langfuse 配置
 POST /api/v1/langfuse                更新 Langfuse

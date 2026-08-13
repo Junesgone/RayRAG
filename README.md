@@ -4,12 +4,12 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本里程碑：**v0.2.5**（2026-08-05，见 CHANGELOG.md）
-- 测试基线：**1114 passed / 0 failed / 27 ignored**（2026-08-05 复核；
+- 版本里程碑：**v0.3.3ae**（2026-08-12，见 MAINTENANCE.md）
+- 测试基线：**1216 passed / 0 failed / 27 ignored**（2026-08-12 默认特性复核；
   27 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试）
 - 覆盖矩阵（RAGFlow v0.26.4 固定快照，4441 文件，`docs/ragflow-v0.26.4-coverage.md`）：
-  aligned **128** / full **541** / partial **18** / replaced **92** / N/A **61** /
-  reference **3601** / unmapped **0**
+  aligned **126** / full **539** / partial **35** / replaced **101** / N/A **61** /
+  reference **3579** / unmapped **0**
 
 ## 架构
 
@@ -50,18 +50,21 @@ Document (.pdf/.docx/.txt/.md/.html)
 
 完整逐文件清单见 `docs/ragflow-v0.26.4-coverage.md`。该矩阵固定对标 RAGFlow
 `v0.26.4` commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，记录每个文件的
-Git blob、RayRAG 对应实现及 `aligned/partial/replaced/reference/unmapped` 状态。生成器
-直接读取固定提交的 4441 文件 Git tree，不依赖当前 checkout，也不使用硬编码文件总数。重新生成：
+Git blob、RayRAG 对应实现及 `aligned/partial/replaced/reference/unmapped` 状态。当前仓库保留
+固定提交的 4441 文件快照；纯 Rust coverage 门禁会直接读取固定 Git tree，校验 commit、
+路径、blob、字节、文本行数、状态库存和摘要：
 
 ```bash
-cargo run --bin ragflow-coverage -- /path/to/ragflow-v0.26.4
+cargo run --locked --bin ragflow-coverage -- --check /path/to/ragflow-v0.26.4
+# 有意修改状态后，以固定 Git blob 修复元数据并重算摘要：
+cargo run --locked --bin ragflow-coverage -- --write /path/to/ragflow-v0.26.4
 ```
 
 未知路径不会再被兜底伪装成 `reference`：生产运行时目录必须显式映射为
 `aligned/partial/replaced`，测试与 fixture 由独立规则标为 `reference`，其余路径进入
 `unmapped`。当前清单的 `unmapped=0` 因此代表固定树中的每个文件都有显式分类；
-`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。矩阵终态（v0.2.5）：
-aligned 128 / full 541 / partial 18 / replaced 92 / N/A 61 / reference 3601 /
+`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。矩阵当前库存（v0.3.3ae）：
+aligned 126 / full 539 / partial 35 / replaced 101 / N/A 61 / reference 3579 /
 unmapped 0，摘要表与清单逐行一致。
 
 | RAGFlow (Python) | RayRAG (Rust) | 说明 |
@@ -75,8 +78,68 @@ unmapped 0，摘要表与清单逐行一致。
 | `rag/nlp/rag_tokenizer.py` | `chunk/tokenizer.rs` | 分词/计数 |
 | `rag/nlp/__init__.py` (naive_merge) | `chunk/naive.rs` | 分块策略 |
 | `rag/llm/embedding_model.py` | `embed/openai.rs` | 向量化 |
-| `rag/utils/es_conn.py` | `store/mod.rs` | 向量存储（zvec 替代 ES） |
+| `rag/utils/es_conn.py` | `store/search_mapping.rs` / `store/mod.rs` | ES/OpenSearch 精确 mapping 构造与提交前 typed projection；JSON/PostgreSQL/zvec 替代引擎索引 |
 | `rag/app/naive.py` (chunk函数) | `pipeline/mod.rs` | 解析编排 |
+
+## Memory 消息兼容状态
+
+Memory REST 查询现在保留固定 Quart `getlist` 合同：`agent_id`、`memory_id` 可重复传参，
+也兼容仅一个参数时的逗号分隔；`page_size`、`limit`、`top_n` 的公开上限均为 100。
+消息的持久身份是 `(memory_id,message_id)`，删除和 FIFO 驱逐不会再波及另一个 Memory
+中复用相同整数 ID 的消息；FIFO 驱逐、upsert 与快照持久化也在同一次可回滚 mutation
+内完成。`ES_INDEX_PREFIX` 命名 helper 已按固定服务动态读取并只 trim 前缀。
+
+Memory 配置 wire 现在使用固定版 `permissions=me|team`、5 MiB 默认/10 MiB 上限、FIFO 与
+temperature 0.5；embedding/type 只在实际已有消息时冻结，容量预算本身不再造成误锁。
+创建时会按所选类型持久化固定 `PromptAssembler` system prompt；类型变更时，只有旧值仍是
+旧类型默认、请求又没有显式提交 prompt，才自动切换为新默认，不覆盖自定义或显式空值。
+固定的三类 instruction、JSON schema、examples、user conversation prompt 以及严格的小写
+JSON fence/非法 JSON 回退合同均已有 Rust 单测与 Python 输出哈希门禁。混合类型在固定
+Python 中受 hash-set 顺序影响，Rust 有意稳定为 semantic、episodic、procedural。
+列表/config 响应返回 Owner nickname，页面提供 Owner 多选。创建与设置模型框从受鉴权的
+tenant model catalog 按 embedding 与 chat/image2text capability 分流，提交固定
+`model@instance@provider` selector（模型名可含 `@`）。RAGFlow tenant 模型目录位于
+`GET /api/v1/models`，显式 Chat 默认位于 `GET /api/v1/models/default`；OpenAI protocol
+模型目录使用 `GET /api/v1/openai/models`。
+
+Memory 新增消息现在使用固定版 RAW-first 异步合同：请求线程完成 RAW embedding 和持久化，
+随后发布持久 `task_type=memory`；worker 在文档 metadata 查询前分流，使用 Memory 的
+temperature 调用 Chat/image2text 模型，把合法 JSON 扁平为 semantic/episodic/procedural
+子消息，批量 embedding 后以 `source_id=RAW id` 原子保存。非法 JSON 视为空抽取成功；合法
+JSON 的结构错误令任务失败但 RAW 保留。任务 payload/digest 可跨重启恢复，staging 状态只有
+在 RAW 与 Memory 都存在时才发布；消息响应把最新 digest task 回绑父行，失败公开为
+`progress=-1`。固定 v0.26.4 正式 worker 实际忽略配置中保存的自定义 prompts，当前 Rust
+同样保留此合同，不虚报自定义 prompt 已参与抽取。
+
+这仍不是 Memory 全栈完成声明：原生引擎 index create/delete、实际 prefix 资源隔离、
+missing-token repair、engine cache repair、跨 task/message 文件的单事务以及私有 task payload
+静态加密仍未替代。线上 Rust UI 已注册
+`/memories`、`/memory/memory-message/:id`、`/memory/memory-setting/:id`：列表具备安全 DOM
+卡片、搜索/类型/存储筛选、分页和 CRUD；消息页具备 sidebar、Agent/会话筛选、展开行、
+启用/遗忘、内容/向量和分页；配置页具备基础、模型、容量与权限/FIFO/温度/提示词表单。
+任务点现在始终可见并提供 32x32 点击区，Done/Running/Failed 对应绿/黄/红，日志使用
+safe-text DOM，缺失时间显示 `—`，父行可展开新生成的子消息。这些路由仍保持 `partial`：
+非 Chat 默认模型管理、固定头像上传协议和逐像素组件行为尚未完全等价。三个公开 HTML shell 不预嵌租户
+业务数据，路径 ID 也使用 script-safe JSON 编码；实际数据继续由鉴权 API 加载。
+
+## 密码传输与 TLS
+
+RAGFlow 固定仓库中的 `conf/private.pem` / `conf/public.pem` 不是 JWT 密钥，而是
+登录、注册和改密请求的 RSAES-PKCS1-v1_5 密码封装对。RayRAG 不复制这个公开已知的
+私钥；如需兼容 RAGFlow 浏览器/CLI 的
+`base64(RSA(base64(UTF-8 password)))` wire，可生成部署专用的至少 2048-bit RSA
+PKCS#1/PKCS#8 私钥，以只读 secret 挂载，并设置：
+
+```bash
+RAYRAG_PASSWORD_PRIVATE_KEY_FILE=/run/secrets/rayrag-password-private.pem
+```
+
+服务启动时会解析、校验私钥并派生 SPKI 公钥；客户端可匿名读取
+`GET /api/v1/system/password-public-key`。注册、登录、自助改密和管理员创建/重置用户均
+接受该密文，同时保留固定 Go 服务的明文回退。未设置该变量时，密码是普通 JSON 字段；
+默认 Compose 暴露的是 HTTP，只适合本机/受信网络，生产部署必须在反向代理终止 HTTPS。
+无论传输形式如何，落盘只保存带随机盐的 Argon2id 哈希。不要使用上游仓库自带私钥或
+固定 `Welcome` 口令。
 
 解析任务终态会形成持久化操作历史，可按知识库、状态、任务类型、关键词和时间筛选：
 
@@ -634,7 +697,7 @@ feature 时静默回退。下载源均可通过 `.env` 的 `DEBIAN_MIRROR`、
   全面对标 RAGFlow 页面层级，每个功能均有真实交互按钮（批量上传/删除/清空/重命名、
   chunk 分页编辑、会话管理、知识图谱环形可视化、搜索多 KB 过滤、模型选择器）
 - ✅ OpenAI 兼容端点：`POST /api/v1/chat/completions`（含 SSE 流式）、
-  `GET /api/v1/models`、`POST /api/v1/embeddings`、`POST /api/v1/rerank`——
+  `GET /api/v1/openai/models`、`POST /api/v1/embeddings`、`POST /api/v1/rerank`——
   LangChain/OpenWebUI 等外部生态可直接接入
 - ✅ 聊天 SSE 流式（打字机效果 + 推理模型思考占位 + 引用卡片）
 - ✅ SearXNG 自托管接入（`SEARXNG_URL`，cn.bing 引擎国内网络适配）

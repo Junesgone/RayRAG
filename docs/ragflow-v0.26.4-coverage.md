@@ -2,7 +2,9 @@
 
 - Fixed commit: `cb93883f3f8c975eecb2fed81210effeb3bdb06f`
 - RAGFlow files: `4441`
-- Generator: `cargo run --bin ragflow-coverage -- <ragflow-source>`
+- Inventory validation: `cargo run --locked --bin ragflow-coverage -- --check
+  /path/to/ragflow-v0.26.4` validates the fixed commit plus every Git path/blob/byte/text-line
+  and the summary; use `--write` after an intentional status edit to refresh metadata and totals.
 - Policy: `aligned` means audited behavior, not a literal Python-to-Rust transliteration. `replaced` records an intentional Rust/PostgreSQL/zvec substitute. `Source lines` are counted from the pinned Git blobs; binary blobs are shown as `-`.
 
 - Classification guard: unknown paths become `unmapped`; only explicit mappings or test/fixture rules may produce `reference`.
@@ -13,21 +15,137 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 137 | 46487 |
-| full | 541 | 245606 |
-| partial | 18 | 50105 |
-| replaced | 92 | 37286 |
+| aligned | 126 | 45348 |
+| full | 539 | 222023 |
+| partial | 35 | 46470 |
+| replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3601 | 908046 |
+| reference | 3579 | 905357 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
 > settings Chat channels/MCP sections、dataset Logs tab（web.rs）。
 >
+> v0.3.3r（2026-08-10）逐行审计 `api/db/__init__.py`，补齐全部枚举、
+> 文件/任务集合与文件夹常量，并把 Agent/DataFlow 类别规范为固定 wire 值；
+> 同时按 File Inventory 实算纠正了已漂移的摘要计数。
+>
+> v0.3.3s（2026-08-10）逐字节审计两份 `doc_meta` 引擎映射，以纯 Rust
+> typed schema + `id`/`kb_id`/动态 `meta_fields` JSON wire、原子快照和可选
+> PostgreSQL 18 opaque mirror 替代 ES/Infinity metadata index；zvec-rust 继续只承载
+> chunk vectors。两条映射由 partial 升为 replaced，摘要按 File Inventory 重算。
+>
+> v0.3.3t（2026-08-10）逐行审计 `conf/message_infinity_mapping.json` 及其
+> Infinity connector：Rust 固定 17 列默认值、content analyzers/comment、动态
+> `q_{dim}_vec` 与 HNSW 参数，以复合 id、日期毫秒镜像、原子 JSON/可选 PostgreSQL
+> snapshot 和进程内全文+向量融合替代引擎表，并接入真实 message REST 生命周期。
+> mapping 由 partial 升为 replaced；同时把仍缺非 RAW LLM 抽取、后台任务和原生
+> index 维护的四个宽泛 memory API/service 条目诚实降为 partial。
+>
+> v0.3.3u（2026-08-11）逐行审计 `conf/skill_infinity_mapping.json` 与实际 Go
+> Infinity 索引/检索调用链：Rust 固定 11 个物理字段、动态向量列、两个 secondary
+> 和八个 fulltext index 名称及 HNSW 参数，以 tenant/space 分区原子快照、可选
+> PostgreSQL 18 snapshot mirror、独立 zvec-rust Skill collection tree 和进程内
+> keyword/vector/hybrid 检索替代 Infinity，并接入真实 REST 与 `/skills` 页面。
+> mapping 由 partial 升为 replaced；文件系统 Skill bundle/space/version 生命周期、
+> 精确 Infinity BM25/fusion 与跨维度原生 collection 重建仍属更广服务差距，相关
+> Go 服务条目未抬高状态。
+>
+> v0.3.3v（2026-08-11）逐行审计 `conf/skill_es_mapping.json` 及实际 Go
+> loader/index/query 调用链：Rust 固定 index settings、`dynamic=false`、完整
+> scripted similarity 源码、22 个显式属性和七个 cosine vector 维度，并提供与
+> Go 写入一致的 `_source`/规范化 `_id` 投影及按 field config 生效的 token 字段。
+> RayRAG 继续以原子 JSON/可选 PostgreSQL snapshot、隔离 zvec Skill collections
+> 和纯 Rust keyword/vector/hybrid scorer 有意替代 ES；ES 自身的 best_fields/
+> scripted-IDF/status/hybrid 方言不冒充逐项等价，宽泛 Skill services 仍不抬高。
+>
+> v0.3.3w（2026-08-11）逐字节审计 `conf/system_settings.json` 与 Python/Go/UI
+> 调用链：Rust 严格持久化固定 14 条 raw-string seed，提供 typed variables API、
+> 管理员 ACL/秘密脱敏，并让 local/self-managed CodeExec 消费 sandbox 配置。
+> broader sandbox provider/schema/config/test API、SSH/Aliyun/E2B runtime 和专用 React
+> 设置页仍未完成，因此该文件只升为 aligned；同时恢复纯 Rust coverage Git 门禁并
+> 修复历史伪 blob/字节/行元数据。
+>
+> v0.3.3x（2026-08-11）逐行审计 `conf/infinity_mapping.json` 以及 Python/Go
+> connector 的建表、写入、反解码和检索调用链：Rust 精确固定 73 个有序基础列、
+> 59/11/3 类型统计、全部默认值、45 个全文与 2 个 secondary 索引、5 组 comment
+> aliases、动态向量/HNSW 参数和 table `chunk_data`，并把双向 canonical codec 接入
+> JSON/zvec 持久投影。Infinity analyzer、通用条件/排序/聚合、dense threshold、atan
+> Fusion 和同表多维生命周期尚未替代，因此该文件仍诚实保持 partial。
+>
+> v0.3.3y（2026-08-11）逐行审计 `conf/private.pem`、`conf/public.pem` 及
+> Python/Go/Web/CLI 消费链，纠正其为 RSAES-PKCS1-v1_5 密码传输对而非 JWT 密钥。
+> Rust 以部署时挂载的至少 2048-bit PKCS#1/PKCS#8 私钥、派生公钥端点和全用户密码
+> 边界的兼容解密有意替代固定密钥，不复制公开已知私钥或固定口令；两条 PEM 从 partial
+> 升为 replaced。原先错误声称 full 的 `api/utils/crypt.py` 降为 partial：生产服务端
+> wire 已接线，但固定 key/passphrase、`decrypt2` 的 127-byte 修复和客户端加密 helper
+> 没有冒充完成。明文回退仍要求部署在 HTTPS 之后。
+>
+> v0.3.3z（2026-08-11）逐字段审计 `conf/mapping.json`、
+> `conf/os_mapping.json` 及 Python/Go 建索引调用链：Rust 精确固定两份 source
+> blob/SHA/bytes/无尾 LF、settings 层级、scripted similarity、字符串布尔细节、
+> 19/24 个有序 dynamic templates、ES/OpenSearch 不同 keyword regex、4/9 个原生
+> vector 维度和显式 `lat_lon`。固定 checkout 结构等价测试逐 Value 对比通过；索引
+> 恢复和在线提交在 JSON/PostgreSQL snapshot 与 zvec mirror 前执行双映射 typed projection。
+> RayRAG 不部署原生 ES/OpenSearch，任意正维度继续由隔离 zvec collection 替代；native
+> analyzer/scripted-IDF/OpenSearch pipeline 仍是明确的服务方言，不冒充由 mapping 文件实现。
+> 两份 mapping 从 partial 升为 replaced。
+>
 > v0.3.3d–i（2026-08-07）新增 aligned：文档下载端点（server.rs）、
 > dataset Configuration 5 字段 + 后端白名单 7 键、chunk method Resume/Tag、
 > providers 类型筛选 + Add 弹窗、agent 类型选择、New Chat 知识库多选、
 > Memory 弹窗、chat 侧栏知识库列表。
+
+> v0.3.3aa（2026-08-12）逐行审计 `api/apps/restful_apis/memory_api.py` 与
+> `memory/services/messages.py`：Rust Memory 查询兼容 Quart multi-value 参数、单值
+> 逗号分隔和公开 100 条上限；消息删除按 `(memory_id,message_id)` 隔离，FIFO 驱逐与
+> upsert 合并为一次可回滚持久化 mutation，并动态遵循 `ES_INDEX_PREFIX` 命名合同。
+> 原生引擎 index 生命周期、missing-token repair、非 RAW LLM 抽取仍未完成，两条后端
+> 文件保持 partial。同步复核固定 React Memory 页面后，将 21 个此前被泛化为 reference
+> 的生产 UI 文件纠正为 partial：当前线上仅有 `/memories` SSR 列表/编辑，固定版消息和
+> 配置详情路由、筛选分页、悬浮操作及精确表单仍是明确待办。
+>
+> v0.3.3ab（2026-08-12）继续逐文件复核固定 React Memory UI，并把生产 Rust
+> 路由接到 `/memories`、`/memory/memory-message/:id` 与
+> `/memory/memory-setting/:id`。列表现有安全 DOM 卡片、搜索、类型/存储筛选、分页、
+> 创建、重命名和删除；消息详情现有 sidebar、搜索、Agent 筛选、展开行、启用/遗忘、
+> 内容/向量、任务日志入口与 10/20/50/100 分页；配置详情现有基础/模型/容量及权限、
+> FIFO、温度和提示词高级表单。21 个文件仍保持 partial：Owner 筛选、精确模型能力元数据、
+> 后端 source-message task digest、头像上传协议和逐像素/逐组件行为尚未完全等价。
+>
+> v0.3.3ac（2026-08-12）逐字段复核 Memory Owner、模型树 selector/default 与配置
+> 默认值：Rust 响应补 `owner_name`，列表接入 Owner 多选；新增 tenant-scoped、secret-free
+> `/api/v1/models` 和 Chat `/api/v1/models/default`，UI 按 embedding 与 chat/image2text
+> capability 分流并使用从右解析的 `model@instance@provider` wire。新 Memory 固定为
+> `me`、5 MiB、FIFO、0.5，容量统一限制 1..=10 MiB，embedding/type 只在真实内容存在时
+> 冻结，LLM 保持可编辑。同步把两个 models service 与两个 Memory service 的历史过度
+> 声明降为 partial，并把 `model-tree-select.tsx` 改为已落地切片的 partial；非 Chat default
+> 管理、source-message task digest、头像上传和逐组件视觉仍明确未完成。
+>
+> v0.3.3ad（2026-08-12）逐函数复核 `memory/utils/prompt_util.py` 与
+> `memory/utils/msg_util.py`，纠正两条虽然标为 full、却错误声称只由 highlight/aggregation
+> 覆盖的历史说明。Rust 现按固定文本拼装 RAW/semantic/episodic/procedural system prompt、
+> required JSON schema、examples 与 user conversation prompt；单类型输出以字符数和 SHA-256
+> 对固定 Python 结果锁定。Python `set` 导致混合类型块随 `PYTHONHASHSEED` 漂移，Rust 有意
+> 固定为 semantic、episodic、procedural 顺序。JSON helper 只剥小写 ` ```json ` 首 fence
+> 与尾 fence，语法失败回退空对象，且保留合法非 object JSON。Memory 创建会持久化默认
+> system prompt；仅当原 prompt 仍等于旧类型默认值、类型确实变化且请求未显式提交 prompt
+> 时才重建，避免覆盖自定义或显式空 prompt。非 RAW LLM、Memory task queue/progress、
+> source digest 与 worker 分流仍保持 partial。
+>
+> v0.3.3ae（2026-08-12）沿固定 `queue_save_to_memory_task`、
+> `handle_save_to_memory_task`、`extract_by_llm` 与 `task_executor.do_handle_task` 完成
+> Memory 异步纵向链：RAW 同步 embedding/落盘后发布持久 `task_type=memory`，私有任务 payload
+> 支持重启，`digest` 回绑 RAW；dispatcher 在文档 metadata 查询前按 task type 分流，按
+> 0.15/0.35/0.5/0.65/0.85/0.95/1 记录进度，使用 Memory temperature 调 Chat/image2text
+> completion，结构化结果批量 embedding 后原子写子消息。非法 JSON 空成功，结构错误失败且
+> RAW 保留；任务失败公开投影为 -1。staging write-ahead 状态在 RAW+Memory 存在时启动恢复，
+> 否则清理；删除 Memory 会先取消 worker。消息 UI 现有始终可见的 32x32 任务点、状态颜色、
+> safe-text 日志、缺失时间回退和 extract 展开。固定版本正式 worker 实际忽略存储的 custom
+> prompts，Rust 本批忠实保留该行为。原生 Memory index/cache、跨 task/message snapshot 的
+> 单文件事务、payload at-rest 加密和完整 task executor 多类型生态仍 partial；因此将此前
+> 宽泛声称 full 的 `rag/svr/task_executor.py` 纠正为 partial。
+>
 
 ## File Inventory
 
@@ -153,12 +271,12 @@
 | `agent/sandbox/providers/aliyun_codeinterpreter.py` | 481 | 19162 | `fd4adb41bd414cd1` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/providers/base.py` | 211 | 6271 | `915487cf59c26af6` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/providers/e2b.py` | 225 | 6945 | `0ebd837564e46c75` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
-| `agent/sandbox/providers/local.py` | 2986 | 4457 | `local` | full | `src/sandbox.rs` | Rust local sandbox: wrapper + structured result protocol |
+| `agent/sandbox/providers/local.py` | 354 | 13981 | `6a9ac516bdba74c7` | full | `src/sandbox.rs` | Rust local sandbox: wrapper + structured result protocol |
 | `agent/sandbox/providers/manager.py` | 78 | 2388 | `3a6fce5c25a2b907` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/providers/self_managed.py` | 391 | 14667 | `85e02cb424555025` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/providers/ssh.py` | 686 | 26993 | `001c2943006d025e` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/pyproject.toml` | 28 | 519 | `7fefa775ced9a142` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
-| `agent/sandbox/result_protocol.py` | 2986 | 4457 | `local` | full | `src/sandbox.rs` | Rust local sandbox: wrapper + structured result protocol |
+| `agent/sandbox/result_protocol.py` | 85 | 2928 | `385f6fb615d72bb1` | full | `src/sandbox.rs` | Rust local sandbox: wrapper + structured result protocol |
 | `agent/sandbox/sandbox_base_image/nodejs/Dockerfile` | 23 | 521 | `21432b818aacbcef` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
 | `agent/sandbox/sandbox_base_image/nodejs/package-lock.json` | 295 | 10245 | `cf22d1fa9c949316` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
 | `agent/sandbox/sandbox_base_image/nodejs/package.json` | 15 | 267 | `3bdae4a936c15835` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
@@ -223,12 +341,12 @@
 | `agent/tools/arxiv.py` | 101 | 3972 | `e09df5bf5c1e9ecb` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/base.py` | 212 | 8445 | `1cb1fa23fc578323` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/bgpt.py` | 188 | 7514 | `8e6a1dbbaff7cec8` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `agent/tools/code_exec.py` | 688 | 4455 | `2cb58c23ac940644` | full | `src/code_exec.rs; src/agent.rs; src/runtime.rs` | Rust CodeExec: sandbox HTTP client + full contract (types/expected/artifacts) |
+| `agent/tools/code_exec.py` | 675 | 26633 | `2cb58c23ac940644` | full | `src/code_exec.rs; src/agent.rs; src/runtime.rs` | Rust CodeExec: sandbox HTTP client + full contract (types/expected/artifacts) |
 | `agent/tools/crawler.py` | 124 | 4272 | `d21ee5ecbb0b4b68` | full | `src/crawler.rs; src/agent.rs; src/runtime.rs` | Rust crawler: SSRF guard + html/markdown/content extraction |
 | `agent/tools/deepl.py` | 101 | 3002 | `037648a5ff0dc4d7` | full | `src/translate.rs; src/runtime.rs; src/agent.rs` | translate tool (baidu VIP API + sug fallback) registered with deepl contract |
 | `agent/tools/duckduckgo.py` | 126 | 5421 | `bd072bd242815e59` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `agent/tools/email.py` | 234 | 4453 | `45fd355ff1b30150` | full | `src/email.rs; src/agent.rs; src/runtime.rs` | Rust email: SMTP STARTTLS with lettre, env-configurable |
-| `agent/tools/exesql.py` | 292 | 4454 | `11359755b4e04ff6` | full | `src/exesql.rs; src/agent.rs; src/runtime.rs` | Rust ExeSQL: postgres-only (Boss decision: no mysql), rag_flow guard |
+| `agent/tools/email.py` | 204 | 8471 | `45fd355ff1b30150` | full | `src/email.rs; src/agent.rs; src/runtime.rs` | Rust email: SMTP STARTTLS with lettre, env-configurable |
+| `agent/tools/exesql.py` | 301 | 13624 | `11359755b4e04ff6` | full | `src/exesql.rs; src/agent.rs; src/runtime.rs` | Rust ExeSQL: postgres-only (Boss decision: no mysql), rag_flow guard |
 | `agent/tools/github.py` | 97 | 3805 | `614e558d5b9df316` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/google.py` | 527 | 14166 | `a5fb4bdf2950d783` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/googlescholar.py` | 115 | 4885 | `bc7f01a9196ea4c3` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
@@ -239,7 +357,7 @@
 | `agent/tools/retrieval.py` | 329 | 14383 | `2fb649e86971df86` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/searxng.py` | 153 | 5953 | `ef03375b3063e71b` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/tavily.py` | 236 | 10103 | `61eee6046f050a86` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `agent/tools/tushare.py` | 84 | 4450 | `c6cc326520afe541` | full | `src/tushare.rs; src/agent.rs; src/runtime.rs` | Rust TuShare: news API with source enum + keyword filter |
+| `agent/tools/tushare.py` | 85 | 3196 | `c6cc326520afe541` | full | `src/tushare.rs; src/agent.rs; src/runtime.rs` | Rust TuShare: news API with source enum + keyword filter |
 | `agent/tools/wencai.py` | 116 | 5029 | `18b53e3b89d29aa5` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/wikipedia.py` | 193 | 6064 | `301a271376c8abc0` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/yahoofinance.py` | 115 | 5047 | `69254b04fc111781` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
@@ -269,8 +387,8 @@
 | `api/apps/restful_apis/file_commit_api.py` | 377 | 17419 | `1882c8df5c25cc81` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/langfuse_api.py` | 99 | 3914 | `70b81b42c638cedc` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/mcp_api.py` | 364 | 15381 | `213923d2da2454d6` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/memory_api.py` | 311 | 12777 | `763befeb3d572285` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/models_api.py` | 199 | 6041 | `c19d0f7d34b50cc4` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/restful_apis/memory_api.py` | 311 | 12777 | `763befeb3d572285` | partial | `src/server.rs; src/api/features.rs` | Memory config plus message add/list/recent/search/status/forget/content routes are access-scoped; POST messages now synchronously saves RAW and publishes a durable asynchronous Memory task, while repeated/comma filters and public 100-item ceilings match. Native index/cache lifecycle and the broader route surface remain incremental |
+| `api/apps/restful_apis/models_api.py` | 199 | 6041 | `c19d0f7d34b50cc4` | partial | `src/api/tenant_models.rs; src/api/system.rs; src/server.rs` | Tenant-added GET `/api/v1/models` and GET `/api/v1/models/default` now expose capability metadata and the fixed right-anchored selector wire; only the explicit Chat default is persisted, while embedding/vision/rerank/ASR/TTS default mutation and several upstream management operations remain incremental |
 | `api/apps/restful_apis/openai_api.py` | 375 | 14425 | `4d913dccdddfa383` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/plugin_api.py` | 30 | 1042 | `ad82d149c20fdd3b` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/provider_api.py` | 932 | 27976 | `dea0c03b491abe6d` | aligned | `src/api/features.rs; src/api/tenant_models.rs; src/model_meta.rs; src/server.rs` | All 932 source lines audited at the provider/model-discovery boundary: authenticated provider list/detail/model-list routes, secret-safe global provider CRUD, tenant model-instance CRUD and capability expansion are implemented in Rust. RayRAG deliberately restricts global provider mutation and credential-backed discovery to administrators; upstream tenant-owned provider add/delete, model-detail, instance-detail/list and verify/delete-model routes remain incremental |
@@ -286,8 +404,8 @@
 | `api/apps/services/dataset_api_service.py` | 2510 | 91252 | `f972e35c3fad3227` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/services/document_api_service.py` | 313 | 11008 | `d7b45e6218c35b6d` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/services/file_api_service.py` | 604 | 25016 | `61e11335cdb5ad9d` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/services/memory_api_service.py` | 389 | 16655 | `a12eb1594675678c` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/services/models_api_service.py` | 420 | 17923 | `8d78ec89e1786399` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/services/memory_api_service.py` | 389 | 16655 | `a12eb1594675678c` | partial | `src/api/features.rs; src/api/joint_services.rs; src/memory.rs; src/server.rs` | Raw envelope embedding, budgets, access-scoped CRUD/search and default prompt lifecycle run in Rust; durable non-RAW LLM extraction, source digest task projection and progress are live. Native index/cache lifecycle and joined-tenant mutation differences remain incremental |
+| `api/apps/services/models_api_service.py` | 420 | 17923 | `8d78ec89e1786399` | partial | `src/api/tenant_models.rs; src/api/system.rs; src/server.rs` | Enabled tenant instances are flattened into secret-free provider/instance/model capability records and explicit Chat defaults resolve through the same tenant model store; per-capability defaults beyond Chat and the full upstream ranking/factory fallback behavior remain incremental |
 | `api/apps/services/provider_api_service.py` | 925 | 42282 | `795885d026dfaa90` | aligned | `src/api/features.rs; src/api/tenant_models.rs; src/model_meta.rs` | All 925 source lines audited with emphasis on list_provider_models: Rust merges configured static names with provider-specific remote discovery, normalizes VLLM/local inference bases and JSON credentials, sorts deterministically, persists provider instances atomically and expands multi-capability models. The full RAGFlow factory catalog, region/extra-field adapters, per-model verification calls and tenant-scoped provider ownership are not yet complete |
 | `api/channels/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/bootstrap.py` | 288 | 10818 | `a607d40383dfe268` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
@@ -320,7 +438,7 @@
 | `api/common/check_team_permission.py` | 59 | 1897 | `c8e04d34b5c2b08b` | full | `src/api/common.rs` | ApiError envelope + team permission + base64 ported |
 | `api/common/exceptions.py` | 43 | 1377 | `508fb552701b33dc` | full | `src/api/common.rs` | ApiError envelope + team permission + base64 ported |
 | `api/constants.py` | 29 | 942 | `72661f47612f0890` | full | `src/common.rs` | api constants + validation ported |
-| `api/db/__init__.py` | 92 | 2736 | `2468d59473076386` | partial | `src/api/*` | enums partially ported (FileType/UserTenantRole/TenantPermission); SerializedType/CanvasCategory 未移植 |
+| `api/db/__init__.py` | 92 | 2736 | `2468d59473076386` | aligned | `src/api/db.rs; src/api/utils.rs; src/api/joint_services.rs; src/api/common.rs; src/api/features.rs; src/agent_templates.rs; src/web.rs` | All 92 fixed-version lines audited: UserTenantRole/TenantPermission, integer SerializedType, seven FileType values, four InputType values, Agent/DataFlow CanvasCategory wire values, seven valid pipeline task types, five lowercase progress-freeze values and both reserved folder names are typed in Rust; persisted legacy agent/ingestion aliases migrate to agent_canvas/dataflow_canvas, invalid values fail closed, and blank/import/copy/fixed ingestion-template UI paths preserve the canonical category |
 | `api/db/db_models.py` | 1847 | 89303 | `74dc5e5c0b13647a` | replaced | `src/auth.rs; src/kb.rs; src/stores.rs; src/api/` | Typed Rust stores plus PostgreSQL snapshot mirror replace Peewee/MySQL models |
 | `api/db/db_utils.py` | 122 | 3947 | `98e44f8d53cf9ff1` | replaced | `src/persistence.rs` | Atomic local state and PostgreSQL 18.4 mirror |
 | `api/db/init_data.py` | 183 | 7244 | `c755565a394759e5` | full | `src/api/joint_services.rs` | seed plans ported (settings/llm factory cleanup) |
@@ -340,7 +458,7 @@
 | `api/db/init_data/compilation_templates/wiki/product.yaml` | 41 | 1822 | `b1da7e56721cb0a9` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` | Fixed v0.26.4 builtin and wiki preset data compiled into the Rust binary with startup validation |
 | `api/db/init_data/compilation_templates/wiki/user_interview.yaml` | 27 | 850 | `fc6bae2c7c1a1b8f` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` | Fixed v0.26.4 builtin and wiki preset data compiled into the Rust binary with startup validation |
 | `api/db/joint_services/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/api/*` | joint services (memory_message/tenant_model/user_account) ported |
-| `api/db/joint_services/memory_message_service.py` | 458 | 20272 | `2e773bb06ca0454a` | full | `src/api/*` | joint services (memory_message/tenant_model/user_account) ported |
+| `api/db/joint_services/memory_message_service.py` | 458 | 20272 | `2e773bb06ca0454a` | partial | `src/api/joint_services.rs; src/api/features.rs; src/memory.rs; src/llm.rs; src/server.rs` | RAW-first durable task staging/publish, fixed prompt/temperature LLM extraction, structural JSON flattening, progress, batch embedding, source-linked child save, FIFO budget and failure-retained RAW are production-wired. Native index/cache repair and cross-snapshot transactionality remain incremental |
 | `api/db/joint_services/tenant_model_service.py` | 408 | 17547 | `fda95630a9f188ec` | full | `src/api/*` | joint services (memory_message/tenant_model/user_account) ported |
 | `api/db/joint_services/user_account_service.py` | 339 | 17397 | `55e3eb5498e6111b` | full | `src/api/*` | joint services (memory_message/tenant_model/user_account) ported |
 | `api/db/reload_config_base.py` | 27 | 1030 | `b9746eaa2c6df2c7` | full | `src/api/runtime_config.rs` | hot-reload runtime config ported |
@@ -365,7 +483,7 @@
 | `api/db/services/langfuse_service.py` | 79 | 2840 | `b571110aba26bcfb` | full | `src/api/joint_services.rs` | service layer semantics ported (settings/canvas/langfuse/mcp/conversation/task) |
 | `api/db/services/llm_service.py` | 550 | 22813 | `c1fe749bee0e306a` | aligned | `src/llm.rs; src/llm_enhanced.rs; src/api/tenant_models.rs` | Provider, tenant instance and capability selection |
 | `api/db/services/mcp_server_service.py` | 91 | 3329 | `101555f4b345d7f5` | full | `src/api/joint_services.rs` | service layer semantics ported (settings/canvas/langfuse/mcp/conversation/task) |
-| `api/db/services/memory_service.py` | 177 | 7218 | `97e5007d8624fe87` | full | `src/api/joint_services.rs` | service layer semantics ported (settings/canvas/langfuse/mcp/conversation/task) |
+| `api/db/services/memory_service.py` | 177 | 7218 | `97e5007d8624fe87` | partial | `src/api/features.rs; src/api/joint_services.rs; src/memory.rs; src/auth.rs` | Tenant-visible list/config/create/update/delete, owner nickname enrichment, fixed defaults, default PromptAssembler lifecycle and scoped message persistence are live; joined-tenant mutation semantics and cross-store delete atomicity remain explicit differences |
 | `api/db/services/pipeline_operation_log_service.py` | 290 | 12194 | `12fbef520139a46e` | aligned | `src/api/features.rs; src/server.rs` | Terminal task history, KB ACL, status/type/keyword/time filters and stable paging |
 | `api/db/services/search_service.py` | 119 | 4019 | `8e14a84bf2873173` | aligned | `src/search.rs; src/rerank.rs; src/api/search.rs` | Hybrid retrieval, rank features, filters, paging and reranking |
 | `api/db/services/system_settings_service.py` | 50 | 1787 | `0b0bde80242449b3` | full | `src/api/joint_services.rs` | service layer semantics ported (settings/canvas/langfuse/mcp/conversation/task) |
@@ -387,7 +505,7 @@
 | `api/utils/commands.py` | 75 | 3338 | `d72d41ad04d5b8c8` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/common.py` | 29 | 922 | `1b07783eb61d6465` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/configs.py` | 51 | 1591 | `6b5929a43fb6f7f2` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
-| `api/utils/crypt.py` | 66 | 2432 | `53afcbec0dbc7194` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
+| `api/utils/crypt.py` | 66 | 2432 | `53afcbec0dbc7194` | partial | `src/password_transport.rs; src/auth.rs; src/server.rs` | The production auth path accepts the fixed base64(RSAES-PKCS1-v1_5(base64(UTF-8))) password wire, derives a public key endpoint from an operator-mounted key, and preserves the fixed Go plaintext fallback. The repository-owned key/passphrase and decrypt2's legacy 127-byte repair are intentionally not copied, and RayRAG has no production client-side encrypt helper, so the Python utility is not claimed full/aligned |
 | `api/utils/email_templates.py` | 41 | 1212 | `767eb7b927029e16` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/file_response.py` | 147 | 4683 | `f9f4751b55ee0bb1` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/file_utils.py` | 259 | 8474 | `21b746f8f180b5a8` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
@@ -395,7 +513,7 @@
 | `api/utils/image_utils.py` | 40 | 1514 | `7b93aa4923c8be4d` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/json_encode.py` | 88 | 3060 | `f2d280dcbcc933f7` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/log_utils.py` | 15 | 622 | `cd7307f51a543601` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
-| `api/utils/memory_utils.py` | 55 | 2115 | `2cdb8fe4285bc504` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
+| `api/utils/memory_utils.py` | 55 | 2115 | `2cdb8fe4285bc504` | partial | `src/api/features.rs; src/api/joint_services.rs` | Memory responses expose owner_name plus core config/message fields and use composite message identity; full source-message task digest enrichment and every upstream response projection remain incremental |
 | `api/utils/nickname_validation.py` | 51 | 1889 | `3df4d9f2dbe2dfd2` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/pagination_utils.py` | 24 | 941 | `8f38eec63ac882ab` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
 | `api/utils/reference_metadata_utils.py` | 122 | 4509 | `e9444f994a208618` | full | `src/api/utils.rs` | file_utils/datetime/parser-config semantics ported |
@@ -411,7 +529,7 @@
 | `common/asyncio_utils.py` | 54 | 1783 | `26acf1b45ae505a6` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/config_utils.py` | 152 | 5050 | `524732265db33412` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/connection_utils.py` | 138 | 5358 | `48327a1879c15a96` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
-| `common/constants.py` | 345 | 10047 | `0c66d39ab2488115` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
+| `common/constants.py` | 345 | 10047 | `0c66d39ab2488115` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported; PipelineTaskType now includes Parse/Download/RAPTOR/GraphRAG/Mindmap/Memory/Artifact/Skill and the valid set excludes only Memory |
 | `common/crypto_utils.py` | 355 | 11628 | `9138cebda1b879c0` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/data_source/__init__.py` | 95 | 3703 | `158e5450b51c1e15` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/airtable_connector.py` | 195 | 7041 | `2ab471191cbb15cf` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
@@ -509,12 +627,12 @@
 | `common/token_utils.py` | 185 | 7031 | `75027737e67b62bf` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/versions.py` | 42 | 1483 | `2507ab10483884c1` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `conf/all_models.json` | 39436 | 761732 | `629486a747200c50` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/doc_meta_es_mapping.json` | 29 | 487 | `eeab3b985a74b29e` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/doc_meta_infinity_mapping.json` | 5 | 145 | `471912c6e20c2747` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/infinity_mapping.json` | 76 | 5413 | `dfc07d2e44814c39` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
+| `conf/doc_meta_es_mapping.json` | 29 | 487 | `eeab3b985a74b29e` | replaced | `src/settings.rs; src/api/document_metadata.rs; src/persistence.rs; src/api/search.rs; src/server.rs; src/store/mod.rs` | Intentional Rust replacement: typed constants preserve shards=2, replicas=0, refresh=1000ms, source=true, dynamic=runtime and the exact id/kb_id/meta_fields schema; canonical JSON snapshots and optional opaque PostgreSQL 18 mirroring replace the ES index, while metadata filtering/enrichment stays independent of zvec-rust chunk vectors |
+| `conf/doc_meta_infinity_mapping.json` | 5 | 145 | `471912c6e20c2747` | replaced | `src/settings.rs; src/api/document_metadata.rs; src/persistence.rs; src/api/search.rs; src/server.rs; src/store/mod.rs` | Intentional Rust replacement: typed schemas preserve varchar defaults for id/kb_id and JSON default `{}` for dynamic meta_fields; canonical JSON snapshots and optional opaque PostgreSQL 18 mirroring replace the Infinity table, while zvec-rust remains scoped to chunk vectors |
+| `conf/infinity_mapping.json` | 76 | 5413 | `dfc07d2e44814c39` | partial | `src/settings.rs; src/store/infinity_chunk.rs; src/store/mod.rs; src/search.rs; src/persistence.rs; src/api/chunks.rs; src/api/search.rs; src/server.rs` | Exact 73-column order/types/defaults, 45 fulltext + 2 secondary index contracts, five alias groups, dynamic vector/HNSW metadata and sparse bidirectional JSON/zvec persistence codec are implemented. RayRAG still lacks Infinity analyzer/index selection, generic filter/sort/aggregation, dense threshold, atan Fusion and same-table multi-dimension lifecycle, so this remains partial |
 | `conf/llm_factories.json` | 8079 | 287486 | `3aeb9b6bfdfcc397` | full | `src/providers.rs; src/data/providers/llm_factories.json` | Embedded factory catalog (65 factories / 1064 models, compact n/t/mx/tools) synced from live RAGFlow v0.26.2; FIXTURE_TO_PRESET bridges fixture keys |
-| `conf/mapping.json` | 212 | 4453 | `495f7c7763cfbfd6` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/message_infinity_mapping.json` | 19 | 941 | `17e7307e89f7fa3d` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
+| `conf/mapping.json` | 212 | 4453 | `495f7c7763cfbfd6` | replaced | `src/settings.rs; src/store/search_mapping.rs; src/store/mod.rs; src/search.rs; src/persistence.rs; src/server.rs; src/api/chunks.rs; src/api/search.rs` | Exact fixed blob/SHA-256/bytes/no-final-LF metadata, index settings, top-level scripted similarity, string-vs-boolean quirks, 19 ordered dynamic templates, ES keyword/date regexes, four dense-vector dimensions and lat_lon are represented by an executable Rust JSON builder and verified structurally against the fixed checkout. Search-index restore and every online commit type-project metadata before atomic JSON/optional PostgreSQL snapshot and isolated zvec mirror writes. RayRAG intentionally replaces native ES; arbitrary positive zvec dimensions remain legal, while native whitespace/scripted-IDF/dynamic mapping behavior is an explicit service dialect rather than claimed execution parity |
+| `conf/message_infinity_mapping.json` | 19 | 941 | `17e7307e89f7fa3d` | replaced | `src/settings.rs; src/api/joint_services.rs; src/api/features.rs; src/server.rs; src/memory.rs; src/persistence.rs` | Exact 17-column types/defaults/analyzers/comment plus dynamic vector/HNSW contract; canonical composite-id and date-float snapshots, legacy migration, PostgreSQL snapshot mirror, lifecycle routes and in-process hybrid retrieval intentionally replace Infinity tables |
 | `conf/models/302ai.json` | 222 | 3865 | `8edb8d10c42479b4` | full | `src/model_meta.rs; src/api/fixtures/models/` | provider model catalog seeded (60 vendors / 556 models, Model Catalog modal on providers page) |
 | `conf/models/aliyun.json` | 53 | 1044 | `66a569bfa7e1bf32` | full | `src/model_meta.rs; src/api/fixtures/models/` | provider model catalog seeded (60 vendors / 556 models, Model Catalog modal on providers page) |
 | `conf/models/anthropic.json` | 118 | 2092 | `f35585fb54c039b8` | full | `src/model_meta.rs; src/api/fixtures/models/` | provider model catalog seeded (60 vendors / 556 models, Model Catalog modal on providers page) |
@@ -575,13 +693,13 @@
 | `conf/models/xinference.json` | 12 | 260 | `cf8fb61fa9f6dc7e` | full | `src/model_meta.rs; src/api/fixtures/models/` | provider model catalog seeded (60 vendors / 556 models, Model Catalog modal on providers page) |
 | `conf/models/xunfei.json` | 23 | 388 | `6ab0385b55faca6e` | full | `src/model_meta.rs; src/api/fixtures/models/` | provider model catalog seeded (60 vendors / 556 models, Model Catalog modal on providers page) |
 | `conf/models/zhipu-ai.json` | 341 | 6008 | `e51819d2438baba1` | full | `src/model_meta.rs; src/api/fixtures/models/` | provider model catalog seeded (60 vendors / 556 models, Model Catalog modal on providers page) |
-| `conf/os_mapping.json` | 268 | 5766 | `47b7c24b0f53a6e9` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/private.pem` | 30 | 1743 | `ff333058d0d8087f` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/public.pem` | 9 | 451 | `3fbcfe189593c174` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
+| `conf/os_mapping.json` | 268 | 5766 | `47b7c24b0f53a6e9` | replaced | `src/settings.rs; src/store/search_mapping.rs; src/store/mod.rs; src/search.rs; src/persistence.rs; src/server.rs; src/api/chunks.rs; src/api/search.rs` | Exact fixed blob/SHA-256/bytes/no-final-LF metadata, nested index similarity, knn=true, string-vs-boolean quirks, 24 ordered templates, the keyword regex that deliberately excludes bare id, nine knn-vector dimensions/space_type=cosinesimil and lat_lon are represented by an executable Rust JSON builder and verified structurally against the fixed checkout. Runtime snapshots are type-projected before JSON/PostgreSQL/zvec commit. Native OpenSearch indices and its normalization search pipeline are intentionally absent; pure-Rust hybrid retrieval plus isolated zvec are the documented replacement |
+| `conf/private.pem` | 30 | 1743 | `ff333058d0d8087f` | replaced | `src/password_transport.rs; src/auth.rs; src/server.rs; .env.example; docker-compose.yml; Cargo.toml` | Intentional security replacement: this is a password-transport RSA private key, not a JWT key. RayRAG never ships the globally known fixed private key or Welcome passphrase; it loads an optional deployment-specific 2048-bit-or-larger PKCS#1/PKCS#8 key from RAYRAG_PASSWORD_PRIVATE_KEY_FILE, validates it at startup, decrypts the compatible wire form at every user-password boundary, and otherwise requires TLS for plaintext JSON |
+| `conf/public.pem` | 9 | 451 | `3fbcfe189593c174` | replaced | `src/password_transport.rs; src/auth.rs; src/server.rs; .env.example; docker-compose.yml; Cargo.toml` | Intentional security replacement: the public half is derived from the mounted private key and exposed unauthenticated at /api/v1/system/password-public-key for compatible clients. The fixed frontend/CLI embedded key is not copied because its matching private key is public repository material; exact blob/SHA-256/byte metadata are pinned without embedding either PEM |
 | `conf/service_conf.yaml` | 169 | 4623 | `b51f3f3cc085069e` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/skill_es_mapping.json` | 136 | 3016 | `a9d3cba86991e898` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/skill_infinity_mapping.json` | 64 | 1214 | `4e4766ea8f5bd07b` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
-| `conf/system_settings.json` | 88 | 1843 | `f546aa1436b0d262` | partial | `.env.example; docker-compose.yml; src/main.rs` | Deployment configuration is represented by typed environment settings; configuration-key parity remains incremental |
+| `conf/skill_es_mapping.json` | 136 | 3016 | `a9d3cba86991e898` | replaced | `src/settings.rs; src/api/skill_index.rs; src/store/mod.rs; src/server.rs; src/web.rs; src/persistence.rs` | All 136 source lines and live Go loader/index/query call sites audited: exact shards/replicas/refresh, dynamic=false, full scripted_sim source, 22 explicit properties, whitespace token fields and seven indexed cosine vector dimensions are fixed in typed Rust. The ES document projection preserves raw source skill_id while normalizing document id, uses comma-joined tags, defaults/version/time/status and field-config token presence; atomic tenant/space JSON plus optional PostgreSQL snapshot, isolated zvec Skill vectors and Rust retrieval intentionally replace ES. ES best_fields/scripted-IDF/status/hybrid scoring, text-only writes after embedding failure and native mapping-rebuild behavior remain explicit service-level dialect differences rather than claimed parity |
+| `conf/skill_infinity_mapping.json` | 64 | 1214 | `4e4766ea8f5bd07b` | replaced | `src/settings.rs; src/api/skill_index.rs; src/store/mod.rs; src/server.rs; src/web.rs; src/persistence.rs` | All 64 source lines and live Go call sites audited: exact 11 physical fields/defaults/analyzers, q_{dimension}_vec, HNSW cosine M=16/ef_construction=50/LVQ contract, two secondary and eight fulltext index names are fixed in Rust; tenant/space atomic snapshots plus optional PostgreSQL mirror and isolated native zvec collections replace Infinity, with scoped index/delete/config/reindex/search REST and UI. Keyword/list status behavior and vector/hybrid active filtering match the connector; exact Infinity BM25/fusion, filesystem bundle scan/version history and cross-dimension native collection recreation remain broader service work |
+| `conf/system_settings.json` | 88 | 1843 | `f546aa1436b0d262` | aligned | `src/api/runtime_config.rs; src/api/system_settings.rs; src/api/joint_services.rs; src/code_exec.rs; src/agent.rs; src/server.rs; src/web.rs` | Exact 14 raw-string rows and insert-only-missing startup are preserved in a strict standalone atomic JSON snapshot; this store is not wired to the generic PostgreSQL snapshot mirror. Sorted exact-to-prefix APIs retain Python GET-body and Go base64 SHOW dialects, validate types, and add admin ACL plus recursive secret redaction. CodeExec consumes lower-case sandbox provider/endpoint/timeout keys with uppercase compatibility and environment override; max_retries/pool_size remain stored because fixed upstream `/run` does not actually consume them. Broader provider/schema/config/test APIs, SSH/Aliyun/E2B runtime and the dedicated React sandbox settings UI remain outside this aligned file boundary |
 | `deepdoc/README.md` | 147 | 6903 | `b8bd15e3078f6bb5` | N/A | `src/parser/; src/ocr.rs; src/app_parsers.rs` | N/A-by-design: documentation; deep-document runtime is ported in src/parser/, src/ocr.rs, src/app_parsers.rs |
 | `deepdoc/README_tr.md` | 136 | 7686 | `434a4cce3ff793ab` | N/A | `src/parser/; src/ocr.rs; src/app_parsers.rs` | N/A-by-design: documentation; deep-document runtime is ported in src/parser/, src/ocr.rs, src/app_parsers.rs |
 | `deepdoc/README_zh.md` | 140 | 6718 | `3eb38e3dddaece85` | N/A | `src/parser/; src/ocr.rs; src/app_parsers.rs` | N/A-by-design: documentation; deep-document runtime is ported in src/parser/, src/ocr.rs, src/app_parsers.rs |
@@ -617,9 +735,9 @@
 | `deepdoc/parser/resume/step_one.py` | 192 | 6162 | `edce6a9028be3afc` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
 | `deepdoc/parser/resume/step_two.py` | 708 | 25582 | `f32d308deac21966` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
 | `deepdoc/parser/somark_parser.py` | 756 | 31048 | `057b9a886aad52a7` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
-| `deepdoc/parser/tcadp_parser.py` | 24796 | 4456 | `tcadp` | full | `src/parser/tcadp.rs` | Rust TCADP: Tencent LKEAP TC3 signature + SSE + safe zip extraction |
+| `deepdoc/parser/tcadp_parser.py` | 539 | 24565 | `37839eb87ac05447` | full | `src/parser/tcadp.rs` | Rust TCADP: Tencent LKEAP TC3 signature + SSE + safe zip extraction |
 | `deepdoc/parser/txt_parser.py` | 67 | 2313 | `2a5e999f7d3b3617` | aligned | `src/parser/txt.rs` | Full port to src/parser/txt.rs: parser_txt (unicode-escape delimiter expansion mirroring encode/decode(unicode_escape), backtick-token + literal-char delimiter decomposition, capturing-group split re-emitting matched delimiters (Rust Regex::split drops captures), `^dels$` pure-delimiter segment skip with Python alternation semantics, token-budget accumulation via estimate_tokens proxy, `\n`-join segment merging, `(content, "")` chunk pairs); RAGFlowTxtParser Parse adapter keeps passthrough + UTF-16 BOM fallback (decode_text). 6 unit tests |
-| `deepdoc/parser/utils.py` | 283 | 13428 | `c9d2f1a7b3e5c8d0` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
+| `deepdoc/parser/utils.py` | 54 | 1657 | `b36af08fa5965c07` | full | `src/parser/excel.rs; src/parser/docx.rs; src/parser/paddleocr_layout.rs` | multi-sheet/row-count-bisect + image extraction + table/figure sections ported |
 | `deepdoc/server/README.md` | 204 | 4548 | `9e58a53cc4aadc20` | N/A | - | N/A: upstream v0.26.4 checkout (local /root/ragflow) has no deepdoc/server/ directory (version difference; deepdoc/ contains only parser/ and vision/). Equivalent deep-document semantics are covered by src/parser/, src/ocr.rs and src/app_parsers.rs |
 | `deepdoc/server/adapters/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | - | N/A: upstream v0.26.4 checkout (local /root/ragflow) has no deepdoc/server/ directory (version difference; deepdoc/ contains only parser/ and vision/). Equivalent deep-document semantics are covered by src/parser/, src/ocr.rs and src/app_parsers.rs |
 | `deepdoc/server/adapters/dla_adapter.py` | 80 | 2464 | `1cc4e2a789d015c7` | N/A | - | N/A: upstream v0.26.4 checkout (local /root/ragflow) has no deepdoc/server/ directory (version difference; deepdoc/ contains only parser/ and vision/). Equivalent deep-document semantics are covered by src/parser/, src/ocr.rs and src/app_parsers.rs |
@@ -2277,16 +2395,16 @@
 | `mcp/server/server.py` | 924 | 38635 | `07c74e28f8c2ffcb` | full | `src/mcp_server.rs` | MCP SSE server ported (ToolRegistry, JSON-RPC 2.0 dispatch) |
 | `memory/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | `-` | N/A-by-design: empty Python package marker (0 lines); no runtime semantics |
 | `memory/services/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | N/A | `-` | N/A-by-design: empty Python package marker (0 lines); no runtime semantics |
-| `memory/services/messages.py` | 300 | 12043 | `8863f5a2f5974926` | full | `src/memory.rs; src/api/joint_services.rs` | message memory read/write/query ported |
+| `memory/services/messages.py` | 300 | 12043 | `8863f5a2f5974926` | partial | `src/memory.rs; src/api/joint_services.rs; src/api/features.rs` | Composite-id upsert and deletion, physical field conversion, list/recent/search, status/forget and one-mutation forgotten-first FIFO plus rollback are implemented; the index-name helper dynamically trims ES_INDEX_PREFIX like the fixed service. Engine-native index lifecycle, actual prefix application to native resources and missing-token repair remain incremental |
 | `memory/services/query.py` | 169 | 7125 | `041fa31d49515e59` | full | `src/memory.rs; src/api/joint_services.rs` | message memory read/write/query ported |
 | `memory/utils/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `memory/utils/aggregation_utils.py` | 56 | 1792 | `6de63f1ba1355e62` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `memory/utils/es_conn.py` | 571 | 24875 | `f49e39705f79b59e` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `memory/utils/highlight_utils.py` | 89 | 2892 | `977fbe3a0fdb71b6` | full | `src/memory.rs` | highlight + aggregation utils ported |
 | `memory/utils/infinity_conn.py` | 516 | 24364 | `feeabe591f59e809` | full | `src/memory.rs` | highlight + aggregation utils ported |
-| `memory/utils/msg_util.py` | 37 | 1425 | `0f4e90e8ca0275a0` | full | `src/memory.rs` | highlight + aggregation utils ported |
+| `memory/utils/msg_util.py` | 37 | 1425 | `0f4e90e8ca0275a0` | full | `src/memory.rs` | Exact trim/lowercase json-fence removal/JSON parse contract, including empty-object fallback on syntax failure and preservation of valid non-object JSON |
 | `memory/utils/ob_conn.py` | 585 | 24985 | `45f78c7802f34792` | full | `src/memory.rs` | highlight + aggregation utils ported |
-| `memory/utils/prompt_util.py` | 190 | 7421 | `422f45cd48eea264` | full | `src/memory.rs` | highlight + aggregation utils ported |
+| `memory/utils/prompt_util.py` | 190 | 7421 | `422f45cd48eea264` | full | `src/memory.rs; src/api/features.rs` | Exact base/type/schema/example/user prompt assembly and Memory config lifecycle; Rust intentionally stabilizes Python hash-set multi-type order as semantic, episodic, procedural |
 | `pyproject.toml` | 354 | 11173 | `0d4b8bd2c3bc7c90` | replaced | `Cargo.toml; Cargo.lock` | Rust dependency graph |
 | `rag/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | N/A | - | empty package marker (no code) |
 | `rag/advanced_rag/__init__.py` | 20 | 773 | `c294e8898ddabe4a` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
@@ -2440,7 +2558,7 @@
 | `rag/svr/cache_file_svr.py` | 62 | 1993 | `f71712f792d53f08` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/discord_svr.py` | 80 | 2644 | `114661cb35beda9e` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/sync_data_source.py` | 2256 | 88673 | `5f13ae4ae1a8f0e2` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
-| `rag/svr/task_executor.py` | 1947 | 88355 | `2e85ef7e82b1c8d1` | full | `src/task_executor.rs; src/api/document.rs` | async task queue + state machine + progress callback + retry ported |
+| `rag/svr/task_executor.py` | 1947 | 88355 | `2e85ef7e82b1c8d1` | partial | `src/task_executor.rs; src/api/features.rs; src/api/document.rs; src/server.rs` | Persistent priority/lease/retry document execution and pre-document `task_type=memory` dispatch with progress/recovery are live; the fixed executor's full multi-task-type, Redis consumer, heartbeat and reporting ecosystem is not yet completely replaced |
 | `rag/svr/task_executor_limiter.py` | 28 | 1202 | `6f365bbc23ef29b9` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/chunk_builder.py` | 133 | 4650 | `0e58382492fb3b1e` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/chunk_post_processor.py` | 1261 | 48733 | `b2738162d9748aef` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
@@ -2453,8 +2571,8 @@
 | `rag/svr/task_executor_refactor/embedding_service.py` | 122 | 4464 | `84d5ba63875d3a62` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/embedding_utils.py` | 219 | 7486 | `70a2c4cf260acdc8` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/post_processor.py` | 152 | 5432 | `73be2cd6103e4819` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
-| `rag/svr/task_executor_refactor/raptor_service.py` | 824 | 31987 | `a6c7b0d4f3e2b1c9` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
-| `rag/svr/task_executor_refactor/raptor_utils.py` | 106 | 4430 | `9b1f3c7d5a2e8b40` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
+| `rag/svr/task_executor_refactor/raptor_service.py` | 824 | 34732 | `b72c952275f654a9` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
+| `rag/svr/task_executor_refactor/raptor_utils.py` | 106 | 3873 | `9b423c48d92a0ef5` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/recording_context.py` | 419 | 13920 | `b8631f844aea246b` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/report_generator.py` | 137 | 4747 | `dcbb414c02fb3197` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
 | `rag/svr/task_executor_refactor/task_context.py` | 520 | 17476 | `dd52de26b3e8dd19` | full | `src/task_executor.rs; src/api/file_mgr.rs` | cache_file_svr + sync_data_source + build_chunks enrichment ported |
@@ -2528,9 +2646,9 @@
 | `test/benchmark/run_chat.sh` | 28 | 1024 | `4ca7fe15d5dfca10` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `test/benchmark/run_retrieval.sh` | 25 | 862 | `238cd039c059aa3a` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `test/benchmark/run_retrieval_chat.sh` | 98 | 3172 | `cb5d264d21aec2cd` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
-| `test/benchmark/test_docs/Doc1.pdf` | 74 | 2654 | `2bc4232fb31c578a` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
-| `test/benchmark/test_docs/Doc2.pdf` | 74 | 2709 | `1bf0c3e4b6789b74` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
-| `test/benchmark/test_docs/Doc3.pdf` | 74 | 2733 | `d36b581c2dc56605` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
+| `test/benchmark/test_docs/Doc1.pdf` | - | 2654 | `2bc4232fb31c578a` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
+| `test/benchmark/test_docs/Doc2.pdf` | - | 2709 | `1bf0c3e4b6789b74` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
+| `test/benchmark/test_docs/Doc3.pdf` | - | 2733 | `d36b581c2dc56605` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `test/benchmark/test_docs/dv.json` | 108 | 3790 | `acf294c01346e915` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `test/benchmark/utils.py` | 40 | 1038 | `2bf5091d7a4629e1` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `test/fixtures/mineru/bmw_page_chrome_content_list.json` | 11 | 832 | `fb1c4fe01737f519` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
@@ -3429,7 +3547,7 @@
 | `web/src/components/metadata-filter/metadata-semi-auto-fields.tsx` | 121 | 3830 | `57fb686c7cac4a62` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/mineru-options-form-field.tsx` | 144 | 4118 | `fd889737becc04ae` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/modal-manager.tsx` | 25 | 533 | `a3d16d1211ea5227` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/components/model-tree-select.tsx` | 190 | 5153 | `3341832d97b4047a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/components/model-tree-select.tsx` | 190 | 5153 | `3341832d97b4047a` | partial | `src/web.rs; src/api/tenant_models.rs` | The Memory create/setting slice groups enabled tenant models by provider/instance, filters embedding versus chat/image2text capabilities and submits the fixed selector wire; the shared React component's broader reuse, search and exact visuals remain reference work |
 | `web/src/components/more-button.tsx` | 24 | 709 | `a73dad2eb872fb8b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/new-document-link.tsx` | 51 | 1109 | `e2c65a62a8636a33` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/next-markdown-content/index.module.less` | 133 | 2095 | `05ef45ed7ee45204` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -4207,27 +4325,27 @@
 | `web/src/pages/login-next/card.tsx` | 69 | 2238 | `5a76ab289a644b58` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/login-next/index.less` | 78 | 1525 | `f393cd5e471e4845` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/login-next/index.tsx` | 416 | 13669 | `2d0d06b296216d8d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/add-or-edit-modal.tsx` | 78 | 2181 | `859a8518e864a1af` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/constants/index.tsx` | 68 | 2063 | `8b4cfaa33d954801` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/hooks.ts` | 333 | 9362 | `dda708fd5aec36d4` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/index.tsx` | 164 | 5279 | `d37c5dadf9efccf3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/interface.ts` | 117 | 2677 | `4b33a625361d4545` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/memory-card.tsx` | 33 | 923 | `9822cc72f4d31e72` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memories/memory-dropdown.tsx` | 76 | 2249 | `bb1c732b9b6c1a8e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/constant.tsx` | 5 | 167 | `d58dfd8b3de3c449` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/hooks/use-memory-setting.ts` | 43 | 1237 | `2821d98c50e9696f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/index.tsx` | 17 | 523 | `89a964bfcd5698e9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-message/hook.ts` | 197 | 6002 | `899439c679192252` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-message/index.tsx` | 53 | 1615 | `6ca98f987d897d38` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-message/interface.ts` | 34 | 755 | `760ac20e787ecc50` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-message/message-table.tsx` | 479 | 14909 | `2ee6e80b856db347` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-setting/advanced-settings-form.tsx` | 163 | 5550 | `2776e29f8a5c2bc6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-setting/basic-form.tsx` | 59 | 1766 | `3ffb47218c91b2a4` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-setting/hook.ts` | 42 | 1282 | `b838d013679e87ee` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-setting/index.tsx` | 113 | 4127 | `e290574a8573faba` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/memory-setting/memory-model-form.tsx` | 104 | 3189 | `455c4f8b344f56c0` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/sidebar/hooks.tsx` | 17 | 417 | `8b28f63c708ee59f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/memory/sidebar/index.tsx` | 82 | 2754 | `bf590f37f8f34dec` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/memories/add-or-edit-modal.tsx` | 78 | 2181 | `859a8518e864a1af` | partial | `src/web.rs; src/server.rs; src/api/features.rs; src/api/tenant_models.rs` | Live Rust create uses required raw type plus capability-scoped embedding/chat selectors and fixed defaults, while edit remains name-only like the fixed modal; exact modal composition and pixel behavior remain partial |
+| `web/src/pages/memories/constants/index.tsx` | 68 | 2063 | `8b4cfaa33d954801` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Type/storage options, Owner option metadata and card paging states are live; exact component styling remains partial |
+| `web/src/pages/memories/hooks.ts` | 333 | 9362 | `dda708fd5aec36d4` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live Rust performs debounced query/filter/pagination, Owner CSV filtering, CRUD and detail navigation with authenticated APIs; exact React cache and request-race semantics remain partial |
+| `web/src/pages/memories/index.tsx` | 164 | 5279 | `d37c5dadf9efccf3` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | `/memories` now has search, Owner/type/storage filters, cards, empty state, creation and pagination; exact visual composition remains partial |
+| `web/src/pages/memories/interface.ts` | 117 | 2677 | `4b33a625361d4545` | partial | `src/web.rs; src/server.rs; src/api/features.rs; src/api/tenant_models.rs` | Live list/detail shells consume owner_name and capability-scoped model option metadata with the core Memory wire fields; full source-task response types remain partial |
+| `web/src/pages/memories/memory-card.tsx` | 33 | 923 | `9822cc72f4d31e72` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live cards expose name, description, type, date, keyboard navigation and the canonical message-detail link; exact fixed visuals remain partial |
+| `web/src/pages/memories/memory-dropdown.tsx` | 76 | 2249 | `bb1c732b9b6c1a8e` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live More menu provides rename and confirmed delete without embedding tenant data in HTML; exact icon/menu-library behavior remains partial |
+| `web/src/pages/memory/constant.tsx` | 5 | 167 | `d58dfd8b3de3c449` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | The fixed file only defines three Memory API action keys; corresponding config/message operations are live, while no route behavior is incorrectly attributed to this constant file |
+| `web/src/pages/memory/hooks/use-memory-setting.ts` | 43 | 1237 | `2821d98c50e9696f` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | The live detail shell loads authenticated config and route-driven sidebar state; exact React query-cache lifecycle remains partial |
+| `web/src/pages/memory/index.tsx` | 17 | 523 | `89a964bfcd5698e9` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live Rust now serves the detail hierarchy with message/config children and shared sidebar; component-level and pixel parity remain partial |
+| `web/src/pages/memory/memory-message/hook.ts` | 197 | 6002 | `899439c679192252` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live page wires debounced search, repeated Agent filters, paging, abortable loads, controlled status rollback, forget/content mutations and source-digest task projection; React hook/component identity remains intentionally replaced by the Rust shell |
+| `web/src/pages/memory/memory-message/index.tsx` | 53 | 1615 | `6ca98f987d897d38` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | `/memory/memory-message/:id` is a registered live Rust route with fixed hierarchy, tools, table and modals; exact React composition remains partial |
+| `web/src/pages/memory/memory-message/interface.ts` | 34 | 755 | `760ac20e787ecc50` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Message responses expose agent_name, extract rows, content_embed and fixed task digest/progress wire; no-task uses null as an intentional safe difference from the source empty object |
+| `web/src/pages/memory/memory-message/message-table.tsx` | 479 | 14909 | `2ee6e80b856db347` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/features.rs` | Live table has fixed columns, source-linked extract expansion, filters/paging/status/content/forget, always-visible 32px task dots, fixed status colors and safe-text task logs; exact React tooltips and pixel identity remain partial |
+| `web/src/pages/memory/memory-setting/advanced-settings-form.tsx` | 163 | 5550 | `2776e29f8a5c2bc6` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live advanced form persists fixed `me|team`, FIFO-only, 0..1 temperature and system/user prompt wires with 5 MiB default and 10 MiB ceiling; upstream prompt assembly and exact schema/component messages remain partial |
+| `web/src/pages/memory/memory-setting/basic-form.tsx` | 59 | 1766 | `3ffb47218c91b2a4` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live basic form edits name, image avatar and description; fixed upload service protocol and exact component validation remain partial |
+| `web/src/pages/memory/memory-setting/hook.ts` | 42 | 1282 | `b838d013679e87ee` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live settings route performs authenticated load, reset and one-PUT save with surfaced errors; React query invalidation behavior remains partial |
+| `web/src/pages/memory/memory-setting/index.tsx` | 113 | 4127 | `e290574a8573faba` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | `/memory/memory-setting/:id` is registered with sidebar, basic/model/capacity fields, collapsible advanced settings and save/reset controls; pixel parity remains partial |
+| `web/src/pages/memory/memory-setting/memory-model-form.tsx` | 104 | 3189 | `455c4f8b344f56c0` | partial | `src/web.rs; src/server.rs; src/api/features.rs; src/api/tenant_models.rs` | Embedding versus chat/image2text capability filtering, fixed `model@instance@provider` values, required raw types and message-count content locks are live; exact ModelTreeSelect composition and cache lifecycle remain partial |
+| `web/src/pages/memory/sidebar/hooks.tsx` | 17 | 417 | `8b28f63c708ee59f` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live detail pages load config into a shared route-aware sidebar; React hook reuse and cache behavior remain partial |
+| `web/src/pages/memory/sidebar/index.tsx` | 82 | 2754 | `bf590f37f8f34dec` | partial | `src/web.rs; src/server.rs; src/api/features.rs` | Live sidebar shows avatar/name/description/created date with active Messages/Configuration links; exact fixed layout and tooltip details remain partial |
 | `web/src/pages/next-chats/chat-card.tsx` | 31 | 958 | `0e6a9eece9dbbb8b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-chats/chat-dropdown.tsx` | 78 | 2251 | `90cfa2a581495306` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-chats/chat/app-settings/chat-basic-settings.tsx` | 77 | 2198 | `8a41ed53e93be57f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
