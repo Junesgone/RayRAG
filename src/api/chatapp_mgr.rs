@@ -30,6 +30,15 @@ pub struct ChatApp {
     /// LLM model name for the app (optional; falls back to tenant default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_id: Option<String>,
+    /// LLM generation settings (temperature/top_p/max_tokens/penalties);
+    /// mirrors RAGFlow `llm_setting` in the chat-app settings form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_setting: Option<serde_json::Value>,
+    /// Prompt configuration (system/prologue/cross_languages/quote/keyword/
+    /// tts/toc_enhance/use_kg/reference_metadata/empty_response);
+    /// mirrors RAGFlow `prompt_config` (chat-prompt-engine.tsx).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_config: Option<serde_json::Value>,
     #[serde(default)]
     pub created_at: u64,
 }
@@ -130,6 +139,10 @@ pub struct CreateChatAppRequest {
     pub icon: String,
     #[serde(default)]
     pub kb_ids: Vec<String>,
+    #[serde(default)]
+    pub llm_setting: Option<serde_json::Value>,
+    #[serde(default)]
+    pub prompt_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +187,8 @@ pub async fn create_chat_app(
         tenant_id: String::new(),
         kb_ids: body.kb_ids,
         llm_id: None,
+        llm_setting: body.llm_setting,
+        prompt_config: body.prompt_config,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -239,6 +254,8 @@ mod tests {
             tenant_id: "t1".into(),
             kb_ids: vec!["kb1".into()],
             llm_id: None,
+            llm_setting: None,
+            prompt_config: None,
             created_at: 1,
         };
         store.insert(app).unwrap();
