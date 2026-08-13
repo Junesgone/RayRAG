@@ -1,3 +1,27 @@
+## 2026-08-13 v0.3.3ar：建库弹窗对齐（浏览器点击实测）+ KB 配置页补 3 字段
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **浏览器模拟点击实测**（fygo CDP 遍历 RAGFlow v0.26.2 线上实例）：
+  `datasets → Create dataset` 弹窗结构 = Name → Embedding model →
+  **Parse type (Built-in|Pipeline)** → **chunking method**（General/Q&A/
+  Resume/Manual/Table/Paper/Book/Laws/Presentation/One/Tag 等 15 法）→
+  Save/Close。RayRAG 建库弹窗此前只有 Name/Desc/Perm/Embedding。
+- **对齐**：① 建库弹窗加 Parse type + chunk method 两个选择器（15 法，
+  createKb 发送 `parse_type`/`chunk_method`）；② `KbStore` 新增
+  `create_for_with_parser_config(parser_config)`（旧 `create_for_with_config`
+  委托默认种子 `{"chunk_token_num":2048,"overlapped_percent":0.05}`）；
+  ③ `create_dataset` 后端接受 chunk_method/parse_type 并 seed parser_config。
+- **KB 配置页补 3 字段**：Children Delimiter（children_delimiters）、
+  Title Levels（title_levels）、Auto Metadata（enable_metadata）——
+  三者后端 ParserConfig 早已支持但 UI 缺失；PUT 白名单同步补 3 键；
+  顺带修复 loadConfig 不恢复 excel_to_html 的小 bug。
+- 新测试：create_seed_tests 2（自定义种子 + 默认种子）。
+- 上游 v0.26.2 侧栏实测：Dataset/Chat/Search/Agent/Memory/File +
+  用户设置页（Data sources/Chat channels/Model providers/MCP/Team/
+  Profile/API/Log out）；Data sources 页含 7 种外部数据源（Confluence/
+  Notion/Google Drive/Gmail/GCS/Oracle Storage/S3）——**RayRAG 数据源页
+  与国内替代源（如飞书/钉钉/微信文档）为后续批次**。
+
 ## 2026-08-13 v0.3.3aq：chunk_method 领域解析器生产接线（app_parsers.py 对齐）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

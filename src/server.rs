@@ -604,10 +604,42 @@ async fn create_dataset(
             Ok(selector) => selector,
             Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
         };
-    match state
-        .kbs
-        .create_for_with_config(&auth.user_id, name, description, permission, &embd_id)
-    {
+    // RAGFlow create_dataset: the create dialog sends chunk_method + parse_type
+    // up front; seed the parser_config accordingly (empty → default seed).
+    let chunk_method = body
+        .get("chunk_method")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty());
+    let parse_type = body
+        .get("parse_type")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty());
+    let parser_config = match (chunk_method, parse_type) {
+        (Some(method), Some(parse_type)) => {
+            format!(
+                r#"{{"chunk_token_num":2048,"overlapped_percent":0.05,"chunk_method":"{}","parse_type":"{}"}}"#,
+                method.trim(),
+                parse_type.trim()
+            )
+        }
+        (Some(method), None) => format!(
+            r#"{{"chunk_token_num":2048,"overlapped_percent":0.05,"chunk_method":"{}"}}"#,
+            method.trim()
+        ),
+        (None, Some(parse_type)) => format!(
+            r#"{{"chunk_token_num":2048,"overlapped_percent":0.05,"parse_type":"{}"}}"#,
+            parse_type.trim()
+        ),
+        (None, None) => r#"{"chunk_token_num":2048,"overlapped_percent":0.05}"#.to_string(),
+    };
+    match state.kbs.create_for_with_parser_config(
+        &auth.user_id,
+        name,
+        description,
+        permission,
+        &embd_id,
+        &parser_config,
+    ) {
         Ok(kb) => (
             StatusCode::CREATED,
             Json(ApiResponse {
@@ -685,6 +717,9 @@ async fn update_dataset(
         "page_index",
         "image_and_table_window",
         "excel_to_html",
+        "children_delimiters",
+        "title_levels",
+        "enable_metadata",
         "tag_sets",
         "page_rank",
     ] {
@@ -3023,6 +3058,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/dashboard", get(crate::web::dashboard))
         .route("/kbs", get(crate::web::kbs_page))
         .route("/kbs/{id}", get(crate::web::kb_detail_page))
+        .route("/dataset/{tab}/{id}", get(crate::web::kb_detail_alias))
         .route("/search", get(crate::web::search_page))
         .route("/providers", get(crate::web::providers_page))
         .route("/skills", get(crate::web::skills_page))

@@ -381,6 +381,28 @@ impl KbStore {
         permission: &str,
         embd_id: &str,
     ) -> Result<KnowledgeBase> {
+        self.create_for_with_parser_config(
+            owner_id,
+            name,
+            description,
+            permission,
+            embd_id,
+            r#"{"chunk_token_num":2048,"overlapped_percent":0.05}"#,
+        )
+    }
+
+    /// Like `create_for_with_config` but seeds a caller-supplied
+    /// `parser_config` (mirrors RAGFlow create_dataset: the create dialog
+    /// sends chunk_method + parse_type up front).
+    pub fn create_for_with_parser_config(
+        &self,
+        owner_id: &str,
+        name: &str,
+        description: &str,
+        permission: &str,
+        embd_id: &str,
+        parser_config: &str,
+    ) -> Result<KnowledgeBase> {
         validate_permission(permission)?;
         validate_embedding_selector(embd_id)?;
         self.mutate(|kbs| {
@@ -400,7 +422,7 @@ impl KbStore {
                 chunk_count: 0,
                 doc_count: 0,
                 embd_id: embd_id.into(),
-                parser_config: r#"{"chunk_token_num":2048,"overlapped_percent":0.05}"#.into(),
+                parser_config: parser_config.to_string(),
                 created_at: now,
                 updated_at: now,
             };
@@ -569,6 +591,39 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod create_seed_tests {
+    use super::*;
+
+    #[test]
+    fn create_for_with_parser_config_seeds_custom_parser_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_parser_config(
+                "owner-a",
+                "seed-kb",
+                "",
+                "private",
+                "default",
+                r#"{"chunk_method":"paper","parse_type":"Built-in"}"#,
+            )
+            .unwrap();
+        assert_eq!(kb.parser_config, r#"{"chunk_method":"paper","parse_type":"Built-in"}"#);
+    }
+
+    #[test]
+    fn create_for_with_config_keeps_default_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("owner-b", "default-kb", "", "private", "default")
+            .unwrap();
+        assert!(kb.parser_config.contains("chunk_token_num"));
+        assert!(kb.parser_config.contains("2048"));
+    }
 }
 
 #[cfg(test)]
