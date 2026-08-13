@@ -483,7 +483,7 @@ pub async fn remove_tenant_member(
 
 // ── Models Management ──────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct ModelConfig {
     pub id: String,
     pub name: String,
@@ -494,6 +494,61 @@ pub struct ModelConfig {
     pub instance_name: String,
     pub selector: String,
     pub max_tokens: Option<u64>,
+}
+
+/// RAGFlow `/llm/list`-style model management list: expand the tenant's
+/// instances through
+/// [`plan_added_models`](crate::api::tenant_models::plan_added_models)
+/// (factory fallback + ranking), then flatten back to one `ModelConfig` per
+/// representable capability. Capabilities without a RayRAG variant (e.g.
+/// `ocr`) are skipped.
+pub fn plan_llm_models(
+    providers: &[crate::api::features::Provider],
+    instances: &[crate::api::tenant_models::TenantModelInstance],
+    filter: &[String],
+) -> Vec<ModelConfig> {
+    use crate::api::tenant_models::ModelCapability;
+    let compose_profiles = std::env::var("COMPOSE_PROFILES").unwrap_or_default();
+    let tei_model = std::env::var("TEI_MODEL").unwrap_or_default();
+    let entries = crate::api::tenant_models::plan_added_models(
+        providers,
+        instances,
+        crate::api::tenant_models::factory_llm_entries(),
+        filter,
+        &compose_profiles,
+        &tei_model,
+    );
+    let mut models = Vec::new();
+    for entry in entries {
+        let id_prefix = format!("{}/{}/{}", entry.provider_id, entry.instance_id, entry.name);
+        let selector = format!(
+            "{}@{}@{}",
+            entry.name, entry.instance_name, entry.provider_name
+        );
+        for raw in entry.model_type {
+            let model_type = match raw.as_str() {
+                "chat" => ModelCapability::Chat,
+                "embedding" => ModelCapability::Embedding,
+                "rerank" => ModelCapability::Rerank,
+                "image2text" => ModelCapability::ImageToText,
+                "speech2text" => ModelCapability::SpeechToText,
+                "tts" => ModelCapability::TextToSpeech,
+                _ => continue,
+            };
+            models.push(ModelConfig {
+                id: id_prefix.clone(),
+                name: entry.name.clone(),
+                model_type,
+                provider: entry.provider_name.clone(),
+                provider_id: entry.provider_id.clone(),
+                instance_id: entry.instance_id.clone(),
+                instance_name: entry.instance_name.clone(),
+                selector: selector.clone(),
+                max_tokens: entry.max_tokens,
+            });
+        }
+    }
+    models
 }
 
 /// GET /api/v1/llm/models — list LLM models
@@ -517,37 +572,7 @@ pub async fn list_models(
         .filter(|provider| provider.enabled)
         .collect();
     let instances = state.tenant_models.list_configured(tenant_id);
-    let mut models = Vec::new();
-    for instance in instances {
-        let Some(provider_name) = providers
-            .iter()
-            .find(|provider| provider.id == instance.provider_id)
-            .map(|provider| provider.name.clone())
-        else {
-            continue;
-        };
-        for model in instance.models.into_iter().filter(|model| model.enabled) {
-            for model_type in model.model_types {
-                models.push(ModelConfig {
-                    id: format!(
-                        "{}/{}/{}",
-                        instance.provider_id, instance.instance_id, model.name
-                    ),
-                    name: model.name.clone(),
-                    model_type,
-                    provider: provider_name.clone(),
-                    provider_id: instance.provider_id.clone(),
-                    instance_id: instance.instance_id.clone(),
-                    instance_name: instance.instance_name.clone(),
-                    selector: format!(
-                        "{}@{}@{}",
-                        model.name, instance.instance_name, provider_name
-                    ),
-                    max_tokens: model.max_tokens,
-                });
-            }
-        }
-    }
+    let models = plan_llm_models(&providers, &instances, &[]);
     Json(serde_json::json!({"code":0,"data":models})).into_response()
 }
 
@@ -773,6 +798,50 @@ pub async fn file2document(Json(body): Json<serde_json::Value>) -> impl IntoResp
 #[cfg(test)]
 mod tests {
     use super::parse_related_questions;
+    use super::plan_llm_models;
+    use crate::api::tenant_models::ModelCapability;
+
+    fn provider(id: &str, name: &str) -> crate::api::features::Provider {
+        crate::api::features::Provider {
+            id: id.into(),
+            name: name.into(),
+            api_base: "http://127.0.0.1:8080/v1".into(),
+            models: vec![],
+            enabled: true,
+            api_key: None,
+        }
+    }
+
+    fn instance(
+        tenant: &str,
+        provider_id: &str,
+        instance_id: &str,
+        instance_name: &str,
+        models: Vec<crate::api::tenant_models::TenantModelSpec>,
+    ) -> crate::api::tenant_models::TenantModelInstance {
+        crate::api::tenant_models::TenantModelInstance {
+            tenant_id: tenant.into(),
+            provider_id: provider_id.into(),
+            instance_id: instance_id.into(),
+            instance_name: instance_name.into(),
+            api_base: "http://127.0.0.1:8080/v1".into(),
+            api_key: None,
+            models,
+        }
+    }
+
+    fn spec(
+        name: &str,
+        types: &[ModelCapability],
+        enabled: bool,
+    ) -> crate::api::tenant_models::TenantModelSpec {
+        crate::api::tenant_models::TenantModelSpec {
+            name: name.into(),
+            model_types: types.to_vec(),
+            max_tokens: Some(8192),
+            enabled,
+        }
+    }
 
     #[test]
     fn related_question_parser_matches_ragflow_numbered_line_contract() {
@@ -783,5 +852,84 @@ mod tests {
             vec!["First question?", "Second question?"]
         );
         assert!(parse_related_questions("No numbered questions").is_empty());
+    }
+
+    #[test]
+    fn llm_models_plan_expands_real_factory_catalog_with_rank_order() {
+        let providers = vec![provider("oa", "OpenAI"), provider("ds", "DeepSeek")];
+        let instances = vec![
+            instance(
+                "tenant-a",
+                "oa",
+                "i1",
+                "default",
+                vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
+            ),
+            instance(
+                "tenant-a",
+                "ds",
+                "i2",
+                "default",
+                vec![spec("deep-chat-dummy", &[ModelCapability::Chat], true)],
+            ),
+        ];
+        let models = plan_llm_models(&providers, &instances, &[]);
+        assert!(!models.is_empty());
+        // Factory fallback: OpenAI's catalog is exposed per tenant instance
+        // (gpt-5.5 is the first chat row of the embedded catalog).
+        assert!(
+            models
+                .iter()
+                .any(|model| model.name == "gpt-5.5" && model.model_type == ModelCapability::Chat)
+        );
+        assert!(
+            models
+                .iter()
+                .any(|model| model.selector == "gpt-5.5@default@OpenAI")
+        );
+        // Manual-only models still surface.
+        assert!(models.iter().any(|model| model.name == "chat-dummy"));
+        // Ranking: OpenAI (rank 999) sorts before DeepSeek.
+        let first_openai = models
+            .iter()
+            .position(|model| model.provider == "OpenAI")
+            .unwrap();
+        let first_deepseek = models
+            .iter()
+            .position(|model| model.provider == "DeepSeek")
+            .unwrap();
+        assert!(first_openai < first_deepseek);
+    }
+
+    #[test]
+    fn llm_models_plan_keeps_image2text_side_of_ocr_rows_and_never_emits_ocr() {
+        let providers = vec![provider("tq", "Tongyi-Qianwen")];
+        let instances = vec![instance(
+            "tenant-a",
+            "tq",
+            "i1",
+            "default",
+            vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
+        )];
+        let models = plan_llm_models(&providers, &instances, &[]);
+        // The ocr-tagged factory rows surface their image2text side; an
+        // ocr-only capability has no ModelConfig representation.
+        assert!(
+            models.iter().any(|model| {
+                model.name == "qwen-vl-ocr-2025-11-20" && model.model_type == ModelCapability::ImageToText
+            })
+        );
+        // Every emitted entry carries a representable capability.
+        for model in &models {
+            assert!(matches!(
+                model.model_type,
+                ModelCapability::Chat
+                    | ModelCapability::Embedding
+                    | ModelCapability::Rerank
+                    | ModelCapability::ImageToText
+                    | ModelCapability::SpeechToText
+                    | ModelCapability::TextToSpeech
+            ));
+        }
     }
 }

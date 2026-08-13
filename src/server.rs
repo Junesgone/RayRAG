@@ -3278,7 +3278,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/models/default",
-            get(crate::api::tenant_models::get_ragflow_default_models),
+            get(crate::api::tenant_models::get_ragflow_default_models)
+                .patch(crate::api::tenant_models::set_ragflow_default_models),
         )
         .route(
             "/api/v1/openai/models",
@@ -4263,11 +4264,16 @@ mod tests {
         assert_eq!(catalog.status(), StatusCode::OK);
         let catalog = response_json(catalog).await;
         let models = catalog["data"].as_array().unwrap();
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[0]["selector"], "MiniMax-M2@Primary@MiniMax");
+        // Factory-catalog expansion (upstream `list_tenant_added_models`):
+        // every MiniMax factory model is exposed for the tenant instance, in
+        // factory order, with manual type overrides applied.
+        assert!(models.len() >= 7, "expected the full MiniMax factory catalog");
+        assert_eq!(models[0]["selector"], "MiniMax-M3@Primary@MiniMax");
         assert!(models.iter().all(|model| model.get("api_key").is_none()));
         assert!(models.iter().any(|model| {
-            model["name"] == "MiniMax-M2" && model["model_type"] == serde_json::json!(["embedding"])
+            model["name"] == "MiniMax-M2"
+                && model["model_type"]
+                    == serde_json::json!(["chat", "embedding"])
         }));
 
         let defaults = router
@@ -6043,7 +6049,14 @@ mod tests {
             .iter()
             .filter_map(|model| model["model_type"].as_str())
             .collect();
-        assert_eq!(model_types, vec!["chat", "embedding"]);
+        // Factory-catalog expansion (upstream `list_tenant_added_models`):
+        // the MiniMax factory catalog is exposed for the tenant instance, in
+        // factory order, with the configured MiniMax-M3 entry expanded first
+        // (chat + embedding), followed by the remaining factory chat models.
+        assert!(model_types.len() >= 7, "expected the full MiniMax factory catalog");
+        assert_eq!(model_types[0], "chat");
+        assert_eq!(model_types[1], "embedding");
+        assert!(model_types[2..].iter().all(|t| *t == "chat"));
 
         let member_write = router
             .clone()

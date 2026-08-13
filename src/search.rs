@@ -57,6 +57,44 @@ pub struct HybridSearchQuery<'a> {
     pub rank_feature: Option<&'a HashMap<String, f32>>,
 }
 
+/// Infinity-flavored options layered on the hybrid engine (see
+/// [`SearchEngine::hybrid_search_kbs_with`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HybridSearchOptions {
+    /// match_dense `similarity` → `threshold`: candidates whose cosine
+    /// similarity falls below this bound contribute no dense score to the
+    /// fusion (Infinity drops them from the dense expression entirely).
+    pub dense_threshold: Option<f32>,
+    /// FusionExpr `weighted_sum` with `normalize=atan`: apply
+    /// `atan(weighted) * 2/pi` to the term/vector weighted sum before adding
+    /// rank features. The Infinity connector sets this because the default
+    /// minmax normalization gives the last-ranked document a zero score.
+    pub atan_fusion: bool,
+}
+
+/// Infinity `normalize=atan` for `weighted_sum` fusion: `atan(x) * 2/pi`
+/// maps non-negative scores into `[0, 1)` with diminishing returns.
+pub fn atan_normalize(score: f32) -> f32 {
+    (2.0 / std::f32::consts::PI) * score.atan()
+}
+
+/// Retrieval-side post filter (`Dealer.retrieval`, search.py): candidates
+/// whose fused score is below `threshold` are dropped, but only while vector
+/// weighting is active (`vector_weight > 0`). Term-only retrieval
+/// (`vector_weight <= 0`) keeps every candidate — a similarity threshold is
+/// meaningless for term-only scores.
+pub fn similarity_threshold_mask(
+    scores: &[f32],
+    threshold: f32,
+    vector_weight: f32,
+) -> Vec<bool> {
+    let post_threshold = if vector_weight <= 0.0 { 0.0 } else { threshold };
+    scores
+        .iter()
+        .map(|score| *score >= post_threshold)
+        .collect()
+}
+
 /// A chunk stored in the search index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexedChunk {
@@ -283,6 +321,18 @@ impl SearchEngine {
     /// query embedding. BM25 scores are normalized by the strongest candidate
     /// so they can be blended with cosine similarity on a common scale.
     pub fn hybrid_search_kbs(&self, request: HybridSearchQuery<'_>) -> Vec<HybridSearchResult> {
+        self.hybrid_search_kbs_with(request, HybridSearchOptions::default())
+    }
+
+    /// Hybrid retrieval with the Infinity search options layered on top of
+    /// the RayRAG blend: a dense `similarity` threshold (match_dense
+    /// `threshold` semantics) and the `atan` normalized weighted-sum fusion
+    /// the Python connector applies for every `weighted_sum` FusionExpr.
+    pub fn hybrid_search_kbs_with(
+        &self,
+        request: HybridSearchQuery<'_>,
+        options: HybridSearchOptions,
+    ) -> Vec<HybridSearchResult> {
         let HybridSearchQuery {
             query,
             query_embedding,
@@ -375,9 +425,23 @@ impl SearchEngine {
                     })
                     .map(|embedding| cosine_similarity(embedding, &chunk.embedding, query_norm))
                     .unwrap_or(0.0);
+                // Infinity match_dense `similarity` → `threshold`: candidates
+                // below the bound contribute no dense score to the fusion.
+                let vector_score = match (query_vector, options.dense_threshold) {
+                    (Some(_), Some(threshold)) if vector_score < threshold => 0.0,
+                    _ => vector_score,
+                };
                 let rank_feature_score = rank_feature_score(chunk, rank_feature);
-                let score =
-                    term_weight * term_score + vector_weight * vector_score + rank_feature_score;
+                let weighted = term_weight * term_score + vector_weight * vector_score;
+                // FusionExpr weighted_sum with normalize=atan: atan maps the
+                // weighted sum into (0, 1); rank features stay outside the
+                // normalization (Infinity `_score = SCORE + pagerank_fea`).
+                let fused = if options.atan_fusion {
+                    atan_normalize(weighted)
+                } else {
+                    weighted
+                };
+                let score = fused + rank_feature_score;
                 (score > 0.0).then(|| HybridSearchResult {
                     chunk: chunk.clone(),
                     score,
@@ -1321,5 +1385,168 @@ mod tests {
             ragflow_rerank_by_model(&[hit], "水产", &tw, 0.3, 0.7, &[0.5, 0.6], None)
         });
         assert!(result.is_err(), "length mismatch must panic");
+    }
+}
+
+#[cfg(test)]
+mod infinity_fusion_tests {
+    use super::*;
+
+    fn dense_chunk(id: &str, kb_id: &str, embedding: Vec<f32>) -> IndexedChunk {
+        let mut metadata = HashMap::new();
+        metadata.insert("kb_id".into(), kb_id.into());
+        metadata.insert("available_int".into(), "1".into());
+        IndexedChunk {
+            id: id.into(),
+            doc_name: "document.txt".into(),
+            content: "shared content".into(),
+            embedding,
+            token_count: 2,
+            position: 0,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn atan_normalize_maps_scores_into_unit_interval() {
+        assert!((atan_normalize(0.0) - 0.0).abs() < 1e-6);
+        let one = atan_normalize(1.0);
+        let ten = atan_normalize(10.0);
+        assert!(one > 0.0 && one < 1.0);
+        assert!(ten > one && ten < 1.0);
+        // atan(x) * 2/pi: diminishing returns compress large scores.
+        assert!(atan_normalize(100.0) < 1.0);
+    }
+
+    #[test]
+    fn similarity_threshold_mask_follows_retrieval_post_filter() {
+        let scores = [0.05, 0.25, 0.95];
+        // vector weight active → keep only scores >= 0.2
+        assert_eq!(
+            similarity_threshold_mask(&scores, 0.2, 0.3),
+            vec![false, true, true]
+        );
+        // term-only retrieval → every candidate survives
+        assert_eq!(
+            similarity_threshold_mask(&scores, 0.2, 0.0),
+            vec![true, true, true]
+        );
+    }
+
+    #[test]
+    fn dense_threshold_zeroes_sub_threshold_vector_scores() {
+        let engine = SearchEngine::from_chunks(vec![
+            dense_chunk("near", "kb-a", vec![1.0, 0.0]),
+            dense_chunk("mid", "kb-a", vec![1.0, 1.0]),
+        ]);
+        let kb_ids = vec!["kb-a".into()];
+        fn request<'a>(kb_ids: &'a [String], vector_weight: f32) -> HybridSearchQuery<'a> {
+            HybridSearchQuery {
+                query: "content",
+                query_embedding: Some(&[1.0, 0.0]),
+                top_k: 10,
+                kb_ids,
+                vector_weight,
+                doc_ids: None,
+                rank_feature: None,
+            }
+        }
+        let plain = engine.hybrid_search_kbs_with(
+            request(&kb_ids, 1.0),
+            HybridSearchOptions {
+                dense_threshold: None,
+                atan_fusion: false,
+            },
+        );
+        let mid = plain.iter().find(|r| r.chunk.id == "mid").unwrap();
+        let mid_similarity = mid.vector_score;
+        assert!(
+            (mid_similarity - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
+            "cosine of [1,0] vs [1,1] must be ~0.7071, got {mid_similarity}"
+        );
+
+        // At pure vector weight the sub-threshold chunk drops out entirely.
+        let thresholded = engine.hybrid_search_kbs_with(
+            request(&kb_ids, 1.0),
+            HybridSearchOptions {
+                dense_threshold: Some(0.9),
+                atan_fusion: false,
+            },
+        );
+        assert!(thresholded.iter().all(|r| r.chunk.id == "near"));
+
+        // With term weight the chunk survives but contributes no dense score.
+        let blended = engine.hybrid_search_kbs_with(
+            request(&kb_ids, 0.5),
+            HybridSearchOptions {
+                dense_threshold: Some(0.9),
+                atan_fusion: false,
+            },
+        );
+        let mid = blended.iter().find(|r| r.chunk.id == "mid").unwrap();
+        assert_eq!(mid.vector_score, 0.0);
+        assert!(mid.term_score > 0.0);
+
+        // Default options preserve the original behavior.
+        let defaulted = engine.hybrid_search_kbs(request(&kb_ids, 1.0));
+        assert_eq!(defaulted.len(), plain.len());
+    }
+
+    #[test]
+    fn atan_fusion_normalizes_the_weighted_sum_before_rank_features() {
+        let engine = SearchEngine::from_chunks(vec![
+            dense_chunk("near", "kb-a", vec![1.0, 0.0]),
+            dense_chunk("far", "kb-a", vec![0.0, 1.0]),
+        ]);
+        let kb_ids = vec!["kb-a".into()];
+        fn request<'a>(kb_ids: &'a [String]) -> HybridSearchQuery<'a> {
+            HybridSearchQuery {
+                query: "content",
+                query_embedding: Some(&[1.0, 0.0]),
+                top_k: 10,
+                kb_ids,
+                vector_weight: 0.8,
+                doc_ids: None,
+                rank_feature: None,
+            }
+        }
+        let fused = engine.hybrid_search_kbs_with(
+            request(&kb_ids),
+            HybridSearchOptions {
+                dense_threshold: None,
+                atan_fusion: true,
+            },
+        );
+        let near = fused.iter().find(|r| r.chunk.id == "near").unwrap();
+        // score == atan(0.8 * 1.0 + 0.2 * term) * 2/pi (+ no rank feature):
+        // term score is tiny for "shared content" vs "content", so verify the
+        // score is the atan of a positive weighted sum, bounded below 1.
+        assert!(near.score > 0.0 && near.score < 1.0);
+        let expected = atan_normalize(0.8 * near.vector_score + 0.2 * near.term_score);
+        assert!(
+            (near.score - expected).abs() < 1e-6,
+            "fused score {:.6} vs expected {:.6}",
+            near.score,
+            expected
+        );
+        // Rank features are added outside the atan normalization.
+        let mut ranked_engine =
+            SearchEngine::from_chunks(vec![dense_chunk("near", "kb-a", vec![1.0, 0.0])]);
+        ranked_engine.chunks[0]
+            .metadata
+            .insert("pagerank_fea".into(), "2.5".into());
+        let ranked = ranked_engine.hybrid_search_kbs_with(
+            request(&kb_ids),
+            HybridSearchOptions {
+                dense_threshold: None,
+                atan_fusion: true,
+            },
+        );
+        let ranked_near = ranked.iter().find(|r| r.chunk.id == "near").unwrap();
+        assert_eq!(ranked_near.rank_feature_score, 2.5);
+        assert!(
+            (ranked_near.score - (expected + 2.5)).abs() < 1e-6,
+            "rank feature must sit outside the atan normalization"
+        );
     }
 }

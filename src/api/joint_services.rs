@@ -356,6 +356,13 @@ pub struct MemoryMessageService {
     next_message_id: AtomicI64,
     path: Option<PathBuf>,
     save_lock: Mutex<()>,
+    /// Native index bookkeeping — `messages.py::MessageService.has_index` /
+    /// `create_index` / `delete_index`. The in-process engine materializes an
+    /// index lazily on first save (mirroring `embed_and_save`'s
+    /// `has_index → create_index` gate); rows alone are not an index, but
+    /// legacy snapshots restored without bookkeeping count as indexed when
+    /// they already hold rows so delete flows still reach them.
+    indexes: RwLock<std::collections::HashSet<(String, String)>>,
 }
 
 impl MemoryMessageService {
@@ -378,6 +385,7 @@ impl MemoryMessageService {
             next_message_id: AtomicI64::new(if max_id > 0 { max_id + 1 } else { 1 }),
             path: Some(path),
             save_lock: Mutex::new(()),
+            indexes: RwLock::new(std::collections::HashSet::new()),
         };
         service.persist()?;
         Ok(service)
@@ -389,6 +397,7 @@ impl MemoryMessageService {
             next_message_id: AtomicI64::new(1),
             path: None,
             save_lock: Mutex::new(()),
+            indexes: RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -2654,6 +2663,123 @@ impl MemoryMessageService {
             hide_forgotten: true,
         })
     }
+
+    /// `MessageService.has_index(uid, memory_id)` on the in-process engine.
+    /// An index counts as present when it was created through the lifecycle
+    /// (`create_index` / the save gate) or — for legacy snapshots restored
+    /// without bookkeeping — when the store already holds rows for the memory.
+    pub fn has_index(&self, uid: &str, memory_id: &str) -> bool {
+        let key = (message_index_name(uid), memory_id.to_string());
+        let bookkept = self
+            .indexes
+            .read()
+            .expect("index lock poisoned")
+            .contains(&key);
+        if bookkept {
+            return true;
+        }
+        self.messages
+            .read()
+            .expect("message store lock poisoned")
+            .iter()
+            .any(|message| message.memory_id == memory_id)
+    }
+
+    /// `MessageService.create_index` — materialize the per-tenant index for a
+    /// memory. In-process this is bookkeeping; the row store is the index.
+    pub fn create_index(
+        &self,
+        uid: &str,
+        memory_id: &str,
+        _vector_size: usize,
+    ) -> anyhow::Result<()> {
+        self.indexes
+            .write()
+            .expect("index lock poisoned")
+            .insert((message_index_name(uid), memory_id.to_string()));
+        Ok(())
+    }
+
+    /// `MessageService.delete_index` — drop the per-tenant index bookkeeping.
+    /// Rows are not removed, mirroring the native connector where the index
+    /// and the documents are separate resources.
+    pub fn delete_index(&self, uid: &str, memory_id: &str) -> anyhow::Result<()> {
+        self.indexes
+            .write()
+            .expect("index lock poisoned")
+            .remove(&(message_index_name(uid), memory_id.to_string()));
+        Ok(())
+    }
+
+    /// `embed_and_save` cross-store transactional sequence on the in-process
+    /// engine: (1) ensure the native index exists (fail → abort before any
+    /// insert), (2) check the size budget against the cache (overflow + FIFO
+    /// evicts and decrements the cache; any other policy is an error), (3)
+    /// insert the rows (fail → abort), (4) increase the size cache. The cache
+    /// is the soft Redis mirror; a miss recomputes from this store.
+    pub fn save_messages_with_index_and_cache(
+        &self,
+        uid: &str,
+        memory_id: &str,
+        forgetting_policy: &str,
+        memory_size: usize,
+        new_messages: Vec<MemoryMessage>,
+        size_cache: &MemorySizeCache,
+    ) -> Result<(), ApiError> {
+        let vector_size = new_messages
+            .iter()
+            .map(|message| message.content_embed.len())
+            .max()
+            .unwrap_or(0);
+        if !self.has_index(uid, memory_id)
+            && self.create_index(uid, memory_id, vector_size).is_err()
+        {
+            return Err(ApiError::admin("Failed to create message index."));
+        }
+
+        let new_msg_size: usize = new_messages
+            .iter()
+            .map(MemoryMessage::calculate_size)
+            .sum();
+        let current_memory_size = size_cache.get(self, memory_id, uid) as usize;
+        if new_msg_size + current_memory_size > memory_size {
+            if forgetting_policy != "FIFO" {
+                return Err(ApiError::admin(MEMORY_BUDGET_ERROR));
+            }
+            let size_to_delete = current_memory_size + new_msg_size - memory_size;
+            let ordered = {
+                let mut ordered: Vec<MemoryMessage> = self
+                    .messages
+                    .read()
+                    .expect("message store lock poisoned")
+                    .iter()
+                    .filter(|message| message.memory_id == memory_id)
+                    .cloned()
+                    .collect();
+                // Infinity first physically removes rows already
+                // soft-forgotten, then the oldest remaining rows.
+                ordered.sort_by(|left, right| match (&left.forget_at, &right.forget_at) {
+                    (Some(left), Some(right)) => left.cmp(right),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => left.valid_at.cmp(&right.valid_at),
+                });
+                ordered
+            };
+            let (ids_to_delete, delete_size) =
+                pick_messages_to_delete_by_fifo(ordered.iter(), size_to_delete);
+            if let Err(error) = self.delete_messages(memory_id, &ids_to_delete) {
+                return Err(ApiError::from(error));
+            }
+            size_cache.decrease(memory_id, delete_size as i64);
+        }
+
+        if let Err(error) = self.insert_messages(new_messages) {
+            return Err(ApiError::from(error));
+        }
+        size_cache.increase(memory_id, new_msg_size as i64);
+        Ok(())
+    }
 }
 
 /// `MessageService.list_message` — group extracted messages by their
@@ -2673,6 +2799,198 @@ pub fn group_extract_by_source(
         }
     }
     grouped
+}
+
+// ── Memory size cache (memory_message_service.py Redis helpers) ───────────
+
+/// In-process mirror of the Redis `memory_{memory_id}` size cache used by
+/// `embed_and_save` / `get_memory_size_cache` / `increase_memory_size_cache` /
+/// `decrease_memory_size_cache` / `init_memory_size_cache`.
+///
+/// The key is always `memory_{memory_id}` (the first positional argument of
+/// every upstream helper). NOTE: v0.26.4's `embed_and_save` calls
+/// `get_memory_size_cache(memory.tenant_id, memory.id)` while
+/// increase/decrease pass `memory.id` first — an upstream argument-order
+/// quirk. The port passes the memory id first in every call site so the
+/// cache stays self-consistent; a `get` miss recomputes from the message
+/// store either way, which is what makes the upstream quirk benign.
+#[derive(Default)]
+pub struct MemorySizeCache {
+    entries: RwLock<HashMap<String, i64>>,
+}
+
+impl MemorySizeCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn key(memory_id: &str) -> String {
+        format!("memory_{memory_id}")
+    }
+
+    /// `get_memory_size_cache(memory_id, uid)`: hit → cached size; miss →
+    /// recompute via `MessageService.calculate_memory_size`, cache it, return.
+    /// `uid` only participates in the native per-tenant index namespace and
+    /// is unused by the in-process recomputation.
+    pub fn get(&self, store: &MemoryMessageService, memory_id: &str, _uid: &str) -> i64 {
+        let key = Self::key(memory_id);
+        if let Some(size) = self.entries.read().expect("size cache lock poisoned").get(&key) {
+            return *size;
+        }
+        let size = store.calculate_memory_size(memory_id) as i64;
+        self.set(memory_id, size);
+        size
+    }
+
+    /// `set_memory_size_cache(memory_id, size)`.
+    pub fn set(&self, memory_id: &str, size: i64) {
+        self.entries
+            .write()
+            .expect("size cache lock poisoned")
+            .insert(Self::key(memory_id), size);
+    }
+
+    /// `increase_memory_size_cache` (Redis INCRBY — returns the new value).
+    pub fn increase(&self, memory_id: &str, size: i64) -> i64 {
+        let mut entries = self.entries.write().expect("size cache lock poisoned");
+        let value = entries.entry(Self::key(memory_id)).or_insert(0);
+        *value += size;
+        *value
+    }
+
+    /// `decrease_memory_size_cache` (Redis DECRBY — returns the new value).
+    pub fn decrease(&self, memory_id: &str, size: i64) -> i64 {
+        self.increase(memory_id, -size)
+    }
+
+    /// `init_memory_size_cache`: warm the cache for every existing memory by
+    /// forcing a get (recompute-on-miss). Returns the number warmed.
+    pub fn init(
+        &self,
+        store: &MemoryMessageService,
+        memories: &[(String, String)],
+    ) -> usize {
+        for (memory_id, tenant_id) in memories {
+            self.get(store, memory_id, tenant_id);
+        }
+        memories.len()
+    }
+}
+
+// ── Native index lifecycle on the DocStore backend ─────────────────────────
+//
+// RAGFlow `messages.py::MessageService.has_index / create_index /
+// delete_index` delegate to `settings.msgStoreConn` (Infinity/ES). RayRAG
+// has no ES client: the equivalent lifecycle runs on the existing
+// `src/doc_store.rs` `DocStore` trait backend (Memory / Postgres / Zvec),
+// with the `ES_INDEX_PREFIX`-derived index name actually applied to the
+// native resources.
+
+/// Native-index lifecycle port — `memory/services/messages.py` index ops
+/// re-expressed on the RayRAG `DocStore` backend abstraction.
+pub struct MessageIndexLifecycle {
+    store: std::sync::Arc<dyn crate::doc_store::DocStore>,
+}
+
+impl MessageIndexLifecycle {
+    pub fn new(store: std::sync::Arc<dyn crate::doc_store::DocStore>) -> Self {
+        Self { store }
+    }
+
+    /// `MessageService.has_index(uid, memory_id)` — prefix is applied to the
+    /// native index resource before the existence check.
+    pub fn has_index(&self, uid: &str, memory_id: &str) -> anyhow::Result<bool> {
+        self.store.index_exist(&message_index_name(uid), memory_id)
+    }
+
+    /// `MessageService.create_index(uid, memory_id, vector_size)`.
+    pub fn create_index(
+        &self,
+        uid: &str,
+        memory_id: &str,
+        vector_size: usize,
+    ) -> anyhow::Result<()> {
+        self.store
+            .create_idx(&message_index_name(uid), memory_id, vector_size)
+    }
+
+    /// `MessageService.delete_index(uid, memory_id)`.
+    pub fn delete_index(&self, uid: &str, memory_id: &str) -> anyhow::Result<()> {
+        self.store.delete_idx(&message_index_name(uid), memory_id)
+    }
+
+    /// `MessageService.get_missing_field_messages` + `fix_missing_tokenized_memory`'s
+    /// inner repair loop: find every row of the memory missing `field`, then
+    /// re-apply its own content via `update_message` so the engine refreshes
+    /// the tokenized field. Returns the number of rows repaired.
+    pub fn repair_missing_field(
+        &self,
+        uid: &str,
+        memory_id: &str,
+        field: &str,
+    ) -> anyhow::Result<usize> {
+        let index_name = message_index_name(uid);
+        let response = self.store.search(&crate::doc_store::SearchQuery {
+            select_fields: vec!["message_id".into(), "content".into()],
+            condition: [("memory_id".to_string(), Value::String(memory_id.to_string()))]
+                .into_iter()
+                .collect(),
+            index_names: vec![index_name.clone()],
+            dataset_ids: vec![memory_id.to_string()],
+            ..Default::default()
+        })?;
+        let mut repaired = 0usize;
+        for row in &response.docs {
+            // Present-but-empty also counts as missing, matching the engine's
+            // empty-string tokenization gap.
+            let missing = match row.get(field) {
+                None => true,
+                Some(Value::Null) => true,
+                Some(Value::String(value)) => value.is_empty(),
+                Some(_) => false,
+            };
+            if !missing {
+                continue;
+            }
+            let (Some(message_id), Some(content)) = (row.get("message_id"), row.get("content"))
+            else {
+                continue;
+            };
+            let condition: crate::doc_store::FilterCondition = [
+                ("memory_id".to_string(), Value::String(memory_id.to_string())),
+                ("message_id".to_string(), message_id.clone()),
+            ]
+            .into_iter()
+            .collect();
+            let mut new_value = crate::doc_store::DocRow::new();
+            new_value.insert("content".into(), content.clone());
+            self.store
+                .update(&condition, &new_value, &index_name, memory_id)?;
+            repaired += 1;
+        }
+        Ok(repaired)
+    }
+}
+
+/// `memory_message_service.py::fix_missing_tokenized_memory` — only the
+/// elasticsearch doc engine tokenizes content; on any other engine the
+/// upstream helper logs and returns. `engine_tokenizes=false` reproduces that
+/// no-op guard (RayRAG's DocStore never tokenizes); `true` runs the
+/// per-memory repair loop and returns the total number of repaired rows.
+pub fn fix_missing_tokenized_memory(
+    engine_tokenizes: bool,
+    memories: &[(String, String)],
+    lifecycle: &MessageIndexLifecycle,
+    field: &str,
+) -> anyhow::Result<usize> {
+    if !engine_tokenizes {
+        return Ok(0);
+    }
+    let mut repaired = 0usize;
+    for (memory_id, tenant_id) in memories {
+        repaired += lifecycle.repair_missing_field(tenant_id, memory_id, field)?;
+    }
+    Ok(repaired)
 }
 
 #[cfg(test)]
@@ -3388,5 +3706,218 @@ mod memory_extraction_tests {
             .await
             .unwrap();
         assert_eq!(answer, "system:1");
+    }
+}
+
+#[cfg(test)]
+mod memory_index_cache_tests {
+    use super::*;
+    // Trait methods (`index_exist` / `insert` / `get`) live on the `DocStore`
+    // trait; bring it into scope for the `Arc<MemoryDocStore>` receivers.
+    use crate::doc_store::DocStore;
+
+    fn message(message_id: i64, memory_id: &str, content: &str) -> MemoryMessage {
+        MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory_id.into(),
+            user_id: "u1".into(),
+            agent_id: "a1".into(),
+            session_id: "s1".into(),
+            content: content.into(),
+            valid_at: format!("2026-08-0{message_id} 00:00:00"),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: vec![0.1, 0.2],
+        }
+    }
+
+    // ── messages.py MessageService index lifecycle (DocStore backend) ──
+
+    #[test]
+    fn native_index_lifecycle_applies_prefix_and_tracks_creation() {
+        let store = std::sync::Arc::new(crate::doc_store::MemoryDocStore::new());
+        let lifecycle = MessageIndexLifecycle::new(store.clone());
+        assert!(!lifecycle.has_index("tenant-1", "memory-1").unwrap());
+        lifecycle.create_index("tenant-1", "memory-1", 768).unwrap();
+        assert!(lifecycle.has_index("tenant-1", "memory-1").unwrap());
+        // Index names are per-tenant: another uid does not see it.
+        assert!(!lifecycle.has_index("tenant-2", "memory-1").unwrap());
+        // The `memory_{uid}` name was applied to the native resource.
+        assert!(store
+            .index_exist(&message_index_name("tenant-1"), "memory-1")
+            .unwrap());
+        lifecycle.delete_index("tenant-1", "memory-1").unwrap();
+        assert!(!lifecycle.has_index("tenant-1", "memory-1").unwrap());
+    }
+
+    #[test]
+    fn prefix_application_matches_upstream_index_name_contract() {
+        // Pure form: trimmed prefix yields `memory_{prefix}_{uid}`.
+        assert_eq!(message_index_name_with_prefix("u1", "rayrag"), "memory_rayrag_u1");
+        assert_eq!(message_index_name_with_prefix("u1", "  rayrag  "), "memory_rayrag_u1");
+        assert_eq!(message_index_name_with_prefix("u1", ""), "memory_u1");
+        assert_eq!(message_index_name_with_prefix("u 1", "p"), "memory_p_u 1");
+    }
+
+    #[test]
+    fn missing_field_repair_reapplies_content_and_counts_only_gaps() {
+        let store = std::sync::Arc::new(crate::doc_store::MemoryDocStore::new());
+        let lifecycle = MessageIndexLifecycle::new(store.clone());
+        lifecycle.create_index("tenant-1", "memory-1", 768).unwrap();
+        let mut complete = Map::new();
+        complete.insert("id".into(), Value::String("memory-1_3".into()));
+        complete.insert("memory_id".into(), Value::String("memory-1".into()));
+        complete.insert("message_id".into(), Value::from(3i64));
+        complete.insert("content".into(), Value::String("already tokenized".into()));
+        complete.insert("tokenized_content_ltks".into(), Value::String("tokens".into()));
+        let mut missing = Map::new();
+        missing.insert("id".into(), Value::String("memory-1_1".into()));
+        missing.insert("memory_id".into(), Value::String("memory-1".into()));
+        missing.insert("message_id".into(), Value::from(1i64));
+        missing.insert("content".into(), Value::String("first".into()));
+        let mut empty = Map::new();
+        empty.insert("id".into(), Value::String("memory-1_2".into()));
+        empty.insert("memory_id".into(), Value::String("memory-1".into()));
+        empty.insert("message_id".into(), Value::from(2i64));
+        empty.insert("content".into(), Value::String("second".into()));
+        empty.insert("tokenized_content_ltks".into(), Value::String(String::new()));
+        store
+            .insert(
+                &[complete.clone(), missing, empty],
+                &message_index_name("tenant-1"),
+                "memory-1",
+            )
+            .unwrap();
+
+        let repaired = lifecycle
+            .repair_missing_field("tenant-1", "memory-1", "tokenized_content_ltks")
+            .unwrap();
+        assert_eq!(repaired, 2);
+        // The complete row is untouched (content unchanged, field intact).
+        let after = store
+            .get("memory-1_3", &message_index_name("tenant-1"), &["memory-1".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.get("tokenized_content_ltks"), Some(&Value::String("tokens".into())));
+    }
+
+    #[test]
+    fn fix_missing_tokenized_memory_is_a_noop_without_a_tokenizing_engine() {
+        let store = std::sync::Arc::new(crate::doc_store::MemoryDocStore::new());
+        let lifecycle = MessageIndexLifecycle::new(store);
+        let memories = vec![("memory-1".to_string(), "tenant-1".to_string())];
+        assert_eq!(
+            fix_missing_tokenized_memory(false, &memories, &lifecycle, "tokenized_content_ltks")
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            fix_missing_tokenized_memory(true, &memories, &lifecycle, "tokenized_content_ltks")
+                .unwrap(),
+            0
+        );
+    }
+
+    // ── MemorySizeCache (memory_message_service.py Redis helpers) ──
+
+    #[test]
+    fn size_cache_recomputes_on_miss_and_tracks_increase_decrease() {
+        let store = MemoryMessageService::in_memory();
+        store.insert_messages(vec![message(1, "m1", "hello")]).unwrap();
+        let cache = MemorySizeCache::new();
+        assert_eq!(cache.get(&store, "m1", "tenant-1"), message(1, "m1", "hello").calculate_size() as i64);
+        assert_eq!(cache.increase("m1", 100), message(1, "m1", "hello").calculate_size() as i64 + 100);
+        assert_eq!(cache.decrease("m1", 30), message(1, "m1", "hello").calculate_size() as i64 + 70);
+        cache.set("m2", 500);
+        assert_eq!(cache.get(&store, "m2", "tenant-1"), 500);
+        // Cache keys are per memory id, never per tenant.
+        assert_eq!(cache.get(&store, "m3", "tenant-9"), 0);
+        assert_eq!(cache.get(&store, "m3", "tenant-8"), 0);
+    }
+
+    #[test]
+    fn init_size_cache_warms_every_memory() {
+        let store = MemoryMessageService::in_memory();
+        store.insert_messages(vec![message(1, "m1", "hello")]).unwrap();
+        let cache = MemorySizeCache::new();
+        let warmed = cache.init(
+            &store,
+            &[
+                ("m1".to_string(), "tenant-1".to_string()),
+                ("m2".to_string(), "tenant-2".to_string()),
+            ],
+        );
+        assert_eq!(warmed, 2);
+        assert!(cache.get(&store, "m1", "tenant-1") > 0);
+        assert_eq!(cache.get(&store, "m2", "tenant-2"), 0);
+    }
+
+    // ── embed_and_save cross-store transactional sequence ──
+
+    #[test]
+    fn transactional_save_creates_index_evicts_fifo_and_keeps_cache_consistent() {
+        let store = MemoryMessageService::in_memory();
+        let cache = MemorySizeCache::new();
+        let budget = 3 * message(1, "m1", "placeholder").calculate_size();
+        let first = message(1, "m1", "oldest");
+        let second = message(2, "m1", "middle");
+        let two_row_size = first.calculate_size() + second.calculate_size();
+        store.save_messages_with_index_and_cache("tenant-1", "m1", "FIFO", budget, vec![first, second], &cache).unwrap();
+        assert!(store.has_index("tenant-1", "m1"));
+        let cached = cache.get(&store, "m1", "tenant-1");
+        assert_eq!(cached, two_row_size as i64);
+
+        // Overflow: FIFO evicts the oldest rows and decrements the cache.
+        let bigger = "bigger".repeat(4);
+        let replacement = message(3, "m1", &bigger);
+        store
+            .save_messages_with_index_and_cache(
+                "tenant-1",
+                "m1",
+                "FIFO",
+                budget,
+                vec![replacement.clone()],
+                &cache,
+            )
+            .unwrap();
+        assert_eq!(store.calculate_memory_size("m1"), cache.get(&store, "m1", "tenant-1") as usize);
+        assert!(store.calculate_memory_size("m1") <= budget);
+        assert!(store.get_by_message_id("m1", 3).is_some());
+    }
+
+    #[test]
+    fn transactional_save_rejects_non_fifo_overflow_and_leaves_store_untouched() {
+        let store = MemoryMessageService::in_memory();
+        let cache = MemorySizeCache::new();
+        let budget = 10;
+        let error = store
+            .save_messages_with_index_and_cache(
+                "tenant-1",
+                "m1",
+                "LRU",
+                budget,
+                vec![message(1, "m1", "content")],
+                &cache,
+            )
+            .unwrap_err();
+        assert_eq!(error.message, MEMORY_BUDGET_ERROR);
+        // Nothing inserted; the index was already created before the budget
+        // check, matching the upstream create-then-budget order.
+        assert_eq!(store.calculate_memory_size("m1"), 0);
+        assert!(store.has_index("tenant-1", "m1"));
+    }
+
+    #[test]
+    fn legacy_rows_without_index_bookkeeping_still_count_as_indexed() {
+        let store = MemoryMessageService::in_memory();
+        store.insert_messages(vec![message(1, "m1", "legacy")]).unwrap();
+        // No create_index call — rows alone must satisfy the has_index gate so
+        // delete flows reach restored snapshots.
+        assert!(store.has_index("tenant-1", "m1"));
+        assert!(!store.has_index("tenant-1", "m2"));
     }
 }

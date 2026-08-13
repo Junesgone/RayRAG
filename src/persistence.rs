@@ -79,6 +79,29 @@ pub fn restore_if_missing(path: &Path) -> anyhow::Result<bool> {
     restore_if_missing_with_mirror(path, snapshot_mirror()?)
 }
 
+/// Atomically persist a serializable value as pretty JSON (mirror-aware).
+///
+/// Reuses [`atomic_write`] so a configured PostgreSQL snapshot mirror stores
+/// the same payload that lands on disk, and a mirror failure rolls the local
+/// file back. Used by the store layer for Infinity-style table lifecycle
+/// state (per-table vector dimension registries).
+pub fn save_json<T: serde::Serialize>(path: &Path, value: &T) -> anyhow::Result<()> {
+    let data = serde_json::to_vec_pretty(value)?;
+    atomic_write(path, &data)
+}
+
+/// Load a deserializable value from a JSON state file.
+///
+/// A missing file yields `Ok(None)` (fresh-state semantics); corrupt JSON is
+/// an error so callers never silently rebuild over a damaged snapshot.
+pub fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<Option<T>> {
+    match std::fs::read(path) {
+        Ok(data) => Ok(Some(serde_json::from_slice(&data)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Probe the configured PostgreSQL snapshot mirror. `Ok(false)` means the
 /// optional mirror is disabled; an enabled but unreachable mirror is an error.
 pub fn snapshot_mirror_health() -> anyhow::Result<bool> {
@@ -591,6 +614,48 @@ mod tests {
         atomic_write_local(&path, b"local-newer").unwrap();
         assert!(!restore_if_missing_with_mirror(&path, Some(&mirror)).unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), b"local-newer");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn json_snapshot_round_trips_through_atomic_write() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-json-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("table.json");
+        let value = serde_json::json!({"dimensions": [1024, 1536], "kb": "kb-1"});
+        save_json(&path, &value).unwrap();
+        let loaded: serde_json::Value = load_json(&path).unwrap().unwrap();
+        assert_eq!(loaded, value);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn json_loader_treats_missing_file_as_fresh_state() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-json-missing-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("absent.json");
+        let loaded: Option<serde_json::Value> = load_json(&path).unwrap();
+        assert!(loaded.is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn json_loader_rejects_corrupt_snapshots() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-json-corrupt-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("corrupt.json");
+        atomic_write_local(&path, b"{not json").unwrap();
+        let result: anyhow::Result<Option<serde_json::Value>> = load_json(&path);
+        assert!(result.is_err());
         std::fs::remove_dir_all(root).ok();
     }
 }

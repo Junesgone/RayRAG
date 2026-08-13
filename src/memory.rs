@@ -327,6 +327,40 @@ pub fn judge_system_prompt_is_default(system_prompt: &str, memory_types: &[Strin
     system_prompt == PromptAssembler::assemble_system_prompt(memory_types)
 }
 
+/// `memory_utils.py::calculate_memory_type` — OR the bit value of every
+/// valid lowercase `MemoryType` name (`RAW=0b0001`, `SEMANTIC=0b0010`,
+/// `EPISODIC=0b0100`, `PROCEDURAL=0b1000`). Unknown names are silently
+/// skipped, exactly like the Python type_value_map lookup.
+pub fn calculate_memory_type(memory_type_name_list: &[String]) -> u8 {
+    memory_type_name_list
+        .iter()
+        .map(|name| memory_type_bit(name))
+        .fold(0u8, std::ops::BitOr::bitor)
+}
+
+/// Bit value of a single `MemoryType` name (trimmed + lowercased), 0 when
+/// the name is not a valid memory type.
+pub fn memory_type_bit(name: &str) -> u8 {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "raw" => 0b0001,
+        "semantic" => 0b0010,
+        "episodic" => 0b0100,
+        "procedural" => 0b1000,
+        _ => 0,
+    }
+}
+
+/// `memory_utils.py::get_memory_type_human` — enum-declaration-order lowercase
+/// names of every set bit (`[mem_type.name.lower() for mem_type in MemoryType
+/// if memory_type & mem_type.value]`).
+pub fn get_memory_type_human(memory_type: u8) -> Vec<String> {
+    ["raw", "semantic", "episodic", "procedural"]
+        .into_iter()
+        .filter(|name| memory_type & memory_type_bit(name) != 0)
+        .map(str::to_owned)
+        .collect()
+}
+
 fn extraction_types(memory_types: &[String]) -> Vec<&'static str> {
     ["semantic", "episodic", "procedural"]
         .into_iter()
@@ -1038,5 +1072,49 @@ mod msg_text_query_tests {
         let expr = expr.expect("normalized input yields an expression");
         assert!(expr.query.contains("rag"));
         assert!(keywords.iter().any(|kw| kw.eq_ignore_ascii_case("rag")));
+    }
+}
+
+#[cfg(test)]
+mod memory_utils_tests {
+    use super::*;
+
+    fn names(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn calculate_memory_type_ors_valid_names_and_skips_unknowns() {
+        assert_eq!(calculate_memory_type(&names(&["raw", "semantic"])), 0b0011);
+        assert_eq!(calculate_memory_type(&names(&["procedural"])), 0b1000);
+        assert_eq!(calculate_memory_type(&names(&["raw"])), 0b0001);
+        // Unknown names contribute 0, exactly like the Python lookup.
+        assert_eq!(
+            calculate_memory_type(&names(&["episodic", "nope", ""])),
+            0b0100
+        );
+        assert_eq!(calculate_memory_type(&names(&[])), 0);
+        // Trimming + case-folding mirror `name.lower()`.
+        assert_eq!(calculate_memory_type(&names(&["  SEMANTIC "])), 0b0010);
+    }
+
+    #[test]
+    fn get_memory_type_human_emits_enum_order_lowercase_names() {
+        assert_eq!(
+            get_memory_type_human(0b0101),
+            vec!["raw".to_string(), "episodic".to_string()]
+        );
+        assert_eq!(
+            get_memory_type_human(0b1111),
+            vec![
+                "raw".to_string(),
+                "semantic".to_string(),
+                "episodic".to_string(),
+                "procedural".to_string(),
+            ]
+        );
+        assert!(get_memory_type_human(0).is_empty());
+        // Unknown bits are not named.
+        assert_eq!(get_memory_type_human(0b1000_0000), Vec::<String>::new());
     }
 }

@@ -1345,13 +1345,6 @@ pub struct MemoryEntry {
     pub updated_at: u64,
 }
 
-#[derive(Debug, Serialize)]
-struct MemoryView {
-    #[serde(flatten)]
-    memory: MemoryEntry,
-    owner_name: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct MemoryCreateRequest {
     pub name: String,
@@ -1676,6 +1669,148 @@ impl MemoryStore {
         })
     }
 
+    /// `memory_api_service._require_memory_access` + `update_memory` —
+    /// joined-tenant mutation: the owner OR any member of the owning tenant
+    /// (when `permissions == "team"`) may mutate, mirroring the fixed
+    /// service's access gate. Returns `None` when absent or inaccessible.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_accessible(
+        &self,
+        id: &str,
+        user_id: &str,
+        is_admin: bool,
+        is_tenant_member: impl Fn(&str, &str) -> bool,
+        has_content: bool,
+        request: MemoryUpdateRequest,
+    ) -> anyhow::Result<Option<MemoryEntry>> {
+        self.mutate_if_changed(|entries| {
+            let Some(current) = entries.get(id).cloned() else {
+                return Ok((None, false));
+            };
+            if !memory_accessible(&current, user_id, is_admin, &is_tenant_member) {
+                return Ok((None, false));
+            }
+            let changes_memory_type = request.memory_type.as_ref().is_some_and(|types| {
+                normalize_memory_types(types.clone())
+                    .is_ok_and(|types| types != current.memory_type)
+            });
+            let changes_embedding = request
+                .embd_id
+                .as_deref()
+                .is_some_and(|selector| selector.trim() != current.embd_id);
+            if has_content && (changes_memory_type || changes_embedding) {
+                anyhow::bail!(
+                    "Memory embedding model and memory type cannot change after content is stored"
+                );
+            }
+            let system_prompt_was_default = crate::memory::judge_system_prompt_is_default(
+                &current.system_prompt,
+                &current.memory_type,
+            );
+            let has_explicit_system_prompt = request.system_prompt.is_some();
+            let mut updated = current.clone();
+            if let Some(name) = request.name {
+                let name = validate_memory_name(&name)?;
+                // Name dedup is scoped to the owning tenant, never the actor.
+                updated.name = duplicate_memory_name(
+                    entries.values().filter(|entry| entry.id != current.id),
+                    &current.tenant_id,
+                    name,
+                );
+            }
+            if let Some(memory_type) = request.memory_type {
+                let memory_type = normalize_memory_types(memory_type)?;
+                if memory_type != current.memory_type
+                    && !has_explicit_system_prompt
+                    && system_prompt_was_default
+                {
+                    updated.system_prompt =
+                        crate::memory::PromptAssembler::assemble_system_prompt(&memory_type);
+                }
+                updated.memory_type = memory_type;
+            }
+            if let Some(embd_id) = request.embd_id {
+                validate_memory_selector("embedding", &embd_id)?;
+                updated.embd_id = embd_id.trim().into();
+            }
+            if let Some(llm_id) = request.llm_id {
+                validate_memory_selector("chat", &llm_id)?;
+                updated.llm_id = llm_id.trim().into();
+            }
+            if let Some(permission) = request.permissions {
+                updated.permissions = normalize_memory_permission(&permission)?.into();
+            }
+            if let Some(memory_size) = request.memory_size {
+                if memory_size == 0 || memory_size > MEMORY_SIZE_LIMIT {
+                    anyhow::bail!("Memory size must be between 1 and {MEMORY_SIZE_LIMIT} bytes");
+                }
+                updated.memory_size = memory_size;
+            }
+            if let Some(temperature) = request.temperature {
+                if !temperature.is_finite() || !(0.0..=1.0).contains(&temperature) {
+                    anyhow::bail!("Memory temperature must be in range [0, 1]");
+                }
+                updated.temperature = temperature;
+            }
+            if let Some(policy) = request.forgetting_policy {
+                if policy != "FIFO" {
+                    anyhow::bail!("Unsupported forgetting policy: {policy}");
+                }
+                updated.forgetting_policy = policy;
+            }
+            if let Some(value) = request.avatar {
+                updated.avatar = value;
+            }
+            if let Some(value) = request.description {
+                updated.description = value;
+            }
+            if let Some(value) = request.system_prompt {
+                updated.system_prompt = value;
+            }
+            if let Some(value) = request.user_prompt {
+                updated.user_prompt = value;
+            }
+            let changed = updated != current;
+            if changed {
+                updated.updated_at = now_ms();
+                entries.insert(id.into(), updated.clone());
+            }
+            Ok((Some(updated), changed))
+        })
+    }
+
+    /// `memory_api_service.delete_memory` access gate — the owner OR a member
+    /// of the owning tenant (team permission) may delete.
+    pub fn delete_accessible(
+        &self,
+        id: &str,
+        user_id: &str,
+        is_admin: bool,
+        is_tenant_member: impl Fn(&str, &str) -> bool,
+    ) -> anyhow::Result<bool> {
+        self.mutate_if_changed(|entries| {
+            let removable = entries
+                .get(id)
+                .is_some_and(|entry| memory_accessible(entry, user_id, is_admin, &is_tenant_member));
+            if removable {
+                entries.remove(id);
+            }
+            Ok((removable, removable))
+        })
+    }
+
+    /// `MemoryService.delete_memory` — raw row removal with no access check.
+    /// Callers (the cross-store delete helper) must have verified access.
+    pub fn delete_by_id(&self, id: &str) -> anyhow::Result<bool> {
+        self.mutate_if_changed(|entries| {
+            let removable = entries.contains_key(id);
+            if removable {
+                entries.remove(id);
+            }
+            Ok((removable, removable))
+        })
+    }
+
     pub fn owned_ids(&self, owner_id: &str) -> Vec<String> {
         self.memories
             .read()
@@ -1759,7 +1894,7 @@ pub async fn list_memories(
     );
     let memory_list: Vec<_> = memory_list
         .into_iter()
-        .map(|memory| memory_view(&state, memory))
+        .map(|memory| memory_ret_data(&state, memory))
         .collect();
     Json(serde_json::json!({
         "code": 0,
@@ -1778,7 +1913,7 @@ pub async fn create_memory(
         return memory_bad_request(error);
     }
     match state.memories.create(&auth.user_id, request) {
-        Ok(entry) => Json(serde_json::json!({ "code": 0, "data": memory_view(&state, entry) }))
+        Ok(entry) => Json(serde_json::json!({ "code": 0, "data": memory_ret_data(&state, entry) }))
             .into_response(),
         Err(error) => memory_bad_request(error),
     }
@@ -1795,7 +1930,7 @@ pub async fn get_memory_config(
         auth.is_admin,
         |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
     ) {
-        Some(entry) => Json(serde_json::json!({ "code": 0, "data": memory_view(&state, entry) }))
+        Some(entry) => Json(serde_json::json!({ "code": 0, "data": memory_ret_data(&state, entry) }))
             .into_response(),
         None => memory_not_found(),
     }
@@ -1822,12 +1957,18 @@ pub async fn update_memory(
         }
     }
     let has_content = state.memory_messages.calculate_memory_size(&memory_id) > 0;
-    match state
-        .memories
-        .update_owned(&memory_id, &auth.user_id, has_content, request)
-    {
+    // `memory_api_service.update_memory`: `_require_memory_access` — the
+    // owner OR a joined member of the owning tenant may mutate team memories.
+    match state.memories.update_accessible(
+        &memory_id,
+        &auth.user_id,
+        auth.is_admin,
+        |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+        has_content,
+        request,
+    ) {
         Ok(Some(entry)) => {
-            Json(serde_json::json!({ "code": 0, "data": memory_view(&state, entry) }))
+            Json(serde_json::json!({ "code": 0, "data": memory_ret_data(&state, entry) }))
                 .into_response()
         }
         Ok(None) => memory_not_found(),
@@ -1835,18 +1976,34 @@ pub async fn update_memory(
     }
 }
 
+/// `memory_api_service.delete_memory` — cross-store delete in the upstream
+/// order: remove the memory row first, then — guarded by the native index
+/// check — delete its messages. Neither store participates in the other's
+/// transaction, exactly as upstream; the `has_index` guard keeps a memory
+/// without a native index from touching the message engine.
+fn delete_memory_with_messages(
+    memories: &MemoryStore,
+    messages: &crate::api::joint_services::MemoryMessageService,
+    memory: &MemoryEntry,
+) -> anyhow::Result<()> {
+    memories.delete_by_id(&memory.id)?;
+    if messages.has_index(&memory.tenant_id, &memory.id) {
+        messages.delete_by_memory(&memory.id)?;
+    }
+    Ok(())
+}
+
 pub async fn delete_memory(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(memory_id): Path<String>,
 ) -> axum::response::Response {
-    let owned = state
-        .memories
-        .get_accessible(&memory_id, &auth.user_id, false, |_, _| false)
-        .is_some_and(|entry| entry.tenant_id == auth.user_id);
-    if !owned {
-        return memory_not_found();
-    }
+    // `_require_memory_access`: any accessible user (owner or joined tenant
+    // member of a team memory) may delete.
+    let memory = match accessible_memory(&state, &auth, &memory_id) {
+        Some(memory) => memory,
+        None => return memory_not_found(),
+    };
     let _commit_guard = state.memory_commit_lock.lock().unwrap();
     if let Err(error) = state.tasks.cancel_memory(&memory_id) {
         return (
@@ -1855,22 +2012,16 @@ pub async fn delete_memory(
         )
             .into_response();
     }
-    if let Err(error) = state.memory_messages.delete_by_memory(&memory_id) {
+    if let Err(error) =
+        delete_memory_with_messages(&state.memories, &state.memory_messages, &memory)
+    {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
         )
             .into_response();
     }
-    match state.memories.delete_owned(&memory_id, &auth.user_id) {
-        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Ok(false) => memory_not_found(),
-        Err(error) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
-        )
-            .into_response(),
-    }
+    Json(serde_json::json!({ "code": 0, "data": true })).into_response()
 }
 
 const MEMORY_API_MAX_PAGE_SIZE: usize = 100;
@@ -2457,13 +2608,57 @@ fn validate_memory_model_bindings(
     Ok(())
 }
 
-fn memory_view(state: &AppState, memory: MemoryEntry) -> MemoryView {
+/// `memory_utils.format_ret_data_from_memory` — the complete upstream
+/// response projection. `owner_name` is `null` when the owner is unknown
+/// (Python `hasattr`-guard), `memory_type` stays the human-readable list,
+/// and `create_time`/`update_time` (epoch ms) are paired with their
+/// `create_date`/`update_date` string forms.
+fn memory_ret_data(state: &AppState, memory: MemoryEntry) -> serde_json::Value {
     let owner_name = state
         .users
         .get_user_by_id(&memory.tenant_id)
-        .map(|user| user.nickname)
-        .unwrap_or_else(|| memory.tenant_id.clone());
-    MemoryView { memory, owner_name }
+        .map(|user| user.nickname);
+    memory_ret_data_with_owner(memory, owner_name)
+}
+
+/// Pure projection for tests — every `format_ret_data_from_memory` key in the
+/// upstream order, with the owner name injected by the caller.
+fn memory_ret_data_with_owner(
+    memory: MemoryEntry,
+    owner_name: Option<String>,
+) -> serde_json::Value {
+    let create_time = memory.created_at;
+    let update_time = memory.updated_at;
+    let create_date = crate::common::time_utils::timestamp_to_date(
+        create_time as i64,
+        crate::common::time_utils::DEFAULT_TIME_FORMAT,
+    );
+    let update_date = crate::common::time_utils::timestamp_to_date(
+        update_time as i64,
+        crate::common::time_utils::DEFAULT_TIME_FORMAT,
+    );
+    serde_json::json!({
+        "id": memory.id,
+        "name": memory.name,
+        "avatar": memory.avatar,
+        "tenant_id": memory.tenant_id,
+        "owner_name": owner_name,
+        "memory_type": memory.memory_type,
+        "storage_type": memory.storage_type,
+        "embd_id": memory.embd_id,
+        "llm_id": memory.llm_id,
+        "permissions": memory.permissions,
+        "description": memory.description,
+        "memory_size": memory.memory_size,
+        "forgetting_policy": memory.forgetting_policy,
+        "temperature": memory.temperature,
+        "system_prompt": memory.system_prompt,
+        "user_prompt": memory.user_prompt,
+        "create_time": create_time,
+        "create_date": create_date,
+        "update_time": update_time,
+        "update_date": update_date,
+    })
 }
 
 fn validate_memory_entries(entries: &[MemoryEntry]) -> anyhow::Result<()> {
@@ -4318,7 +4513,12 @@ mod memory_store_tests {
     }
 
     #[test]
-    fn team_members_can_read_but_only_owner_can_mutate_memory() {
+    fn joined_team_members_can_mutate_team_memory_and_outsiders_cannot() {
+        // `memory_api_service.update_memory` / `delete_memory`:
+        // `_require_memory_access` allows the owner OR a member of the owning
+        // tenant (when permissions == "team") to mutate; outsiders are
+        // rejected exactly like a missing memory.
+        let member = |tenant_id: &str, user_id: &str| tenant_id == "owner" && user_id == "member";
         let store = MemoryStore::in_memory();
         let entry = store.create("owner", create_request("Shared")).unwrap();
         let updated = store
@@ -4336,16 +4536,33 @@ mod memory_store_tests {
         assert_eq!(updated.permissions, "team");
         assert!(
             store
-                .get_accessible(&entry.id, "member", false, |tenant_id, user_id| {
-                    tenant_id == "owner" && user_id == "member"
-                })
+                .get_accessible(&entry.id, "member", false, member)
                 .is_some()
         );
+        // Joined member mutation is the fixed-version semantics.
+        let by_member = store
+            .update_accessible(
+                &entry.id,
+                "member",
+                false,
+                member,
+                false,
+                MemoryUpdateRequest {
+                    description: Some("team edit".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_member.description, "team edit");
+        // An outsider is indistinguishable from a missing memory.
         assert!(
             store
-                .update_owned(
+                .update_accessible(
                     &entry.id,
-                    "member",
+                    "stranger",
+                    false,
+                    member,
                     false,
                     MemoryUpdateRequest {
                         description: Some("forbidden".into()),
@@ -4355,7 +4572,101 @@ mod memory_store_tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(!store.delete_owned(&entry.id, "member").unwrap());
+        assert!(
+            !store
+                .delete_accessible(&entry.id, "stranger", false, member)
+                .unwrap()
+        );
+        // The joined member may delete the team memory.
+        assert!(store.delete_accessible(&entry.id, "member", false, member).unwrap());
+        assert!(store.get(&entry.id).is_none());
+    }
+
+    #[test]
+    fn delete_memory_with_messages_follows_upstream_two_phase_order() {
+        // `memory_api_service.delete_memory`: row first, then the
+        // `has_index`-guarded message cleanup.
+        let memories = MemoryStore::in_memory();
+        let entry = memories.create("owner", create_request("Gone")).unwrap();
+
+        // Empty memory: no native index → the message store is untouched.
+        let messages = crate::api::joint_services::MemoryMessageService::in_memory();
+        delete_memory_with_messages(&memories, &messages, &entry).unwrap();
+        assert!(memories.get(&entry.id).is_none());
+
+        // Indexed memory: rows are removed with the row.
+        let memories = MemoryStore::in_memory();
+        let entry = memories.create("owner", create_request("With rows")).unwrap();
+        let messages = crate::api::joint_services::MemoryMessageService::in_memory();
+        messages
+            .insert_messages(vec![crate::api::joint_services::MemoryMessage {
+                message_id: 1,
+                message_type: "raw".into(),
+                source_id: 0,
+                memory_id: entry.id.clone(),
+                user_id: "owner".into(),
+                agent_id: "a1".into(),
+                session_id: "s1".into(),
+                content: "row".into(),
+                valid_at: "2026-08-01 00:00:00".into(),
+                invalid_at: None,
+                forget_at: None,
+                status: true,
+                zone_id: 0,
+                content_embed: vec![0.1],
+            }])
+            .unwrap();
+        assert!(messages.has_index("owner", &entry.id));
+        delete_memory_with_messages(&memories, &messages, &entry).unwrap();
+        assert!(memories.get(&entry.id).is_none());
+        assert_eq!(messages.calculate_memory_size(&entry.id), 0);
+    }
+
+    #[test]
+    fn memory_ret_data_projection_matches_upstream_key_set() {
+        let store = MemoryStore::in_memory();
+        let entry = store.create("owner", create_request("Projection")).unwrap();
+        let owner_name = Some("Owner Nick".to_string());
+        let projection = memory_ret_data_with_owner(entry.clone(), owner_name.clone());
+        let object = projection.as_object().expect("projection is an object");
+        let keys: std::collections::BTreeSet<&str> =
+            object.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = [
+            "id",
+            "name",
+            "avatar",
+            "tenant_id",
+            "owner_name",
+            "memory_type",
+            "storage_type",
+            "embd_id",
+            "llm_id",
+            "permissions",
+            "description",
+            "memory_size",
+            "forgetting_policy",
+            "temperature",
+            "system_prompt",
+            "user_prompt",
+            "create_time",
+            "create_date",
+            "update_time",
+            "update_date",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(keys, expected);
+        assert_eq!(object.get("owner_name"), Some(&serde_json::json!(owner_name)));
+        assert_eq!(object.get("create_time"), Some(&serde_json::json!(entry.created_at)));
+        assert_eq!(object.get("update_time"), Some(&serde_json::json!(entry.updated_at)));
+        assert_eq!(object.get("memory_type"), Some(&serde_json::json!(entry.memory_type)));
+        assert!(object
+            .get("create_date")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()));
+        // Unknown owner → null, mirroring Python's hasattr guard.
+        let anonymous = memory_ret_data_with_owner(entry, None);
+        assert_eq!(anonymous.get("owner_name"), Some(&serde_json::Value::Null));
     }
 
     #[test]

@@ -4,6 +4,8 @@
 //! `RAYRAG_VECTOR_BACKEND=zvec` to use the native `zvec-rust` collection.
 
 pub mod infinity_chunk;
+pub mod infinity_query;
+pub mod infinity_table;
 pub mod search_mapping;
 
 use crate::search::{IndexedChunk, SearchEngine};
