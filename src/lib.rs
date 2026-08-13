@@ -259,6 +259,9 @@ pub struct ParserConfig {
     pub graphrag_entity_resolution: bool,
     /// Generate community reports (Leiden clustering).
     pub graphrag_community_reports: bool,
+    /// KB page rank (0 = default ranking; positive values boost).
+    #[serde(default)]
+    pub page_rank: usize,
     /// Chunking method: naive | token | title (RAGFlow chunk_method).
     #[serde(alias = "chunkMethod")]
     pub chunk_method: String,
@@ -335,6 +338,7 @@ impl Default for ParserConfig {
             graphrag_batch_chunk_size: 8196,
             graphrag_entity_resolution: false,
             graphrag_community_reports: false,
+            page_rank: 0,
             chunk_method: "naive".to_string(),
             delimiter_mode: "token_size".to_string(),
             delimiters: Vec::new(),

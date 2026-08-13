@@ -31,6 +31,12 @@ pub struct KnowledgeBase {
     pub embd_id: String,
     /// Parser config (JSON string)
     pub parser_config: String,
+    /// KB tag sets (comma-joined; RAGFlow tag_kwd parity).
+    #[serde(default)]
+    pub tag_sets: String,
+    /// Avatar image (data URL or empty for the letter avatar).
+    #[serde(default)]
+    pub avatar: String,
     /// Creation timestamp (Unix ms)
     pub created_at: u64,
     /// Last update timestamp (Unix ms)
@@ -423,6 +429,8 @@ impl KbStore {
                 doc_count: 0,
                 embd_id: embd_id.into(),
                 parser_config: parser_config.to_string(),
+                tag_sets: String::new(),
+                avatar: String::new(),
                 created_at: now,
                 updated_at: now,
             };
@@ -479,13 +487,27 @@ impl KbStore {
         name: Option<&str>,
         description: Option<&str>,
     ) -> Result<Option<KnowledgeBase>> {
+        self.update_identity(id, name, description, None, None)
+    }
+
+    /// Update KB identity fields: name, description, tag_sets, avatar.
+    pub fn update_identity(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+        tag_sets: Option<&str>,
+        avatar: Option<&str>,
+    ) -> Result<Option<KnowledgeBase>> {
         self.mutate_if_changed(|kbs| {
             let Some(kb) = kbs.get_mut(id) else {
                 return Ok((None, false));
             };
             let name_changed = name.is_some_and(|value| kb.name != value.trim());
             let desc_changed = description.is_some_and(|value| kb.description != value);
-            if !name_changed && !desc_changed {
+            let tags_changed = tag_sets.is_some_and(|value| kb.tag_sets != value);
+            let avatar_changed = avatar.is_some_and(|value| kb.avatar != value);
+            if !name_changed && !desc_changed && !tags_changed && !avatar_changed {
                 return Ok((Some(kb.clone()), false));
             }
             if let Some(name) = name {
@@ -493,6 +515,12 @@ impl KbStore {
             }
             if let Some(description) = description {
                 kb.description = description.to_string();
+            }
+            if let Some(tag_sets) = tag_sets {
+                kb.tag_sets = tag_sets.to_string();
+            }
+            if let Some(avatar) = avatar {
+                kb.avatar = avatar.to_string();
             }
             kb.updated_at = now_ms();
             Ok((Some(kb.clone()), true))
@@ -623,6 +651,47 @@ mod create_seed_tests {
             .unwrap();
         assert!(kb.parser_config.contains("chunk_token_num"));
         assert!(kb.parser_config.contains("2048"));
+    }
+}
+
+#[cfg(test)]
+mod identity_update_tests {
+    use super::*;
+
+    #[test]
+    fn update_identity_persists_tags_and_avatar() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store.create_for_with_config("o", "n", "", "private", "default").unwrap();
+        let updated = store
+            .update_identity(
+                &kb.id,
+                None,
+                None,
+                Some("tag1, tag2"),
+                Some("data:image/png;base64,AA=="),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.tag_sets, "tag1, tag2");
+        assert!(updated.avatar.starts_with("data:image/png"));
+        // reload from disk
+        let reloaded = store.get(&kb.id).unwrap();
+        assert_eq!(reloaded.tag_sets, "tag1, tag2");
+        assert!(reloaded.avatar.starts_with("data:image/png"));
+    }
+
+    #[test]
+    fn update_name_description_still_works_via_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store.create_for_with_config("o", "old", "", "private", "default").unwrap();
+        let updated = store
+            .update_name_description(&kb.id, Some("new"), Some("desc"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "new");
+        assert_eq!(updated.description, "desc");
     }
 }
 

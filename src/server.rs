@@ -731,7 +731,6 @@ async fn update_dataset(
         "graphrag_batch_chunk_size",
         "graphrag_entity_resolution",
         "graphrag_community_reports",
-        "tag_sets",
         "page_rank",
     ] {
         if let Some(value) = body.get(key) {
@@ -773,10 +772,12 @@ async fn update_dataset(
         }
         None => None,
     };
-    // 名称/描述与其它配置分别持久化
+    // KB 身份字段（名称/描述/标签集/头像）与解析配置分别持久化
+    let tag_sets = body.get("tag_sets").and_then(|value| value.as_str());
+    let avatar = body.get("avatar").and_then(|value| value.as_str());
     if let Err(error) = state
         .kbs
-        .update_name_description(&dataset_id, name, description)
+        .update_identity(&dataset_id, name, description, tag_sets, avatar)
     {
         return api_error(StatusCode::BAD_REQUEST, &error.to_string());
     }

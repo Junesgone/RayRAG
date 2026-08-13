@@ -1,3 +1,17 @@
+## 2026-08-13 v0.3.3at：Page rank / Tag sets / Avatar 三字段（对齐实测配置页基础段）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 依据浏览器实测配置页基础段清单（Name/Language/Avatar/Description/
+  Permissions/Embedding model/Page rank/Tag sets），补齐缺的三字段：
+- **后端**：`KnowledgeBase + tag_sets/avatar`（serde(default) 兼容旧记录）；
+  `ParserConfig + page_rank`（默认 0）；`update_identity`（name/description/
+  tag_sets/avatar 一次更新，旧 `update_name_description` 委托）；
+  `update_dataset` 把 tag_sets/avatar 从 parser_config 白名单移出改走
+  KB 身份字段更新（RAGFlow 中 tag_kwd 也是 KB 级而非 parser 级）。
+- **UI（两个配置表单都接）**：Page rank 数字输入、Tag sets 文本、
+  Avatar 文件选择（data URL，300KB 上限）+ 圆形预览；load/save 全接线。
+- 新测试：identity_update_tests 2（tag_sets/avatar 持久化 + 旧接口兼容）。
+
 ## 2026-08-13 v0.3.3as：RAPTOR/KG 高级参数组 UI（对齐实测配置页字段清单）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
