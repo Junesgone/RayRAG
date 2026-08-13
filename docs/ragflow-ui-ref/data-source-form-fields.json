@@ -1,0 +1,811 @@
+{
+ "ONEDRIVE": {
+  "labels": [
+   "Tenant ID",
+   "Client ID",
+   "Client Secret",
+   "Folder Path (optional)",
+   "Batch Size"
+  ],
+  "names": [
+   "config.credentials.tenant_id",
+   "config.credentials.client_id",
+   "config.credentials.client_secret",
+   "config.folder_path",
+   "config.batch_size"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text",
+   "Number"
+  ],
+  "select_options_count": []
+ },
+ "OUTLOOK": {
+  "labels": [
+   "Tenant ID",
+   "Client ID",
+   "Client Secret",
+   "Mail Folder",
+   "Mailbox User IDs (optional)",
+   "Batch Size"
+  ],
+  "names": [
+   "config.credentials.tenant_id",
+   "config.credentials.client_id",
+   "config.credentials.client_secret",
+   "config.folder",
+   "config.user_ids",
+   "config.batch_size"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text",
+   "Text",
+   "Number"
+  ],
+  "select_options_count": []
+ },
+ "SALESFORCE": {
+  "labels": [
+   "Instance URL",
+   "Client ID",
+   "Client Secret",
+   "Objects",
+   "API Version",
+   "Batch Size"
+  ],
+  "names": [
+   "config.credentials.instance_url",
+   "config.credentials.client_id",
+   "config.credentials.client_secret",
+   "config.objects",
+   "config.api_version",
+   "config.batch_size"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text",
+   "Text",
+   "Number"
+  ],
+  "select_options_count": []
+ },
+ "AZURE_BLOB": {
+  "labels": [
+   "Auth Mode",
+   "Account Key",
+   "Connection String",
+   "SAS Token",
+   "Account Name",
+   "Account Key",
+   "Connection String",
+   "Container URL",
+   "SAS Token",
+   "Container Name",
+   "Prefix (optional)",
+   "Batch Size"
+  ],
+  "names": [
+   "config.auth_mode",
+   "config.credentials.account_name",
+   "config.credentials.account_key",
+   "config.credentials.connection_string",
+   "config.credentials.container_url",
+   "config.credentials.sas_token",
+   "config.credentials.container_name",
+   "config.prefix",
+   "config.batch_size"
+  ],
+  "types": [
+   "Select",
+   "Text",
+   "Password",
+   "Password",
+   "Text",
+   "Password",
+   "Text",
+   "Text",
+   "Number"
+  ],
+  "select_options_count": [
+   3
+  ]
+ },
+ "RSS": {
+  "labels": [
+   "Feed URL",
+   "Batch Size"
+  ],
+  "names": [
+   "config.feed_url",
+   "config.batch_size"
+  ],
+  "types": [
+   "Text",
+   "Number"
+  ],
+  "select_options_count": []
+ },
+ "GOOGLE_CLOUD_STORAGE": {
+  "labels": [
+   "GCS Access Key ID",
+   "GCS Secret Access Key",
+   "Bucket Name"
+  ],
+  "names": [
+   "config.credentials.access_key_id",
+   "config.credentials.secret_access_key",
+   "config.bucket_name"
+  ],
+  "types": [
+   "Text",
+   "Password",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "OCI_STORAGE": {
+  "labels": [
+   "OCI Namespace",
+   "OCI Region",
+   "OCI Access Key ID",
+   "OCI Secret Access Key",
+   "Bucket Name"
+  ],
+  "names": [
+   "config.credentials.namespace",
+   "config.credentials.region",
+   "config.credentials.access_key_id",
+   "config.credentials.secret_access_key",
+   "config.bucket_name"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Text",
+   "Password",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "R2": {
+  "labels": [
+   "R2 Account ID",
+   "R2 Access Key ID",
+   "R2 Secret Access Key",
+   "Bucket Name"
+  ],
+  "names": [
+   "config.credentials.account_id",
+   "config.credentials.r2_access_key_id",
+   "config.credentials.r2_secret_access_key",
+   "config.bucket_name"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "NOTION": {
+  "labels": [
+   "Notion Integration Token",
+   "Root Page Id"
+  ],
+  "names": [
+   "config.credentials.notion_integration_token",
+   "config.root_page_id"
+  ],
+  "types": [
+   "Password",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "DISCORD": {
+  "labels": [
+   "Discord Bot Token",
+   "Server IDs",
+   "Channels"
+  ],
+  "names": [
+   "config.credentials.discord_bot_token",
+   "config.server_ids",
+   "config.channels"
+  ],
+  "types": [
+   "Password",
+   "Tag",
+   "Tag"
+  ],
+  "select_options_count": []
+ },
+ "GOOGLE_DRIVE": {
+  "labels": [
+   "Primary Admin Email",
+   "OAuth Token JSON",
+   "My Drive Emails",
+   "Shared Folder URLs",
+   "Shared Drive URLs",
+   "Specific User Emails",
+   "Include My Drive",
+   "Include Shared Drives",
+   "Include “Shared with me”",
+   "Allow Images",
+   null
+  ],
+  "names": [
+   "config.credentials.google_primary_admin",
+   "config.credentials.google_tokens",
+   "config.my_drive_emails",
+   "config.shared_folder_urls",
+   "config.shared_drive_urls",
+   "config.specific_user_emails",
+   "config.include_my_drives",
+   "config.include_shared_drives",
+   "config.include_files_shared_with_me",
+   "config.allow_images",
+   "config.credentials.authentication_method"
+  ],
+  "types": [
+   "Text",
+   "Textarea",
+   "Text",
+   "Textarea",
+   "Text",
+   "Text",
+   "Checkbox",
+   "Checkbox",
+   "Checkbox",
+   "Checkbox",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "GMAIL": {
+  "labels": [
+   "Primary Admin Email",
+   "OAuth Token JSON",
+   null
+  ],
+  "names": [
+   "config.credentials.google_primary_admin",
+   "config.credentials.google_tokens",
+   "config.credentials.authentication_method"
+  ],
+  "types": [
+   "Text",
+   "Textarea",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "MOODLE": {
+  "labels": [
+   "Moodle URL",
+   "API Token"
+  ],
+  "names": [
+   "config.moodle_url",
+   "config.credentials.moodle_token"
+  ],
+  "types": [
+   "Text",
+   "Password"
+  ],
+  "select_options_count": []
+ },
+ "TEAMS": {
+  "labels": [
+   "Tenant ID",
+   "Client ID",
+   "Client Secret"
+  ],
+  "names": [
+   "config.credentials.tenant_id",
+   "config.credentials.client_id",
+   "config.credentials.client_secret"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password"
+  ],
+  "select_options_count": []
+ },
+ "SLACK": {
+  "labels": [
+   "Slack Bot Token",
+   "Channels"
+  ],
+  "names": [
+   "config.credentials.slack_bot_token",
+   "config.channels"
+  ],
+  "types": [
+   "Password",
+   "Tag"
+  ],
+  "select_options_count": []
+ },
+ "SHAREPOINT": {
+  "labels": [
+   "Site URL",
+   "Tenant ID",
+   "Client ID",
+   "Client Secret"
+  ],
+  "names": [
+   "config.credentials.site_url",
+   "config.credentials.tenant_id",
+   "config.credentials.client_id",
+   "config.credentials.client_secret"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Text",
+   "Password"
+  ],
+  "select_options_count": []
+ },
+ "WEBDAV": {
+  "labels": [
+   "WebDAV Server URL",
+   "Username",
+   "Password",
+   "Remote Path"
+  ],
+  "names": [
+   "config.base_url",
+   "config.credentials.username",
+   "config.credentials.password",
+   "config.remote_path"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "DROPBOX": {
+  "labels": [
+   "Access Token",
+   "Batch Size"
+  ],
+  "names": [
+   "config.credentials.dropbox_access_token",
+   "config.batch_size"
+  ],
+  "types": [
+   "Password",
+   "Number"
+  ],
+  "select_options_count": []
+ },
+ "BOX": {
+  "labels": [
+   "Box OAuth Configuration",
+   "Folder ID"
+  ],
+  "names": [
+   "config.credentials.box_tokens",
+   "config.folder_id"
+  ],
+  "types": [
+   "Textarea",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "AIRTABLE": {
+  "labels": [
+   "Access Token",
+   "Base ID",
+   "Table Name OR ID"
+  ],
+  "names": [
+   "config.credentials.airtable_access_token",
+   "config.base_id",
+   "config.table_name_or_id"
+  ],
+  "types": [
+   "Password",
+   "Text",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "DINGTALK_AI_TABLE": {
+  "labels": [
+   "Access Token",
+   "Base ID",
+   "Operator ID"
+  ],
+  "names": [
+   "config.credentials.access_token",
+   "config.table_id",
+   "config.operator_id"
+  ],
+  "types": [
+   "Password",
+   "Text",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "GITLAB": {
+  "labels": [
+   "Project Owner",
+   "Project Name",
+   "GitLab Personal Access Token",
+   "GitLab URL",
+   "include Merge Requests",
+   "include Issues",
+   "include Code Files"
+  ],
+  "names": [
+   "config.project_owner",
+   "config.project_name",
+   "config.credentials.gitlab_access_token",
+   "config.gitlab_url",
+   "config.include_mrs",
+   "config.include_issues",
+   "config.include_code_files"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text",
+   "Checkbox",
+   "Checkbox",
+   "Checkbox"
+  ],
+  "select_options_count": []
+ },
+ "ASANA": {
+  "labels": [
+   "API Token",
+   "Workspace ID",
+   "Project IDs",
+   "Team ID"
+  ],
+  "names": [
+   "config.credentials.asana_api_token_secret",
+   "config.asana_workspace_id",
+   "config.asana_project_ids",
+   "config.asana_team_id"
+  ],
+  "types": [
+   "Password",
+   "Text",
+   "Text",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "GITHUB": {
+  "labels": [
+   "Repository Owner",
+   "Repository Name",
+   "GitHub Access Token",
+   "Include Pull Requests",
+   "Include Issues"
+  ],
+  "names": [
+   "config.repository_owner",
+   "config.repository_name",
+   "config.credentials.github_access_token",
+   "config.include_pull_requests",
+   "config.include_issues"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Checkbox",
+   "Checkbox"
+  ],
+  "select_options_count": []
+ },
+ "IMAP": {
+  "labels": [
+   "Username",
+   "Password",
+   "Host",
+   "Port",
+   "Mailboxes",
+   "Poll Range"
+  ],
+  "names": [
+   "config.credentials.imap_username",
+   "config.credentials.imap_password",
+   "config.imap_host",
+   "config.imap_port",
+   "config.imap_mailbox",
+   "config.poll_range"
+  ],
+  "types": [
+   "Text",
+   "Password",
+   "Text",
+   "Number",
+   "Tag",
+   "Number"
+  ],
+  "select_options_count": []
+ },
+ "ZENDESK": {
+  "labels": [
+   "Zendesk Domain",
+   "Zendesk Email",
+   "Zendesk Token",
+   "Content",
+   "Articles",
+   "Tickets"
+  ],
+  "names": [
+   "config.credentials.zendesk_subdomain",
+   "config.credentials.zendesk_email",
+   "config.credentials.zendesk_token",
+   "config.zendesk_content_type"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Segmented"
+  ],
+  "select_options_count": [
+   2
+  ]
+ },
+ "MYSQL": {
+  "labels": [
+   "Host",
+   "Port",
+   "Database",
+   "Username",
+   "Password",
+   "SQL Query",
+   "Content Columns",
+   "Metadata Columns",
+   "ID Column",
+   "Timestamp Column"
+  ],
+  "names": [
+   "config.host",
+   "config.port",
+   "config.database",
+   "config.credentials.username",
+   "config.credentials.password",
+   "config.query",
+   "config.content_columns",
+   "config.metadata_columns",
+   "config.id_column",
+   "config.timestamp_column"
+  ],
+  "types": [
+   "Text",
+   "Number",
+   "Text",
+   "Text",
+   "Password",
+   "Textarea",
+   "Text",
+   "Text",
+   "Text",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "POSTGRESQL": {
+  "labels": [
+   "Host",
+   "Port",
+   "Database",
+   "Username",
+   "Password",
+   "SQL Query",
+   "Content Columns",
+   "Metadata Columns",
+   "ID Column",
+   "Timestamp Column"
+  ],
+  "names": [
+   "config.host",
+   "config.port",
+   "config.database",
+   "config.credentials.username",
+   "config.credentials.password",
+   "config.query",
+   "config.content_columns",
+   "config.metadata_columns",
+   "config.id_column",
+   "config.timestamp_column"
+  ],
+  "types": [
+   "Text",
+   "Number",
+   "Text",
+   "Text",
+   "Password",
+   "Textarea",
+   "Text",
+   "Text",
+   "Text",
+   "Text"
+  ],
+  "select_options_count": []
+ },
+ "BIGQUERY": {
+  "labels": [
+   "Project ID",
+   "Location",
+   "Service Account JSON",
+   "Dataset ID",
+   "Table ID",
+   "SQL Query",
+   "Content Columns",
+   "Metadata Columns",
+   "ID Column",
+   "Timestamp Column",
+   "Max Bytes Billed",
+   "Job Timeout (ms)",
+   "Page Size",
+   "Batch Size",
+   "Use Query Cache"
+  ],
+  "names": [
+   "config.project_id",
+   "config.location",
+   "config.credentials.service_account_json",
+   "config.dataset_id",
+   "config.table_id",
+   "config.query",
+   "config.content_columns",
+   "config.metadata_columns",
+   "config.id_column",
+   "config.timestamp_column",
+   "config.maximum_bytes_billed",
+   "config.job_timeout_ms",
+   "config.page_size",
+   "config.batch_size",
+   "config.use_query_cache"
+  ],
+  "types": [
+   "Text",
+   "Text",
+   "Password",
+   "Text",
+   "Text",
+   "Textarea",
+   "Text",
+   "Text",
+   "Text",
+   "Text",
+   "Number",
+   "Number",
+   "Number",
+   "Number",
+   "Checkbox"
+  ],
+  "select_options_count": []
+ },
+ "REST_API": {
+  "labels": [
+   "Base URL",
+   "HTTP Method",
+   "GET",
+   "POST",
+   "Query Parameters",
+   "Items Path",
+   "ID Field",
+   "Auth Type",
+   "None",
+   "API Key (Header)",
+   "Bearer Token",
+   "Basic Auth",
+   "API Key Header Name",
+   "API Key Value",
+   "Bearer Token",
+   "Username",
+   "Password",
+   "Content Fields",
+   "Metadata Fields",
+   "Pagination Type",
+   "None",
+   "Page",
+   "Offset",
+   "Cursor",
+   "Start Page",
+   "Offset Param",
+   "Start Offset",
+   "Cursor Param",
+   "Next Cursor JSONPath",
+   "Advanced Settings",
+   "Custom Headers (JSON)",
+   "Limit Param",
+   "Initial Cursor",
+   "Max Pages",
+   "Request Delay (seconds)",
+   "Poll Timestamp Field",
+   "Request Body (POST) JSON"
+  ],
+  "names": [
+   "config.url",
+   "config.method",
+   "config.query_params",
+   "config.items_path",
+   "config.id_field",
+   "config.auth_type",
+   "config.auth_config.header_name",
+   "config.credentials.api_key",
+   "config.credentials.token",
+   "config.credentials.username",
+   "config.credentials.password",
+   "config.content_fields",
+   "config.metadata_fields",
+   "config.pagination_type",
+   "config.pagination_config.start_page",
+   "config.pagination_config.offset_param",
+   "config.pagination_config.start_offset",
+   "config.pagination_config.cursor_param",
+   "config.pagination_config.next_cursor_path",
+   "config.show_advanced",
+   "config.headers",
+   "config.pagination_config.limit_param",
+   "config.pagination_config.initial_cursor",
+   "config.max_pages",
+   "config.request_delay",
+   "config.poll_timestamp_field",
+   "config.request_body"
+  ],
+  "types": [
+   "Text",
+   "Select",
+   "Textarea",
+   "Text",
+   "Text",
+   "Select",
+   "Text",
+   "Password",
+   "Password",
+   "Text",
+   "Password",
+   "Text",
+   "Text",
+   "Select",
+   "Number",
+   "Text",
+   "Number",
+   "Text",
+   "Text",
+   "Switch",
+   "Textarea",
+   "Text",
+   "Text",
+   "Number",
+   "Number",
+   "Text",
+   "Textarea"
+  ],
+  "select_options_count": [
+   2,
+   4,
+   4
+  ]
+ }
+}

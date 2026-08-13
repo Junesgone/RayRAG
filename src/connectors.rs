@@ -544,8 +544,20 @@ impl ConnectorRegistry {
             "confluence" => Ok(Box::new(ConfluenceConnector::new(options))),
             "yuque" => Ok(Box::new(YuqueConnector::new(options)?)),
             "dingtalk" => Ok(Box::new(DingTalkConnector::new(options)?)),
-            // S3 协议家族：S3 / GCS-interop / Oracle S3-compat 共用 SigV4 连接器。
-            "s3" | "gcs" | "oracle" => Ok(Box::new(S3Connector::new(options))),
+            // S3 协议家族：S3 / GCS-interop / Oracle S3-compat / Cloudflare R2
+            // 共用 SigV4 连接器（R2 为 S3 兼容协议，端点经 options.url 指定）。
+            "s3" | "gcs" | "oracle" | "r2" => Ok(Box::new(S3Connector::new(options))),
+            // Azure Blob Storage（RAGFlow 官方源名；与旧 "blob" 同一 SAS 适配器）。
+            "azure_blob" => Ok(Box::new(BlobAdapter::new(options))),
+            // 以下 24 个 RAGFlow 源已登记，连接器按域逐步实装。
+            // 未实装前 connect 明确报错，避免静默失败。
+            "github" | "bitbucket" | "jira" | "box" | "dropbox" | "onedrive"
+            | "outlook" | "sharepoint" | "teams" | "slack" | "discord" | "zendesk"
+            | "salesforce" | "moodle" | "airtable" | "asana" | "imap"
+            | "dingtalk_ai_table" | "seafile" | "rss" | "rest_api" | "mysql"
+            | "postgresql" | "bigquery" => {
+                bail!("connector not implemented yet: {kind} (registered, coming soon)")
+            }
             other => bail!("unsupported connector kind: {other}"),
         }
     }
@@ -559,14 +571,14 @@ impl ConnectorRegistry {
                 hint: "url=https://gitlab.com, token=PAT, target=project id or owner/repo",
             },
             ConnectorTypeInfo {
-                kind: "blob",
-                label: "Blob Storage",
-                hint: "url=https://acct.blob.core.windows.net, token=SAS, target=container",
+                kind: "github",
+                label: "GitHub",
+                hint: "url=https://github.com, token=PAT, target=owner/repo",
             },
             ConnectorTypeInfo {
-                kind: "local",
-                label: "Local Files",
-                hint: "url=absolute directory path, target=optional relative subdir",
+                kind: "bitbucket",
+                label: "Bitbucket",
+                hint: "url=https://bitbucket.org, token=app_password, target=workspace/repo",
             },
             ConnectorTypeInfo {
                 kind: "webdav",
@@ -574,18 +586,15 @@ impl ConnectorRegistry {
                 hint: "url=https://webdav.example.com, token=user:password, target=/path",
             },
             ConnectorTypeInfo {
-                kind: "feishu",
-                label: "飞书云空间 (Feishu Drive)",
-                hint: "token=app_id:app_secret, target=可选 folder_token",
-            },
-            ConnectorTypeInfo {
                 kind: "confluence",
                 label: "Confluence",
                 hint: "url=https://xxx.atlassian.net/wiki, token=email:api_token, target=spaceKey",
             },
-            // RAGFlow 数据源对齐（v0.3.3au）：Notion/Google Drive/Gmail/
-            // Google Cloud Storage/Oracle Storage/S3。S3 协议三源（s3/gcs/
-            // oracle）暂以 blob 风格占位，其余连接时明确报未实现。
+            ConnectorTypeInfo {
+                kind: "jira",
+                label: "Jira",
+                hint: "url=https://xxx.atlassian.net, token=email:api_token, target=project key",
+            },
             ConnectorTypeInfo {
                 kind: "notion",
                 label: "Notion",
@@ -609,33 +618,157 @@ impl ConnectorRegistry {
             ConnectorTypeInfo {
                 kind: "oracle",
                 label: "Oracle Storage",
-                hint: "url=https://objectstorage.region.oraclecloud.com, token=access_token, target=bucket",
+                hint: "url=https://objectstorage.region.oraclecloud.com, token=access:secret, target=bucket",
             },
             ConnectorTypeInfo {
                 kind: "s3",
                 label: "S3",
                 hint: "url=https://s3.region.amazonaws.com, token=access:secret, target=bucket",
             },
-            // 中国大陆网络环境替代源（v0.3.3au）。
+            ConnectorTypeInfo {
+                kind: "r2",
+                label: "R2",
+                hint: "url=https://<account>.r2.cloudflarestorage.com, token=access:secret, target=bucket",
+            },
+            ConnectorTypeInfo {
+                kind: "azure_blob",
+                label: "Azure Blob Storage",
+                hint: "url=https://acct.blob.core.windows.net, token=SAS 或 connection_string, target=container",
+            },
+            ConnectorTypeInfo {
+                kind: "box",
+                label: "Box",
+                hint: "token=access_token (OAuth), target=folder id",
+            },
+            ConnectorTypeInfo {
+                kind: "dropbox",
+                label: "Dropbox",
+                hint: "token=access_token (OAuth), target=folder path",
+            },
+            ConnectorTypeInfo {
+                kind: "onedrive",
+                label: "OneDrive",
+                hint: "token=OAuth 凭据, target=folder id",
+            },
+            ConnectorTypeInfo {
+                kind: "outlook",
+                label: "Outlook",
+                hint: "token=OAuth 凭据, target=mailbox query",
+            },
+            ConnectorTypeInfo {
+                kind: "sharepoint",
+                label: "SharePoint",
+                hint: "url=site url, token=OAuth 凭据, target=library",
+            },
+            ConnectorTypeInfo {
+                kind: "teams",
+                label: "Microsoft Teams",
+                hint: "token=OAuth 凭据, target=channel id",
+            },
+            ConnectorTypeInfo {
+                kind: "slack",
+                label: "Slack",
+                hint: "token=bot token, target=channel id",
+            },
+            ConnectorTypeInfo {
+                kind: "discord",
+                label: "Discord",
+                hint: "token=bot token, target=channel id",
+            },
+            ConnectorTypeInfo {
+                kind: "zendesk",
+                label: "Zendesk",
+                hint: "url=https://subdomain.zendesk.com, token=email:api_token",
+            },
+            ConnectorTypeInfo {
+                kind: "salesforce",
+                label: "Salesforce",
+                hint: "url=instance url, token=OAuth 凭据",
+            },
+            ConnectorTypeInfo {
+                kind: "moodle",
+                label: "Moodle",
+                hint: "url=https://moodle.example.com, token=api_token",
+            },
+            ConnectorTypeInfo {
+                kind: "airtable",
+                label: "Airtable",
+                hint: "token=personal_access_token, target=base id",
+            },
+            ConnectorTypeInfo {
+                kind: "asana",
+                label: "Asana",
+                hint: "token=personal_access_token, target=project gid",
+            },
+            ConnectorTypeInfo {
+                kind: "imap",
+                label: "IMAP",
+                hint: "url=imap host, token=user:password, target=folder",
+            },
+            ConnectorTypeInfo {
+                kind: "dingtalk_ai_table",
+                label: "Dingtalk AI Table",
+                hint: "token=appKey:appSecret, target=app id (多维表格)",
+            },
+            ConnectorTypeInfo {
+                kind: "seafile",
+                label: "SeaFile",
+                hint: "url=https://seafile.example.com, token=api_token, target=library id",
+            },
+            ConnectorTypeInfo {
+                kind: "rss",
+                label: "RSS",
+                hint: "url=https://feed.example.com/rss, target=可选过滤词",
+            },
+            ConnectorTypeInfo {
+                kind: "rest_api",
+                label: "REST API",
+                hint: "url=api endpoint, token=可选, target=可选",
+            },
+            ConnectorTypeInfo {
+                kind: "mysql",
+                label: "MySQL",
+                hint: "url=host, token=user:password, target=database",
+            },
+            ConnectorTypeInfo {
+                kind: "postgresql",
+                label: "PostgreSQL",
+                hint: "url=host, token=user:password, target=database",
+            },
+            ConnectorTypeInfo {
+                kind: "bigquery",
+                label: "BigQuery",
+                hint: "token=service_account_json, target=dataset",
+            },
+            ConnectorTypeInfo {
+                kind: "local",
+                label: "Local Files",
+                hint: "url=absolute directory path, target=optional relative subdir",
+            },
+            ConnectorTypeInfo {
+                kind: "feishu",
+                label: "飞书云空间 (Feishu Drive)",
+                hint: "token=app_id:app_secret, target=可选 folder_token",
+            },
             ConnectorTypeInfo {
                 kind: "dingtalk",
-                label: "钉钉文档 (DingTalk Docs)",
-                hint: "token=app_key:app_secret, target=可选 space_id",
+                label: "钉钉云盘 (DingTalk Drive)",
+                hint: "token=app_key:app_secret, target=可选 space_id (RAGFlow 无此源，本土扩展)",
             },
             ConnectorTypeInfo {
                 kind: "tencent_docs",
                 label: "腾讯文档 (Tencent Docs)",
-                hint: "token=access_token, target=可选 folder_id",
+                hint: "token=access_token, target=可选 folder_id (本土扩展)",
             },
             ConnectorTypeInfo {
                 kind: "yuque",
                 label: "语雀 (Yuque)",
-                hint: "token=access_token, target=namespace/repo slug",
+                hint: "token=access_token, target=namespace/repo slug (本土扩展)",
             },
             ConnectorTypeInfo {
                 kind: "wechat_docs",
                 label: "微信文档 (WeChat Docs)",
-                hint: "token=access_token, target=可选 folder_id",
+                hint: "token=access_token, target=可选 folder_id (本土扩展)",
             },
         ]
     }
@@ -2443,9 +2576,14 @@ mod registry_kind_tests {
             .iter()
             .map(|info| info.kind)
             .collect();
-        // RAGFlow 7 源
+        // RAGFlow v0.26.4 数据源管理页全量 35 源（constant/index.tsx DataSourceKey）
         for expected in [
             "confluence", "notion", "google_drive", "gmail", "gcs", "oracle", "s3",
+            "r2", "jira", "box", "dropbox", "bitbucket", "gitlab", "github", "moodle",
+            "discord", "zendesk", "webdav", "airtable", "asana", "imap",
+            "dingtalk_ai_table", "seafile", "mysql", "postgresql", "bigquery",
+            "rest_api", "rss", "onedrive", "outlook", "salesforce", "azure_blob",
+            "teams", "slack", "sharepoint",
         ] {
             assert!(kinds.contains(&expected), "missing RAGFlow source: {expected}");
         }
@@ -2453,8 +2591,8 @@ mod registry_kind_tests {
         for expected in ["feishu", "dingtalk", "tencent_docs", "yuque", "wechat_docs"] {
             assert!(kinds.contains(&expected), "missing China source: {expected}");
         }
-        // 现有源不受影响
-        for expected in ["gitlab", "blob", "local", "webdav"] {
+        // 现有源不受影响（"blob" 已并入 azure_blob，分发保留兼容旧记录）
+        for expected in ["gitlab", "azure_blob", "local", "webdav"] {
             assert!(kinds.contains(&expected), "missing legacy kind: {expected}");
         }
     }

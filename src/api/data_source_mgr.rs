@@ -534,7 +534,10 @@ mod tests {
     #[test]
     fn registry_dispatch_accepts_all_supported_kinds() {
         // create_data_source's kind gate mirrors the connector registry.
-        for kind in ["gitlab", "blob", "local", "webdav", "feishu", "confluence"] {
+        for kind in [
+            "gitlab", "azure_blob", "local", "webdav", "feishu", "confluence",
+            "r2", "dingtalk_ai_table", "postgresql", "rss",
+        ] {
             assert!(is_supported_kind(kind), "kind {kind} should be supported");
         }
         assert!(!is_supported_kind("nope"));

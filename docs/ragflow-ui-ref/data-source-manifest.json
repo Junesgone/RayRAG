@@ -1,0 +1,217 @@
+{
+ "ragflow_version": "v0.26.4",
+ "total": 35,
+ "sources": [
+  {
+   "key": "confluence",
+   "label": "Confluence",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "notion",
+   "label": "Notion",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "google_drive",
+   "label": "Google Drive",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "gmail",
+   "label": "Gmail",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "google_cloud_storage",
+   "label": "Google Cloud Storage",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "oci_storage",
+   "label": "Oracle Storage",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "s3",
+   "label": "S3",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "r2",
+   "label": "R2",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "jira",
+   "label": "Jira",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "box",
+   "label": "Box",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "dropbox",
+   "label": "Dropbox",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "bitbucket",
+   "label": "Bitbucket",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "gitlab",
+   "label": "GitLab",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "github",
+   "label": "GitHub",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "moodle",
+   "label": "Moodle",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "discord",
+   "label": "Discord",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "zendesk",
+   "label": "Zendesk",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "webdav",
+   "label": "WebDAV",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "airtable",
+   "label": "Airtable",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "asana",
+   "label": "Asana",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "imap",
+   "label": "IMAP",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "dingtalk_ai_table",
+   "label": "Dingtalk AI Table",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "seafile",
+   "label": "SeaFile",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "mysql",
+   "label": "MySQL",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "postgresql",
+   "label": "PostgreSQL",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "bigquery",
+   "label": "BigQuery",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "rest_api",
+   "label": "REST API",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "rss",
+   "label": "RSS",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "onedrive",
+   "label": "OneDrive",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "outlook",
+   "label": "Outlook",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "salesforce",
+   "label": "Salesforce",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "azure_blob",
+   "label": "Azure Blob Storage",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "teams",
+   "label": "Microsoft Teams",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "slack",
+   "label": "Slack",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  },
+  {
+   "key": "sharepoint",
+   "label": "SharePoint",
+   "sync_deleted_files": false,
+   "form_fields": "see data-source-form-fields.json"
+  }
+ ],
+ "note": "RAGFlow 0.26.4 user-setting 数据源管理页 35 源清单; 另有 5 源表单在独立 constant 文件(bitbucket/confluence/jira/s3/seafile-constant.tsx)"
+}

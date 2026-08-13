@@ -1,3 +1,30 @@
+## 2026-08-13 v0.3.3az：数据源注册表对齐 RAGFlow 0.26.4 全量 35 源
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **溯源**：RAGFlow 0.26.4 数据源管理页（user-setting/data-source）由
+  `web/src/pages/user-setting/data-source/constant/index.tsx` 的
+  `DataSourceKey` 枚举驱动，共 **35 源**；表单字段 schema 在
+  `DataSourceFormFields`（30 源）+ 5 个独立 constant 文件
+  （bitbucket/confluence/jira/s3/seafile-constant.tsx）。
+  已程序化抽取落档：
+  `docs/ragflow-ui-ref/data-source-manifest.json`（35 源清单 +
+  sync_deleted_files 支持位）、
+  `docs/ragflow-ui-ref/data-source-form-fields.json`（30 源表单字段）。
+- **ConnectorRegistry::kinds() 扩到 41 项**：35 个 RAGFlow 源（原样
+  标签，如 "Dingtalk AI Table"、"Azure Blob Storage"）+
+  6 个本土扩展（local/feishu/钉钉云盘/腾讯文档/语雀/微信文档）。
+- **create() 分发**：新增 `r2`（S3 协议族，Cloudflare R2 兼容）、
+  `azure_blob`（并入原 blob SAS 适配器，旧 "blob" 分发保留兼容历史
+  记录）；其余 24 个 RAGFlow 源登记后 connect 明确报
+  "connector not implemented yet"（按域逐步实装，不静默失败）。
+- **钉钉语义澄清**：RAGFlow 官方源是 **钉钉 AI 多维表格**
+  （dingtalk_ai_table，NotableClient），不是云盘。现有钉钉云盘连接器
+  降级为本土扩展（kind "dingtalk"），官方语义 kind "dingtalk_ai_table"
+  已登记，实装排队。
+- **web.rs 数据源页**：下拉 41 项 + dsHint 悬停提示映射全量同步。
+- 测试：registry_kind_tests 断言扩为全量 35 源清单。
+
+
 ## 2026-08-13 v0.3.3ay：钉钉云盘连接器（子agent 并行）+ DocumentSource::DingTalk + prompt_config 守卫
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
