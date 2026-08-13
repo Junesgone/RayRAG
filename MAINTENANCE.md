@@ -1,3 +1,23 @@
+## 2026-08-13 v0.3.3ag：llm_factories 目录补齐（DeerAPI fixture + Astraflow-CN 别名）+ conf 行复核
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 三方对比：llm_factories.json 66 工厂 vs conf/models 60 文件 vs RayRAG 60 fixture。
+  真缺口只有两个：**DeerAPI**（37 模型，OpenAI 兼容中转，官方端点
+  api.deerapi.com/v1）与 **Astraflow-CN**（21 模型，与 Astraflow 逐条相同，仅
+  端点不同——RayRAG 的 astraflow fixture 默认端点本就是国内
+  api.modelverse.cn，故以别名 `astraflow-cn → astraflow` 覆盖）。
+  其余 6 个工厂（BaiduYiyan/Tencent Cloud/New API/OpenAI-API-Compatible/
+  RAGcon 等）在 RAGFlow 中本身就是 0 条目动态提供商，无模型可嵌。
+- `deerapi.json` 由 llm_factories.json 逐条转 conf/models 格式生成（chat/
+  embedding/image2text/speech2text/tts 五能力 37 模型）；fixture 总数 60→61，
+  三处计数断言与 DeerAPI 端点/模型数抽查同步。
+- conf 两行复核：service_conf.yaml 的 ragflow/admin host+port、
+  task_executor.message_queue_type、user_default_llm.default_models、
+  os.*→zvec 均已有类型化等价键（mysql/minio/es/infinity/oceanbase/redis/nats
+  被 postgres+zvec 架构取代）；file_syncer 周期同步旋钮（RayRAG 现为手动
+  sync_data_source）与 all_models.json 3757 条扁平别名列表仍 incremental，
+  行备注已精确枚举。
+
 ## 2026-08-13 v0.3.3af：per-capability 模型默认值、memory 原生索引生命周期与 Infinity 查询语义
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。本批由
