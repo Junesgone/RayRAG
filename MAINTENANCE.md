@@ -1,3 +1,38 @@
+## 2026-08-14 v0.3.3bg：Agent 画布 toolbar 对齐（CDP 点击遍历）+ Airtable 连接器
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **CDP 点击模拟遍历（/tmp/ui_traverse/traverse_agent_canvas*.py）**：
+  - /agents 页：Create agent 下拉 = Create from blank / Create from
+    template / Import JSON file（复验一致）。
+  - Choose agent type 弹窗：Agent flow / Ingestion pipeline 单选 + Name
+    （placeholder "Please input name"）+ Save / Close（复验一致）。
+  - **画布编辑器（/agent/{id}?category=agent_canvas）首次遍历**：
+    toolbar = Save / Run / Launch / Publish / Management；图标按钮 =
+    Zoom In / Zoom Out / Fit View / Toggle Interactivity（aria-label）；
+    Publish 点击 → "Confirm publish" 弹窗（Cancel/Confirm）→ 发布后
+    Chat 测试窗（"Drag & drop files here" / "Attach file" / "Send
+    message" / "Upload max 5 files each up to 5MB"）；画布节点 Begin /
+    Conversational；顶部 "Autosaved <时间>" 状态。
+- **RayRAG agent_detail_page 对齐**：
+  - header 加 Launch（🚀，agent-launch testid → 开 Chat 测试窗）+
+    Management（⚙，agent-management → 版本管理弹窗）+
+    Autosaved 状态 span（saveAgent 成功后 updateAutosave 刷新时间）。
+  - Zoom 四控：🔍+ / 🔍− / ⛶ Fit / ✋ Toggle Interactivity ——
+    真实作用于组件面板 font-size（zoomCanvas 9-20px，fit 复位 12px，
+    toggleInter 切换 .no-click 类）。
+  - Publish 改造：confirm() → Confirm publish 弹窗（pubModal，RAGFlow
+    原文 "You are about to publish this agent"）→ Confirm 发布成功后
+    开 Chat 测试窗（chatTestModal：Drag & drop 占位 + 输入 + Send →
+    /api/v1/agents/{id}/completions 显示回答）。
+  - i18n 6 条；agent 页测试补 8 条 toolbar 断言。
+- **Airtable 连接器**（子agent 并行，仅改 src/connectors.rs）：
+  AirtableConnector —— PAT Bearer → /v0/meta/bases/{base_id}/tables
+  列表 → /v0/{base_id}/{table} records 分页 → 每行文档；5 个本地
+  mock 测试；connectors:: 49 passed。
+- 待接线：RAGFlow 画布是 React Flow 可视化节点编辑；RayRAG 画布
+  为组件面板+DSL 编辑器（语义等价、形态不同），下批评估节点拖拽。
+
+
 ## 2026-08-14 v0.3.3bf：思考模式 toggle 全链路接线（reasoning）
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

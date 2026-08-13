@@ -553,11 +553,12 @@ impl ConnectorRegistry {
             // Azure Blob Storage（RAGFlow 官方源名；与旧 "blob" 同一 SAS 适配器）。
             "azure_blob" => Ok(Box::new(BlobAdapter::new(options))),
             "rss" => Ok(Box::new(RssConnector::new(options)?)),
+            "airtable" => Ok(Box::new(AirtableConnector::new(options)?)),
             // 以下 RAGFlow 源已登记，连接器按域逐步实装。
             // 未实装前 connect 明确报错，避免静默失败。
             "github" | "bitbucket" | "jira" | "dropbox" | "onedrive"
             | "outlook" | "sharepoint" | "teams" | "slack" | "discord" | "zendesk"
-            | "salesforce" | "moodle" | "airtable" | "asana" | "imap"
+            | "salesforce" | "moodle" | "asana" | "imap"
             | "seafile" | "rest_api" | "mysql"
             | "postgresql" | "bigquery" => {
                 bail!("connector not implemented yet: {kind} (registered, coming soon)")
@@ -4046,6 +4047,357 @@ fn parse_feed_date(raw: &str) -> String {
     EPOCH.to_string()
 }
 
+// ── Concrete connector: Airtable ─────────────────────────────────────────────
+//
+// Mirrors RAGFlow `common/data_source/airtable_connector.py` (Personal Access
+// Token auth) with row-per-record semantics (task spec): enumerate tables via
+// the metadata API, paginate each table's records via `offset`, and emit one
+// RemoteFile per row.
+//
+//   * credentials: Airtable PAT (`options.token`, sent as `Bearer`) + base id
+//     (`options.target` — SourceOptions has no `base_id` field; the registry
+//     hint already documents `target=base id`).
+//   * list tables : GET {base}/v0/meta/bases/{base_id}/tables → tables[]
+//     {id, name} — also the load_credentials probe (RAGFlow
+//     `validate_connector_settings` equivalent).
+//   * list records: GET {base}/v0/{base_id}/{table}?offset=… paginated;
+//     response carries `records[]` {id, createdTime, fields{}} + `offset`.
+//   * RemoteFile  : id=record id (fallback row{index}), name=first text field
+//     (fallback `{table}-{row_n}`), blob=`列名: 值` lines, metadata
+//     source=airtable / table / table_id / record_id.
+//   * fetch_file  : re-list the table and re-render the record blob (rows have
+//     no stable download URL — same refetch pattern as RSS / DingTalkAiTable).
+//   * normalize   : `DocumentSource::Airtable` has no variant yet, so the
+//     stand-in is `DocumentSource::Local` + metadata `("source","airtable")`
+//     (parent will add the enum variant, same precedent as Rss/Box/Yuque).
+
+/// Airtable base connector — PAT Bearer → list tables → paginate records →
+/// one document per row.
+#[derive(Debug)]
+pub struct AirtableConnector {
+    client: reqwest::Client,
+    /// API base — `options.url` override (tests), default
+    /// `https://api.airtable.com`.
+    base_url: String,
+    /// Airtable Personal Access Token (`options.token`).
+    token: String,
+    /// Airtable base id (`options.target`).
+    base_id: String,
+}
+
+impl AirtableConnector {
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let token = options.token.trim().to_string();
+        if token.is_empty() {
+            bail!("airtable: token required (Airtable personal access token)");
+        }
+        let base_id = options.target.trim().to_string();
+        if base_id.is_empty() {
+            bail!("airtable: base id required (target)");
+        }
+        let base_url = {
+            let raw = options.url.trim().trim_end_matches('/');
+            if raw.is_empty() {
+                "https://api.airtable.com".to_string()
+            } else {
+                raw.to_string()
+            }
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            base_url,
+            token,
+            base_id,
+        })
+    }
+
+    /// GET `path` with the Bearer PAT; non-2xx surfaces the Airtable
+    /// `error.message` envelope (`{error:{type,message}}`).
+    async fn get_json(&self, path: &str, query: &[(&str, String)]) -> Result<serde_json::Value> {
+        let mut url = format!("{}{}", self.base_url, path);
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(
+                &query
+                    .iter()
+                    .map(|(key, value)| format!("{}={}", urlencode(key), urlencode(value)))
+                    .collect::<Vec<_>>()
+                    .join("&"),
+            );
+        }
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .with_context(|| format!("airtable: request failed: {url}"))?;
+        let status = response.status();
+        let value: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            bail!(
+                "airtable: upstream error ({}): type={}, message={}",
+                status.as_u16(),
+                value
+                    .pointer("/error/type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                value
+                    .pointer("/error/message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        Ok(value)
+    }
+
+    /// Enumerate the base's tables via the metadata API → `(table_id, name)`.
+    async fn tables(&self) -> Result<Vec<(String, String)>> {
+        let value = self
+            .get_json(
+                &format!("/v0/meta/bases/{}/tables", urlencode(&self.base_id)),
+                &[],
+            )
+            .await?;
+        let mut tables = Vec::new();
+        for table in value
+            .get("tables")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let id = table
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let name = table
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if !id.is_empty() {
+                tables.push((id, name));
+            }
+        }
+        Ok(tables)
+    }
+
+    /// One records page of a table: `(records, next_offset)`.
+    async fn records_page(
+        &self,
+        table_id: &str,
+        offset: &str,
+    ) -> Result<(Vec<serde_json::Value>, String)> {
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if !offset.is_empty() {
+            query.push(("offset", offset.to_string()));
+        }
+        let value = self
+            .get_json(
+                &format!(
+                    "/v0/{}/{}",
+                    urlencode(&self.base_id),
+                    urlencode(table_id)
+                ),
+                &query,
+            )
+            .await?;
+        let records = value
+            .get("records")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let next = value
+            .get("offset")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok((records, next))
+    }
+}
+
+/// Render record fields as `列名: 值` lines (task spec; same flattening as
+/// DingTalkAiTable — readable text parses unambiguously).
+fn airtable_record_blob(fields: &serde_json::Value) -> String {
+    let Some(object) = fields.as_object() else {
+        return fields.to_string();
+    };
+    let mut lines = String::new();
+    for (name, value) in object {
+        let rendered = match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        lines.push_str(name);
+        lines.push_str(": ");
+        lines.push_str(&rendered);
+        lines.push('\n');
+    }
+    lines
+}
+
+/// Semantic identifier: first column's text (truncated), falling back to
+/// `{table}-{row_n}` when no text field exists.
+fn airtable_record_name(fields: &serde_json::Value, table_name: &str, row_n: usize) -> String {
+    if let Some(object) = fields.as_object() {
+        for value in object.values() {
+            if let serde_json::Value::String(text) = value {
+                if !text.is_empty() && text.len() < 100 {
+                    return text.chars().take(50).collect::<String>();
+                }
+            }
+        }
+    }
+    format!("{table_name}-{row_n}")
+}
+
+#[async_trait]
+impl Connector for AirtableConnector {
+    fn kind(&self) -> &'static str {
+        "airtable"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        if self.token.is_empty() {
+            bail!("airtable: token required (Airtable personal access token)");
+        }
+        if self.base_id.is_empty() {
+            bail!("airtable: base id required (target)");
+        }
+        // 探针：列 base 的 tables 验证 PAT 可用（RAGFlow
+        // `validate_connector_settings` 的等价探活）。
+        let _ = self.tables().await?;
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let mut files = Vec::new();
+        for (table_id, table_name) in self.tables().await? {
+            let mut offset = String::new();
+            let mut pages = 0usize;
+            loop {
+                let (records, next) = self.records_page(&table_id, &offset).await?;
+                for (index, record) in records.iter().enumerate() {
+                    let record_id = match record
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    {
+                        Some(id) => id.to_string(),
+                        None => format!("row{index}"),
+                    };
+                    let fields = record
+                        .get("fields")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let name = airtable_record_name(&fields, &table_name, index + 1);
+                    let blob = airtable_record_blob(&fields);
+                    let mut metadata = HashMap::new();
+                    metadata.insert("source".into(), "airtable".into());
+                    metadata.insert("table".into(), table_name.clone());
+                    metadata.insert("table_id".into(), table_id.clone());
+                    metadata.insert("record_id".into(), record_id.clone());
+                    files.push(RemoteFile {
+                        id: record_id.clone(),
+                        name,
+                        path: format!("{}/{}/{}", self.base_id, table_id, record_id),
+                        extension: ".txt".into(),
+                        size_bytes: blob.len() as u64,
+                        updated_at: record
+                            .get("createdTime")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        fingerprint: String::new(),
+                        metadata,
+                    });
+                }
+                offset = next;
+                if offset.is_empty() {
+                    break;
+                }
+                pages += 1;
+                if pages > 1000 {
+                    bail!("airtable: records pagination exceeded 1000 pages — aborting");
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let table_id = file
+            .metadata
+            .get("table_id")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let record_id = file
+            .metadata
+            .get("record_id")
+            .map(String::as_str)
+            .unwrap_or_default();
+        // Re-list the table until the record is found (RAGFlow `get_value`
+        // re-fetches content lazily; rows have no stable download URL).
+        let mut offset = String::new();
+        let mut pages = 0usize;
+        loop {
+            let (records, next) = self.records_page(table_id, &offset).await?;
+            for (index, record) in records.iter().enumerate() {
+                let rid = record
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                // Fallback ids (row{index}) match records the API lists
+                // without an id.
+                let matched =
+                    (rid == record_id) || (rid.is_empty() && record_id == format!("row{index}"));
+                if matched {
+                    let fields = record
+                        .get("fields")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    return Ok(airtable_record_blob(&fields).into_bytes());
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            offset = next;
+            pages += 1;
+            if pages > 1000 {
+                bail!("airtable: records pagination exceeded 1000 pages — aborting");
+            }
+        }
+        bail!("airtable: record not found: {record_id} (table {table_id})")
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        for key in ["source", "table", "table_id", "record_id"] {
+            if let Some(value) = file.metadata.get(key) {
+                metadata.insert(key.to_string(), value.clone());
+            }
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            // Stand-in until the parent adds a DocumentSource::Airtable
+            // variant.
+            source: DocumentSource::Local,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -6077,5 +6429,323 @@ mod box_connector_tests {
             ConnectorRegistry::create("box", options(String::new(), "legacy-raw-token", ""))
                 .unwrap();
         assert_eq!(connector.kind(), "box");
+    }
+}
+
+#[cfg(test)]
+mod airtable_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, content_type, body)`; the connector's `options.url`
+    /// override points here — no real network. `Connection: close` makes every
+    /// request land on a fresh connection.
+    fn mock_airtable_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String)
+            + Send
+            + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, content_type, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base: &str, token: &str, base_id: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base.to_string();
+        options.token = token.to_string();
+        options.target = base_id.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// `new()` credential parsing: token and base id (target) are both
+    /// mandatory; the API base defaults to https://api.airtable.com.
+    #[test]
+    fn new_requires_token_and_base_id() {
+        // Empty token → readable error.
+        let error = AirtableConnector::new(options("", "", "appBase1")).unwrap_err();
+        assert!(error.to_string().contains("token"), "{error:#}");
+
+        // Empty base id (target) → readable error.
+        let error = AirtableConnector::new(options("", "pat123", "")).unwrap_err();
+        assert!(error.to_string().contains("base id"), "{error:#}");
+
+        // Valid credentials → default API base, target carried as base id.
+        let connector =
+            AirtableConnector::new(options("", "pat123", "appBase1")).unwrap();
+        assert_eq!(connector.base_url, "https://api.airtable.com");
+        assert_eq!(connector.base_id, "appBase1");
+    }
+
+    /// list_files: enumerates tables via the metadata API, paginates each
+    /// table's records via `offset`, and maps every row onto a RemoteFile
+    /// (id=record id, name=first text field or `{table}-{row_n}`, blob-size
+    /// from the `列名: 值` rendering, metadata source/table/table_id/
+    /// record_id). The mock also enforces the PAT Bearer header.
+    #[tokio::test]
+    async fn list_files_enumerates_tables_and_paginates_records() {
+        let base = mock_airtable_server(move |method, path, query, headers, _body| {
+            if headers.to_ascii_lowercase().contains("authorization: bearer pat123") {
+                match (method, path) {
+                    ("GET", "/v0/meta/bases/appBase1/tables") => (
+                        200,
+                        "application/json",
+                        json!({
+                            "tables": [
+                                {"id": "tbl1", "name": "Users"},
+                                {"id": "tbl2", "name": "Pets"}
+                            ]
+                        })
+                        .to_string(),
+                    ),
+                    ("GET", "/v0/appBase1/tbl1") => {
+                        if query.contains("offset=itr1") {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "records": [
+                                        {"id": "rec3", "createdTime": "2025-08-01T09:00:00.000Z",
+                                         "fields": {"Name": "Cara"}}
+                                    ],
+                                    "offset": ""
+                                })
+                                .to_string(),
+                            )
+                        } else {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "records": [
+                                        {"id": "rec1", "createdTime": "2025-08-01T08:00:00.000Z",
+                                         "fields": {"Name": "Alice", "Email": "alice@example.com"}},
+                                        {"id": "rec2", "createdTime": "2025-08-01T08:30:00.000Z",
+                                         "fields": {"Name": "Bob"}}
+                                    ],
+                                    "offset": "itr1"
+                                })
+                                .to_string(),
+                            )
+                        }
+                    }
+                    ("GET", "/v0/appBase1/tbl2") => (
+                        200,
+                        "application/json",
+                        json!({
+                            "records": [
+                                {"id": "rec9", "createdTime": "2025-08-02T00:00:00.000Z",
+                                 "fields": {}}
+                            ],
+                            "offset": ""
+                        })
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                }
+            } else {
+                (401, "application/json", json!({"error": {"type": "AUTHENTICATION_REQUIRED", "message": "no token"}}).to_string())
+            }
+        });
+
+        let connector =
+            AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 4, "tbl1 page1 (rec1,rec2) + page2 (rec3) + tbl2 (rec9)");
+
+        // Row 1 of table "Users": id/name/metadata/extension/updated_at mapping.
+        let first = &files[0];
+        assert_eq!(first.id, "rec1");
+        assert_eq!(first.name, "Alice");
+        assert_eq!(first.path, "appBase1/tbl1/rec1");
+        assert_eq!(first.extension, ".txt");
+        assert_eq!(first.updated_at, "2025-08-01T08:00:00.000Z");
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("airtable")
+        );
+        assert_eq!(
+            first.metadata.get("table").map(String::as_str),
+            Some("Users")
+        );
+        assert_eq!(
+            first.metadata.get("table_id").map(String::as_str),
+            Some("tbl1")
+        );
+        assert_eq!(
+            first.metadata.get("record_id").map(String::as_str),
+            Some("rec1")
+        );
+        // size_bytes = rendered `列名: 值` blob length.
+        assert_eq!(first.size_bytes as usize, "Name: Alice\nEmail: alice@example.com\n".len());
+
+        // Rows 2 and 3 (page 2 via offset).
+        assert_eq!(files[1].id, "rec2");
+        assert_eq!(files[1].name, "Bob");
+        assert_eq!(files[2].id, "rec3");
+        assert_eq!(files[2].name, "Cara");
+
+        // Record without any text field → `{table}-{row_n}` fallback name.
+        let last = &files[3];
+        assert_eq!(last.id, "rec9");
+        assert_eq!(last.name, "Pets-1");
+        assert_eq!(
+            last.metadata.get("table").map(String::as_str),
+            Some("Pets")
+        );
+    }
+
+    /// fetch_file re-lists the table and re-renders the record blob; normalize
+    /// maps it onto a ConnectorDoc (Local stand-in + metadata source=airtable).
+    #[tokio::test]
+    async fn fetch_file_and_normalize_build_airtable_doc() {
+        let base = mock_airtable_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("GET", "/v0/meta/bases/appBase1/tables") => (
+                    200,
+                    "application/json",
+                    json!({
+                        "tables": [{"id": "tbl1", "name": "Users"}]
+                    })
+                    .to_string(),
+                ),
+                ("GET", "/v0/appBase1/tbl1") => (
+                    200,
+                    "application/json",
+                    json!({
+                        "records": [
+                            {"id": "rec1", "createdTime": "2025-08-01T08:00:00.000Z",
+                             "fields": {"Name": "Alice", "Email": "alice@example.com"}}
+                        ],
+                        "offset": ""
+                    })
+                    .to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let connector =
+            AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 1);
+        let file = files.into_iter().next().unwrap();
+
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw.clone()).unwrap(),
+            "Name: Alice\nEmail: alice@example.com\n"
+        );
+
+        let doc = connector.normalize(&file, raw).unwrap();
+        assert_eq!(doc.id, "rec1");
+        assert_eq!(doc.blob, "Name: Alice\nEmail: alice@example.com\n");
+        assert_eq!(doc.semantic_identifier, "Alice");
+        assert_eq!(doc.extension, ".txt");
+        assert_eq!(doc.doc_updated_at, "2025-08-01T08:00:00.000Z");
+        // Stand-in until the parent adds a DocumentSource::Airtable variant.
+        assert_eq!(doc.source, DocumentSource::Local);
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("airtable"));
+        assert_eq!(doc.metadata.get("table").map(String::as_str), Some("Users"));
+        assert_eq!(doc.metadata.get("table_id").map(String::as_str), Some("tbl1"));
+        assert_eq!(doc.metadata.get("record_id").map(String::as_str), Some("rec1"));
+    }
+
+    /// Non-2xx upstream responses surface the Airtable error envelope
+    /// (type + message) through the load_credentials probe.
+    #[tokio::test]
+    async fn upstream_error_reports_error_message() {
+        let base = mock_airtable_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("GET", "/v0/meta/bases/appBase1/tables") => (
+                    403,
+                    "application/json",
+                    json!({
+                        "error": {
+                            "type": "INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND",
+                            "message": "Permission denied for base appBase1"
+                        }
+                    })
+                    .to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let mut connector =
+            AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("403"), "{error}");
+        assert!(
+            error.contains("INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND"),
+            "{error}"
+        );
+        assert!(error.contains("Permission denied for base appBase1"), "{error}");
+    }
+
+    /// Registry dispatch: `create("airtable", …)` returns an AirtableConnector
+    /// instead of bailing with "not implemented".
+    #[test]
+    fn registry_dispatches_airtable_connector() {
+        let connector =
+            ConnectorRegistry::create("airtable", options("", "pat123", "appBase1")).unwrap();
+        assert_eq!(connector.kind(), "airtable");
     }
 }
