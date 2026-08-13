@@ -655,9 +655,17 @@ fn build_chat_request_body(
     // merge extra_body into the request, llama.cpp applies the chat template
     // kwarg, and endpoints that ignore unknown fields simply keep thinking
     // on (content still arrives; only the chain differs).
+    //
+    // RAGFlow 0.26.4 prompt_config.reasoning toggle: when true, thinking is
+    // explicitly enabled for the Qwen3 family; for any other model the
+    // chat_template_kwargs form is emitted so llama.cpp-served reasoning
+    // models (DeepSeek-R1 style) honor the switch too.
     if model.to_ascii_lowercase().contains("qwen3") {
-        body["extra_body"] = serde_json::json!({"enable_thinking": false});
-        body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
+        body["extra_body"] = serde_json::json!({"enable_thinking": generation.reasoning});
+        body["chat_template_kwargs"] =
+            serde_json::json!({"enable_thinking": generation.reasoning});
+    } else if generation.reasoning {
+        body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": true});
     }
     body
 }
@@ -1441,6 +1449,7 @@ mod conversation_store_tests {
             frequency_penalty: Some(0.2),
             presence_penalty: Some(0.3),
             max_tokens: Some(2048),
+            reasoning: None,
         });
         let body = build_chat_request_body(
             "chat-model",
@@ -1559,6 +1568,7 @@ mod conversation_store_tests {
             top_p: 0.9,
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
+            reasoning: false,
         };
         let qwen = build_chat_request_body(
             "Qwen3-8B",

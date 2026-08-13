@@ -2,12 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const GENERATION_CONFIG_KEYS: [&str; 5] = [
+pub const GENERATION_CONFIG_KEYS: [&str; 6] = [
     "temperature",
     "top_p",
     "frequency_penalty",
     "presence_penalty",
     "max_tokens",
+    "reasoning",
 ];
 
 /// Effective parameters forwarded to an OpenAI-compatible completion call.
@@ -18,6 +19,9 @@ pub struct GenerationParams {
     pub frequency_penalty: f32,
     pub presence_penalty: f32,
     pub max_tokens: u32,
+    /// Thinking / chain-of-thought mode (RAGFlow prompt_config.reasoning).
+    #[serde(default)]
+    pub reasoning: bool,
 }
 
 impl Default for GenerationParams {
@@ -29,6 +33,7 @@ impl Default for GenerationParams {
             frequency_penalty: 0.7,
             presence_penalty: 0.4,
             max_tokens: 512,
+            reasoning: false,
         }
     }
 }
@@ -41,6 +46,7 @@ pub struct GenerationParamsPatch {
     pub frequency_penalty: Option<f32>,
     pub presence_penalty: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub reasoning: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for GenerationParamsPatch {
@@ -61,6 +67,7 @@ impl GenerationParams {
             frequency_penalty: patch.frequency_penalty.unwrap_or(self.frequency_penalty),
             presence_penalty: patch.presence_penalty.unwrap_or(self.presence_penalty),
             max_tokens: patch.max_tokens.unwrap_or(self.max_tokens),
+            reasoning: patch.reasoning.unwrap_or(self.reasoning),
         }
     }
 
@@ -83,6 +90,7 @@ impl GenerationParamsPatch {
             frequency_penalty: optional_float(object, "frequency_penalty", 0.0, 1.0)?,
             presence_penalty: optional_float(object, "presence_penalty", 0.0, 1.0)?,
             max_tokens: optional_u32(object, "max_tokens", 1, 128_000)?,
+            reasoning: object.get("reasoning").and_then(|v| v.as_bool()),
         })
     }
 }

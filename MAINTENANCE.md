@@ -1,3 +1,25 @@
+## 2026-08-14 v0.3.3bf：思考模式 toggle 全链路接线（reasoning）
+
+- 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 溯源：prompt_config.reasoning（z.boolean，chat-settings defaultValues）
+  → 生成参数透传 → _apply_model_family_policies（Qwen3 族
+  extra_body.enable_thinking）。
+- generation_params.rs：
+  - GENERATION_CONFIG_KEYS 扩为 6（+reasoning）。
+  - GenerationParams.reasoning（bool，serde default，默认 false，
+    对齐 RAGFlow reasoning=false 默认）。
+  - GenerationParamsPatch.reasoning（Option<bool>）；from_request 读取；
+    merged() 透传。
+- llm.rs build_chat_request_body：
+  - Qwen3 族：enable_thinking = generation.reasoning（原来硬编码 false）。
+  - 非 Qwen3 且 reasoning=true：发 chat_template_kwargs.enable_thinking
+    （llama.cpp 服务 DeepSeek-R1 等推理模型也能切换）。
+- agent.rs：merge_generation_patch 透传 reasoning；
+  llm_component_generation_patch 读 canvas 节点 params.reasoning。
+- web.rs 会话页：🤔 按钮（testid chat-detail-thinking-toggle，
+  开时描边高亮）+ sendMsg body 带 reasoning: window.__thinking。
+- 门禁：1341 passed / 0 failed / 27 ignored。
+
 ## 2026-08-14 v0.3.3be：对话输入区 RAGFlow testid 对齐
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

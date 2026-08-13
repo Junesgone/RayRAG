@@ -12922,6 +12922,7 @@ fn merge_generation_patch(
         frequency_penalty: component.frequency_penalty.or(request.frequency_penalty),
         presence_penalty: component.presence_penalty.or(request.presence_penalty),
         max_tokens: component.max_tokens.or(request.max_tokens),
+        reasoning: component.reasoning.or(request.reasoning),
     }
 }
 
@@ -13003,6 +13004,10 @@ fn llm_component_generation_patch(node: &CanvasNode) -> Result<GenerationParamsP
         )?,
         presence_penalty: llm_component_float(node, "presence_penalty", "presencePenaltyEnabled")?,
         max_tokens: llm_component_max_tokens(node)?,
+        reasoning: node
+            .params
+            .get("reasoning")
+            .and_then(Value::as_bool),
     })
 }
 
