@@ -30,6 +30,8 @@ pub enum DocumentSource {
     DingTalk,
     /// RSS/Atom feed (RAGFlow `rss_connector.py` parity).
     Rss,
+    /// Box cloud drive (RAGFlow `box_connector.py` parity).
+    Box,
 }
 
 impl DocumentSource {
@@ -45,6 +47,7 @@ impl DocumentSource {
             DocumentSource::Yuque => "yuque",
             DocumentSource::DingTalk => "dingtalk",
             DocumentSource::Rss => "rss",
+            DocumentSource::Box => "box",
         }
     }
 
@@ -60,6 +63,7 @@ impl DocumentSource {
             "yuque" => Some(DocumentSource::Yuque),
             "dingtalk" => Some(DocumentSource::DingTalk),
             "rss" => Some(DocumentSource::Rss),
+            "box" => Some(DocumentSource::Box),
             _ => None,
         }
     }
