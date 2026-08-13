@@ -742,15 +742,17 @@ async fn update_dataset(
     } else {
         Some(serde_json::Value::Object(config).to_string())
     };
+    let requested_prompt_config = body.get("prompt_config").and_then(|value| value.as_object());
     if name.is_none()
         && description.is_none()
         && permission.is_none()
         && requested_embedding.is_none()
         && parser_config.is_none()
+        && requested_prompt_config.is_none()
     {
         return api_error(
             StatusCode::BAD_REQUEST,
-            "name, permission, embedding_model or parser_config is required",
+            "name, permission, embedding_model, parser_config or prompt_config is required",
         );
     }
     let current = state.kbs.get(&dataset_id).expect("manageable KB exists");

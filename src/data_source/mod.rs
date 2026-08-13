@@ -26,6 +26,8 @@ pub enum DocumentSource {
     /// 语雀 (Yuque) — China-friendly document repo (RAGFlow has no direct
     /// equivalent; local extension for mainland network parity).
     Yuque,
+    /// 钉钉云盘 (DingTalk Drive) — mainland cloud disk via OpenAPI.
+    DingTalk,
 }
 
 impl DocumentSource {
@@ -39,6 +41,7 @@ impl DocumentSource {
             DocumentSource::Confluence => "confluence",
             DocumentSource::S3 => "s3",
             DocumentSource::Yuque => "yuque",
+            DocumentSource::DingTalk => "dingtalk",
         }
     }
 
@@ -52,6 +55,7 @@ impl DocumentSource {
             "confluence" => Some(DocumentSource::Confluence),
             "s3" => Some(DocumentSource::S3),
             "yuque" => Some(DocumentSource::Yuque),
+            "dingtalk" => Some(DocumentSource::DingTalk),
             _ => None,
         }
     }

@@ -2395,9 +2395,7 @@ impl Connector for DingTalkConnector {
         Ok(ConnectorDoc {
             id: file.id.clone(),
             blob,
-            // `DocumentSource` 尚无 DingTalk 变体 — 复用 Local 占位，
-            // metadata.source=dingtalk 携带真实来源（枚举扩展为后续工作）。
-            source: DocumentSource::Local,
+            source: DocumentSource::DingTalk,
             semantic_identifier: file.name.clone(),
             extension: file.extension.clone(),
             doc_updated_at: file.updated_at.clone(),
@@ -3289,7 +3287,7 @@ mod dingtalk_connector_tests {
         assert_eq!(doc.extension, ".md");
         assert_eq!(doc.doc_updated_at, "2026-02-01T00:00:00Z");
         assert_eq!(doc.size_bytes, 6);
-        assert_eq!(doc.source, DocumentSource::Local);
+        assert_eq!(doc.source, DocumentSource::DingTalk);
         assert_eq!(
             doc.metadata.get("source").map(String::as_str),
             Some("dingtalk")

@@ -1,3 +1,23 @@
+## 2026-08-13 v0.3.3ay：钉钉云盘连接器（子agent 并行）+ DocumentSource::DingTalk + prompt_config 守卫
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **钉钉云盘连接器**（子agent 实现，仅改 src/connectors.rs，文件隔离）：
+  appKey:appSecret → /v1.0/oauth2/accessToken（缓存 Mutex）→
+  x-acs-dingtalk-access-token 头 → 列空间/文件（nextToken 分页）→
+  download 接口取 Location → GET 内容。target=spaceId 可空（遍历全部空间）。
+  本地 TcpListener mock 测试 6 个（accessToken 缓存/分页/下载跳转）。
+  注意：因主 agent `git add -A` 打包，钉钉代码实际落在提交 b32b7c2
+  （该提交消息仅写了 chip 多选，含 connectors.rs +754 行）。
+- **DocumentSource::DingTalk** 变体（as_str/from_str 全接线）+ normalize
+  与测试断言更新（移除 Local 占位）。
+- **prompt_config 守卫**：update_dataset 校验允许仅含 prompt_config 的
+  PUT（此前 400 "name, permission, embedding_model or parser_config
+  is required"）。
+- 数据源登记现共 17 类：gitlab/blob/local/webdav/feishu/confluence +
+  s3/gcs/oracle（S3 协议族）+ notion/google_drive/gmail +
+  钉钉/企业微信/腾讯文档/语雀 + yuque/dingtalk 已实装。
+
+
 ## 2026-08-13 v0.3.3ax：检索页 Language 多选 + prompt_config 全链路（cross_languages）
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
