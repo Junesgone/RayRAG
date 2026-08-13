@@ -470,6 +470,16 @@ pub struct InfinityConf {
     pub db_name: String,
 }
 
+/// `file_syncer:` block of service_conf.yaml. Legacy dead-config in RAGFlow
+/// v0.26.4 (no active Python consumer; the Go server only carries the config
+/// struct). RayRAG parses the keys for config parity; the manual
+/// `sync_data_source` endpoint matches upstream behavior.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileSyncerConf {
+    pub max_concurrent_syncs: u32,
+    pub sync_interval: u32,
+}
+
 /// `redis:` block of service_conf.yaml.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RedisConf {
@@ -505,6 +515,7 @@ pub struct ServiceConf {
     pub infinity: InfinityConf,
     pub redis: RedisConf,
     pub message_queue_type: String,
+    pub file_syncer: FileSyncerConf,
     pub user_default_llm: UserDefaultLlm,
 }
 
@@ -556,6 +567,10 @@ impl Default for ServiceConf {
                 host: "localhost:6379".to_owned(),
             },
             message_queue_type: DEFAULT_MESSAGE_QUEUE_TYPE.to_owned(),
+            file_syncer: FileSyncerConf {
+                max_concurrent_syncs: 4,
+                sync_interval: 3,
+            },
             user_default_llm: UserDefaultLlm::default(),
         }
     }
@@ -645,6 +660,12 @@ impl ServiceConf {
         if let Some(task_executor) = service_section(value, "task_executor") {
             conf.message_queue_type = str_field(Some(task_executor), "message_queue_type")
                 .unwrap_or(conf.message_queue_type);
+        }
+        if let Some(file_syncer) = service_section(value, "file_syncer") {
+            conf.file_syncer.max_concurrent_syncs = u32_field(Some(file_syncer), "max_concurrent_syncs")
+                .unwrap_or(conf.file_syncer.max_concurrent_syncs);
+            conf.file_syncer.sync_interval =
+                u32_field(Some(file_syncer), "sync_interval").unwrap_or(conf.file_syncer.sync_interval);
         }
         if let Some(llm) = service_section(value, "user_default_llm") {
             conf.user_default_llm.factory =
@@ -2070,6 +2091,7 @@ mod tests {
             "infinity": {"uri": "infinity:23817", "postgres_port": 5433, "db_name": "kb"},
             "redis": {"db": 2, "username": "", "password": "p", "host": "redis:6379"},
             "task_executor": {"message_queue_type": "redis"},
+            "file_syncer": {"max_concurrent_syncs": 9, "sync_interval": 7},
             "user_default_llm": {
                 "factory": "ZHIPU-AI",
                 "api_key": "key",
@@ -2092,11 +2114,15 @@ mod tests {
         assert_eq!(conf.es.hosts, "http://es:1200");
         assert_eq!(conf.redis.db, 2);
         assert_eq!(conf.user_default_llm.factory, "ZHIPU-AI");
+        // file_syncer keys parse (legacy dead-config parity).
+        assert_eq!(conf.file_syncer.max_concurrent_syncs, 9);
+        assert_eq!(conf.file_syncer.sync_interval, 7);
         // Missing keys keep the shipped defaults.
         let partial = ServiceConf::from_value(&serde_json::json!({"ragflow": {"http_port": 9400}}));
         assert_eq!(partial.http_port, 9400);
         assert_eq!(partial.admin_port, 9381);
         assert_eq!(partial.mysql.name, "rag_flow");
+        assert_eq!(partial.file_syncer.max_concurrent_syncs, 4);
 
         // Apply onto a settings snapshot: fills the LLM defaults that the env
         // reader intentionally leaves empty, composing name@factory.
