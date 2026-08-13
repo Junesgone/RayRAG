@@ -1,3 +1,15 @@
+## 2026-08-13 v0.3.3ai：file_syncer 遗留键类型化解析 + service_conf 行转 full
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 溯源 `file_syncer.max_concurrent_syncs/sync_interval`：v0.26.4 中为**遗留死配置**——
+  Python 侧无任何引用（周期同步组件已退役，被逐数据源手动同步取代），Go 侧仅
+  internal/server/config.go 的结构体 + admin 状态枚举，无活跃消费者。
+- RayRAG 按配置对齐原则补齐：`ServiceConf.file_syncer: FileSyncerConf`（默认
+  max_concurrent_syncs=4 / sync_interval=3，与 shipped service_conf.yaml 一致），
+  from_value 用 u32_field 解析自定义值，测试覆盖文档解析与缺省回退两条路径。
+  运行时行为与上游一致：手动 `sync_data_source` 端点即 v0.26.4 的实际同步方式。
+- 覆盖矩阵 conf/service_conf.yaml 行 partial→full（全键解析齐，架构差异注明）。
+
 ## 2026-08-13 v0.3.3ah：all_models 扁平别名索引 + Add-model 自动补全
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
