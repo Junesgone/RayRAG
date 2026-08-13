@@ -4386,9 +4386,7 @@ impl Connector for AirtableConnector {
         Ok(ConnectorDoc {
             id: file.id.clone(),
             blob,
-            // Stand-in until the parent adds a DocumentSource::Airtable
-            // variant.
-            source: DocumentSource::Local,
+            source: DocumentSource::AirTable,
             semantic_identifier: file.name.clone(),
             extension: file.extension.clone(),
             doc_updated_at: file.updated_at.clone(),
@@ -6700,8 +6698,7 @@ mod airtable_connector_tests {
         assert_eq!(doc.semantic_identifier, "Alice");
         assert_eq!(doc.extension, ".txt");
         assert_eq!(doc.doc_updated_at, "2025-08-01T08:00:00.000Z");
-        // Stand-in until the parent adds a DocumentSource::Airtable variant.
-        assert_eq!(doc.source, DocumentSource::Local);
+        assert_eq!(doc.source, DocumentSource::AirTable);
         assert_eq!(doc.metadata.get("source").map(String::as_str), Some("airtable"));
         assert_eq!(doc.metadata.get("table").map(String::as_str), Some("Users"));
         assert_eq!(doc.metadata.get("table_id").map(String::as_str), Some("tbl1"));

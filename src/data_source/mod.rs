@@ -32,6 +32,8 @@ pub enum DocumentSource {
     Rss,
     /// Box cloud drive (RAGFlow `box_connector.py` parity).
     Box,
+    /// Airtable base rows (RAGFlow `airtable_connector.py` parity).
+    AirTable,
 }
 
 impl DocumentSource {
@@ -48,6 +50,7 @@ impl DocumentSource {
             DocumentSource::DingTalk => "dingtalk",
             DocumentSource::Rss => "rss",
             DocumentSource::Box => "box",
+            DocumentSource::AirTable => "airtable",
         }
     }
 
@@ -64,6 +67,7 @@ impl DocumentSource {
             "dingtalk" => Some(DocumentSource::DingTalk),
             "rss" => Some(DocumentSource::Rss),
             "box" => Some(DocumentSource::Box),
+            "airtable" => Some(DocumentSource::AirTable),
             _ => None,
         }
     }
