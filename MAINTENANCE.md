@@ -1,3 +1,896 @@
+## 2026-08-17 v0.3.3bw2：ChatChannel 23 渠道目录全量移植
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- `web/src/pages/user-setting/chat-channel/constant/index.tsx`（761 行）的 23 个 ChatChannelKey
+  全部移植到 `src/web.rs` 的 `CHAT_CHANNEL_INFO`（原仅 7 个）：新增 clickclack/googlechat/irc/
+  line/matrix/mattermost/msteams/nextcloud_talk/nostr/slack/synology_chat/tlon/twitch/yuanbao/
+  zalo/zalouser，并补齐 feishu domain select、googlechat auth_mode select、wecom connection_type
+  select（带 showIf websocket/webhook 条件显隐）；dingtalk 字段纠正为 client_id/client_secret。
+- 弹层字段渲染支持 select/number/switch/textarea/tag 五种类型；wecom 按 connection_type 动态
+  显隐 bot_id（websocket）与 corp_id/agent_id/token/aes_key（webhook）。
+- 测试更新：`user_setting_chat_channel_page_wires_add_edit_delete_flows` 断言新增 8 个渠道名
+  与 select/showIf 标记；`cargo test chat_channel` 2 passed。
+- 覆盖矩阵 `constant/index.tsx` 行已同步更新。
+
+## 2026-08-16 v0.3.3ce：Google Drive/Gmail web-OAuth token 字段 + Google start/callback/result + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/data-source/component/google-drive-token-field.tsx`
+  （459 行）与 `gmail-token-field.tsx`（460 行），以及 `connector_api.py` 的
+  Google web-OAuth start/callback/result。
+- **Rust 后端**（`src/api/oauth_web.rs` + 路由）：新增独立 Google flow 注册表
+  （source/client_id/secret/redirect/raw_config/code/tokens，TTL 600s）与四个
+  端点：`POST /api/v1/connectors/google/oauth/web/start?type=google-drive|gmail`
+  （解析 web/installed 客户端配置，含 refresh_token 或缺 client_id/secret
+  分别失败关闭；redirect 取请求或 `GOOGLE_DRIVE_WEB_OAUTH_REDIRECT_URI`/
+  `GMAIL_WEB_OAUTH_REDIRECT_URI` 环境；按类型拼 Drive 4 组 / Gmail 3 组固定
+  scopes 的 accounts.google.com authorize URL）、`GET /api/v1/connectors/
+  {gmail,google-drive}/oauth/web/callback`（校验 state/code、error 分支、渲染
+  对应 `ragflow-gmail-oauth`/`ragflow-google-drive-oauth` postMessage 弹层）、
+  `POST …/result?type=`（未完成返回 code 106，完成后合并客户端配置 + redirect +
+  code/tokens 返回 credentials JSON 字符串）。真实令牌铸造仅在
+  `GOOGLE_OAUTH_TOKEN_URL` 配置时执行（大陆镜像/自托管可指向镜像，未配置则
+  持久化授权码原文）。
+- **Rust UI**（`src/web.rs` Add 弹层）：gmail/google_drive 的
+  `config.credentials.google_tokens` 渲染 JSON 文件上传器 + Uploaded (pending)/
+  Needs authorization/Verified 徽章 + Complete Google verification 弹层
+  （Redirect URI 从 redirect_uris[0] 自动提取、Authorize with Google 开
+  600x720 窗口、Refresh status 轮询 106 续等、成功合并凭据写回隐藏字段）。
+- **测试**：oauth_web 新增 Google start→result 106→callback→result 全链路
+  单测（Drive scopes 断言、merged credentials 校验）；列表页模板断言补 Google
+  弹层/端点 marker；`cargo test --locked --lib` **1409 passed / 0 failed / 27
+  ignored**（待全量复跑确认）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19489`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 7 组动作；accounts.google.com 用 route abort 模拟
+  离网：Google Drive 卡开 `Create your Google Drive connector` → JSON 上传器
+  渲染（google_tokens 非 textarea）→ 上传客户端 JSON（redirect 自动回填、
+  Uploaded (pending) 徽章、弹层开）→ Authorize with Google（start body 恰为
+  credentials+redirect_uri、popup 指向 accounts.google.com 被 abort）→
+  Refresh status 得 106 → fetch 注入 callback（code=g-code）→ 再 Refresh 合并
+  凭据（Needs authorization 徽章、隐藏值为含 code 的 JSON）→ 创建时
+  google_tokens 为含 code 的 JSON 且 my_drive_emails 等字段透传。报告
+  `/tmp/rayrag-ce-audit/rayrag-google-drive-oauth-browser-audit.json`：7 动作、
+  3 截图（`00-google-field.png`/`01-google-dialog.png`/`02-google-verified.png`）、
+  0 console error、0 page error、0 异常 API。
+- **台账**：coverage 刷新并通过 `--check`（partial 68 / reference 3472 /
+  aligned 186 / unmapped 0）；两个 token 字段文件由 reference 纠正为 partial，
+  connector_api.py 注记补 Google OAuth。逐像素 FileUploader、popup 自动
+  postMessage 监听与真实 Google 令牌铸造仍为 partial（诚实边界）。
+
+## 2026-08-16 v0.3.3cd：Box web-OAuth token 字段 + start/callback/result 端点 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/data-source/component/box-token-field.tsx`
+  （452 行）与 `connector_api.py` 的 Box web-OAuth start/callback/result。
+- **Rust 后端**（`src/api/oauth_web.rs` 新模块 + 路由）：内存 flow 注册表
+  （uuid → client_id/secret/redirect/code/tokens，TTL 600s、过期清理）。
+  `POST /api/v1/connectors/box/oauth/web/start`：必填 client_id/secret、校验
+  redirect http(s)，生成 `account.box.com/api/oauth2/authorize` URL +
+  flow_id。`GET …/callback`：校验 state/code，error 参数走失败分支，成功后
+  渲染上游 popup 模板（postMessage `{type:'ragflow-box-oauth',flowId,status,
+  message}` + 成功自动 window.close）；仅当配置 `BOX_OAUTH_TOKEN_URL` 时执行
+  真实 Box 令牌交换（大陆镜像/自托管代理可指向镜像，未配置则持久化
+  authorization code 原文——联网失败也不阻塞自托管流）。`POST …/result`：
+  未完成返回上游 `code=106` + `Authorization is still pending.`，完成后返回
+  credentials 并清除 flow。
+- **Rust UI**（`src/web.rs` Add 弹层）：`config.credentials.box_tokens` 不再
+  渲染裸 textarea，改为 Box 专用字段——Configure/Get Box credentials 按钮、
+  Configured/Authorized 徽章、Client ID/Secret/Redirect URI 弹层（空值原位
+  报 `Please fill in Client ID, Client Secret, and Redirect URI.`）、Submit &
+  Authorize 开 600x720 窗口并记录 flow、Refresh status 轮询（106 续等、成功
+  合并 credentials 写回隐藏字段 JSON + Authorized 徽章并关窗）。
+- **测试**：oauth_web 3 项（start 参数校验、注册表共享、
+  start→result 106→callback→result 全链路）；列表页模板断言补 Box 弹层/
+  端点 marker；`cargo test --locked --lib` **1406 passed / 0 failed / 27
+  ignored**（全量回归含本批）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19489`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 7 组动作；account.box.com 弹窗用 route abort 模拟
+  离网：Box 卡开 `Create your Box connector` → 专用字段渲染（无裸 textarea）
+  → 空值原位报错 → 填凭据 Submit & Authorize（start body 恰为三字段、popup
+  指向 account.box.com authorize + state、等待文案）→ Refresh status 得 106
+  → fetch 注入 callback（code=mock-code）→ 再 Refresh 得 credentials、徽章
+  Authorized、关窗 → 创建时 `config.credentials.box_tokens` 为含
+  authorization_code 的 JSON 字符串、folder_id 透传。报告
+  `/tmp/rayrag-cd-audit/rayrag-box-oauth-browser-audit.json`：7 动作、3 截图
+  （`00-box-field.png`/`01-box-waiting.png`/`02-box-authorized.png`）、
+  0 console error、0 page error、0 异常 API。
+- **台账**：coverage 刷新并通过 `--check`（partial 66 / reference 3474 /
+  aligned 186 / unmapped 0）；box-token-field.tsx 由 reference 纠正为
+  partial，connector_api.py 注记补 Box OAuth。Gmail/Google Drive token
+  字段、真实 Box 令牌交换与逐像素 React Dialog 组合仍为 partial（诚实
+  边界）。
+
+## 2026-08-16 v0.3.3cc：Data source 列表页 35 卡 Available + 分组 Added + 删除确认弹层 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/data-source/index.tsx`（150 行）、
+  `component/added-source-card.tsx`（70 行）与
+  `component/delete-source-modal.tsx`（85 行）。
+- **资产**：把上游 `web/src/assets/svg/data-source/` 的 31 个品牌 SVG 原样落到
+  `web/static/assets/svg/data-source/`；github/imap/outlook/rss 四个上游 lucide
+  图标以 emoji 回退。新增 `src/data_source/source_info.json`（35 项
+  name/description/icon，description 取自固定 en.ts 的 `{key}Description`）+
+  `form_fields.rs::source_info_for*` 解析与单测。
+- **Rust UI**（`src/web.rs`）：数据源列表页由类型下拉升级为上游布局：
+  - Available：35 张卡（icon/name/description、hover + Add、整卡点击），打开
+    schema 弹层，标题修正为上游 `Create your {name} connector`（cb 批的
+    `Add data source: …` 为偏差，本批纠正）；本地扩展（local/feishu/dingtalk/
+    tencent_docs/yuque/wechat_docs）以下拉 + Add 保留；
+  - Added：按源分组卡片（icon+name 头、name/状态徽章行、Settings→详情、
+    Trash→删除确认），保留 Connect/Disconnect/List/Sync 行内按钮（上游行内仅
+    齿轮/垃圾桶，记录为明确偏差）；空态 `No data sources added yet.`；
+  - 删除确认弹层：`Delete data source` / `Are you sure you want to delete
+    this data source link?` / icon+name 框 / Cancel + Confirm(error)，
+    Confirm 后 DELETE 并刷新分组。
+- **测试**：新增 2 项——列表页模板含卡片/分组/删除弹层 marker、source_info
+  清单 35 源与图标约束；`cargo test --locked --lib` **1403 passed / 0 failed /
+  27 ignored**（含全量回归）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19489`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 7 组动作：登录 → 35 卡渲染 + S3 svg 图标自然加载 +
+  hover 出现 Add → 点 S3 卡（标题 `Create your S3 connector`）嵌套 config
+  POST 落库 → Added 按 S3 分组出现新行 → Settings 齿轮进详情并回退 → 删除弹层
+  Cancel 保留 / Confirm 后 DELETE 回空态。报告
+  `/tmp/rayrag-cc-audit/rayrag-datasource-list-cards-browser-audit.json`：7 动作、
+  4 截图（`00-available-cards.png` 至 `03-deleted.png`）、0 console error、
+  0 page error、0 异常 API。
+- **门禁与台账**：`cargo check --locked --all-targets` 0 error；修改文件
+  rustfmt 干净、无新增 Clippy 命中；`git diff --check` 干净；coverage 刷新为
+  partial **65** / reference **3475** / aligned **186** / unmapped **0** 并通过
+  `--check`；3 个组件文件由 reference 纠正为 partial，31 个 data-source SVG
+  资产行由 reference 升为 aligned。逐像素 React 网格几何、列表页搜索、行内
+  Connect/List/Sync 按钮与四个 lucide 图标仍为 partial/明确偏差。
+
+## 2026-08-16 v0.3.3cb：Data source Add 弹层 schema 驱动 + 嵌套 config 创建 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/data-source/add-datasource-modal.tsx`（90 行）并复用
+  v0.3.3ca 的 35 套逐源字段 schema。
+- **Rust 后端**（`src/api/data_source_mgr.rs`）：`CreateDataSourceRequest` 增嵌套
+  `config` 与 `sync_deleted_files`/`prune_freq`/`refresh_freq`/`timeout_secs`；
+  url/target 改为可选（schema 创建时从 config 折叠）；`apply_config_mapping` 增
+  `batch_size → max_items` 折叠；创建默认值对齐上游 prune=5 / refresh=5 /
+  timeout=1740，无 config 的旧扁平客户端仍要求 name/url/target（fail closed）。
+- **Rust UI**（`src/web.rs`）：数据源列表页 Add 入口由内联扁平表单升级为 schema 驱动
+  弹层（`data_source_add_modal` helper + raw string 模板）：标题
+  `Add data source: {类型名}`、按当前类型渲染 Text/Password/Number/Checkbox/
+  Segmented/Select/Textarea、必填星标、占位、选项、默认值与 show_when 条件显隐、
+  Cancel/Confirm；无 schema 的本地类型（local/feishu/dingtalk 等）回退
+  URL/Target/Token 旧表单。修复两处 builder 细节：Select 空白占位需显式选中（prepend
+  不清除浏览器默认首项）、替换后语句缺分号。
+- **测试**：新增 3 项——嵌套 config 创建折叠（url/target/token/max_items/默认值）、
+  无 config 创建仍要求 url/target、列表页模板含 Add 弹层与 DS_SCHEMA；
+  `cargo test --locked --lib` **1401 passed / 0 failed / 27 ignored**，
+  `cargo test --locked --all-targets` 同绿（含 coverage bin 2/2）；
+  `cargo check --locked --all-targets` 0 error；修改文件 rustfmt 干净、无新增
+  Clippy 命中（基线 72 warning 不变）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19489`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 6 组动作：登录 → S3 弹层（标题、7 字段组、Region ≥35 选项）
+  → Mode 切 S3 Compatible（Authentication 隐藏、Addressing Style/Endpoint URL 出现）
+  → 空 Name/空 Bucket 两条原位必填报错 → Confirm（POST 恰为嵌套 config
+  `{bucket_name, bucket_type:'s3_compatible', credentials:{region, addressing_style,
+  endpoint_url,...}}`，列表出现 S3 Bucket）→ local 类型回退 URL/Target/Token 旧表单。
+  报告 `/tmp/rayrag-cb-audit/rayrag-datasource-add-modal-browser-audit.json`：6 动作、
+  4 截图（`00-add-s3.png` 至 `03-add-local.png`）、0 console error、0 page error、
+  0 异常 API。
+- **台账**：`add-datasource-modal.tsx` 由 reference 纠正为 partial，connector_api.py
+  注记补 POST 语义；coverage 刷新并通过 `--check`（partial 62 / reference 3509 /
+  unmapped 0）。Available 卡片化入口、逐像素 React Modal 组合与 web OAuth token 字段
+  仍为 partial（诚实边界）。
+
+## 2026-08-16 v0.3.3ca：Data source 详情页逐源动态字段集 + Save/Stop/Resume 状态机 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/data-source/constant/index.tsx`（2473 行）与
+  `s3-constant.tsx`/`confluence-constant.tsx`/`jira-constant.tsx`/
+  `seafile-constant.tsx`/`bitbucket-constant.tsx` 五文件，并复核
+  `api/apps/restful_apis/connector_api.py` 的 PATCH `reschedule`/`status` 语义。
+- **表单 schema**（`src/data_source/form_schema.json` 新资产 +
+  `src/data_source/form_fields.rs` 新模块）：把上游 `DataSourceFormFields` 的
+  35 套逐源字段（213 个字段，含 R2/S3/Confluence/Jira/SeaFile/Bitbucket）抽取为
+  编译期嵌入 JSON：label/name（config.* 点路径）/
+  type/required/placeholder/options/default_value/show_when（OR 条件）；S3 Region
+  运行时复用 Bedrock 37 区域表。`FormFieldSpec::visible` 实现 OR 谓词。Tip /
+  `FilterFormField` 自定义渲染器与 jira 的 `!== false` 条件、S3 的
+  `access_key OR s3_compatible` 双条件（近似为 access_key-only）保持 partial。
+- **Rust 后端**（`src/api/data_source_mgr.rs` / `src/server.rs`）：
+  - `DataSourceRecord` 增 `status`（serde 默认 unstart，旧快照可回读）与扁平
+    `extra`（config.* 点路径）；`redacted()` 列表只回 sync 开关，`detail_json()`
+    还原嵌套 config 供编辑回填，旧 token 仍掩码；
+  - `flatten_config`/`unflatten_config` 嵌套往返（标量转字符串、数组/对象存紧凑
+    JSON、跳过 null）；`normalize_status` 接受新旧两种拼写
+    （cancel/SCHEDULE/2/5 等）；`apply_config_mapping` 把 gitlab_url/base_url/
+    feed_url 等折叠回旧 url/target/token/include 字段，保证既有连接器分发可用；
+  - PUT/PATCH `/api/v1/data_sources/{id}` 支持嵌套 `config`、
+    `reschedule` 与 `status` 转换；`/test` 别名（上游 test 端点）与 PATCH 路由
+    注册；sync 核心抽为 `perform_sync`，运行前后落 running/schedule/fail 状态。
+    RayRAG 无后台调度器：save/resume 即时执行首轮同步（成功置 schedule、失败置
+    fail），为明确偏差。
+- **Rust UI**（`src/web.rs`）：详情页由固定表单升级为 schema 驱动。Name 禁用、
+  按类型渲染 Text/Password/Number/Checkbox/Segmented/Select/Textarea、必填星标、
+  占位与选项、show_when 条件显隐、sync_deleted_files 门控 Prune Freq（onchange
+  即时刷新）、Test 仅 rest_api/bigquery、主按钮 Save/Stop/Resume 状态机
+  （dirty/unstart→Save、running/schedule→Stop、其余→Resume），日志表在
+  running/schedule 时每 15s 轮询（对齐上游 refetchInterval）。模板改为
+  `data_source_detail_body` 辅助函数 + raw string 占位符，避免 JS 大括号转义。
+- **测试**：新增 11 项——form_fields 5 项（34 源完整性/路径约束/gitlab 7 字段/
+  S3 区域注入/show_when OR）、data_source_mgr 3 项（status 归一化/config 压平往返/
+  gitlab 折叠映射）、web 2 项（模板 marker/PATCH cancel 持久化/PATCH 嵌套 config
+  往返）；`cargo test --locked --lib` **1398 passed / 0 failed / 27 ignored**；
+  `cargo check --locked --all-targets` 0 error；修改文件 rustfmt 干净、无新增
+  Clippy 命中（基线 72 warning 不变）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19489` + 本地 mock GitLab
+  `127.0.0.1:19488`（project JSON + 空 tree/issues/MR），fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 8 组动作：登录 → 创建 gitlab 源 → 详情页 7 字段渲染
+  （Name 禁用、Test 隐藏、Prune 隐藏）→ sync_deleted 勾选/取消驱动 Prune 显隐 →
+  Save（PATCH 体恰为嵌套 config + reschedule，mock 收到 /api/v4 同步，按钮变
+  Stop）→ Stop（`{status:cancel}`）→ Resume（`{status:schedule}` + 二次同步）→
+  重载回填 owner/name/sync 开关。报告
+  `/tmp/rayrag-ca-audit/rayrag-datasource-fields-browser-audit.json`：8 动作、
+  3 截图（`00-detail-fields.png`/`01-saved-schedule.png`/`02-resumed.png`）、
+  0 console error、0 page error、0 异常 API。
+- **台账**：coverage 刷新为 partial **61** / reference **3510** / unmapped **0**
+  并通过 `--check`；六个 data-source constant 文件由 reference 纠正为 partial，
+  两个 detail UI 文件注记更新为 schema 驱动 + 状态机，`connector_api.py` 注记补
+  PATCH 状态机。逐像素 React 组合、Tip 渲染器与未覆盖的条件组合仍为 partial
+  （诚实边界）。
+
+## 2026-08-16 v0.3.3bz：Data source 详情路由/连接表单/Sync Logs + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/data-source/data-source-detail-page/index.tsx`
+  （282 行）与 `log-table.tsx`（293 行），以及 `hooks.ts` 的
+  `useFetchDataSourceDetail`/`useTestDataSource` 连接语义。
+- **Rust 后端**（`src/api/data_source_mgr.rs`）：新增 `get_data_source`、
+  `update_data_source`、`get_data_source_logs` 与 `append_log`（同步/连接写入
+  success|failed 行，newest-first，上限 100 条，随数据源记录原子持久化）；
+  详情输出补 `sync_logs` 数组，update 复用既有 PUT 校验并支持改名、url/target、
+  `sync_deleted_files`、`prune_freq`、`refresh_freq`、`timeout_secs` 与可选 token。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：注册
+  `/user-setting/data-source/{id}` 详情路由；列表行新增 Details 按钮。详情页渲染
+  返回链接、连接表单（Name/URL/Target/Token、Sync deleted files 开关、
+  Prune Freq/Refresh Freq/Timeout Secs 分钟/秒数输入）、Test/Sync/Save 三按钮、
+  状态行（`Saved ✓`/`Synced N docs ✓`/`Connection verified ✓`）与 Sync Logs 表
+  （Time/Status/Message，status 徽章 success/其它两色，空态 `No sync logs yet.`）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19489`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 6 组动作：创建 local 源 → Details 进详情（表单回填
+  url/target）→ 改名 Save（PUT 持久化 + `Saved ✓`）→ Sync（POST 写 success 日志行
+  并在表中显示）→ Back 回列表。报告 `/tmp/rayrag-ds-detail-browser-audit.json`：
+  6 动作、2 截图（`00-ds-detail.png`、`01-ds-synced.png`）、0 page error、0 异常
+  API。
+- **门禁与台账**：`cargo test --locked --lib` **1387 passed / 0 failed / 27
+  ignored**；`cargo check --locked --all-targets` 0 error；coverage 刷新为
+  partial **55** / reference **3516** / unmapped **0** 并通过 `--check`；
+  detail-page 两文件由 reference 纠正为 partial，`routes.tsx` 注记补详情路由。
+  诚实边界：上游按源类型动态渲染的 30 套字段集（`getDataSourceFieldsWithExtras`）、
+  编辑态禁用 Name、Save/Stop/Resume 主按钮状态机、仅 REST_API/BigQuery 显示
+  Test、日志表 autoRefresh 与逐像素 DynamicForm 组合仍为 partial。
+
+## 2026-08-16 v0.3.3bx：Provider 逐能力推理 Verify（chat/embedding/rerank 真实探测）+ Chrome 复核
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批对齐
+  `api/apps/services/provider_api_service.py::verify_api_key` 的逐能力推理语义。
+- **Rust 后端**（`src/model_meta.rs` / `src/api/tenant_models.rs`）：新增
+  `verify_provider_capabilities` 与三个探测 helper；verify 与 create 在带 model_info
+  时不再只做模型列表 GET，而是按能力真实请求：
+  - chat/VLM：POST chat/completions（VolcEngine 走 `/api/v3/chat/completions`、
+    OpenRouter 走 `/api/v1/chat/completions`，其余 `{base}/v1/chat/completions`），
+    `max_tokens=8`、非流式；
+  - embedding：POST embeddings（input=`Test if the api key is available`），校验
+    `data[0].embedding` 非空；
+  - rerank：POST `{base}/v1/rerank`（Jina 形状），校验 `results` 非空；
+  - 非 2xx 统一失败关闭并返回上游 `Fail to access model({provider}/{model}): ...`；
+    空 model_info 回退既有模型列表探测；OCR/TTS/ASR 与 Baidu/Tencent/XunFei/Google
+    等厂商专有 REST 协议有意跳过（partial，README/矩阵已注明）。
+  - `OneOrManyModelTypes` 增 Clone，新增 `capability_pairs` 从 model_info 组装
+    `(model_name, capabilities)`。
+- **测试**：新增 3 项——mock 下 chat/embedding/rerank 全通过、chat 4xx 失败关闭、
+  （此前 batch 的）OCR 端点读取；`cargo test --locked --lib` **1386 passed /
+  0 failed / 27 ignored**。隔离 binary
+  `127.0.0.1:19389` + 本地 OpenAI 兼容 mock `127.0.0.1:19388`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 复核：`/connection` 带 chat model_info 探测成功（mock 收到
+  chat/completions）、bad-model 返回 401 时端点回 `code=102` + `Fail to access
+  model`、创建实例同样先探测再持久化并在 Added models 出现；报告
+  `/tmp/rayrag-capability-browser-audit.json`，mock 日志计 3 次 chat 探测。
+- **台账**：coverage 刷新并通过 `--check`；`provider_api_service.py` 保持 partial，
+  注记更新为“逐能力推理已落地，region/extra-field 适配与完全租户自有 provider 实体
+  仍 partial”。
+
+## 2026-08-16 v0.3.3bw：Chat channels 页（7 渠道 Add/Edit/Delete）+ chat-channels CRUD + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/chat-channel/` 八文件（共 1689 行）与
+  `api/apps/restful_apis/chat_channel_api.py`（150 行）。
+- **Rust 后端**（`src/api/chat_channel_mgr.rs` 新模块 + 路由 + `AppState.chat_channels`）：
+  租户级原子 JSON 快照（`chat_channels.json`）；`GET/POST /api/v1/chat-channels`、
+  `GET/PATCH/DELETE /api/v1/chat-channels/{id}`；记录形状
+  `{id,tenant_id,name,channel,config,chat_id,created_at,updated_at}`，config 用
+  `config.credential.*` 嵌套保存渠道密钥；name/channel 必填校验。运行态 bot 仍由既有
+  `channels` 注册表负责，本存储只管理配置。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：`/user-setting/chat-channel` 由静态
+  构建器列表升级为固定页：Added channels（按渠道分组、空态
+  `No chat channels added yet. Select one below to connect.`、Edit/Delete）与 7 张
+  Available 卡（Discord/DingTalk/Feishu / Lark/Telegram/QQ Bot/WeCom/WhatsApp，
+  描述 + hover Add）。Add/Edit 弹层数据驱动按渠道渲染字段：Discord/Telegram 的
+  Bot Token、DingTalk/Feishu 的 App Key/Secret、QQ 的 App ID/Client Secret/可选
+  Base URL、WeCom 的 Secret/Corp ID/Agent ID/Token/AES Key（保存附加
+  connection_type=webhook），WhatsApp 无凭据字段；必填字段原位校验。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19289`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 6 组动作：空态 → Telegram 校验/创建（POST body 恰为
+  `{name,channel,config.credential.token}`）→ DingTalk 双凭据创建 → Edit 回填并 PATCH
+  改名 → 确认删除（固定 `Delete chat channel` 文案）。报告
+  `/tmp/rayrag-chatchannel-browser-audit.json`：6 动作、3 截图、0 page error、
+  0 异常 API；截图 `00-chat-channels.png` 至 `02-telegram-deleted.png`。
+- **门禁与台账**：`cargo test --locked --lib` **1384 passed / 0 failed / 27 ignored**；
+  `cargo check --locked --all-targets` 0 error；修改文件 rustfmt 干净、无新增 Clippy
+  命中；coverage 刷新为 partial **53** / reference **3518** / unmapped **0** 并通过
+  `--check`；6 个 chat-channel UI 文件由 reference 纠正为 partial，`interface.ts` 与
+  `connect-dialog-modal.tsx`（连接助手）保持 reference，`chat_channel_api.py` 由空洞
+  aligned 更新为真实实现。Connect assistant、WhatsApp QR runtime、7 个展示渠道之外
+  的 ChatChannelKey 目录与逐像素 React 组合仍为 partial（诚实边界）。
+
+## 2026-08-15 v0.3.3bv：Profile 页完整编辑（昵称/时区/头像/密码）+ /users/me PATCH + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/profile/` 三文件（index/hooks/constants，共 580 行）与
+  `api/apps/restful_apis/user_api.py` 的 `/users/me`（PATCH/GET）。
+- **Rust 后端**（`src/auth.rs` / `src/api/system.rs` / `src/server.rs`）：`User` 增
+  serde 默认的 `avatar`/`timezone` 字段（老快照可回读）；新增
+  `PATCH /api/v1/users/me`：昵称按上游 `validate_nickname`（1-100 字符、字母数字 +
+  ` ._'-`）校验；`password`+`new_password` 走既有 change_password（错误当前密码返回
+  `Password error!`），成功后 `logout_user_tokens` 失效全部 token；`GET
+  /api/v1/user/info` 增 avatar/timezone。新增 `update_profile`、昵称校验单测。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：`/user-setting/profile` 升级为固定
+  Profile 页：Username / Avatar（Upload 选图 → FileReader data URL → 立即 PATCH）/
+  Time Zone（18 项 IANA 列表）/ Email（只读 + 说明）/ Password（********）五行，以及
+  Edit Name / Edit Time Zone / Edit Password 弹层（新密码 ≥8、两次一致、错误当前密码
+  显示 `Password error!`）；改密成功后清 token 并跳 `/login`。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19189`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 7 组动作：改名（PATCH `{nickname}` + 头部同步）、时区
+  （PATCH `{timezone}`）、头像（1x1 PNG → data URL → `naturalWidth>0`）、错误当前密码
+  （`Password error!`）、正确改密（清 token → `/login`）、用新密码重新登录成功。报告
+  `/tmp/rayrag-profile-browser-audit.json`：7 动作、2 截图、0 page error、0 异常 API
+  （唯一 400 为审计主动的错误密码用例，记入 failed_api 并在本记录注明）。
+- **门禁与台账**：`cargo test --locked --lib` **1382 passed / 0 failed / 27 ignored**；
+  `cargo check --locked --all-targets` 0 error；修改文件 rustfmt 干净、无新增 Clippy
+  命中；coverage 刷新为 partial **47** / reference **3524** / unmapped **0** 并通过
+  `--check`；3 个 profile UI 文件由 reference 纠正为 partial，`user_api.py` 由空洞
+  aligned 更新为真实实现。完整上游时区列表、AvatarUpload 走文件服务（当前存内联
+  data URL，属明确偏差）与逐像素 React 表单组合仍为 partial。
+
+## 2026-08-15 v0.3.3bu：Team 页成员/加入团队 + 邀请/移除/接受/退出 + 双账号 Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/setting-team/` 五文件（index/add-user-modal/hooks/
+  user-table/tenant-table，共 630 行）与 `api/apps/restful_apis/tenant_api.py`
+  （177 行）。
+- **Rust 后端**（`src/api/system.rs` + 路由）：新增
+  `GET/POST/DELETE /api/v1/tenants/{tenant_id}/users` 与
+  `PATCH /api/v1/tenants/{tenant_id}`（INVITE→NORMAL 接受）。列表 join 用户注册表
+  输出 `{user_id,nickname,email,avatar,role,update_date}`，并补上隐式 owner 行
+  （个人租户 owner 本不在 memberships 表里）；邀请错误文案对齐上游
+  （User not found. / already in the team. / owner of the team.）；删除允许 owner
+  或本人、禁止移除 owner；`list_tenants` 的 role 改为小写 wire 值。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：`/user-setting/team` 由单一
+  Invite 表单升级为固定 Team 页：`{nickname} workspace` 标题；Team members 卡
+  （Search + Invite member，Name/Date 排序/Email/State/Action，owner 行无删除按钮）；
+  Joined teams 卡（Search，invite 行 Accept/Decline，成员行 Quit）；Invite 弹层
+  （Email 校验 + “Only registered users can be invited…” 提示）与统一确认弹层
+  （sureDelete/sureQuit 文案）。
+- **隔离浏览器复点**：隔离 binary `127.0.0.1:19089`（`RAYRAG_ALLOW_REGISTRATION=true`）
+  双账号真点，fnOS Chrome 149/CDP `127.0.0.1:16002`：注册成员 → owner 行（无删除）→
+  空邮箱/未知邮箱失败 → 邀请（Invited 徽标）→ 移除 → 重邀后成员登录 Accept（PATCH →
+  Member）→ Quit（DELETE 自身）→ Date 排序 ↕→↑→↓。报告
+  `/tmp/rayrag-team-browser-audit.json`：8 动作、3 截图、0 page error、0 异常 API
+  （唯一 400 为审计主动的未知邮箱用例，记入报告 failed_api 并在本记录注明）。
+- **门禁与台账**：`cargo test --locked --lib` **1380 passed / 0 failed / 27 ignored**；
+  `cargo check --locked --all-targets` 0 error；修改文件 rustfmt 干净、无新增 Clippy
+  命中；coverage 刷新为 partial **44** / reference **3527** / unmapped **0** 并通过
+  `--check`；5 个 setting-team UI 文件由 reference 纠正为 partial，`tenant_api.py`
+  由空洞 aligned 更新为真实实现。头像、加入团队显示名解析与逐像素 React 表格组合
+  仍为 partial（诚实边界）。
+
+## 2026-08-15 v0.3.3bt：MCP servers 全页 CRUD/导入导出/批量 + streamable-http 工具探测 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行复核
+  `web/src/pages/user-setting/mcp/` 十二文件（index/edit/import/card/operation/tool/bulk/
+  hooks，共 913 行）与 `api/apps/restful_apis/mcp_api.py`（364 行），并复用
+  `common/ssrf_guard.py` 的地址策略与 RayRAG 已打包的 `src/mcp_client.rs`。
+- **Rust 后端**（`src/api/mcp_mgr.rs` 新模块 + 路由 + `AppState.mcp_servers`）：
+  - 租户级原子 JSON 快照（`mcp_servers.json`）；`GET/POST /api/v1/mcp/servers`、
+    `GET/PUT/DELETE /api/v1/mcp/servers/{id}`（GET 支持 `?mode=download` 导出）、
+    `POST /api/v1/mcp/servers/import` 与 `POST /api/v1/mcp/servers/{id}/test`；
+  - create/update/import 用 `McpClient::http` 做 `initialize` + `tools/list`（10 秒
+    超时），`authorization_token` 以 `Authorization: Bearer` 发送，工具表缓存进
+    `variables.tools`；探测失败按上游语义拒绝保存；import 对重名追加 `_N` 后缀并返回
+    逐条 results；
+  - URL 校验复刻 `assert_url_is_safe`：仅 http/https、逐地址全局路由检查；
+    `ALLOW_ANY_HOST=1` 提供局域网/回环旁路（大陆自托管 MCP 适配，README/记录已注明）；
+    name 执行前端固定 `^[a-zA-Z0-9_-]{1,64}$` 正则与租户内去重。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：`/user-setting/mcp` 由静态工具表
+  替换为固定页面：Search / Bulk manage / Import / + Add MCP 工具栏、空态 Add Now、
+  卡片（名称、N cached tools、更新时间、hover Export/Edit/Delete 或批量勾选）、
+  bulk Select all / Selected N / Export / Delete 确认弹层、Add/Edit 弹层（Name/URL/
+  Server type/Authorization Token、Test 拉取并列出工具、Save/Cancel）与 JSON 文件
+  Import 弹层（逐条结果展示）。
+- **隔离浏览器复点**：streamable-http MCP mock `127.0.0.1:18988`（initialize/tools-list
+  两方法）+ 隔离 binary `127.0.0.1:18989`（`ALLOW_ANY_HOST=1`），fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真点 9 组动作：空态、Add+Test+Save（Bearer token 贯通、2 工具列
+  表）、Search 0↔1、Edit 回填并 PUT 改名、Export download 请求、Bulk select all +
+  确认删除、JSON Import 建服；0 console/page error、0 异常 API。报告
+  `/tmp/rayrag-mcp-browser-audit.json`，截图 `00-mcp-empty.png` 至
+  `04-mcp-imported.png`；mock 日志确认 `Authorization: Bearer audit-token/import-token`
+  逐次送达。
+- **门禁与台账**：`cargo test --locked --lib` **1379 passed / 0 failed / 27 ignored**
+  （新增 mcp_mgr 存储/校验/URL/工具抓取 4 项 + MCP 页 SSR 1 项）；`cargo check
+  --locked --all-targets` 0 error；修改文件 rustfmt 干净、无新增 Clippy 命中。
+  coverage 刷新为 partial **39** / reference **3532** / unmapped **0** 并通过
+  `--check`；12 个 MCP UI 文件由 reference 纠正为 partial，`mcp_api.py` 由空洞 aligned
+  更新为真实实现。SSE 传输的工具抓取、RAGFlowPagination 分页组件与逐像素 React 组合
+  仍为 partial（诚实边界）。
+
+## 2026-08-15 v0.3.3bs：Provider 品牌图标（LlmIcon 解析）+ Chrome 逐卡复核
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批对照
+  `web/src/components/svg-icon.tsx`（LlmIcon）与 `web/src/constants/llm.ts`（IconMap），
+  把 Model providers 页的首字母头像替换为固定品牌图标。
+- **资产与解析**：10 个 svgIcons 工厂（LocalAI/Gemini/StepFun/MinerU/PaddleOCR/n1n/
+  Avian/RAGcon/SoMark/New API）的 SVG 从固定树原样拷入
+  `web/static/assets/svg/llm/`；Rust `provider_icon` 按上游顺序先查 svgIcons，再查
+  IconMap 的 iconfont symbol（含 MiniMax 大写、bright 变体与 hunyuan/groq-next 等），
+  未映射回退 `moxing-default`；`provider_icon_html` 生成 `<img>` 或 `<use>` 标记。
+  `/user-setting/model`（含 `/providers` 兼容页）引入 `/iconfont.js`，并把
+  `PROVIDER_ICON_DIRECTORY` 以 JSON 嵌入供 Added models 的 JS 端渲染。
+- **UI**：Available 卡图标由首字母改为品牌图标；Added 组头部 `renderAddedProvider`
+  改用 `providerIconHtml`；CSS 固定 20px 品牌图标、卡内 34px 容器与 currentColor fill。
+  深色主题 `-dark` 变体、iconfont bright/dark 成对切换、弹层标题 LLMHeader 图标与默认
+  模型树节点图标仍为 partial（诚实边界）。
+- **隔离浏览器复核**：隔离 binary `127.0.0.1:18889`，fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 逐卡校验：63 卡 = 53 iconfont + 10 静态 SVG；53 个 symbol 全部在
+  加载后的 iconfont 定义集中解析，10 张 `<img>` 全部 `naturalWidth>0`；0 console/page
+  error、0 资产失败。报告 `/tmp/rayrag-provider-icons-browser-audit.json`，截图
+  `01-provider-icons.png`。
+- **门禁与台账**：`cargo test --locked --lib` **1374 passed / 0 failed / 27 ignored**
+  （新增 provider_icons 单测 1 项）；`cargo check --locked --all-targets` 通过；修改的
+  `src/web.rs` rustfmt 干净、无新增 Clippy 命中。coverage 刷新为 aligned **155** /
+  partial **27** / reference **3544** / unmapped **0** 并通过 `--check`；10 个
+  `assets/svg/llm/*.svg` 资产行由 reference 升为 aligned（原样提供且被 Rust 解析器
+  渲染）。`svg-icon.tsx`/`icon-font.tsx` 组件本体仍为 reference，不声称 React 组件对齐。
+
+## 2026-08-15 v0.3.3br：Provider 专属动态凭据字段（10 工厂）+ OCR 端点探测 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `provider-config-map.ts`（906 行）、`use-provider-fields.tsx`（312 行）、
+  `use-provider-modal-actions.ts`（192 行）与 `field-config/utils.ts`，并核对
+  `provider_api_service.py` 的 create/verify 对 OCR 端点的处理。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：通用 provider modal 新增
+  `PROVIDER_SPECIAL_FIELDS` 数据驱动注册表，按工厂渲染固定动态字段：
+  - Azure-OpenAI：model type 三选（默认 embedding）、model_name（gpt-3.5-turbo）、
+    api_version（2024-02-01）、max_tokens、Vision 开关（仅 chat 显示，勾选后给
+    model_type 追加 image2text —— 有意不复制上游 vision→extra.is_tools 的模板怪癖）；
+  - VolcEngine：API-Key 标签改 `VOLC ARK_API_KEY`、Model ID（endpoint id）；
+  - Google Cloud：project id / region / service account key；
+  - Tencent Cloud：22 引擎 ASR 选择器（默认 16k_zh）+ sid/sk；
+  - XunFei Spark：password 常显，tts 勾选后才显示 app id / secret / key；
+  - BaiduYiYan（ak/sk）、Fish Audio（ak/refid）；
+  - OpenDataLoader / PaddleOCR / MinerU：OCR cfg（apiserver、algorithm、backend +
+    条件 server_url + delete_output 开关默认开）。
+  - `hideWhenInstanceExists` 与 `modelTypeIncludes*` 条件渲染接线；各字段原位错误
+    文案；save 按上游 `apikey_json` 语义把动态字段合并进 `api_key` 对象（VolcEngine
+    为标量 ark key），verify 把对象 JSON 化后送出，model_info 从表单值组装。
+- **Rust 后端**（`src/api/tenant_models.rs`）：新增 `ocr_provider_api_base`，当
+  OpenDataLoader/PaddleOCR/MinerU 的 `base_url` 为空时，从 api_key JSON 对象读取
+  `opendataloader_apiserver`/`paddleocr_api_url`/`mineru_apiserver` 作为探测端点；
+  新增定向单测。
+- **隔离浏览器复点**：catch-all 模型 mock `127.0.0.1:18788` + 隔离 binary
+  `127.0.0.1:18789`，fnOS Chrome 149/CDP `127.0.0.1:16002` 真点 11 组动作覆盖全部
+  10 个工厂的字段渲染、条件显隐、校验与保存 payload；0 console error、0 page error、
+  0 异常 API。报告 `/tmp/rayrag-special-providers-browser-audit.json`，截图
+  `01-azure-fields.png` 至 `04-ocr-saved.png`。复点过程捕获并修复两类真实故障：
+  credential+onTypes 字段的显隐谓词组合、以及 showIf 全局 change 监听在跨弹层时对
+  空 DOM 的读取（改为由本弹层 select 的 refresh 驱动）。
+- **门禁与诚实状态**：`cargo test --locked --lib` **1373 passed / 0 failed /
+  27 ignored**；SSR 定向 **1/1**；`cargo check --locked --all-targets` 0 error；
+  修改过的 `src/web.rs`/`src/api/tenant_models.rs` rustfmt 干净、无新增 Clippy 命中；
+  全库 Clippy 基线仍为 416 warning + 1 deny（非本批引入）。coverage 刷新为 partial
+  **27** / reference **3554** / unmapped **0** 并通过 `--check`。
+  `provider-config-map.ts`、`use-provider-fields.tsx`、`use-provider-modal-actions.ts`
+  由泛化 reference 纠正为 partial；inputSelect 的 base-url→region 映射推导、编辑/
+  查看（viewMode）路径与逐像素 DynamicForm 组合仍为 partial。Azure vision→image2text
+  的偏差已在 README/本记录注明。
+
+## 2026-08-15 v0.3.3bq：Langfuse 配置卡/弹层 + 租户级持久化 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `web/src/pages/user-setting/setting-model/langfuse/` 四文件（index /
+  langfuse-configuration-dialog / langfuse-configuration-form /
+  use-save-langfuse-configuration，共 295 行）与 `api/apps/restful_apis/langfuse_api.py`
+  （99 行），并核对 `setting-api/index.tsx` 与 `chat-overview-modal/api-content.tsx`
+  的挂载位置。
+- **Rust 后端**（`src/api/langfuse.rs` 新模块 + `src/server.rs` 路由 + `AppState.langfuse`）：
+  - 上游 wire 路径 `GET/POST/PUT/DELETE /api/v1/langfuse/api-key`，旧的
+    `/api/v1/langfuse` GET/POST 保留为兼容别名；原 system.rs 空洞 stub 删除；
+  - `LangfuseStore`：租户为键的原子 JSON 快照（`langfuse.json`），upsert/delete/get
+    跨重启 round-trip，跨租户隔离；
+  - 保存先校验 secret_key/public_key/host 三字段非空（上游 `Missing required
+    fields`），再用 Basic auth 探测 `{host}/api/public/health` 与
+    `/api/public/projects`（连接 5s / 总 10s 超时），缓存第一个项目的 id/name；
+    非 2xx 失败关闭并返回上游文案 `Invalid Langfuse keys`；
+  - GET 直接回读缓存条目（含 project_id/name），不再像 Python 每次读都做一次出网
+    auth_check —— 对大陆网络更友好，记为明确偏差；host 缺 scheme 时补 `https://`
+    并拒绝非法 URL。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：`/user-setting/api` 增加 Langfuse
+  卡（标题/描述/Configuration，未配置时隐藏 View）与配置弹层：Secret key / Public key
+  （password + 占位文案）、Host、左下 `View Langfuse's documentation` 外链、确认后
+  Delete、Save；重开弹层回填已存三字段且仅对已有配置显示 Delete；View 链接用
+  `langfuseViewUrl` 优先自托管 host（`{host}/project/{id}`），仅云端才用
+  `cloud.langfuse.com/project/{id}`（大陆网络适配）。`[hidden]` 与 `.btn` 的 display
+  覆盖问题以 `.btn[hidden]{display:none!important}` 修正。
+- **隔离浏览器复点**：本地 Langfuse public-API mock `127.0.0.1:18688`、隔离 Rust
+  binary `127.0.0.1:18689`，fnOS Chrome 149/CDP `127.0.0.1:16002` 真点 8 组动作：
+  空表单校验、Save（health+projects 探测、自托管项目 URL）、重开回填、确认后 Delete、
+  删除后 GET 空记录；另补无效凭证检查（弹层保持打开并显示 `Invalid Langfuse keys`）。
+  报告 `/tmp/rayrag-langfuse-browser-audit.json`：8 动作、6 截图、0 console/page
+  error、0 异常 API；截图 `/tmp/rayrag-langfuse-audit/00-api-page.png` 至
+  `05-deleted.png`。
+- **门禁与诚实状态**：`cargo test --locked --lib` **1372 passed / 0 failed /
+  27 ignored**（新增 langfuse 存储/probe 5 项 + API 页 SSR 1 项）；`cargo check
+  --locked --all-targets` 通过；新增 `src/api/langfuse.rs` rustfmt 干净、无 Clippy
+  命中，`src/web.rs` 已 rustfmt 干净；全库 Clippy 基线仍为 416 warning + 1 个
+  `approx_constant` deny（非本批引入）。coverage 刷新为 partial **24** / reference
+  **3557** / unmapped **0** 并通过 `--check`。四个 langfuse UI 文件由泛化 reference
+  纠正为 partial；`langfuse_api.py` 由空洞 aligned 更新为有真实持久化/探测的 aligned。
+  逐像素 React/Radix 组合、保存时的云端项目枚举 UI 刷新细节与多租户下项目切换仍为
+  partial。
+
+## 2026-08-15 v0.3.3bp：Bedrock / SoMark 专属弹层 + ocr_config 持久化 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `web/src/pages/user-setting/setting-model/modal/bedrock-modal/index.tsx`（379 行）与
+  `somark-modal/index.tsx`（366 行），并核对 `setting-model/index.tsx` 的 ModalMap 分流、
+  `hooks.tsx` 的 `useSubmitBedrock/useSubmitSoMark`、`payload-utils.ts` 的字段拆分、
+  `constant.ts` 的 37 个 Bedrock 区域，以及服务端
+  `api/apps/services/provider_api_service.py` 的 `create_provider_instance` /
+  `add_model_to_instance`（SoMark+OCR 时 extra 提升为 `ocr_config`）。
+- **Rust UI/API/持久化**（`src/web.rs` / `src/web_css.txt` / `src/api/tenant_models.rs`）：
+  - Available 卡新增 `data-special-modal` 属性，`showProviderInstanceModal` 将 Bedrock/SoMark
+    分别路由到专属弹层，不再走通用 provider modal；
+  - Bedrock：instance name、chat/embedding model type、model name、Access Key / IAM Role /
+    Assume Role 三段认证（切换时清除非活动凭证）、AK/SK、AWS Role ARN、assume-role 提示、
+    37 区域带搜索选择器、max_tokens（默认 8192）；打开弹层即 GET 实例名集合，实例名已存在时
+    隐藏认证区；Verify 发送密钥对象的 JSON 字符串，Ok 发送密钥对象本身；
+  - SoMark：instance name、model name、Base URL、可选 API key、Element Formats 四选择器
+    （url/base64/none、latex/mathml/ascii、html/markdown/image、image）与 Feature Config
+    七开关，table_image 与 image_understanding 固定默认开；Verify/Add 用
+    `model_type=['ocr']` 且 extra 携带全部 11 个 `somark_*` 字段；
+  - `RagflowCreateModelExtra` 增加 flatten 兜底，`TenantModelSpec` 增加
+    `ocr_config: Option<Map<String,Value>>`；SoMark+OCR 时 model extra 提升为 `ocr_config`
+    持久化，`instance_model_rows` 以 `{"max_tokens":n,"ocr_config":{...}}` 形状回读，
+    `effective_instance_models` 保留该配置供运行时消费；Bedrock 密钥对象经既有
+    `deserialize_optional_api_key` 存为 JSON 字符串；SoMark 加入 API key 可选名单
+    （自托管可留空，对齐 modal 的 optional 语义）。
+- **隔离浏览器复点**：本地 OpenAI 兼容 model mock `127.0.0.1:18588`、隔离 Rust binary
+  `127.0.0.1:18589`（providers.json 仅 Bedrock/SoMark 指向 mock），fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 真实执行 12 组动作：Bedrock 空表单校验、三段认证切换、Verify/Ok、
+  已存在实例名隐藏认证区；SoMark 空表单校验、默认值核对、开关编辑、Verify/Add、View models
+  及 models API 直读。报告 `/tmp/rayrag-somark-bedrock-browser-audit.json`：12 动作、9 截图、
+  0 console error、0 page error、0 异常 API；`extra.ocr_config` 11 字段完整回读证明持久化。
+  截图 `/tmp/rayrag-somark-bedrock-audit/00-bedrock-empty.png` 至 `08-somark-models.png`。
+- **门禁与诚实状态**：`cargo test --locked --lib` **1367 passed / 0 failed / 27 ignored**；
+  tenant-model 定向 **4/4**、SSR 定向 **1/1**；`cargo check --locked --all-targets` 通过；
+  修改过的 `src/api/tenant_models.rs` 已 rustfmt 干净；修改行无新增 Clippy 命中，全库仍有
+  416 warning + 1 个 `approx_constant` deny 的既有基线（common.rs:1626 等，非本批引入）。
+  主工作树此前三处 datasource/connectors 编译断点以最小改动修复（`#[serde(default)]` 移除、
+  `SourceOptions.extra` 补默认、`RdbmsConnector::new(&options)` 借用），
+  `plan_llm_models` 新增 OCR 分支对应的旧测试断言同步更新；两者均记录为基线修复，不改动
+  用户正在编辑文件的语义。coverage 生成器刷新为 partial **20** / reference **3561** /
+  unmapped **0** 并通过 `--check`。两个专属 modal 文件从泛化 reference 纠正为 partial：
+  逐像素 React/Radix 组合、真实 AWS/SoMark 服务端 Verify、Bedrock 编辑既有实例的 viewMode
+  模型同步仍未完成。
+
+## 2026-08-14 v0.3.3bo：用户设置七路由共享壳层 + Chrome 逐项点击
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行核对
+  `web/src/routes.tsx`、`web/src/pages/user-setting/index.tsx`、
+  `web/src/pages/user-setting/sidebar/index.tsx` 与 `sidebar/hooks.tsx`。固定侧栏按
+  Data sources / Chat channels / Model providers / MCP / Team / Profile / API 排序，
+  `/user-setting` replace 跳转 `/user-setting/data-source`，active 严格匹配第三段路径；
+  侧栏为桌面 303 px、移动 64 px，没有管理员条件或用户可控折叠状态。
+- **live RAGFlow 点击边界**：Chrome 149/CDP `127.0.0.1:16002` 从头像入口进入
+  `/user-setting`，逐个点击七个侧栏路由，并展开/用 Escape 关闭语言菜单；报告
+  `/tmp/ragflow-user-settings-shell-audit.json` 为 11 动作/7 页/11 截图/38 网络事件/
+  0 error/0 非 GET。页面仍明确显示 **v0.26.2**，且当时 version API 业务体为
+  `code=503`/`RAGFlow is starting`，所以只将壳层、路由和按钮作为 live 交互证据，
+  页面数据不冒充固定 v0.26.4 稳定运行证据。
+- **Rust 壳层/路由**（`src/web.rs` / `src/web_css.txt` / `src/server.rs`）：
+  - 保留全局 Header，头像改为可直接打开 `/user-setting` 的
+    `data-testid=settings-entrypoint` 链接；新增共享 user-setting shell，固定七项
+    顺序、唯一 `aria-current`、Model providers testid、账号邮箱、版本、主题和登出；
+  - 注册根跳转与 data-source/chat-channel/model/mcp/team/profile/api 七路由；既有
+    `/providers` 和 `/datasources` 兼容入口仍保留，设置路由则共享新壳层；
+  - `user_info` 改用鉴权中间件的 `AuthContext`，Bearer 和 cookie 登录均能渲染
+    侧栏账号，失效用户返回真正 HTTP 401；
+  - Chrome 首轮还捕获了 Data sources 旧 `loadKbs/loadDs` 字符串拼接语法错误，
+    已改为 `replaceChildren`/`textContent`/event listener 构造 DOM，同时避免将用户值直接
+    注入 `innerHTML`。
+- **隔离 RayRAG 浏览器复点**：不修改用户正在编辑的
+  `src/data_source/mod.rs` 和 `src/connectors.rs`，仅在临时 clone 补齐其三个编译断点，
+  启动隔离 RayRAG `127.0.0.1:18381`。Chrome 149 真实执行 13 组动作：登录后点
+  头像、七个路由、back/forward、主题开关并恢复、移动宽度、登出。桌面侧栏 303 px、
+  移动 64 px；报告 `/tmp/rayrag-user-setting-browser-audit.json` 为 22 请求、0 失败、
+  0 Runtime exception、0 console error、0 异常响应，除 login 外没有写请求。
+- **门禁与诚实状态**：隔离 `cargo test --locked user_setting` **2/2**、
+  `current_user_accepts_bearer_and_cookie_auth` **1/1**、binary build 及定向 rustfmt 通过。
+  主树 `cargo check --locked --lib` 仍只剩三个用户进行中 datasource/connectors 编译错误。
+  Chat channel 帐号 CRUD、MCP Search/Add/Import/Bulk、Team 成员表、Profile 完整编辑、
+  API 完整文档组合、data-source detail route、固定 Header 精确视觉与服务端 token revoke
+  尚未完成；因此本批对应四个上游壳层/路由文件标为 `partial`，不声称子页内容
+  完整对齐。
+
+## 2026-08-14 v0.3.3bn：默认模型三层树 + 六类型持久化 + Chrome 故障回滚
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `web/src/components/model-tree-select.tsx`、`web/src/components/tree-select.tsx` 与
+  `web/src/pages/user-setting/setting-model/components/system-setting.tsx`，并核对
+  `llm-label.tsx`、`llm-util.ts`、`use-llm-request.tsx` 的 selector 和 GET/PATCH wire。
+- **live RAGFlow 点击边界**：Chrome 149/CDP `127.0.0.1:16002` 对本机 v0.26.2 页面真点
+  六个 selector；进一步展开 LLM 的 MiniMax/default 三层树，逐个折叠/展开 provider 和
+  instance，输入命中/不命中 Search 并关闭恢复。报告
+  `/tmp/ragflow-llm-selector-deep-audit.json` 为 10 动作/10 截图/0 error/0 请求；live 页面
+  仍明确是 v0.26.2，只用于交互观察，固定语义以 v0.26.4 源码为准。
+- **Rust UI/请求状态**（`src/web.rs` / `src/web_css.txt` / `src/api/tenant_models.rs`）：
+  - 六个 native datalist 全部替换为真实 button/dialog/tree；树保持 provider→instance→model
+    三个节点深度、响应顺序、`__` 名规范化、exact selector 去重和六类 capability 过滤；
+  - 默认展开 branch，点击 branch 只折叠，点击 leaf 才关闭并清 Search；递归 Search、
+    `No data available`、outside/Escape、五项 clear、LLM required、selected model/instance、
+    ARIA tree/group 均已接线；弹层由 control 容器定位，严格与 trigger 左对齐同宽；
+  - PATCH 直接取叶子明确字段，不从显示字符串猜请求；每字段 request id/pending guard 防迟到
+    请求覆盖，失败恢复旧值，成功后重新 GET defaults；VLM/ASR 使用 canonical
+    `vision/asr` 写入并按 `image2text/speech2text` 响应正确回显；
+  - 不复制固定源码“父分支命中、子项全不命中后把空 branch 当 leaf”的边缘缺陷：Rust 保留
+    该 branch 的原始后代，且始终以节点 kind 限定只有 model leaf 可选择。
+- **隔离 RayRAG 浏览器复点**：在不含用户进行中 datasource/connectors 改动的临时 clone
+  应用本批 Rust diff，启动模型 mock `127.0.0.1:18288`、RayRAG `18289` 与独立
+  HeadlessChrome 144/CDP `16003`。真实鼠标/键盘完成 23 组动作：逐个打开六 selector、
+  provider/instance 折叠、Search/No data、Escape 关闭并回焦且保留 Search、外部关闭、六个
+  leaf 依次保存、Embedding clear 保持弹层/Search、阻断 Rerank PATCH 后回滚、reload 后
+  LLM/VLM/ASR/Rerank/TTS 持久。六次 PATCH 类型顺序严格为
+  `chat/embedding/vision/asr/rerank/tts`；报告 `/tmp/rayrag-model-tree-browser-audit.json`，
+  截图 `/tmp/rayrag-model-tree-00-initial.png` 至 `05-reloaded.png`，0 Runtime exception；唯一
+  404 是无关 `favicon.ico`，唯一 loadingFailed 是审计主动阻断的回滚请求。复点首次捕获并修复
+  Chrome 原生 search Escape 清词和弹层按 label+trigger 整行定位两项真实故障。
+- **门禁与诚实状态**：隔离 tenant-model **26/26**、SSR UI **1/1**、binary build、
+  `git diff --check` 通过；主工作树 `cargo check --locked --lib` 仍只剩用户正在编辑的
+  datasource/connectors 三个错误。`model-tree-select.tsx` 从历史过报 aligned 降为 partial，
+  `tree-select.tsx` 从泛化 reference 改为 partial；固定 provider 图片资源、共享组件的其他
+  consumers、逐像素 React/Radix 组合尚未完成，所以矩阵保持诚实 partial。
+
+## 2026-08-14 v0.3.3bm：本地 Provider 模型发现/自定义模型/动态运行时 + Chrome 全链路
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `provider-modal/field-config/local-llm-configs.ts`、
+  `hooks/use-list-models-picker.ts`、`hooks/use-list-models-options.tsx` 与
+  `components/add-custom-model-dialog.tsx`，并核对 provider modal payload/verify/create 链路。
+- **live RAGFlow 点击边界**：Chrome 149/CDP `127.0.0.1:16002` 实点 Ollama、VLLM、
+  OpenAI-API-Compatible、LM-Studio；四者均显示 Instance name、Base url、可选 API-Key、
+  Vision、List models、Verify/Cancel/Ok。Ollama 空 Base url 点 List models 只发 GET 并显示
+  `No models available`；再点 Add custom model 得到 Model name、Model type、Max tokens、
+  Model features/Tool call、Cancel/Confirm/Close。本机页面明确为 **v0.26.2**，只作为交互观察，
+  固定字段和 provider 集合仍以 v0.26.4 源码为准；未发非 GET 请求。
+- **Rust UI/API/运行时**（`src/web.rs` / `src/web_css.txt` / `src/api/features.rs` /
+  `src/api/tenant_models.rs` / `src/server.rs`）：
+  - 识别固定 10 个 List models providers 与 14 个 API-key 可选本地 providers；New API 等
+    无需预先写入全局 provider 即可携临时 Base url/key 发现模型；
+  - modal 支持惰性 List models、All models、多选、按目录大小显示 Search、Vision 追加
+    `image2text`，以及嵌套 Add custom model 的 name/types/max_tokens/`is_tools`；
+  - Verify 保持无持久化；Ok 成功验证后才创建 tenant instance，并仅物化无全局密钥的动态
+    factory。`is_tools` 贯穿持久化、实例模型响应和实际 runtime resolve；
+  - 修复真实浏览器发现的 nested modal 层级、无静态 capability 时 Vision 隐藏，以及新建
+    provider 后 Added 目录仍显示内部 id 的即时刷新问题。
+- **隔离 RayRAG 浏览器复点**：在临时 clone 仅补齐三个无关 datasource/connectors 编译
+  断点，构建 Rust binary，启动模型 mock `127.0.0.1:18188`、RayRAG `18189` 与隔离
+  HeadlessChrome 144/CDP `16003`。真实鼠标/键盘依次执行 Search New API、开 modal、空表单
+  Verify、List models、选 audit-chat、Vision、Add custom model、Tool call、Confirm、Verify、
+  Ok、View models；9 组动作全部通过，0 Runtime exception、最终 0 dialog。报告
+  `/tmp/rayrag-local-picker-browser-audit.json`，截图
+  `/tmp/rayrag-local-picker-01-empty.png` 至 `04-added.png`。持久化确认自定义模型
+  `max_tokens=32768`、`is_tools=true` 且 global factory 未保存 API key。
+- **诚实边界与门禁**：Verify 仍使用只读 model-list probe，不等同上游按 capability 发起真实
+  推理；所有 per-provider default/max-token/placeholder、region、编辑已有实例及 SoMark/Bedrock
+  专属 modal 仍未完成，因此相关 11 个 Model providers UI 文件保持/转为 `partial`；总矩阵为
+  partial **12** / reference **3568** / unmapped **0**。隔离 tenant-model **26/26**、动态
+  picker/runtime **1/1**、SSR UI **1/1** 与 binary build 通过。主工作树 `cargo check` 仍只剩
+  用户进行中的 datasource/connectors 三个错误；未修改或格式化那两份用户文件。
+
+## 2026-08-14 v0.3.3bl：固定 63-provider Available 目录 + canonical 身份贯通
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `api/apps/services/provider_api_service.py::list_providers(all_available=True)`，并与
+  `conf/llm_factories.json`、`setting-model/components/un-add-model.tsx` 对照。固定目录为
+  66 个 factory 排除 `FastEmbed`、`Builtin`、`siliconflow_intl` 后的 **63** 家；源码的
+  五项排除名单还含当前快照不存在的 `Youdao`、`BAAI`。
+- **Rust 目录/身份**（`src/api/tenant_models.rs` / `src/providers.rs` / `src/web.rs`）：
+  - `plan_available_providers` 直接从固定 66-factory 目录生成卡片，完全按 rank 降序、名称
+    升序排序；能力去重排序，并给 MinerU/OpenDataLoader/PaddleOCR 补 OCR；
+  - Available 从旧 `conf/models` 61 张别名卡改为固定 63 张 canonical 卡，新增 SoMark、
+    New API，卡名统一为 Tongyi-Qianwen、Google Cloud、Tencent Hunyuan、NVIDIA 等；
+  - `canonical_provider_name` 兼容既有 `aliyun/Aliyun`、`google/Google`、
+    `hunyuan/HunYuan`、`nvidia/Nvidia` 数据。Added 分组、实例模型目录、默认模型校验、
+    `model@instance@provider` 解析和实际 runtime resolve 均改用同一 canonical 身份；
+    tenant secret 与持久化目录仍保持原有边界。
+- **真实 RayRAG 浏览器复点**：在隔离 clone 仅补齐三个无关编译断点后构建 Rust binary，
+  启动 `127.0.0.1:19472`，以 Chrome 149/CDP `127.0.0.1:16002` 真实鼠标点击/键盘输入：
+  初始 `63 shown`，chip 计数为 LLM 37 / Embedding 25 / Rerank 10 / TTS 8 / ASR 11 /
+  VLM 17 / OCR 4；Search `Tongyi-Qianwen` 与 `SoMark` 各只剩一张；OCR chip 显示
+  Tongyi-Qianwen、MinerU、OpenDataLoader、PaddleOCR，再点同 chip 恢复 63；点击
+  OpenAI-API-Compatible Add 与 Tongyi-Qianwen 整卡分别打开正确标题的 modal，Cancel
+  关闭。最终 Search 空、63 卡、0 dialog、0 HTTP/console/page error；除隔离登录外无写请求。
+  报告 `/tmp/rayrag-provider-directory-audit.json`，截图
+  `/tmp/rayrag-provider-directory-final.png`，审计标签恢复 `about:blank`。
+- **浏览器暴露的诚实边界**：点击 `New API` 虽能打开正确标题，但固定本地 provider 表单
+  应要求 model type/name/Base URL/max tokens 等字段；当前通用弹窗因无默认 URL 还隐藏
+  Base-Url。SoMark/Bedrock 专属 modal、其他本地动态模型字段也未完成。因此
+  `provider_api_service.py` 从过度声明的 aligned 降为 partial；Model providers 五个既有
+  partial 条目仍保持 partial，不把 63 卡目录修复扩张为整页完成。
+- **门禁**：隔离 tenant-model **26/26**、canonical helper **1/1**、SSR UI contract
+  **1/1**、binary build和上述 Chrome/CDP 复点通过；`git diff --check` 与固定 coverage
+  write/check 通过。主工作树 `cargo check --locked --lib` 仍只剩用户进行中的
+  datasource/connectors 三个错误；未修改这两份用户文件，也不把隔离结果冒充主树全量门禁。
+
+## 2026-08-14 v0.3.3bk：Provider Add/Verify 弹窗 + 外链 + 工厂模型运行时回退
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `web/src/pages/user-setting/setting-model/index.tsx` 与
+  `modal/provider-modal/index.tsx`，并核对 `generic-api-key-config.ts`、
+  `use-provider-modal-actions.ts`、`payload-utils.ts` 和 Python
+  `provider_api_service.py` 调用链。
+- **真实浏览器补点（live v0.26.2）**：fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 模拟动作 31–35：点击 OpenAI 外链箭头只打开
+  `https://platform.openai.com/api-keys` 而不冒泡开 modal；点击 Add 实见
+  Instance name/API-Key/Base-Url/Group ID 与 Verify/Cancel/Ok；空表单 Verify
+  只出现两条必填错误、无请求；Cancel 后无 dialog，临时标签恢复 `about:blank`。
+  报告为 `/tmp/ragflow-model-ui-provider-modal-audit.json`，全程无非 GET 请求。
+  live 页面明确为 v0.26.2；其 OpenAI Group ID 与固定 v0.26.4“仅 MiniMax 显示”存在
+  版本漂移，RayRAG 以固定源码为准。
+- **Rust UI**（`src/web.rs` / `src/web_css.txt`）：Available 卡新增独立 API-key
+  外链（`_blank` + `noopener noreferrer` + stopPropagation）；整卡/Add 打开 tenant
+  provider-instance dialog，支持 Instance name/API-Key/Base-Url、MiniMax Group ID、
+  Verify/Cancel/Ok、两项行内必填错误、Escape/Cancel 无写入。旧的全局 provider 管理表单
+  仅保留在折叠 admin 区，不再承担上游 Add 行为。
+- **RayRAG 浏览器复点**：在隔离 clone 构建并启动 `127.0.0.1:19472`，再通过同一真实
+  Chrome/CDP 点击页面、hover、外链、OpenAI Add、空 Verify、Cancel、MiniMax Add、
+  整卡和 Escape。首轮真实点击发现并修复两项字符串测试抓不到的故障：author CSS 覆盖
+  `hidden` 导致 OpenAI 错显 Group ID；鉴权 fetch wrapper 位于页面末尾导致首批
+  `/api/v1/models` / `/api/v1/tenant/models` 401。修后复点 OpenAI 只显示前三字段、
+  MiniMax 才显示 Group ID，hover opacity=1，所有 API GET 均成功；0 非 GET、0 HTTP error、
+  0 console/page error，Cancel/Escape 后 dialog 均关闭。截图为
+  `/tmp/rayrag-model-bk-02-provider-modal-final.png`。隔离页显示 61 张 Available 卡，而固定
+  v0.26.4 `llm_factories.json` + 实际排除规则应为 63；精确 factory 名称/目录仍记为后续差距。
+- **Rust API/运行时**（`src/model_meta.rs` / `src/api/tenant_models.rs` /
+  `src/api/features.rs` / `src/server.rs`）：
+  - 新增 `POST /api/v1/providers/{provider}/connection`：租户管理员校验后使用带认证的
+    只读 model-list 请求验证，成功不持久化；
+  - 新增 `POST /api/v1/providers/{provider}/instances`：再次验证后原子保存租户实例，
+    拒绝空名/`default`，重复名按 `(1)` 递增；Group ID 只进入租户密钥 envelope，所有
+    public 响应仅返回 `api_key_configured`；
+  - 空 `model_info` 按固定 factory catalog 回退。回退不只用于 Added/selector 显示，
+    同时进入实际 `TenantModelStore::resolve`，使新建实例能用于 chat/embedding 等运行时；
+    成功附加时只启用无密钥的全局目录记录，密钥仍严格租户隔离。
+- **诚实边界**：generic modal 已形成可执行纵向切片，但仍缺各供应商专属动态字段、region
+  持久化、List Models picker、编辑现有实例，以及上游按 capability 发起真实推理的验证探针；
+  当前 Verify 使用只读 model-list probe。`index.tsx` 与 `provider-modal/index.tsx` 从泛化
+  `reference` 纠正为 `partial`，coverage 为 partial **5** / reference **3574** /
+  unmapped **0**，不升级 full/aligned。
+- **门禁**：tenant-model **24/24**、只读 probe **1/1**、Verify/Create/目录回退/运行时解析
+  **1/1**、既有 exact-route **1/1**、SSR UI contract **1/1** 均在隔离 clone 通过；页面
+  JavaScript 由 Node `new Function` 解析，隔离 binary 构建及上述真实浏览器复点通过，
+  coverage write/check 与 `git diff --check` 通过。
+  主工作树 `cargo check --locked --lib` 仍只剩用户进行中的 datasource/connectors 三个错误：
+  `SourceOptions.extra` 缺失、`RdbmsConnector::new(options)` 未借用及孤立 serde attribute；
+  本批未修改这些文件，也不把隔离定向/浏览器通过冒充主树全量门禁。
+
+## 2026-08-14 v0.3.3bj：Added models 展开/编辑/开关/删除 + CDP 可逆实测
+
+- 固定上游仍为 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`；本批逐行聚焦
+  `web/src/pages/user-setting/setting-model/components/used-model.tsx` 及其
+  `use-llm-request.tsx` / `utils/api.ts` 调用链。
+- **真实浏览器补点（live v0.26.2）**：fnOS Chrome 149/CDP
+  `127.0.0.1:16002` 在首轮 24 动作后继续模拟动作 25–30：
+  - MiniMax/default `View models` 发出
+    `GET /api/v1/providers/MiniMax/instances/default/models`；
+  - MiniMax-M3 Pencil 弹窗实见 Name/Max tokens disabled，只有 Model type 可改，
+    Cancel 无请求；
+  - 实例垃圾桶先出现 `Are you sure to delete it ?` + Cancel/Delete，Cancel 无请求；
+  - 把原 inactive 的 MiniMax-M3 switch 切为 active，再切回 inactive；两次 PATCH
+    同一路径，body status 分别为 active/inactive，均 HTTP 200、`{"code":0}`，最终状态
+    与实测前一致。
+  - 报告写入 `/tmp/ragflow-model-ui-added-audit.json`；临时标签最终恢复
+    `about:blank`，未改变原有 agent 标签。运行页明确显示 v0.26.2，仍不冒充固定版实测。
+- **Rust Added models UI**（`src/web.rs` / `src/web_css.txt`）：
+  - 按 provider→instance 分组生成 `added-model-card`，View/Hide 首次展开才加载模型；
+  - 模型列表显示汇总/行内 type chips、hover Pencil、active switch；编辑弹窗锁定名称与
+    max tokens，只提交完整 model-type 集；
+  - 实例删除必须先过 Confirm/Cancel alertdialog；Cancel 无写请求，Confirm 才 DELETE；
+  - 所有动态文本使用 DOM `textContent`/属性赋值，provider 目录通过 script-safe JSON
+    注入，不把模型/实例名称拼接为 HTML。
+- **Rust API/存储**（`src/api/tenant_models.rs` / `src/server.rs`）：新增并注册固定 URL：
+  - `GET|DELETE /api/v1/providers/{provider}/instances`；
+  - `GET|PUT /api/v1/providers/{provider}/instances/{instance}/models`；
+  - `PATCH /api/v1/providers/{provider}/instances/{instance}/models/{model}`。
+  路径同时接受稳定 id 与上游 display name；GET 永不暴露 API key。模型停用、编辑移除能力、
+  上游确认删除实例会清理其默认模型；legacy RayRAG 删除接口仍拒绝删除正在作为默认值的
+  实例。模型停用、编辑移除能力也会清理不再有效的默认模型；compact Rust spec 一旦存在
+  即作为最终有效能力集。
+  `ModelCapability::Ocr` 同步接入目录解析与 system model planning。
+- **合同与状态**：新增 store helper/alias/默认清理测试、实例模型 inactive 可见测试、三类
+  exact-route 集成断言和 SSR UI marker 断言。`used-model.tsx` 从泛化 `reference` 纠正为
+  `partial`；coverage 为 partial 3 / reference 3576 / unmapped 0。仍缺 tenant
+  provider-instance Add/Verify modal，且 live RayRAG 点击尚未完成，所以不升级 full/aligned。
+- **门禁**：新增 Added models JavaScript 经 Node `new Function` 解析；
+  `git diff --check` 与固定 coverage `--check` 通过。为不覆盖用户进行中的代码，在临时共享
+  clone 仅补齐三个已知 datasource/connectors 编译断点后，定向测试通过：tenant-model
+  **23/23**、exact-route **1/1**、SSR UI contract **1/1**。主工作树
+  `cargo check --locked --lib` 已越过本批文件，只剩既有未完成
+  `src/connectors.rs` / `src/data_source/mod.rs` 引出的三个错误：孤立 `#[serde(default)]`、
+  `SourceOptions.extra` 缺失、`RdbmsConnector::new(options)` 未借用；本批未修改或掩盖这些
+  用户改动，因此 live RayRAG 启动/点击仍明确记为阻断，隔离定向通过不冒充主树全量门禁。
+
+## 2026-08-14 v0.3.3bi：Model providers 默认模型 + Available models 点击对标
+
+- 固定上游 RAGFlow v0.26.4 commit
+  `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，本批逐行聚焦：
+  - `web/src/pages/user-setting/setting-model/components/system-setting.tsx`
+  - `web/src/pages/user-setting/setting-model/components/un-add-model.tsx`
+- **真实浏览器逐点击**：fnOS Chrome 149/CDP `127.0.0.1:16002` 完成
+  24 个动作、17 张截图、36 条网络事件、0 error。逐一 hover LLM help、打开/关闭
+  六个默认 selector、展开/折叠五个 Added models 组、点击 LLM/Embedding/Rerank/
+  TTS/ASR/VLM/OCR/All、搜索 DeepSeek、hover OpenAI Add、打开并 Cancel 弹窗。
+  页面 footer/DOM 明确为 v0.26.2，故只作为 live 交互观察；固定语义以 v0.26.4
+  源码为准，完整逐动作结果已写入 `docs/ragflow-ui-inventory.md`。
+- **Rust `/user-setting/model` 纵向切片**：
+  - 注册固定路由并把 Header 入口改到该路由；保留 `/providers` legacy alias。
+  - 用一份 `DEFAULT_MODEL_FIELDS` Rust 表同时生成 DOM 和 JS，消除原来的
+    `dmLlm/dmVlm` 对 `dmChat/dmVLM` 漂移；修掉致命 `<script><script>`。
+  - 六项顺序、field id、tooltip、能力过滤、仅 LLM required/不可清空均按固定源码；
+    selector 使用可搜索 datalist，wire 为 `model@instance@provider` 并从右解析。
+  - 改用租户目录 `GET /api/v1/models`；change 立即 PATCH
+    `/api/v1/models/default`。VLM/ASR 更新类型纠正为后端接受的 `vision`/`asr`，
+    GET 描述仍按 `image2text`/`speech2text` 回填；失败会恢复已保存值。
+  - Available models 新增 provider 子串 Search、Search 联动 chip 计数、重复 chip
+    取消、键盘/整卡/hover Add；Add payload 补齐后端必填 `models`/`enabled`，
+    已存在 provider 使用 PUT、自定义 provider 使用 POST。
+  - 页面合同测试覆盖六字段映射、right-split wire、错误标签/双 script 不再出现、
+    Search/chip/Add 事件以及固定路由。
+- **诚实状态**：两条 coverage 从泛化 `reference` 纠正为 `partial`；摘要已由固定
+  coverage binary 重算并通过 check（4441 files，unmapped=0）。精确二级 dialog tree、
+  Available 外链箭头、tenant provider-instance modal，以及 `used-model.tsx` 的
+  View/Hide、模型 switch/edit/delete 仍是后续批次。
+- **门禁**：两段新页面 JavaScript 由 Node `new Function` 语法检查通过，
+  `git diff --check` 通过，固定 coverage check 通过。当前工作树另有未完成的
+  `src/connectors.rs` / `src/data_source/mod.rs` 改动，导致 `cargo check`、Rust 单测和
+  新 RayRAG 浏览器启动被三个无关编译错误阻断（`serde` attribute、`SourceOptions.extra`、
+  `RdbmsConnector::new(&options)`）；本批未触碰或掩盖这些用户改动，也未冒充测试已通过。
+
 ## 2026-08-14 v0.3.3bh：meta_data_filter 表单 + DocumentSource::AirTable
 
 - 固定上游 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

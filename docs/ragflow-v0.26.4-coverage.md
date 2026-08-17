@@ -15,16 +15,265 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 148 | 47815 |
-| full | 552 | 266026 |
-| partial | 0 | 0 |
+| aligned | 186 | 46909 |
+| full | 553 | 266211 |
+| partial | 68 | 16583 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3579 | 905357 |
+| reference | 3472 | 889495 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
 > settings Chat channels/MCP sections、dataset Logs tab（web.rs）。
+>
+> v0.3.3ce（2026-08-16）逐行复核 `google-drive-token-field.tsx`（459 行）与
+> `gmail-token-field.tsx`（460 行）及 connector_api.py 的 Google web-OAuth：
+> `oauth_web.rs` 增独立 Google flow 注册表与四个端点
+> `POST /api/v1/connectors/google/oauth/web/{start,result}?type=`、
+> `GET /api/v1/connectors/{gmail,google-drive}/oauth/web/callback`——start 解析
+> web/installed 客户端配置（缺 client_id/secret、含 refresh_token 分别失败关闭）、
+> 按类型带 Drive/Gmail 固定 scopes 生成 accounts.google.com authorize URL；
+> callback 校验 state/code 并渲染对应 postMessage 类型（ragflow-gmail-oauth /
+> ragflow-google-drive-oauth）；result 未完成返回 code 106，完成后合并返回
+> credentials JSON 字符串。真实令牌铸造仅在配置 `GOOGLE_OAUTH_TOKEN_URL` 时
+> 执行（大陆镜像/自托管可指向镜像，未配置则持久化授权码原文）。Add 弹层为
+> gmail/google_drive 的 `config.credentials.google_tokens` 渲染 JSON 文件上传器
+> + Uploaded (pending)/Needs authorization 徽章 + Complete Google verification
+> 弹层（Redirect URI 自动从 redirect_uris[0] 提取、Authorize with Google 开窗、
+> Refresh status 轮询 106 续等）。fnOS Chrome 149/CDP 真点 7 组动作
+> （accounts.google.com 用 route abort 模拟离网）：上传客户端 JSON → 弹层回填
+> redirect → start 落 flow → 106 → callback 注入 code → 轮询合并凭据 → 创建时
+> google_tokens 为含 code 的 JSON；0 console/page error、0 异常 API。两个
+> token 字段文件由 reference 纠正为 partial；connector_api.py 注记补 Google
+> OAuth。逐像素 FileUploader、popup 自动 postMessage 监听与真实 Google 令牌
+> 铸造仍为 partial。
+>
+> v0.3.3cd（2026-08-16）逐行复核 `box-token-field.tsx`（452 行）与
+> `connector_api.py` 的 Box web-OAuth 端点：新增 `src/api/oauth_web.rs`
+> （内存 flow 注册表，TTL 600s）实现 `POST /api/v1/connectors/box/oauth/web/
+> start|result` 与 `GET …/callback`——start 校验 client_id/secret 与 http(s)
+> redirect 并生成 account.box.com authorize URL + flow_id；callback 校验
+> state/code、渲染上游 popup 模板（postMessage `ragflow-box-oauth` 成功/失败 +
+> window.close），配置 `BOX_OAUTH_TOKEN_URL` 时才做真实 token 交换（大陆镜像/
+> 自托管可指向镜像，未配置则持久化 authorization code 原文）；result 未完成
+> 返回上游 code 106。Add 弹层里 `config.credentials.box_tokens` 不再渲染裸
+> textarea，改为 Configure/Get Box credentials 按钮 + Configured/Authorized
+> 徽章 + Client ID/Secret/Redirect URI 弹层（空值原位报错、Submit & Authorize
+> 开窗、Refresh status 轮询 106 续等、成功回写 JSON 凭据）。fnOS Chrome 149/
+> CDP 真点 7 组动作（Box 弹窗 account.box.com 用 route abort 模拟离网）：
+> 字段渲染/校验/start 落 flow/106 等待/callback 注入 code/轮询成功/创建时
+> box_tokens JSON 带 authorization_code；0 console/page error、0 异常 API。
+> box-token-field.tsx 由 reference 纠正为 partial；connector_api.py 注记补
+> Box OAuth。Gmail/Google Drive token 字段与真实 Box 令牌交换仍为 partial。
+>
+> v0.3.3cc（2026-08-16）逐行复核数据源列表页 `index.tsx`、`added-source-card.tsx`
+> 与 `delete-source-modal.tsx`（共 305 行）：Rust 列表页由下拉选择升级为上游
+> 35-card Available 网格（icon/name/description、hover + Add、点击开
+> `Create your {name} connector` schema 弹层，31 个上游 SVG 原样提供、github/imap/
+> outlook/rss 用 emoji 回退），Added 按源分组卡片（icon+name 头、name/badge 行、
+> Settings→详情、Trash→删除确认），删除弹层保留 `Delete data source` /
+> `Are you sure you want to delete this data source link?` / icon+name 框 /
+> Cancel+Confirm(error) 固定文案；本地扩展仍以下拉 + Add 保留。fnOS Chrome
+> 149/CDP 真点 7 组动作：35 卡渲染与 S3 svg 加载、hover Add、卡片创建嵌套
+> config、分组行、Settings 路由、删除取消/确认；0 console/page error、0 异常
+> API。三个组件文件由 reference 纠正为 partial，31 个 data-source SVG 资产行
+> 升为 aligned。逐像素 React 网格几何、列表页搜索与 Connect/List/Sync 仍放在
+> 行内（上游仅有齿轮/垃圾桶）的记录为明确偏差/partial。
+>
+> v0.3.3cb（2026-08-16）逐行复核 `add-datasource-modal.tsx`（90 行）并把数据源列表页
+> 的 Add 入口升级为 schema 驱动弹层：标题 `Add data source: {name}`、按当前类型渲染
+> 35 套字段集（必填星标/占位/选项/默认值/show_when）、Cancel/Confirm、必填原位校验
+> （`Name is required` / `{label} is required`）；schema 外的本地类型回退 URL/Target/
+> Token 旧表单。后端 `POST /api/v1/data_sources` 接受嵌套 `config`（压平 + 折叠
+> url/target/token/batch_size，无 config 时保留旧的 name/url/target 必填语义），并采用
+> 上游默认 prune=5/refresh=5/timeout=1740。fnOS Chrome 149/CDP 真点 6 组动作：S3 弹层
+> 字段与 35 区域选项、S3 Compatible 条件显隐、两条必填校验、嵌套 config POST 落库、
+> local 回退旧表单；0 console/page error、0 异常 API。add-datasource-modal.tsx 由
+> reference 纠正为 partial；connector_api.py 注记补 POST 语义。Available 卡片化入口
+> 与逐像素 React Modal 组合仍为 partial。
+>
+> v0.3.3ca（2026-08-16）逐行复核 data-source 的 `constant/index.tsx`（2473 行）与
+> `s3/confluence/jira/seafile/bitbucket-constant.tsx` 五文件，把 35 套逐源动态表单
+> 字段（213 个字段：label/name/type/required/placeholder/options/default/show_when）
+> 抽取为编译期嵌入的 `src/data_source/form_schema.json` + Rust
+> `form_fields.rs`（S3 Region 复用 Bedrock 37 区域表）。详情页由固定表单升级为
+> schema 驱动：Name 禁用、按类型渲染 Text/Password/Number/Checkbox/Segmented/
+> Select/Textarea、必填星标、show_when 条件显隐、sync_deleted_files 门控 Prune
+> Freq、Test 仅 REST_API/BigQuery，主按钮 Save/Stop/Resume 状态机走 PATCH
+> `reschedule`/`status`（cancel/schedule，兼容旧数字串）。后端 DataSourceRecord
+> 增 `status` + 扁平 `extra`（config.* 点路径）、嵌套 config 压平/还原、
+> `{status}` 状态归一化与 PATCH 语义（RayRAG 无后台调度器，resume/save 即时执行
+> 首轮同步并置 schedule/fail，记录为明确偏差）。fnOS Chrome 149/CDP 真点 8 组动作
+> 对照本地 mock GitLab：7 字段渲染、Prune 显隐、Save（嵌套 config+reschedule、
+> mock 收到同步）、Stop（cancel）、Resume（schedule + 二次同步）、重载回填；
+> 0 console/page error、0 异常 API。六个 constant 文件由 reference 纠正为
+> partial；connector_api.py 注记更新为 PATCH 状态机已落地。Tip/FilterFormField
+> 自定义渲染、S3 双条件 OR、jira 的 `!== false` 条件与逐像素 DynamicForm 组合
+> 仍为 partial。
+>
+> v0.3.3bp（2026-08-15）逐行复核 `bedrock-modal/index.tsx` 与
+> `somark-modal/index.tsx`。Rust 将 Bedrock/SoMark Available 卡片路由到专属弹层：
+> Bedrock 含 instance name、chat/embedding model type、model name、Access Key/IAM Role/
+> Assume Role 三段 auth、AK/SK、Role ARN、assume-role 提示、37 区域带搜索选择器与
+> max_tokens，实例名已存在时隐藏认证区；SoMark 含 instance name、model name、Base URL、
+> 可选 API key、四个 Element Format 选择器、七个 Feature Config 开关（table_image/
+> image_understanding 默认开）与 Verify/Add。Bedrock 密钥对象与 SoMark 的 11 个
+> `somark_*` 字段（作为 `ocr_config`）随 model_info 持久化并经实例 models API 回读。
+> fnOS Chrome 149/CDP 真点击 12 组动作、9 张截图、0 console/page error、0 异常 API。
+> 两个文件由泛化 reference 纠正为 partial；逐像素 React 组合与真实 AWS/SoMark 服务端
+> Verify 仍未完成。
+>
+> v0.3.3bq（2026-08-15）逐行复核 `setting-model/langfuse/` 四文件与
+> `langfuse_api.py`。Rust 在 `/user-setting/api` 落地 Langfuse 卡与配置弹层
+> （Secret key / Public key / Host、文档外链、确认后 Delete、Save），并实现
+> `GET/POST/PUT/DELETE /api/v1/langfuse/api-key`：租户级原子 JSON 持久化，保存时
+> 用 Basic auth 探测 `/api/public/health` 与 `/api/public/projects` 并缓存
+> project_id/name，无效凭证按上游消息失败关闭；GET 直接回读缓存，不再每次读都做
+> 出网校验。View 链接优先使用自托管 host 而非硬编码 cloud.langfuse.com（大陆网络
+> 适配，记录为明确偏差）。fnOS Chrome 149/CDP 真点击 8 组动作、6 张截图、0 error；
+> 四个 UI 文件由泛化 reference 纠正为 partial，langfuse_api.py 从空洞 aligned 改为
+> 有真实持久化的 aligned；逐像素 React 组合与保存时真实云端项目枚举仍记为 partial。
+>
+> v0.3.3br（2026-08-15）逐行复核 `provider-config-map.ts`、`use-provider-fields.tsx`
+> 与 `use-provider-modal-actions.ts`。Rust provider modal 现按工厂渲染固定动态字段：
+> Azure-OpenAI（api_version、vision）、VolcEngine（ARK_API_KEY + endpoint-id）、
+> Google Cloud（project/region/service-account）、Tencent Cloud（22 引擎 ASR 选择器 +
+> sid/sk）、XunFei Spark（password，tts 增 app id/secret/key）、BaiduYiYan（ak/sk）、
+> Fish Audio（ak/refid），以及 OpenDataLoader/PaddleOCR/MinerU 的 OCR cfg
+> （apiserver、algorithm、backend/server-url/delete-output）。hideWhenInstanceExists
+> 与 modelTypeIncludes* 条件渲染接线；后端新增 `ocr_provider_api_base` 从 api_key
+> 对象读取 OCR 端点做探测。fnOS Chrome 149/CDP 真点击 11 组动作覆盖 10 工厂、
+> 0 console/page error、0 异常 API。三个文件由泛化 reference 纠正为 partial；
+> inputSelect 的 region 映射推导、编辑/查看模式与逐像素 DynamicForm 组合仍为 partial。
+>
+> v0.3.3bs（2026-08-15）对照 `svg-icon.tsx` 的 `LlmIcon` 解析把 provider 品牌图标落到
+> Model providers 页：10 个 svgIcons 工厂（LocalAI/Gemini/StepFun/MinerU/PaddleOCR/n1n/
+> Avian/RAGcon/SoMark/New API）原样提供 `assets/svg/llm/*.svg`，其余用已打包 iconfont
+> 的 `IconMap` symbol，未映射回退 `moxing-default`；Available 卡与 Added 组头部都换掉
+> 首字母头像。fnOS Chrome 149/CDP 复核 63 卡：53 个 iconfont symbol 全部解析、10 个
+> 静态 SVG 全部加载、0 error。10 个资产行由 reference 升为 aligned；深色主题 -dark
+> 变体切换、iconfont bright/dark 成对切换与弹层标题 LLMHeader 图标仍为 partial。
+>
+> v0.3.3bt（2026-08-15）逐行复核 `user-setting/mcp/` 十二文件与 `mcp_api.py`。Rust
+> `/user-setting/mcp` 落地完整 MCP servers 页：Search / Bulk manage / Import / + Add MCP
+> 工具栏、空态 Add Now、卡片（N cached tools + 更新时间）、hover Export/Edit/Delete、
+> 批量 Select all / Selected N / Export / Delete、Add/Edit 弹层（Name 1-64 字符正则、URL、
+> SSE/Streamable HTTP、Authorization Token、Test 拉取工具、Save）与 JSON Import 弹层。
+> 后端实现租户级原子 JSON 存储与全套 REST；create/update/import 用已打包的
+> streamable-http MCP client 做 initialize+tools/list 并把工具表缓存进
+> variables.tools，URL 按 `assert_url_is_safe` 全局地址策略做 SSRF 校验并提供
+> `ALLOW_ANY_HOST=1` 的局域网旁路（大陆自托管适配）。fnOS Chrome 149/CDP 真点 9 组动作
+> 覆盖建/测/存、Search、Edit 改名、Export、批量 Delete、JSON Import，0 error。
+> 12 个 UI 文件由 reference 纠正为 partial，mcp_api.py 由空洞 aligned 更新为真实实现；
+> SSE 传输工具抓取、分页组件与逐像素 React 组合仍为 partial。
+>
+> v0.3.3bu（2026-08-15）逐行复核 `user-setting/setting-team/` 五文件与
+> `tenant_api.py`。Rust `/user-setting/team` 由单一 Invite 升级为固定 Team 页：
+> `{nickname} workspace` 标题、Team members 表（Name/Date 排序/Email/State/Action，
+> owner 行无删除按钮）、Joined teams 表（Accept/Decline/Quit）与 Invite member 弹层
+> （注册用户提示 + 邮箱校验）。后端补 GET/POST/DELETE `/api/v1/tenants/{id}/users`、
+> PATCH `/api/v1/tenants/{id}`（INVITE→NORMAL），列表补隐式 owner 行，错误文案对齐
+> 上游（User not found / already in the team / owner of the team）。fnOS Chrome 149/CDP
+> 双账号真点 8 组动作：注册、邀请、未知邮箱失败、移除、成员 Accept、Quit、日期排序，
+> 0 page error（唯一 400 是审计主动的未知邮箱用例）。5 个 UI 文件由 reference 纠正为
+> partial；`tenant_api.py` 由空洞 aligned 更新为真实实现；头像与逐像素 React 表格组合
+> 仍为 partial。
+>
+> v0.3.3bv（2026-08-15）逐行复核 `user-setting/profile/` 三文件与 `user_api.py`
+> 的 `/users/me`。Rust `/user-setting/profile` 升级为固定 Profile 页：Username /
+> Avatar（内联上传，读 data URL 并即时 PATCH）/ Time Zone / Email（只读说明）/
+> Password 五行，Edit Name / Edit Time Zone / Edit Password 弹层；密码改成功即失效
+> 全部 token 并跳登录。后端 `PATCH /api/v1/users/me` 复刻上游昵称校验（1-100、
+> 字母数字与固定标点）、当前密码核验（`Password error!`）、avatar/timezone 持久化
+> （User 增 serde 默认字段）。fnOS Chrome 149/CDP 真点 7 组动作：改名、时区、头像、
+> 错误当前密码、改密后重新登录；0 page error（唯一 400 为审计主动的错误密码用例）。
+> 3 个 UI 文件由 reference 纠正为 partial，`user_api.py` 由空洞 aligned 更新为真实
+> 实现；完整上游时区列表与逐像素 React 表单组合仍为 partial。
+>
+> v0.3.3bw（2026-08-16）逐行复核 `user-setting/chat-channel/` 八文件与
+> `chat_channel_api.py`。Rust `/user-setting/chat-channel` 由静态构建器列表升级为固定
+> Chat channels 页：Added channels（按渠道分组、空态提示、Edit/Delete）与 7 张
+> Available 卡（Discord/DingTalk/Feishu/Telegram/QQ Bot/WeCom/WhatsApp，hover Add），
+> Add/Edit 弹层按渠道渲染固定凭据字段（token/app key/secret/client secret/corp id/
+> agent id/aes key 等，WhatsApp 无凭据字段）。后端新增租户级原子 JSON 存储与
+> `GET/POST /api/v1/chat-channels`、`GET/PATCH/DELETE /{id}`。fnOS Chrome 149/CDP
+> 真点 6 组动作：空态、Telegram 校验+创建、DingTalk 双凭据创建、Edit 改名、确认删除；
+> 0 page error。6 个 UI 文件由 reference 纠正为 partial；connect-dialog-modal（连接
+> 助手）与 interface.ts 仍为 reference；`chat_channel_api.py` 由空洞 aligned 更新为
+> 真实实现。Connect assistant、WhatsApp QR runtime 与逐像素 React 组合仍为 partial。
+>
+> v0.3.3bx（2026-08-16）对齐 `provider_api_service.py` 的 `verify_api_key` 逐能力推理：
+> Rust verify/create 在带 model_info 时改为真实探测 chat / embedding / rerank（按方言
+> 路由 chat 端点，embedding 校验非空向量，rerank 校验非空 results，非 2xx 失败关闭并
+> 返回上游 `Fail to access model(...)` 文案），空 model_info 回退模型列表探测；
+> OCR/TTS/ASR 与 Baidu/Tencent/XunFei/Google 等厂商专有 REST 有意跳过并记为 partial。
+> 本地 mock + fnOS Chrome 149/CDP 复核 Verify 成功/失败与创建实例三条 chat 探测。
+> region/extra-field 适配与完全租户自有 provider 实体仍为 partial。
+>
+> v0.3.3bz（2026-08-16）落地 data-source detail 路由
+> `/user-setting/data-source/{id}`：Rust 详情页渲染连接表单（name/url/target/token、
+> sync_deleted_files、prune/refresh/timeout）与 Test/Sync/Save/Back；后端新增
+> GET/PUT `/api/v1/data_sources/{id}` 与 `/{id}/logs`，sync/connect 写入 newest-first
+> 同步日志（DataSourceRecord 增 sync 设置与日志字段）。fnOS Chrome 149/CDP 真点 6 组
+> 动作：创建 local 源 → Details 进入详情 → 改名 PUT → Sync 写 success 日志行 → Back。
+> 2 个 detail UI 文件由 reference 纠正为 partial；routes.tsx 注记更新为 detail 路由已
+> 覆盖。逐源动态字段集与逐像素 React 表单仍为 partial。
+>
+> v0.3.3bn（2026-08-14）逐行复核 `model-tree-select.tsx`、`tree-select.tsx` 与
+> `system-setting.tsx`。Rust 六个默认项已改为 provider→instance→model 树弹层，具备
+> capability 过滤、稳定去重、默认展开、分支折叠、递归 Search/No data、叶子选择、五项
+> clear、LLM 必填、outside/Escape、失败回滚与成功后 GET 回读；六种 PATCH wire 严格为
+> `chat/embedding/vision/asr/rerank/tts`。隔离 Chrome 真点击 23 组动作并覆盖六 selector、
+> 分支、搜索、Escape 焦点/保留、外部关闭、六次保存、clear、故障回滚及 reload 持久化。
+> 浏览器因此发现并修复原生 search Escape 清空和弹层按整行错位。两个历史状态同时纠偏：
+> `model-tree-select.tsx` 从过报 aligned 降为 partial，`tree-select.tsx` 从泛化 reference
+> 改为 partial；固定 provider 图标、完整共享组件消费者与逐像素 React 组合仍未完成。
+>
+> v0.3.3bm（2026-08-14）逐行复核本地 provider 配置、List models picker 与 Add custom
+> model。Rust 现支持固定 10 类动态目录 provider、临时 Base url/key discovery、All models/
+> 多选/Search/Vision、自定义 name/types/max_tokens/is_tools，以及 Verify 后才物化动态 factory
+> 和 tenant instance；隔离 Chrome 真实点击到 Added/View models，0 runtime exception。
+> 六个此前泛化为 reference 的直接 UI 文件纠正为 partial。Verify 仍仅做 model-list probe，
+> SoMark/Bedrock、逐 provider 精确字段和 edit mode 未完成，故不升级整页。
+>
+> v0.3.3bl（2026-08-14）逐行复核
+> `provider_api_service.py::list_providers(all_available=True)`：固定 66 factory 实际排除
+> 3 家后为 63 家。Rust Available 目录改为固定 rank/name 顺序和 canonical 名称，并把旧
+> `aliyun/Google/HunYuan/Nvidia` 身份贯通 Added、default selector 与 runtime resolve。
+> 隔离 RayRAG 经 Chrome/CDP 真实点击验证 63 张卡、七个 chip 数量、Search、同 chip 取消、
+> Add/整卡 modal，0 HTTP/console/page error。点击 New API 同时暴露其专属本地模型字段与
+> Base-Url 仍未实现，故该 Python 文件从过度声明 aligned 纠正为 partial，不升级整页状态。
+>
+> v0.3.3bk（2026-08-14）固定审计 Model providers 页面组合
+> `setting-model/index.tsx` 与通用 `provider-modal/index.tsx`，并以 live v0.26.2
+> Chrome/CDP 模拟点击 Available 卡外链、Add、空表单 Verify、Cancel 后恢复临时标签。
+> Rust 新增 tenant provider-instance modal、必填校验、外链 stopPropagation、只读
+> `/connection` 验证与 `/instances` 创建；密钥只落租户实例且响应脱敏，空 `model_info`
+> 通过固定工厂目录同时接入 UI 与运行时解析。两文件从泛化 reference 纠正为 partial；
+> provider 专属字段、真正逐能力推理探测、List Models picker、编辑既有实例及 Langfuse
+> 仍未完成。live 页面明确为 v0.26.2，不能充当固定 v0.26.4 浏览器证明。隔离 RayRAG
+> binary 已真实复点并据此修掉条件字段 hidden 与初始 API 鉴权时序两项故障；复点最终
+> 0 HTTP/console/page error，但 Available 为 61 张，固定源码应为 63，继续保持 partial。
+> 主树测试仍受 datasource/connectors 三个用户进行中编译错误阻断，隔离结果不冒充全量门禁。
+>
+> v0.3.3bj（2026-08-14）继续固定审计 Model providers 的 `used-model.tsx`。live
+> v0.26.2 Chrome/CDP 补点打开 MiniMax-M3 Pencil、实例删除确认框，并把一个 inactive
+> switch 切为 active 后立即恢复 inactive；两次 PATCH 均 HTTP 200/code 0，编辑与删除均
+> Cancel。Rust 新增 provider→instance Added cards、View/Hide 懒加载、只编辑 model type、
+> active/inactive PATCH、确认后实例 DELETE，以及与上游一致的 display-name 路由；该文件由
+> 泛化 reference 纠正为 partial。tenant provider-instance Add/Verify modal 与 live RayRAG
+> 点击仍受当前 datasource/connectors 三个无关编译错误阻断；隔离 clone 定向测试已通过
+> tenant-model 23/23、exact-route 1/1、SSR UI contract 1/1，但不冒充主树全量门禁或完整对标。
+>
+> v0.3.3bi（2026-08-14）固定审计 Model providers 的 `system-setting.tsx` 与
+> `un-add-model.tsx`，并用真实 Chrome/CDP 逐个打开六个默认选择器、七个 capability
+> chip、五个 Added models 组、Search、hover Add 与 Add/Cancel 弹窗。运行实例明确为
+> v0.26.2，因此只作交互观察；语义以固定 v0.26.4 commit 源码为准。Rust 新增
+> `/user-setting/model`、六字段单一映射表、正确 `vision/asr` PATCH 类型、可搜索
+> `model@instance@provider` selector，以及 Search 联动计数、同 chip 取消、整卡/hover
+> Add。两条从泛化 reference 纠正为 partial：精确两级模型树、外链箭头，以及
+> `used-model.tsx` 的实例级 View/Hide、模型 switch/edit/delete 仍未完成；当前仓库还受
+> 进行中的 datasource/connectors 编译错误阻断，未把静态/JS 诊断冒充成 live RayRAG 通过。
 >
 > v0.3.3r（2026-08-10）逐行审计 `api/db/__init__.py`，补齐全部枚举、
 > 文件/任务集合与文件夹常量，并把 Agent/DataFlow 类别规范为固定 wire 值；
@@ -374,19 +623,19 @@
 | `api/apps/restful_apis/agent_api.py` | 2526 | 95210 | `98e92f1c13163205` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/bot_api.py` | 589 | 25498 | `f2ee95ab21df6e51` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/chat_api.py` | 1323 | 54247 | `d9a613f380afb7b3` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/chat_channel_api.py` | 150 | 6177 | `0ba9cc5f994a7ba5` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/restful_apis/chat_channel_api.py` | 150 | 6177 | `0ba9cc5f994a7ba5` | aligned | `src/server.rs; src/api/chat_channel_mgr.rs` | Tenant-scoped GET/POST /api/v1/chat-channels and GET/PATCH/DELETE /{id} implemented over an atomic JSON store with {name, channel, config.credential.*, chat_id}; CDP-verified create/list/edit/delete (v0.3.3bw) |
 | `api/apps/restful_apis/chunk_api.py` | 1110 | 48716 | `b91519db0c9dd741` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/compilation_template_api.py` | 72 | 2970 | `8895bb102cc7f023` | aligned | `src/api/compilation_templates.rs; src/api/fixtures/; src/server.rs` | Authenticated read-only builtin palette and wiki presets; builtins use the personal tenant by default or a membership-checked shared tenant and inject only its explicit default chat selector |
 | `api/apps/restful_apis/compilation_template_group_api.py` | 172 | 6716 | `37f73b7247b00d39` | aligned | `src/api/compilation_templates.rs; src/server.rs` | Tenant-scoped group CRUD, validation, filtering and paging |
-| `api/apps/restful_apis/connector_api.py` | 681 | 26842 | `8348351bd79af9ca` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/restful_apis/connector_api.py` | 681 | 26842 | `8348351bd79af9ca` | aligned | `src/server.rs; src/api/data_source_mgr.rs; src/api/oauth_web.rs` | audited: REST endpoints in src/server.rs; PATCH prune/refresh/config/timeout + `reschedule`/`status` transitions, POST nested `config` defaults, and the Box + Google web-OAuth start/callback/result flows (popup postMessage contract, code 106 pending, optional `BOX_OAUTH_TOKEN_URL`/`GOOGLE_OAUTH_TOKEN_URL` token exchange for mainland mirrors) implemented (v0.3.3ce) |
 | `api/apps/restful_apis/dataset_api.py` | 1050 | 38154 | `0c4df259019ba1cf` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/dify_retrieval_api.py` | 318 | 12170 | `6ede32cc40c5afab` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/document_api.py` | 2208 | 85063 | `f37d4e9cd7859bc1` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/file2document_api.py` | 180 | 7343 | `b5524bcaddce892e` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/file_api.py` | 376 | 11738 | `5ffd99dede41b042` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/file_commit_api.py` | 377 | 17419 | `1882c8df5c25cc81` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/langfuse_api.py` | 99 | 3914 | `70b81b42c638cedc` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/mcp_api.py` | 364 | 15381 | `213923d2da2454d6` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/restful_apis/langfuse_api.py` | 99 | 3914 | `70b81b42c638cedc` | aligned | `src/server.rs; src/api/langfuse.rs` | Tenant-scoped `GET/POST/PUT/DELETE /api/v1/langfuse/api-key` implemented over an atomic JSON snapshot; save validates all three fields, probes Langfuse `/api/public/health` + `/api/public/projects` with Basic auth and caches project_id/name, invalid credentials fail closed with the upstream message, and GET serves the cached entry instead of a blocking per-read auth call (v0.3.3bq) |
+| `api/apps/restful_apis/mcp_api.py` | 364 | 15381 | `213923d2da2454d6` | aligned | `src/server.rs; src/api/mcp_mgr.rs` | Tenant-scoped GET/POST/PUT/DELETE /api/v1/mcp/servers, /import and /{id}/test implemented over an atomic JSON store; create/update/import connect with the bundled streamable-http MCP client (initialize + tools/list, Bearer authorization_token) and cache the tool map, SSRF-guarding URLs with the global-address policy plus the ALLOW_ANY_HOST LAN bypass; CDP-verified create/test/save/edit/export/bulk-delete/import (v0.3.3bt) |
 | `api/apps/restful_apis/memory_api.py` | 311 | 12777 | `763befeb3d572285` | full | `src/server.rs; src/api/features.rs` | Memory config plus message add/list/recent/search/status/forget/content routes are access-scoped; POST messages synchronously saves RAW and publishes a durable asynchronous Memory task; repeated/comma filters and the public 100-item ceiling match. Native index/cache lifecycle (message index create/drop/has + size cache) and the joined-tenant route surface are implemented (v0.3.3af)
 | `api/apps/restful_apis/models_api.py` | 199 | 6041 | `c19d0f7d34b50cc4` | full | `src/api/tenant_models.rs; src/api/system.rs; src/server.rs` | Tenant-added GET `/api/v1/models` and GET `/api/v1/models/default` expose capability metadata and the fixed right-anchored selector wire; per-capability defaults (embedding/vision/rerank/ASR/TTS) persist via PATCH `/api/v1/models/default` with upstream validation (v0.3.3af)
 | `api/apps/restful_apis/openai_api.py` | 375 | 14425 | `4d913dccdddfa383` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
@@ -396,8 +645,8 @@
 | `api/apps/restful_apis/stats_api.py` | 51 | 2247 | `42be01d77bad5f78` | aligned | `src/api/features.rs; src/llm.rs; src/server.rs` | Authenticated membership-checked tenant date buckets, including shared-tenant sessions, PV/UV/round/thumb-up and derived token/speed series; source=chat is isolated from persisted source=agent canvas sessions; OpenAI-compatible provider usage is persisted and preferred with legacy/provider-without-usage token fallback |
 | `api/apps/restful_apis/system_api.py` | 422 | 12649 | `efc011bd87ff99f7` | aligned | `src/api/system.rs; src/logging.rs; src/server.rs` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/task_api.py` | 102 | 4128 | `3688e71bc8887ff3` | aligned | `src/api/features.rs; src/server.rs` | All 102 source lines audited: POST/PATCH cancellation, stop-only validation, idempotent success and persisted task/document cancellation; owner ACL intentionally hardens the source behavior |
-| `api/apps/restful_apis/tenant_api.py` | 177 | 6369 | `a0a69a3f4d55ceaa` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/user_api.py` | 862 | 28162 | `833fc451b48c345b` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/restful_apis/tenant_api.py` | 177 | 6369 | `a0a69a3f4d55ceaa` | aligned | `src/server.rs; src/api/system.rs` | GET/POST/DELETE /api/v1/tenants/{id}/users, GET /api/v1/tenants and PATCH /api/v1/tenants/{id} implemented over the tenant store with the upstream role-conflict messages, owner/self remove authorization and INVITE->NORMAL accept; the owner row is synthesized from the implicit personal tenant; CDP-verified invite/remove/accept/quit (v0.3.3bu) |
+| `api/apps/restful_apis/user_api.py` | 862 | 28162 | `833fc451b48c345b` | aligned | `src/server.rs; src/api/system.rs; src/auth.rs` | PATCH /api/v1/users/me implemented with upstream nickname validation, current-password verification ("Password error!"), avatar/timezone persistence and access-token invalidation after a password change; User gains serde-defaulted avatar/timezone fields; CDP-verified (v0.3.3bv) |
 | `api/apps/restful_apis/utils/compilation_template_validation.py` | 79 | 4042 | `0ee378fcc8cc1757` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/services/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/services/canvas_replica_service.py` | 247 | 8674 | `b4d28807e0b148f7` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
@@ -406,7 +655,7 @@
 | `api/apps/services/file_api_service.py` | 604 | 25016 | `61e11335cdb5ad9d` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/services/memory_api_service.py` | 389 | 16655 | `a12eb1594675678c` | full | `src/api/features.rs; src/api/joint_services.rs; src/memory.rs; src/server.rs` | Raw envelope embedding, budgets, access-scoped CRUD/search, default prompt lifecycle, durable non-RAW LLM extraction and progress are live; native index/cache lifecycle and joined-tenant update/delete semantics (owner-or-team-member, external = 404) are implemented (v0.3.3af)
 | `api/apps/services/models_api_service.py` | 420 | 17923 | `8d78ec89e1786399` | full | `src/api/tenant_models.rs; src/api/system.rs; src/server.rs` | Enabled tenant instances flatten into secret-free capability records; per-capability defaults beyond Chat and the full factory-ranking/fallback behavior (`plan_added_models`: factory ∪ active − inactive − unsupported, rank key) are implemented (v0.3.3af)
-| `api/apps/services/provider_api_service.py` | 925 | 42282 | `795885d026dfaa90` | aligned | `src/api/features.rs; src/api/tenant_models.rs; src/model_meta.rs` | All 925 source lines audited with emphasis on list_provider_models: Rust merges configured static names with provider-specific remote discovery, normalizes VLLM/local inference bases and JSON credentials, sorts deterministically, persists provider instances atomically and expands multi-capability models. The full RAGFlow factory catalog, region/extra-field adapters, per-model verification calls and tenant-scoped provider ownership are not yet complete |
+| `api/apps/services/provider_api_service.py` | 925 | 42282 | `795885d026dfaa90` | partial | `src/api/features.rs; src/api/tenant_models.rs; src/model_meta.rs; src/providers.rs; src/web.rs` | Fixed all-available listing derives 63 canonical factories from the embedded 66-factory registry with exact exclusions, model-type/OCR rules and rank/name ordering; legacy provider ids normalize across Added/default/runtime resolution. The provider modal renders the 10 ProviderConfigMap dynamic credential fields, and verify/create now run upstream-style capability-inference probes (chat / embedding / rerank over the OpenAI-compatible contract, with per-dialect endpoint routing and fail-closed non-2xx messages); OCR/TTS/ASR and provider-specific REST protocols are intentionally skipped. region/extra-field adapters and fully tenant-owned provider entities remain partial (v0.3.3bx) |
 | `api/channels/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/bootstrap.py` | 288 | 10818 | `a607d40383dfe268` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/core/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
@@ -3221,37 +3470,37 @@
 | `web/src/assets/svg/data-flow/processing-icon.svg` | 6 | 2069 | `46acc8c1d23de4f6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/data-flow/total-files-icon-bri.svg` | 6 | 2191 | `795b5f540b61ac9a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/data-flow/total-files-icon.svg` | 6 | 2161 | `702e309093794502` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/airtable.svg` | 14 | 2027 | `a379231028ad9b2c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/asana.svg` | 5 | 724 | `01b755d974023da2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/azure-blob.svg` | 17 | 860 | `7219d3446dac8e20` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/bigquery.svg` | 4 | 580 | `843ab80283abf185` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/bitbucket.svg` | 7 | 803 | `894ed83bfea1bc6f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/box.svg` | 1 | 723 | `5eec50e55dd0d333` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/confluence.svg` | 28 | 2357 | `91c9d12bed42bc9a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/dingtalk-ai-table.svg` | 27 | 1778 | `589602c48045c5cc` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/discord.svg` | 14 | 1672 | `2b43881012c54d52` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/dropbox.svg` | 1 | 396 | `2890b48af06e80ec` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/gitlab.svg` | 2 | 946 | `222fe006ec15d735` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/gmail.svg` | 7 | 419 | `40b7175c11c04992` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/google-cloud-storage.svg` | 1 | 958 | `59db35d960aca1b2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/google-drive.svg` | 22 | 1770 | `74cf7493eaf905ce` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/jira.svg` | 16 | 1079 | `8f9cd8b97e440f3a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/moodle.svg` | 4 | 2020 | `d268572cda05a538` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/mysql.svg` | 3 | 2797 | `c3ad803e3680efc7` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/notion.svg` | 19 | 2678 | `0ce75107c3ca1e5c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/onedrive.svg` | 6 | 718 | `6b1b0a20881ebbae` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/oracle-storage.svg` | 1 | 604 | `90768f8bc9c29e89` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/postgresql.svg` | 6 | 2811 | `f0612b272fc20587` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/r2.svg` | 5 | 1524 | `d31b48fb07c7e5ed` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/rest-api.svg` | 13 | 1000 | `f7d3e6d213a9ebc1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/s3.svg` | 29 | 2598 | `b897abe25bf36769` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/salesforce.svg` | 4 | 462 | `bc7097dafbd9ecc3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/seafile.svg` | 1 | 1448 | `8fd594ce829b4722` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/sharepoint.svg` | 9 | 993 | `fc8ed27b0b3a7bb9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/slack.svg` | 6 | 965 | `72d111006246734a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/teams.svg` | 9 | 673 | `359332f298f68e2d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/webdav.svg` | 15 | 449 | `a970d38fe9d06862` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/data-source/zendesk.svg` | 8 | 864 | `cc7edc68ce2a333b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/assets/svg/data-source/airtable.svg` | 14 | 2027 | `a379231028ad9b2c` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Airtable Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/asana.svg` | 5 | 724 | `01b755d974023da2` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Asana Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/azure-blob.svg` | 17 | 860 | `7219d3446dac8e20` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Azure Blob Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/bigquery.svg` | 4 | 580 | `843ab80283abf185` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the BigQuery Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/bitbucket.svg` | 7 | 803 | `894ed83bfea1bc6f` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Bitbucket Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/box.svg` | 1 | 723 | `5eec50e55dd0d333` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Box Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/confluence.svg` | 28 | 2357 | `91c9d12bed42bc9a` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Confluence Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/dingtalk-ai-table.svg` | 27 | 1778 | `589602c48045c5cc` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Dingtalk AI Table Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/discord.svg` | 14 | 1672 | `2b43881012c54d52` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Discord Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/dropbox.svg` | 1 | 396 | `2890b48af06e80ec` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Dropbox Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/gitlab.svg` | 2 | 946 | `222fe006ec15d735` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the GitLab Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/gmail.svg` | 7 | 419 | `40b7175c11c04992` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Gmail Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/google-cloud-storage.svg` | 1 | 958 | `59db35d960aca1b2` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Google Cloud Storage Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/google-drive.svg` | 22 | 1770 | `74cf7493eaf905ce` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Google Drive Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/jira.svg` | 16 | 1079 | `8f9cd8b97e440f3a` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Jira Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/moodle.svg` | 4 | 2020 | `d268572cda05a538` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Moodle Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/mysql.svg` | 3 | 2797 | `c3ad803e3680efc7` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the MySQL Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/notion.svg` | 19 | 2678 | `0ce75107c3ca1e5c` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Notion Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/onedrive.svg` | 6 | 718 | `6b1b0a20881ebbae` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the OneDrive Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/oracle-storage.svg` | 1 | 604 | `90768f8bc9c29e89` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Oracle Storage Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/postgresql.svg` | 6 | 2811 | `f0612b272fc20587` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the PostgreSQL Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/r2.svg` | 5 | 1524 | `d31b48fb07c7e5ed` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the R2 Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/rest-api.svg` | 13 | 1000 | `f7d3e6d213a9ebc1` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the REST API Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/s3.svg` | 29 | 2598 | `b897abe25bf36769` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the S3 Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/salesforce.svg` | 4 | 462 | `bc7097dafbd9ecc3` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Salesforce Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/seafile.svg` | 1 | 1448 | `8fd594ce829b4722` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the SeaFile Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/sharepoint.svg` | 9 | 993 | `fc8ed27b0b3a7bb9` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the SharePoint Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/slack.svg` | 6 | 965 | `72d111006246734a` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Slack Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/teams.svg` | 9 | 673 | `359332f298f68e2d` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Microsoft Teams Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/webdav.svg` | 15 | 449 | `a970d38fe9d06862` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the WebDAV Available/Added card (v0.3.3cc) |
+| `web/src/assets/svg/data-source/zendesk.svg` | 8 | 864 | `cc7edc68ce2a333b` | aligned | `src/web.rs; web/static/assets/svg/data-source/` | served verbatim and rendered by the Rust data-source card resolver for the Zendesk Available/Added card (v0.3.3cc) |
 | `web/src/assets/svg/database.svg` | 3 | 921 | `687326cee3673fb6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/deepl.svg` | 13 | 1615 | `c0b430d5ecbafaee` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/delete.svg` | 5 | 935 | `7e1f0a015ccbd872` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -3335,18 +3584,18 @@
 | `web/src/assets/svg/knowledge-dataset.svg` | 5 | 706 | `7d36526d1c7401c4` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/knowledge-testing.svg` | 11 | 792 | `5aa40b8f5652ec41` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/langfuse.svg` | 10 | 14237 | `cac46d8c35bc155f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/avian.svg` | 5 | 380 | `28d9405c1e106121` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/gemini.svg` | 1 | 2830 | `f1cf357573df0d2c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/assets/svg/llm/avian.svg` | 5 | 380 | `28d9405c1e106121` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the Avian Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/gemini.svg` | 1 | 2830 | `f1cf357573df0d2c` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the Gemini Available/Added card (v0.3.3bs) |
 | `web/src/assets/svg/llm/jiekouai.svg` | 3 | 270 | `914929ad7ee8c616` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/local-ai.svg` | 15 | 74478 | `9dc6e6276ea16672` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/mineru-bright.svg` | 22 | 3189 | `7b4c3257b0d58d93` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/assets/svg/llm/local-ai.svg` | 15 | 74478 | `9dc6e6276ea16672` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the LocalAI Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/mineru-bright.svg` | 22 | 3189 | `7b4c3257b0d58d93` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the MinerU bright-theme Available/Added card (v0.3.3bs) |
 | `web/src/assets/svg/llm/mineru-dark.svg` | 22 | 3183 | `755fe0f3c5ff558e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/n1n.svg` | 4 | 441 | `58296008bcee3413` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/new-api.svg` | 3 | 12706 | `5af0227fbde77017` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/paddleocr.svg` | 14 | 10626 | `e2e3f13e77e8b69f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/ragcon.svg` | 24 | 1531 | `11acb87762c9a4eb` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/somark.svg` | 1 | 6248 | `8864a3cb7b53525b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/assets/svg/llm/stepfun.svg` | 1 | 674 | `70989521a5181d76` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/assets/svg/llm/n1n.svg` | 4 | 441 | `58296008bcee3413` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the n1n Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/new-api.svg` | 3 | 12706 | `5af0227fbde77017` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the New API Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/paddleocr.svg` | 14 | 10626 | `e2e3f13e77e8b69f` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the PaddleOCR Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/ragcon.svg` | 24 | 1531 | `11acb87762c9a4eb` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the RAGcon Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/somark.svg` | 1 | 6248 | `8864a3cb7b53525b` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the SoMark Available/Added card (v0.3.3bs) |
+| `web/src/assets/svg/llm/stepfun.svg` | 1 | 674 | `70989521a5181d76` | aligned | `src/web.rs; web/static/assets/svg/llm/` | served verbatim and rendered by the Rust LlmIcon-equivalent resolver for the StepFun Available/Added card (v0.3.3bs) |
 | `web/src/assets/svg/llm/wenxin.svg` | 11 | 4475 | `2c673b6a8dedf316` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/login-avatars.svg` | 90 | 1816095 | `d235c326add1e87d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/assets/svg/login-background.svg` | 10 | 3465380 | `ca0269da7cdeb385` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -3547,7 +3796,7 @@
 | `web/src/components/metadata-filter/metadata-semi-auto-fields.tsx` | 121 | 3830 | `57fb686c7cac4a62` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/mineru-options-form-field.tsx` | 144 | 4118 | `fd889737becc04ae` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/modal-manager.tsx` | 25 | 533 | `a3d16d1211ea5227` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/components/model-tree-select.tsx` | 190 | 5153 | `3341832d97b4047a` | aligned | `src/web.rs; src/api/tenant_models.rs` | Functional parity complete; the visual layer is token-aligned to the v0.26.2 dark design (dark-first `:root` palette #0b0a12/#f6f6f7, InterVariable 16px base, card rgba(255,255,255,.05), purple #9276ff accent, 8px radius; light theme kept as optional `.light` toggle); micro-spacing per element remains an approximation, not a literal React transliteration (v0.3.3am)
+| `web/src/components/model-tree-select.tsx` | 190 | 5153 | `3341832d97b4047a` | partial | `src/web.rs; src/web_css.txt; src/api/tenant_models.rs` | Rust Model providers now builds the fixed provider→instance→model selector tree in catalog order, filters all six capabilities, normalizes `__` names, deduplicates exact selectors, defaults branches open, renders selected model/instance, and persists canonical default wires. Isolated Chrome real clicks cover every selector, branch/search/No data, leaf save, clear, Escape/outside, rollback and reload. Fixed provider image assets and every non-Model-providers consumer of this shared React component remain pending (v0.3.3bn) |
 | `web/src/components/more-button.tsx` | 24 | 709 | `a73dad2eb872fb8b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/new-document-link.tsx` | 51 | 1109 | `e2c65a62a8636a33` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/next-markdown-content/index.module.less` | 133 | 2095 | `05ef45ed7ee45204` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -3596,7 +3845,7 @@
 | `web/src/components/toc-enhance-form-field.tsx` | 16 | 381 | `174d76a1d79c51c5` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/top-n-item.tsx` | 30 | 668 | `6ffeacee5958c9be` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/top-select.tsx` | 38 | 976 | `e969f703ceb54388` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/components/tree-select.tsx` | 269 | 7864 | `1e537bfc79beadd3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/components/tree-select.tsx` | 269 | 7864 | `1e537bfc79beadd3` | partial | `src/web.rs; src/web_css.txt` | Rust Model providers has a native button/dialog/tree slice with default expansion, branch-only toggles, recursive case-insensitive Search, search-path expansion, leaf-only selection, optional clear, outside/Escape close, retained Search, focus return and ARIA tree/group state. It deliberately keeps matching-parent descendants selectable instead of reproducing the fixed source's empty-branch pseudo-leaf bug. A reusable cross-page component and exact Radix keyboard/visual behavior remain pending (v0.3.3bn) |
 | `web/src/components/ui/accordion.tsx` | 71 | 2161 | `08a3659a752baca6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/ui/alert-dialog.tsx` | 141 | 4488 | `caa6025bb42cc05c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/components/ui/aspect-ratio.tsx` | 7 | 158 | `aaabffbc4500936e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -4419,95 +4668,95 @@
 | `web/src/pages/skills/types.ts` | 166 | 4223 | `6bd278c2a6c30207` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/skills/utils.ts` | 14 | 301 | `3b9cd5f0dd2c1b21` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/skills/validation.ts` | 563 | 14206 | `0f45626d7e2559e1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/chat-channel/add-channel-modal.tsx` | 173 | 5969 | `9fc1e8e0804e9f41` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/chat-channel/component/added-channel-card.tsx` | 225 | 7962 | `70863641b893c596` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/chat-channel/add-channel-modal.tsx` | 173 | 5969 | `9fc1e8e0804e9f41` | partial | `src/web.rs; src/api/chat_channel_mgr.rs` | Rust Add/Edit bot dialog renders Name plus the fixed per-channel credential fields (Telegram/Discord token, DingTalk/Feishu app key/secret, QQ app id/client secret/base url, WeCom secret/corp/agent/token/aes) with inline validation; WhatsApp keeps no credential fields. CDP-verified Telegram and DingTalk. Connect-assistant and WhatsApp QR runtime remain partial (v0.3.3bw) |
+| `web/src/pages/user-setting/chat-channel/component/added-channel-card.tsx` | 225 | 7962 | `70863641b893c596` | partial | `src/web.rs; src/web_css.txt` | Rust added-channels section groups accounts by channel with Edit/Delete actions and the empty tip; CDP-verified. React card composition remains partial (v0.3.3bw) |
 | `web/src/pages/user-setting/chat-channel/component/connect-dialog-modal.tsx` | 81 | 2304 | `f0126f69896de0d9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/chat-channel/component/delete-channel-modal.tsx` | 59 | 1865 | `8ed5dc49c92318f3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/chat-channel/constant/index.tsx` | 761 | 21593 | `6e16ce2def418af5` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/chat-channel/hooks.ts` | 203 | 6203 | `679ce6db832ed06a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/chat-channel/index.tsx` | 154 | 4792 | `4e19fa5c58fff316` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/chat-channel/component/delete-channel-modal.tsx` | 59 | 1865 | `8ed5dc49c92318f3` | partial | `src/web.rs; src/api/chat_channel_mgr.rs` | Rust confirm dialog carries the fixed title and undo warning and DELETE /api/v1/chat-channels/{id}; CDP-verified (v0.3.3bw) |
+| `web/src/pages/user-setting/chat-channel/constant/index.tsx` | 761 | 21593 | `6e16ce2def418af5` | partial | `src/web.rs` | Rust registry now covers all 23 ChatChannelKey entries (clickclack/discord/dingtalk/feishu/googlechat/irc/line/matrix/mattermost/msteams/nextcloud_talk/nostr/qqbot/slack/synology_chat/telegram/tlon/twitch/wecom/whatsapp/yuanbao/zalo/zalouser) with their fixed names, descriptions and full per-channel credential field sets (select/number/switch/textarea/tag types incl. feishu domain select, googlechat auth_mode select, wecom connection_type select with showIf websocket/webhook conditionals); dingtalk corrected to client_id/client_secret. Exact i18n description copy and upstream FormFieldType Tag/placeholder pixel parity remain partial (v0.3.3bw) |
+| `web/src/pages/user-setting/chat-channel/hooks.ts` | 203 | 6203 | `679ce6db832ed06a` | partial | `src/web.rs; src/api/chat_channel_mgr.rs` | Rust add/edit/delete flows hit the fixed GET/POST/PATCH/DELETE endpoints and refresh the grouped list; CDP-verified (v0.3.3bw) |
+| `web/src/pages/user-setting/chat-channel/index.tsx` | 154 | 4792 | `4e19fa5c58fff316` | partial | `src/web.rs; src/web_css.txt; src/api/chat_channel_mgr.rs` | Rust Chat channels page renders Added channels (grouped, empty tip) and the 7 Available channel cards with hover Add; CDP-verified. Exact React layout remains partial (v0.3.3bw) |
 | `web/src/pages/user-setting/chat-channel/interface.ts` | 33 | 736 | `4b1c77e544b1f0c4` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/components/user-setting-header/index.tsx` | 31 | 846 | `4f6026f434aee4dd` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/constants.tsx` | 49 | 1320 | `1e32df75360caa5d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/add-datasource-modal.tsx` | 90 | 2653 | `16d4eff89ed5f9c2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/component/added-source-card.tsx` | 70 | 2775 | `7c340c15653374aa` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/component/box-token-field.tsx` | 452 | 13971 | `4ae6bb2cf7696830` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/component/delete-source-modal.tsx` | 85 | 2701 | `8f8b5ed02594d60f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/component/gmail-token-field.tsx` | 460 | 14591 | `c347ed649d419e8e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/component/google-drive-token-field.tsx` | 459 | 14632 | `53ef6a60bf33fb36` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/constant/bitbucket-constant.tsx` | 83 | 2485 | `83f33c07fdeccc71` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/constant/confluence-constant.tsx` | 120 | 3193 | `4aa70494e7e9bcf9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/constant/index.tsx` | 2473 | 66363 | `c542ded061262187` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/constant/jira-constant.tsx` | 149 | 4258 | `31af61c4783fd339` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/constant/s3-constant.tsx` | 178 | 6028 | `40223f93a48d15af` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/constant/seafile-constant.tsx` | 214 | 6353 | `cc8a5b593c18fe35` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/data-source-detail-page/index.tsx` | 282 | 8547 | `ae1f05c873c33f51` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/data-source-detail-page/log-table.tsx` | 293 | 8565 | `c00301b7939b8a11` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/data-source/add-datasource-modal.tsx` | 90 | 2653 | `16d4eff89ed5f9c2` | partial | `src/web.rs; src/api/data_source_mgr.rs; src/data_source/form_fields.rs` | Rust Add data source modal renders the selected source's schema-driven field set (title `Add data source: {name}`, required markers, options/defaults/show_when, Cancel/Confirm), validates required fields inline, and POSTs the nested upstream config; flat-fallback sources keep URL/Target/Token. CDP-verified 6 actions incl. S3 compatible-mode conditionals and both create shapes (v0.3.3cb) |
+| `web/src/pages/user-setting/data-source/component/added-source-card.tsx` | 70 | 2775 | `7c340c15653374aa` | partial | `src/web.rs; src/data_source/form_fields.rs` | Rust Added sources render per-type cards (icon+name header, name/badge rows, Settings→detail and Trash→delete modal, plus the legacy Connect/Disconnect/List/Sync row actions kept as a documented deviation); CDP-verified group, gear routing and delete (v0.3.3cc) |
+| `web/src/pages/user-setting/data-source/component/box-token-field.tsx` | 452 | 13971 | `4ae6bb2cf7696830` | partial | `src/web.rs; src/api/oauth_web.rs` | Rust Box token field replaces the raw textarea: Configure/Get Box credentials button, Configured/Authorized chips, Client ID/Secret/Redirect URI dialog, Submit & Authorize popup + Refresh status polling against the implemented start/callback/result endpoints; CDP-verified the full start→pending(106)→callback→authorized→create loop with an offline-aborted popup. Gmail/Drive fields and the real Box token exchange (requires `BOX_OAUTH_TOKEN_URL`) remain partial (v0.3.3cd) |
+| `web/src/pages/user-setting/data-source/component/delete-source-modal.tsx` | 85 | 2701 | `8f8b5ed02594d60f` | partial | `src/web.rs` | Rust delete dialog keeps the fixed `Delete data source` title, `Are you sure you want to delete this data source link?` body, source icon+name box and Cancel/Confirm(error) actions; CDP-verified cancel keeps and confirm deletes (v0.3.3cc) |
+| `web/src/pages/user-setting/data-source/component/gmail-token-field.tsx` | 460 | 14591 | `c347ed649d419e8e` | partial | `src/web.rs; src/api/oauth_web.rs` | Rust serves the shared Google token field for Gmail (JSON uploader, redirect extraction, Authorize with Google, Refresh status) through the implemented Google OAuth endpoints; the per-provider popup listener and real token minting remain partial (v0.3.3ce) |
+| `web/src/pages/user-setting/data-source/component/google-drive-token-field.tsx` | 459 | 14632 | `53ef6a60bf33fb36` | partial | `src/web.rs; src/api/oauth_web.rs` | Rust Google Drive token field replaces the raw textarea: JSON uploader, Uploaded (pending)/Needs authorization chips, verification dialog, Authorize with Google popup and Refresh status polling against the implemented Google OAuth endpoints; CDP-verified the full upload→start→106→callback→updated→create loop offline (v0.3.3ce) |
+| `web/src/pages/user-setting/data-source/constant/bitbucket-constant.tsx` | 83 | 2485 | `83f33c07fdeccc71` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Bitbucket field set (email/api token/workspace/index mode + conditional slugs/projects) embedded in the Rust form schema (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/constant/confluence-constant.tsx` | 120 | 3193 | `4aa70494e7e9bcf9` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Confluence field set (username/token/wiki base/is cloud/index mode + conditional page/space fields) embedded in the Rust form schema (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/constant/index.tsx` | 2473 | 66363 | `c542ded061262187` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Per-source `DataSourceFormFields` (30 inline sets incl. REST API pagination/auth conditionals) extracted into the embedded Rust form schema; tip/`FilterFormField` custom renderers and hidden fallback duplicates remain partial (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/constant/jira-constant.tsx` | 149 | 4258 | `31af61c4783fd339` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Jira field set (email/username/base URL/project/JQL/batch/attachment limit/mode/API token/password/scoped token) embedded in the Rust form schema; `!== false` cloud/server conditionals remain partial (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/constant/s3-constant.tsx` | 178 | 6028 | `40223f93a48d15af` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | S3 field set (bucket/region/prefix/mode/auth/access keys/role ARN/addressing style/endpoint) embedded in the Rust form schema with the Bedrock region list; the `access_key OR s3_compatible` OR-condition is approximated as access_key-only (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/constant/seafile-constant.tsx` | 214 | 6353 | `cc8a5b593c18fe35` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | SeaFile field set (server URL/sync scope + conditional account/library/directory credentials) embedded in the Rust form schema (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/data-source-detail-page/index.tsx` | 282 | 8547 | `ae1f05c873c33f51` | partial | `src/web.rs; src/api/data_source_mgr.rs; src/data_source/form_fields.rs` | Rust detail form is schema-driven: disabled Name, 34 per-source dynamic field sets (Text/Password/Number/Checkbox/Segmented/Select/Textarea with required markers, placeholders, options and show_when conditionals), sync_deleted_files-gated Prune Freq, Test only for REST_API/BigQuery, and the Save/Stop/Resume primary action state machine (PATCH reschedule/cancel/schedule with eager first sync). CDP-verified 8 actions against a mock GitLab server (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/data-source-detail-page/log-table.tsx` | 293 | 8565 | `c00301b7939b8a11` | partial | `src/web.rs; src/api/data_source_mgr.rs` | Rust Sync Logs table renders newest-first persisted rows (time/status/message) written by sync/connect and auto-refreshes every 15s while the connector is running/schedule; CDP-verified success rows after Save/Resume. Pagination and exact React table composition remain partial (v0.3.3ca) |
 | `web/src/pages/user-setting/data-source/hooks.ts` | 285 | 8400 | `1fe074e79401718c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/data-source/index.tsx` | 150 | 4613 | `fc1cab52f146025c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/data-source/index.tsx` | 150 | 4613 | `fc1cab52f146025c` | partial | `src/web.rs; src/data_source/form_fields.rs` | Rust list page renders the fixed 35-card Available composition (icon/name/description, hover + Add, click opens the schema modal titled `Create your {name} connector`), grouped Added cards and the empty state; CDP-verified 35 cards, hover Add, create/gear/delete flows. Exact React grid/card geometry and per-source search remain partial (v0.3.3cc) |
 | `web/src/pages/user-setting/data-source/interface.ts` | 53 | 1138 | `812a2f8e0da99fc5` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/index.module.less` | 13 | 161 | `81554148ea6e37e9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/index.tsx` | 22 | 517 | `beef40eb4fa3efc3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/index.tsx` | 22 | 517 | `beef40eb4fa3efc3` | partial | `src/web.rs; src/web_css.txt; src/server.rs` | Rust keeps the global Header and renders a shared responsive settings shell around every registered child route; isolated Chrome verified the 303 px desktop and 64 px mobile layouts. Exact RootLayout/Tailwind geometry and child-page content remain partial (v0.3.3bo) |
 | `web/src/pages/user-setting/interface.ts` | 6 | 121 | `f6fe4375ef4a8e2c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/edit-mcp-dialog.tsx` | 236 | 7314 | `efa316f86a28a74d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/edit-mcp-form.tsx` | 171 | 4446 | `d6b49db110c8759a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/import-mcp-dialog/import-mcp-form.tsx` | 72 | 1839 | `6408b9e18014d0fc` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/import-mcp-dialog/index.tsx` | 36 | 978 | `04a3ea6e9ee4fb47` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/index.tsx` | 198 | 6711 | `fd15878233672e9a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/mcp-card.tsx` | 74 | 2366 | `a122345c0a3417a3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/mcp-operation.tsx` | 54 | 1994 | `8a0969aa983af8a5` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/tool-card.tsx` | 16 | 423 | `fa82446db63ad357` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/use-bulk-operate-mcp.tsx` | 56 | 1596 | `2afef834737664e2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/use-edit-mcp.ts` | 53 | 1267 | `09fc83be5034dc6f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/use-export-mcp.ts` | 28 | 822 | `93b8e52fb52292a9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/mcp/use-import-mcp.ts` | 75 | 2118 | `4f123fbf22cb9bce` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/profile/constants.ts` | 3 | 98 | `a6df7d35739851d3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/profile/hooks/use-profile.ts` | 155 | 4080 | `a349da5cc1b4f524` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/profile/index.tsx` | 422 | 14718 | `56d78372785fc272` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/mcp/edit-mcp-dialog.tsx` | 236 | 7314 | `efa316f86a28a74d` | partial | `src/web.rs; src/web_css.txt; src/api/mcp_mgr.rs` | Rust Add/Edit MCP dialog renders Name/URL/Server type/Authorization Token, inline validation, the Test flow listing tools and Save; CDP-verified create-test-save and edit rename. Exact React/Radix composition remains partial (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/edit-mcp-form.tsx` | 171 | 4446 | `d6b49db110c8759a` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust form keeps the fixed 1-64 charset name regex, URL, SSE/Streamable HTTP type options and optional Authorization Token; zod/monaco composition remains partial (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/import-mcp-dialog/import-mcp-form.tsx` | 72 | 1839 | `6408b9e18014d0fc` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust import dialog accepts a JSON file and POSTs the fixed {mcpServers} payload; CDP-verified. React file-uploader composition remains partial (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/import-mcp-dialog/index.tsx` | 36 | 978 | `04a3ea6e9ee4fb47` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust import dialog titled Import with Cancel/Save; CDP-verified JSON import creates the server with fetched tools (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/index.tsx` | 198 | 6711 | `fd15878233672e9a` | partial | `src/web.rs; src/web_css.txt; src/api/mcp_mgr.rs` | Rust MCP servers page renders the header toolbar (Search/Bulk manage/Import/+ Add MCP), empty Add Now state, card list, bulk select-all/Selected N/Export/Delete and pagination-free tenant list; CDP-verified. React pagination composition remains partial (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/mcp-card.tsx` | 74 | 2366 | `a122345c0a3417a3` | partial | `src/web.rs; src/web_css.txt` | Rust card shows name, N cached tools from variables.tools and update date with hover Export/Edit/Delete or bulk checkbox; CDP-verified (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/mcp-operation.tsx` | 54 | 1994 | `8a0969aa983af8a5` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust export/edit/delete card actions hit the fixed download-mode GET, edit dialog and DELETE endpoints; CDP-verified (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/tool-card.tsx` | 16 | 423 | `fa82446db63ad357` | partial | `src/web.rs` | Rust tools list renders each cached tool's name and description from variables.tools; CDP-verified two mock tools (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/use-bulk-operate-mcp.tsx` | 56 | 1596 | `2afef834737664e2` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust bulk mode keeps a selected-id set, select-all, Selected N and combined Export/Delete; CDP-verified bulk delete (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/use-edit-mcp.ts` | 53 | 1267 | `09fc83be5034dc6f` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust edit flow fetches the stored server, prefills the dialog and PUTs the updated fields; CDP-verified rename (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/use-export-mcp.ts` | 28 | 822 | `93b8e52fb52292a9` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust export downloads the fixed {mcpServers:{name:{type,url,authorization_token,tools}}} JSON via ?mode=download; CDP-verified request (v0.3.3bt) |
+| `web/src/pages/user-setting/mcp/use-import-mcp.ts` | 75 | 2118 | `4f123fbf22cb9bce` | partial | `src/web.rs; src/api/mcp_mgr.rs` | Rust import parses the uploaded {mcpServers} JSON, renames duplicates with the _N suffix and reports per-server results; CDP-verified (v0.3.3bt) |
+| `web/src/pages/user-setting/profile/constants.ts` | 3 | 98 | `a6df7d35739851d3` | partial | `src/web.rs; src/api/system.rs` | Rust keeps the fixed 1-100 nickname limit and the letter/digit/punctuation charset in both the client inline validation and the server PATCH /users/me guard (v0.3.3bv) |
+| `web/src/pages/user-setting/profile/hooks/use-profile.ts` | 155 | 4080 | `a349da5cc1b4f524` | partial | `src/web.rs; src/api/system.rs` | Rust edit/save flows PATCH /api/v1/users/me for nickname/timezone/avatar and the current+new password pair with token invalidation on success; CDP-verified all four edits (v0.3.3bv) |
+| `web/src/pages/user-setting/profile/index.tsx` | 422 | 14718 | `56d78372785fc272` | partial | `src/web.rs; src/web_css.txt; src/api/system.rs` | Rust Profile page renders Username/Avatar/Time Zone/Email/Password rows with Edit Name / Edit Time Zone / Edit Password dialogs and inline avatar upload; CDP-verified name, timezone, avatar and password change. Exact React form composition and the full upstream timezone list remain partial (v0.3.3bv) |
 | `web/src/pages/user-setting/setting-api/index.module.less` | 7 | 96 | `772530dd955df02d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-api/index.tsx` | 7 | 189 | `d772a22d7ae2883d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/components/llm-header.tsx` | 34 | 1215 | `0c90cf6b74f59e94` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/components/system-setting.tsx` | 159 | 4271 | `99f130ef3e4ea599` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/components/un-add-model.tsx` | 216 | 7068 | `1039c7c97f5c2ce6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/components/used-model.tsx` | 401 | 11934 | `0e02a87b529873a1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/setting-model/components/system-setting.tsx` | 159 | 4271 | `99f130ef3e4ea599` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs` | Rust `/user-setting/model` renders the exact LLM/Embedding/VLM/ASR/Rerank/TTS order, required/clear and tooltip contract, three-depth tree selectors, immediate canonical PATCH, pending guard, failure rollback and success GET refresh. Isolated Chrome selected all six, cleared Embedding, forced a Rerank network failure and reloaded persisted vision/asr values. Exact React/provider icon composition and broader user-setting shell remain pending (v0.3.3bn) |
+| `web/src/pages/user-setting/setting-model/components/un-add-model.tsx` | 216 | 7068 | `1039c7c97f5c2ce6` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs; src/providers.rs` | Available models has the fixed 63-provider canonical directory/ranking, substring Search, Search-relative chip counts, repeat-chip clear, exact capability/OCR counts, whole-card/keyboard/hover Add opening, and a stopPropagation external API-key link. Local list-model providers open the dynamic picker; the 10 ProviderConfigMap factories render their fixed dynamic credential fields and SoMark/Bedrock open their dedicated modals; exact React decoration remains partial (v0.3.3br) |
+| `web/src/pages/user-setting/setting-model/components/used-model.tsx` | 401 | 11934 | `0e02a87b529873a1` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs; src/model_meta.rs` | Rust Added models groups provider→instance, lazily GETs model rows on View/Hide, shows type chips plus hover Pencil and active switch, edits only the complete model-type set, PATCHes active/inactive with default cleanup, and deletes instances only after confirmation through the fixed display-name URLs. The compact Rust model record is the authoritative override set layered over the fixed factory catalog rather than separate upstream ACTIVE/INACTIVE/UNSUPPORTED rows; provider-specific editing fields remain pending (v0.3.3bk) |
 | `web/src/pages/user-setting/setting-model/constant.ts` | 39 | 677 | `1e2141911a0533a2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/hooks.tsx` | 290 | 8441 | `458aa310a890a4a9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/index.less` | 53 | 1095 | `a415b02735312239` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/index.tsx` | 409 | 14710 | `e5254dc4c3159f16` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/langfuse/index.tsx` | 65 | 2132 | `bf3dbd67115b8b42` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/langfuse/langfuse-configuration-dialog.tsx` | 71 | 2294 | `30bc06dee53132b0` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/langfuse/langfuse-configuration-form.tsx` | 126 | 3146 | `4a1e57a3453bd161` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/langfuse/use-save-langfuse-configuration.tsx` | 33 | 1072 | `f2e1c66c057b355f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/bedrock-modal/index.tsx` | 379 | 12212 | `e2a405bfaf1e88bd` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/components/add-custom-model-dialog.tsx` | 246 | 7819 | `654f246cadb6b58a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/components/addable-toggle-list.tsx` | 162 | 5065 | `86a0773fa83f3eb2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/components/use-custom-model-fields.tsx` | 74 | 2108 | `a76353940751c053` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/setting-model/index.tsx` | 409 | 14710 | `e5254dc4c3159f16` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs; src/providers.rs` | Rust serves the fixed `/user-setting/model` route with Set default models, Added models and the fixed 63-card Available composition, exact tenant routes, canonical Search/filter/card actions and tenant instance modal. The Langfuse card, Bedrock/SoMark dedicated modals and the 10 ProviderConfigMap dynamic credential field sets are implemented and CDP-verified; exact React layout and the latent viewMode edit-instance path remain pending (v0.3.3br) |
+| `web/src/pages/user-setting/setting-model/langfuse/index.tsx` | 65 | 2132 | `bf3dbd67115b8b42` | partial | `src/web.rs; src/web_css.txt; src/api/langfuse.rs` | Rust renders the Langfuse card on /user-setting/api: title, description, View (hidden until configured) and Configuration actions; View builds the project URL from the stored host + cached project_id, preferring the self-hosted host over hardcoded cloud.langfuse.com for mainland deployments. Exact React/Radix composition remains partial (v0.3.3bq) |
+| `web/src/pages/user-setting/setting-model/langfuse/langfuse-configuration-dialog.tsx` | 71 | 2294 | `30bc06dee53132b0` | partial | `src/web.rs; src/web_css.txt; src/api/langfuse.rs` | Rust dialog titled Configuration Langfuse carries the Secret key / Public key / Host form, the View Langfuse's documentation link, the confirm-then-delete flow and Save; saved credentials prefill on reopen and Delete only appears for an existing entry. Exact React/Radix composition remains partial (v0.3.3bq) |
+| `web/src/pages/user-setting/setting-model/langfuse/langfuse-configuration-form.tsx` | 126 | 3146 | `4a1e57a3453bd161` | partial | `src/web.rs; src/api/langfuse.rs` | Rust form keeps the fixed secret_key/public_key inline validation messages, the host placeholder and password autocomplete-off semantics, and submits the exact {secret_key,public_key,host} wire body; host emptiness is enforced server-side like the upstream backend rather than by the zod min(0) no-op. Exact React/Radix composition remains partial (v0.3.3bq) |
+| `web/src/pages/user-setting/setting-model/langfuse/use-save-langfuse-configuration.tsx` | 33 | 1072 | `f2e1c66c057b355f` | partial | `src/web.rs; src/api/langfuse.rs` | Rust save hook equivalent: POST success closes the dialog and refreshes the card, failure keeps the dialog open with the server message; loading disables Save. Exact React mutation-cache semantics remain partial (v0.3.3bq) |
+| `web/src/pages/user-setting/setting-model/modal/bedrock-modal/index.tsx` | 379 | 12212 | `e2a405bfaf1e88bd` | partial | `src/web.rs; src/web_css.txt; src/api/tenant_models.rs` | Rust routes the fixed Bedrock Available card to a dedicated modal: instance name, chat/embedding model types, model name, Access Key/IAM Role/Assume Role segmented auth, AK/SK, Role ARN, assume-role tip, searchable 37-region picker and max_tokens; auth fields hide when the instance name already exists. Isolated Chrome clicked all three auth modes, verified and saved the Bedrock key object {auth_mode,bedrock_ak,bedrock_sk,bedrock_region}, which persists as JSON on the tenant instance. Exact React/Radix composition and live AWS verification remain partial (v0.3.3bp) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/components/add-custom-model-dialog.tsx` | 246 | 7819 | `654f246cadb6b58a` | partial | `src/web.rs; src/web_css.txt; src/api/tenant_models.rs` | Nested Rust dialog implements Model name, multi-type selection, non-negative Max tokens, Tool call, Cancel/Confirm/Close, duplicate/name/type validation and script-safe custom model insertion. Its fieldset styling is not a literal Radix form and provider-specific feature controls remain pending (v0.3.3bm) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/components/addable-toggle-list.tsx` | 162 | 5065 | `86a0773fa83f3eb2` | partial | `src/web.rs; src/web_css.txt` | Rust picker renders All models plus checkbox rows, capability chips, selected state and search filtering with real click coverage. Keyboard/focus details and exact virtualized React composition remain partial (v0.3.3bm) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/components/use-custom-model-fields.tsx` | 74 | 2108 | `a76353940751c053` | partial | `src/web.rs; src/api/tenant_models.rs` | Rust custom-model fields carry name, model_types, max_tokens and extra.is_tools from browser payload through tenant persistence and public features. Provider-specific feature schemas remain pending (v0.3.3bm) |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/constants.ts` | 51 | 1591 | `bd77e064527b7ea3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/generic-api-key-config.ts` | 82 | 2411 | `38c947ef9d053751` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/get-provider-config.ts` | 28 | 995 | `027e1619d424350e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/index.ts` | 5 | 268 | `1ef256145a49b3c3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/local-llm-configs.ts` | 274 | 7229 | `8fd8967fd9246054` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/provider-config-map.ts` | 906 | 28156 | `629ada01de820fe3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/local-llm-configs.ts` | 274 | 7229 | `8fd8967fd9246054` | partial | `src/web.rs; src/providers.rs; src/api/features.rs; src/api/tenant_models.rs` | Rust recognizes the fixed local-provider names, optional API-key set and 10 list-model providers, exposes required Instance name/Base url plus Vision, and discovers models without first persisting a global secret. Exact per-provider default/max-token/placeholder combinations are not all rendered and capability-specific inference verification remains pending (v0.3.3bm) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/provider-config-map.ts` | 906 | 28156 | `629ada01de820fe3` | partial | `src/web.rs; src/web_css.txt; src/api/tenant_models.rs` | Rust provider modal renders the fixed dynamic fields for Azure-OpenAI (api_version, vision), VolcEngine (ARK_API_KEY + endpoint-id model name), Google Cloud (project/region/service-account), Tencent Cloud (22-engine ASR select, sid/sk), XunFei Spark (password + tts app/secret/key), BaiduYiYan (ak/sk), Fish Audio (ak/refid) and the OCR cfg builders for OpenDataLoader/PaddleOCR/MinerU (apiserver, algorithm, backend/server-url/delete-output); hideWhenInstanceExists and model-type conditional rendering are wired and CDP-verified. Exact React/DynamicForm composition and edit/view modes remain partial (v0.3.3br) |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/utils.ts` | 57 | 1760 | `4c19db0e6f5e586e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/index.ts` | 4 | 261 | `6ebbee5ee59a6521` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-list-models-options.tsx` | 108 | 3213 | `abf52103d2b37536` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-list-models-picker.ts` | 339 | 11992 | `934cc9d054f63e42` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-provider-fields.tsx` | 312 | 11333 | `624d230b7fccbd47` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-provider-modal-actions.ts` | 192 | 6222 | `523fbdf3984f5f0e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/provider-modal/index.tsx` | 318 | 10415 | `78af33a25747cc75` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-list-models-options.tsx` | 108 | 3213 | `abf52103d2b37536` | partial | `src/web.rs; src/api/features.rs; src/api/tenant_models.rs` | Signed-in discovery GET forwards ephemeral Base url/API key to the provider model endpoint and normalizes name/types/max_tokens/features for the picker without catalog persistence. Exact upstream option grouping and provider error presentation remain partial (v0.3.3bm) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-list-models-picker.ts` | 339 | 11992 | `934cc9d054f63e42` | partial | `src/web.rs; src/api/features.rs; src/api/tenant_models.rs; src/server.rs` | Rust implements lazy List models expansion, All models, multi-selection, search for larger catalogs, custom selected models and model_info payload construction. Browser/API tests cover discovery-before-create and runtime resolution; upstream per-capability verification and edit mode remain pending (v0.3.3bm) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-provider-fields.tsx` | 312 | 11333 | `624d230b7fccbd47` | partial | `src/web.rs; src/web_css.txt` | Rust renders the per-provider field set with hideWhenInstanceExists / modelTypeIncludesChat / modelTypeIncludesTtsAndNotExists predicates, per-field inline errors, and the conditional MinerU server_url; the generic inputSelect baseUrlRegionMaps derivation remains partial (v0.3.3br) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-provider-modal-actions.ts` | 192 | 6222 | `523fbdf3984f5f0e` | partial | `src/web.rs; src/api/tenant_models.rs` | Rust assembles the fixed verify/submit payloads: api_key object merges (the apikey_json equivalents) for Azure/Google/Tencent/XunFei/Baidu/Fish plus OCR cfg objects, scalar ARK key for VolcEngine, and model_info built from form values; region derivation from inputSelect base-url maps remains partial (v0.3.3br) |
+| `web/src/pages/user-setting/setting-model/modal/provider-modal/index.tsx` | 318 | 10415 | `78af33a25747cc75` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs; src/model_meta.rs` | Rust provider dialog implements Instance name/API-Key/Base url, MiniMax Group ID, local Vision/List models/custom models, Verify/Cancel/Ok, tenant persistence, dynamic factory materialization, duplicate-name suffixing and secret redaction. Region persistence, editing existing instances, SoMark/Bedrock dialogs and upstream capability-specific inference probes remain pending (v0.3.3bm) |
 | `web/src/pages/user-setting/setting-model/modal/provider-modal/types.ts` | 188 | 6894 | `32095a238f03c1e1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/modal/somark-modal/index.tsx` | 366 | 11829 | `871a8b49c9da0cef` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/setting-model/modal/somark-modal/index.tsx` | 366 | 11829 | `871a8b49c9da0cef` | partial | `src/web.rs; src/web_css.txt; src/api/tenant_models.rs` | Rust routes the fixed SoMark card to a dedicated modal: instance name, model name, Base URL, optional API key, four Element Format selects, seven Feature Config switches with the fixed table_image/image_understanding defaults, Verify/Add; the model_info extra carrying all 11 somark_* fields persists as ocr_config and round-trips through the instance models API. Exact React/Radix composition and live SoMark server verification remain partial (v0.3.3bp) |
 | `web/src/pages/user-setting/setting-model/modal/verify-button/index.tsx` | 146 | 4227 | `039bfba059cd73ea` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/payload-utils.ts` | 132 | 3311 | `f9df605776b690b3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-team/add-user-modal.tsx` | 80 | 2012 | `46caacf9c5e831d6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-team/hooks.ts` | 88 | 2326 | `81c7ed8e990ab795` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-team/index.tsx` | 106 | 3651 | `cd70b4d504e31dd8` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-team/tenant-table.tsx` | 167 | 5985 | `fa1d4b1dace4eacf` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-team/user-table.tsx` | 189 | 6928 | `fd04f9192f91cf4a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/sidebar/hooks.tsx` | 31 | 878 | `be490c8b8fa37ef3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/sidebar/index.tsx` | 144 | 4422 | `d9eb9b881a6005a9` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/user-setting/setting-team/add-user-modal.tsx` | 80 | 2012 | `46caacf9c5e831d6` | partial | `src/web.rs; src/api/system.rs` | Rust Add dialog renders the Email field, the registered-user tip and Cancel/Ok; inline email validation and the upstream User not found failure are CDP-verified (v0.3.3bu) |
+| `web/src/pages/user-setting/setting-team/hooks.ts` | 88 | 2326 | `81c7ed8e990ab795` | partial | `src/web.rs; src/api/system.rs` | Rust add/remove/agree/quit flows hit the fixed POST/DELETE /tenants/{id}/users and PATCH /tenants/{id} endpoints; CDP-verified invite, remove, accept and quit (v0.3.3bu) |
+| `web/src/pages/user-setting/setting-team/index.tsx` | 106 | 3651 | `cd70b4d504e31dd8` | partial | `src/web.rs; src/web_css.txt; src/api/system.rs` | Rust Team page renders {nickname} workspace, Team members and Joined teams cards with Search + Invite member; CDP-verified owner/invite/member flows (v0.3.3bu) |
+| `web/src/pages/user-setting/setting-team/tenant-table.tsx` | 167 | 5985 | `fa1d4b1dace4eacf` | partial | `src/web.rs; src/api/system.rs` | Rust Joined teams table covers the search, Accept/Decline and Quit rows and is CDP-verified; exact React table composition remains partial (v0.3.3bu) |
+| `web/src/pages/user-setting/setting-team/user-table.tsx` | 189 | 6928 | `fd04f9192f91cf4a` | partial | `src/web.rs; src/api/system.rs` | Rust member table renders Name/Date/Email/State/Action with the date sort toggle and owner-row no-delete rule; CDP-verified (v0.3.3bu) |
+| `web/src/pages/user-setting/sidebar/hooks.tsx` | 31 | 878 | `be490c8b8fa37ef3` | partial | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) |
+| `web/src/pages/user-setting/sidebar/index.tsx` | 144 | 4422 | `d9eb9b881a6005a9` | partial | `src/web.rs; src/web_css.txt; src/server.rs` | Rust renders the seven fixed items in source order, the model-provider test id, account avatar/email, version, theme and logout controls, with 303/64 px responsive behavior and real Chrome clicks. Exact icon artwork, the legacy RayRAG Header dropdown and server-side token revocation still differ (v0.3.3bo) |
 | `web/src/pages/user-setting/utils.ts` | 4 | 158 | `00094f8d72e4c58b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/routes.tsx` | 434 | 12685 | `974d9ddd8fcd4bee` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/routes.tsx` | 434 | 12685 | `974d9ddd8fcd4bee` | partial | `src/server.rs; src/web.rs` | Rust registers the `/user-setting` root redirect, all seven fixed sidebar routes and the data-source detail route /user-setting/data-source/{id}, all browser-verified. The broader fixed application route graph remains partial (v0.3.3bz) |
 | `web/src/services/admin-service.ts` | 320 | 9743 | `7db75f4230c11754` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/services/admin.service.d.ts` | 221 | 4833 | `8ec45f8efda650d4` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/services/agent-service.ts` | 227 | 5788 | `78fbfd82b3390219` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |

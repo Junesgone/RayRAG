@@ -1,4 +1,3 @@
-
 //! RayRAG Web UI — Rust SSR, mirrors RAGFlow's complete UI flow.
 //! Every button, every page, every interaction matches RAGFlow's design.
 
@@ -64,6 +63,7 @@ fn t(k: &str, zh: bool) -> &str {
         "Memories" => "记忆",
         "Files" => "文件",
         "Settings" => "设置",
+        "Model providers" => "模型提供商",
         "Set default models" => "设置默认模型",
         "Please complete these settings before beginning" => "开始前请完成这些设置",
         "Admin" => "管理",
@@ -213,6 +213,16 @@ fn json_script_string(value: &str) -> String {
         .replace('\u{2029}', "\\u2029")
 }
 
+fn json_script_value(value: &serde_json::Value) -> String {
+    serde_json::to_string(value)
+        .expect("JSON value serializes")
+        .replace('&', "\\u0026")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 const CSS: &str = include_str!("./web_css.txt");
 
 fn layout(title: &str, body: &str, zh: bool) -> String {
@@ -224,7 +234,7 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     let mm = t("Memories", zh);
     let fl = t("Files", zh);
     let sk = t("Skills", zh);
-    let pr = t("Providers", zh);
+    let pr = t("Model providers", zh);
     let st = t("Settings", zh);
     let ad = t("Admin", zh);
     let sc = t("Status", zh);
@@ -242,7 +252,7 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
 .tip:hover::after{content:attr(data-tip);position:absolute;left:22px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
 .lang-chip{border:1px solid var(--bd);border-radius:14px;padding:2px 10px;font-size:12px;background:transparent;color:var(--t);cursor:pointer}
 .lang-chip.on{background:var(--p);color:#fff;border-color:var(--p)}
-\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style></head><body>");
+\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style><script>(function(){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})()</script></head><body>");
     h.push_str("<header class='hdr'><a href='/dashboard' class='logo'><svg width='28' height='28'><circle cx='14' cy='14' r='12' fill='#4f46e5'/><text x='14' y='19' text-anchor='middle' fill='#fff' font-size='13' font-weight='700'>R</text></svg>RayRAG</a>");
     h.push_str("<nav class='np'><a href='/dashboard'>");
     h.push_str(db);
@@ -262,13 +272,13 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str(fl);
     h.push_str("</a><a href='/skills'>");
     h.push_str(&sk);
-    h.push_str("</a><a href='/providers'>");
+    h.push_str("</a><a href='/user-setting/model'>");
     h.push_str(&pr);
     h.push_str("</a></nav>");
     h.push_str("<div class='hr'><button onclick='toggleTheme()' title='Theme'>🌓</button><button onclick='toggleLang()' title='Language'>");
     h.push_str(lb);
     h.push_str(
-        "</button><div class='dd'><div class='av'>A</div><div class='dm'><a href='/settings'>⚙️ ",
+        "</button><div class='dd'><a class='av' href='/user-setting' data-testid='settings-entrypoint'>A</a><div class='dm'><a href='/settings'>⚙️ ",
     );
     h.push_str(st);
     h.push_str("</a><a href='/admin'>🔧 ");
@@ -281,8 +291,189 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str("<div class='ct'>");
     h.push_str(body);
     h.push_str("</div>");
-    h.push_str("<script>(function(){if(localStorage.getItem('theme')==='light')document.body.classList.add('light');var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})();function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark')};function toggleLang(){var n=document.cookie.indexOf('lang=zh-CN')>=0?'en':'zh-CN';document.cookie='lang='+n+';path=/;max-age=31536000';location.reload()}</script></body></html>");
+    h.push_str("<script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark')};function toggleLang(){var n=document.cookie.indexOf('lang=zh-CN')>=0?'en':'zh-CN';document.cookie='lang='+n+';path=/;max-age=31536000';location.reload()}</script></body></html>");
     h
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UserSettingSection {
+    DataSource,
+    ChatChannel,
+    Model,
+    Mcp,
+    Team,
+    Profile,
+    Api,
+}
+
+impl UserSettingSection {
+    fn key(self) -> &'static str {
+        match self {
+            Self::DataSource => "/data-source",
+            Self::ChatChannel => "/chat-channel",
+            Self::Model => "/model",
+            Self::Mcp => "/mcp",
+            Self::Team => "/team",
+            Self::Profile => "/profile",
+            Self::Api => "/api",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::DataSource => "▰",
+            Self::ChatChannel => "◇",
+            Self::Model => "⬡",
+            Self::Mcp => "M",
+            Self::Team => "♟",
+            Self::Profile => "●",
+            Self::Api => "⌁",
+        }
+    }
+
+    fn label(self, zh: bool) -> &'static str {
+        match (self, zh) {
+            (Self::DataSource, true) => "数据源",
+            (Self::ChatChannel, true) => "聊天渠道",
+            (Self::Model, true) => "模型提供商",
+            (Self::Mcp, true) => "MCP",
+            (Self::Team, true) => "团队",
+            (Self::Profile, true) => "个人资料",
+            (Self::Api, true) => "API",
+            (Self::DataSource, false) => "Data sources",
+            (Self::ChatChannel, false) => "Chat channels",
+            (Self::Model, false) => "Model providers",
+            (Self::Mcp, false) => "MCP",
+            (Self::Team, false) => "Team",
+            (Self::Profile, false) => "Profile",
+            (Self::Api, false) => "API",
+        }
+    }
+}
+
+const USER_SETTING_SECTIONS: [UserSettingSection; 7] = [
+    UserSettingSection::DataSource,
+    UserSettingSection::ChatChannel,
+    UserSettingSection::Model,
+    UserSettingSection::Mcp,
+    UserSettingSection::Team,
+    UserSettingSection::Profile,
+    UserSettingSection::Api,
+];
+
+/// RAGFlow's `/user-setting` subtree keeps the global header and renders one
+/// responsive 64/303 px settings sidebar around every child route. User data
+/// is filled through the authenticated self API so the HTML never interpolates
+/// account-controlled strings.
+fn user_setting_layout(title: &str, body: &str, active: UserSettingSection, zh: bool) -> String {
+    let theme_label = if zh { "主题" } else { "Theme" };
+    let logout_label = if zh { "退出登录" } else { "Log out" };
+    let mut nav = String::new();
+    for section in USER_SETTING_SECTIONS {
+        let label = section.label(zh);
+        let is_active = section == active;
+        nav.push_str("<a class='user-setting-nav-item");
+        if is_active {
+            nav.push_str(" active");
+        }
+        nav.push_str("' href='/user-setting");
+        nav.push_str(section.key());
+        nav.push_str("' data-setting-key='");
+        nav.push_str(section.key());
+        nav.push_str("' aria-label='");
+        nav.push_str(label);
+        nav.push('\'');
+        if is_active {
+            nav.push_str(" aria-current='page'");
+        }
+        if section == UserSettingSection::Model {
+            nav.push_str(" data-testid='settings-nav-model-providers'");
+        }
+        nav.push_str("><span class='user-setting-nav-icon' aria-hidden='true'>");
+        nav.push_str(section.icon());
+        nav.push_str("</span><span class='user-setting-nav-label'>");
+        nav.push_str(label);
+        nav.push_str("</span></a>");
+    }
+
+    let shell = format!(
+        r#"<div class='user-setting-layout' data-testid='user-setting-layout'><aside class='user-setting-sidebar' aria-label='User settings'><div class='user-setting-account'><span class='user-setting-avatar' id='userSettingAvatar' aria-hidden='true'>U</span><span class='user-setting-email' id='userSettingEmail'>...</span></div><nav class='user-setting-nav'>{nav}</nav><footer class='user-setting-footer'><span class='user-setting-version'>v{version}</span><button type='button' class='user-setting-footer-button user-setting-theme' aria-label='{theme_label}' onclick='toggleTheme()'><span aria-hidden='true'>◐</span><span class='user-setting-footer-label'>{theme_label}</span></button><button type='button' class='user-setting-footer-button user-setting-logout' aria-label='{logout_label}' onclick='logoutUser()'><span aria-hidden='true'>↪</span><span class='user-setting-footer-label'>{logout_label}</span></button></footer></aside><main class='user-setting-content' data-setting-page='{active_key}'>{body}</main></div><script>function logoutUser(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/login'}}function settingUnauthorized(){{logoutUser()}}function loadSettingUser(){{fetch('/api/v1/user/info').then(function(response){{return response.json()}}).then(function(result){{if(result.code===401){{settingUnauthorized();return}}var user=result.data||{{}};var name=(user.nickname||user.email||'U').trim();document.getElementById('userSettingAvatar').textContent=name.charAt(0).toUpperCase()||'U';document.getElementById('userSettingEmail').textContent=user.email||user.nickname||''}}).catch(function(){{}})}}loadSettingUser()</script>"#,
+        version = env!("CARGO_PKG_VERSION"),
+        active_key = active.key(),
+    );
+    layout(title, &shell, zh)
+}
+
+pub async fn user_setting_index() -> Redirect {
+    Redirect::temporary("/user-setting/data-source")
+}
+
+pub async fn user_setting_profile_page(
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let body = r#"<h1>Profile</h1><div class='card' data-testid='profile-card'><div class='profile-rows'><div class='profile-row'><label>Username</label><div class='profile-value'><span id='profileNickname'>...</span><button class='btn btn-o btn-sm' type='button' onclick='openProfileEdit("name")'>Edit</button></div></div><div class='profile-row'><label>Avatar</label><div class='profile-value'><img id='profileAvatar' class='profile-avatar' alt='Avatar' hidden><span id='profileAvatarFallback' class='profile-avatar profile-avatar-letter'>A</span><input id='profileAvatarFile' type='file' accept='image/*' hidden onchange='uploadAvatar()'><button class='btn btn-o btn-sm' type='button' onclick='document.getElementById("profileAvatarFile").click()'>Upload</button></div></div><div class='profile-row'><label>Time Zone</label><div class='profile-value'><span id='profileTimezone'>...</span><button class='btn btn-o btn-sm' type='button' onclick='openProfileEdit("timezone")'>Edit</button></div></div><div class='profile-row'><label>Email</label><div class='profile-value'><span id='profileEmail'>...</span><span class='user-setting-description' style='margin:0'>The email is your login account and cannot be changed here.</span></div></div><div class='profile-row'><label>Password</label><div class='profile-value'><span>********</span><button class='btn btn-o btn-sm' type='button' onclick='openProfileEdit("password")'>Edit</button></div></div></div></div><div class='modal-overlay' id='profileEditDialog' data-testid='profile-edit-dialog' onclick='if(event.target===this)closeProfileEdit()'><div class='modal' style='max-width:440px' role='dialog' aria-modal='true' aria-labelledby='profileEditTitle'><h2 id='profileEditTitle'>Edit Name</h2><div id='profileNameFields'><label class='provider-instance-field'>Username<input id='profileEditName' placeholder='Username' autocomplete='off'><p id='profileEditNameError' class='provider-instance-error'></p></label></div><div id='profileTimezoneFields' hidden><label class='provider-instance-field'>Time Zone<select id='profileEditTimezone'></select><p id='profileEditTimezoneError' class='provider-instance-error'></p></label></div><div id='profilePasswordFields' hidden><label class='provider-instance-field'>Current Password<input id='profileCurPw' type='password' autocomplete='current-password'><p id='profileCurPwError' class='provider-instance-error'></p></label><label class='provider-instance-field'>New Password<input id='profileNewPw' type='password' placeholder='At least 8 characters' autocomplete='new-password'><p id='profileNewPwError' class='provider-instance-error'></p></label><label class='provider-instance-field'>Confirm Password<input id='profileConfirmPw' type='password' autocomplete='new-password'><p id='profileConfirmPwError' class='provider-instance-error'></p></label></div><p id='profileEditStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeProfileEdit()'>Cancel</button><button class='btn btn-p' id='profileEditSave' type='button' onclick='saveProfileEdit()'>Save</button></div></div></div><script>var PROFILE_TIMEZONES=['Asia/Shanghai','Asia/Hong_Kong','Asia/Taipei','Asia/Tokyo','Asia/Seoul','Asia/Singapore','Asia/Kolkata','Asia/Dubai','Europe/London','Europe/Paris','Europe/Berlin','Europe/Moscow','UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','Pacific/Auckland'];var profileEditType='name';function profileApi(url,options){return fetch(url,options).then(function(response){return response.json()})}async function loadProfile(){var data=await profileApi('/api/v1/user/info');var user=data.data||{};document.getElementById('profileNickname').textContent=user.nickname||'';document.getElementById('profileEmail').textContent=user.email||'';document.getElementById('profileTimezone').textContent=user.timezone||'Asia/Shanghai';if(user.avatar){document.getElementById('profileAvatar').src=user.avatar;document.getElementById('profileAvatar').hidden=false;document.getElementById('profileAvatarFallback').hidden=true}else{document.getElementById('profileAvatar').hidden=true;document.getElementById('profileAvatarFallback').hidden=false;document.getElementById('profileAvatarFallback').textContent=(user.nickname||'A').charAt(0).toUpperCase()}}function openProfileEdit(type){profileEditType=type;var titles={name:'Edit Name',timezone:'Edit Time Zone',password:'Edit Password'};document.getElementById('profileEditTitle').textContent=titles[type]||'Edit';document.getElementById('profileNameFields').hidden=type!=='name';document.getElementById('profileTimezoneFields').hidden=type!=='timezone';document.getElementById('profilePasswordFields').hidden=type!=='password';['profileEditNameError','profileEditTimezoneError','profileCurPwError','profileNewPwError','profileConfirmPwError'].forEach(function(id){document.getElementById(id).textContent=''});document.getElementById('profileEditStatus').textContent='';if(type==='name'){document.getElementById('profileEditName').value=document.getElementById('profileNickname').textContent}if(type==='timezone'){var select=document.getElementById('profileEditTimezone');select.replaceChildren();PROFILE_TIMEZONES.forEach(function(tz){var option=document.createElement('option');option.value=tz;option.textContent=tz;select.appendChild(option)});select.value=document.getElementById('profileTimezone').textContent||'Asia/Shanghai'}if(type==='password'){['profileCurPw','profileNewPw','profileConfirmPw'].forEach(function(id){document.getElementById(id).value=''})}document.getElementById('profileEditDialog').classList.add('show')}function closeProfileEdit(){document.getElementById('profileEditDialog').classList.remove('show')}async function saveProfileEdit(){var status=document.getElementById('profileEditStatus');var payload={};if(profileEditType==='name'){var name=document.getElementById('profileEditName').value.trim();if(!name){document.getElementById('profileEditNameError').textContent='Username is required';return}if(name.length>100){document.getElementById('profileEditNameError').textContent='Username must be at most 100 characters';return}payload={nickname:name}}else if(profileEditType==='timezone'){payload={timezone:document.getElementById('profileEditTimezone').value}}else{var current=document.getElementById('profileCurPw').value;var next=document.getElementById('profileNewPw').value;var confirm=document.getElementById('profileConfirmPw').value;var valid=true;if(!current){document.getElementById('profileCurPwError').textContent='Please input the current password';valid=false}if(next.length<8){document.getElementById('profileNewPwError').textContent='The new password must be at least 8 characters';valid=false}if(next!==confirm){document.getElementById('profileConfirmPwError').textContent='The two passwords do not match';valid=false}if(!valid)return;payload={password:current,new_password:next}}var button=document.getElementById('profileEditSave');button.disabled=true;status.textContent='Saving…';try{var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));if(profileEditType==='password'){localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=; path=/; max-age=0';location.href='/login';return}closeProfileEdit();loadProfile()}catch(error){status.textContent=error.message}finally{button.disabled=false}}async function uploadAvatar(){var file=document.getElementById('profileAvatarFile').files[0];if(!file)return;if(!file.type.startsWith('image/')){alert('Please select an image file');return}var dataUrl=await new Promise(function(resolve,reject){var reader=new FileReader();reader.onload=function(){resolve(reader.result)};reader.onerror=function(){reject(reader.error)};reader.readAsDataURL(file)});var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar:dataUrl})});if(data.code===0)loadProfile();else alert('Error: '+(data.message||'unknown'))}loadProfile()</script>"#;
+    Html(user_setting_layout(
+        if zh { "个人资料" } else { "Profile" },
+        body,
+        UserSettingSection::Profile,
+        zh,
+    ))
+}
+
+pub async fn user_setting_team_page(
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let title = if zh { "团队" } else { "Team" };
+    let body = r#"<h1>Team</h1><div class='card' data-testid='team-members-card'><div class='user-setting-card-head'><div><h2>Team members</h2><span id='teamWorkspaceTitle' class='team-workspace-label'>Workspace</span></div><div class='user-setting-actions'><input id='memberSearch' type='search' placeholder='Search' aria-label='Search team members' oninput='renderMemberTable()'><button class='btn btn-p btn-sm' type='button' onclick='openTeamInvite()'>Invite member</button></div></div><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Name</th><th><button class='team-sort' type='button' id='teamSort' onclick='toggleMemberSort()'>Date <span id='teamSortIcon'>↕</span></button></th><th>Email</th><th>State</th><th>Action</th></tr></thead><tbody id='memberRows'></tbody></table></div></div><div class='card' data-testid='joined-teams-card'><div class='user-setting-card-head'><h2>Joined teams</h2><div class='user-setting-actions'><input id='teamSearch' type='search' placeholder='Search' aria-label='Search joined teams' oninput='renderTeamTable()'></div></div><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Name</th><th>State</th><th>Action</th></tr></thead><tbody id='teamRows'></tbody></table></div></div><div class='modal-overlay' id='teamInviteDialog' data-testid='team-invite-dialog' onclick='if(event.target===this)closeTeamInvite()'><div class='modal' style='max-width:440px' role='dialog' aria-modal='true' aria-labelledby='teamInviteTitle'><h2 id='teamInviteTitle'>Add</h2><label class='provider-instance-field'>Email<input id='inviteEmail' type='email' autocomplete='email' placeholder='Email'><p id='inviteEmailError' class='provider-instance-error'></p></label><p class='user-setting-description'>Only registered users can be invited. Please register the account before sending an invitation.</p><p id='inviteStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeTeamInvite()'>Cancel</button><button class='btn btn-p' id='inviteOk' type='button' onclick='submitTeamInvite()'>Ok</button></div></div></div><div class='modal-overlay' id='teamConfirmDialog' data-testid='team-confirm-dialog' onclick='if(event.target===this)closeTeamConfirm()'><div class='modal' style='max-width:440px' role='alertdialog' aria-modal='true' aria-labelledby='teamConfirmTitle'><h2 id='teamConfirmTitle'>Confirm</h2><p id='teamConfirmText' class='user-setting-description'></p><p id='teamConfirmStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeTeamConfirm()'>Cancel</button><button class='btn btn-d' id='teamConfirmOk' type='button' onclick='runTeamConfirm()'>Delete</button></div></div></div><script>var teamState={members:[],teams:[],memberSort:null,memberFilter:'',teamFilter:'',selfId:null,confirmAction:null};function teamApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function formatTeamDate(ms){if(!ms)return '';var date=new Date(ms);var pad=function(value){return String(value).padStart(2,'0')};return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes())}function teamRoleBadge(role){var label={owner:'Owner',admin:'Admin',normal:'Member',invite:'Invited'}[role]||role;return "<span class='badge team-role-"+role+"'>"+label+"</span>"}async function loadTeam(){var info=await teamApi('/api/v1/user/info');var me=(info.data&&info.data.id)||null;teamState.selfId=me;var workspace=(info.data&&info.data.nickname)||'';document.getElementById('teamWorkspaceTitle').textContent=workspace+' workspace';if(me){var members=await teamApi('/api/v1/tenants/'+encodeURIComponent(me)+'/users');teamState.members=members.data||[]}var teams=await teamApi('/api/v1/tenants');teamState.teams=teams.data||[];renderMemberTable();renderTeamTable()}function sortedMembers(){var rows=teamState.members.filter(function(row){var query=teamState.memberFilter.toLowerCase();return !query||(row.nickname||'').toLowerCase().indexOf(query)>=0||(row.email||'').toLowerCase().indexOf(query)>=0});if(teamState.memberSort){rows=rows.slice().sort(function(left,right){var diff=(left.update_date||0)-(right.update_date||0);return teamState.memberSort==='asc'?diff:-diff})}return rows}function renderMemberTable(){teamState.memberFilter=document.getElementById('memberSearch').value;var body=document.getElementById('memberRows');body.replaceChildren();sortedMembers().forEach(function(row){var tr=document.createElement('tr');tr.dataset.testid='team-member-row';var name=document.createElement('td');name.textContent=row.nickname||'';var date=document.createElement('td');date.textContent=formatTeamDate(row.update_date);var email=document.createElement('td');email.textContent=row.email||'';var role=document.createElement('td');role.innerHTML=teamRoleBadge(row.role);var action=document.createElement('td');if(row.role!=='owner'){var remove=document.createElement('button');remove.type='button';remove.className='btn btn-d btn-sm';remove.textContent='Delete';remove.onclick=function(){confirmRemoveMember(row)};action.appendChild(remove)}tr.append(name,date,email,role,action);body.appendChild(tr)});if(!sortedMembers().length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=5;td.className='team-empty';td.textContent='No members.';tr.appendChild(td);body.appendChild(tr)}}function toggleMemberSort(){teamState.memberSort=teamState.memberSort==='asc'?'desc':teamState.memberSort==='desc'?null:'asc';document.getElementById('teamSortIcon').textContent=teamState.memberSort==='asc'?'↑':teamState.memberSort==='desc'?'↓':'↕';renderMemberTable()}function sortedTeams(){var query=teamState.teamFilter.toLowerCase();return teamState.teams.filter(function(row){var name=row.tenant_id===teamState.selfId?(document.getElementById('teamWorkspaceTitle').textContent.split(' workspace')[0]):row.tenant_id;return !query||name.toLowerCase().indexOf(query)>=0})}function renderTeamTable(){teamState.teamFilter=document.getElementById('teamSearch').value;var body=document.getElementById('teamRows');body.replaceChildren();sortedTeams().forEach(function(row){var tr=document.createElement('tr');tr.dataset.testid='joined-team-row';var name=document.createElement('td');name.textContent=row.tenant_id===teamState.selfId?(document.getElementById('teamWorkspaceTitle').textContent.split(' workspace')[0]):row.tenant_id;var role=document.createElement('td');role.innerHTML=teamRoleBadge(row.role||'normal');var action=document.createElement('td');if(row.role==='invite'){var accept=document.createElement('button');accept.type='button';accept.className='btn btn-p btn-sm';accept.textContent='Accept';accept.onclick=function(){agreeTeam(row.tenant_id)};action.appendChild(accept);var decline=document.createElement('button');decline.type='button';decline.className='btn btn-o btn-sm';decline.textContent='Decline';decline.onclick=function(){declineTeam(row.tenant_id)};action.appendChild(decline)}else{var quit=document.createElement('button');quit.type='button';quit.className='btn btn-o btn-sm';quit.textContent='Quit';quit.onclick=function(){confirmQuitTeam(row.tenant_id)};action.appendChild(quit)}tr.append(name,role,action);body.appendChild(tr)});if(!sortedTeams().length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=3;td.className='team-empty';td.textContent='No joined teams.';tr.appendChild(td);body.appendChild(tr)}}function openTeamInvite(){document.getElementById('inviteEmail').value='';document.getElementById('inviteEmailError').textContent='';document.getElementById('inviteStatus').textContent='';document.getElementById('teamInviteDialog').classList.add('show')}function closeTeamInvite(){document.getElementById('teamInviteDialog').classList.remove('show')}async function submitTeamInvite(){var email=document.getElementById('inviteEmail').value.trim();var error=document.getElementById('inviteEmailError');if(!email){error.textContent='Please input email';return}if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){error.textContent='Please input a valid email';return}var button=document.getElementById('inviteOk');button.disabled=true;document.getElementById('inviteStatus').textContent='Sending…';try{var data=await teamApi('/api/v1/tenants/'+encodeURIComponent(teamState.selfId)+'/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeTeamInvite();loadTeam()}catch(caught){document.getElementById('inviteStatus').textContent=caught.message}finally{button.disabled=false}}function confirmRemoveMember(row){teamState.confirmAction=function(){return removeMember(row.user_id)};document.getElementById('teamConfirmText').textContent='Are you sure to remove this member?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}async function removeMember(userId){return teamApi('/api/v1/tenants/'+encodeURIComponent(teamState.selfId)+'/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:userId})})}async function agreeTeam(tenantId){var data=await teamApi('/api/v1/tenants/'+encodeURIComponent(tenantId),{method:'PATCH'});if(data.code===0)loadTeam();else alert('Error: '+(data.message||'unknown'))}function declineTeam(tenantId){teamState.confirmAction=function(){return quitTeam(tenantId)};document.getElementById('teamConfirmText').textContent='Are you sure you want to quit the team you joined?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}function confirmQuitTeam(tenantId){teamState.confirmAction=function(){return quitTeam(tenantId)};document.getElementById('teamConfirmText').textContent='Are you sure you want to quit the team you joined?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}async function quitTeam(tenantId){return teamApi('/api/v1/tenants/'+encodeURIComponent(tenantId)+'/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:teamState.selfId})})}function closeTeamConfirm(){document.getElementById('teamConfirmDialog').classList.remove('show')}async function runTeamConfirm(){var button=document.getElementById('teamConfirmOk');button.disabled=true;document.getElementById('teamConfirmStatus').textContent='Processing…';try{var data=await teamState.confirmAction();if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeTeamConfirm();loadTeam()}catch(error){document.getElementById('teamConfirmStatus').textContent=error.message}finally{button.disabled=false}}loadTeam()</script>"#;
+    Html(user_setting_layout(
+        title,
+        body,
+        UserSettingSection::Team,
+        zh,
+    ))
+}
+
+pub async fn user_setting_api_page(
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let body = r#"<h1>API</h1><div class='card'><h2>API KEY</h2><p class='user-setting-description'>Generate and manage personal API keys.</p><button type='button' class='btn btn-p' onclick='generateSettingKey()'>Generate</button><div id='settingApiKeyList' class='user-setting-table-wrap' aria-live='polite'>Loading...</div></div><div class='card' data-testid='langfuse-card'><div class='user-setting-card-head'><h2>Langfuse</h2><div class='user-setting-actions'><a id='langfuseView' class='btn btn-o btn-sm' target='_blank' rel='noopener noreferrer' hidden>View</a><button type='button' class='btn btn-p btn-sm' onclick='openLangfuseDialog()'>Configuration</button></div></div><p class='user-setting-description'>Traces, evals, prompt management and metrics to debug and improve your LLM application.</p></div><div class='modal-overlay' id='langfuseDialog' data-testid='langfuse-config-dialog' onclick='if(event.target===this)closeLangfuseDialog()'><div class='modal' style='max-width:520px' role='dialog' aria-modal='true' aria-labelledby='langfuseDialogTitle'><h2 id='langfuseDialogTitle'>Configuration Langfuse</h2><label class='provider-instance-field'>Secret key<input id='lfSecret' type='password' placeholder='Please enter the secret key' autocomplete='new-password'></label><p id='lfSecretError' class='provider-instance-error'></p><label class='provider-instance-field'>Public key<input id='lfPublic' type='password' placeholder='Please enter the public key' autocomplete='new-password'></label><p id='lfPublicError' class='provider-instance-error'></p><label class='provider-instance-field'>Host<input id='lfHost' placeholder='https://cloud.langfuse.com' autocomplete='off'></label><p id='lfHostError' class='provider-instance-error'></p><p id='lfStatus' class='provider-instance-status' aria-live='polite'></p><div class='langfuse-dialog-footer'><a class='langfuse-docs-link' href='https://langfuse.com/docs' target='_blank' rel='noopener noreferrer'>View Langfuse&#39;s documentation ↗</a><div class='provider-instance-actions'><button class='btn btn-d' id='lfDelete' type='button' onclick='confirmDeleteLangfuse()'>Delete</button><button class='btn btn-o' type='button' onclick='closeLangfuseDialog()'>Cancel</button><button class='btn btn-p' id='lfSave' type='button' onclick='saveLangfuse()'>Save</button></div></div></div></div><div class='modal-overlay' id='langfuseDeleteDialog' data-testid='langfuse-delete-dialog' onclick='if(event.target===this)closeLangfuseDeleteDialog()'><div class='modal' style='max-width:440px' role='alertdialog' aria-modal='true' aria-labelledby='langfuseDeleteTitle'><h2 id='langfuseDeleteTitle'>Delete Langfuse configuration</h2><p id='langfuseDeleteText' class='user-setting-description'>Are you sure you want to delete the Langfuse configuration?</p><p id='lfDeleteStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeLangfuseDeleteDialog()'>Cancel</button><button class='btn btn-d' id='lfDeleteOk' type='button' onclick='deleteLangfuse()'>Delete</button></div></div></div><script>function settingApiCall(url,options){return fetch(url,options).then(function(r){return r.json()})}function loadSettingKeys(){settingApiCall('/api/v1/system/api_keys').then(function(d){var list=document.getElementById('settingApiKeyList');list.replaceChildren();var keys=d.data||[];if(!keys.length){var empty=document.createElement('p');empty.className='user-setting-description';empty.textContent='No API keys yet.';list.appendChild(empty);return}var table=document.createElement('table');var head=document.createElement('thead');head.innerHTML='<tr><th>Key</th><th>Created</th><th></th></tr>';table.appendChild(head);var tbody=document.createElement('tbody');keys.forEach(function(k){var row=document.createElement('tr');var key=document.createElement('td');key.className='co';key.textContent=k.token;var created=document.createElement('td');created.textContent=k.create_date||'';var action=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-d btn-sm';button.textContent='Delete';button.addEventListener('click',function(){deleteSettingKey(k.token)});action.appendChild(button);row.append(key,created,action);tbody.appendChild(row)});table.appendChild(tbody);list.appendChild(table)})}function generateSettingKey(){settingApiCall('/api/v1/system/api_keys',{method:'POST'}).then(function(d){if(d.code===0)loadSettingKeys();else alert('Error: '+(d.message||'unknown'))})}function deleteSettingKey(key){if(!confirm('Delete this API key?'))return;settingApiCall('/api/v1/system/api_keys/'+encodeURIComponent(key),{method:'DELETE'}).then(function(d){if(d.code===0)loadSettingKeys();else alert('Error: '+(d.message||'unknown'))})}function langfuseStatus(text,error){var status=document.getElementById('lfStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}function langfuseViewUrl(config){var host=(config&&config.host||'').replace(/\/+$/,'');if(!host||host==='https://cloud.langfuse.com')return 'https://cloud.langfuse.com/project/'+(config&&config.project_id||'');return host+'/project/'+(config&&config.project_id||'')}function loadLangfuse(){settingApiCall('/api/v1/langfuse/api-key').then(function(d){var view=document.getElementById('langfuseView');var config=d.data;if(!config){view.hidden=true;view.removeAttribute('href');return}view.href=langfuseViewUrl(config);view.hidden=false}).catch(function(){document.getElementById('langfuseView').hidden=true})}function openLangfuseDialog(){['lfSecret','lfPublic','lfHost'].forEach(function(id){document.getElementById(id).value=''});['lfSecretError','lfPublicError','lfHostError'].forEach(function(id){document.getElementById(id).textContent=''});langfuseStatus('',false);document.getElementById('lfDelete').hidden=true;settingApiCall('/api/v1/langfuse/api-key').then(function(d){if(d.data){document.getElementById('lfSecret').value=d.data.secret_key||'';document.getElementById('lfPublic').value=d.data.public_key||'';document.getElementById('lfHost').value=d.data.host||'';document.getElementById('lfDelete').hidden=false}}).catch(function(){});document.getElementById('langfuseDialog').classList.add('show')}function closeLangfuseDialog(){document.getElementById('langfuseDialog').classList.remove('show')}function saveLangfuse(){['lfSecretError','lfPublicError','lfHostError'].forEach(function(id){document.getElementById(id).textContent=''});var valid=true;if(!document.getElementById('lfSecret').value.trim()){document.getElementById('lfSecretError').textContent='Please enter the secret key';valid=false}if(!document.getElementById('lfPublic').value.trim()){document.getElementById('lfPublicError').textContent='Please enter the public key';valid=false}if(!valid)return;var button=document.getElementById('lfSave');button.disabled=true;langfuseStatus('Saving…',false);settingApiCall('/api/v1/langfuse/api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret_key:document.getElementById('lfSecret').value,public_key:document.getElementById('lfPublic').value,host:document.getElementById('lfHost').value.trim()})}).then(function(d){if(d.code!==0)throw new Error(d.message||('HTTP '+d.code));closeLangfuseDialog();loadLangfuse()}).catch(function(error){langfuseStatus(error.message,true)}).finally(function(){button.disabled=false})}function confirmDeleteLangfuse(){closeLangfuseDialog();document.getElementById('lfDeleteStatus').textContent='';document.getElementById('langfuseDeleteDialog').classList.add('show')}function closeLangfuseDeleteDialog(){document.getElementById('langfuseDeleteDialog').classList.remove('show')}function deleteLangfuse(){var button=document.getElementById('lfDeleteOk');button.disabled=true;document.getElementById('lfDeleteStatus').textContent='Deleting…';settingApiCall('/api/v1/langfuse/api-key',{method:'DELETE'}).then(function(d){if(d.code!==0)throw new Error(d.message||('HTTP '+d.code));closeLangfuseDeleteDialog();loadLangfuse()}).catch(function(error){document.getElementById('lfDeleteStatus').textContent=error.message}).finally(function(){button.disabled=false})}loadSettingKeys();loadLangfuse()</script>"#;
+    Html(user_setting_layout(
+        "API",
+        body,
+        UserSettingSection::Api,
+        zh,
+    ))
+}
+
+pub async fn user_setting_mcp_page(
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let body = r#"<h1>MCP</h1><div class='card' data-testid='mcp-servers-card'><div class='user-setting-card-head'><div><h2>MCP servers</h2><p class='user-setting-description'>Customize the list of MCP servers</p></div><div class='user-setting-actions mcp-toolbar' role='toolbar'><input id='mcpSearch' type='search' placeholder='Search' aria-label='Search MCP servers' oninput='debounceMcpSearch()'><button class='btn btn-o btn-sm' id='mcpBulkToggle' type='button' onclick='toggleMcpBulk()'>Bulk manage</button><button class='btn btn-o btn-sm' type='button' onclick='openMcpImport()'>Import</button><button class='btn btn-p btn-sm' type='button' onclick='openMcpDialog()'>+ Add MCP</button></div></div><div id='mcpBulkBar' class='mcp-bulk-bar' hidden><label><input type='checkbox' id='mcpSelectAll' onchange='toggleMcpSelectAll()'> Select all</label><span id='mcpSelectedCount' class='user-setting-description' style='margin:0'>Selected 0</span><div class='user-setting-actions'><button class='btn btn-o btn-sm' type='button' onclick='exportMcpSelected()'>Export</button><button class='btn btn-d btn-sm' type='button' onclick='confirmDeleteMcpSelected()'>Delete</button></div></div><div id='mcpList' class='user-setting-card-grid mcp-grid' aria-live='polite'></div><div id='mcpEmpty' class='mcp-empty' hidden onclick='openMcpDialog()'><p class='user-setting-description'>No MCP servers available</p><button class='btn btn-o btn-sm' type='button'>+ Add Now</button></div></div><div class='modal-overlay' id='mcpDialog' data-testid='mcp-edit-dialog' onclick='if(event.target===this)closeMcpDialog()'><div class='modal' style='max-width:540px' role='dialog' aria-modal='true' aria-labelledby='mcpDialogTitle'><h2 id='mcpDialogTitle'>Add MCP</h2><label class='provider-instance-field'>Name<input id='mcpName' placeholder='My MCP server' autocomplete='off'><p id='mcpNameError' class='provider-instance-error'></p></label><label class='provider-instance-field'>URL<input id='mcpUrl' placeholder='https://api.example.com/v1/mcp' autocomplete='off'><p id='mcpUrlError' class='provider-instance-error'></p></label><label class='provider-instance-field'>Server type<select id='mcpServerType'><option value='sse'>SSE</option><option value='streamable-http'>Streamable HTTP</option></select><p id='mcpTypeError' class='provider-instance-error'></p></label><label class='provider-instance-field'>Authorization Token<input id='mcpToken' type='password' placeholder='e.g. eyJhbGciOiJIUzI1Ni...' autocomplete='new-password'></label><div class='mcp-tools-box'><div class='mcp-tools-head'><span id='mcpToolsCount'>0 tools available</span><button class='btn btn-o btn-sm' type='button' onclick='testMcpServer()'>Test</button></div><div id='mcpToolsList' class='mcp-tools-list'><p class='user-setting-description'>Test the connection to load tools.</p></div></div><p id='mcpStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeMcpDialog()'>Cancel</button><button class='btn btn-p' id='mcpSave' type='button' onclick='saveMcpServer()'>Save</button></div></div></div><div class='modal-overlay' id='mcpImportDialog' data-testid='mcp-import-dialog' onclick='if(event.target===this)closeMcpImport()'><div class='modal' style='max-width:480px' role='dialog' aria-modal='true' aria-labelledby='mcpImportTitle'><h2 id='mcpImportTitle'>Import</h2><label class='provider-instance-field'>Name<input id='mcpImportFile' type='file' accept='.json,application/json'><p id='mcpImportError' class='provider-instance-error'></p></label><div id='mcpImportResult' class='mcp-import-result'></div><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeMcpImport()'>Cancel</button><button class='btn btn-p' id='mcpImportSave' type='button' onclick='importMcpServers()'>Save</button></div></div></div><div class='modal-overlay' id='mcpDeleteDialog' data-testid='mcp-delete-dialog' onclick='if(event.target===this)closeMcpDelete()'><div class='modal' style='max-width:440px' role='alertdialog' aria-modal='true' aria-labelledby='mcpDeleteTitle'><h2 id='mcpDeleteTitle'>Delete MCP server</h2><p id='mcpDeleteText' class='user-setting-description'></p><p id='mcpDeleteStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeMcpDelete()'>Cancel</button><button class='btn btn-d' id='mcpDeleteOk' type='button' onclick='deleteMcpServer()'>Delete</button></div></div></div><script>var mcpState={servers:[],bulk:false,selected:new Set(),editingId:null,searchTimer:null,toolsTested:false};function mcpApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function debounceMcpSearch(){clearTimeout(mcpState.searchTimer);mcpState.searchTimer=setTimeout(loadMcpServers,180)}function toggleMcpBulk(){mcpState.bulk=!mcpState.bulk;mcpState.selected.clear();document.getElementById('mcpBulkToggle').textContent=mcpState.bulk?'Exit bulk manage':'Bulk manage';document.getElementById('mcpBulkBar').hidden=!mcpState.bulk;renderMcpServers()}function toggleMcpSelectAll(){var all=document.getElementById('mcpSelectAll').checked;mcpState.selected.clear();if(all)mcpState.servers.forEach(function(server){mcpState.selected.add(server.id)});renderMcpServers()}function formatMcpDate(ms){if(!ms)return '';var date=new Date(ms);var pad=function(value){return String(value).padStart(2,'0')};return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes())}function toolCount(server){var tools=server.variables&&server.variables.tools;if(tools&&typeof tools==='object')return Object.keys(tools).length;return 0}async function loadMcpServers(){var query=new URLSearchParams();if(document.getElementById('mcpSearch').value.trim())query.set('keywords',document.getElementById('mcpSearch').value.trim());var data=await mcpApi('/api/v1/mcp/servers'+(query.toString()?'?'+query.toString():''));mcpState.servers=(data.data&&data.data.mcp_servers)||[];renderMcpServers()}function renderMcpServers(){var list=document.getElementById('mcpList');list.replaceChildren();document.getElementById('mcpEmpty').hidden=!!mcpState.servers.length;document.getElementById('mcpSelectedCount').textContent='Selected '+mcpState.selected.size;mcpState.servers.forEach(function(server){list.appendChild(renderMcpCard(server))})}function renderMcpCard(server){var card=document.createElement('article');card.className='user-setting-catalog-card mcp-card';card.dataset.testid='mcp-server-card';card.dataset.id=server.id;var head=document.createElement('div');head.className='mcp-card-head';var name=document.createElement('h3');name.textContent=server.name;name.className='mcp-card-name';head.appendChild(name);var actions=document.createElement('div');actions.className='mcp-card-actions';if(mcpState.bulk){var box=document.createElement('input');box.type='checkbox';box.checked=mcpState.selected.has(server.id);box.setAttribute('aria-label','Select '+server.name);box.onchange=function(){if(box.checked)mcpState.selected.add(server.id);else mcpState.selected.delete(server.id);renderMcpServers()};actions.appendChild(box)}else{var exportButton=document.createElement('button');exportButton.type='button';exportButton.className='btn btn-o btn-sm';exportButton.textContent='Export';exportButton.setAttribute('aria-label','Export '+server.name);exportButton.onclick=function(){exportMcpServer(server.id)};actions.appendChild(exportButton);var editButton=document.createElement('button');editButton.type='button';editButton.className='btn btn-o btn-sm';editButton.textContent='Edit';editButton.onclick=function(){openMcpDialog(server.id)};actions.appendChild(editButton);var deleteButton=document.createElement('button');deleteButton.type='button';deleteButton.className='btn btn-d btn-sm';deleteButton.textContent='Delete';deleteButton.onclick=function(){confirmDeleteMcp(server)};actions.appendChild(deleteButton)}head.appendChild(actions);card.appendChild(head);var meta=document.createElement('div');meta.className='mcp-card-meta';meta.appendChild(document.createTextNode(toolCount(server)+' cached tools'));var date=document.createElement('p');date.textContent=formatMcpDate(server.update_date||server.update_time);meta.appendChild(date);card.appendChild(meta);return card}function openMcpDialog(id){mcpState.editingId=id||null;mcpState.toolsTested=false;['mcpNameError','mcpUrlError','mcpTypeError'].forEach(function(error){document.getElementById(error).textContent=''});document.getElementById('mcpStatus').textContent='';document.getElementById('mcpDialogTitle').textContent=id?'Edit MCP':'Add MCP';document.getElementById('mcpName').value='';document.getElementById('mcpUrl').value='';document.getElementById('mcpServerType').value='sse';document.getElementById('mcpToken').value='';document.getElementById('mcpToolsCount').textContent='0 tools available';document.getElementById('mcpToolsList').replaceChildren(document.createTextNode('Test the connection to load tools.'));document.getElementById('mcpDialog').classList.add('show');if(id){mcpApi('/api/v1/mcp/servers/'+encodeURIComponent(id)).then(function(response){var server=response.data;if(!server)return;document.getElementById('mcpName').value=server.name||'';document.getElementById('mcpUrl').value=server.url||'';document.getElementById('mcpServerType').value=server.server_type||'sse';var token=server.variables&&server.variables.authorization_token||'';document.getElementById('mcpToken').value=token;renderMcpTools(server.variables&&server.variables.tools)})}}function closeMcpDialog(){document.getElementById('mcpDialog').classList.remove('show')}function mcpToolObjects(tools){if(!tools||typeof tools!=='object')return [];return Object.keys(tools).map(function(name){var tool=tools[name]||{};return {name:name,description:tool.description||''}})}function renderMcpTools(tools){var list=document.getElementById('mcpToolsList');list.replaceChildren();var rows=mcpToolObjects(tools);document.getElementById('mcpToolsCount').textContent=rows.length+' tools available';if(!rows.length){var empty=document.createElement('p');empty.className='user-setting-description';empty.textContent='No tools available.';list.appendChild(empty);return}rows.forEach(function(tool){var item=document.createElement('div');item.className='mcp-tool-item';var name=document.createElement('div');name.textContent=tool.name;item.appendChild(name);var description=document.createElement('div');description.className='mcp-tool-desc';description.textContent=tool.description;item.appendChild(description);list.appendChild(item)})}async function testMcpServer(){var url=document.getElementById('mcpUrl').value.trim();var serverType=document.getElementById('mcpServerType').value;var token=document.getElementById('mcpToken').value;var status=document.getElementById('mcpStatus');if(!url){document.getElementById('mcpUrlError').textContent='Please input URL';return}status.textContent='Testing…';try{var data=await mcpApi('/api/v1/mcp/servers/'+(mcpState.editingId||'test')+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,server_type:serverType,variables:{authorization_token:token}})});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));mcpState.toolsTested=true;var tools={};(data.data||[]).forEach(function(tool){tools[tool.name]=tool});renderMcpTools(tools);status.textContent='Connection succeeded'}catch(error){status.textContent=error.message;document.getElementById('mcpToolsList').replaceChildren(document.createTextNode('Test the connection to load tools.'))}}function validateMcpForm(){var valid=true;['mcpNameError','mcpUrlError','mcpTypeError'].forEach(function(id){document.getElementById(id).textContent=''});var name=document.getElementById('mcpName').value.trim();var url=document.getElementById('mcpUrl').value.trim();if(!name){document.getElementById('mcpNameError').textContent='Please input name';valid=false}else if(!/^[a-zA-Z0-9_-]{1,64}$/.test(name)){document.getElementById('mcpNameError').textContent='It must be 1-64 characters long and can only contain letters, numbers, hyphens, and underscores.';valid=false}if(!url){document.getElementById('mcpUrlError').textContent='Please input URL';valid=false}return valid}async function saveMcpServer(){if(!validateMcpForm())return;var button=document.getElementById('mcpSave');button.disabled=true;var status=document.getElementById('mcpStatus');status.textContent='Saving…';var payload={name:document.getElementById('mcpName').value.trim(),url:document.getElementById('mcpUrl').value.trim(),server_type:document.getElementById('mcpServerType').value,variables:{authorization_token:document.getElementById('mcpToken').value}};try{var data=await mcpApi('/api/v1/mcp/servers'+(mcpState.editingId?'/'+encodeURIComponent(mcpState.editingId):''),{method:mcpState.editingId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeMcpDialog();loadMcpServers()}catch(error){status.textContent=error.message}finally{button.disabled=false}}function openMcpImport(){document.getElementById('mcpImportFile').value='';document.getElementById('mcpImportError').textContent='';document.getElementById('mcpImportResult').replaceChildren();document.getElementById('mcpImportDialog').classList.add('show')}function closeMcpImport(){document.getElementById('mcpImportDialog').classList.remove('show')}async function importMcpServers(){var file=document.getElementById('mcpImportFile').files[0];var error=document.getElementById('mcpImportError');if(!file){error.textContent='Please select a JSON file';return}var result=document.getElementById('mcpImportResult');result.replaceChildren();try{var text=await file.text();var parsed=JSON.parse(text);var data=await mcpApi('/api/v1/mcp/servers/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mcpServers:parsed.mcpServers||parsed})});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));(data.data&&data.data.results||[]).forEach(function(item){var line=document.createElement('p');line.className='user-setting-description';line.textContent=(item.success?'✓ ':'✗ ')+item.server+(item.message?' — '+item.message:'');result.appendChild(line)});closeMcpImport();loadMcpServers()}catch(parseError){error.textContent='Invalid JSON file: '+parseError.message}}async function exportMcpServer(id){var data=await mcpApi('/api/v1/mcp/servers/'+encodeURIComponent(id)+'?mode=download');if(data.code!==0){alert('Error: '+(data.message||'unknown'));return}downloadMcpJson(data.data)}function downloadMcpJson(payload){var blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});var anchor=document.createElement('a');anchor.href=URL.createObjectURL(blob);anchor.download='mcp-servers.json';anchor.click();setTimeout(function(){URL.revokeObjectURL(anchor.href)},1000)}async function exportMcpSelected(){if(!mcpState.selected.size){alert('Please select at least one MCP server');return}var merged={mcpServers:{}};for(var id of mcpState.selected){var data=await mcpApi('/api/v1/mcp/servers/'+encodeURIComponent(id)+'?mode=download');if(data.code===0&&data.data&&data.data.mcpServers)Object.assign(merged.mcpServers,data.data.mcpServers)}downloadMcpJson(merged)}function confirmDeleteMcp(server){var dialog=document.getElementById('mcpDeleteDialog');dialog.dataset.id=server.id;dialog.dataset.bulk='false';document.getElementById('mcpDeleteText').textContent='Are you sure you want to delete "'+server.name+'"?';document.getElementById('mcpDeleteStatus').textContent='';dialog.classList.add('show')}function confirmDeleteMcpSelected(){if(!mcpState.selected.size){alert('Please select at least one MCP server');return}var dialog=document.getElementById('mcpDeleteDialog');dialog.dataset.bulk='true';document.getElementById('mcpDeleteText').textContent='Are you sure you want to delete the selected '+mcpState.selected.size+' MCP server(s)?';document.getElementById('mcpDeleteStatus').textContent='';dialog.classList.add('show')}function closeMcpDelete(){document.getElementById('mcpDeleteDialog').classList.remove('show')}async function deleteMcpServer(){var dialog=document.getElementById('mcpDeleteDialog');var button=document.getElementById('mcpDeleteOk');button.disabled=true;document.getElementById('mcpDeleteStatus').textContent='Deleting…';try{var ids=dialog.dataset.bulk==='true'?Array.from(mcpState.selected):[dialog.dataset.id];for(var id of ids){var data=await mcpApi('/api/v1/mcp/servers/'+encodeURIComponent(id),{method:'DELETE'});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code))}mcpState.selected.clear();closeMcpDelete();loadMcpServers()}catch(error){document.getElementById('mcpDeleteStatus').textContent=error.message}finally{button.disabled=false}}loadMcpServers()</script>"#;
+    Html(user_setting_layout(
+        "MCP",
+        body,
+        UserSettingSection::Mcp,
+        zh,
+    ))
+}
+
+pub async fn user_setting_chat_channel_page(
+    State(_state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let title = if zh { "聊天渠道" } else { "Chat channels" };
+    let body = r#"<h1>Chat channels</h1><p class='user-setting-description'>Manage your chat channel bots and credentials</p><section data-testid='added-channels-section'><h2>Added channels</h2><div id='addedChannelList' class='added-channels' aria-live='polite'></div></section><section class='user-setting-section' data-testid='available-channels-section'><h2>Available channels</h2><p class='user-setting-description'>Select a chat channel to add</p><div id='availableChannelGrid' class='available-channel-grid'></div></section><div class='modal-overlay' id='chatChannelDialog' data-testid='chat-channel-dialog' onclick='if(event.target===this)closeChatChannelDialog()'><div class='modal' style='max-width:520px' role='dialog' aria-modal='true' aria-labelledby='chatChannelDialogTitle'><h2 id='chatChannelDialogTitle'>Add bot</h2><label class='provider-instance-field'>Name<input id='ccName' placeholder='My bot' autocomplete='off'><p id='ccNameError' class='provider-instance-error'></p></label><div id='ccFields' class='provider-extra-fields'></div><p id='ccStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeChatChannelDialog()'>Cancel</button><button class='btn btn-p' id='ccSave' type='button' onclick='saveChatChannel()'>Save</button></div></div></div><div class='modal-overlay' id='chatChannelDeleteDialog' data-testid='chat-channel-delete-dialog' onclick='if(event.target===this)closeChatChannelDelete()'><div class='modal' style='max-width:440px' role='alertdialog' aria-modal='true' aria-labelledby='chatChannelDeleteTitle'><h2 id='chatChannelDeleteTitle'>Delete chat channel</h2><p class='user-setting-description'>Are you sure you want to delete this chat channel bot? This action cannot be undone.</p><p id='ccDeleteStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeChatChannelDelete()'>Cancel</button><button class='btn btn-d' id='ccDeleteOk' type='button' onclick='deleteChatChannel()'>Delete</button></div></div></div><script>var CHAT_CHANNEL_INFO={clickclack:{name:'ClickClack',desc:'Connect a ClickClack bot',fields:[{key:'token',label:'Bot Token',type:'password',required:true}]},discord:{name:'Discord',desc:'Connect a Discord bot',fields:[{key:'token',label:'Bot Token',type:'password',required:true},{key:'application_id',label:'Application ID',type:'text',required:false}]},dingtalk:{name:'DingTalk',desc:'Connect a DingTalk bot',fields:[{key:'client_id',label:'Client ID',type:'text',required:true},{key:'client_secret',label:'Client Secret',type:'password',required:true}]},feishu:{name:'Feishu / Lark',desc:'Connect a Feishu / Lark bot',fields:[{key:'app_id',label:'App ID',type:'text',required:true},{key:'app_secret',label:'App Secret',type:'password',required:true},{key:'domain',label:'Domain',type:'select',required:true,defaultValue:'feishu',options:[{label:'Feishu (mainland)',value:'feishu'},{label:'Lark (international)',value:'lark'}]}]},googlechat:{name:'Google Chat',desc:'Connect a Google Chat bot',fields:[{key:'auth_mode',label:'Auth Mode',type:'select',required:true,defaultValue:'webhook_url',options:[{label:'Webhook URL',value:'webhook_url'},{label:'Service Account JSON',value:'service_account'},{label:'Service Account File',value:'service_account_file'}]},{key:'webhook_url',label:'Webhook URL',type:'text',required:false},{key:'service_account',label:'Service Account JSON',type:'textarea',required:false},{key:'service_account_file',label:'Service Account File Path',type:'text',required:false}]},irc:{name:'IRC',desc:'Connect an IRC bot',fields:[{key:'host',label:'Host',type:'text',required:true},{key:'port',label:'Port',type:'number',required:true},{key:'tls',label:'TLS',type:'switch',required:false},{key:'nick',label:'Nick',type:'text',required:true},{key:'username',label:'Username',type:'text',required:false},{key:'password',label:'Server Password',type:'password',required:false},{key:'nickserv_account',label:'NickServ Account',type:'text',required:false},{key:'nickserv_password',label:'NickServ Password',type:'password',required:false}]},line:{name:'LINE',desc:'Connect a LINE bot',fields:[{key:'channel_secret',label:'Channel Secret',type:'password',required:true},{key:'channel_access_token',label:'Channel Access Token',type:'password',required:true}]},matrix:{name:'Matrix',desc:'Connect a Matrix bot',fields:[{key:'homeserver',label:'Homeserver',type:'text',required:true},{key:'user_id',label:'User ID',type:'text',required:true},{key:'access_token',label:'Access Token',type:'password',required:false},{key:'password',label:'Password',type:'password',required:false},{key:'device_id',label:'Device ID',type:'text',required:false}]},mattermost:{name:'Mattermost',desc:'Connect a Mattermost bot',fields:[{key:'base_url',label:'Base URL',type:'text',required:true},{key:'bot_token',label:'Bot Token',type:'password',required:true}]},msteams:{name:'Microsoft Teams',desc:'Connect a Microsoft Teams bot',fields:[{key:'app_id',label:'App ID',type:'text',required:true},{key:'app_password',label:'App Password',type:'password',required:true},{key:'tenant_id',label:'Tenant ID',type:'text',required:true}]},nextcloud_talk:{name:'Nextcloud Talk',desc:'Connect a Nextcloud Talk bot',fields:[{key:'base_url',label:'Base URL',type:'text',required:true,placeholder:'https://nextcloud.example.com'},{key:'bot_secret',label:'Bot Secret',type:'password',required:true}]},nostr:{name:'Nostr',desc:'Connect a Nostr bot',fields:[{key:'private_key',label:'Private Key',type:'password',required:true,placeholder:'nsec1xxxx or hex'},{key:'relays',label:'Relays',type:'tag',required:false,placeholder:'wss://relay.damus.io'}]},qqbot:{name:'QQ Bot',desc:'Connect a QQ bot',fields:[{key:'app_id',label:'App ID',type:'text',required:true,placeholder:'102000000'},{key:'client_secret',label:'Client Secret',type:'password',required:true},{key:'base_url',label:'Base URL',type:'text',required:false,placeholder:'https://api.sgroup.qq.com'}]},slack:{name:'Slack',desc:'Connect a Slack bot',fields:[{key:'bot_token',label:'Bot Token',type:'password',required:true,placeholder:'xoxb-xxxx'},{key:'app_token',label:'App Token',type:'password',required:false,placeholder:'xapp-xxxx (socket mode)'},{key:'signing_secret',label:'Signing Secret',type:'password',required:false},{key:'user_token',label:'User Token',type:'password',required:false,placeholder:'xoxp-xxxx'}]},synology_chat:{name:'Synology Chat',desc:'Connect a Synology Chat bot',fields:[{key:'token',label:'Token',type:'password',required:true},{key:'incoming_url',label:'Incoming URL',type:'text',required:true,placeholder:'https://nas.example.com/webapi/entry.cgi?...'}]},telegram:{name:'Telegram',desc:'Connect a Telegram bot',fields:[{key:'token',label:'Bot Token',type:'password',required:true,placeholder:'From @BotFather'}]},tlon:{name:'Tlon (Urbit)',desc:'Connect a Tlon (Urbit) bot',fields:[{key:'ship',label:'Ship',type:'text',required:true,placeholder:'~sampel-palnet'},{key:'url',label:'URL',type:'text',required:true,placeholder:'https://sampel-palnet.tlon.network'},{key:'code',label:'Code',type:'password',required:true}]},twitch:{name:'Twitch',desc:'Connect a Twitch bot',fields:[{key:'username',label:'Username',type:'text',required:true,placeholder:'my-bot'},{key:'access_token',label:'Access Token',type:'password',required:true,placeholder:'oauth:xxxx'},{key:'client_id',label:'Client ID',type:'text',required:true},{key:'channel',label:'Channel',type:'text',required:true,placeholder:'target-channel-name'}]},wecom:{name:'WeCom',desc:'Connect a WeCom bot',fields:[{key:'connection_type',label:'Connection Type',type:'select',required:true,defaultValue:'webhook',options:[{label:'Webhook',value:'webhook'},{label:'WebSocket',value:'websocket'}]},{key:'bot_id',label:'Bot ID',type:'text',required:true,placeholder:'AIBOTID',showIf:'connection_type==websocket'},{key:'secret',label:'Secret',type:'password',required:true,placeholder:'App Secret / Long-connection Secret'},{key:'corp_id',label:'Corp ID',type:'text',required:true,placeholder:'ww1234567890abcdef',showIf:'connection_type!=websocket'},{key:'agent_id',label:'Agent ID',type:'number',required:true,placeholder:'1000001',showIf:'connection_type!=websocket'},{key:'token',label:'Token',type:'password',required:true,showIf:'connection_type!=websocket'},{key:'aes_key',label:'AES Key',type:'password',required:1,placeholder:'43 chars',showIf:'connection_type!=websocket'}]},whatsapp:{name:'WhatsApp',desc:'Connect a WhatsApp bot (QR pairing)',fields:[]},yuanbao:{name:'Yuanbao',desc:'Connect a Yuanbao bot',fields:[{key:'app_key',label:'App Key',type:'text',required:true},{key:'app_secret',label:'App Secret',type:'password',required:true},{key:'token',label:'Token',type:'password',required:false,placeholder:'Optional pre-signed token'}]},zalo:{name:'Zalo',desc:'Connect a Zalo bot',fields:[{key:'bot_token',label:'Bot Token',type:'password',required:true}]},zalouser:{name:'Zalo (Personal)',desc:'Connect a Zalo (Personal) bot',fields:[{key:'cookies',label:'Cookies (JSON)',type:'textarea',required:true,placeholder:'{ ... }'},{key:'imei',label:'IMEI',type:'text',required:true},{key:'user_agent',label:'User Agent',type:'text',required:true,placeholder:'Mozilla/5.0 ...'}]}};var chatChannelState={channels:[],activeId:null,editingId:null,deleteId:null};function ccApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function ccLabel(id){return (CHAT_CHANNEL_INFO[id]&&CHAT_CHANNEL_INFO[id].name)||id}function ccFieldVisible(expr){var ct=document.getElementById('cc-connection_type');var ctVal=ct?ct.value:'webhook';if(expr==='connection_type==websocket')return ctVal==='websocket';if(expr==='connection_type!=websocket')return ctVal!=='websocket';return true}function ccApplyShowIf(){document.querySelectorAll('#ccFields label[data-show-if]').forEach(function(label){var visible=ccFieldVisible(label.dataset.showIf);label.style.display=visible?'':'none';var nxt=label.nextElementSibling;if(nxt&&nxt.className&&nxt.className.indexOf('provider-instance-error')>=0){nxt.style.display=visible?'':'none'}})}async function loadChatChannels(){var data=await ccApi('/api/v1/chat-channels');chatChannelState.channels=data.data||[];renderAddedChannels();renderAvailableChannels()}function renderAddedChannels(){var list=document.getElementById('addedChannelList');list.replaceChildren();if(!chatChannelState.channels.length){var empty=document.createElement('p');empty.className='user-setting-description';empty.textContent='No chat channels added yet. Select one below to connect.';list.appendChild(empty);return}var groups={};chatChannelState.channels.forEach(function(row){var group=groups[row.channel]||{channel:row.channel,rows:[]};group.rows.push(row);groups[row.channel]=group});Object.values(groups).forEach(function(group){var card=document.createElement('article');card.className='user-setting-catalog-card cc-added-card';card.dataset.testid='added-channel-card';card.dataset.channel=group.channel;var head=document.createElement('div');head.className='cc-card-head';var icon=document.createElement('span');icon.className='user-setting-catalog-icon';icon.textContent=ccLabel(group.channel).charAt(0).toUpperCase();head.appendChild(icon);var name=document.createElement('strong');name.textContent=ccLabel(group.channel);head.appendChild(name);card.appendChild(head);group.rows.forEach(function(row){var item=document.createElement('div');item.className='cc-account';item.dataset.testid='added-channel-account';var label=document.createElement('span');label.textContent=row.name;item.appendChild(label);var actions=document.createElement('div');actions.className='cc-account-actions';var edit=document.createElement('button');edit.type='button';edit.className='btn btn-o btn-sm';edit.textContent='Edit';edit.onclick=function(){openChatChannelDialog(group.channel,row)};actions.appendChild(edit);var del=document.createElement('button');del.type='button';del.className='btn btn-d btn-sm';del.textContent='Delete';del.onclick=function(){confirmDeleteChatChannel(row)};actions.appendChild(del);item.appendChild(actions);card.appendChild(item)});list.appendChild(card)})}function renderAvailableChannels(){var grid=document.getElementById('availableChannelGrid');grid.replaceChildren();Object.keys(CHAT_CHANNEL_INFO).forEach(function(id){var info=CHAT_CHANNEL_INFO[id];var card=document.createElement('article');card.className='cc-available-card';card.dataset.testid='available-channel-card';card.dataset.channel=id;card.tabIndex=0;card.onclick=function(){openChatChannelDialog(id)};card.onkeydown=function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();openChatChannelDialog(id)}};var icon=document.createElement('span');icon.className='cc-available-icon';icon.textContent=info.name.charAt(0).toUpperCase();var title=document.createElement('h3');title.textContent=info.name;var add=document.createElement('button');add.type='button';add.className='btn btn-o btn-sm cc-add-btn';add.textContent='+ Add';add.onclick=function(event){event.stopPropagation();openChatChannelDialog(id)};var desc=document.createElement('p');desc.className='cc-available-desc';desc.textContent=info.desc;card.append(icon,title,add,desc);grid.appendChild(card)})}function openChatChannelDialog(channelId,record){chatChannelState.activeId=channelId;chatChannelState.editingId=record?record.id:null;var info=CHAT_CHANNEL_INFO[channelId];document.getElementById('chatChannelDialogTitle').textContent=(record?'Edit ':'Add ')+info.name+' bot';document.getElementById('ccName').value=record?record.name:'';document.getElementById('ccNameError').textContent='';document.getElementById('ccStatus').textContent='';var fields=document.getElementById('ccFields');fields.replaceChildren();info.fields.forEach(function(field){var label=document.createElement('label');label.className='provider-instance-field';var span=document.createElement('span');span.textContent=field.label;label.appendChild(span);var existing=(record&&record.config&&record.config.credential&&record.config.credential[field.key]!==undefined)?record.config.credential[field.key]:'';var control;if(field.type==='select'){control=document.createElement('select');control.id='cc-'+field.key;control.className='cc-input';(field.options||[]).forEach(function(o){var opt=document.createElement('option');opt.value=o.value;opt.textContent=o.label;var def=field.defaultValue||'';if(existing!==''&&existing!==undefined&&existing!==null?existing===o.value:def===o.value)opt.selected=true;control.appendChild(opt)})}else if(field.type==='switch'){control=document.createElement('input');control.type='checkbox';control.id='cc-'+field.key;control.className='cc-switch';if(existing===true||existing==='true'||existing===1||existing==='1')control.checked=true}else if(field.type==='textarea'){control=document.createElement('textarea');control.id='cc-'+field.key;control.placeholder=field.placeholder||'';control.value=existing}else if(field.type==='tag'){control=document.createElement('input');control.type='text';control.id='cc-'+field.key;control.placeholder=field.placeholder||'';control.value=Array.isArray(existing)?existing.join(','):existing}else{control=document.createElement('input');control.id='cc-'+field.key;control.type=field.type==='password'?'password':(field.type==='number'?'number':'text');control.placeholder=field.placeholder||'';control.autocomplete='off';control.value=(existing!==undefined&&existing!==null)?existing:(field.defaultValue||'')}if(field.showIf){label.dataset.showIf=field.showIf}label.appendChild(control);fields.appendChild(label);var error=document.createElement('p');error.id='cc-'+field.key+'-error';error.className='provider-instance-error';fields.appendChild(error)});ccApplyShowIf();var ctSel=document.getElementById('cc-connection_type');if(ctSel){ctSel.onchange=ccApplyShowIf}document.getElementById('chatChannelDialog').classList.add('show')}function closeChatChannelDialog(){document.getElementById('chatChannelDialog').classList.remove('show')}async function saveChatChannel(){var info=CHAT_CHANNEL_INFO[chatChannelState.activeId];var name=document.getElementById('ccName').value.trim();var valid=true;document.getElementById('ccNameError').textContent='';if(!name){document.getElementById('ccNameError').textContent='Name is required';valid=false}var credential={};info.fields.forEach(function(field){var control=document.getElementById('cc-'+field.key);var error=document.getElementById('cc-'+field.key+'-error');error.textContent='';var label=control.closest('label');if(label&&label.style.display==='none'){return}var value;if(field.type==='switch'){value=control.checked;if(value)credential[field.key]=true}else if(field.type==='tag'){var raw=control.value.trim();var arr=raw?raw.split(',').map(function(s){return s.trim()}).filter(function(s){return s}):[];if(field.required&&!arr.length){error.textContent=field.label+' is required';valid=false}if(arr.length)credential[field.key]=arr}else{value=control.value.trim();if(field.required&&!value){error.textContent=field.label+' is required';valid=false}if(value)credential[field.key]=value}});if(!valid)return;var button=document.getElementById('ccSave');button.disabled=true;document.getElementById('ccStatus').textContent='Saving…';var payload={name:name,channel:chatChannelState.activeId,config:{credential:credential}};try{var data=await ccApi('/api/v1/chat-channels'+(chatChannelState.editingId?'/'+encodeURIComponent(chatChannelState.editingId):''),{method:chatChannelState.editingId?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeChatChannelDialog();loadChatChannels()}catch(error){document.getElementById('ccStatus').textContent=error.message}finally{button.disabled=false}}function confirmDeleteChatChannel(row){chatChannelState.deleteId=row.id;document.getElementById('ccDeleteStatus').textContent='';document.getElementById('chatChannelDeleteDialog').classList.add('show')}function closeChatChannelDelete(){document.getElementById('chatChannelDeleteDialog').classList.remove('show')}async function deleteChatChannel(){var button=document.getElementById('ccDeleteOk');button.disabled=true;document.getElementById('ccDeleteStatus').textContent='Deleting…';try{var data=await ccApi('/api/v1/chat-channels/'+encodeURIComponent(chatChannelState.deleteId),{method:'DELETE'});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeChatChannelDelete();loadChatChannels()}catch(error){document.getElementById('ccDeleteStatus').textContent=error.message}finally{button.disabled=false}}loadChatChannels()</script>"#;
+    Html(user_setting_layout(
+        title,
+        body,
+        UserSettingSection::ChatChannel,
+        zh,
+    ))
 }
 
 // ── Pages ───────────────────────────────────────────────────────
@@ -947,7 +1138,9 @@ pub async fn dataset_page(
     b.push_str("</label></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Children Delimiter", zh));
-    b.push_str("</td><td><input id='cfgChildrenDelims' value='\\n' style='max-width:200px'></td></tr>");
+    b.push_str(
+        "</td><td><input id='cfgChildrenDelims' value='\\n' style='max-width:200px'></td></tr>",
+    );
     b.push_str("<tr><td>");
     b.push_str(t("Title Levels", zh));
     b.push_str("</td><td><input id='cfgTitleLevels' placeholder='0,1,2' style='max-width:200px'></td></tr>");
@@ -1433,6 +1626,7 @@ var aid='default';function testA(id){aid=id};function showCreate(){document.getE
 pub async fn datasources_page(
     req: axum::http::Request<axum::body::Body>,
 ) -> Result<axum::response::Html<String>, axum::response::Response> {
+    let in_user_settings = req.uri().path() == "/user-setting/data-source";
     let zh = crate::web::detect_lang(req.headers());
     let mut b = format!(
         "<h1>🔗 {}</h1>",
@@ -1442,14 +1636,14 @@ pub async fn datasources_page(
             "Data Sources"
         }
     );
-    // 类型选择 + 新建表单（RAGFlow 数据源页风格：类型 → 凭证 → 测试连接）
+    // 上游风格：35 张 Available 卡片 + 本地扩展下拉（卡片点击/Hover Add 打开弹层）
     b.push_str("<div class='card'><h2>");
-    b.push_str(if zh { "新建数据源" } else { "Add Source" });
-    b.push_str("</h2><div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px'>");
-    b.push_str("<select id='dsType' onchange='dsHint()'><option value='gitlab'>GitLab</option><option value='github'>GitHub</option><option value='bitbucket'>Bitbucket</option><option value='webdav'>WebDAV</option><option value='confluence'>Confluence</option><option value='jira'>Jira</option><option value='notion'>Notion</option><option value='google_drive'>Google Drive</option><option value='gmail'>Gmail</option><option value='gcs'>Google Cloud Storage</option><option value='oracle'>Oracle Storage</option><option value='s3'>S3</option><option value='r2'>R2</option><option value='azure_blob'>Azure Blob Storage</option><option value='box'>Box</option><option value='dropbox'>Dropbox</option><option value='onedrive'>OneDrive</option><option value='outlook'>Outlook</option><option value='sharepoint'>SharePoint</option><option value='teams'>Microsoft Teams</option><option value='slack'>Slack</option><option value='discord'>Discord</option><option value='zendesk'>Zendesk</option><option value='salesforce'>Salesforce</option><option value='moodle'>Moodle</option><option value='airtable'>Airtable</option><option value='asana'>Asana</option><option value='imap'>IMAP</option><option value='dingtalk_ai_table'>Dingtalk AI Table</option><option value='seafile'>SeaFile</option><option value='rss'>RSS</option><option value='rest_api'>REST API</option><option value='mysql'>MySQL</option><option value='postgresql'>PostgreSQL</option><option value='bigquery'>BigQuery</option><option value='local'>Local Files</option><option value='feishu'>飞书云空间</option><option value='dingtalk'>钉钉云盘</option><option value='tencent_docs'>腾讯文档</option><option value='yuque'>语雀</option><option value='wechat_docs'>微信文档</option></select>");
-    b.push_str("<input id='dsName' placeholder='Name'><input id='dsUrl' placeholder='URL'><input id='dsToken' type='password' placeholder='Token / app_id:app_secret'><input id='dsTarget' placeholder='Target (project/space/container)'>");
-    b.push_str("</div><div id='dsHint' style='color:var(--t2);font-size:13px;margin-bottom:8px'></div><label><input type='checkbox' id='dsIssues'> Issues</label> <label><input type='checkbox' id='dsMRs'> Merge Requests</label> ");
-    b.push_str("<button class='btn btn-p' onclick='addDs()'>+ Add</button></div>");
+    b.push_str(if zh {
+        "可用数据源"
+    } else {
+        "Available sources"
+    });
+    b.push_str("</h2><p class='user-setting-description'>Add a connector and sync its content into your knowledge base.</p><section class='ds-available-grid' id='dsAvailable' data-testid='available-sources-section' aria-live='polite'></section><div class='ds-local-row' style='margin-top:16px'><label class='provider-instance-field' style='margin-top:0;max-width:300px'>Local sources<select id='dsLocalType'><option value='local'>Local Files</option><option value='feishu'>飞书云空间</option><option value='dingtalk'>钉钉云盘</option><option value='tencent_docs'>腾讯文档</option><option value='yuque'>语雀</option><option value='wechat_docs'>微信文档</option></select></label><button class='btn btn-p' type='button' onclick='openDsAdd(document.getElementById(\"dsLocalType\").value,document.getElementById(\"dsLocalType\").selectedOptions[0].textContent)'>+ Add</button></div></div>");
     b.push_str("<div class='card'><h2>Sources</h2><div style='margin-bottom:8px'><select id='dsKb'><option value=''>Sync to KB (optional)</option></select></div><div id='dsList'>Loading...</div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(if zh {
@@ -1459,15 +1653,169 @@ pub async fn datasources_page(
     });
     b.push_str("</h2><div id='dsPreview' style='color:var(--t2)'>Select a source, then List / Sync.</div></div><script>");
     b.push_str("function dsHint(){var m={'gitlab':'url=https://gitlab.com, token=PAT, target=project id or owner/repo','github':'url=https://github.com, token=PAT, target=owner/repo','bitbucket':'url=https://bitbucket.org, token=app_password, target=workspace/repo','webdav':'url=https://webdav.example.com, token=user:password, target=/path','confluence':'url=https://xxx.atlassian.net/wiki, token=email:api_token, target=spaceKey','jira':'url=https://xxx.atlassian.net, token=email:api_token, target=project key','notion':'token=integration_token, target=database/page id','google_drive':'token=service_account_json, target=folder id','gmail':'token=service_account_json, target=query','gcs':'url=https://storage.googleapis.com, token=access_token, target=bucket','oracle':'url=https://objectstorage.region.oraclecloud.com, token=access:secret, target=bucket','s3':'url=https://s3.region.amazonaws.com, token=access:secret, target=bucket','r2':'url=https://<account>.r2.cloudflarestorage.com, token=access:secret, target=bucket','azure_blob':'url=https://acct.blob.core.windows.net, token=SAS, target=container','box':'token=access_token (OAuth), target=folder id','dropbox':'token=access_token (OAuth), target=folder path','onedrive':'token=OAuth credentials, target=folder id','outlook':'token=OAuth credentials, target=mailbox query','sharepoint':'url=site url, token=OAuth credentials, target=library','teams':'token=OAuth credentials, target=channel id','slack':'token=bot token, target=channel id','discord':'token=bot token, target=channel id','zendesk':'url=https://subdomain.zendesk.com, token=email:api_token','salesforce':'url=instance url, token=OAuth credentials','moodle':'url=https://moodle.example.com, token=api_token','airtable':'token=personal_access_token, target=base id','asana':'token=personal_access_token, target=project gid','imap':'url=imap host, token=user:password, target=folder','dingtalk_ai_table':'token=appKey:appSecret, target=app id (多维表格)','seafile':'url=https://seafile.example.com, token=api_token, target=library id','rss':'url=https://feed.example.com/rss, target=optional filter','rest_api':'url=api endpoint, token=optional, target=optional','mysql':'url=host, token=user:password, target=database','postgresql':'url=host, token=user:password, target=database','bigquery':'token=service_account_json, target=dataset','local':'url=absolute directory path, target=optional relative subdir','feishu':'token=app_id:app_secret, target=可选 folder_token','dingtalk':'token=app_key:app_secret, target=可选 space_id','tencent_docs':'token=access_token, target=可选 folder_id','yuque':'token=access_token, target=namespace/repo slug','wechat_docs':'token=access_token, target=可选 folder_id'};document.getElementById('dsHint').textContent=m[document.getElementById('dsType').value]||'';}");
-    b.push_str("function loadKbs(){fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];var sel=document.getElementById('dsKb');var h='<option value=\'\'>Sync to KB (optional)</option>';kbs.forEach(function(k){h=h+'<option value=\'\"+k.id+\"\'>'+(k.name||k.id)+'</option>';});sel.innerHTML=h;});}");
-    b.push_str("function loadDs(){fetch('/api/v1/data_sources').then(function(r){return r.json()}).then(function(d){var list=d.data||[];var h='<table><tr><th>Name</th><th>Type</th><th>URL</th><th>Target</th><th>State</th><th></th></tr>';list.forEach(function(x){var st=x.connected?'<span class=badge bs>connected</span>':'<span class=badge bw>disconnected</span>';h=h+'<tr><td>'+x.name+'</td><td>'+x.type+'</td><td>'+(x.url||'')+'</td><td>'+(x.target||'')+'</td><td>'+st+'</td><td><button class=btn-p onclick=connDs(\'\"+x.id+\"\')>Connect</button> <button class=btn-o onclick=discDs(\'\"+x.id+\"\')>Disconnect</button> <button class=btn-o onclick=listDs(\'\"+x.id+\"\')>List</button> <button class=btn-p onclick=syncDs(\'\"+x.id+\"\')>Sync</button> <button class=btn-d onclick=delDs(\'\"+x.id+\"\')>Del</button></td></tr>';});document.getElementById('dsList').innerHTML=h+'</table>';});}");
-    b.push_str("function addDs(){var n=document.getElementById('dsName').value;var u=document.getElementById('dsUrl').value;var t=document.getElementById('dsToken').value;var g=document.getElementById('dsTarget').value;if(!n||!u||!g){alert('Name/URL/Target required');return;}var body={name:n,type:document.getElementById('dsType').value,url:u,token:t,target:g,include_issues:document.getElementById('dsIssues').checked,include_merge_requests:document.getElementById('dsMRs').checked};fetch('/api/v1/data_sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(d.code===0){loadDs();document.getElementById('dsName').value='';document.getElementById('dsUrl').value='';document.getElementById('dsToken').value='';document.getElementById('dsTarget').value='';}else{alert(d.message||'create failed');}});}");
+    b.push_str(r#"function loadKbs(){fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];var sel=document.getElementById('dsKb');sel.replaceChildren();var empty=document.createElement('option');empty.value='';empty.textContent='Sync to KB (optional)';sel.appendChild(empty);kbs.forEach(function(k){var option=document.createElement('option');option.value=k.id;option.textContent=k.name||k.id;sel.appendChild(option)})})}function dsCell(row,text){var cell=document.createElement('td');cell.textContent=text==null?'':String(text);row.appendChild(cell);return cell}function dsAction(text,className,handler){var button=document.createElement('button');button.type='button';button.className=className;button.textContent=text;button.addEventListener('click',handler);return button}function loadDs(){fetch('/api/v1/data_sources').then(function(r){return r.json()}).then(function(d){var list=d.data||[];var root=document.getElementById('dsList');root.replaceChildren();var table=document.createElement('table');var head=document.createElement('thead');head.innerHTML='<tr><th>Name</th><th>Type</th><th>URL</th><th>Target</th><th>State</th><th></th></tr>';table.appendChild(head);var body=document.createElement('tbody');list.forEach(function(x){var row=document.createElement('tr');dsCell(row,x.name);dsCell(row,x.type);dsCell(row,x.url||'');dsCell(row,x.target||'');var state=dsCell(row,'');var badge=document.createElement('span');badge.className=x.connected?'badge bs':'badge bw';badge.textContent=x.connected?'connected':'disconnected';state.appendChild(badge);var actions=dsCell(row,'');actions.append(dsAction('Connect','btn btn-p btn-sm',function(){connDs(x.id)}),document.createTextNode(' '),dsAction('Disconnect','btn btn-o btn-sm',function(){discDs(x.id)}),document.createTextNode(' '),dsAction('List','btn btn-o btn-sm',function(){listDs(x.id)}),document.createTextNode(' '),dsAction('Sync','btn btn-p btn-sm',function(){syncDs(x.id)}),document.createTextNode(' '),dsAction('Details','btn btn-o btn-sm',function(){location.href='/user-setting/data-source/'+encodeURIComponent(x.id)}),document.createTextNode(' '),dsAction('Del','btn btn-d btn-sm',function(){delDs(x.id)}));body.appendChild(row)});table.appendChild(body);root.appendChild(table)})}"#);
     b.push_str("function connDs(id){document.getElementById('dsPreview').textContent='Connecting...';fetch('/api/v1/data_sources/'+id+'/connect',{method:'POST'}).then(function(r){return r.json()}).then(function(d){document.getElementById('dsPreview').textContent=d.code===0?'Connected ✓':'Connect failed: '+(d.message||'unknown');loadDs();});}");
     b.push_str("function discDs(id){fetch('/api/v1/data_sources/'+id+'/disconnect',{method:'POST'}).then(function(r){return r.json()}).then(function(d){document.getElementById('dsPreview').textContent=d.code===0?'Disconnected':'Disconnect failed: '+(d.message||'unknown');loadDs();});}");
     b.push_str("function listDs(id){document.getElementById('dsPreview').textContent='Listing...';fetch('/api/v1/data_sources/'+id+'/files',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){var x=d.data||{};var h='<b>'+x.count+' files</b><table><tr><th>Name</th><th>Ext</th><th>Size</th><th>Updated</th></tr>';(x.files||[]).forEach(function(f){h=h+'<tr><td>'+(f.name||'')+'</td><td>'+(f.extension||'')+'</td><td>'+(f.size_bytes||0)+'</td><td>'+(f.updated_at||'')+'</td></tr>';});document.getElementById('dsPreview').innerHTML=h+'</table>';}else{document.getElementById('dsPreview').textContent='List failed: '+(d.message||'unknown');}});}");
     b.push_str("function syncDs(id){document.getElementById('dsPreview').textContent='Syncing...';var kb=document.getElementById('dsKb').value||'';var url='/api/v1/data_sources/'+id+'/sync'+(kb?('?kb_id='+encodeURIComponent(kb)):'');fetch(url,{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){var x=d.data||{};var h='<b>'+x.count+' docs</b>'+(x.failures&&x.failures.length?' <span style=color:var(--d)>'+x.failures.length+' failures</span>':'')+'<table><tr><th>Title</th><th>Ext</th><th>Size</th><th>Type</th></tr>';(x.preview||[]).forEach(function(p){h=h+'<tr><td>'+(p.title||'')+'</td><td>'+(p.extension||'')+'</td><td>'+(p.size_bytes||0)+'</td><td>'+(p.type||'')+'</td></tr>';});document.getElementById('dsPreview').innerHTML=h+'</table>';}else{document.getElementById('dsPreview').textContent='Sync failed: '+(d.message||'unknown');}});}");
-    b.push_str("function delDs(id){if(!confirm('Delete this data source?'))return;fetch('/api/v1/data_sources/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){loadDs();}else{alert(d.message||'delete failed');}});}dsHint();loadKbs();loadDs();</script>");
-    Ok(axum::response::Html(b))
+    b.push_str("function delDs(id){if(!confirm('Delete this data source?'))return;fetch('/api/v1/data_sources/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){loadDs();}else{alert(d.message||'delete failed');}});}loadKbs();loadDs();</script>");
+    let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+        .unwrap_or_else(|_| "{}".to_string());
+    b.push_str(&data_source_add_modal(&schema, zh));
+    let info_json = serde_json::to_string(&crate::data_source::form_fields::source_info_for_ui())
+        .unwrap_or_else(|_| "{}".to_string());
+    b.push_str(&data_source_list_section(&info_json));
+    let page = if in_user_settings {
+        user_setting_layout(
+            if zh { "数据源" } else { "Data sources" },
+            &b,
+            UserSettingSection::DataSource,
+            zh,
+        )
+    } else {
+        layout(if zh { "数据源" } else { "Data sources" }, &b, zh)
+    };
+    Ok(axum::response::Html(page))
+}
+
+/// Render the schema-driven data-source detail form. The template is kept in
+/// raw strings with `__PLACEHOLDER__` tokens so the embedded JavaScript stays
+/// brace-free and line-editable.
+fn data_source_detail_body(name: &str, id: &str, source: &str, schema: &str, zh: bool) -> String {
+    let head = r#"<style>#dsDetailTest[hidden],#dsFlatFields[hidden],#dsPruneField[hidden]{display:none!important}.ds-segment{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;margin-top:8px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bg);width:fit-content}.ds-segment button{border:0;border-radius:calc(var(--r) - 2px);padding:6px 12px;background:transparent;color:var(--t2);font-size:13px;cursor:pointer}.ds-segment button[aria-checked=true]{background:var(--p);color:#fff}.ds-suffix{padding-left:6px;color:var(--tm);font-style:italic;font-size:12px}.provider-instance-field textarea{width:100%;min-height:88px;resize:vertical}.provider-instance-field input:disabled{opacity:.65;cursor:not-allowed}</style><h1 id='dsDetailTitle'>🔗 __NAME__</h1><a class='btn btn-o btn-sm' href='/user-setting/data-source'>← __BACK__</a><div class='card' data-testid='data-source-detail-card'><h2>__CONN__</h2><p class='user-setting-description'>__TYPE__</p><label class='provider-instance-field'>Name<input id='dsDetailName' autocomplete='off' disabled></label><div id='dsFlatFields'><label class='provider-instance-field'>URL<input id='dsDetailUrl' autocomplete='off'></label><label class='provider-instance-field'>Target<input id='dsDetailTarget' autocomplete='off'></label><label class='provider-instance-field'>Token<input id='dsDetailToken' type='password' autocomplete='new-password' placeholder='Configured; leave blank to keep'></label></div><div id='dsDynamicFields'></div><label class='provider-instance-switch'><span>Sync deleted files</span><input id='dsDetailSyncDeleted' type='checkbox' role='switch'></label><label class='provider-instance-field' id='dsPruneField'>Prune Freq<span class='ds-suffix'>(minutes)</span><input id='dsDetailPrune' type='number' min='0' step='any'></label><label class='provider-instance-field'>Refresh Freq<span class='ds-suffix'>(minutes)</span><input id='dsDetailRefresh' type='number' min='0' step='any'></label><label class='provider-instance-field'>Timeout Secs<span class='ds-suffix'>(seconds)</span><input id='dsDetailTimeout' type='number' min='0' step='any'></label><p id='dsDetailStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='dsDetailTest' type='button' onclick='dsDetailTest()' hidden>Test</button><button class='btn btn-p' id='dsDetailPrimary' type='button' onclick='dsDetailPrimary()'>Save</button></div></div><div class='card' data-testid='data-source-logs-card'><h2>Sync Logs</h2><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Time</th><th>Status</th><th>Message</th></tr></thead><tbody id='dsLogRows'></tbody></table></div></div>__JS__"#;
+    let js = r#"<script>var DS_DETAIL_ID='__ID__';var DS_SCHEMA=__SCHEMA__;var DS_SOURCE='__SOURCE__';var DS_SCHEMA_FIELDS=DS_SCHEMA[DS_SOURCE.toUpperCase()]||[];var DS_WRAPS={};var DS_RECORD=null;var DS_DIRTY=false;var DS_POLL=null;function dsDetailApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function dsGet(obj,path){return (path||'').split('.').reduce(function(o,k){return o==null?undefined:o[k]},obj||{})}function dsSet(obj,path,value){var parts=path.split('.');var cur=obj;for(var i=0;i<parts.length-1;i++){if(typeof cur[parts[i]]!=='object'||cur[parts[i]]===null)cur[parts[i]]={};cur=cur[parts[i]]}cur[parts[parts.length-1]]=value}function dsInputOf(wrap){return wrap.querySelector('input,select,textarea')}function dsMarkDirty(){DS_DIRTY=true;dsUpdatePrimary()}function dsVisible(field){if(!field.show_when||!field.show_when.length)return true;return field.show_when.some(function(condition){return String(dsFieldValue(condition.field))===String(condition.equals)})}function dsRefreshVisibility(){DS_SCHEMA_FIELDS.forEach(function(field){var wrap=DS_WRAPS[field.name];if(wrap)wrap.hidden=!dsVisible(field)});document.getElementById('dsPruneField').hidden=!document.getElementById('dsDetailSyncDeleted').checked}function dsFieldValue(name){var wrap=DS_WRAPS[name];if(!wrap)return '';var input=dsInputOf(wrap);if(input.type==='checkbox')return input.checked?'true':'false';return input.value}function dsSetFieldValue(name,value){var wrap=DS_WRAPS[name];if(!wrap)return;var input=dsInputOf(wrap);if(input.type==='checkbox'){input.checked=String(value)==='true'}else{input.value=value==null?'':String(value)}if(wrap._seg){wrap._seg.querySelectorAll('button').forEach(function(button){button.setAttribute('aria-checked',String(button.dataset.value===String(input.value)))})}}function dsBuildField(field){var checkbox=field.type==='Checkbox'||field.type==='Switch';var wrap=document.createElement('label');wrap.className=checkbox?'provider-instance-switch':'provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');wrap.appendChild(span);if(checkbox){var check=document.createElement('input');check.type='checkbox';check.addEventListener('change',function(){dsMarkDirty();dsRefreshVisibility()});wrap.appendChild(check);return wrap}var input;if(field.type==='Select'){input=document.createElement('select');(field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option.value;node.textContent=option.label;input.appendChild(node)});if(!field.required){var blank=document.createElement('option');blank.value='';blank.textContent='Please select';input.prepend(blank)}input.addEventListener('change',function(){dsMarkDirty();dsRefreshVisibility()})}else if(field.type==='Textarea'){input=document.createElement('textarea');input.rows=4;input.addEventListener('input',function(){dsMarkDirty();dsRefreshVisibility()})}else if(field.type==='Segmented'){input=document.createElement('input');input.type='hidden';var segment=document.createElement('div');segment.className='ds-segment';(field.options||[]).forEach(function(option){var button=document.createElement('button');button.type='button';button.textContent=option.label;button.dataset.value=option.value;button.addEventListener('click',function(){input.value=option.value;segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node===button))});dsMarkDirty();dsRefreshVisibility()});segment.appendChild(button)});wrap.appendChild(input);wrap.appendChild(segment);wrap._seg=segment;return wrap}else{input=document.createElement('input');input.type=field.type==='Password'?'password':field.type==='Number'?'number':'text';if(input.type==='number')input.step='any';if(field.type==='Password')input.autocomplete='new-password';if(field.placeholder)input.placeholder=field.placeholder;input.addEventListener('input',function(){dsMarkDirty();dsRefreshVisibility()})}wrap.appendChild(input);return wrap}function dsBuildFields(){var root=document.getElementById('dsDynamicFields');DS_SCHEMA_FIELDS.forEach(function(field){var wrap=dsBuildField(field);DS_WRAPS[field.name]=wrap;root.appendChild(wrap)})}function dsBuildPayload(){var payload={name:document.getElementById('dsDetailName').value.trim(),sync_deleted_files:document.getElementById('dsDetailSyncDeleted').checked,prune_freq:Number(document.getElementById('dsDetailPrune').value)||0,refresh_freq:Number(document.getElementById('dsDetailRefresh').value)||0,timeout_secs:Number(document.getElementById('dsDetailTimeout').value)||0};if(DS_SCHEMA_FIELDS.length){var config={};DS_SCHEMA_FIELDS.forEach(function(field){dsSet(config,field.name,dsFieldValue(field.name))});payload.config=config}else{payload.url=document.getElementById('dsDetailUrl').value.trim();payload.target=document.getElementById('dsDetailTarget').value.trim();var token=document.getElementById('dsDetailToken').value;if(token)payload.token=token}return payload}function dsActionMode(){var status=(DS_RECORD&&DS_RECORD.status||'unstart').toLowerCase();if(DS_DIRTY)return 'save';if(status==='unstart')return 'save';if(status==='running'||status==='schedule')return 'stop';return 'resume'}function dsUpdatePrimary(){var mode=dsActionMode();var button=document.getElementById('dsDetailPrimary');button.dataset.mode=mode;button.textContent=mode==='save'?'Save':mode==='stop'?'Stop':'Resume'}function dsStatus(text,error){var status=document.getElementById('dsDetailStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}function renderDsLogs(logs){var body=document.getElementById('dsLogRows');body.replaceChildren();logs.forEach(function(log){var row=document.createElement('tr');var time=document.createElement('td');time.textContent=log.created_at||'';var status=document.createElement('td');var badge=document.createElement('span');badge.className=log.status==='success'?'badge bs':'badge bw';badge.textContent=log.status||'';status.appendChild(badge);var message=document.createElement('td');message.textContent=log.message||'';row.append(time,status,message);body.appendChild(row)});if(!logs.length){var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=3;cell.className='team-empty';cell.textContent='No sync logs yet.';row.appendChild(cell);body.appendChild(row)}}async function dsMaybePoll(){if(DS_POLL)clearInterval(DS_POLL);DS_POLL=null;var status=(DS_RECORD&&DS_RECORD.status||'').toLowerCase();if(status==='running'||status==='schedule')DS_POLL=setInterval(function(){dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID).then(function(data){DS_RECORD=data.data||DS_RECORD;renderDsLogs(DS_RECORD.sync_logs||[]);dsUpdatePrimary()}).catch(function(){})},15000)}async function loadDsDetail(){var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID);DS_RECORD=data.data||{};document.getElementById('dsDetailTitle').textContent='🔗 '+(DS_RECORD.name||'');document.getElementById('dsDetailName').value=DS_RECORD.name||'';document.getElementById('dsFlatFields').hidden=DS_SCHEMA_FIELDS.length>0;document.getElementById('dsDetailUrl').value=DS_RECORD.url||'';document.getElementById('dsDetailTarget').value=DS_RECORD.target||'';document.getElementById('dsDetailToken').value='';document.getElementById('dsDetailSyncDeleted').checked=!!DS_RECORD.sync_deleted_files;document.getElementById('dsDetailPrune').value=DS_RECORD.prune_freq==null?'':DS_RECORD.prune_freq;document.getElementById('dsDetailRefresh').value=DS_RECORD.refresh_freq==null?'':DS_RECORD.refresh_freq;document.getElementById('dsDetailTimeout').value=DS_RECORD.timeout_secs==null?'':DS_RECORD.timeout_secs;DS_SCHEMA_FIELDS.forEach(function(field){var value=dsGet(DS_RECORD.config,field.name);if(value===undefined||value===null||value==='')value=field.default_value||'';dsSetFieldValue(field.name,value)});document.getElementById('dsDetailTest').hidden=!(DS_SOURCE==='rest_api'||DS_SOURCE==='bigquery');dsRefreshVisibility();DS_DIRTY=false;dsUpdatePrimary();renderDsLogs(DS_RECORD.sync_logs||[]);dsMaybePoll()}async function dsDetailTest(){dsStatus('Testing…',false);var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID+'/test',{method:'POST'});dsStatus(data.code===0?'Connection verified ✓':'Test failed: '+(data.message||'unknown'),data.code!==0);await loadDsDetail()}async function dsDetailPrimary(){var button=document.getElementById('dsDetailPrimary');var mode=button.dataset.mode;button.disabled=true;if(mode==='stop'){dsStatus('Stopping…',false);try{var stopped=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'cancel'})});if(stopped.code!==0)throw new Error(stopped.message||('HTTP '+stopped.code));dsStatus('Stopped ✓',false);await loadDsDetail()}catch(error){dsStatus(error.message,true)}finally{button.disabled=false}return}var payload=mode==='save'?dsBuildPayload():{status:'schedule'};if(mode==='save')payload.reschedule=true;dsStatus(mode==='save'?'Saving…':'Resuming…',false);try{var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));var nextStatus=data.data&&data.data.status||'';dsStatus(nextStatus==='fail'?'Sync failed; see logs below':'Saved ✓',nextStatus==='fail');await loadDsDetail()}catch(error){dsStatus(error.message,true)}finally{button.disabled=false}}dsBuildFields();loadDsDetail()</script>"#;
+    let js = js
+        .replace("__ID__", id)
+        .replace("__SOURCE__", source)
+        .replace("__SCHEMA__", schema)
+        .replace(
+            "function dsMarkDirty()",
+            "function dsFieldPath(name){return name.replace(/^config\\./,'')}function dsMarkDirty()",
+        )
+        .replace(
+            "dsSet(config,field.name,dsFieldValue(field.name))",
+            "dsSet(config,dsFieldPath(field.name),dsFieldValue(field.name))",
+        )
+        .replace(
+            "var value=dsGet(DS_RECORD.config,field.name);",
+            "var value=dsGet(DS_RECORD.config,dsFieldPath(field.name));",
+        );
+    head.replace("__NAME__", &html_escape(name))
+        .replace("__BACK__", t("Back", zh))
+        .replace("__CONN__", t("Connection", zh))
+        .replace("__TYPE__", t("Type", zh))
+        .replace(
+            "<input id='dsDetailSyncDeleted' type='checkbox' role='switch'>",
+            "<input id='dsDetailSyncDeleted' type='checkbox' role='switch' onchange='dsMarkDirty();dsRefreshVisibility()'>",
+        )
+        .replace("__JS__", &js)
+}
+
+/// Schema-driven Add data source modal for the data-source list page. The
+/// type selector lives on the page; this overlay renders the per-source field
+/// set for the selected type and POSTs the nested upstream wire shape.
+fn data_source_add_modal(schema: &str, zh: bool) -> String {
+    let _ = zh;
+    let overlay = r#"<div class='modal-overlay' id='dsAddModal' data-testid='data-source-add-modal' onclick='if(event.target===this)closeDsAdd()'><div class='modal' role='dialog' aria-modal='true' aria-labelledby='dsAddTitle'><h2 id='dsAddTitle'>Add data source</h2><label class='provider-instance-field'>Name<input id='dsAddName' autocomplete='off'></label><div id='dsAddFields'></div><p id='dsAddError' class='provider-instance-error'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeDsAdd()'>Cancel</button><button class='btn btn-p' id='dsAddConfirm' type='button' onclick='dscCreate()'>Confirm</button></div></div></div>"#;
+    let box_dialog = r#"<div class='modal-overlay' id='dscBoxDialog' data-testid='box-oauth-dialog' onclick='if(event.target===this)closeDscBoxDialog()'><div class='modal' style='max-width:520px' role='dialog' aria-modal='true' aria-labelledby='dscBoxTitle'><h2 id='dscBoxTitle'>Configure Box OAuth credentials</h2><p class='user-setting-description'>Enter your Box application's Client ID, Client Secret, and Redirect URI. These values will be stored in the form field and can be used later to start the OAuth flow.</p><label class='provider-instance-field'>Client ID<input id='dscBoxClientId' placeholder='Enter Box Client ID' autocomplete='off'></label><label class='provider-instance-field'>Client Secret<input id='dscBoxClientSecret' type='password' placeholder='Enter Box Client Secret' autocomplete='new-password'></label><label class='provider-instance-field'>Redirect URI<input id='dscBoxRedirect' placeholder='https://example.com/box/oauth/callback' autocomplete='off'></label><p id='dscBoxMsg' class='provider-instance-status' hidden></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeDscBoxDialog()'>Cancel</button><button class='btn btn-o' id='dscBoxRefresh' type='button' onclick='dscBoxPoll()' hidden>Refresh status</button><button class='btn btn-p' id='dscBoxSubmit' type='button' onclick='dscBoxSubmit()'>Submit &amp; Authorize</button></div></div></div>"#;
+    let google_dialog = r#"<div class='modal-overlay' id='dscGoogleDialog' data-testid='google-oauth-dialog' onclick='if(event.target===this)closeDscGoogleDialog()'><div class='modal' style='max-width:520px' role='dialog' aria-modal='true' aria-labelledby='dscGoogleTitle'><h2 id='dscGoogleTitle'>Complete Google verification</h2><p class='user-setting-description'>The uploaded client credentials do not contain a refresh token. Run the verification flow once to mint reusable tokens.</p><label class='provider-instance-field'>Redirect URI<input id='dscGoogleRedirect' placeholder='https://example.com/google-drive/oauth/callback' autocomplete='off'></label><p id='dscGoogleMsg' class='provider-instance-status' hidden></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeDscGoogleDialog()'>Cancel</button><button class='btn btn-o' id='dscGoogleRefresh' type='button' onclick='dscGooglePoll()' hidden>Refresh status</button><button class='btn btn-p' id='dscGoogleSubmit' type='button' onclick='dscGoogleAuthorize()'>Authorize with Google</button></div></div></div>"#;
+    let js = r#"<script>var DS_SCHEMA=__SCHEMA__;var DSC_WRAPS={};var DSC_FIELDS=[];function dscPath(name){return name.replace(/^config\./,'')}function dscSet(obj,path,value){var parts=path.split('.');var cur=obj;for(var i=0;i<parts.length-1;i++){if(typeof cur[parts[i]]!=='object'||cur[parts[i]]===null)cur[parts[i]]={};cur=cur[parts[i]]}cur[parts[parts.length-1]]=value}function dscInputOf(wrap){return wrap.querySelector('input,select,textarea')}function dscValue(name){var wrap=DSC_WRAPS[name];if(!wrap)return '';var input=dscInputOf(wrap);if(input.type==='checkbox')return input.checked?'true':'false';return input.value}function dscVisible(field){if(!field.show_when||!field.show_when.length)return true;return field.show_when.some(function(condition){return String(dscValue(condition.field))===String(condition.equals)})}function dscRefresh(){DSC_FIELDS.forEach(function(field){var wrap=DSC_WRAPS[field.name];if(wrap)wrap.hidden=!dscVisible(field)})}function dscBuildField(field){var checkbox=field.type==='Checkbox'||field.type==='Switch';var wrap=document.createElement('label');wrap.className=checkbox?'provider-instance-switch':'provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');wrap.appendChild(span);if(checkbox){var check=document.createElement('input');check.type='checkbox';check.addEventListener('change',function(){dscRefresh()});wrap.appendChild(check);return wrap}var input;if(field.type==='Select'){input=document.createElement('select');(field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option.value;node.textContent=option.label;input.appendChild(node)});if(!field.required){var blank=document.createElement('option');blank.value='';blank.textContent='Please select';input.prepend(blank)}if(field.default_value&&!field.required===false){input.value=field.default_value}input.addEventListener('change',function(){dscRefresh()})}else if(field.type==='Textarea'){input=document.createElement('textarea');input.rows=4}else if(field.type==='Segmented'){input=document.createElement('input');input.type='hidden';var segment=document.createElement('div');segment.className='ds-segment';(field.options||[]).forEach(function(option){var button=document.createElement('button');button.type='button';button.textContent=option.label;button.dataset.value=option.value;button.addEventListener('click',function(){input.value=option.value;segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node===button))});dscRefresh()});segment.appendChild(button)});input.value=field.default_value||(field.options&&field.options[0]&&field.options[0].value)||'';segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node.dataset.value===input.value))});wrap.appendChild(input);wrap.appendChild(segment);return wrap}else{input=document.createElement('input');input.type=field.type==='Password'?'password':field.type==='Number'?'number':'text';if(input.type==='number')input.step='any';if(field.type==='Password')input.autocomplete='new-password';if(field.placeholder)input.placeholder=field.placeholder;if(field.default_value)input.value=field.default_value}wrap.appendChild(input);return wrap}function dscFlatFields(){var root=document.getElementById('dsAddFields');['URL','Target','Token'].forEach(function(label){var wrap=document.createElement('label');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=label;wrap.appendChild(span);var input=document.createElement('input');input.id='dsc'+label;if(label==='Token'){input.type='password';input.autocomplete='new-password'}wrap.appendChild(input);root.appendChild(wrap)})}function dscRenderFields(){var root=document.getElementById('dsAddFields');root.replaceChildren();DSC_WRAPS={};var kind=(document.getElementById('dsType').value||'').toUpperCase();DSC_FIELDS=DS_SCHEMA[kind]||[];if(!DSC_FIELDS.length){dscFlatFields();return}DSC_FIELDS.forEach(function(field){var wrap=dscBuildField(field);DSC_WRAPS[field.name]=wrap;root.appendChild(wrap)});dscRefresh()}function openDsAdd(){var select=document.getElementById('dsType');document.getElementById('dsAddTitle').textContent='Add data source: '+select.selectedOptions[0].textContent;document.getElementById('dsAddError').textContent='';document.getElementById('dsAddName').value='';dscRenderFields();document.getElementById('dsAddModal').classList.add('show')}function closeDsAdd(){document.getElementById('dsAddModal').classList.remove('show')}function dscCreate(){var name=document.getElementById('dsAddName').value.trim();var error='';if(!name)error='Name is required';DSC_FIELDS.forEach(function(field){if(field.required&&!dscValue(field.name).trim())error=error||(field.label+' is required')});if(error){document.getElementById('dsAddError').textContent=error;return}var body={name:name,type:document.getElementById('dsType').value};if(DSC_FIELDS.length){var config={};DSC_FIELDS.forEach(function(field){dscSet(config,dscPath(field.name),dscValue(field.name))});body.config=config}else{body.url=document.getElementById('dscUrl').value.trim();body.target=document.getElementById('dscTarget').value.trim();var token=document.getElementById('dscToken').value;if(token)body.token=token;if(!body.url||!body.target){document.getElementById('dsAddError').textContent='URL/Target required';return}}var button=document.getElementById('dsAddConfirm');button.disabled=true;fetch('/api/v1/data_sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code===0){closeDsAdd();loadDs()}else{document.getElementById('dsAddError').textContent=data.message||'create failed'}}).finally(function(){button.disabled=false})}</script>"#;
+    let js = js
+        .replace("__SCHEMA__", schema)
+        .replace(
+            "function dscBuildField(field){var checkbox=",
+            "function dscBuildField(field){if(field.name==='config.credentials.box_tokens')return dscBuildBoxField(field);if(field.name==='config.credentials.google_tokens'&&(window.DSC_TYPE==='gmail'||window.DSC_TYPE==='google_drive'))return dscBuildGoogleField(field);var checkbox=",
+        )
+        .replace(
+            "function dscFlatFields()",
+            "var DSC_BOX_FLOW='';var DSC_BOX_CREDS={};function dscBuildBoxField(field){var wrap=document.createElement('div');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');var input=document.createElement('input');input.type='hidden';input.dataset.field=field.name;var chips=document.createElement('div');chips.id='dscBoxChips';chips.className='ds-box-chips';var button=document.createElement('button');button.type='button';button.className='btn btn-o';button.id='dscBoxBtn';button.textContent='Configure Box credentials';button.addEventListener('click',openDscBoxDialog);wrap.append(span,input,chips,button);try{var parsed=JSON.parse(input.value||'');if(parsed&&(parsed.client_id||parsed.access_token||parsed.authorization_code)){DSC_BOX_CREDS=parsed;dscBoxRefreshChips()}}catch(error){}return wrap}function dscBoxRefreshChips(){var chips=document.getElementById('dscBoxChips');if(!chips)return;var authorized=!!(DSC_BOX_CREDS.access_token||DSC_BOX_CREDS.authorization_code);var configured=!!DSC_BOX_CREDS.client_id;chips.replaceChildren();if(authorized){var a=document.createElement('span');a.className='ds-box-chip ds-box-authorized';a.textContent='Authorized';chips.appendChild(a)}else if(configured){var c=document.createElement('span');c.className='ds-box-chip ds-box-configured';c.textContent='Configured';chips.appendChild(c)}var b=document.getElementById('dscBoxBtn');if(b)b.textContent=authorized||configured?'Get Box credentials':'Configure Box credentials'}function openDscBoxDialog(){document.getElementById('dscBoxClientId').value=DSC_BOX_CREDS.client_id||'';document.getElementById('dscBoxClientSecret').value=DSC_BOX_CREDS.client_secret||'';document.getElementById('dscBoxRedirect').value=DSC_BOX_CREDS.redirect_uri||'';document.getElementById('dscBoxMsg').hidden=true;document.getElementById('dscBoxRefresh').hidden=!window.DSC_BOX_FLOW;document.getElementById('dscBoxDialog').classList.add('show')}function closeDscBoxDialog(){document.getElementById('dscBoxDialog').classList.remove('show')}function dscBoxMsg(text,error){var message=document.getElementById('dscBoxMsg');message.hidden=false;message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)';document.getElementById('dscBoxRefresh').hidden=!window.DSC_BOX_FLOW}function dscBoxSubmit(){var cid=document.getElementById('dscBoxClientId').value.trim();var csec=document.getElementById('dscBoxClientSecret').value.trim();var redir=document.getElementById('dscBoxRedirect').value.trim();if(!cid||!csec||!redir){dscBoxMsg('Please fill in Client ID, Client Secret, and Redirect URI.',true);return}var button=document.getElementById('dscBoxSubmit');button.disabled=true;fetch('/api/v1/connectors/box/oauth/web/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid,client_secret:csec,redirect_uri:redir})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to start Box authorization.');window.DSC_BOX_FLOW=data.data.flow_id;DSC_BOX_CREDS={client_id:cid,client_secret:csec,redirect_uri:redir};var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.box_tokens']\");if(field)field.value=JSON.stringify(DSC_BOX_CREDS);dscBoxRefreshChips();dscBoxMsg('Complete the Box consent in the opened window and return here.',false);var popup=window.open(data.data.authorization_url,'ragflow-box-oauth','width=600,height=720');if(!popup){dscBoxMsg('Popup was blocked. Please allow popups for this site.',true);window.DSC_BOX_FLOW='';document.getElementById('dscBoxRefresh').hidden=true}}).catch(function(error){dscBoxMsg(error.message||'Failed to start Box authorization.',true)}).finally(function(){button.disabled=false})}function dscBoxPoll(){var flow=window.DSC_BOX_FLOW;if(!flow){dscBoxMsg('Start browser authorization first.',true);return}dscBoxMsg('Checking authorization status...',false);fetch('/api/v1/connectors/box/oauth/web/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flow})}).then(function(response){return response.json()}).then(function(data){if(data.code===0){var creds=data.data.credentials||{};var finalValue={client_id:creds.client_id||DSC_BOX_CREDS.client_id,client_secret:creds.client_secret||DSC_BOX_CREDS.client_secret,redirect_uri:creds.redirect_uri||DSC_BOX_CREDS.redirect_uri};if(creds.code)finalValue.authorization_code=creds.code;if(creds.access_token)finalValue.access_token=creds.access_token;if(creds.refresh_token)finalValue.refresh_token=creds.refresh_token;var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.box_tokens']\");if(field)field.value=JSON.stringify(finalValue);DSC_BOX_CREDS=finalValue;dscBoxRefreshChips();dscBoxMsg('Box authorization completed.',false);window.DSC_BOX_FLOW='';document.getElementById('dscBoxRefresh').hidden=true;closeDscBoxDialog()}else if(data.code===106){dscBoxMsg('Authorization is still pending.',false)}else{dscBoxMsg(data.message||'Authorization failed.',true)}}).catch(function(){dscBoxMsg('Unable to retrieve authorization result.',true)})}var DSC_GOOGLE_FLOW='';var DSC_GOOGLE_PENDING='';function dscBuildGoogleField(field){var wrap=document.createElement('div');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');var input=document.createElement('input');input.type='hidden';input.dataset.field=field.name;var chips=document.createElement('div');chips.id='dscGoogleChips';chips.className='ds-box-chips';var file=document.createElement('input');file.type='file';file.accept='.json,application/json';file.id='dscGoogleFile';file.addEventListener('change',function(){dscGoogleFileSelected(file.files&&file.files[0])});var hint=document.createElement('p');hint.className='user-setting-description';hint.textContent='Upload your Google OAuth JSON file.';wrap.append(span,input,chips,file,hint);dscGoogleRefreshChips();return wrap}function dscGoogleChip(text,className){var chip=document.createElement('span');chip.className='ds-box-chip '+className;chip.textContent=text;return chip}function dscGoogleRefreshChips(){var chips=document.getElementById('dscGoogleChips');if(!chips)return;chips.replaceChildren();var value=(document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\")||{}).value||'';try{var parsed=JSON.parse(value);if(parsed&&parsed.refresh_token){chips.appendChild(dscGoogleChip('Verified','ds-box-authorized'))}else if(parsed&&(parsed.web||parsed.installed)){chips.appendChild(dscGoogleChip('Needs authorization','ds-box-pending'))}else if(value){chips.appendChild(dscGoogleChip('Stored','ds-box-configured'))}}catch(error){}}function dscGoogleFileSelected(file){if(!file)return;var reader=new FileReader();reader.onload=function(){var text=String(reader.result||'');try{var parsed=JSON.parse(text);var redirect='';var uris=parsed.web&&parsed.web.redirect_uris||parsed.installed&&parsed.installed.redirect_uris;if(Array.isArray(uris)&&uris.length)redirect=uris[0];if(parsed.refresh_token){var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\");if(field)field.value=text;dscGoogleRefreshChips();dscBoxMsg?dscBoxMsg('OAuth credentials uploaded.',false):null;return}DSC_GOOGLE_PENDING=text;document.getElementById('dscGoogleRedirect').value=redirect||'';document.getElementById('dscGoogleMsg').hidden=true;document.getElementById('dscGoogleRefresh').hidden=true;document.getElementById('dscGoogleDialog').classList.add('show')}catch(error){dscBoxMsg('Invalid JSON file.',true)}};reader.readAsText(file)}function closeDscGoogleDialog(){document.getElementById('dscGoogleDialog').classList.remove('show')}function dscGoogleMsg(text,error){var message=document.getElementById('dscGoogleMsg');message.hidden=false;message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)';document.getElementById('dscGoogleRefresh').hidden=!window.DSC_GOOGLE_FLOW}function dscGoogleAuthorize(){if(!DSC_GOOGLE_PENDING){dscGoogleMsg('No Google credential file detected.',true);return}var redir=document.getElementById('dscGoogleRedirect').value.trim();if(!redir){dscGoogleMsg('Please fill in Redirect URI.',true);return}var button=document.getElementById('dscGoogleSubmit');button.disabled=true;var type=window.DSC_TYPE==='gmail'?'gmail':'google-drive';fetch('/api/v1/connectors/google/oauth/web/start?type='+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credentials:DSC_GOOGLE_PENDING,redirect_uri:redir})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to start browser authorization.');window.DSC_GOOGLE_FLOW=data.data.flow_id;dscGoogleMsg('Complete the Google consent in the popup window.',false);var popup=window.open(data.data.authorization_url,type==='gmail'?'ragflow-gmail-oauth':'ragflow-google-drive-oauth','width=600,height=720');if(!popup){dscGoogleMsg('Popup was blocked. Please allow popups for this site.',true);window.DSC_GOOGLE_FLOW='';document.getElementById('dscGoogleRefresh').hidden=true}}).catch(function(error){dscGoogleMsg(error.message||'Failed to start browser authorization.',true)}).finally(function(){button.disabled=false})}function dscGooglePoll(){var flow=window.DSC_GOOGLE_FLOW;if(!flow){dscGoogleMsg('Start browser authorization first.',true);return}var type=window.DSC_TYPE==='gmail'?'gmail':'google-drive';dscGoogleMsg('Checking authorization status...',false);fetch('/api/v1/connectors/google/oauth/web/result?type='+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flow})}).then(function(response){return response.json()}).then(function(data){if(data.code===0){var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\");if(field)field.value=data.data.credentials||'';dscGoogleRefreshChips();dscGoogleMsg('Google credentials verified.',false);window.DSC_GOOGLE_FLOW='';document.getElementById('dscGoogleRefresh').hidden=true;DSC_GOOGLE_PENDING='';closeDscGoogleDialog()}else if(data.code===106){dscGoogleMsg('Authorization is still pending.',false)}else{dscGoogleMsg(data.message||'Authorization failed.',true)}}).catch(function(){dscGoogleMsg('Unable to retrieve authorization result.',true)})}function dscFlatFields()",
+        )
+        .replace(
+            "var kind=(document.getElementById('dsType').value||'').toUpperCase();",
+            "var kind=(window.DSC_TYPE||'').toUpperCase();",
+        )
+        .replace(
+            "var body={name:name,type:document.getElementById('dsType').value};",
+            "var body={name:name,type:window.DSC_TYPE};",
+        )
+        .replace(
+            "function openDsAdd(){var select=document.getElementById('dsType');document.getElementById('dsAddTitle').textContent='Add data source: '+select.selectedOptions[0].textContent;",
+            "function openDsAdd(key,label){window.DSC_TYPE=key||'';document.getElementById('dsAddTitle').textContent='Create your '+(label||key||'')+' connector';",
+        )
+        .replace(
+            "if(field.default_value&&!field.required===false){input.value=field.default_value}",
+            "if(field.default_value)input.value=field.default_value;",
+        )
+        .replace(
+            "if(field.default_value)input.value=field.default_value;input.addEventListener",
+            "if(field.default_value){input.value=field.default_value}else if(!field.required){input.value=''};input.addEventListener",
+        )
+        .replace(
+            "input.id='dsc'+label;",
+            "input.id=label==='URL'?'dscUrl':label==='Target'?'dscTarget':'dscToken';",
+        )
+        .replace(
+            "dscBoxMsg?dscBoxMsg('OAuth credentials uploaded.',false):null;return}",
+            "return}",
+        )
+        .replace(
+            "dscBoxMsg('Invalid JSON file.',true)",
+            "alert('Invalid JSON file.')",
+        )
+        .replace(
+            "var value=(document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\")||{}).value||'';try{",
+            "var value=(document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\")||{}).value||'';if(!value&&window.DSC_GOOGLE_PENDING){chips.appendChild(dscGoogleChip('Uploaded (pending)','ds-box-pending'));return}try{",
+        )
+        .replace(
+            "DSC_GOOGLE_PENDING=text;document.getElementById('dscGoogleRedirect')",
+            "DSC_GOOGLE_PENDING=text;dscGoogleRefreshChips();document.getElementById('dscGoogleRedirect')",
+        )
+        .replace(
+            "dscGoogleMsg('Google credentials verified.',false);",
+            "dscGoogleMsg('Google credentials updated.',false);",
+        );
+    format!(
+        "<style>.ds-segment{{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;margin-top:8px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bg);width:fit-content}}.ds-segment button{{border:0;border-radius:calc(var(--r) - 2px);padding:6px 12px;background:transparent;color:var(--t2);font-size:13px;cursor:pointer}}.ds-segment button[aria-checked=true]{{background:var(--p);color:#fff}}.provider-instance-field textarea{{width:100%;min-height:88px;resize:vertical}}.ds-box-chips{{display:flex;gap:6px;margin-top:8px}}.ds-box-chip{{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}}.ds-box-authorized{{background:#d1fae5;color:#065f46}}.ds-box-configured{{background:#dbeafe;color:#1e40af}}.ds-box-pending{{background:#fef3c7;color:#92400e}}</style>{overlay}{box_dialog}{google_dialog}{js}"
+    )
+}
+
+/// Upstream-style data-source list surface: a grid of 35 Available cards,
+/// grouped Added cards with Settings/Trash row actions, and the delete
+/// confirmation dialog (`added-source-card.tsx` + `delete-source-modal.tsx`).
+fn data_source_list_section(info_json: &str) -> String {
+    let style = r#"<style>.ds-available-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:12px}.ds-available-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--nab);font-weight:700}.ds-available-icon img{width:26px;height:26px;object-fit:contain}.ds-added-card{margin-top:16px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);padding:12px 16px}.ds-added-head{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:16px;font-weight:500}.ds-added-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd)}.ds-added-row:last-child{border-bottom:0}.ds-added-name{flex:1;min-width:0;overflow-wrap:anywhere}.ds-added-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.ds-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:var(--t2);cursor:pointer}.ds-icon-btn:hover{background:var(--bgch);color:var(--t)}.ds-icon-btn.ds-trash:hover{color:var(--d)}.ds-local-row{display:flex;gap:8px;align-items:flex-end}.ds-empty{color:var(--tm);padding:16px 0}</style>"#;
+    let delete_modal = r#"<div class='modal-overlay' id='dsDeleteModal' data-testid='data-source-delete-modal' onclick='if(event.target===this)closeDsDelete()'><div class='modal' style='max-width:560px' role='alertdialog' aria-modal='true' aria-labelledby='dsDeleteTitle'><h2 id='dsDeleteTitle'>Delete data source</h2><p class='user-setting-description'>Are you sure you want to delete this data source link?</p><div id='dsDeleteBox' class='ds-delete-box'></div><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeDsDelete()'>Cancel</button><button class='btn btn-d' id='dsDeleteOk' type='button' onclick='confirmDsDelete()'>Confirm</button></div></div></div>"#;
+    let js = r#"<script>var DS_SOURCE_INFO=__INFO__;var DS_DELETE_ID='';function dsIconHtml(info){if(info&&info.icon&&info.icon.indexOf('.svg')>=0)return "<img src='/"+info.icon+"' alt='' aria-hidden='true'>";return info&&info.icon||'🔗'}function dsRenderCards(){var root=document.getElementById('dsAvailable');root.replaceChildren();Object.keys(DS_SOURCE_INFO).forEach(function(key){var info=DS_SOURCE_INFO[key];var card=document.createElement('article');card.className='cc-available-card';card.dataset.type=key;card.tabIndex=0;var icon=document.createElement('span');icon.className='cc-available-icon ds-available-icon';icon.innerHTML=dsIconHtml(info);var title=document.createElement('h3');title.textContent=info.name;var desc=document.createElement('p');desc.className='cc-available-desc ds-available-desc';desc.textContent=info.description||'';var add=document.createElement('button');add.className='cc-add-btn btn btn-p btn-sm';add.type='button';add.textContent='+ Add';add.addEventListener('click',function(event){event.stopPropagation();openDsAdd(key,info.name)});card.addEventListener('click',function(){openDsAdd(key,info.name)});card.append(icon,title,desc,add);root.appendChild(card)})}function dsGroupedRows(list){var groups={};list.forEach(function(item){(groups[item.type]=groups[item.type]||[]).push(item)});return groups}function loadDs(){fetch('/api/v1/data_sources').then(function(response){return response.json()}).then(function(data){var list=data.data||[];var root=document.getElementById('dsList');root.replaceChildren();if(!list.length){var empty=document.createElement('p');empty.className='ds-empty';empty.textContent='No data sources added yet.';root.appendChild(empty);return}var groups=dsGroupedRows(list);Object.keys(groups).forEach(function(type){var info=DS_SOURCE_INFO[type]||{name:type,icon:'🔗'};var card=document.createElement('div');card.className='ds-added-card';card.dataset.type=type;var head=document.createElement('h2');head.className='ds-added-head';var headIcon=document.createElement('span');headIcon.className='ds-available-icon';headIcon.innerHTML=dsIconHtml(info);head.appendChild(headIcon);var headName=document.createElement('span');headName.textContent=info.name;head.appendChild(headName);card.appendChild(head);groups[type].forEach(function(item){var row=document.createElement('div');row.className='ds-added-row';var name=document.createElement('span');name.className='ds-added-name';name.textContent=item.name;var badge=document.createElement('span');badge.className=item.connected?'badge bs':'badge bw';badge.textContent=item.connected?'connected':'disconnected';var actions=document.createElement('span');actions.className='ds-added-actions';actions.append(dsAction('Connect','btn btn-p btn-sm',function(){connDs(item.id)}),document.createTextNode(' '),dsAction('Disconnect','btn btn-o btn-sm',function(){discDs(item.id)}),document.createTextNode(' '),dsAction('List','btn btn-o btn-sm',function(){listDs(item.id)}),document.createTextNode(' '),dsAction('Sync','btn btn-p btn-sm',function(){syncDs(item.id)}));var gear=document.createElement('button');gear.type='button';gear.className='ds-icon-btn';gear.title='Settings';gear.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';gear.addEventListener('click',function(){location.href='/user-setting/data-source/'+encodeURIComponent(item.id)});var trash=document.createElement('button');trash.type='button';trash.className='ds-icon-btn ds-trash';trash.title='Delete';trash.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';trash.addEventListener('click',function(){openDsDelete(item.id,item.name,item.type)});actions.append(document.createTextNode(' '),gear,document.createTextNode(' '),trash);row.append(name,badge,actions);card.appendChild(row)});root.appendChild(card)})})}function openDsDelete(id,name,type){DS_DELETE_ID=id;var info=DS_SOURCE_INFO[type]||{name:type,icon:'🔗'};var box=document.getElementById('dsDeleteBox');box.replaceChildren();var icon=document.createElement('span');icon.className='ds-available-icon';icon.innerHTML=dsIconHtml(info);var label=document.createElement('span');label.textContent=name;box.append(icon,label);document.getElementById('dsDeleteModal').classList.add('show')}function closeDsDelete(){document.getElementById('dsDeleteModal').classList.remove('show')}function confirmDsDelete(){fetch('/api/v1/data_sources/'+DS_DELETE_ID,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code===0){closeDsDelete();loadDs()}else{alert(data.message||'delete failed')}})}dsRenderCards();loadDs()</script>"#;
+    format!("{style}{delete_modal}{}", js.replace("__INFO__", info_json))
+}
+
+pub async fn data_source_detail_page(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    let zh = detect_lang(req.headers());
+    let Some(record) = state.data_sources.as_ref().and_then(|store| store.get(&id)) else {
+        return Html(layout(
+            t("Data source", zh),
+            &format!(
+                "<h1>404</h1><p>{}: {id}</p>",
+                t("Data source not found", zh)
+            ),
+            zh,
+        ))
+        .into_response();
+    };
+    let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+        .unwrap_or_else(|_| "{{}}".to_string());
+    let body = data_source_detail_body(&record.name, &id, &record.kind, &schema, zh);
+    Html(user_setting_layout(
+        t("Data source", zh),
+        &body,
+        UserSettingSection::DataSource,
+        zh,
+    ))
+    .into_response()
 }
 
 pub async fn files_page(
@@ -1900,43 +2248,335 @@ searchSkills();
     Html(layout(t("Skills", zh), &b, zh))
 }
 
+#[derive(Clone, Copy)]
+struct DefaultModelField {
+    field_id: &'static str,
+    dom_id: &'static str,
+    label: &'static str,
+    update_type: &'static str,
+    response_type: &'static str,
+    accepted_types: &'static [&'static str],
+    required: bool,
+    tooltip: &'static str,
+}
+
+const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
+    DefaultModelField {
+        field_id: "llm_id",
+        dom_id: "dmLlm",
+        label: "LLM",
+        update_type: "chat",
+        response_type: "chat",
+        accepted_types: &["chat", "image2text"],
+        required: true,
+        tooltip: "The default LLM for each newly created dataset.",
+    },
+    DefaultModelField {
+        field_id: "embd_id",
+        dom_id: "dmEmbedding",
+        label: "Embedding",
+        update_type: "embedding",
+        response_type: "embedding",
+        accepted_types: &["embedding"],
+        required: false,
+        tooltip: "The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+    },
+    DefaultModelField {
+        field_id: "img2txt_id",
+        dom_id: "dmVlm",
+        label: "VLM",
+        update_type: "vision",
+        response_type: "image2text",
+        accepted_types: &["image2text"],
+        required: false,
+        tooltip: "The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+    },
+    DefaultModelField {
+        field_id: "asr_id",
+        dom_id: "dmAsr",
+        label: "ASR",
+        update_type: "asr",
+        response_type: "speech2text",
+        accepted_types: &["speech2text"],
+        required: false,
+        tooltip: "The default ASR model for each newly created dataset. Use this model to translate voices to corresponding text.",
+    },
+    DefaultModelField {
+        field_id: "rerank_id",
+        dom_id: "dmRerank",
+        label: "Rerank",
+        update_type: "rerank",
+        response_type: "rerank",
+        accepted_types: &["rerank"],
+        required: false,
+        tooltip: "The default rerank model for reranking chunks. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+    },
+    DefaultModelField {
+        field_id: "tts_id",
+        dom_id: "dmTts",
+        label: "TTS",
+        update_type: "tts",
+        response_type: "tts",
+        accepted_types: &["tts"],
+        required: false,
+        tooltip: "The default text-to-speech model. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+    },
+];
+
+fn provider_capability_tags(provider_id: &str, provider_name: &str) -> Vec<&'static str> {
+    use crate::providers::{ProviderKind, provider_has_kind};
+    [
+        (ProviderKind::Chat, "chat"),
+        (ProviderKind::Embedding, "embedding"),
+        (ProviderKind::Rerank, "rerank"),
+        (ProviderKind::TextToSpeech, "tts"),
+        (ProviderKind::SpeechToText, "speech2text"),
+        (ProviderKind::ImageToText, "image2text"),
+        (ProviderKind::Ocr, "ocr"),
+    ]
+    .into_iter()
+    .filter_map(|(kind, tag)| provider_has_kind(provider_id, provider_name, kind).then_some(tag))
+    .collect()
+}
+
+fn model_type_label(model_type: &str) -> &str {
+    match model_type {
+        "chat" => "LLM",
+        "embedding" => "Embedding",
+        "rerank" => "Rerank",
+        "tts" => "TTS",
+        "asr" | "speech2text" => "ASR",
+        "vision" | "image2text" => "VLM",
+        "ocr" => "OCR",
+        _ => model_type,
+    }
+}
+
+/// Fixed v0.26.4 `LIST_MODEL_PROVIDERS`: these provider modals replace the
+/// single model-name field with a remote, multi-select model picker.
+fn provider_uses_model_picker(provider_name: &str) -> bool {
+    matches!(
+        provider_name,
+        "Ollama"
+            | "OpenRouter"
+            | "VLLM"
+            | "OpenAI-API-Compatible"
+            | "LM-Studio"
+            | "VolcEngine"
+            | "Xinference"
+            | "LocalAI"
+            | "BaiduYiyan"
+            | "New API"
+    )
+}
+
+/// Fixed `FACTORIES_WITH_BASE_URL` plus Anthropic: these provider modals render
+/// the Base url input (and, for SiliconFlow/Tongyi-Qianwen, its
+/// default/intl options) even before a tenant instance exists.
+fn provider_shows_base_url(provider_name: &str) -> bool {
+    matches!(
+        provider_name,
+        "OpenAI" | "Azure-OpenAI" | "Tongyi-Qianwen" | "MiniMax" | "SILICONFLOW" | "Anthropic"
+    )
+}
+
+/// Fixed `LocalLlmConfigs` declare API-Key optional for local/self-hosted
+/// factories while keeping instance name, base URL and model selection.
+fn provider_api_key_optional(provider_name: &str) -> bool {
+    matches!(
+        provider_name,
+        "Ollama"
+            | "Xinference"
+            | "ModelScope"
+            | "LocalAI"
+            | "LM-Studio"
+            | "OpenAI-API-Compatible"
+            | "RAGcon"
+            | "TogetherAI"
+            | "Replicate"
+            | "OpenRouter"
+            | "HuggingFace"
+            | "GPUStack"
+            | "VLLM"
+            | "New API"
+    )
+}
+
+fn provider_api_key_url(provider_name: &str) -> Option<&'static str> {
+    match provider_name {
+        "Ollama" => Some("https://github.com/ollama/ollama"),
+        "VLLM" => Some("https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html"),
+        "LM-Studio" => Some("https://lmstudio.ai/docs/developer/openai-compat"),
+        "LocalAI" => Some("https://localai.io/features/openai-functions/"),
+        "Xinference" => Some("https://inference.readthedocs.io/"),
+        "New API" => Some("https://docs.newapi.pro/"),
+        "OpenAI" => Some("https://platform.openai.com/api-keys"),
+        "Anthropic" => Some("https://console.anthropic.com/settings/keys"),
+        "Gemini" => Some("https://aistudio.google.com/app/apikey"),
+        "DeepSeek" => Some("https://platform.deepseek.com/api_keys"),
+        "Moonshot" => Some("https://platform.moonshot.cn/console/api-keys"),
+        "Tongyi-Qianwen" => Some("https://dashscope.console.aliyun.com/apiKey"),
+        "ZHIPU-AI" => Some("https://open.bigmodel.cn/usercenter/apikeys"),
+        "xAI" => Some("https://x.ai/api/"),
+        "HuggingFace" => Some("https://huggingface.co/settings/tokens"),
+        "Mistral" => Some("https://console.mistral.ai/api-keys/"),
+        "Cohere" => Some("https://dashboard.cohere.com/api-keys"),
+        "BaiduYiyan" => Some("https://console.bce.baidu.com/qianfan/ais/console/apiKey"),
+        "Meituan" => Some("https://longcat.chat/platform/api_keys"),
+        "Bedrock" => {
+            Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-2#/users")
+        }
+        "Azure-OpenAI" => {
+            Some("https://portal.azure.com/#create/Microsoft.CognitiveServicesOpenAI")
+        }
+        "OpenRouter" => Some("https://openrouter.ai/keys"),
+        "XunFei Spark" => Some("https://console.xfyun.cn/services/cbm"),
+        "MiniMax" => Some("https://platform.minimaxi.com/user-center/basic-information"),
+        "Groq" => Some("https://console.groq.com/keys"),
+        "NVIDIA" => Some("https://build.nvidia.com/settings/api-keys"),
+        "SILICONFLOW" => Some("https://cloud.siliconflow.cn/account/ak"),
+        "Replicate" => Some("https://replicate.com/account/api-tokens"),
+        "VolcEngine" => Some("https://console.volcengine.com/ark"),
+        "Jina" => Some("https://jina.ai/embeddings/"),
+        "Tencent Hunyuan" => Some("https://console.cloud.tencent.com/hunyuan/api-key"),
+        "Tencent Cloud" => Some("https://console.cloud.tencent.com/cam/capi"),
+        "ModelScope" => Some("https://modelscope.cn/my/myaccesstoken"),
+        "Google Cloud" => Some("https://console.cloud.google.com/apis/credentials"),
+        "Fish Audio" => Some("https://fish.audio/app/api-keys/"),
+        "GiteeAI" => Some("https://ai.gitee.com/dashboard/settings/tokens"),
+        "StepFun" => Some("https://platform.stepfun.com/interface-key"),
+        "BaiChuan" => Some("https://platform.baichuan-ai.com/console/apikey"),
+        "PPIO" => Some("https://ppio.com/settings/key-management"),
+        "Voyage AI" => Some("https://dash.voyageai.com/api-keys"),
+        "TogetherAI" => Some("https://api.together.xyz/settings/api-keys"),
+        "NovitaAI" => Some("https://novita.ai/dashboard/key"),
+        "Upstage" => Some("https://console.upstage.ai/api-keys"),
+        "CometAPI" => Some("https://api.cometapi.com/console/token"),
+        "302.AI" => Some("https://302.ai/apis/list"),
+        "DeerAPI" => Some("https://api.deerapi.com/token"),
+        "TokenPony" => Some("https://www.tokenpony.cn/#/user/keys"),
+        "DeepInfra" => Some("https://deepinfra.com/dash/api_keys"),
+        "PaddleOCR" => Some("https://www.paddleocr.ai/latest/"),
+        "SoMark" => Some("https://somark.tech/workbench/apikey"),
+        "n1n" => Some("https://docs.n1n.ai"),
+        "Avian" => Some("https://avian.io"),
+        "Perplexity" => Some("https://docs.perplexity.ai/docs/embeddings/quickstart"),
+        _ => None,
+    }
+}
+
+/// Fixed v0.26.4 `LlmIcon` resolution: the `svgIcons` factories serve a
+/// branded static SVG from `/assets/svg/llm/`, everyone else uses the bundled
+/// iconfont symbol from `IconMap`, and unmapped names fall back to the
+/// upstream `moxing-default` glyph. Dark-theme `-dark` variants and the
+/// iconfont bright/dark pairs are intentionally rendered with the bright
+/// variant in the server-rendered shell for now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderIcon {
+    Svg(&'static str),
+    Font(&'static str),
+}
+
+fn provider_icon(provider_name: &str) -> ProviderIcon {
+    let svg = match provider_name {
+        "LocalAI" => Some("local-ai.svg"),
+        "Gemini" => Some("gemini.svg"),
+        "StepFun" => Some("stepfun.svg"),
+        "MinerU" => Some("mineru-bright.svg"),
+        "PaddleOCR" => Some("paddleocr.svg"),
+        "n1n" => Some("n1n.svg"),
+        "Avian" => Some("avian.svg"),
+        "RAGcon" => Some("ragcon.svg"),
+        "SoMark" => Some("somark.svg"),
+        "New API" => Some("new-api.svg"),
+        _ => None,
+    };
+    if let Some(path) = svg {
+        return ProviderIcon::Svg(path);
+    }
+    let symbol = match provider_name {
+        "Tongyi-Qianwen" => "tongyi-qianwen",
+        "Moonshot" => "moonshot",
+        "OpenAI" => "openai",
+        "ZHIPU-AI" => "zhipu",
+        "WenXinYiYan" => "wenxin",
+        "Ollama" => "ollama",
+        "Xinference" => "xinference",
+        "ModelScope" => "modelscope",
+        "DeepSeek" => "deepseek",
+        "VolcEngine" => "volcengine",
+        "BaiChuan" => "baichuan",
+        "Jina" => "jina",
+        "MiniMax" => "MiniMax",
+        "Mistral" => "mistral",
+        "Azure-OpenAI" => "azure",
+        "Bedrock" => "bedrock",
+        "Groq" => "groq-next",
+        "OpenRouter" => "open-router",
+        "NVIDIA" => "nvidia",
+        "LM-Studio" => "lm-studio",
+        "OpenAI-API-Compatible" => "openai-api",
+        "Cohere" => "cohere",
+        "TogetherAI" => "together-bright",
+        "Upstage" => "upstage",
+        "NovitaAI" => "novita-ai",
+        "SILICONFLOW" => "siliconflow",
+        "PPIO" => "ppio",
+        "Replicate" => "replicate",
+        "Tencent Hunyuan" => "hunyuan",
+        "XunFei Spark" => "spark",
+        "BaiduYiyan" => "wenxinyiyan",
+        "Fish Audio" => "fish-audio-bright",
+        "Tencent Cloud" => "tencent-cloud",
+        "Anthropic" => "anthropic",
+        "Voyage AI" => "voyage",
+        "Google Cloud" => "google-cloud",
+        "HuggingFace" => "huggingface",
+        "GPUStack" => "gpustack",
+        "VLLM" => "vllm",
+        "GiteeAI" => "gitee-ai",
+        "302.AI" => "ai302",
+        "DeepInfra" => "deepinfra",
+        "xAI" => "xai",
+        "TokenPony" => "tokenpony",
+        "Meituan" => "longcat-bright",
+        "LongCat" => "longcat-bright",
+        "CometAPI" => "cometapi",
+        "DeerAPI" => "deerapi",
+        "Jiekou.AI" => "jiekouai-bright",
+        "Builtin" => "builtin",
+        "Perplexity" => "perplexity-bright",
+        _ => "moxing-default",
+    };
+    ProviderIcon::Font(symbol)
+}
+
+fn provider_icon_html(provider_name: &str, class: &str) -> String {
+    match provider_icon(provider_name) {
+        ProviderIcon::Svg(path) => format!(
+            "<img class='{class} provider-brand-icon' src='/assets/svg/llm/{path}' alt='' aria-hidden='true'>"
+        ),
+        ProviderIcon::Font(symbol) => format!(
+            "<svg class='{class} provider-brand-icon' aria-hidden='true' focusable='false'><use href='#icon-{symbol}'></use></svg>"
+        ),
+    }
+}
+
 pub async fn providers_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
+    let in_user_settings = req.uri().path() == "/user-setting/model";
     let zh = detect_lang(req.headers());
     let providers = state.providers.list();
     let mut rows = String::new();
     for p in &providers {
         let factory = crate::model_meta::resolve_model_factory(&p.id, &p.name);
-        // Capability kinds (aligned with RAGFlow Model providers type filter).
-        let mut kinds = Vec::new();
-        use crate::providers::{ProviderKind, provider_has_kind};
-        if provider_has_kind(&p.id, &p.name, ProviderKind::Chat) {
-            kinds.push("llm");
-        }
-        if provider_has_kind(&p.id, &p.name, ProviderKind::Embedding) {
-            kinds.push("embedding");
-        }
-        if provider_has_kind(&p.id, &p.name, ProviderKind::Rerank) {
-            kinds.push("rerank");
-        }
-        if provider_has_kind(&p.id, &p.name, ProviderKind::TextToSpeech) {
-            kinds.push("tts");
-        }
-        if provider_has_kind(&p.id, &p.name, ProviderKind::SpeechToText) {
-            kinds.push("asr");
-        }
-        if provider_has_kind(&p.id, &p.name, ProviderKind::ImageToText) {
-            kinds.push("vlm");
-        }
-        if provider_has_kind(&p.id, &p.name, ProviderKind::Ocr) {
-            kinds.push("ocr");
-        }
+        let kinds = provider_capability_tags(&p.id, &p.name);
         let click = match &factory {
             Some(factory) => format!(
                 " style='cursor:pointer' data-factory='{}' data-k='{}' onclick='showProviderModels(this)'",
-                html_escape(factory),
+                html_escape(&factory),
                 kinds.join(" ")
             ),
             None => format!(" data-k='{}'", kinds.join(" ")),
@@ -1945,58 +2585,213 @@ pub async fn providers_page(
             "<tr{}><td>{} {}{}</td><td class='co'>{}</td><td>{}</td></tr>",
             click,
             if p.enabled { "🟢" } else { "⚫" },
-            p.name,
+            html_escape(&p.name),
             if factory.is_some() {
                 " <span style='font-size:11px;color:var(--tm)'>📦 catalog</span>"
             } else {
                 ""
             },
-            p.api_base,
-            p.models.join(", ")
+            html_escape(&p.api_base),
+            html_escape(&p.models.join(", "))
         ));
     }
     let mut b = String::new();
     b.push_str("<h1>🤖 ");
-    b.push_str(t("Providers", zh));
-        b.push_str("</h1>");
+    b.push_str(t("Model providers", zh));
+    b.push_str("</h1>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Set default models", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>");
     b.push_str(t("Please complete these settings before beginning", zh));
-    b.push_str("</p><div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px'>");
-    b.push_str("<label><span style='color:var(--err)'>*</span>LLM<select id='dmLlm' onchange=\"saveModelDefault('chat')\"><option value=''>Select value</option></select></label><label><span style='color:var(--err)'>*</span>Embedding<select id='dmEmbedding' onchange=\"saveModelDefault('embedding')\"><option value=''>Select value</option></select></label><label><span style='color:var(--err)'>*</span>VLM<select id='dmVlm' onchange=\"saveModelDefault('image2text')\"><option value=''>Select value</option></select></label><label><span style='color:var(--err)'>*</span>ASR<select id='dmAsr' onchange=\"saveModelDefault('speech2text')\"><option value=''>Select value</option></select></label><label><span style='color:var(--err)'>*</span>Rerank<select id='dmRerank' onchange=\"saveModelDefault('rerank')\"><option value=''>Select value</option></select></label><label><span style='color:var(--err)'>*</span>TTS<select id='dmTts' onchange=\"saveModelDefault('tts')\"><option value=''>Select value</option></select></label>");
-    b.push_str("</div><p id='dmMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div>");
-    b.push_str("<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px'><span id='pfCount' style='color:var(--tm);font-size:12px'></span><button class='btn btn-o btn-sm pfb on' data-f='all' onclick='pf(\"all\",this)'>All</button><button class='btn btn-o btn-sm pfb' data-f='llm' onclick='pf(\"llm\",this)'>LLM</button><button class='btn btn-o btn-sm pfb' data-f='embedding' onclick='pf(\"embedding\",this)'>Embedding</button><button class='btn btn-o btn-sm pfb' data-f='rerank' onclick='pf(\"rerank\",this)'>Rerank</button><button class='btn btn-o btn-sm pfb' data-f='tts' onclick='pf(\"tts\",this)'>TTS</button><button class='btn btn-o btn-sm pfb' data-f='asr' onclick='pf(\"asr\",this)'>ASR</button><button class='btn btn-o btn-sm pfb' data-f='vlm' onclick='pf(\"vlm\",this)'>VLM</button><button class='btn btn-o btn-sm pfb' data-f='ocr' onclick='pf(\"ocr\",this)'>OCR</button><span style='flex:1'></span><button class='btn btn-p btn-sm' onclick='showAddProv()'>+ Add</button></div><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
-    b.push_str(&rows);
-    b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
-    b.push_str(t(
-        "Click a provider row to browse its seeded model catalog (RAGFlow conf/models).",
-        zh,
-    ));
-    b.push_str("</p></div>");
-    {
-        let summary = crate::model_meta::provider_catalog_summary();
-        let total: usize = summary.iter().map(|(_, _, count)| count).sum();
-        b.push_str("<div class='card'><h2>");
-        b.push_str(t("Model Catalog", zh));
-        b.push_str(" <span style='font-size:13px;color:var(--tm)'>");
-        b.push_str(&summary.len().to_string());
-        b.push_str(" ");
-        b.push_str(t("providers", zh));
-        b.push_str(" · ");
-        b.push_str(&total.to_string());
-        b.push_str(" ");
-        b.push_str(t("models", zh));
-        b.push_str("</span></h2><div class='kb-grid'>");
-        for (factory, name, count) in &summary {
-            b.push_str(&format!(
-                "<div class='kb-card' data-factory='{}' onclick='showProviderModels(this)' style='cursor:pointer'><h3>{}</h3><p style='color:var(--tm);font-size:12px'>{count} {}</p></div>",
-                html_escape(factory),
-                html_escape(name),
-                t("models", zh)
-            ));
+    b.push_str("</p><div class='provider-default-grid'>");
+    for field in DEFAULT_MODEL_FIELDS {
+        b.push_str("<div class='provider-default-field' data-default-model-root='");
+        b.push_str(field.dom_id);
+        b.push_str("'><label id='");
+        b.push_str(field.dom_id);
+        b.push_str("Label' for='");
+        b.push_str(field.dom_id);
+        b.push_str("'>");
+        if field.required {
+            b.push_str("<span style='color:var(--d)'>*</span>");
         }
-        b.push_str("</div></div>");
+        b.push_str(field.label);
+        b.push_str(" <span class='tip' tabindex='0' aria-label='");
+        b.push_str(&html_escape(field.tooltip));
+        b.push_str("' data-tip='");
+        b.push_str(&html_escape(field.tooltip));
+        b.push_str("'>?</span></label><div class='default-model-control'><button id='");
+        b.push_str(field.dom_id);
+        b.push_str("' type='button' class='default-model-trigger' aria-labelledby='");
+        b.push_str(field.dom_id);
+        b.push_str("Label ");
+        b.push_str(field.dom_id);
+        b.push_str("Value' aria-haspopup='dialog' aria-expanded='false' aria-controls='");
+        b.push_str(field.dom_id);
+        b.push_str("Popover' data-state='closed' data-testid='default-model-");
+        b.push_str(field.field_id);
+        b.push_str("' data-field-id='");
+        b.push_str(field.field_id);
+        b.push_str("' data-update-type='");
+        b.push_str(field.update_type);
+        b.push_str("' data-response-type='");
+        b.push_str(field.response_type);
+        b.push_str("' data-model-types='");
+        b.push_str(&field.accepted_types.join(" "));
+        b.push_str("' data-value='' data-saved-value='' onclick=\"toggleDefaultModelTree('");
+        b.push_str(field.update_type);
+        b.push_str("')\"");
+        if field.required {
+            b.push_str(" aria-required='true'");
+        }
+        b.push_str("><span id='");
+        b.push_str(field.dom_id);
+        b.push_str("Value' class='default-model-value'><span class='default-model-placeholder'>Select value</span></span><span id='");
+        b.push_str(field.dom_id);
+        b.push_str("Indicator' class='default-model-indicator' aria-hidden='true'>⌄</span></button><div id='");
+        b.push_str(field.dom_id);
+        b.push_str("Popover' class='default-model-popover' role='dialog' aria-label='");
+        b.push_str(field.label);
+        b.push_str(" model tree' hidden><div class='default-model-search-wrap'><span aria-hidden='true'>⌕</span><input id='");
+        b.push_str(field.dom_id);
+        b.push_str("Search' class='default-model-search' type='search' placeholder='Search' aria-label='Search ");
+        b.push_str(field.label);
+        b.push_str(" models' oninput=\"searchDefaultModelTree('");
+        b.push_str(field.update_type);
+        b.push_str("',this.value)\"></div><div id='");
+        b.push_str(field.dom_id);
+        b.push_str("Tree' class='default-model-tree' role='tree'></div></div></div></div>");
+    }
+    b.push_str(
+        "</div><p id='dmMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div>",
+    );
+    b.push_str("<section class='added-models-section' data-testid='added-models-section'><h2>Added models</h2><div id='addedModelList' class='added-model-list'><p class='added-model-loading'>Loading…</p></div></section>");
+    {
+        let summary = crate::api::tenant_models::plan_available_providers(
+            crate::api::tenant_models::factory_llm_entries(),
+        );
+        b.push_str("<section class='card' id='availableModels' data-testid='available-models-section'><h2>Available models <span id='availableShown' style='font-size:12px;color:var(--tm)'></span></h2><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All <span id='providerCountAll'></span></button>");
+        for (model_type, label) in [
+            ("chat", "LLM"),
+            ("embedding", "Embedding"),
+            ("rerank", "Rerank"),
+            ("tts", "TTS"),
+            ("speech2text", "ASR"),
+            ("image2text", "VLM"),
+            ("ocr", "OCR"),
+        ] {
+            b.push_str("<button class='btn btn-o btn-sm provider-chip' data-filter='");
+            b.push_str(model_type);
+            b.push_str("' onclick=\"selectProviderFilter('");
+            b.push_str(model_type);
+            b.push_str("',this)\">");
+            b.push_str(label);
+            b.push_str(" <span id='providerCount-");
+            b.push_str(model_type);
+            b.push_str("'></span></button>");
+        }
+        b.push_str("</div><div class='available-provider-grid' id='availableProviderGrid'>");
+        for available in &summary {
+            let name = &available.name;
+            let provider = providers.iter().find(|provider| {
+                crate::providers::canonical_provider_name(&provider.id, &provider.name) == *name
+            });
+            let provider_id = provider
+                .map(|provider| provider.id.clone())
+                .unwrap_or_else(|| crate::providers::provider_id_slug(name));
+            let api_base = available
+                .url
+                .get("default")
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .or_else(|| provider.map(|provider| provider.api_base.clone()))
+                .unwrap_or_default();
+            let base_options: Vec<(&String, &String)> = available
+                .url
+                .iter()
+                .filter(|(_, url)| !url.is_empty())
+                .collect();
+            let base_options_json = if base_options.len() > 1 {
+                format!(
+                    "[{}]",
+                    base_options
+                        .iter()
+                        .map(|(url, region)| format!(
+                            "[\"{}\",\"{}\"]",
+                            url.replace('\\', "\\\\").replace('"', "\\\""),
+                            region.replace('\\', "\\\\").replace('"', "\\\"")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            } else {
+                String::new()
+            };
+            let model_names = provider
+                .map(|provider| provider.models.join(", "))
+                .unwrap_or_else(|| {
+                    crate::api::tenant_models::factory_llm_entries()
+                        .iter()
+                        .find(|entry| entry.name == *name)
+                        .map(|entry| {
+                            entry
+                                .llm
+                                .iter()
+                                .map(|model| model.llm_name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default()
+                });
+            let kinds: Vec<&str> = available.model_types.iter().map(String::as_str).collect();
+            let uses_picker = provider_uses_model_picker(name);
+            let shows_base = provider_shows_base_url(name);
+            let key_optional = provider_api_key_optional(name);
+            let special_modal = match name.as_str() {
+                "Bedrock" => "bedrock",
+                "SoMark" => "somark",
+                _ => "",
+            };
+            let factory = crate::model_meta::resolve_model_factory(&provider_id, name)
+                .unwrap_or_else(|| crate::providers::provider_id_slug(name));
+            let doc_link = provider_api_key_url(name)
+                .map(|url| {
+                    format!(
+                        "<a class='available-provider-doc' href='{}' target='_blank' rel='noopener noreferrer' aria-label='Open {} API key page' onclick='event.stopPropagation()'>↗</a>",
+                        html_escape(url),
+                        html_escape(name)
+                    )
+                })
+                .unwrap_or_default();
+            b.push_str(&format!(
+                "<article class='available-provider-card' tabindex='0' data-testid='available-model-card' data-provider='{}' data-name='{}' data-k='{}' data-factory='{}' data-provider-id='{}' data-api-base='{}' data-api-base-options='{}' data-show-base='{}' data-models='{}' data-model-picker='{}' data-api-key-optional='{}' data-special-modal='{}' onclick='showProviderInstanceModal(this)' onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();showProviderInstanceModal(this)}}\"><div class='available-provider-head'><span class='available-provider-icon'>{}</span><span class='available-provider-name'>{}</span>{}<button class='btn btn-p btn-sm available-provider-add' aria-label='Add {}' onclick='event.stopPropagation();showProviderInstanceModal(this.closest(&quot;[data-testid=available-model-card]&quot;))'>+ Add</button></div><div class='available-provider-tags'>",
+                html_escape(name),
+                html_escape(&name.to_lowercase()),
+                kinds.join(" "),
+                html_escape(&factory),
+                html_escape(&provider_id),
+                html_escape(&api_base),
+                html_escape(&base_options_json),
+                shows_base,
+                html_escape(&model_names),
+                uses_picker,
+                key_optional,
+                special_modal,
+                provider_icon_html(name, "provider-brand-icon"),
+                html_escape(name),
+                doc_link,
+                html_escape(name),
+            ));
+            for kind in &kinds {
+                b.push_str("<span class='badge'>");
+                b.push_str(model_type_label(kind));
+                b.push_str("</span>");
+            }
+            b.push_str("</div><p style='margin-top:9px'>");
+            b.push_str(&available.model_count.to_string());
+            b.push_str(" models</p></article>");
+        }
+        b.push_str("</div><p class='available-provider-empty' id='availableProviderEmpty'>No model providers found.</p></section>");
     }
     {
         let reranker = state.reranker.public_config();
@@ -2017,20 +2812,228 @@ pub async fn providers_page(
         b.push_str("'></label><label style='display:block;margin:12px 0'><input id='rerank-clear' type='checkbox'> Clear saved API key</label><button class='btn btn-p' onclick='saveReranker()'>Save</button><span id='rerank-status' style='margin-left:10px;color:var(--tm)'></span></div><script>function saveReranker(){var s=document.getElementById('rerank-status');fetch('/api/v1/reranker',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('rerank-enabled').checked,api_base:document.getElementById('rerank-base').value,api_key:document.getElementById('rerank-key').value||null,clear_api_key:document.getElementById('rerank-clear').checked})}).then(async r=>({ok:r.ok,data:await r.json()})).then(x=>{s.textContent=x.ok?'Saved':(x.data.message||'Failed')})}</script>");
     }
     b.push_str("<div class='card'><h2>RAG Chat Test</h2><input id='q' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='chat()'>Ask</button><div id='answer' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>function chat(){var q=document.getElementById('q').value;fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('answer').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
+    b.push_str("<details class='card provider-admin-details'><summary>RayRAG provider administration</summary><div style='display:flex;justify-content:flex-end;margin:12px 0'><button class='btn btn-p btn-sm' onclick='showAddProv()'>+ Add custom provider</button></div><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
+    b.push_str(&rows);
+    b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
+    b.push_str(t(
+        "Click a provider row to browse its seeded model catalog (RAGFlow conf/models).",
+        zh,
+    ));
+    b.push_str("</p></details>");
     b.push_str("<div class='modal-overlay' id='modelModal' onclick='if(event.target===this)this.classList.remove(\"show\")'><div class='modal' style='max-width:720px'><h2 id='modelModalTitle'>");
     b.push_str(t("Models", zh));
     b.push_str("</h2><div id='modelModalBody' style='max-height:60vh;overflow:auto;margin-top:12px'></div><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-o' onclick='document.getElementById(\"modelModal\").classList.remove(\"show\")'>");
     b.push_str(t("Close", zh));
-    b.push_str("</button></div></div></div><script><script>var MODEL_TYPES={chat:\'dmChat\',embedding:\'dmEmbedding\',image2text:\'dmVLM\',speech2text:\'dmASR\',rerank:\'dmRerank\',tts:\'dmTTS\'};function saveModelDefault(type){var s=document.getElementById(MODEL_TYPES[type]);if(!s)return;var v=s.value||\'\';var p=v?v.split(\'|\'):[\'\',\'\',\'\'];var body={model_provider:p[0]||\'\',model_instance:p[1]||\'\',model_name:p[2]||\'\',model_type:type};var msg=document.getElementById(\'dmMsg\');if(msg)msg.textContent=\'Saving…\';fetch(\'/api/v1/models/default\',{method:\'PATCH\',headers:{\'Content-Type\':\'application/json\'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{if(msg)msg.textContent=d.code===0?\'Saved\':\'Error: \'+(d.message||d.code)});}function loadModelDefaults(){fetch(\'/api/v1/models/default\').then(r=>r.json()).then(d=>{var list=(d.data&&d.data.models)||[];Object.keys(MODEL_TYPES).forEach(function(k){var s=document.getElementById(MODEL_TYPES[k]);if(s)s.value=\'\'});list.forEach(function(m){var id=MODEL_TYPES[m.model_type];if(!id)return;var s=document.getElementById(id);if(!s)return;var v=[m.model_provider,m.model_instance,m.model_name].join(\'|\');if([].slice.call(s.options).some(function(o){return o.value===v})){s.value=v}else{var o=document.createElement(\'option\');o.value=v;o.textContent=m.selector||m.model_name;s.appendChild(o);s.value=v}});});}function loadModelOptions(){fetch(\'/api/v1/llm/models\').then(r=>r.json()).then(d=>{(d.data||[]).forEach(function(m){var id=MODEL_TYPES[m.model_type];if(!id)return;var s=document.getElementById(id);if(!s)return;var v=[m.provider,m.instance_name,m.name].join(\'|\');if([].slice.call(s.options).some(function(o){return o.value===v}))return;var o=document.createElement(\'option\');o.value=v;o.textContent=m.name+\' @ \'+m.instance_name+\' (\'+m.provider+\')\';s.appendChild(o)});loadModelDefaults();});}loadModelOptions();</script>var providerModels=");
-    b.push_str(&crate::model_meta::provider_models_payload().to_string());
-    b.push_str(";function showProviderModels(el){var f=el.getAttribute('data-factory');var p=providerModels[f];if(!p)return;document.getElementById('modelModalTitle').textContent=p.name+' ('+f+')';var h='';if(!p.models||!p.models.length){h='<p style=color:var(--tm)>");
-    b.push_str(t(
+    let model_fields_payload = serde_json::Value::Array(
+        DEFAULT_MODEL_FIELDS
+            .iter()
+            .map(|field| {
+                serde_json::json!({
+                    "fieldId": field.field_id,
+                    "domId": field.dom_id,
+                    "updateType": field.update_type,
+                    "responseType": field.response_type,
+                    "acceptedTypes": field.accepted_types,
+                    "required": field.required,
+                })
+            })
+            .collect(),
+    );
+    b.push_str("</button></div></div></div><script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&model_fields_payload));
+    b.push_str(
+        r#";
+function modelField(type){return MODEL_FIELDS.find(function(field){return field.updateType===type})}
+function modelMessage(text,error){var message=document.getElementById('dmMsg');if(message){message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)'}}
+function parseDefaultModelValue(value){var parts=String(value||'').split('@');if(parts.length<3)return null;var provider=parts.pop();var instance=parts.pop();var name=parts.join('@');if(!provider||!instance||!name)return null;return {model_provider:provider,model_instance:instance,model_name:name}}
+var DEFAULT_MODEL_CATALOG=[];
+var DEFAULT_MODEL_STATES={};
+	function defaultModelState(field){if(!DEFAULT_MODEL_STATES[field.updateType])DEFAULT_MODEL_STATES[field.updateType]={search:'',expanded:new Set(),requestId:0,pending:false};return DEFAULT_MODEL_STATES[field.updateType]}
+	function defaultModelSelector(model){var provider=String(model.provider_name||model.provider||model.model_provider||'');var instance=String(model.instance_name||model.model_instance||'');var name=String(model.name||model.model_name||'').split('__')[0];return name&&instance&&provider?[name,instance,provider].join('@'):''}
+	function normalizeDefaultModel(model){return {name:String(model.name||model.model_name||''),model_type:Array.isArray(model.model_type)?model.model_type.slice():[],provider_name:String(model.provider_name||model.provider||model.model_provider||''),provider_id:String(model.provider_id||''),instance_id:String(model.instance_id||''),instance_name:String(model.instance_name||model.model_instance||''),selector:defaultModelSelector(model),max_tokens:model.max_tokens==null?null:Number(model.max_tokens)}}
+	function defaultModelOption(field,value){return DEFAULT_MODEL_CATALOG.find(function(model){return model.selector===value&&field.acceptedTypes.some(function(type){return model.model_type.indexOf(type)>=0})})}
+	function modelOptionExists(field,value){return !!defaultModelOption(field,value)}
+function buildDefaultModelTree(field){var providers=new Map();var seen=new Set();DEFAULT_MODEL_CATALOG.forEach(function(model){if(!field.acceptedTypes.some(function(type){return model.model_type.indexOf(type)>=0}))return;var selector=model.selector;if(!selector||seen.has(selector))return;seen.add(selector);var instances=providers.get(model.provider_name);if(!instances){instances=new Map();providers.set(model.provider_name,instances)}var models=instances.get(model.instance_name);if(!models){models=[];instances.set(model.instance_name,models)}models.push({id:selector,title:String(model.name).split('__')[0],kind:'model',provider:model.provider_name,instance:model.instance_name,children:null})});return Array.from(providers.entries()).map(function(providerEntry){var provider=providerEntry[0],instances=providerEntry[1];return {id:provider,title:provider,kind:'provider',children:Array.from(instances.entries()).map(function(instanceEntry){var instance=instanceEntry[0],models=instanceEntry[1];return {id:provider+'||'+instance,title:instance,kind:'instance',children:models}})}})}
+function expandDefaultModelTree(field,nodes){var state=defaultModelState(field);(nodes||buildDefaultModelTree(field)).forEach(function(node){if(node.children&&node.children.length){state.expanded.add(node.id);expandDefaultModelTree(field,node.children)}})}
+function filterDefaultModelTree(nodes,term){if(!term)return nodes;var query=term.toLowerCase();return nodes.reduce(function(result,node){var children=node.children?filterDefaultModelTree(node.children,term):null;var match=node.title.toLowerCase().indexOf(query)>=0;if(match||children&&children.length){result.push(Object.assign({},node,{children:match&&node.children?node.children:children}))}return result},[])}
+	function defaultModelTreeRow(field,node,level,searching){var state=defaultModelState(field);var branch=!!(node.children&&node.children.length);var expanded=branch&&(searching||state.expanded.has(node.id));var row=document.createElement('button');row.type='button';row.className='default-model-node '+(branch?'default-model-branch':'default-model-leaf');row.style.paddingLeft=(level*20+4)+'px';row.setAttribute('role','treeitem');if(branch){row.setAttribute('aria-expanded',String(expanded))}else{var selected=document.getElementById(field.domId).dataset.value===node.id;row.setAttribute('aria-selected',String(selected));if(selected)row.classList.add('selected')}var chevron=document.createElement('span');chevron.className='default-model-chevron';chevron.textContent=branch?(expanded?'⌄':'›'):'';row.appendChild(chevron);if(!branch){var icon=document.createElement('span');icon.className='default-model-leaf-icon';icon.textContent=(node.provider||'M').charAt(0).toUpperCase();row.appendChild(icon)}var title=document.createElement('span');title.className='default-model-node-title';title.textContent=node.title;row.appendChild(title);row.addEventListener('click',function(event){event.stopPropagation();if(branch){if(state.expanded.has(node.id))state.expanded.delete(node.id);else state.expanded.add(node.id);renderDefaultModelTree(field)}else{selectDefaultModel(field.updateType,node.id)}});var wrapper=document.createElement('div');wrapper.appendChild(row);if(branch&&expanded){var group=document.createElement('div');group.setAttribute('role','group');node.children.forEach(function(child){group.appendChild(defaultModelTreeRow(field,child,level+1,searching))});wrapper.appendChild(group)}return wrapper}
+function renderDefaultModelTree(field){var tree=document.getElementById(field.domId+'Tree');if(!tree)return;var state=defaultModelState(field);var nodes=filterDefaultModelTree(buildDefaultModelTree(field),state.search);tree.replaceChildren();if(!nodes.length){var empty=document.createElement('div');empty.className='default-model-empty';empty.textContent='No data available';tree.appendChild(empty);return}nodes.forEach(function(node){tree.appendChild(defaultModelTreeRow(field,node,0,!!state.search))})}
+function renderDefaultModelTrigger(field){var trigger=document.getElementById(field.domId);var valueNode=document.getElementById(field.domId+'Value');var indicator=document.getElementById(field.domId+'Indicator');if(!trigger||!valueNode||!indicator)return;var value=trigger.dataset.value||'';var parsed=parseDefaultModelValue(value);valueNode.replaceChildren();if(parsed){var icon=document.createElement('span');icon.className='default-model-selected-icon';icon.textContent=parsed.model_provider.charAt(0).toUpperCase();var name=document.createElement('span');name.className='default-model-selected-name';name.textContent=parsed.model_name;var instance=document.createElement('span');instance.className='default-model-selected-instance';instance.textContent=parsed.model_instance;valueNode.append(icon,name,instance)}else{var placeholder=document.createElement('span');placeholder.className='default-model-placeholder';placeholder.textContent='Select value';valueNode.appendChild(placeholder)}indicator.onclick=null;if(!field.required&&value){indicator.textContent='×';indicator.classList.add('clear');indicator.setAttribute('aria-hidden','false');indicator.setAttribute('aria-label','Clear '+field.fieldId);indicator.onclick=function(event){event.stopPropagation();saveModelDefault(field.updateType,'')}}else{indicator.textContent='⌄';indicator.classList.remove('clear');indicator.setAttribute('aria-hidden','true');indicator.removeAttribute('aria-label')}}
+function closeDefaultModelTree(field,resetSearch){var trigger=document.getElementById(field.domId);var popover=document.getElementById(field.domId+'Popover');if(!trigger||!popover)return;popover.hidden=true;trigger.setAttribute('aria-expanded','false');trigger.dataset.state='closed';if(resetSearch){var state=defaultModelState(field);state.search='';var search=document.getElementById(field.domId+'Search');if(search)search.value=''}}
+function closeAllDefaultModelTrees(exceptType){MODEL_FIELDS.forEach(function(field){if(field.updateType!==exceptType)closeDefaultModelTree(field,false)})}
+function toggleDefaultModelTree(type){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);var popover=document.getElementById(field.domId+'Popover');var opening=popover.hidden;closeAllDefaultModelTrees(opening?type:null);if(!opening){closeDefaultModelTree(field,false);return}popover.hidden=false;trigger.setAttribute('aria-expanded','true');trigger.dataset.state='open';renderDefaultModelTree(field);var search=document.getElementById(field.domId+'Search');setTimeout(function(){if(search)search.focus()},0)}
+function searchDefaultModelTree(type,value){var field=modelField(type);if(!field)return;defaultModelState(field).search=String(value||'');renderDefaultModelTree(field)}
+function selectDefaultModel(type,value){var field=modelField(type);if(!field)return;closeDefaultModelTree(field,true);saveModelDefault(type,value)}
+	async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var saved=trigger.dataset.savedValue||'';var value=String(nextValue==null?'':nextValue).trim();if(field.required&&!value){trigger.dataset.value=saved;renderDefaultModelTrigger(field);modelMessage('LLM is required and cannot be cleared.',true);return}var option=value?defaultModelOption(field,value):null;if(value&&!option){trigger.dataset.value=saved;renderDefaultModelTrigger(field);modelMessage('Select a model from the available model tree.',true);return}var parsed=option?{model_provider:option.provider_name,model_instance:option.instance_name,model_name:String(option.name).split('__')[0]}:{model_provider:'',model_instance:'',model_name:''};var requestId=++state.requestId;state.pending=true;trigger.disabled=true;trigger.dataset.value=value;renderDefaultModelTrigger(field);var body=Object.assign(parsed,{model_type:type});modelMessage('Saving…',false);try{var response=await fetch('/api/v1/models/default',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));if(state.requestId!==requestId)return;trigger.dataset.savedValue=value;try{await loadModelDefaults(type,requestId);modelMessage('Saved',false)}catch(refreshError){modelMessage('Saved; refresh failed: '+refreshError.message,true)}}catch(error){if(state.requestId===requestId){trigger.dataset.value=saved;renderDefaultModelTrigger(field);modelMessage('Error: '+error.message,true)}}finally{if(state.requestId===requestId){state.pending=false;trigger.disabled=false}}}
+	async function loadModelDefaults(onlyType,requestId){var response=await fetch('/api/v1/models/default');var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));if(onlyType&&defaultModelState(modelField(onlyType)).requestId!==requestId)return;var fields=onlyType?[modelField(onlyType)]:MODEL_FIELDS.filter(function(field){return !defaultModelState(field).pending});fields.forEach(function(field){var trigger=document.getElementById(field.domId);if(trigger){trigger.dataset.value='';trigger.dataset.savedValue=''}});((data.data&&data.data.models)||[]).forEach(function(model){if(model.enable===false)return;var field=fields.find(function(item){return item.responseType===model.model_type});if(!field)return;var normalized=normalizeDefaultModel(model);var value=model.selector||normalized.selector;if(value&&!DEFAULT_MODEL_CATALOG.some(function(item){return item.selector===value})){normalized.selector=value;DEFAULT_MODEL_CATALOG.push(normalized)}var trigger=document.getElementById(field.domId);if(trigger){trigger.dataset.value=value;trigger.dataset.savedValue=value}});fields.forEach(function(field){renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}
+async function loadModelOptions(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field)});await loadModelDefaults()}catch(error){modelMessage('Error: '+error.message,true)}}
+document.addEventListener('pointerdown',function(event){MODEL_FIELDS.forEach(function(field){var root=document.querySelector('[data-default-model-root="'+field.domId+'"]');var popover=document.getElementById(field.domId+'Popover');if(root&&popover&&!popover.hidden&&!root.contains(event.target))closeDefaultModelTree(field,false)})});
+	document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;var openField=MODEL_FIELDS.find(function(field){return document.getElementById(field.domId).getAttribute('aria-expanded')==='true'});if(!openField)return;event.preventDefault();event.stopPropagation();closeAllDefaultModelTrees(null);document.getElementById(openField.domId).focus()});
+loadModelOptions();
+const providerModels="#,
+    );
+    b.push_str(&json_script_value(
+        &crate::model_meta::provider_models_payload(),
+    ));
+    b.push_str(";function showProviderModels(el){var factory=el.getAttribute('data-factory');var provider=providerModels[factory];if(!provider)return;document.getElementById('modelModalTitle').textContent=provider.name+' ('+factory+')';var body=document.getElementById('modelModalBody');body.replaceChildren();if(!provider.models||!provider.models.length){var empty=document.createElement('p');empty.style.color='var(--tm)';empty.textContent=");
+    b.push_str(&json_script_string(t(
         "No static model list (models are discovered at runtime).",
         zh,
-    ));
-    b.push_str("</p>'}else{p.models.forEach(function(m){var tags=(m.t||[]).map(function(x){return '<span class=badge bs>'+x+'</span>'}).join(' ');h+='<div style=padding:8px 0;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;flex-wrap:wrap><span style=font-weight:500>'+m.n+'</span>'+tags+'</div>'})}document.getElementById('modelModalBody').innerHTML=h;document.getElementById('modelModal').classList.add('show')}</script>");
-    b.push_str("<div class='modal-overlay' id='addProvModal' onclick='if(event.target===this)this.classList.remove(\"show\")'><div class='modal' style='max-width:520px'><h2>+ Add Provider</h2><label style='display:block;margin-top:12px'>Provider ID<input id='apId' placeholder='e.g. deepseek' style='width:100%'></label><label style='display:block;margin-top:12px'>Name<input id='apName' placeholder='Display name' style='width:100%'></label><label style='display:block;margin-top:12px'>API Base<input id='apBase' placeholder='https://api.example.com/v1' style='width:100%'></label><label style='display:block;margin-top:12px'>API Key<input id='apKey' type='password' placeholder='Optional' style='width:100%'></label><label style='display:block;margin-top:12px'>Models (comma separated)<input id='apModels' list='apModelSuggestions' placeholder='model-a, model-b' style='width:100%'></label><datalist id='apModelSuggestions'></datalist><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveAddProv()'>Save</button><button class='btn btn-o' onclick='document.getElementById(\"addProvModal\").classList.remove(\"show\")'>Cancel</button><span id='apStatus' style='margin-left:8px;color:var(--tm);font-size:12px'></span></div></div></div><script>function pf(k,btn){document.querySelectorAll('.pfb').forEach(function(x){x.classList.remove('on')});if(btn)btn.classList.add('on');document.querySelectorAll('tbody tr[data-k]').forEach(function(tr){var ks=(tr.getAttribute('data-k')||' ').split(' ');tr.style.display=(k==='all'||ks.indexOf(k)>=0)?'':'none'});var rows=document.querySelectorAll('tbody tr[data-k]');var n=0;rows.forEach(function(tr){if(tr.style.display!=='none')n++});var c=document.getElementById('pfCount');if(c)c.textContent=rows.length+' providers · '+n+' shown'};function showAddProv(){document.getElementById('apId').value='';document.getElementById('apName').value='';document.getElementById('apBase').value='';document.getElementById('apKey').value='';document.getElementById('apModels').value='';document.getElementById('apStatus').textContent='';document.getElementById('addProvModal').classList.add('show')};function saveAddProv(){var id=document.getElementById('apId').value.trim();var nm=document.getElementById('apName').value.trim();var base=document.getElementById('apBase').value.trim();var key=document.getElementById('apKey').value.trim();var ms=document.getElementById('apModels').value.split(',').map(function(x){return x.trim()}).filter(Boolean);if(!id||!nm){document.getElementById('apStatus').textContent='ID and Name required';return}var body={name:nm,api_base:base,api_key:key||null};if(ms.length)body.models=ms;var st=document.getElementById('apStatus');st.textContent='Saving…';fetch('/api/v1/providers/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(d.code===0){st.textContent='Saved ✓';setTimeout(function(){location.reload()},500)}else{st.textContent=d.message||'Failed'}}).catch(function(e){st.textContent='Error: '+e});};var apTimer=null;function apSearch(v){var dl=document.getElementById('apModelSuggestions');if(!dl)return;clearTimeout(apTimer);if(!v||v.length<2){dl.innerHTML='';return}apTimer=setTimeout(function(){fetch('/api/v1/models/search?q='+encodeURIComponent(v)+'&limit=15').then(function(r){return r.json()}).then(function(d){var items=(d.data||[]);dl.innerHTML='';items.forEach(function(m){var o=document.createElement('option');o.value=m.name;o.label=(m.alias&&m.alias.length)?m.name+' — '+m.alias.slice(0,2).join(' / '):m.name;dl.appendChild(o)})}).catch(function(){})},250)};document.getElementById('apModels').addEventListener('input',function(){apSearch(this.value.split(',').pop().trim())});pf('all',document.querySelector('.pfb'));</script>");
-    Html(layout(t("Providers", zh), &b, zh))
+    )));
+    b.push_str(";body.appendChild(empty)}else{provider.models.forEach(function(model){var row=document.createElement('div');row.style.cssText='padding:8px 0;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;flex-wrap:wrap';var name=document.createElement('span');name.style.fontWeight='500';name.textContent=model.n;row.appendChild(name);(model.t||[]).forEach(function(tag){var badge=document.createElement('span');badge.className='badge bs';badge.textContent=tag;row.appendChild(badge)});body.appendChild(row)})}document.getElementById('modelModal').classList.add('show')}</script>");
+    b.push_str(
+        r##"<div class='modal-overlay' id='providerInstanceModal' data-testid='provider-instance-dialog' onclick='if(event.target===this)closeProviderInstanceModal()'><div class='modal provider-instance-modal' role='dialog' aria-modal='true' aria-labelledby='providerInstanceTitle'><div class='provider-instance-title'><h2 id='providerInstanceTitle'></h2><a id='providerInstanceDoc' class='available-provider-doc' target='_blank' rel='noopener noreferrer' aria-label='Open provider documentation'>↗</a></div><label class='provider-instance-field'>Instance name<input id='piName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off'></label><p id='piNameError' class='provider-instance-error'></p><label class='provider-instance-field' id='piBaseField'>Base url<input id='piBase' name='base_url' list='piBaseOptions' placeholder='Please input your base url!' autocomplete='off'><datalist id='piBaseOptions'></datalist></label><p id='piBaseError' class='provider-instance-error'></p><label class='provider-instance-field'>API-Key<input id='piKey' name='api_key' type='password' placeholder='Please enter the API key' autocomplete='new-password'></label><p id='piKeyError' class='provider-instance-error'></p><label class='provider-instance-switch' id='piVisionField'><span>Vision</span><input id='piVision' type='checkbox' role='switch' aria-label='Vision'></label><label class='provider-instance-field' id='piGroupField'>Group ID<input id='piGroup' name='group_id' autocomplete='off'></label><section id='piModelPicker' class='provider-model-picker' aria-label='Provider models'><button class='btn btn-o provider-model-trigger' id='piListModels' type='button' aria-expanded='false' onclick='toggleProviderModelPicker()'>List models</button><div id='piModelPanel' class='provider-model-panel' hidden><input id='piModelSearch' type='search' placeholder='Search models' aria-label='Search models' oninput='renderProviderModelList()'><p id='piModelLoading' class='provider-model-empty'></p><div id='piModelList' class='provider-model-list' role='listbox' aria-multiselectable='true'></div><button class='provider-model-add' type='button' aria-label='Add custom model' onclick='showProviderCustomModel()'>＋ <span>Add custom model</span></button></div><p id='piModelError' class='provider-instance-error'></p></section><p id='piStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='piVerify' type='button' onclick='verifyProviderInstance()'>Verify</button><button class='btn btn-o' type='button' onclick='closeProviderInstanceModal()'>Cancel</button><button class='btn btn-p' id='piOk' type='button' onclick='saveProviderInstance()'>Ok</button></div></div></div>
+<div class='modal-overlay provider-custom-model-overlay' id='providerCustomModelModal' style='z-index:1001' data-testid='add-custom-model-dialog' onclick='if(event.target===this)closeProviderCustomModel()'><div class='modal provider-custom-model-modal' role='dialog' aria-modal='true' aria-labelledby='providerCustomModelTitle'><h2 id='providerCustomModelTitle'>Add custom model</h2><label class='provider-instance-field'>Model name<input id='pcmName' name='name' placeholder='Model name' autocomplete='off'></label><fieldset class='added-model-type-fieldset' id='pcmTypes'><legend>Model type</legend><label><input type='checkbox' value='chat'> LLM</label><label><input type='checkbox' value='embedding'> Embedding</label><label><input type='checkbox' value='rerank'> Rerank</label><label><input type='checkbox' value='tts'> TTS</label><label><input type='checkbox' value='image2text'> VLM</label><label><input type='checkbox' value='ocr'> OCR</label><label><input type='checkbox' value='speech2text'> ASR</label></fieldset><label class='provider-instance-field'>Max tokens<input id='pcmMaxTokens' name='max_tokens' type='number' min='0' value='0' placeholder='Max tokens'></label><fieldset class='added-model-type-fieldset'><legend>Model features</legend><label class='provider-instance-switch'><span>Tool call</span><input id='pcmTools' type='checkbox' role='switch' aria-label='Tool call'></label></fieldset><p id='pcmError' class='provider-instance-error'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeProviderCustomModel()'>Cancel</button><button class='btn btn-p' type='button' onclick='addProviderCustomModel()'>Confirm</button><button class='btn btn-o' type='button' aria-label='Close' onclick='closeProviderCustomModel()'>Close</button></div></div></div>
+<div class='modal-overlay' id='bedrockModal' data-testid='bedrock-dialog' onclick='if(event.target===this)closeBedrockModal()'><div class='modal provider-instance-modal bedrock-modal' role='dialog' aria-modal='true' aria-labelledby='bedrockTitle'><div class='provider-instance-title'><h2 id='bedrockTitle'></h2><a id='bedrockDoc' class='available-provider-doc' target='_blank' rel='noopener noreferrer' aria-label='Open provider documentation'>↗</a></div><label class='provider-instance-field'>Instance name<input id='bdName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off' oninput='bedrockRefreshInstanceState()'></label><p id='bdNameError' class='provider-instance-error'></p><fieldset class='bedrock-model-types'><legend>Model type</legend><label><input type='checkbox' name='bdType' value='chat'> Chat</label><label><input type='checkbox' name='bdType' value='embedding'> Embedding</label></fieldset><p id='bdTypeError' class='provider-instance-error'></p><label class='provider-instance-field'>Model name<input id='bdModelName' name='llm_name' placeholder='Please input your model name!' autocomplete='off'></label><p id='bdModelError' class='provider-instance-error'></p><div id='bdAuthSection'><div class='bedrock-auth-segment' id='bdAuthMode' role='radiogroup' aria-label='AWS authentication mode' data-testid='bedrock-auth-mode'><button type='button' role='radio' aria-checked='true' data-mode='access_key_secret' onclick='setBedrockAuthMode("access_key_secret")'>Access Key</button><button type='button' role='radio' aria-checked='false' data-mode='iam_role' onclick='setBedrockAuthMode("iam_role")'>IAM Role</button><button type='button' role='radio' aria-checked='false' data-mode='assume_role' onclick='setBedrockAuthMode("assume_role")'>Assume Role</button></div><div id='bdAkSk'><label class='provider-instance-field'>AWS Access Key ID<input id='bdAk' name='bedrock_ak' placeholder='Please input your ACCESS KEY' autocomplete='off'></label><p id='bdAkError' class='provider-instance-error'></p><label class='provider-instance-field'>AWS Secret Access Key<input id='bdSk' name='bedrock_sk' type='password' placeholder='Please input your SECRET KEY' autocomplete='new-password'></label><p id='bdSkError' class='provider-instance-error'></p></div><div id='bdRoleArnField' hidden><label class='provider-instance-field'>AWS Role ARN<input id='bdRoleArn' name='aws_role_arn' placeholder='Please enter AWS Role ARN' autocomplete='off'></label><p id='bdRoleArnError' class='provider-instance-error'></p></div><p id='bdAssumeTip' class='bedrock-assume-tip' hidden>If you select this mode, the Amazon EC2 instance will assume its existing role to access AWS services. No additional credentials are required.</p><label class='provider-instance-field'>AWS region<input id='bdRegion' name='bedrock_region' list='bdRegionOptions' placeholder='Please select!' data-testid='bedrock-region-select' autocomplete='off'><datalist id='bdRegionOptions'></datalist></label><p id='bdRegionError' class='provider-instance-error'></p></div><label class='provider-instance-field'>Max tokens<input id='bdMaxTokens' name='max_tokens' type='number' min='0' value='8192' placeholder='The maximum context size of the model'></label><p id='bdMaxTokensError' class='provider-instance-error'></p><p id='bdStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='bdVerify' type='button' onclick='verifyBedrock()'>Verify</button><button class='btn btn-o' type='button' onclick='closeBedrockModal()'>Cancel</button><button class='btn btn-p' id='bdOk' type='button' onclick='saveBedrock()'>Ok</button></div></div></div>
+<div class='modal-overlay' id='somarkModal' data-testid='somark-dialog' onclick='if(event.target===this)closeSoMarkModal()'><div class='modal provider-instance-modal somark-modal' role='dialog' aria-modal='true' aria-labelledby='somarkTitle'><div class='provider-instance-title'><h2 id='somarkTitle'></h2><a id='somarkDoc' class='available-provider-doc' target='_blank' rel='noopener noreferrer' aria-label='Open provider documentation'>↗</a></div><label class='provider-instance-field'>Instance name<input id='smName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off'></label><p id='smNameError' class='provider-instance-error'></p><label class='provider-instance-field'>Model name<input id='smModelName' name='llm_name' placeholder='somark-from-env-1' autocomplete='off'></label><p id='smModelNameError' class='provider-instance-error'></p><label class='provider-instance-field'>Base URL<input id='smBaseUrl' name='somark_base_url' placeholder='For SoMark API, fill in https://somark.tech/api/v1; for self-hosted deployment, fill in your local Base URL' autocomplete='off'></label><p id='smBaseUrlError' class='provider-instance-error'></p><label class='provider-instance-field'>API Key<input id='smApiKey' name='somark_api_key' type='password' placeholder='Required for SoMark API; leave blank for self-hosted deployment' autocomplete='new-password'></label><h3 class='somark-section-title'>Element Formats</h3><label class='provider-instance-field'>Image Format<select id='smImageFormat'><option value='url'>URL</option><option value='base64'>Base64</option><option value='none'>None</option></select></label><label class='provider-instance-field'>Formula Format<select id='smFormulaFormat'><option value='latex'>LaTeX</option><option value='mathml'>MathML</option><option value='ascii'>ASCII</option></select></label><label class='provider-instance-field'>Table Format<select id='smTableFormat'><option value='html'>HTML</option><option value='markdown'>Markdown</option><option value='image'>Image</option></select></label><label class='provider-instance-field'>Chemical Structural Formula Format<select id='smCsFormat'><option value='image'>Image</option></select></label><h3 class='somark-section-title'>Feature Config</h3><label class='provider-instance-switch'><span>Enable Text Cross Page</span><input type='checkbox' role='switch' data-key='somark_enable_text_cross_page' aria-label='Enable Text Cross Page'></label><label class='provider-instance-switch'><span>Enable Table Cross Page</span><input type='checkbox' role='switch' data-key='somark_enable_table_cross_page' aria-label='Enable Table Cross Page'></label><label class='provider-instance-switch'><span>Enable Title Level Recognition</span><input type='checkbox' role='switch' data-key='somark_enable_title_level_recognition' aria-label='Enable Title Level Recognition'></label><label class='provider-instance-switch'><span>Enable Inline Image</span><input type='checkbox' role='switch' data-key='somark_enable_inline_image' aria-label='Enable Inline Image'></label><label class='provider-instance-switch'><span>Enable Table Image</span><input type='checkbox' role='switch' data-key='somark_enable_table_image' aria-label='Enable Table Image'></label><label class='provider-instance-switch'><span>Enable Image Understanding</span><input type='checkbox' role='switch' data-key='somark_enable_image_understanding' aria-label='Enable Image Understanding'></label><label class='provider-instance-switch'><span>Keep Header Footer</span><input type='checkbox' role='switch' data-key='somark_keep_header_footer' aria-label='Keep Header Footer'></label><p id='smStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='smVerify' type='button' onclick='verifySoMark()'>Verify</button><button class='btn btn-o' type='button' onclick='closeSoMarkModal()'>Cancel</button><button class='btn btn-p' id='smOk' type='button' onclick='saveSoMark()'>Add</button></div></div></div><script>
+var providerInstanceCard=null;
+var piModels=[];
+var piSelectedModels=new Set();
+var piModelsLoaded=false;
+var providerSpecialConfig=null;var providerSpecialInstanceNames=null;
+var PROVIDER_SPECIAL_FIELDS={'Azure-OpenAI':{types:[['chat','Chat'],['embedding','Embedding'],['image2text','Image2Text']],typeDefault:'embedding',showBase:true,baseRequired:true,showKey:true,keyRequired:false,keyLabel:'API-Key',keyPlaceholder:'Please enter the API key',fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please input your model name!',default:'gpt-3.5-turbo'},{id:'pf_api_version',label:'API-Version',type:'text',placeholder:'Please input API version',default:'2024-02-01'},{id:'pf_max_tokens',label:'Max tokens',type:'number',required:true,default:'8192'},{id:'pf_vision',label:'Vision',type:'switch',onTypes:['chat']}],buildKey:function(){var o={};var k=document.getElementById('piKey').value;if(k)o.api_key=k;var v=document.getElementById('pf_api_version').value;if(v)o.api_version=v;return o},buildModelTypes:function(){var types=specialSelectedTypes();if(document.getElementById('pf_vision').checked&&types.indexOf('chat')>=0&&types.indexOf('image2text')<0)types.push('image2text');return types}},'VolcEngine':{types:[['chat','Chat'],['embedding','Embedding'],['image2text','Image2Text']],typeDefault:'chat',showBase:false,showKey:true,keyRequired:true,keyLabel:'VOLC ARK_API_KEY',keyPlaceholder:'Please input your ARK_API_KEY',fields:[{id:'pf_model_name',label:'Model ID',type:'text',required:true,placeholder:'Please input your Model ID of the model'},{id:'pf_max_tokens',label:'Max tokens',type:'number',required:true,default:'8192'}],buildKey:function(){return document.getElementById('piKey').value}},'Google Cloud':{types:[['chat','Chat'],['image2text','Image2Text']],typeDefault:'chat',showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model ID',type:'text',required:true,placeholder:'Please input your model ID!'},{id:'pf_google_project_id',label:'Project ID',type:'text',required:true,placeholder:'Please input your Project ID',credential:true},{id:'pf_google_region',label:'Region',type:'text',required:true,placeholder:'Please input Google Cloud Region',credential:true},{id:'pf_google_service_account_key',label:'Service Account Key(Leave blank if you use Application Default Credentials)',type:'text',required:true,placeholder:'Please input your Service Account Key',credential:true},{id:'pf_max_tokens',label:'Max tokens',type:'number',required:true,default:'8192'}],buildKey:function(){return {google_project_id:document.getElementById('pf_google_project_id').value,google_region:document.getElementById('pf_google_region').value,google_service_account_key:document.getElementById('pf_google_service_account_key').value}}},'Tencent Cloud':{types:[['speech2text','Speech2Text']],typeDefault:'speech2text',showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'select',required:true,options:['16k_zh','16k_zh_large','16k_multi_lang','16k_zh_dialect','16k_en','16k_yue','16k_zh-PY','16k_ja','16k_ko','16k_vi','16k_ms','16k_id','16k_fil','16k_th','16k_pt','16k_tr','16k_ar','16k_es','16k_hi','16k_fr','16k_zh_medical','16k_de'],default:'16k_zh'},{id:'pf_TencentCloud_sid',label:'TencentCloud Secret ID',type:'text',required:true,placeholder:'Please input your Secret ID',credential:true},{id:'pf_TencentCloud_sk',label:'TencentCloud Secret Key',type:'text',required:true,placeholder:'Please input your Secret Key',credential:true}],buildKey:function(){return {TencentCloud_sid:document.getElementById('pf_TencentCloud_sid').value,TencentCloud_sk:document.getElementById('pf_TencentCloud_sk').value}}},'XunFei Spark':{types:[['chat','Chat'],['tts','TTS']],typeDefault:'chat',showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please input your model name!'},{id:'pf_spark_api_password',label:'Spark APIPassword',type:'text',required:true,placeholder:'please input your APIPassword',credential:true},{id:'pf_spark_app_id',label:'Spark APP ID',type:'text',required:true,placeholder:'please input your APP ID',onTypes:['tts'],credential:true},{id:'pf_spark_api_secret',label:'Spark APISecret',type:'text',required:true,placeholder:'please input your APISecret',onTypes:['tts'],credential:true},{id:'pf_spark_api_key',label:'Spark APIKey',type:'text',required:true,placeholder:'please input your APIKey',onTypes:['tts'],credential:true},{id:'pf_max_tokens',label:'Max tokens',type:'number',required:true,default:'8192'}],buildKey:function(){return {spark_api_password:document.getElementById('pf_spark_api_password').value,spark_app_id:document.getElementById('pf_spark_app_id').value,spark_api_secret:document.getElementById('pf_spark_api_secret').value,spark_api_key:document.getElementById('pf_spark_api_key').value}}},'BaiduYiyan':{types:[['chat','Chat'],['embedding','Embedding'],['rerank','Rerank']],typeDefault:'chat',showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please input model name'},{id:'pf_yiyan_ak',label:'yiyan API KEY',type:'text',required:true,placeholder:'Please input your API KEY',credential:true},{id:'pf_yiyan_sk',label:'yiyan Secret KEY',type:'text',required:true,placeholder:'Please input your Secret KEY',credential:true},{id:'pf_max_tokens',label:'Max tokens',type:'number',required:true,default:'8192'}],buildKey:function(){return {yiyan_ak:document.getElementById('pf_yiyan_ak').value,yiyan_sk:document.getElementById('pf_yiyan_sk').value}}},'Fish Audio':{types:[['tts','TTS']],typeDefault:'tts',showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please give your speech synthesis model a name'},{id:'pf_fish_audio_ak',label:'Fish Audio API KEY',type:'text',required:true,placeholder:'Please input your API KEY',credential:true},{id:'pf_fish_audio_refid',label:'FishAudio Reference ID',type:'text',required:true,placeholder:'Please input the Reference ID (leave blank to use the default model).',credential:true},{id:'pf_max_tokens',label:'Max tokens',type:'number',required:true,default:'8192'}],buildKey:function(){return {fish_audio_ak:document.getElementById('pf_fish_audio_ak').value,fish_audio_refid:document.getElementById('pf_fish_audio_refid').value}}},'OpenDataLoader':{ocr:true,showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please input your model name!'},{id:'pf_opendataloader_apiserver',label:'Base URL',type:'text',required:true,placeholder:'Please input the OpenDataLoader API server URL!',credential:true},{id:'pf_opendataloader_api_key',label:'API Key',type:'text',placeholder:'API Key (optional)',credential:true}],buildKey:function(){var o={};var api=document.getElementById('pf_opendataloader_apiserver').value;if(api)o.opendataloader_apiserver=api;var key=document.getElementById('pf_opendataloader_api_key').value;if(key)o.opendataloader_api_key=key;o.llm_name=document.getElementById('pf_model_name').value;return o}},'PaddleOCR':{ocr:true,showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please input your model name!'},{id:'pf_paddleocr_api_url',label:'PaddleOCR API URL',type:'text',required:true,placeholder:'For example: https://paddleocr-server.com/layout-parsing',credential:true},{id:'pf_paddleocr_access_token',label:'AI Studio Access Token',type:'text',placeholder:'Access token for PaddleOCR API (optional)',credential:true},{id:'pf_paddleocr_algorithm',label:'Algorithm',type:'select',options:['PaddleOCR-VL-1.6','PaddleOCR-VL-1.5','PaddleOCR-VL','PP-OCRv6','PP-OCRv5','PP-StructureV3'],default:'PaddleOCR-VL'}],buildKey:function(){var o={};var url=document.getElementById('pf_paddleocr_api_url').value;if(url)o.paddleocr_api_url=url;var token=document.getElementById('pf_paddleocr_access_token').value;if(token)o.paddleocr_access_token=token;var alg=document.getElementById('pf_paddleocr_algorithm').value;if(alg)o.paddleocr_algorithm=alg;return o}},'MinerU':{ocr:true,showBase:false,showKey:false,fields:[{id:'pf_model_name',label:'Model name',type:'text',required:true,placeholder:'Please input your model name!'},{id:'pf_mineru_apiserver',label:'MinerU API Server URL',type:'text',required:true,placeholder:'Please input the MinerU API Server URL!',credential:true},{id:'pf_mineru_output_dir',label:'MinerU Output Directory',type:'text',placeholder:'Output directory (optional)'},{id:'pf_mineru_backend',label:'MinerU Backend',type:'select',required:true,options:['pipeline','vlm-transformers','vlm-vllm-engine','vlm-http-client','vlm-mlx-engine','vlm-vllm-async-engine','vlm-lmdeploy-engine'],default:'pipeline'},{id:'pf_mineru_server_url',label:'MinerU Server URL',type:'text',placeholder:'Please input the MinerU Server URL!',showIf:function(){return document.getElementById('pf_mineru_backend').value==='vlm-http-client'}},{id:'pf_mineru_delete_output',label:'Delete output after processing',type:'switch',default:true}],buildKey:function(){var o={};o.mineru_apiserver=document.getElementById('pf_mineru_apiserver').value;var out=document.getElementById('pf_mineru_output_dir').value;if(out)o.mineru_output_dir=out;o.mineru_backend=document.getElementById('pf_mineru_backend').value;if(document.getElementById('pf_mineru_backend').value==='vlm-http-client'){o.mineru_server_url=document.getElementById('pf_mineru_server_url').value}o.mineru_delete_output=document.getElementById('pf_mineru_delete_output').checked?'1':'0';return o}}};
+function providerSpecialFieldConfig(provider){return PROVIDER_SPECIAL_FIELDS[provider]||null}
+function specialSelectedTypes(){return Array.from(document.querySelectorAll('#piTypeFields input[type=checkbox]:checked')).map(function(input){return input.value})}
+function ensureProviderExtraContainer(){var container=document.getElementById('piExtraFields');if(!container){container=document.createElement('div');container.id='piExtraFields';container.className='provider-extra-fields';var status=document.getElementById('piStatus');status.parentNode.insertBefore(container,status)}return container}
+function renderSpecialProviderFields(config){var container=ensureProviderExtraContainer();container.replaceChildren();if(config.types){var set=document.createElement('fieldset');set.id='piTypeFields';set.className='bedrock-model-types';var legend=document.createElement('legend');legend.textContent='Model type';set.appendChild(legend);config.types.forEach(function(pair){var label=document.createElement('label');var box=document.createElement('input');box.type='checkbox';box.value=pair[0];box.checked=pair[0]===config.typeDefault;box.addEventListener('change',refreshSpecialFieldsState);label.appendChild(box);label.appendChild(document.createTextNode(' '+pair[1]));set.appendChild(label)});container.appendChild(set);var err=document.createElement('p');err.id='piTypeError';err.className='provider-instance-error';container.appendChild(err)}config.fields.forEach(function(field){var label=document.createElement('label');label.className='provider-instance-field';label.id=field.id+'-label';var span=document.createElement('span');span.textContent=field.label;label.appendChild(span);var control;if(field.type==='select'){control=document.createElement('select');(field.options||[]).forEach(function(value){var option=document.createElement('option');option.value=value;option.textContent=value;control.appendChild(option)});control.value=field.default||'';control.addEventListener('change',refreshSpecialFieldsState)}else if(field.type==='switch'){control=document.createElement('input');control.type='checkbox';control.checked=!!field.default}else{control=document.createElement('input');control.type=field.type==='number'?'number':'text';if(field.type==='number'){control.min='0'}control.placeholder=field.placeholder||'';control.value=field.default||''}control.id=field.id;label.appendChild(control);container.appendChild(label);var error=document.createElement('p');error.id=field.id+'-error';error.className='provider-instance-error';container.appendChild(error);if(field.showIf){label.hidden=!field.showIf()}if(field.onTypes){label.hidden=true}});refreshSpecialFieldsState()}
+function refreshSpecialFieldsState(){var card=providerInstanceCard;if(!card)return;var config=providerSpecialFieldConfig(card.dataset.provider||'');if(!config)return;var exists=!!providerSpecialInstanceNames&&providerSpecialInstanceNames.has(document.getElementById('piName').value.trim());if(config.showBase)document.getElementById('piBaseField').hidden=exists;if(config.showKey)document.getElementById('piKeyField').hidden=exists;var types=specialSelectedTypes();config.fields.forEach(function(field){var control=document.getElementById(field.id);if(!control)return;var label=document.getElementById(field.id+'-label');if(!label)return;var onTypes=field.onTypes&&field.onTypes.some(function(type){return types.indexOf(type)>=0});var show;if(field.credential&&field.onTypes){show=!exists&&onTypes}else if(field.credential){show=!exists}else if(field.onTypes){show=onTypes}else{show=true}if(field.showIf)show=show&&field.showIf();label.hidden=!show;var error=document.getElementById(field.id+'-error');if(error)error.hidden=!show})}
+function loadProviderSpecialInstanceNames(provider){var names=null;fetch('/api/v1/providers/'+encodeURIComponent(provider)+'/instances').then(function(response){return response.json()}).then(function(data){names=new Set();(data.data||[]).forEach(function(instance){if(instance&&instance.instance_name)names.add(instance.instance_name)});if(providerInstanceCard&&providerInstanceCard.dataset.provider===provider){providerSpecialInstanceNames=names;refreshSpecialFieldsState()}}).catch(function(){providerSpecialInstanceNames=new Set()})}
+function providerSpecialValidate(){var config=providerSpecialConfig;if(!config)return true;var valid=true;['piNameError','piTypeError'].forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=''});if(!document.getElementById('piName').value.trim()){document.getElementById('piNameError').textContent='Please input the instance name!';valid=false}if(config.types&&!specialSelectedTypes().length){document.getElementById('piTypeError').textContent='Please input your model type!';valid=false}if(config.showBase&&config.baseRequired&&!document.getElementById('piBase').value.trim()&&!(providerSpecialInstanceNames&&providerSpecialInstanceNames.has(document.getElementById('piName').value.trim()))){document.getElementById('piBaseError').textContent='Please input your base url!';valid=false}if(config.showKey&&config.keyRequired&&!document.getElementById('piKey').value.trim()&&!(providerSpecialInstanceNames&&providerSpecialInstanceNames.has(document.getElementById('piName').value.trim()))){document.getElementById('piKeyError').textContent=config.keyPlaceholder||'Please enter the API key';valid=false}var exists=!!providerSpecialInstanceNames&&providerSpecialInstanceNames.has(document.getElementById('piName').value.trim());config.fields.forEach(function(field){var control=document.getElementById(field.id);var error=document.getElementById(field.id+'-error');if(!control)return;if(field.showIf&&!field.showIf()){return}var onTypes=field.onTypes&&field.onTypes.some(function(type){return specialSelectedTypes().indexOf(type)>=0});if(field.onTypes&&!onTypes)return;if(field.credential&&exists)return;var value=field.type==='switch'?'true':control.value.trim();if(field.required&&!value){error.textContent=field.placeholder||('Please input the '+field.label);valid=false}else if(field.type==='number'&&value!==''&&(isNaN(Number(value))||Number(value)<0)){error.textContent='Max tokens cannot be less than 0.';valid=false}});return valid}
+function providerSpecialModelTypes(){var config=providerSpecialConfig;if(!config)return null;if(config.ocr)return ['ocr'];if(config.buildModelTypes)return config.buildModelTypes();return specialSelectedTypes()}
+function providerSpecialPayload(){var config=providerSpecialConfig;var modelName=document.getElementById('pf_model_name')?document.getElementById('pf_model_name').value.trim():'';var maxTokens=document.getElementById('pf_max_tokens')?(Number(document.getElementById('pf_max_tokens').value)||0):0;var modelInfo=[{model_name:modelName,model_type:providerSpecialModelTypes(),max_tokens:maxTokens}];var key=config.buildKey?config.buildKey():null;return {instance_name:document.getElementById('piName').value.trim(),api_key:key,base_url:config.showBase?document.getElementById('piBase').value.trim():undefined,model_info:modelInfo}}
+function providerSpecialVerifyPayload(){var payload=providerSpecialPayload();return {api_key:(typeof payload.api_key==='string')?payload.api_key:JSON.stringify(payload.api_key),base_url:payload.base_url,model_info:payload.model_info}}
+document.getElementById('piKey').closest('label').id='piKeyField';
+document.getElementById('piName').addEventListener('input',refreshSpecialFieldsState);
+function providerInstanceSetStatus(text,error){var status=document.getElementById('piStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}
+function providerInstanceUsesPicker(){return !!providerInstanceCard&&providerInstanceCard.dataset.modelPicker==='true'}
+function providerInstanceValidate(){if(providerSpecialConfig)return providerSpecialValidate();var name=document.getElementById('piName');var key=document.getElementById('piKey');var base=document.getElementById('piBase');var picker=providerInstanceUsesPicker();var optional=providerInstanceCard&&providerInstanceCard.dataset.apiKeyOptional==='true';var valid=true;['piNameError','piKeyError','piBaseError','piModelError'].forEach(function(id){document.getElementById(id).textContent=''});if(!name.value.trim()){document.getElementById('piNameError').textContent='Instance name is required';valid=false}if(picker&&!base.value.trim()){document.getElementById('piBaseError').textContent='Base url is required';valid=false}if(!optional&&!key.value.trim()){document.getElementById('piKeyError').textContent='Please enter the API key';valid=false}if(picker&&!piSelectedModels.size){document.getElementById('piModelError').textContent='Select at least one model';valid=false}return valid}
+function resetProviderModelPicker(){piModels=[];piSelectedModels=new Set();piModelsLoaded=false;document.getElementById('piModelSearch').value='';document.getElementById('piModelLoading').textContent='';document.getElementById('piModelList').replaceChildren();document.getElementById('piModelPanel').hidden=true;document.getElementById('piListModels').setAttribute('aria-expanded','false')}
+function providerBaseOptions(card){try{var raw=card.dataset.apiBaseOptions;if(raw){var parsed=JSON.parse(raw);if(Array.isArray(parsed))return parsed.filter(function(item){return Array.isArray(item)&&item.length>=2})}}catch(error){}return card.dataset.apiBase?[[card.dataset.apiBase,'default']]:[]}
+function providerRegionForBaseUrl(base){if(!base)return null;var options=providerBaseOptions(providerInstanceCard);for(var i=0;i<options.length;i++){if(options[i][0]===base)return options[i][1]}return null}
+function showProviderInstanceModal(card){var special=card.dataset.specialModal||'';if(special==='bedrock'){showBedrockModal(card);return}if(special==='somark'){showSoMarkModal(card);return}providerInstanceCard=card;var provider=card.dataset.provider||'';providerSpecialConfig=providerSpecialFieldConfig(provider);providerSpecialInstanceNames=null;var picker=card.dataset.modelPicker==='true'&&!providerSpecialConfig;document.getElementById('providerInstanceTitle').textContent=provider;var doc=document.getElementById('providerInstanceDoc');var cardDoc=card.querySelector('.available-provider-doc');if(cardDoc){doc.href=cardDoc.href;doc.hidden=false}else{doc.removeAttribute('href');doc.hidden=true}document.getElementById('piName').value='';document.getElementById('piKey').value='';document.getElementById('piBase').value=card.dataset.apiBase||'';document.getElementById('piBaseOptions').replaceChildren();providerBaseOptions(card).forEach(function(entry){var option=document.createElement('option');option.value=entry[0];option.label=entry[1];option.dataset.region=entry[1];document.getElementById('piBaseOptions').appendChild(option)});var keyLabel=document.getElementById('piKey').closest('label');keyLabel.childNodes[0].textContent=providerSpecialConfig&&providerSpecialConfig.keyLabel?providerSpecialConfig.keyLabel:'API-Key';document.getElementById('piKey').placeholder=providerSpecialConfig&&providerSpecialConfig.keyPlaceholder?providerSpecialConfig.keyPlaceholder:'Please enter the API key';document.getElementById('piBaseField').hidden=providerSpecialConfig?!providerSpecialConfig.showBase:!picker&&card.dataset.showBase!=='true';document.getElementById('piKeyField').hidden=providerSpecialConfig?!providerSpecialConfig.showKey:false;document.getElementById('piVisionField').hidden=!!providerSpecialConfig||!picker;document.getElementById('piVision').checked=false;document.getElementById('piModelPicker').hidden=!!providerSpecialConfig||!picker;document.getElementById('piGroupField').hidden=provider.toLowerCase()!=='minimax';document.getElementById('piGroup').value='';['piNameError','piKeyError','piBaseError','piModelError'].forEach(function(id){document.getElementById(id).textContent=''});resetProviderModelPicker();if(providerSpecialConfig){renderSpecialProviderFields(providerSpecialConfig);loadProviderSpecialInstanceNames(provider)}else{ensureProviderExtraContainer().replaceChildren()}providerInstanceSetStatus('',false);document.getElementById('providerInstanceModal').classList.add('show')}
+function closeProviderInstanceModal(){closeProviderCustomModel();document.getElementById('providerInstanceModal').classList.remove('show');resetProviderModelPicker();providerInstanceCard=null}
+function normalizeProviderModel(model){return {name:String(model.name||''),model_types:Array.isArray(model.model_types)?model.model_types.slice():[],max_tokens:Number(model.max_tokens)||0,features:Array.isArray(model.features)?model.features.slice():[]}}
+function providerModelInfo(model){var types=model.model_types.slice();if(document.getElementById('piVision').checked&&types.indexOf('chat')>=0&&types.indexOf('image2text')<0)types.push('image2text');return {model_name:model.name,model_type:types,max_tokens:model.max_tokens,extra:{is_tools:model.features.indexOf('is_tools')>=0}}}
+function providerInstancePayload(){if(providerSpecialConfig)return providerSpecialPayload();var selected=piModels.filter(function(model){return piSelectedModels.has(model.name)}).map(providerModelInfo);return {instance_name:document.getElementById('piName').value.trim(),api_key:document.getElementById('piKey').value,base_url:document.getElementById('piBase').value.trim(),region:providerRegionForBaseUrl(document.getElementById('piBase').value.trim()),group_id:document.getElementById('piGroup').value.trim()||null,model_info:selected}}
+function providerModelRow(model){var label=document.createElement('label');label.className='provider-model-row';label.dataset.name=model.name.toLowerCase();label.setAttribute('role','option');label.setAttribute('aria-selected',piSelectedModels.has(model.name)?'true':'false');var details=document.createElement('span');details.className='provider-model-details';var name=document.createElement('strong');name.textContent=model.name;details.appendChild(name);model.model_types.forEach(function(type){var badge=document.createElement('span');badge.className='badge';badge.textContent=type;details.appendChild(badge)});var box=document.createElement('input');box.type='checkbox';box.checked=piSelectedModels.has(model.name);box.setAttribute('aria-label','Select '+model.name);box.onchange=function(){if(box.checked)piSelectedModels.add(model.name);else piSelectedModels.delete(model.name);renderProviderModelList()};label.appendChild(details);label.appendChild(box);return label}
+function renderProviderModelList(){var list=document.getElementById('piModelList');var query=document.getElementById('piModelSearch').value.trim().toLowerCase();list.replaceChildren();var visible=piModels.filter(function(model){return !query||model.name.toLowerCase().indexOf(query)>=0});document.getElementById('piModelSearch').hidden=piModels.length<=10;if(piModels.length){var all=document.createElement('label');all.className='provider-model-row provider-model-all';all.setAttribute('role','option');var text=document.createElement('strong');text.textContent='All models';var box=document.createElement('input');box.type='checkbox';box.checked=piSelectedModels.size===piModels.length;box.setAttribute('aria-label','Select all models');box.onchange=function(){if(box.checked)piModels.forEach(function(model){piSelectedModels.add(model.name)});else piSelectedModels.clear();renderProviderModelList()};all.appendChild(text);all.appendChild(box);list.appendChild(all)}visible.forEach(function(model){list.appendChild(providerModelRow(model))});document.getElementById('piModelLoading').textContent=piModels.length?'':'No models available'}
+async function loadProviderModels(){var provider=providerInstanceCard.dataset.provider;var query=new URLSearchParams();var base=document.getElementById('piBase').value.trim();var key=document.getElementById('piKey').value;if(base)query.set('base_url',base);if(key)query.set('api_key',key);document.getElementById('piModelLoading').textContent='Loading…';try{var response=await fetch('/api/v1/providers/'+encodeURIComponent(provider)+'/models'+(query.toString()?'?'+query.toString():''));var data=await response.json().catch(function(){return {}});if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));piModels=(data.data||[]).map(normalizeProviderModel).filter(function(model){return model.name});piModelsLoaded=true;renderProviderModelList()}catch(error){piModels=[];piModelsLoaded=true;renderProviderModelList();providerInstanceSetStatus(error.message,true)}}
+async function toggleProviderModelPicker(){var panel=document.getElementById('piModelPanel');var open=panel.hidden;panel.hidden=!open;document.getElementById('piListModels').setAttribute('aria-expanded',open?'true':'false');if(open&&!piModelsLoaded)await loadProviderModels()}
+function showProviderCustomModel(){document.getElementById('pcmName').value='';document.getElementById('pcmMaxTokens').value='0';document.getElementById('pcmTools').checked=false;document.querySelectorAll('#pcmTypes input').forEach(function(input){input.checked=false});document.getElementById('pcmError').textContent='';document.getElementById('providerCustomModelModal').classList.add('show')}
+function closeProviderCustomModel(){document.getElementById('providerCustomModelModal').classList.remove('show')}
+function addProviderCustomModel(){var name=document.getElementById('pcmName').value.trim();var types=Array.from(document.querySelectorAll('#pcmTypes input:checked')).map(function(input){return input.value});var maxTokens=Number(document.getElementById('pcmMaxTokens').value);var error=document.getElementById('pcmError');if(!name){error.textContent='Model name is required';return}if(piModels.some(function(model){return model.name===name})){error.textContent='Model name already exists';return}if(!types.length){error.textContent='Model type is required';return}if(!Number.isFinite(maxTokens)||maxTokens<0){error.textContent='Max tokens must be 0 or greater';return}var features=document.getElementById('pcmTools').checked?['is_tools']:[];piModels.push({name:name,model_types:types,max_tokens:maxTokens,features:features});piSelectedModels.add(name);piModelsLoaded=true;renderProviderModelList();closeProviderCustomModel()}
+async function providerInstanceApi(path,payload){var response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var data=await response.json().catch(function(){return {}});if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));return data}
+async function verifyProviderInstance(){if(!providerInstanceValidate())return;var button=document.getElementById('piVerify');button.disabled=true;providerInstanceSetStatus('Verifying…',false);try{var provider=providerInstanceCard.dataset.provider;var payload=providerSpecialConfig?providerSpecialVerifyPayload():providerInstancePayload();await providerInstanceApi('/api/v1/providers/'+encodeURIComponent(provider)+'/connection',{api_key:payload.api_key,base_url:payload.base_url,region:payload.region,model_info:payload.model_info});providerInstanceSetStatus('Verification succeeded',false)}catch(error){providerInstanceSetStatus(error.message,true)}finally{button.disabled=false}}
+async function saveProviderInstance(){if(!providerInstanceValidate())return;var button=document.getElementById('piOk');button.disabled=true;providerInstanceSetStatus('Saving…',false);try{var provider=providerInstanceCard.dataset.provider;await providerInstanceApi('/api/v1/providers/'+encodeURIComponent(provider)+'/instances',providerInstancePayload());closeProviderInstanceModal();await Promise.all([loadAddedModels(),loadModelOptions()])}catch(error){providerInstanceSetStatus(error.message,true)}finally{button.disabled=false}}
+const BEDROCK_REGIONS=[['us-east-2','US East (Ohio)'],['us-east-1','US East (N. Virginia)'],['us-west-1','US West (N. California)'],['us-west-2','US West (Oregon)'],['af-south-1','Africa (Cape Town)'],['ap-east-1','Asia Pacific (Hong Kong)'],['ap-south-2','Asia Pacific (Hyderabad)'],['ap-southeast-3','Asia Pacific (Jakarta)'],['ap-southeast-5','Asia Pacific (Malaysia)'],['ap-southeast-4','Asia Pacific (Melbourne)'],['ap-south-1','Asia Pacific (Mumbai)'],['ap-northeast-3','Asia Pacific (Osaka)'],['ap-northeast-2','Asia Pacific (Seoul)'],['ap-southeast-1','Asia Pacific (Singapore)'],['ap-southeast-2','Asia Pacific (Sydney)'],['ap-east-2','Asia Pacific (Taipei)'],['ap-southeast-7','Asia Pacific (Thailand)'],['ap-northeast-1','Asia Pacific (Tokyo)'],['ca-central-1','Canada (Central)'],['ca-west-1','Canada West (Calgary)'],['eu-central-1','Europe (Frankfurt)'],['eu-west-1','Europe (Ireland)'],['eu-west-2','Europe (London)'],['eu-south-1','Europe (Milan)'],['eu-west-3','Europe (Paris)'],['eu-south-2','Europe (Spain)'],['eu-north-1','Europe (Stockholm)'],['eu-central-2','Europe (Zurich)'],['il-central-1','Israel (Tel Aviv)'],['mx-central-1','Mexico (Central)'],['me-south-1','Middle East (Bahrain)'],['me-central-1','Middle East (UAE)'],['sa-east-1','South America (São Paulo)'],['us-gov-east-1','AWS GovCloud (US-East)'],['us-gov-west-1','AWS GovCloud (US-West)']];
+var bedrockCard=null;var bedrockInstanceNames=null;var bedrockAuthMode='access_key_secret';
+function bedrockStatus(text,error){var status=document.getElementById('bdStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}
+function bedrockClearErrors(){['bdNameError','bdTypeError','bdModelError','bdAkError','bdSkError','bdRoleArnError','bdRegionError','bdMaxTokensError'].forEach(function(id){document.getElementById(id).textContent=''})}
+function bedrockDoc(card){var title=document.getElementById('bedrockTitle');title.textContent=card.dataset.provider||'Bedrock';var doc=document.getElementById('bedrockDoc');var cardDoc=card.querySelector('.available-provider-doc');if(cardDoc){doc.href=cardDoc.href;doc.hidden=false}else{doc.removeAttribute('href');doc.hidden=true}}
+function bedrockRegionOptions(){var list=document.getElementById('bdRegionOptions');list.replaceChildren();BEDROCK_REGIONS.forEach(function(entry){var option=document.createElement('option');option.value=entry[0];option.label=entry[1];list.appendChild(option)})}
+function bedrockRefreshInstanceState(){var name=document.getElementById('bdName').value.trim();var exists=!!bedrockInstanceNames&&bedrockInstanceNames.has(name);document.getElementById('bdAuthSection').hidden=exists}
+function loadBedrockInstanceNames(){var instance=document.getElementById('bedrockModal');fetch('/api/v1/providers/Bedrock/instances').then(function(response){return response.json()}).then(function(data){var names=new Set();(data.data||[]).forEach(function(instance){if(instance&&instance.instance_name)names.add(instance.instance_name)});bedrockInstanceNames=names;if(instance.classList.contains('show'))bedrockRefreshInstanceState()}).catch(function(){bedrockInstanceNames=new Set()})}
+function setBedrockAuthMode(mode){bedrockAuthMode=mode;Array.from(document.querySelectorAll('#bdAuthMode [role=radio]')).forEach(function(button){button.setAttribute('aria-checked',button.dataset.mode===mode?'true':'false')});if(mode!=='access_key_secret'){document.getElementById('bdAk').value='';document.getElementById('bdSk').value=''}if(mode!=='iam_role'){document.getElementById('bdRoleArn').value=''}document.getElementById('bdAkSk').hidden=mode!=='access_key_secret';document.getElementById('bdRoleArnField').hidden=mode!=='iam_role';document.getElementById('bdAssumeTip').hidden=mode!=='assume_role'}
+function showBedrockModal(card){bedrockCard=card;bedrockDoc(card);bedrockRegionOptions();document.getElementById('bdName').value='';document.getElementById('bdModelName').value='';document.getElementById('bdAk').value='';document.getElementById('bdSk').value='';document.getElementById('bdRoleArn').value='';document.getElementById('bdRegion').value='';document.getElementById('bdMaxTokens').value='8192';Array.from(document.querySelectorAll('#bedrockModal input[name=bdType]')).forEach(function(input){input.checked=input.value==='chat'});setBedrockAuthMode('access_key_secret');bedrockInstanceNames=null;bedrockRefreshInstanceState();bedrockClearErrors();bedrockStatus('',false);document.getElementById('bedrockModal').classList.add('show');loadBedrockInstanceNames()}
+function closeBedrockModal(){document.getElementById('bedrockModal').classList.remove('show');bedrockCard=null}
+function bedrockSelectedTypes(){return Array.from(document.querySelectorAll('#bedrockModal input[name=bdType]:checked')).map(function(input){return input.value})}
+function bedrockInstanceExists(){var name=document.getElementById('bdName').value.trim();return !!bedrockInstanceNames&&bedrockInstanceNames.has(name)}
+function bedrockValidate(){bedrockClearErrors();var valid=true;if(!document.getElementById('bdName').value.trim()){document.getElementById('bdNameError').textContent='Please input the instance name!';valid=false}var types=bedrockSelectedTypes();if(!types.length){document.getElementById('bdTypeError').textContent='Please input your model type!';valid=false}if(!document.getElementById('bdModelName').value.trim()){document.getElementById('bdModelError').textContent='Please input your model name!';valid=false}var raw=document.getElementById('bdMaxTokens').value.trim();var maxTokens=raw===''?NaN:Number(raw);if(raw===''||isNaN(maxTokens)||maxTokens<0){document.getElementById('bdMaxTokensError').textContent='Max tokens cannot be less than 0.';valid=false}if(!bedrockInstanceExists()){if(!document.getElementById('bdRegion').value.trim()){document.getElementById('bdRegionError').textContent='Please select!';valid=false}if(bedrockAuthMode==='access_key_secret'){if(!document.getElementById('bdAk').value.trim()){document.getElementById('bdAkError').textContent='Please input your ACCESS KEY';valid=false}if(!document.getElementById('bdSk').value.trim()){document.getElementById('bdSkError').textContent='Please input your SECRET KEY';valid=false}}if(bedrockAuthMode==='iam_role'&&!document.getElementById('bdRoleArn').value.trim()){document.getElementById('bdRoleArnError').textContent='Please enter AWS Role ARN';valid=false}}return valid}
+function bedrockKeyPayload(){var key={auth_mode:bedrockAuthMode};if(bedrockAuthMode==='access_key_secret'){key.bedrock_ak=document.getElementById('bdAk').value.trim();key.bedrock_sk=document.getElementById('bdSk').value}if(bedrockAuthMode==='iam_role'){key.aws_role_arn=document.getElementById('bdRoleArn').value.trim()}key.bedrock_region=document.getElementById('bdRegion').value.trim();return key}
+function bedrockModelPayload(){return {model_name:document.getElementById('bdModelName').value.trim(),model_type:bedrockSelectedTypes(),max_tokens:Number(document.getElementById('bdMaxTokens').value)}}
+function bedrockSavePayload(){return {instance_name:document.getElementById('bdName').value.trim(),llm_factory:'Bedrock',api_key:bedrockKeyPayload(),region:'default',max_tokens:bedrockModelPayload().max_tokens,model_info:[bedrockModelPayload()]}}
+async function verifyBedrock(){if(!bedrockValidate())return;var button=document.getElementById('bdVerify');button.disabled=true;bedrockStatus('Verifying…',false);try{await providerInstanceApi('/api/v1/providers/Bedrock/connection',{api_key:JSON.stringify(bedrockKeyPayload()),region:'default',model_info:[bedrockModelPayload()]});bedrockStatus('Your API key is valid.',false)}catch(error){bedrockStatus(error.message,true)}finally{button.disabled=false}}
+async function saveBedrock(){if(!bedrockValidate())return;var button=document.getElementById('bdOk');button.disabled=true;bedrockStatus('Saving…',false);try{await providerInstanceApi('/api/v1/providers/Bedrock/instances',bedrockSavePayload());closeBedrockModal();await Promise.all([loadAddedModels(),loadModelOptions()])}catch(error){bedrockStatus(error.message,true)}finally{button.disabled=false}}
+var somarkCard=null;
+function somarkStatus(text,error){var status=document.getElementById('smStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}
+function somarkClearErrors(){['smNameError','smModelNameError','smBaseUrlError'].forEach(function(id){document.getElementById(id).textContent=''})}
+function somarkDoc(card){var title=document.getElementById('somarkTitle');title.textContent=card.dataset.provider||'SoMark';var doc=document.getElementById('somarkDoc');var cardDoc=card.querySelector('.available-provider-doc');if(cardDoc){doc.href=cardDoc.href;doc.hidden=false}else{doc.removeAttribute('href');doc.hidden=true}}
+function showSoMarkModal(card){somarkCard=card;somarkDoc(card);document.getElementById('smName').value='';document.getElementById('smModelName').value='';document.getElementById('smBaseUrl').value='';document.getElementById('smApiKey').value='';document.getElementById('smImageFormat').value='url';document.getElementById('smFormulaFormat').value='latex';document.getElementById('smTableFormat').value='html';document.getElementById('smCsFormat').value='image';Array.from(document.querySelectorAll('#somarkModal input[type=checkbox][role=switch]')).forEach(function(input){var key=input.dataset.key;input.checked=key==='somark_enable_table_image'||key==='somark_enable_image_understanding'});somarkClearErrors();somarkStatus('',false);document.getElementById('somarkModal').classList.add('show')}
+function closeSoMarkModal(){document.getElementById('somarkModal').classList.remove('show');somarkCard=null}
+function somarkValidate(){somarkClearErrors();var valid=true;if(!document.getElementById('smName').value.trim()){document.getElementById('smNameError').textContent='Please input the instance name!';valid=false}if(!document.getElementById('smModelName').value.trim()){document.getElementById('smModelNameError').textContent='Please input your model name';valid=false}if(!document.getElementById('smBaseUrl').value.trim()){document.getElementById('smBaseUrlError').textContent='Please input the Base URL';valid=false}return valid}
+function somarkExtra(){var extra={somark_image_format:document.getElementById('smImageFormat').value,somark_formula_format:document.getElementById('smFormulaFormat').value,somark_table_format:document.getElementById('smTableFormat').value,somark_cs_format:document.getElementById('smCsFormat').value};Array.from(document.querySelectorAll('#somarkModal input[type=checkbox][role=switch]')).forEach(function(input){extra[input.dataset.key]=input.checked});return extra}
+function somarkModelPayload(){return {model_name:document.getElementById('smModelName').value.trim(),model_type:['ocr'],max_tokens:0,extra:somarkExtra()}}
+function somarkSavePayload(){return {instance_name:document.getElementById('smName').value.trim(),llm_factory:'SoMark',api_key:document.getElementById('smApiKey').value.trim()||'',base_url:document.getElementById('smBaseUrl').value.trim(),max_tokens:0,model_info:[somarkModelPayload()]}}
+async function verifySoMark(){if(!somarkValidate())return;var button=document.getElementById('smVerify');button.disabled=true;somarkStatus('Verifying…',false);try{var payload=somarkSavePayload();await providerInstanceApi('/api/v1/providers/SoMark/connection',{api_key:payload.api_key,base_url:payload.base_url,model_info:payload.model_info});somarkStatus('Verified',false)}catch(error){somarkStatus('Verification failed: '+error.message,true)}finally{button.disabled=false}}
+async function saveSoMark(){if(!somarkValidate())return;var button=document.getElementById('smOk');button.disabled=true;somarkStatus('Saving…',false);try{await providerInstanceApi('/api/v1/providers/SoMark/instances',somarkSavePayload());closeSoMarkModal();await Promise.all([loadAddedModels(),loadModelOptions()])}catch(error){somarkStatus(error.message,true)}finally{button.disabled=false}}
+</script>"##,
+    );
+    b.push_str(
+        r##"<div class='modal-overlay' id='addProvModal' onclick='if(event.target===this)this.classList.remove("show")'><div class='modal' style='max-width:520px'><h2>+ Add Provider</h2><label style='display:block;margin-top:12px'>Provider ID<input id='apId' placeholder='e.g. deepseek' style='width:100%'></label><label style='display:block;margin-top:12px'>Name<input id='apName' placeholder='Display name' style='width:100%'></label><label style='display:block;margin-top:12px'>API Base<input id='apBase' placeholder='https://api.example.com/v1' style='width:100%'></label><label style='display:block;margin-top:12px'>API Key<input id='apKey' type='password' placeholder='Optional' style='width:100%'></label><label style='display:block;margin-top:12px'>Models (comma separated)<input id='apModels' list='apModelSuggestions' placeholder='model-a, model-b' style='width:100%'></label><datalist id='apModelSuggestions'></datalist><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveAddProv()'>Save</button><button class='btn btn-o' onclick='document.getElementById("addProvModal").classList.remove("show")'>Cancel</button><span id='apStatus' style='margin-left:8px;color:var(--tm);font-size:12px'></span></div></div></div><script>
+var activeProviderFilter='';
+function availableCards(){return Array.from(document.querySelectorAll('[data-testid="available-model-card"]'))}
+function filterAvailableProviders(){var query=(document.getElementById('providerSearch').value||'').trim().toLowerCase();var searched=0;var shown=0;var counts={};availableCards().forEach(function(card){var searchMatch=(card.dataset.name||'').includes(query);var kinds=(card.dataset.k||'').split(' ').filter(Boolean);if(searchMatch){searched++;new Set(kinds).forEach(function(kind){counts[kind]=(counts[kind]||0)+1})}var visible=searchMatch&&(!activeProviderFilter||kinds.indexOf(activeProviderFilter)>=0);card.style.display=visible?'':'none';if(visible)shown++});document.getElementById('providerCountAll').textContent=searched;['chat','embedding','rerank','tts','speech2text','image2text','ocr'].forEach(function(kind){var count=document.getElementById('providerCount-'+kind);if(count)count.textContent=counts[kind]||0});document.getElementById('availableShown').textContent=shown+' shown';document.getElementById('availableProviderEmpty').style.display=shown?'none':'block'}
+function selectProviderFilter(kind){activeProviderFilter=(kind&&activeProviderFilter===kind)?'':kind;document.querySelectorAll('.provider-chip').forEach(function(chip){chip.classList.toggle('on',(chip.dataset.filter||'')===activeProviderFilter)});filterAvailableProviders()}
+function showAddProv(card){var modal=document.getElementById('addProvModal');var selected=!!card;document.getElementById('apId').value=selected?(card.dataset.providerId||''):'';document.getElementById('apId').readOnly=selected;document.getElementById('apName').value=selected?(card.dataset.provider||''):'';document.getElementById('apBase').value=selected?(card.dataset.apiBase||''):'';document.getElementById('apKey').value='';document.getElementById('apModels').value=selected?(card.dataset.models||''):'';document.getElementById('apStatus').textContent='';modal.dataset.existing=selected?'true':'false';modal.classList.add('show')}
+async function saveAddProv(){var modal=document.getElementById('addProvModal');var id=document.getElementById('apId').value.trim();var name=document.getElementById('apName').value.trim();var base=document.getElementById('apBase').value.trim();var key=document.getElementById('apKey').value.trim();var models=document.getElementById('apModels').value.split(',').map(function(value){return value.trim()}).filter(Boolean);var status=document.getElementById('apStatus');if(!id||!name||!base||!models.length){status.textContent='ID, Name, API Base, and at least one model are required';return}var body={name:name,api_base:base,api_key:key||null,models:models,enabled:true};status.textContent='Saving…';try{var response=await fetch('/api/v1/providers/'+encodeURIComponent(id),{method:modal.dataset.existing==='true'?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));status.textContent='Saved ✓';setTimeout(function(){location.reload()},500)}catch(error){status.textContent='Error: '+error.message}}
+var apTimer=null;function apSearch(value){var list=document.getElementById('apModelSuggestions');if(!list)return;clearTimeout(apTimer);if(!value||value.length<2){list.replaceChildren();return}apTimer=setTimeout(async function(){try{var response=await fetch('/api/v1/models/search?q='+encodeURIComponent(value)+'&limit=15');var data=await response.json();list.replaceChildren();(data.data||[]).forEach(function(model){var option=document.createElement('option');option.value=model.name;option.label=(model.alias&&model.alias.length)?model.name+' — '+model.alias.slice(0,2).join(' / '):model.name;list.appendChild(option)})}catch(_error){}},250)}
+document.getElementById('apModels').addEventListener('input',function(){apSearch(this.value.split(',').pop().trim())});filterAvailableProviders();
+</script>"##,
+    );
+    b.push_str(
+        r#"<div class='modal-overlay' id='deleteModelInstanceModal' data-testid='delete-model-instance-dialog' onclick='if(event.target===this)closeDeleteModelInstance()'><div class='modal' style='max-width:460px' role='alertdialog' aria-modal='true' aria-labelledby='deleteModelInstanceTitle'><h2 id='deleteModelInstanceTitle'>Confirm</h2><p id='deleteModelInstanceText' style='margin-top:12px;color:var(--t2)'></p><p id='deleteModelInstanceStatus' class='added-model-dialog-status'></p><div class='added-model-dialog-actions'><button class='btn btn-o' type='button' onclick='closeDeleteModelInstance()'>Cancel</button><button class='btn btn-d' id='deleteModelInstanceOk' type='button' onclick='confirmDeleteModelInstance()'>Confirm</button></div></div></div>
+<div class='modal-overlay' id='editInstanceModelModal' data-testid='edit-instance-model-dialog' onclick='if(event.target===this)closeEditInstanceModel()'><div class='modal' style='max-width:520px' role='dialog' aria-modal='true' aria-labelledby='editInstanceModelTitle'><h2 id='editInstanceModelTitle'>Edit model</h2><label class='added-model-edit-field'>Name<input id='editInstanceModelName' disabled></label><fieldset id='editInstanceModelTypes' class='added-model-type-fieldset'><legend>Model types</legend><label><input type='checkbox' value='chat'> LLM</label><label><input type='checkbox' value='embedding'> Embedding</label><label><input type='checkbox' value='image2text'> VLM</label><label><input type='checkbox' value='speech2text'> ASR</label><label><input type='checkbox' value='rerank'> Rerank</label><label><input type='checkbox' value='tts'> TTS</label><label><input type='checkbox' value='ocr'> OCR</label></fieldset><label class='added-model-edit-field'>Max tokens<input id='editInstanceModelMaxTokens' type='number' disabled></label><p id='editInstanceModelStatus' class='added-model-dialog-status'></p><div class='added-model-dialog-actions'><button class='btn btn-o' type='button' onclick='closeEditInstanceModel()'>Cancel</button><button class='btn btn-p' id='editInstanceModelOk' type='button' onclick='saveEditInstanceModel()'>Ok</button></div></div></div><script>const ADDED_PROVIDER_DIRECTORY="#,
+    );
+    let added_provider_directory: Vec<_> = providers
+        .iter()
+        .map(|provider| {
+            serde_json::json!({
+                "id": provider.id,
+                "name": crate::providers::canonical_provider_name(&provider.id, &provider.name),
+            })
+        })
+        .collect();
+    b.push_str(&json_script_value(&serde_json::json!(
+        added_provider_directory
+    )));
+    let icon_directory: serde_json::Map<String, serde_json::Value> =
+        crate::api::tenant_models::factory_llm_entries()
+            .iter()
+            .map(|entry| {
+                let value = match provider_icon(&entry.name) {
+                    ProviderIcon::Svg(path) => {
+                        serde_json::json!({ "kind": "svg", "value": path })
+                    }
+                    ProviderIcon::Font(symbol) => {
+                        serde_json::json!({ "kind": "font", "value": symbol })
+                    }
+                };
+                (entry.name.clone(), value)
+            })
+            .collect();
+    b.push_str(";const PROVIDER_ICON_DIRECTORY=");
+    b.push_str(&serde_json::to_string(&icon_directory).expect("icon directory serializes"));
+    b.push_str(
+        r#";
+function addedNode(tag,className,text){var node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
+function providerIconHtml(name){var entry=PROVIDER_ICON_DIRECTORY[name]||{kind:'font',value:'moxing-default'};if(entry.kind==='svg')return "<img class='provider-brand-icon' src='/assets/svg/llm/"+entry.value+"' alt='' aria-hidden='true'>";return "<svg class='provider-brand-icon' aria-hidden='true' focusable='false'><use href='#icon-"+entry.value+"'></use></svg>"}
+function providerDirectoryEntry(providerId){var entry=ADDED_PROVIDER_DIRECTORY.find(function(provider){return provider.id===providerId});if(entry)return entry;var card=Array.from(document.querySelectorAll('[data-testid="available-model-card"]')).find(function(candidate){return candidate.dataset.providerId===providerId});return {id:providerId,name:card&&card.dataset.provider?card.dataset.provider:providerId}}
+async function addedApi(url,options){var response=await fetch(url,options);var data=await response.json().catch(function(){return {}});if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));return data.data}
+function addedUrl(providerName,instanceName,suffix){var value='/api/v1/providers/'+encodeURIComponent(providerName)+'/instances';if(instanceName!==undefined)value+='/'+encodeURIComponent(instanceName)+'/models';if(suffix!==undefined)value+='/'+encodeURIComponent(suffix);return value}
+async function loadAddedModels(){var list=document.getElementById('addedModelList');list.replaceChildren(addedNode('p','added-model-loading','Loading…'));try{var instances=await addedApi('/api/v1/tenant/models');var groups=new Map();(instances||[]).forEach(function(instance){var directory=providerDirectoryEntry(instance.provider_id);var group=groups.get(instance.provider_id);if(!group){group={providerId:instance.provider_id,providerName:directory.name||instance.provider_id,instances:[]};groups.set(instance.provider_id,group)}group.instances.push(instance)});list.replaceChildren();if(!groups.size){list.appendChild(addedNode('p','added-model-empty','No model provider instances added.'));return}Array.from(groups.values()).forEach(function(group){list.appendChild(renderAddedProvider(group))})}catch(error){list.replaceChildren(addedNode('p','added-model-error','Error: '+error.message))}}
+function renderAddedProvider(group){var card=addedNode('article','added-model-card');card.dataset.testid='added-model-card';card.dataset.provider=group.providerName;var head=addedNode('div','added-model-provider-head');var icon=addedNode('span','added-model-provider-icon');icon.innerHTML=providerIconHtml(group.providerName);head.appendChild(icon);head.appendChild(addedNode('span','added-model-provider-name',group.providerName));card.appendChild(head);var instances=addedNode('div','added-model-instances');group.instances.forEach(function(instance,index){instances.appendChild(renderAddedInstance(group,instance,index))});card.appendChild(instances);return card}
+function renderAddedInstance(group,instance,index){var row=addedNode('section','added-model-instance');var header=addedNode('div','added-model-instance-head');header.appendChild(addedNode('span','added-model-instance-name',instance.instance_name));var actions=addedNode('div','added-model-instance-actions');var toggle=addedNode('button','btn btn-o btn-sm','View models');toggle.type='button';toggle.setAttribute('aria-expanded','false');var content=addedNode('div','added-model-content');content.hidden=true;content.dataset.loaded='false';content.id='added-model-content-'+group.providerId.replace(/[^a-zA-Z0-9_-]/g,'-')+'-'+instance.instance_id.replace(/[^a-zA-Z0-9_-]/g,'-')+'-'+index;toggle.addEventListener('click',function(){toggleAddedInstance(toggle,content,group.providerName,instance.instance_name)});actions.appendChild(toggle);var remove=addedNode('button','btn btn-d btn-sm added-model-delete','🗑');remove.type='button';remove.setAttribute('aria-label','Delete '+instance.instance_name);remove.addEventListener('click',function(){openDeleteModelInstance(group.providerName,instance.instance_name)});actions.appendChild(remove);header.appendChild(actions);row.appendChild(header);row.appendChild(content);return row}
+async function toggleAddedInstance(button,content,providerName,instanceName){var open=button.getAttribute('aria-expanded')==='true';if(open){button.setAttribute('aria-expanded','false');button.textContent='View models';content.hidden=true;return}button.disabled=true;try{if(content.dataset.loaded!=='true')await loadAddedInstanceModels(providerName,instanceName,content);content.hidden=false;button.setAttribute('aria-expanded','true');button.textContent='Hide models'}catch(error){content.replaceChildren(addedNode('p','added-model-error','Error: '+error.message));content.hidden=false}finally{button.disabled=false}}
+function modelTypeBadge(type){return addedNode('span','badge added-model-type',type)}
+async function loadAddedInstanceModels(providerName,instanceName,content){content.replaceChildren(addedNode('p','added-model-loading','Loading…'));var models=await addedApi(addedUrl(providerName,instanceName));content.replaceChildren();content.dataset.loaded='true';var types=[];(models||[]).forEach(function(model){(model.model_type||[]).forEach(function(type){if(types.indexOf(type)<0)types.push(type)})});if(types.length){var summary=addedNode('div','added-model-type-summary');types.forEach(function(type){summary.appendChild(modelTypeBadge(type))});content.appendChild(summary)}var list=addedNode('ul','added-model-rows');(models||[]).forEach(function(model){list.appendChild(renderAddedModel(providerName,instanceName,model,content))});if(!models||!models.length)list.appendChild(addedNode('li','added-model-empty','No models.'));content.appendChild(list)}
+function renderAddedModel(providerName,instanceName,model,content){var row=addedNode('li','added-model-row');var details=addedNode('div','added-model-details');details.appendChild(addedNode('span','added-model-name',model.name));(model.model_type||[]).slice(0,3).forEach(function(type){details.appendChild(modelTypeBadge(type))});if((model.model_type||[]).length>3){var more=modelTypeBadge('...');more.title=model.model_type.slice(3).join('\n');details.appendChild(more)}var edit=addedNode('button','btn btn-o btn-sm added-model-edit','✎');edit.type='button';edit.setAttribute('aria-label','Edit custom model');edit.addEventListener('click',function(event){event.stopPropagation();openEditInstanceModel(providerName,instanceName,model,content)});details.appendChild(edit);row.appendChild(details);var toggle=document.createElement('input');toggle.type='checkbox';toggle.className='added-model-switch';toggle.setAttribute('role','switch');toggle.setAttribute('aria-label','Set '+model.name+' active');toggle.checked=model.status==='active';toggle.setAttribute('aria-checked',String(toggle.checked));toggle.addEventListener('change',function(){updateAddedModelStatus(toggle,providerName,instanceName,model.name)});row.appendChild(toggle);return row}
+async function updateAddedModelStatus(toggle,providerName,instanceName,modelName){var checked=toggle.checked;toggle.disabled=true;try{await addedApi(addedUrl(providerName,instanceName,modelName),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:checked?'active':'inactive'})});toggle.setAttribute('aria-checked',String(checked));await loadModelOptions()}catch(error){toggle.checked=!checked;toggle.setAttribute('aria-checked',String(toggle.checked));alert(error.message)}finally{toggle.disabled=false}}
+function openDeleteModelInstance(providerName,instanceName){var modal=document.getElementById('deleteModelInstanceModal');modal.dataset.provider=providerName;modal.dataset.instance=instanceName;document.getElementById('deleteModelInstanceText').textContent='Are you sure you want to delete the instance "'+instanceName+'"?';document.getElementById('deleteModelInstanceStatus').textContent='';modal.classList.add('show')}
+function closeDeleteModelInstance(){document.getElementById('deleteModelInstanceModal').classList.remove('show')}
+async function confirmDeleteModelInstance(){var modal=document.getElementById('deleteModelInstanceModal');var button=document.getElementById('deleteModelInstanceOk');var status=document.getElementById('deleteModelInstanceStatus');button.disabled=true;status.textContent='Deleting…';try{await addedApi(addedUrl(modal.dataset.provider),{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[modal.dataset.instance]})});closeDeleteModelInstance();await Promise.all([loadAddedModels(),loadModelOptions()])}catch(error){status.textContent='Error: '+error.message}finally{button.disabled=false}}
+function openEditInstanceModel(providerName,instanceName,model,content){var modal=document.getElementById('editInstanceModelModal');modal.dataset.provider=providerName;modal.dataset.instance=instanceName;modal.dataset.model=model.name;modal.dataset.contentId=content.id;document.getElementById('editInstanceModelName').value=model.name;document.getElementById('editInstanceModelMaxTokens').value=model.max_tokens||0;document.querySelectorAll('#editInstanceModelTypes input[type=checkbox]').forEach(function(input){input.checked=(model.model_type||[]).indexOf(input.value)>=0});document.getElementById('editInstanceModelStatus').textContent='';modal.classList.add('show')}
+function closeEditInstanceModel(){document.getElementById('editInstanceModelModal').classList.remove('show')}
+async function saveEditInstanceModel(){var modal=document.getElementById('editInstanceModelModal');var button=document.getElementById('editInstanceModelOk');var status=document.getElementById('editInstanceModelStatus');var types=Array.from(document.querySelectorAll('#editInstanceModelTypes input[type=checkbox]:checked')).map(function(input){return input.value});if(!types.length){status.textContent='Select at least one model type.';return}button.disabled=true;status.textContent='Saving…';try{await addedApi(addedUrl(modal.dataset.provider,modal.dataset.instance),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_name:[modal.dataset.model],model_type:types})});var content=document.getElementById(modal.dataset.contentId);closeEditInstanceModel();if(content)await loadAddedInstanceModels(modal.dataset.provider,modal.dataset.instance,content);await loadModelOptions()}catch(error){status.textContent='Error: '+error.message}finally{button.disabled=false}}
+document.addEventListener('keydown',function(event){if(event.key==='Escape'){closeProviderInstanceModal();closeDeleteModelInstance();closeEditInstanceModel()}});loadAddedModels();
+</script>"#,
+    );
+    b.push_str("<script src='/iconfont.js' defer></script>");
+    let page = if in_user_settings {
+        user_setting_layout(t("Model providers", zh), &b, UserSettingSection::Model, zh)
+    } else {
+        layout(t("Model providers", zh), &b, zh)
+    };
+    Html(page)
 }
 
 fn html_escape(value: &str) -> String {
@@ -2157,8 +3160,6 @@ pub async fn status_page(req: axum::http::Request<axum::body::Body>) -> impl Int
     Html(layout("Status", &b, zh))
 }
 
-
-
 /// RAGFlow 0.26.4 parity: chat-apps list page (`/chats`).
 pub async fn chat_apps_page(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
@@ -2173,11 +3174,20 @@ pub async fn chat_apps_page(
     let mut cards = String::new();
     for a in &apps {
         let initial = if a.icon.is_empty() {
-            a.name.chars().next().unwrap_or('C').to_uppercase().to_string()
+            a.name
+                .chars()
+                .next()
+                .unwrap_or('C')
+                .to_uppercase()
+                .to_string()
         } else {
             a.icon.clone()
         };
-        let desc = if a.description.is_empty() { "-".to_string() } else { a.description.clone() };
+        let desc = if a.description.is_empty() {
+            "-".to_string()
+        } else {
+            a.description.clone()
+        };
         cards.push_str(&format!(
             "<div class='chat-card' data-name='{name}' data-testid='chat-card' onclick=\"location.href='/chats/{id}'\"><div class='cc-top'><div class='av' style='width:40px;height:40px;font-size:18px'>{icon}</div><div class='cc-meta'><h3 style='font-size:15px;margin:0'>{name}</h3><p style='font-size:12px;color:var(--tm);margin:2px 0 0'>{desc}</p></div><div class='cc-actions' onclick='event.stopPropagation()'><button class='btn btn-o btn-sm' onclick=\"renApp('{id}','{name}')\">✏️</button><button class='btn btn-d btn-sm' onclick=\"delApp('{id}')\">🗑</button></div></div></div>",
             id = a.id, icon = initial, name = html_esc(&a.name, 30), desc = html_esc(&desc, 40)
@@ -2218,10 +3228,14 @@ pub async fn chat_apps_page(
     b.push_str("<script>");
     b.push_str("function filterApps(v){v=(v||'').toLowerCase();document.querySelectorAll('#appList .chat-card').forEach(function(c){c.style.display=(!v||(c.getAttribute('data-name')||'').toLowerCase().indexOf(v)>=0)?'':'none'})}");
     b.push_str("function openNewApp(){document.getElementById('appName').value='';document.getElementById('newAppModal').classList.add('show')}");
-    b.push_str("function closeNewApp(){document.getElementById('newAppModal').classList.remove('show')}");
+    b.push_str(
+        "function closeNewApp(){document.getElementById('newAppModal').classList.remove('show')}",
+    );
     b.push_str("function saveNewApp(){var n=document.getElementById('appName').value.trim();if(!n){alert('Name required');return}fetch('/api/v1/chatapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'create failed')}})}");
     b.push_str("function renApp(id,name){document.getElementById('renAppId').value=id;document.getElementById('renAppName').value=name;document.getElementById('renAppModal').classList.add('show')}");
-    b.push_str("function closeRenApp(){document.getElementById('renAppModal').classList.remove('show')}");
+    b.push_str(
+        "function closeRenApp(){document.getElementById('renAppModal').classList.remove('show')}",
+    );
     b.push_str("function saveRenApp(){var n=document.getElementById('renAppName').value.trim();var id=document.getElementById('renAppId').value;if(!n)return;fetch('/api/v1/chatapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
     b.push_str("function delApp(id){if(!confirm('Delete this chat app?'))return;fetch('/api/v1/chatapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
     b.push_str("</script>");
@@ -2235,18 +3249,28 @@ pub async fn chat_app_detail_page(
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let app = state
-        .chat_apps
-        .as_ref()
-        .and_then(|s| s.get(&app_id));
+    let app = state.chat_apps.as_ref().and_then(|s| s.get(&app_id));
     let (name, icon, desc) = match &app {
         Some(a) => {
             let ic = if a.icon.is_empty() {
-                a.name.chars().next().unwrap_or('C').to_uppercase().to_string()
+                a.name
+                    .chars()
+                    .next()
+                    .unwrap_or('C')
+                    .to_uppercase()
+                    .to_string()
             } else {
                 a.icon.clone()
             };
-            (a.name.clone(), ic, if a.description.is_empty() { "-".into() } else { a.description.clone() })
+            (
+                a.name.clone(),
+                ic,
+                if a.description.is_empty() {
+                    "-".into()
+                } else {
+                    a.description.clone()
+                },
+            )
         }
         None => {
             return Html(format!(
@@ -2263,22 +3287,42 @@ pub async fn chat_app_detail_page(
         .collect();
     let mut cards = String::new();
     for c in convs.iter().rev() {
-        let preview = c.messages.last().map(|m| m.content.chars().take(80).collect::<String>()).unwrap_or_else(|| "No messages".into());
+        let preview = c
+            .messages
+            .last()
+            .map(|m| m.content.chars().take(80).collect::<String>())
+            .unwrap_or_else(|| "No messages".into());
         cards.push_str(&format!(
             "<div class='chat-card' onclick=\"location.href='/chat/{0}'\"><h3 style='font-size:14px;margin:0'>{1}</h3><p style='font-size:12px;color:var(--t2);margin:6px 0 0'>{2} msgs</p><p style='font-size:12px;color:var(--tm);margin:6px 0 0'>{3}</p></div>",
             c.id, html_esc(&c.name, 30), c.messages.len(), html_esc(&preview, 60)
         ));
     }
     if convs.is_empty() {
-        cards = format!("<p style='color:var(--tm);text-align:center;padding:32px'>{}</p>", t("No conversations yet", zh));
+        cards = format!(
+            "<p style='color:var(--tm);text-align:center;padding:32px'>{}</p>",
+            t("No conversations yet", zh)
+        );
     }
 
     // ---- settings form values (server-rendered from ChatApp) ----
     let app = app.as_ref().unwrap();
     let pc = app.prompt_config.as_ref().and_then(|v| v.as_object());
-    let getb = |k: &str, d: bool| pc.and_then(|o| o.get(k)).and_then(|v| v.as_bool()).unwrap_or(d);
-    let gets = |k: &str| pc.and_then(|o| o.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let getn = |k: &str, d: f64| pc.and_then(|o| o.get(k)).and_then(|v| v.as_f64()).unwrap_or(d);
+    let getb = |k: &str, d: bool| {
+        pc.and_then(|o| o.get(k))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(d)
+    };
+    let gets = |k: &str| {
+        pc.and_then(|o| o.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let getn = |k: &str, d: f64| {
+        pc.and_then(|o| o.get(k))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(d)
+    };
     let prologue = gets("prologue");
     let system = gets("system");
     let empty_response = gets("empty_response");
@@ -2292,8 +3336,13 @@ pub async fn chat_app_detail_page(
     let refine_multiturn = getb("refine_multiturn", true);
     let reasoning = getb("reasoning", false);
     let vector_similarity_weight = getn("vector_similarity_weight", 0.3);
-    let ref_meta = pc.and_then(|o| o.get("reference_metadata")).and_then(|v| v.as_object());
-    let ref_include = ref_meta.and_then(|o| o.get("include")).and_then(|v| v.as_bool()).unwrap_or(false);
+    let ref_meta = pc
+        .and_then(|o| o.get("reference_metadata"))
+        .and_then(|v| v.as_object());
+    let ref_include = ref_meta
+        .and_then(|o| o.get("include"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let ref_fields = ref_meta
         .and_then(|o| o.get("fields"))
         .and_then(|v| v.as_array())
@@ -2304,7 +3353,9 @@ pub async fn chat_app_detail_page(
                 .join(",")
         })
         .unwrap_or_default();
-    let meta_filter = pc.and_then(|o| o.get("meta_data_filter")).and_then(|v| v.as_object());
+    let meta_filter = pc
+        .and_then(|o| o.get("meta_data_filter"))
+        .and_then(|v| v.as_object());
     let mf_method = meta_filter
         .and_then(|o| o.get("method"))
         .and_then(|v| v.as_str())
@@ -2313,20 +3364,40 @@ pub async fn chat_app_detail_page(
     let mf_manual = meta_filter
         .and_then(|o| o.get("manual"))
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(","))
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
         .unwrap_or_default();
     let rerank_id = app.rerank_id.clone().unwrap_or_default();
-    let rtop_k = app.top_k.map(|v| v.to_string()).unwrap_or_else(|| "1024".into());
+    let rtop_k = app
+        .top_k
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "1024".into());
     let cross: Vec<String> = pc
         .and_then(|o| o.get("cross_languages"))
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let llm_id = app.llm_id.clone().unwrap_or_default();
     let mut kb_opts = String::new();
     for kb in state.kbs.list() {
-        let sel = if app.kb_ids.contains(&kb.id) { " selected" } else { "" };
-        kb_opts.push_str(&format!("<option value='{}'{sel}>{}</option>", kb.id, html_esc(&kb.name, 40)));
+        let sel = if app.kb_ids.contains(&kb.id) {
+            " selected"
+        } else {
+            ""
+        };
+        kb_opts.push_str(&format!(
+            "<option value='{}'{sel}>{}</option>",
+            kb.id,
+            html_esc(&kb.name, 40)
+        ));
     }
     // LLM options: tenant models via providers/models endpoint is async; render current value as text input + datalist from providers.
     let mut llm_opts = String::new();
@@ -2347,12 +3418,36 @@ pub async fn chat_app_detail_page(
     b.push_str("</div>");
 
     // ---- Settings drawer (440px, RAGFlow chat-detail-settings parity) ----
-    let sw = |k: &str, on: bool| if on { format!("<input type='checkbox' id='sw_{k}' checked>") } else { format!("<input type='checkbox' id='sw_{k}'>") };
-    let langs = ["Chinese","English","Japanese","Korean","French","German","Spanish","Portuguese","Italian","Dutch","Polish"];
+    let sw = |k: &str, on: bool| {
+        if on {
+            format!("<input type='checkbox' id='sw_{k}' checked>")
+        } else {
+            format!("<input type='checkbox' id='sw_{k}'>")
+        }
+    };
+    let langs = [
+        "Chinese",
+        "English",
+        "Japanese",
+        "Korean",
+        "French",
+        "German",
+        "Spanish",
+        "Portuguese",
+        "Italian",
+        "Dutch",
+        "Polish",
+    ];
     let mut chips = String::new();
     for l in langs {
-        let on = if cross.contains(&l.to_string()) { " on" } else { "" };
-        chips.push_str(&format!("<span class='lang-chip{on}' data-lang='{l}' onclick='toggleLang(this)'>{l}</span>"));
+        let on = if cross.contains(&l.to_string()) {
+            " on"
+        } else {
+            ""
+        };
+        chips.push_str(&format!(
+            "<span class='lang-chip{on}' data-lang='{l}' onclick='toggleLang(this)'>{l}</span>"
+        ));
     }
     b.push_str(&format!(
         "<div class='settings-drawer' id='settingsDrawer'><div style='padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd)'><b>{}</b><button class='btn btn-o btn-sm' data-testid='chat-detail-settings-close' onclick='toggleSettings()'>✕</button></div><div style='padding:16px 20px;overflow-y:auto;flex:1'>",
@@ -2377,15 +3472,42 @@ pub async fn chat_app_detail_page(
         "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><textarea id='f_system' rows='4' style='width:100%'>{}</textarea><label class='set-label'>{}</label><div id='langChips' style='display:flex;flex-wrap:wrap;gap:6px;margin-top:6px'>{}</div>",
         t("Prompt Engine", zh), t("System Prompt", zh), html_esc(&system, 4000), t("Cross Languages", zh), chips
     ));
-    for (k, label) in [("quote", "Quote"), ("keyword", "Keyword"), ("tts", "TTS"), ("use_kg", "Use KG"), ("toc_enhance", "TOC Enhance")] {
-        let on = match k { "quote" => quote, "keyword" => keyword, "tts" => tts, "use_kg" => use_kg, _ => toc_enhance };
+    for (k, label) in [
+        ("quote", "Quote"),
+        ("keyword", "Keyword"),
+        ("tts", "TTS"),
+        ("use_kg", "Use KG"),
+        ("toc_enhance", "TOC Enhance"),
+    ] {
+        let on = match k {
+            "quote" => quote,
+            "keyword" => keyword,
+            "tts" => tts,
+            "use_kg" => use_kg,
+            _ => toc_enhance,
+        };
         b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
     }
-    for (k, label) in [("quote", "Quote"), ("keyword", "Keyword"), ("tts", "TTS"), ("use_kg", "Use KG"), ("toc_enhance", "TOC Enhance")] {
-        let on = match k { "quote" => quote, "keyword" => keyword, "tts" => tts, "use_kg" => use_kg, _ => toc_enhance };
+    for (k, label) in [
+        ("quote", "Quote"),
+        ("keyword", "Keyword"),
+        ("tts", "TTS"),
+        ("use_kg", "Use KG"),
+        ("toc_enhance", "TOC Enhance"),
+    ] {
+        let on = match k {
+            "quote" => quote,
+            "keyword" => keyword,
+            "tts" => tts,
+            "use_kg" => use_kg,
+            _ => toc_enhance,
+        };
         b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
     }
-    for (k, label, on) in [("refine_multiturn", "Refine Multiturn", refine_multiturn), ("reasoning", "Reasoning", reasoning)] {
+    for (k, label, on) in [
+        ("refine_multiturn", "Refine Multiturn", refine_multiturn),
+        ("reasoning", "Reasoning", reasoning),
+    ] {
         b.push_str(&format!("<label class='set-switch'>{}</label><span class='set-sw-label' style='margin-left:-6px'>{}</span>", sw(k, on), label));
     }
     b.push_str(&format!(
@@ -2435,8 +3557,6 @@ fn html_esc(input: &str, max_chars: usize) -> String {
         .replace('\'', "&#39;")
 }
 
-
-
 /// RAGFlow 0.26.4 parity: search-apps list page (`/searches`).
 pub async fn search_apps_page(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
@@ -2451,11 +3571,20 @@ pub async fn search_apps_page(
     let mut cards = String::new();
     for a in &apps {
         let initial = if a.icon.is_empty() {
-            a.name.chars().next().unwrap_or('S').to_uppercase().to_string()
+            a.name
+                .chars()
+                .next()
+                .unwrap_or('S')
+                .to_uppercase()
+                .to_string()
         } else {
             a.icon.clone()
         };
-        let desc = if a.description.is_empty() { "-".to_string() } else { a.description.clone() };
+        let desc = if a.description.is_empty() {
+            "-".to_string()
+        } else {
+            a.description.clone()
+        };
         cards.push_str(&format!(
             "<div class='chat-card' data-name='{name}' data-testid='search-card' onclick=\"location.href='/searches/{id}'\"><div class='cc-top'><div class='av' style='width:40px;height:40px;font-size:18px'>{icon}</div><div class='cc-meta'><h3 style='font-size:15px;margin:0'>{name}</h3><p style='font-size:12px;color:var(--tm);margin:2px 0 0'>{desc}</p></div><div class='cc-actions' onclick='event.stopPropagation()'><button class='btn btn-o btn-sm' onclick=\"renSApp('{id}','{name}')\">✏️</button><button class='btn btn-d btn-sm' onclick=\"delSApp('{id}')\">🗑</button></div></div></div>",
             id = a.id, icon = initial, name = html_esc(&a.name, 30), desc = html_esc(&desc, 40)
@@ -2463,7 +3592,10 @@ pub async fn search_apps_page(
     }
     let mut b = String::new();
     b.push_str("<div style='display:flex;align-items:center;gap:12px;margin-bottom:24px'>");
-    b.push_str(&format!("<h1 style='margin:0'>{}</h1>", t("Search apps", zh)));
+    b.push_str(&format!(
+        "<h1 style='margin:0'>{}</h1>",
+        t("Search apps", zh)
+    ));
     b.push_str(&format!(
         "<input id='sappSearch' placeholder='{}' style='margin-left:auto;width:240px' oninput='filterSApps(this.value)'>",
         t("Search", zh)
@@ -2491,10 +3623,14 @@ pub async fn search_apps_page(
     b.push_str("<script>");
     b.push_str("function filterSApps(v){v=(v||'').toLowerCase();document.querySelectorAll('#sappList .chat-card').forEach(function(c){c.style.display=(!v||(c.getAttribute('data-name')||'').toLowerCase().indexOf(v)>=0)?'':'none'})}");
     b.push_str("function openNewSApp(){document.getElementById('sappName').value='';document.getElementById('newSAppModal').classList.add('show')}");
-    b.push_str("function closeNewSApp(){document.getElementById('newSAppModal').classList.remove('show')}");
+    b.push_str(
+        "function closeNewSApp(){document.getElementById('newSAppModal').classList.remove('show')}",
+    );
     b.push_str("function saveNewSApp(){var n=document.getElementById('sappName').value.trim();if(!n){alert('Name required');return}fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'create failed')}})}");
     b.push_str("function renSApp(id,name){document.getElementById('renSAppId').value=id;document.getElementById('renSAppName').value=name;document.getElementById('renSAppModal').classList.add('show')}");
-    b.push_str("function closeRenSApp(){document.getElementById('renSAppModal').classList.remove('show')}");
+    b.push_str(
+        "function closeRenSApp(){document.getElementById('renSAppModal').classList.remove('show')}",
+    );
     b.push_str("function saveRenSApp(){var n=document.getElementById('renSAppName').value.trim();var id=document.getElementById('renSAppId').value;if(!n)return;fetch('/api/v1/searchapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
     b.push_str("function delSApp(id){if(!confirm('Delete this search app?'))return;fetch('/api/v1/searchapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
     b.push_str("</script>");
@@ -2508,10 +3644,7 @@ pub async fn search_app_detail_page(
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let app = state
-        .search_apps
-        .as_ref()
-        .and_then(|s| s.get(&app_id));
+    let app = state.search_apps.as_ref().and_then(|s| s.get(&app_id));
     let app = match app {
         Some(a) => a,
         None => {
@@ -2522,14 +3655,27 @@ pub async fn search_app_detail_page(
         }
     };
     let initial = if app.icon.is_empty() {
-        app.name.chars().next().unwrap_or('S').to_uppercase().to_string()
+        app.name
+            .chars()
+            .next()
+            .unwrap_or('S')
+            .to_uppercase()
+            .to_string()
     } else {
         app.icon.clone()
     };
     let mut kb_opts = String::new();
     for kb in state.kbs.list() {
-        let sel = if app.kb_ids.contains(&kb.id) { " selected" } else { "" };
-        kb_opts.push_str(&format!("<option value='{}'{sel}>{}</option>", kb.id, html_esc(&kb.name, 40)));
+        let sel = if app.kb_ids.contains(&kb.id) {
+            " selected"
+        } else {
+            ""
+        };
+        kb_opts.push_str(&format!(
+            "<option value='{}'{sel}>{}</option>",
+            kb.id,
+            html_esc(&kb.name, 40)
+        ));
     }
     let ck = |on: bool| if on { " checked" } else { "" };
     let mut b = String::new();
@@ -2676,6 +3822,9 @@ mod kb_ui_tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
+            mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
+            chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
             tasks: Arc::new(TaskQueue::in_memory()),
             task_executor: Arc::new(TaskExecutor::new("test_executor", 4)),
             agents: Arc::new(AgentStore::in_memory()),
@@ -2843,44 +3992,325 @@ mod kb_ui_tests {
         assert!(!html.contains("innerHTML"));
     }
 
+    #[test]
+    fn default_model_fields_keep_upstream_order_and_wire_types() {
+        assert_eq!(
+            DEFAULT_MODEL_FIELDS.map(|field| field.field_id),
+            [
+                "llm_id",
+                "embd_id",
+                "img2txt_id",
+                "asr_id",
+                "rerank_id",
+                "tts_id",
+            ]
+        );
+        assert_eq!(
+            DEFAULT_MODEL_FIELDS.map(|field| field.update_type),
+            ["chat", "embedding", "vision", "asr", "rerank", "tts"]
+        );
+        assert_eq!(
+            DEFAULT_MODEL_FIELDS.map(|field| field.response_type),
+            [
+                "chat",
+                "embedding",
+                "image2text",
+                "speech2text",
+                "rerank",
+                "tts",
+            ]
+        );
+        assert!(DEFAULT_MODEL_FIELDS[0].required);
+        assert!(
+            DEFAULT_MODEL_FIELDS[1..]
+                .iter()
+                .all(|field| !field.required)
+        );
+    }
+
     #[tokio::test]
-    async fn providers_page_renders_kind_filter_and_add_provider_modal() {
+    async fn providers_page_wires_default_models_and_available_provider_clicks() {
         let (_root, state) = test_state();
         let req = axum::http::Request::builder()
-            .uri("/providers")
+            .uri("/user-setting/model")
             .header("accept-language", "en")
             .body(axum::body::Body::empty())
             .unwrap();
         let body = body_of(providers_page(axum::extract::State(state), req).await).await;
-        // RAGFlow-style capability filter buttons.
-        for label in [
-            "All",
-            "LLM",
-            "Embedding",
-            "Rerank",
-            "TTS",
-            "ASR",
-            "VLM",
-            "OCR",
+        for marker in [
+            "dmLlm",
+            "dmEmbedding",
+            "dmVlm",
+            "dmAsr",
+            "dmRerank",
+            "dmTts",
+            "default-model-llm_id",
+            "data-update-type='vision'",
+            "data-update-type='asr'",
+            "data-response-type='image2text'",
+            "data-response-type='speech2text'",
+            "The default LLM for each newly created dataset.",
+            "fetch('/api/v1/models')",
+            "fetch('/api/v1/models/default'",
+            "parseDefaultModelValue",
+            "model_name:name",
+            "aria-haspopup='dialog'",
+            "data-state='closed'",
+            "default-model-control",
+            "default-model-popover",
+            "buildDefaultModelTree",
+            "filterDefaultModelTree",
+            "defaultModelTreeRow",
+            "group.setAttribute('role','group')",
+            "requestId:0,pending:false",
+            "No data available",
+            "provider_name",
         ] {
-            assert!(body.contains(label), "missing filter button {label}");
+            assert!(
+                body.contains(marker),
+                "missing default-model marker {marker}"
+            );
         }
-        // Rows carry data-k kind attributes for filtering.
+        assert_eq!(body.matches(" aria-required='true'").count(), 1);
+        assert_eq!(body.matches("class='default-model-popover'").count(), 6);
+        assert_eq!(body.matches("aria-haspopup='dialog'").count(), 6);
+        for field in DEFAULT_MODEL_FIELDS {
+            assert!(!body.contains(&format!("id='{}Options'", field.dom_id)));
+        }
+        assert!(!body.contains("<script><script>"));
+        assert!(!body.contains("dmChat"));
+        assert!(!body.contains("dmVLM"));
+        assert!(!body.contains("dmASR"));
+        assert!(!body.contains("/api/v1/llm/models"));
+
+        for marker in [
+            "available-models-section",
+            "model-providers-search",
+            "available-model-card",
+            "selectProviderFilter",
+            "activeProviderFilter===kind",
+            "new Set(kinds)",
+            "showProviderInstanceModal(this)",
+            "available-provider-add",
+            "available-provider-doc",
+            "https://platform.openai.com/api-keys",
+            "event.stopPropagation()",
+            "data-api-base-options='",
+            "data-show-base='true'",
+            "providerBaseOptions",
+            "providerRegionForBaseUrl",
+            "region:providerRegionForBaseUrl",
+            "option.dataset.region=entry[1]",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing Available models marker {marker}"
+            );
+        }
         assert!(
             body.contains("data-k="),
-            "rows must carry data-k kind attributes"
+            "provider cards must carry capability attributes"
         );
-        // Add-provider modal + save wiring.
+        assert_eq!(
+            body.matches("data-testid='available-model-card'").count(),
+            63,
+            "fixed v0.26.4 exposes 63 Available provider cards"
+        );
+        assert_eq!(
+            body.matches("data-show-base='true'").count(),
+            6,
+            "OpenAI/Azure-OpenAI/Tongyi-Qianwen/MiniMax/SILICONFLOW/Anthropic show Base url"
+        );
+        assert!(
+            body.contains("https://api.siliconflow.cn/v1")
+                && body.contains("https://api.siliconflow.com/v1"),
+            "SILICONFLOW card must advertise default and intl base URLs"
+        );
+        assert!(
+            body.contains("https://dashscope.aliyuncs.com/compatible-mode/v1")
+                && body.contains("https://dashscope-intl.aliyuncs.com/compatible-model/v1"),
+            "Tongyi-Qianwen card must advertise default and intl base URLs"
+        );
+        for canonical in [
+            "Tongyi-Qianwen",
+            "OpenAI-API-Compatible",
+            "SoMark",
+            "New API",
+        ] {
+            assert!(
+                body.contains(&format!("data-provider='{canonical}'")),
+                "missing canonical Available provider {canonical}"
+            );
+        }
         assert!(body.contains("addProvModal"), "missing add-provider modal");
-        assert!(
-            body.contains("saveAddProv"),
-            "missing add-provider save handler"
+        assert!(body.contains("models:models,enabled:true"));
+        assert!(body.contains("?'PUT':'POST'"));
+        for marker in [
+            "provider-instance-dialog",
+            "Instance name",
+            "API-Key",
+            "Base url",
+            "Group ID",
+            "verifyProviderInstance",
+            "saveProviderInstance",
+            "/connection",
+            "method:'POST'",
+            "Please input the instance name!",
+            "Please enter the API key",
+            ".provider-instance-field[hidden]",
+            "data-model-picker='true'",
+            "data-api-key-optional='true'",
+            "List models",
+            "Add custom model",
+            "Model name",
+            "Model type",
+            "Max tokens",
+            "Model features",
+            "Tool call",
+            "toggleProviderModelPicker",
+            "loadProviderModels",
+            "providerModelInfo",
+            "extra:{is_tools:",
+            "addProviderCustomModel",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing provider-instance modal marker {marker}"
+            );
+        }
+        assert_eq!(
+            body.matches("data-special-modal='bedrock'").count(),
+            1,
+            "exactly one Bedrock Available card routes to the dedicated modal"
         );
-        assert!(
-            body.contains("/api/v1/providers/"),
-            "missing providers API wiring"
+        assert_eq!(
+            body.matches("data-special-modal='somark'").count(),
+            1,
+            "exactly one SoMark Available card routes to the dedicated modal"
         );
-        assert!(body.contains("pf('all'"), "filter must initialize on All");
+        for marker in [
+            "special==='bedrock'",
+            "special==='somark'",
+            "data-testid='bedrock-dialog'",
+            "data-testid='somark-dialog'",
+            "AWS Access Key ID",
+            "AWS Secret Access Key",
+            "AWS Role ARN",
+            "AWS region",
+            "US East (Ohio)",
+            "auth_mode:bedrockAuthMode",
+            "key.bedrock_ak=",
+            "key.bedrock_sk=",
+            "key.aws_role_arn=",
+            "key.bedrock_region=",
+            "role='radiogroup'",
+            "verifyBedrock",
+            "saveBedrock",
+            "Your API key is valid.",
+            "Element Formats",
+            "Feature Config",
+            "Chemical Structural Formula Format",
+            "Enable Text Cross Page",
+            "Keep Header Footer",
+            "somark_image_format:",
+            "somark_enable_table_image",
+            "verifySoMark",
+            "saveSoMark",
+            "llm_factory:'SoMark'",
+            "model_type:['ocr']",
+            "Verification failed",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing Bedrock/SoMark dedicated modal marker {marker}"
+            );
+        }
+        assert_eq!(
+            body.matches("US East (").count(),
+            2,
+            "the two US East regions render their fixed Bedrock labels"
+        );
+        for marker in [
+            "PROVIDER_SPECIAL_FIELDS",
+            "providerSpecialFieldConfig",
+            "renderSpecialProviderFields",
+            "providerSpecialValidate",
+            "providerSpecialPayload",
+            "providerSpecialVerifyPayload",
+            "Azure-OpenAI",
+            "api_version",
+            "VOLC ARK_API_KEY",
+            "google_service_account_key",
+            "TencentCloud_sid",
+            "spark_api_password",
+            "yiyan_ak",
+            "fish_audio_ak",
+            "opendataloader_apiserver",
+            "paddleocr_api_url",
+            "mineru_backend",
+            "16k_zh_medical",
+            "PaddleOCR-VL-1.6",
+            "vlm-lmdeploy-engine",
+            "mineru_delete_output",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing provider-specific field registry marker {marker}"
+            );
+        }
+        for marker in [
+            "PROVIDER_ICON_DIRECTORY",
+            "providerIconHtml",
+            "href='#icon-openai'",
+            "href='#icon-MiniMax'",
+            "src='/assets/svg/llm/gemini.svg'",
+            "src='/assets/svg/llm/mineru-bright.svg'",
+            "src='/assets/svg/llm/paddleocr.svg'",
+            "src='/assets/svg/llm/somark.svg'",
+            "src='/iconfont.js'",
+            "moxing-default",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing provider icon marker {marker}"
+            );
+        }
+        let auth_bootstrap = body
+            .find("var nativeFetch=window.fetch.bind(window)")
+            .expect("missing authenticated fetch bootstrap");
+        let initial_model_load = body
+            .find("loadModelOptions();")
+            .expect("missing initial model load");
+        assert!(
+            auth_bootstrap < initial_model_load,
+            "API authentication must be installed before initial model requests"
+        );
+
+        for marker in [
+            "added-models-section",
+            "added-model-card",
+            "View models",
+            "Hide models",
+            "delete-model-instance-dialog",
+            "edit-instance-model-dialog",
+            "role','switch'",
+            "Edit custom model",
+            "method:'PATCH'",
+            "method:'DELETE'",
+            "method:'PUT'",
+            "instances:[modal.dataset.instance]",
+            "model_name:[modal.dataset.model]",
+            "model_type:types",
+            "loadAddedModels",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing Added models marker {marker}"
+            );
+        }
+        assert!(body.contains("/api/v1/providers/"));
+        assert!(body.contains("/instances"));
+        assert!(body.contains("/models"));
     }
 
     #[tokio::test]
@@ -2960,7 +4390,10 @@ mod kb_ui_tests {
         assert!(html.contains("embdSel"), "embedding select missing");
         assert!(html.contains("cfgTopK"), "retrieval top k missing");
         assert!(html.contains("cfgLangs"), "cross-language selector missing");
-        assert!(html.contains("cross_languages"), "prompt_config save wiring missing");
+        assert!(
+            html.contains("cross_languages"),
+            "prompt_config save wiring missing"
+        );
         assert!(html.contains("cfgThreshold"), "similarity slider missing");
         assert!(html.contains("cfgVector"), "vector weight slider missing");
         assert!(html.contains("saveConfig"), "save button missing");
@@ -3102,13 +4535,19 @@ mod kb_ui_tests {
         );
         // RAGFlow canvas toolbar parity (agent/editor.tsx click-record)
         assert!(html.contains("agent-launch"), "Launch button missing");
-        assert!(html.contains("agent-management"), "Management button missing");
+        assert!(
+            html.contains("agent-management"),
+            "Management button missing"
+        );
         assert!(html.contains("autosaveSt"), "Autosaved status missing");
         assert!(html.contains("zoomCanvas"), "zoom controls missing");
         assert!(html.contains("toggleInter"), "toggle interactivity missing");
         assert!(html.contains("pubModal"), "confirm publish modal missing");
         assert!(html.contains("chatTestModal"), "chat test modal missing");
-        assert!(html.contains("confirmPublish"), "confirm publish handler missing");
+        assert!(
+            html.contains("confirmPublish"),
+            "confirm publish handler missing"
+        );
     }
 
     #[tokio::test]
@@ -3161,15 +4600,13 @@ mod kb_ui_tests {
         let app_id = "a1".to_string();
         // seed a chat app via the store (insert a minimal ChatApp)
         if let Some(store) = &state.chat_apps {
-            let app: crate::api::chatapp_mgr::ChatApp = serde_json::from_value(
-                serde_json::json!({
-                    "id": "a1",
-                    "name": "设置抽屉",
-                    "owner_id": "t1",
-                    "kb_ids": [],
-                    "created_at": 1,
-                }),
-            )
+            let app: crate::api::chatapp_mgr::ChatApp = serde_json::from_value(serde_json::json!({
+                "id": "a1",
+                "name": "设置抽屉",
+                "owner_id": "t1",
+                "kb_ids": [],
+                "created_at": 1,
+            }))
             .unwrap();
             let _ = store.insert(app);
         }
@@ -3181,14 +4618,25 @@ mod kb_ui_tests {
         // settings drawer shell + prompt engine fields incl. meta_data_filter
         assert!(html.contains("settingsDrawer"), "drawer missing");
         assert!(html.contains("f_rerank"), "rerank field missing");
-        assert!(html.contains("sw_refmeta"), "reference metadata switch missing");
-        assert!(html.contains("f_mfmethod"), "meta filter method select missing");
-        assert!(html.contains("f_mfmanual"), "meta filter manual fields missing");
-        assert!(html.contains("sw_refine_multiturn"), "refine multiturn missing");
+        assert!(
+            html.contains("sw_refmeta"),
+            "reference metadata switch missing"
+        );
+        assert!(
+            html.contains("f_mfmethod"),
+            "meta filter method select missing"
+        );
+        assert!(
+            html.contains("f_mfmanual"),
+            "meta filter manual fields missing"
+        );
+        assert!(
+            html.contains("sw_refine_multiturn"),
+            "refine multiturn missing"
+        );
         assert!(html.contains("sw_reasoning"), "reasoning switch missing");
         assert!(html.contains("f_vsw"), "vector weight missing");
     }
-
 
     #[tokio::test]
     async fn document_page_renders_export_chunks_button() {
@@ -3271,5 +4719,519 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[test]
+    fn user_setting_shell_has_fixed_menu_order_active_state_and_footer_actions() {
+        let html = user_setting_layout(
+            "Model providers",
+            "<p>body</p>",
+            UserSettingSection::Model,
+            false,
+        );
+        assert!(html.contains("class='hdr'"), "global header must remain");
+        assert!(html.contains("data-testid='settings-entrypoint'"));
+        assert!(html.contains("data-testid='user-setting-layout'"));
+        let mut cursor = 0;
+        for key in [
+            "/data-source",
+            "/chat-channel",
+            "/model",
+            "/mcp",
+            "/team",
+            "/profile",
+            "/api",
+        ] {
+            let offset = html[cursor..]
+                .find(&format!("data-setting-key='{key}'"))
+                .unwrap_or_else(|| panic!("missing settings item {key}"));
+            cursor += offset + 1;
+        }
+        assert!(html.contains(
+            "class='user-setting-nav-item active' href='/user-setting/model' data-setting-key='/model'"
+        ));
+        assert_eq!(html.matches(" aria-current='page'").count(), 1);
+        assert!(html.contains("class='user-setting-version'>v0.1.2"));
+        assert!(html.contains("onclick='toggleTheme()'"));
+        assert!(html.contains("onclick='logoutUser()'"));
+        assert!(html.contains("result.code===401"));
+    }
+
+    #[test]
+    fn provider_icons_resolve_svg_font_and_fallback() {
+        assert_eq!(provider_icon("OpenAI"), ProviderIcon::Font("openai"));
+        assert_eq!(provider_icon("MiniMax"), ProviderIcon::Font("MiniMax"));
+        assert_eq!(
+            provider_icon("Tencent Cloud"),
+            ProviderIcon::Font("tencent-cloud")
+        );
+        assert_eq!(provider_icon("Gemini"), ProviderIcon::Svg("gemini.svg"));
+        assert_eq!(
+            provider_icon("MinerU"),
+            ProviderIcon::Svg("mineru-bright.svg")
+        );
+        assert_eq!(
+            provider_icon("PaddleOCR"),
+            ProviderIcon::Svg("paddleocr.svg")
+        );
+        assert_eq!(
+            provider_icon("Unknown Factory"),
+            ProviderIcon::Font("moxing-default")
+        );
+    }
+
+    #[tokio::test]
+    async fn user_setting_api_page_wires_langfuse_card_dialog_and_persistence() {
+        let html = body_of(user_setting_api_page(english_request("/user-setting/api")).await).await;
+        for marker in [
+            "data-testid='langfuse-card'",
+            "data-testid='langfuse-config-dialog'",
+            "data-testid='langfuse-delete-dialog'",
+            "Configuration Langfuse",
+            "Secret key",
+            "Public key",
+            "Please enter the secret key",
+            "Please enter the public key",
+            "https://cloud.langfuse.com",
+            "View Langfuse&#39;s documentation",
+            "/api/v1/langfuse/api-key",
+            "method:'POST'",
+            "method:'DELETE'",
+            "langfuseViewUrl",
+            "cloud.langfuse.com/project/",
+            "loadLangfuse()",
+            "Traces, evals, prompt management",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing Langfuse API-page marker {marker}"
+            );
+        }
+        assert!(
+            html.contains("Generate") && html.contains("/api/v1/system/api_keys"),
+            "the personal API KEY card remains beside the Langfuse card"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_setting_mcp_page_wires_server_crud_bulk_import_and_tools() {
+        let html = body_of(user_setting_mcp_page(english_request("/user-setting/mcp")).await).await;
+        for marker in [
+            "data-testid='mcp-servers-card'",
+            "MCP servers",
+            "Customize the list of MCP servers",
+            "Bulk manage",
+            "Import",
+            "+ Add MCP",
+            "data-testid='mcp-edit-dialog'",
+            "data-testid='mcp-import-dialog'",
+            "data-testid='mcp-delete-dialog'",
+            "Server type",
+            "streamable-http",
+            "Authorization Token",
+            "tools available",
+            "testMcpServer",
+            "saveMcpServer",
+            "importMcpServers",
+            "exportMcpServer",
+            "deleteMcpServer",
+            "toggleMcpBulk",
+            "/api/v1/mcp/servers",
+            "/api/v1/mcp/servers/import",
+            "mode=download",
+            "No MCP servers available",
+            "+ Add Now",
+            "It must be 1-64 characters long",
+        ] {
+            assert!(html.contains(marker), "missing MCP page marker {marker}");
+        }
+    }
+
+    #[tokio::test]
+    async fn user_setting_team_page_wires_members_teams_invite_and_confirm_flows() {
+        let html =
+            body_of(user_setting_team_page(english_request("/user-setting/team")).await).await;
+        for marker in [
+            "data-testid='team-members-card'",
+            "data-testid='joined-teams-card'",
+            "data-testid='team-invite-dialog'",
+            "data-testid='team-confirm-dialog'",
+            "Team members",
+            "Joined teams",
+            "Invite member",
+            "Only registered users can be invited",
+            "Accept",
+            "Decline",
+            "Quit",
+            "/api/v1/tenants/'+encodeURIComponent(me)+'/users'",
+            "user_id:teamState.selfId",
+            "Are you sure to remove this member?",
+            "Are you sure you want to quit the team you joined?",
+            "toggleMemberSort",
+            "team-role-owner",
+        ] {
+            assert!(html.contains(marker), "missing Team page marker {marker}");
+        }
+    }
+
+    #[tokio::test]
+    async fn user_setting_profile_page_wires_edit_dialogs_and_avatar_upload() {
+        let html =
+            body_of(user_setting_profile_page(english_request("/user-setting/profile")).await)
+                .await;
+        for marker in [
+            "data-testid='profile-card'",
+            "data-testid='profile-edit-dialog'",
+            "Username",
+            "Avatar",
+            "Time Zone",
+            "Edit Name",
+            "Edit Time Zone",
+            "Edit Password",
+            "Current Password",
+            "Confirm Password",
+            "Asia/Shanghai",
+            "America/Los_Angeles",
+            "profileAvatarFile",
+            "uploadAvatar",
+            "saveProfileEdit",
+            "/api/v1/users/me",
+            "new_password",
+            "The two passwords do not match",
+            "reader.readAsDataURL",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing Profile page marker {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn user_setting_chat_channel_page_wires_add_edit_delete_flows() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            user_setting_chat_channel_page(
+                State(state),
+                english_request("/user-setting/chat-channel"),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='added-channels-section'",
+            "data-testid='available-channels-section'",
+            "data-testid='chat-channel-dialog'",
+            "data-testid='chat-channel-delete-dialog'",
+            "Manage your chat channel bots and credentials",
+            "Select a chat channel to add",
+            "CHAT_CHANNEL_INFO",
+            "Feishu / Lark",
+            "QQ Bot",
+            "WhatsApp",
+            "ClickClack",
+            "Google Chat",
+            "Microsoft Teams",
+            "Nextcloud Talk",
+            "Slack",
+            "LINE",
+            "Zalo (Personal)",
+            "Bot Token",
+            "Client Secret",
+            "AES Key",
+            "/api/v1/chat-channels",
+            "method:chatChannelState.editingId?'PATCH':'POST'",
+            "defaultValue:'webhook',options:[{label:'Webhook'",
+            "showIf:'connection_type==websocket'",
+            "Are you sure you want to delete this chat channel bot?",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing Chat channel page marker {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn data_source_detail_page_missing_source_renders_404() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            data_source_detail_page(
+                State(state),
+                Path("missing-source".to_string()),
+                english_request("/user-setting/data-source/missing-source"),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            html.contains("Data source not found"),
+            "missing source must render the 404 body"
+        );
+    }
+
+    #[test]
+    fn data_source_detail_body_embeds_schema_and_state_machine() {
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let body = data_source_detail_body("gitlab-main", "s1", "gitlab", &schema, false);
+        for marker in [
+            "DS_SCHEMA=",
+            "config.gitlab_url",
+            "GitLab Personal Access Token",
+            "id='dsDetailName' autocomplete='off' disabled",
+            "dsDetailPrimary",
+            "dsPruneField",
+            "DS_SOURCE==='rest_api'||DS_SOURCE==='bigquery'",
+            "method:'PATCH'",
+            "reschedule=true",
+            "status:'cancel'",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing data-source detail marker {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn data_source_patch_cancel_persists_status_without_syncing() {
+        use crate::api::data_source_mgr::{
+            DataSourceRecord, DataSourceStore, UpdateDataSourceRequest,
+        };
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-data").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-cancel".to_string();
+        store
+            .insert(DataSourceRecord {
+                id: id.clone(),
+                name: "webdav-main".into(),
+                kind: "webdav".into(),
+                url: "https://dav.example.com".into(),
+                token: String::new(),
+                target: "/docs".into(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 5,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                connected: false,
+                sync_deleted_files: false,
+                prune_freq: None,
+                refresh_freq: None,
+                timeout_secs: None,
+                status: "schedule".into(),
+                extra: std::collections::HashMap::new(),
+                sync_logs: Vec::new(),
+            })
+            .unwrap();
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: true,
+        };
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "status": "cancel" })).unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state),
+            axum::Extension(auth),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("cancel patch succeeds");
+        assert_eq!(response["code"], 0);
+        assert_eq!(response["data"]["status"], "cancel");
+        assert_eq!(store.get(&id).unwrap().status, "cancel");
+    }
+
+    #[tokio::test]
+    async fn data_source_patch_nested_config_persists_and_rebuilds_detail() {
+        use crate::api::data_source_mgr::{
+            DataSourceRecord, DataSourceStore, UpdateDataSourceRequest,
+        };
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-config").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-config".to_string();
+        store
+            .insert(DataSourceRecord {
+                id: id.clone(),
+                name: "webdav-main".into(),
+                kind: "webdav".into(),
+                url: "https://dav.example.com".into(),
+                token: String::new(),
+                target: "/docs".into(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 5,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                connected: false,
+                sync_deleted_files: false,
+                prune_freq: None,
+                refresh_freq: None,
+                timeout_secs: None,
+                status: "unstart".into(),
+                extra: std::collections::HashMap::new(),
+                sync_logs: Vec::new(),
+            })
+            .unwrap();
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: true,
+        };
+        let body: UpdateDataSourceRequest = serde_json::from_value(serde_json::json!({
+            "config": {
+                "base_url": "https://dav2.example.com",
+                "credentials": {"username": "alice", "password": "secret"},
+                "sync_deleted_files": true,
+            },
+            "prune_freq": 7,
+        }))
+        .unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state),
+            axum::Extension(auth),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("config patch succeeds");
+        let record = store.get(&id).unwrap();
+        assert_eq!(record.url, "https://dav2.example.com");
+        assert_eq!(record.prune_freq, Some(7));
+        assert!(record.sync_deleted_files);
+        assert_eq!(record.extra["config.credentials.username"], "alice");
+        assert_eq!(
+            response["data"]["config"]["credentials"]["username"],
+            "alice"
+        );
+        assert_eq!(response["data"]["config"]["sync_deleted_files"], true);
+    }
+
+    #[tokio::test]
+    async fn data_source_create_accepts_nested_config_and_folds_flat_fields() {
+        use crate::api::data_source_mgr::{CreateDataSourceRequest, DataSourceStore};
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-create").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let body: CreateDataSourceRequest = serde_json::from_value(serde_json::json!({
+            "name": "gitlab-create",
+            "type": "gitlab",
+            "config": {
+                "project_owner": "o",
+                "project_name": "p",
+                "gitlab_url": "https://g.example.com",
+                "batch_size": "7",
+                "credentials": {"gitlab_access_token": "t"},
+            },
+        }))
+        .unwrap();
+        let response = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state),
+            axum::Json(body),
+        )
+        .await
+        .expect("schema-driven create succeeds");
+        let id = response["data"]["id"].as_str().unwrap().to_string();
+        let record = store.get(&id).unwrap();
+        assert_eq!(record.url, "https://g.example.com");
+        assert_eq!(record.target, "o/p");
+        assert_eq!(record.token, "t");
+        assert_eq!(record.max_items, 7);
+        assert_eq!(record.prune_freq, Some(5));
+        assert_eq!(record.timeout_secs, Some(1740));
+        assert_eq!(record.extra["config.project_owner"], "o");
+    }
+
+    #[tokio::test]
+    async fn data_source_create_without_config_still_requires_url_and_target() {
+        use crate::api::data_source_mgr::{CreateDataSourceRequest, DataSourceStore};
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-flat").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let body: CreateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "name": "n", "type": "webdav" })).unwrap();
+        let error = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("flat create without url/target fails closed");
+        assert!(
+            error.1.contains("name/url/target are required"),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn datasources_page_wires_schema_driven_add_modal() {
+        let (_root, _state) = test_state();
+        let html = body_of(
+            datasources_page(english_request("/user-setting/data-source"))
+                .await
+                .expect("data-source page renders"),
+        )
+        .await;
+        for marker in [
+            "data-testid='data-source-add-modal'",
+            "openDsAdd(",
+            "dscRenderFields",
+            "dscCreate",
+            "DS_SCHEMA=",
+            "config.bucket_name",
+            "Create your ",
+            "method:'POST'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing data-source add-modal marker {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn datasources_page_renders_available_cards_and_grouped_delete_modal() {
+        let (_root, _state) = test_state();
+        let html = body_of(
+            datasources_page(english_request("/user-setting/data-source"))
+                .await
+                .expect("data-source page renders"),
+        )
+        .await;
+        for marker in [
+            "data-testid='available-sources-section'",
+            "data-testid='data-source-delete-modal'",
+            "dsRenderCards",
+            "dsGroupedRows",
+            "openDsDelete",
+            "DS_SOURCE_INFO=",
+            "assets/svg/data-source/s3.svg",
+            "Delete data source",
+            "Are you sure you want to delete this data source link?",
+            "dsLocalType",
+            "data-testid='box-oauth-dialog'",
+            "Configure Box OAuth credentials",
+            "Submit &amp; Authorize",
+            "/api/v1/connectors/box/oauth/web/start",
+            "/api/v1/connectors/box/oauth/web/result",
+            "data-testid='google-oauth-dialog'",
+            "Complete Google verification",
+            "Authorize with Google",
+            "/api/v1/connectors/google/oauth/web/start?type=",
+            "/api/v1/connectors/google/oauth/web/result?type=",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing data-source list marker {marker}"
+            );
+        }
     }
 }
