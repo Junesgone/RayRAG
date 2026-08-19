@@ -4,12 +4,18 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本里程碑：**v0.3.3ar**（2026-08-13，见 MAINTENANCE.md）
-- 测试基线：**1282 passed / 0 failed / 27 ignored**（2026-08-13 postgres-backend 特性复核；
-  27 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试）
+- 版本里程碑：**v0.3.3bo**（2026-08-14，见 MAINTENANCE.md）
+- 最近完整测试基线：**1347 passed / 0 failed / 27 ignored**（v0.3.3bh；
+  27 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试）。当前工作树另有
+  未完成的 datasource/connectors 改动造成三个编译错误；在不修改这些用户文件的隔离
+  clone 中，本批用户设置壳层定向测试为 route/shell **2/2**、Bearer/cookie
+  鉴权 **1/1**，隔离 binary build 通过；真实 Chrome/CDP 以 13 组用户动作点击头像入口、
+  七个侧栏路由、历史返回/前进、主题开关、桌面/移动宽度和登出，最终 0 Runtime
+  exception、0 console error、0 失败请求。主树全量测试仍记为环境阻断，不把隔离
+  定向与浏览器结果冒充完整新基线。
 - 覆盖矩阵（RAGFlow v0.26.4 固定快照，4441 文件，`docs/ragflow-v0.26.4-coverage.md`）：
-  full **553** / aligned **147** / replaced **101** / N/A **61** / partial **0** /
-  reference **3579** / unmapped **0**
+  full **553** / aligned **145** / replaced **101** / N/A **61** / partial **18** /
+  reference **3563** / unmapped **0**
 
 ## 架构
 
@@ -63,9 +69,68 @@ cargo run --locked --bin ragflow-coverage -- --write /path/to/ragflow-v0.26.4
 未知路径不会再被兜底伪装成 `reference`：生产运行时目录必须显式映射为
 `aligned/partial/replaced`，测试与 fixture 由独立规则标为 `reference`，其余路径进入
 `unmapped`。当前清单的 `unmapped=0` 因此代表固定树中的每个文件都有显式分类；
-`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。矩阵当前库存（v0.3.3ae）：
-aligned 126 / full 539 / partial 35 / replaced 101 / N/A 61 / reference 3579 /
-unmapped 0，摘要表与清单逐行一致。
+`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。矩阵当前库存（v0.3.3bz）：
+aligned 155 / full 553 / partial 55 / replaced 101 / N/A 61 / reference 3516 /
+unmapped 0，摘要表与清单逐行一致。用户设置已有固定七路由顺序、根跳转、
+303/64 px 响应式侧栏、精确 active 项、头像入口、账号/版本/主题/登出项，且已真实
+Chrome 逐项点击；各子页的完整 CRUD、data-source detail route、精确图标与登出 token
+revoke 仍为 partial。Model providers 已覆盖固定 63-card Available 目录、默认
+模型、Added models、tenant Add/Verify/Create、10 类本地 provider 的 List models picker、
+模型多选、Vision 与自定义模型 `is_tools` 持久化/运行时解析。默认项现为固定
+provider→instance→model 三深度 tree dialog，六种 canonical PATCH、clear/required、失败回滚、
+成功回读和 reload 已经真实 Chrome 复点。Bedrock 与 SoMark 卡片现路由到专属弹层：
+Bedrock 三段 AWS 认证（Access Key/IAM Role/Assume Role）、37 区域带搜索选择器，密钥对象
+以 JSON 持久化；SoMark 四个 Element Format 选择器与七个 Feature Config 开关，11 个
+`somark_*` 字段作为 `ocr_config` 随 model_info 持久化并经实例 models API 回读。两者仍保留为
+partial，因为固定 provider 图片资源、共享 tree 组件的其他消费者、Verify 的逐 capability
+推理、编辑已有实例及精确 React 布局尚未完成。`/user-setting/api` 现有 Langfuse 卡与
+配置弹层（Secret key / Public key / Host、文档外链、确认后 Delete），后端实现租户级
+`GET/POST/PUT/DELETE /api/v1/langfuse/api-key`：保存时用 Basic auth 探测 Langfuse
+health/projects 并缓存 project_id/name，无效凭证失败关闭；View 链接优先自托管 host
+（大陆网络适配）。Provider modal 现按工厂渲染固定动态凭据字段：Azure-OpenAI 的
+api_version/vision、VolcEngine 的 ARK_API_KEY 与 endpoint id、Google Cloud 三项、Tencent
+Cloud 22 引擎 ASR 选择器与 sid/sk、XunFei Spark 四键（tts 条件显示）、BaiduYiYan ak/sk、
+Fish Audio ak/refid，以及 OpenDataLoader/PaddleOCR/MinerU 的 OCR cfg（apiserver、algorithm、
+backend/server-url/delete-output）；save 时按上游 `apikey_json` 语义合并进 api_key 对象，
+OCR 端点从 api_key 对象读取做探测。Model providers 页现按固定 `LlmIcon` 规则渲染
+provider 品牌图标：10 个 svgIcons 工厂提供 `assets/svg/llm/*.svg`，其余用打包 iconfont
+的 IconMap symbol，未映射回退 `moxing-default`，Available 卡与 Added 组头部均不再用首
+字母头像。`/user-setting/mcp` 现为完整 MCP servers 页：Search/Bulk manage/Import/+ Add
+MCP、空态 Add Now、卡片与 hover Export/Edit/Delete、批量选择/导出/删除、Add/Edit 弹层
+（Name 正则、URL、SSE/Streamable HTTP、Authorization Token、Test 拉取工具）与 JSON Import。
+后端实现租户级 `GET/POST/PUT/DELETE /api/v1/mcp/servers`、`/import`、`/{id}/test`：
+创建/更新/导入用打包 streamable-http MCP client 拉取并缓存工具表，URL 走
+`assert_url_is_safe` 同款全局地址 SSRF 校验并支持 `ALLOW_ANY_HOST=1` 局域网旁路。
+`/user-setting/team` 现为固定 Team 页：`{nickname} workspace` 标题、Team members 表
+（Name/Date 排序/Email/State/Action，owner 行无删除）、Joined teams 表
+（Accept/Decline/Quit）与 Invite member 弹层；后端补 GET/POST/DELETE
+`/api/v1/tenants/{id}/users` 与 PATCH `/api/v1/tenants/{id}`（邀请接受），错误文案对齐
+上游。`/user-setting/profile` 现为固定 Profile 页：Username / Avatar（内联上传）/
+Time Zone / Email / Password 五行与 Edit Name / Edit Time Zone / Edit Password 弹层；
+后端 `PATCH /api/v1/users/me` 支持昵称（上游 1-100 字符校验）、时区、头像与改密
+（成功后失效全部 token）。`/user-setting/chat-channel` 现为固定 Chat channels 页：
+Added channels 分组列表（Edit/Delete）与 7 张 Available 卡（hover Add），Add/Edit
+弹层按渠道渲染固定凭据字段；后端新增 `GET/POST /api/v1/chat-channels` 与
+`GET/PATCH/DELETE /{id}`。Provider Verify/创建在带 model_info 时现按上游
+`verify_api_key` 做逐能力推理探测：chat / embedding / rerank 走 OpenAI 兼容协议真实
+请求（非 2xx 失败关闭并返回 `Fail to access model(...)`），空 model_info 回退模型列表
+探测；OCR/TTS/ASR 与厂商专有 REST 协议有意跳过。逐像素 React 组合与编辑/查看模式仍
+为 partial。数据源列表页升级为上游布局：35 张 Available 卡（品牌 SVG icon/
+描述、hover + Add、点击打开 `Create your {name} connector` schema 弹层）与按源
+分组的 Added 卡（Settings→详情、Trash→删除确认弹层），数据源列表新增 Details 入口，落地
+`/user-setting/data-source/{id}` 详情页：两处表单共用上游 35 套逐源动态字段集
+（213 字段，编译期嵌入 schema）渲染 Text/Password/Number/Checkbox/Segmented/Select/
+Textarea、必填星标、选项/默认值与条件显隐；详情页主按钮为 Save/Stop/Resume 状态机
+（PATCH `reschedule`/`status`，RayRAG 无后台调度器、保存/恢复即时执行首轮同步），
+Test 仅 REST API/BigQuery，Sync Logs 运行态每 15s 轮询。后端补
+`GET/PUT/PATCH /api/v1/data_sources/{id}`、`/{id}/logs`、`/{id}/test`，`POST` 接受
+嵌套 `config`（默认 prune=5/refresh=5/timeout=1740），记录嵌套持久化与状态归一化
+（接受新旧两种拼写）；无 schema 的本地类型回退 URL/Target/Token 旧表单。
+Box 数据源提供专用 web-OAuth 字段（Client ID/Secret/Redirect URI 弹层、
+Configured/Authorized 徽章、Submit & Authorize 开窗 + Refresh status 轮询），
+后端落地 `/api/v1/connectors/box/oauth/web/{start,callback,result}`（未完成返回
+code 106；配置 `BOX_OAUTH_TOKEN_URL` 才执行真实令牌交换，大陆镜像/自托管可指向
+镜像，未配置则持久化授权码原文）。
 
 | RAGFlow (Python) | RayRAG (Rust) | 说明 |
 |-----------------|---------------|------|

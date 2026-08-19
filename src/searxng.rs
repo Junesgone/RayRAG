@@ -60,7 +60,7 @@ impl SearxngClient {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(RedirectPolicy::none())
-            .timeout(Duration::from_secs(30))
+            .timeout(crate::common::cmd_timeout::duration())
             .build()
             .context("could not build SearXNG HTTP client")?;
         Ok(Self { client })

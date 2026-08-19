@@ -275,6 +275,54 @@ pub async fn upload_file(
         .into_response()
 }
 
+#[derive(Deserialize)]
+pub struct CreateFolderRequest {
+    pub name: String,
+    #[serde(default)]
+    pub parent_id: String,
+}
+
+/// POST /api/v1/files/folder — create an empty folder in the file manager.
+/// Parity with RAGFlow v0.26.4 "Add file → New folder" dropdown item.
+pub async fn create_folder(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<CreateFolderRequest>,
+) -> Response {
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "Folder name is required" })),
+        )
+            .into_response();
+    }
+    let parent = if body.parent_id.is_empty() { "root".to_string() } else { body.parent_id };
+    let id = uuid::Uuid::new_v4().to_string();
+    let record = FileRecord {
+        id: id.clone(),
+        name: name.clone(),
+        owner_id: auth.user_id,
+        parent_id: parent,
+        size: 0,
+        content_hash: String::new(),
+        file_type: "folder".into(),
+        created_at: now_ms(),
+    };
+    match state.files.add(record) {
+        Ok(()) => (
+            axum::http::StatusCode::CREATED,
+            Json(serde_json::json!({ "code": 0, "data": { "id": id, "name": name } })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

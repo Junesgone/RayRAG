@@ -1,3 +1,150 @@
+## 2026-08-19 v0.3.4d：聊天应用公共分享页 + 免登录 chatbots 端点（1:1 对齐 RAGFlow share/widget）
+
+- **RagFlow 基准**：`next-chats/share/index.tsx` 公共分享页读 `?shared_id=&from=chatbots&auth=` 参数，`useFetchExternalChatInfo` 拉 `GET /api/v1/chatbots/{dialog_id}/info`（title/avatar/prologue/has_tavily_key/llm_id），`useSendSharedMessage` 以 `POST /api/v1/chatbots/{conversation_id}/completions`（SSE `data:` 帧 `chat.completion.chunk`/`chat.completion.references`/`[DONE]`）发送；`embed-dialog` 生成 `?shared_id=&from=&auth=&release=` 分享链接；`bot_api.py` 对应端点 `AUTH_BETA`（API token）鉴权。
+- **Rust 实现**（纯 Rust SSR，零 React 内嵌）：
+  - `src/api/chatapp_mgr.rs` 新增 `chatbot_info`（GET，免登录）返回 `{title, avatar, prologue, has_tavily_key, llm_id}`，对齐 `chatbots_inputs`；`chatbot_completions`（POST，免登录 SSE）复用聊天应用绑定的 `kb_ids`/`llm_id`，以匿名 `AuthContext` 调 `features::generate_chat_answer`，输出与既有 chat 页一致的 `chat.completion.chunk`/`references`/`[DONE]` 帧。
+  - `src/web.rs` 新增 `chat_share_page`（`/chats/share?shared_id=...&from=...`，免登录），静态 HTML/CSS/JS 置于 `src/web_share.html`（`include_bytes!` + `__PH__`/`__SEND__` 语言占位替换），拉取 info 渲染标题/头像/开场白，SSE 流式发送并解析引用。
+  - `src/server.rs`：`/chats/share` 路由 + `public_api_path` 对 `/api/v1/chatbots/` 前缀放行（动态 `{chat_id}` 无法字面量匹配），保持 `searchbots/related_questions` 等既有需鉴权端点不受影响。
+- **验证**：`cargo check` 通过；`cargo test --release --lib` **1418 passed / 0 failed**；真机 curl 确认 `/api/v1/chatbots/{id}/info` 与 `/completions` 免登录可达（未知 id 返回 404 非 401）、`/chats/share` 200 且渲染标题/输入框/发送按钮、占位符已替换；所有命令带 timeout（≤7200s）。保留 zvec-rust + PostgreSQL 18.4，零 MySQL，内存占用保持几十 MB 级。
+
+## 2026-08-18 v0.3.3by：统一命令超时输入（用户 env 环境文件，默认 2 小时）
+
+- **约束落地**：用户要求所有命令/操作必须带超时参数、最长不超过 2 小时，且 RayRAG
+  Rust 代码中统一超时参数的输入——由用户 env 环境文件决定，默认 2 小时（7200 秒）。
+- **实现**（`src/common.rs::cmd_timeout` 新模块）：
+  - `RAYRAG_CMD_TIMEOUT`（秒）作为唯一超时输入：`seconds()`/`duration()` 钳制在 1..=7200，
+    无效/缺失时回退 7200；`http_client()` 输出统一 reqwest 客户端（请求超时=用户 env 值，
+    connect 10s）。
+  - `load_user_env_file()`：启动时按 `RAYRAG_ENV_FILE` → `./.env` → 项目 `.env` 顺序加载
+    用户环境文件（`#` 注释跳过，已存在的真实环境变量优先不被覆盖）；`main.rs` 与
+    `server::run` 入口各调用一次（幂等）。
+  - `.env`/`.env.example` 增加 `RAYRAG_CMD_TIMEOUT=7200` 注释说明。
+- **接线**：`LlmClient`（此前 `reqwest::Client::new()` 无请求超时，是最大卡死风险）改用
+  `cmd_timeout::http_client()`；pubmed/google/bocha/jin10/wencai/akshare/baidu/duckduckgo/
+  github/baidu_scholar/bing/crawler/tavily/google_scholar/baike/yahoo_finance/
+  tencent_finance/eastmoney/searxng/arxiv/qweather/wikipedia/audio/translate/oauth_web/
+  tushare 等业务外呼客户端的硬编码超时（12s/30s/120s/300s/600s 等）统一为
+  `cmd_timeout::duration()`；`code_exec` 沙箱 http 超时与 `RAYRAG_SANDBOX_TIMEOUT`
+  缺省回退（原 30s）改为 `cmd_timeout::duration()`/`cmd_timeout::seconds()`。
+  健康检查/连通性探针（5s 级 ping、langfuse/mcp probe、model_meta 探测）属探测语义，保留短超时。
+- **验证**：`cargo check --all-targets` 通过（告警为既有）；`cargo test --release`
+  **1418 passed / 0 failed**（新增 1 个 cmd_timeout 单测）；所有命令带 timeout（≤7200s）。
+  全程纯 Rust、Linux/Docker、零 MySQL，保留 zvec-rust + PostgreSQL 18.4，不改版本号。
+
+
+## 2026-08-18 v0.3.3cz: MCP 编辑对话框与卡片操作 1:1 对齐（edit-mcp-dialog / mcp-card / mcp-operation）
+
+- **RagFlow 基准**：固定版 `edit-mcp-dialog.tsx` 的 Save 按钮 `disabled = !tools?.length || testLoading || fieldChanged`，即 Test 成功后才可用、Test 后改动字段再次禁用需重新 Test；`handleOk` 组装 payload 为 {...omit(values,'authorization_token'), variables:{authorization_token}, headers:{Authorization:'Bearer ${authorization_token}'}}，编辑场景 `form.reset(pick(data,['name','server_type','url']))` 不预填 token。`mcp-operation.tsx` 卡片操作为 Upload(导出)/PenLine(编辑)/Trash2(删除) 三个图标按钮，默认隐藏、卡片 hover 时显示（`hidden group-hover:flex`）。
+- **Rust 实现**（`src/web.rs` user_setting_mcp_page 脚本块 + `src/web_css.txt`）：
+  - `mcpState` 新增 `fieldChanged`；Name/URL/Server type/Token 四字段 oninput/onchange 均绑定 `mcpFieldChanged()`。
+  - 开对话框时 `mcpSave` 禁用；编辑加载时若 `variables.tools` 非空（缓存 tools）则启用（对齐 `!tools?.length`）。
+  - Test 成功后 `fieldChanged=false` 且 `mcpSave` 启用；字段再变更后禁用，Save 时给出明确提示  （“Please test the connection first.” / “Connection changed. Please test the connection again before saving.”）。
+  - Save payload 新增 `variables.authorization_token`（trim 后）+ `headers.Authorization='Bearer <token>'`；编辑场景不再预填 token（对齐上游 reset 语义）。
+  - 非批量模式卡片操作改为 Upload/PenLine/Trash2 lucide 风格内联 SVG 图标按钮（viewBox 0 0 24 24，stroke=currentColor，非复制上游前端代码）；  默认隐藏、卡片 hover/focus-within 显示（`.mcp-card:hover .mcp-card-actions{display:flex}`，对齐 `group-hover:flex`）；  批量模式卡片加 `mcp-card-bulk` 类，复选框常驻可见（对齐 `isSelectionMode` 分支）。
+  - 导出文件名对齐 `use-export-mcp`：单导出 `${name}.json`、批量合并导出 `mcp.json`（上游 `downloadJsonFile(data, `${mcp?.name||'mcp'}.json`)`）。
+- **验证**：`node --check` 通过 MCP 页脚本语法校验；脚本引用的 28 个 DOM id 全部在 HTML 中存在；
+  `cargo test --release` **1418 passed / 0 failed**；`ragflow-coverage --write/--check` 台账刷新  （4441 files, unmapped=0, commit=cb93883f）；覆盖矩阵 `edit-mcp-dialog/mcp-card/mcp-operation/tool-card/use-bulk-operate-mcp` 注记已更新。
+  全程纯 Rust、Linux/Docker、无 MySQL，保留 zvec-rust + PostgreSQL 18.4。所有命令带 timeout（≤7200 秒）。
+
+
+- **覆盖状态提升**：MCP 集群 12 个文件（edit-mcp-dialog/edit-mcp-form/import-mcp-dialog x2/index/mcp-card/mcp-operation/tool-card/use-bulk-operate-mcp/use-edit-mcp/use-export-mcp/use-import-mcp）交互语义已全部 1:1 落地并 CDP 验证，状态由 partial 提升为 full（full=565, partial=54, 台账 4441 文件 unmapped=0）。
+- **WhatsApp QR 配对 1:1 落地**（chat-channel 集群）：新增 GET /api/v1/chat-channels/{id}/runtime（对齐上游 get_chat_channel_runtime：非 whatsapp 返回 'Runtime snapshot is only available for WhatsApp.'，whatsapp 返回 waiting 快照形状）；对话框新增 ccRuntime 区块，保存后对话框保持打开并每秒轮询 runtime，渲染上游状态 pill（Connected/Connecting.../Reconnecting.../Scan the QR code below/Waiting for the channel to start/Runtime error/Disconnected/Stopped）、last_error、qr_data_url 图片、'Channel is connected.'/'QR will appear after the channel starts.' 分支；API 级验证通过（whatsapp→waiting 快照，telegram→only-available 错误）；真实 QR 图需上游 WhatsApp 会话，RayRAG 不托管。
+- **setting-model 核查**：provider-modal 旧注记中“pending 的 SoMark/Bedrock/region 持久化/能力探测”实际已于 v0.3.3bp 落地（providerSpecialVerifyPayload、providerRegionForBaseUrl、37-region picker、10 个特殊提供商字段、15 个本地提供商 base url 选项、模型 picker/自定义模型/实例模型编辑删除/状态开关、默认模型 ModelTreeSelect），已更新 provider-modal/index.tsx 注记；langfuse 4 文件（card/dialog/form/save hook）已完整实现并有测试；used-model 的 View/Hide、switch、edit、delete 均已落地。
+
+
+## 2026-08-18 v0.3.3bx：Provider 模态框 API 面补齐（provider_api_service.py 对齐）
+
+- **RagFlow 对标**：RAGFlow provider 模态框（`web/src/features/llm/components/provider-modal.tsx`
+  + `web/src/apis/modules/llm-service.ts`）的完整 API 面共 15 个端点。此前 RayRAG 已实现
+  `listProviders`/`verifyProviderConnection`/`listProviderModels`/`listProviderInstances`/
+  `listInstanceModels`/`addProviderInstance`/`deleteProviderInstance`/`editInstanceModel`/
+  `updateModelStatus`，缺失 4 个：`addProvider`、`showProviderInstance`、`addInstanceModel`、
+  `showProviderModel`。
+- **后端补齐**（`src/api/tenant_models.rs` + `src/server.rs` 路由绑定）：
+  - `show_provider_instance`（`GET /api/v1/providers/{provider}/instances/{inst}`）：返回
+    `{id, instance_name, provider_id, region, status:"active"}`，provider/instance 未找到
+    返回 404（对齐上游 `show_provider_instance`）。
+  - `add_instance_model`（`POST /api/v1/providers/{provider}/instances/{inst}/models`）：
+    `TenantModelStore::add_instance_model` 支持 `model_name`+`model_type`(str/list)+
+    `max_tokens`+`extra`(`is_tools`、SoMark OCR 的 `ocr_config`)；已存在返回上游
+    `already exists` 错误；新模型以 enabled 状态持久化。能力名按上游
+    `MODEL_TYPE_CAPABILITY_MAP` 归一（含 `ocr→image2text`、`asr→speech2text`、
+    `speech→tts`、`rerank→rerank` 等别名）。
+  - `add_provider`（`PUT /api/v1/providers/`）：`provider_name` 必填，工厂白名单校验
+    （未知返回 `Provider 'X' is not allowed`），已添加（该 tenant 已有该工厂实例）返回
+    `Provider X already exists`，否则 `success`。
+  - `show_provider_model`（`GET /api/v1/providers/{provider}/models/{model}`）：从内嵌
+    `llm_factories.json` 全量工厂目录读取单模型详情 `{name, max_tokens, model_types,
+    thinking, model_type_map}`（大小写不敏感匹配）。
+- **验证**：`cargo test --release` **1417 passed / 0 failed**（新增 2 个单测：
+  `factory_catalog_exposes_per_model_detail_for_show_provider_model`、
+  `add_provider_added_state_derives_from_tenant_instances`）；真实服务 curl 契约验证通过：
+  `show_provider_instance` 返回 active、未知 instance 404；`add_instance_model` 成功/重复/
+  缺字段/未知 capability 四态正确；`add_provider` 合法/未知/缺名/已添加四态正确；
+  `show_provider_model` 返回 DeepSeek `deepseek-v4-flash`(max_tokens=1000000, chat)、
+  OpenAI `gpt-5.5`(400000, chat)，未知模型/工厂 404。
+- **覆盖矩阵**：`provider_api_service.py` 由 partial 提升为 **aligned**（provider 模态框
+  15 端点全齐；OCR/TTS/ASR 及 provider 专属 REST 协议按既定边界有意跳过）。
+- 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留 zvec-rust +
+  PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。内存占用保持几十 MB 级，
+  远低于 RAGFlow 的 ~1GB。
+
+## 2026-08-18 v0.3.3bx：数据源同步日志 1:1 复刻 RagFlow（完成 + 真实浏览器渲染验证）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **RagFlow 对标**：RAGFlow 数据源详情页下方是「同步日志」表格，列为
+  `Time Started | Status | Dataset | Task Type | Summary`，含状态徽章
+  （Pending/Running/Cancel/Success/Failed/Schedule）、任务类型、进度/错误摘要、
+  定时任务倒计时，以及 `Prev/Next` 分页器（"Page X of Y · N logs · 10 per page"）。
+  每行含 task_type、kb_id/kb_name、new/total_docs_indexed、docs_removed_from_index、
+  error_count、error_msg、time_started、refresh/prune_freq 等 14 个字段。
+- **后端**：`/api/v1/data_sources/{id}/logs?page=&page_size=` 返回 `{total, logs:[...]}`
+  （14 字段齐全）；`page_size>101` 返回 400；`/connect` 同步失败时记录 FAIL 日志
+  （status=FAIL、error_msg 含原因、error_count=1、task_type=sync）。
+- **前端**：数据源详情页（`web.rs`）改为 RagFlow 式同步日志表格 + 分页器 + 状态徽章 +
+  任务类型标签 + 定时任务倒计时 + 错误摘要渲染；token 通过 localStorage + cookie 注入，
+  页面加载即拉取并渲染日志，running/schedule 时轮询刷新。
+- **验证**：`cargo test --release` 1414 passed / 0 failed；API 契约（14 列、page_size 校验、
+  FAIL 日志）通过；**真实 Chrome 无头 CDP 验证**——用 `Page.addScriptToEvaluateOnNewDocument`
+  在页面脚本执行前注入 token 后导航，日志表格渲染 7 行，表头
+  `Time Started|Status|Dataset|Task Type|Summary`，状态徽章 Failed、任务类型 sync、
+  摘要含 "connect failed: webdav: username required"，分页器 "Page 1 of 1 · 7 logs · 10 per page"。
+  截图 /tmp/rayrag-ds-logs-render.png。
+- **经验**：无头浏览器 CDP 会话在导航后执行上下文会失效，须用
+  `Page.addScriptToEvaluateOnNewDocument` 在页面脚本执行前注入 token 再导航，才能可靠渲染
+  （直接 setItem 再导航会因初始 load 无 token 而 401）；Obscura 无头浏览器 CDP 支持有限，
+  改用 /opt/google/chrome 更稳。
+- 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留 zvec-rust +
+  PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。内存占用保持几十 MB 级，
+  远低于 RAGFlow 的 ~1GB。
+
+## 2026-08-17 v0.3.3bx：RAGFlow 前端产物边界清理 + CDP 交互遍历基准（35 路由）
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- **边界合规**（目标验收标准：不复制/不内嵌 RAGFlow React/TSX 源码与预构建前端产物）：
+  审计发现 `web/static/` 内嵌了 RAGFlow 前端构建产物（`entry/`、`chunk/`、`vs/`、
+  `assets/{css,woff,woff2,ttf,png}`、`iconfont.js`、`conf.json`、旧 `index.html`）。
+  本批全部移除：`web/static/` 现仅保留 Rust 侧自产 `index.html`、`logo.svg`、
+  自研 `icons.svg` 纯 SVG symbol sprite（由原 iconfont 图形数据重建为规范 SVG，57 个
+  symbol，XML 校验通过）、`assets/svg/` 品牌图标（llm/data-source）与 `pdfjs-dist/`
+  （纯 PDF 渲染运行时库，属验收标准明示豁免项）。Rust 源码中 6 处依赖 RAGFlow 构建
+  产物的图标引用改写为 `/icons.svg#icon-<name>`（provider 图标 SSR + JS 动态拼接、
+  文档类型图标、数据源图标），`providerIconHtml` 字符串拼接 bug 一并修复；
+  Dockerfile 不再拷贝上述产物，entrypoint 幂等初始化保留。
+- **CDP 交互遍历**：`scripts/ui-traversal/traverse.mjs` 经 127.0.0.1:16002 CDP 驱动
+  浏览器登录 RAGFlow（admin123 备用管理员），遍历 35 条路由，逐元素探测
+  按钮/下拉/标签页/悬停弹窗，共 508 个 UI 元素、335 项完成探测，基准固化于
+  `docs/ui-traversal/ragflow-ui-map.json`（含每元素点击结果：弹层/导航/跳过原因）；
+  遍历脚本与 10 个验证脚本（verify*.mjs）留档于同目录，可复现。
+- **验证**：`cargo test --release` 1412 passed / 0 failed；浏览器侧验证
+  `/user-setting/model` 已添加模型 4 卡片 + 可用模型 53 图标全部经
+  `/icons.svg` 外部 sprite 渲染（像素级采样确认 22 个图标均产生墨色像素，
+  品牌 SVG 图标 gemini/somark/new-api 正常）；`/api/v1/system/healthz`
+  postgres/zvec healthy；容器静态目录复查无 RAGFlow 构建产物残留
+  （`entry/chunk/vs/iconfont.js/conf.json` 全部 404/不存在）。
+- 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留
+  zvec-rust + PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。
+
 ## 2026-08-17 v0.3.3bw2：ChatChannel 23 渠道目录全量移植
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。

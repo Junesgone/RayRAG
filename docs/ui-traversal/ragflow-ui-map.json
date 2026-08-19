@@ -1,0 +1,3535 @@
+{
+  "base": "http://127.0.0.1:11526",
+  "generated_at": "2026-08-17T15:00:45.397Z",
+  "routes": [
+    {
+      "route": "/",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Chat",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nWelcome to RAGFlow\nDataset\n全\n全部文件\n30329 files\n\n14/08/2026 21:15:14\n\nSee all\nChat\nChat\nSearch\nAgent\nMemory\nNo chat app created yet",
+      "total_interactive": 15,
+      "probed": 15
+    },
+    {
+      "route": "/datasets",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Create dataset",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "1",
+          "role": "a",
+          "result": [
+            "nav -> /datasets?page=1&size=50#"
+          ]
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nDataset\nCreate dataset\n全\n全部文件\n30329 files\n\n14/08/2026 21:15:14\n\nTotal 1\n1\n50 / Page",
+      "total_interactive": 16,
+      "probed": 16
+    },
+    {
+      "route": "/chats",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nNo chat app created yet",
+      "total_interactive": 11,
+      "probed": 11
+    },
+    {
+      "route": "/searches",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nNo search app created yet",
+      "total_interactive": 11,
+      "probed": 11
+    },
+    {
+      "route": "/agents",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Create agent",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "1",
+          "role": "a",
+          "result": [
+            "nav -> /agents?page=1&size=50#"
+          ]
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nAgents\nCreate agent\nU\nui-probe-agent\nLast saved at:\n\n14/08/2026 01:46:56\n\n智\n智能体\nLast saved at:\n\n14/08/2026 01:49:44\n\nTotal 2\n1\n50 / Page",
+      "total_interactive": 16,
+      "probed": 16
+    },
+    {
+      "route": "/agent-templates",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Recommended",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Customer support",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Marketing",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Consumer app",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Ingestion pipeline",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Other",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nRecommended\nAgent\nCustomer support\nMarketing\nConsumer app\nIngestion pipeline\nOther\nDeep research\n\nFor professionals in sales, marketing, policy, or consulting, the Multi-Agent Deep research Agentic workflow conducts structured, multi-step investigations across diverse sources and delivers consulting-style reports with clear citations.\n\nSEO article writer\n\nThis SEO article writer automatically generates a complete SEO-optimized blog article based on a simple user input. You don't need any writing experience. Just provide a topic or sho",
+      "total_interactive": 18,
+      "probed": 18
+    },
+    {
+      "route": "/memories",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Create memory",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "1",
+          "role": "a",
+          "result": [
+            "nav -> /memories?page=1&size=50#"
+          ]
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nMemory\nCreate memory\n记\n记忆\n\n18/05/2026 20:42:40\n\nTotal 1\n1\n50 / Page",
+      "total_interactive": 16,
+      "probed": 16
+    },
+    {
+      "route": "/files",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Add file",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Select all",
+          "role": "checkbox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Select row",
+          "role": "checkbox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": ".knowledgebase",
+          "role": "button",
+          "result": [
+            "nav -> /files?folderId=5b6cb0a852b711f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "1",
+          "role": "a",
+          "result": [
+            "nav -> /files?page=1&size=50#"
+          ]
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nFiles\nAdd file\n\t\nName\n\t\nUpload date\n\t\nSize\n\tDataset\tAction\n\t\n.knowledgebase\n\t\n18/05/2026 20:44:49\n\t\n32.1 GB\n\t\n\t\nTotal 2\n1\n50 / Page",
+      "total_interactive": 19,
+      "probed": 19
+    },
+    {
+      "route": "/files/skills",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Create skill space",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Close toast",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nroot\n/\nSkills\nCreate skill space\nNo skill space created yet\nRequest error 404: http://127.0.0.1:11526/api/v1/skills/spaces The request was made for a record that does not exist, and the server did not perform the operation.\nhint : 404 Not Found: /api/v1/skills/spaces",
+      "total_interactive": 13,
+      "probed": 13
+    },
+    {
+      "route": "/user-setting",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/team"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "Add",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nData sources\n\nManage your data source and connections\n\nWebDAV\n被剥削压榨的老公小宝贝李gen澎的文件\n我的文件（李锦澎）\n本科硕士老电脑\n微信备份\n本科硕士老电脑微信文件备份\n本科硕士老电脑文档\n本科硕士老电脑下载文件夹\n公司\n花都科研\n李锦澎21楼\n我的新电脑\n我的新电脑的下载文件夹\n下载的文件\n新电脑桌面文件\n银色备份会议赠送U盘\n银色U盘备份\nAvailable sources\nSelect a data source to add\nConfluence\nAdd\n\nIntegrate your Confluence workspace to search documentation.\n\nNotion\nAdd\n\nSync pages and databases from Notion for knowledge retrieval.\n\nGoogle Drive\nAdd\n\nConnect yo",
+      "total_interactive": 20,
+      "probed": 19
+    },
+    {
+      "route": "/user-setting/profile",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Team\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button aria-label=\"Team\" data-inspector-line=\"101\" data-inspector-column=\"16\" data-inspector-relative-path=\"src/pages/user-setting/sidebar/index.tsx\" class=\"inline-flex items-center whitespace-nowrap transition-colors outline-0 disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary hover:bg-border-button focus-visible:bg-border-button hover:text-text-primary focus-vis…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - performing click action\u001b[22m\n"
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "Edit",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Upload",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Upload\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-inspector-line=\"264\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/components/avatar-upload.tsx\" class=\"justify-center whitespace-nowrap text-sm transition-colors outline-0 disabled:pointer-events-none disabled:opacity-50 border-0.5 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary border-border-button border-dashed hover:text-text-primary hover:bg-border-button hover:border-border-default focus-visi…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-inspector-line=\"239\" data-inspector-column=\"14\" class=\"flex items-start px-6 py-4 justify-start text-base\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-inspector-line=\"239\" data-inspector-column=\"14\" class=\"flex items-start px-6 py-4 justify-start text-base\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-inspector-line=\"239\" data-inspector-column=\"14\" class=\"flex items-start px-6 py-4 justify-start text-base\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"header.Root\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Dataset\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/datasets\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Chat\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/chats\" data-discover=\"true\" data-testid=\"nav-chat\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Search\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/searches\" data-discover=\"true\" data-inspector-line=\"79\" data-testid=\"nav-search\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Agent\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/agents\" data-discover=\"true\" data-testid=\"nav-agent\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Memory\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/memories\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"File\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/files\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"J\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/user-setting\" data-discover=\"true\" class=\"relative ms-3\" data-inspector-line=\"129\" data-inspector-column=\"8\" data-testid=\"settings-entrypoint\" data-inspector-relative-path=\"src/layouts/components/header.tsx\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nProfile\n\nUpdate your photo and personal details here.\n\nName\nJunesgone\nEdit\nAvatar\nUpload\nThis will be displayed on your profile.\nTime zone\nGMT+08:00 Asia/Shanghai\nEdit\nEmail\nJunesgone@outlook.com\nOnce registered, E-mail cannot be changed.\nPassword\n********\nEdit",
+      "total_interactive": 21,
+      "probed": 20
+    },
+    {
+      "route": "/user-setting/locale",
+      "ok": true,
+      "elements": [
+        {
+          "text": "Business",
+          "role": "button",
+          "result": [
+            "nav -> /"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "404\nPage not found, please enter a correct address.\nBusiness",
+      "total_interactive": 1,
+      "probed": 1
+    },
+    {
+      "route": "/user-setting/model",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/team"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "View models",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "All 62",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "LLM 37",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Embedding 25",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Rerank 10",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "TTS 8",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "ASR 11",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "VLM 17",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "OCR 4",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Add",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"header.Root\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Dataset\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/datasets\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Chat\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/chats\" data-discover=\"true\" data-testid=\"nav-chat\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Search\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/searches\" data-discover=\"true\" data-inspector-line=\"79\" data-testid=\"nav-search\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Agent\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/agents\" data-discover=\"true\" data-testid=\"nav-agent\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Memory\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/memories\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"File\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/files\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"J\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/user-setting\" data-discover=\"true\" class=\"relative ms-3\" data-inspector-line=\"129\" data-inspector-column=\"8\" data-testid=\"settings-entrypoint\" data-inspector-relative-path=\"src/layouts/components/header.tsx\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nSet default models\n\nPlease complete these settings before beginning\n\n*LLM\nEmbedding\nVLM\nASR\nRerank\nTTS\nAdded models\nMiniMax\ndefault\nView models\nOpenAI-API-Compatible\ndefault\nView models\nembedding\nView models\nPaddleOCR\ndefault\nView models\nXinference\ndefault\nView models\nAvailable models\nAll\n62\nLLM\n37\nEmbedding\n25\nRerank\n10\nTTS\n8\nASR\n11\nVLM\n17\nOCR\n4\nOpenAI\nAdd\nLLM\nEmbedding\nTTS\nASR\nAnthropic\nAdd\nLLM\nGemini\nAdd\nLLM\nEmbedding\nVLM\nDeepS",
+      "total_interactive": 29,
+      "probed": 28
+    },
+    {
+      "route": "/user-setting/team",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "Invite member",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nJunesgone workspace\nTeam members\nInvite member\nName\t\nDate\n\tEmail\tState\tAction\nNo data available\nJoined teams\nName\t\nDate\n\tEmail\tAction\n\nJ\nJunesgone\n13/08/2026 22:42:22\tJunesgone@outlook.com\t",
+      "total_interactive": 20,
+      "probed": 19
+    },
+    {
+      "route": "/user-setting/api",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/team"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "API KEY",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Show content",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "have your RAGFlow API key ready for authentication",
+          "role": "a",
+          "result": [
+            "nav -> https://ragflow.io/docs/acquire_ragflow_api_key"
+          ]
+        },
+        {
+          "text": "OpenAI's API",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"OpenAI\\'s API\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"https://platform.openai.com/docs/api-reference/chat/create\">OpenAI's API</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - performing click action\u001b[22m\n\u001b[2m    - click action done\u001b[22m\n\u001b[2m    - waiting for scheduled navigations to finish\u001b[22m\n"
+        },
+        {
+          "text": "Use tag set",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Set page rank",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "here",
+          "role": "a",
+          "result": [
+            "nav -> /guides/dataset/advanced/construct_knowledge_graph.md"
+          ]
+        },
+        {
+          "text": "Set metadata",
+          "role": "a",
+          "result": [
+            "nav -> /guides/dataset/set_metadata.md"
+          ]
+        },
+        {
+          "text": "Begin",
+          "role": "a",
+          "result": [
+            "nav -> /guides/agent/agent_component_reference/begin.mdx"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nRAGFlow API\nAPI KEY\nAPI server\nhttp://127.0.0.1:11526\nShow content\nsidebar_position: 4 slug: /http_api_reference sidebar_custom_props: { categoryIcon: LucideGlobe }\nHTTP API\n\nA complete reference for RAGFlow's RESTful API. Before proceeding, please ensure you have your RAGFlow API key ready for authentication.\n\nERROR CODES\nCode\tMessage\tDescription\n400\tBad Request\tInvalid request parameters\n401\tUnauthorized\tUnauthorized access\n403\t",
+      "total_interactive": 29,
+      "probed": 28
+    },
+    {
+      "route": "/user-setting/mcp",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/team"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "Bulk manage",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Import",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Add MCP",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Add Now",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nMCP servers\n\nCustomize the list of MCP servers\n\nBulk manage\nImport\nAdd MCP\nNo MCP servers available\nAdd Now",
+      "total_interactive": 23,
+      "probed": 22
+    },
+    {
+      "route": "/user-setting/data-source",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/chat-channel"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/team"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "Add",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"header.Root\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Dataset\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/datasets\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Chat\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/chats\" data-discover=\"true\" data-testid=\"nav-chat\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Search\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/searches\" data-discover=\"true\" data-inspector-line=\"79\" data-testid=\"nav-search\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Agent\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/agents\" data-discover=\"true\" data-testid=\"nav-agent\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Memory\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/memories\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"File\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/files\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"J\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/user-setting\" data-discover=\"true\" class=\"relative ms-3\" data-inspector-line=\"129\" data-inspector-column=\"8\" data-testid=\"settings-entrypoint\" data-inspector-relative-path=\"src/layouts/components/header.tsx\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nData sources\n\nManage your data source and connections\n\nWebDAV\n被剥削压榨的老公小宝贝李gen澎的文件\n我的文件（李锦澎）\n本科硕士老电脑\n微信备份\n本科硕士老电脑微信文件备份\n本科硕士老电脑文档\n本科硕士老电脑下载文件夹\n公司\n花都科研\n李锦澎21楼\n我的新电脑\n我的新电脑的下载文件夹\n下载的文件\n新电脑桌面文件\n银色备份会议赠送U盘\n银色U盘备份\nAvailable sources\nSelect a data source to add\nConfluence\nAdd\n\nIntegrate your Confluence workspace to search documentation.\n\nNotion\nAdd\n\nSync pages and databases from Notion for knowledge retrieval.\n\nGoogle Drive\nAdd\n\nConnect yo",
+      "total_interactive": 20,
+      "probed": 19
+    },
+    {
+      "route": "/user-setting/chat-channel",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Data sources",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Chat channels",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Model providers",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "MCP",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/mcp"
+          ]
+        },
+        {
+          "text": "Team",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/team"
+          ]
+        },
+        {
+          "text": "Profile",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/profile"
+          ]
+        },
+        {
+          "text": "API",
+          "role": "button",
+          "result": [
+            "nav -> /user-setting/api"
+          ]
+        },
+        {
+          "text": "Add",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"header.Root\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Dataset\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/datasets\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Chat\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/chats\" data-discover=\"true\" data-testid=\"nav-chat\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Search\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/searches\" data-discover=\"true\" data-inspector-line=\"79\" data-testid=\"nav-search\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    4 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Agent\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/agents\" data-discover=\"true\" data-testid=\"nav-agent\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Memory\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/memories\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"File\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/files\" data-discover=\"true\" data-inspector-line=\"79\" data-inspector-column=\"18\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"J\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/user-setting\" data-discover=\"true\" class=\"relative ms-3\" data-inspector-line=\"129\" data-inspector-column=\"8\" data-testid=\"settings-entrypoint\" data-inspector-relative-path=\"src/layouts/components/header.tsx\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nJ\n\nJunesgone@outlook.com\n\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nv0.26.2\nLog out\nChat channels\n\nManage your chat channel bots and credentials\n\nNo chat channels added yet. Select one below to connect.\nAvailable channels\nSelect a chat channel to add\nDiscord\nAdd\n\nConnect a Discord bot\n\nDingTalk\nAdd\n\nConnect a DingTalk bot\n\nFeishu / Lark\nAdd\n\nConnect a Feishu / Lark bot\n\nQQ Bot\nAdd\n\nConnect a QQ bot\n\nTelegram\nAdd\n\nConnect a Telegram bot\n\nWeCom\nAdd\n\nConnect a WeCom bot\n\nWhatsApp\nAdd\n\nConnect a WhatsApp bot (QR pair",
+      "total_interactive": 20,
+      "probed": 19
+    },
+    {
+      "route": "/agent-list",
+      "ok": true,
+      "elements": [
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Create agent",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "1",
+          "role": "a",
+          "result": [
+            "nav -> /agent-list?page=1&size=50#"
+          ]
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Agents\nCreate agent\nU\nui-probe-agent\nLast saved at:\n\n14/08/2026 01:46:56\n\n智\n智能体\nLast saved at:\n\n14/08/2026 01:49:44\n\nTotal 2\n1\n50 / Page",
+      "total_interactive": 6,
+      "probed": 6
+    },
+    {
+      "route": "/admin",
+      "ok": true,
+      "elements": [
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Sign in",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Email",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Password",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Remember me",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "RAGFlow\nAdmin console\nEmail\nPassword\nRemember me\nSign in",
+      "total_interactive": 5,
+      "probed": 5
+    },
+    {
+      "route": "/admin/services",
+      "ok": true,
+      "elements": [
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Sign in",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Email",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Password",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Remember me",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "RAGFlow\nAdmin console\nEmail\nPassword\nRemember me\nSign in",
+      "total_interactive": 5,
+      "probed": 5
+    },
+    {
+      "route": "/admin/users",
+      "ok": true,
+      "elements": [
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Sign in",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Email",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Password",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Remember me",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "RAGFlow\nAdmin console\nEmail\nPassword\nRemember me\nSign in",
+      "total_interactive": 5,
+      "probed": 5
+    },
+    {
+      "route": "/admin/sandbox-settings",
+      "ok": true,
+      "elements": [
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Sign in",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Email",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Password",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Remember me",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "RAGFlow\nAdmin console\nEmail\nPassword\nRemember me\nSign in",
+      "total_interactive": 5,
+      "probed": 5
+    },
+    {
+      "route": "/admin/whitelist",
+      "ok": true,
+      "elements": [
+        {
+          "text": "Business",
+          "role": "button",
+          "result": [
+            "nav -> /admin"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "404\nPage not found, please enter a correct address.\nBusiness",
+      "total_interactive": 1,
+      "probed": 1
+    },
+    {
+      "route": "/admin/roles",
+      "ok": true,
+      "elements": [
+        {
+          "text": "Business",
+          "role": "button",
+          "result": [
+            "nav -> /admin"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "404\nPage not found, please enter a correct address.\nBusiness",
+      "total_interactive": 1,
+      "probed": 1
+    },
+    {
+      "route": "/admin/monitoring",
+      "ok": true,
+      "elements": [
+        {
+          "text": "Business",
+          "role": "button",
+          "result": [
+            "nav -> /admin"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "404\nPage not found, please enter a correct address.\nBusiness",
+      "total_interactive": 1,
+      "probed": 1
+    },
+    {
+      "route": "/dataset/files/a710b71c52b611f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Add file",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Select all",
+          "role": "checkbox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/retrieval/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\nfiles\nCreated\nFiles\nRetrieval testing\nLogs\nConfiguration\nFiles\n\nPlease wait for your files to finish parsing before starting an AI-powered chat.\n\nAdd file\n\t\nName\n\t\nUpload date\n\tEnable\tChunks\tMetadata\tParse\t\tAction\n\nNo data available\nTotal 0\n50 / Page",
+      "total_interactive": 20,
+      "probed": 20
+    },
+    {
+      "route": "/dataset/logs/a710b71c52b611f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "File",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/files/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/retrieval/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "1",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69?page=1&size=50#"
+          ]
+        },
+        {
+          "text": "2",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69?page=2&size=50#"
+          ]
+        },
+        {
+          "text": "3",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69?page=3&size=50#"
+          ]
+        },
+        {
+          "text": "20",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69?page=20&size=50#"
+          ]
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\n全\n全部文件\n30329 files\n30 GB\nCreated 18/05/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nTotal files\n30329\n0% from last week\nDownloading\n0\nSuccess\n0\nFailed\n0\nProcessing\n0\nSuccess\n0\nFailed\n0\nFile\nDataset\nID\tFile name\tSource\tIngestion pipeline\t\nStart date\n\tTask\tStatus\tOperations\n\n312bd01097e211f1b2a699affbb3d987\n\t\n说明书---甲状腺过氧化物酶抗体测定试剂盒(化学发光法) anti-TPO (aTPO).pdf\n\t\n\t\nG\ngeneral\n\t\n30/06/2026 07:56:11\n\t\nParse\n\t\nSuccess\t\n\n\n25b8ab0497e211f1b2a699affbb3d987\n\t\nlaoshu pcr.xlsx\n\t\n\t\nG\ngeneral\n\t\n09/07/2026 21:52:52\n\t\nParse\n\t\nFailed\t\n\n\n0ecc80b497e211f",
+      "total_interactive": 24,
+      "probed": 24
+    },
+    {
+      "route": "/dataset/configuration/a710b71c52b611f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Chinese",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Upload",
+          "role": "button",
+          "result": "skipped: Error: locator.click: Target page, context or browser has been closed\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Upload\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-inspector-line=\"264\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/components/avatar-upload.tsx\" class=\"justify-center whitespace-nowrap text-sm transition-colors outline-0 disabled:pointer-events-none disabled:opacity-50 border-0.5 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary border-border-button border-dashed hover:text-text-primary hover:bg-border-button hover:border-border-default focus-visi…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - performing click action\u001b[22m\n"
+        },
+        {
+          "text": "Only me",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Select value",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "General",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "DeepDOC",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Settings",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Link data source",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Save",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Built-in pipeline introduction",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "请总结以下段落。注意数字，不要编造。段落如下： {cluster_content} 以上就是您需要总结的内容。",
+          "role": "textarea",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "*Name",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Language",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Avatar",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Description",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\n全\n全部文件\n30329 files\n30 GB\nCreated 18/05/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nConfiguration\nUpdate your dataset configuration here, particularly the LLM and prompts.\nBasic\n*Name\nLanguage\nChinese\nAvatar\nUpload\nYou can upload an image up to 4 MB.\nDescription\nPermissions\nOnly me\nEmbedding model\nPage rank\nTag sets\nSelect value\nSwitch or configure ingestion pipeline.\nParse type\nBuilt-in\nPipeline\nBuilt-in\nGeneral\nPDF parser\nDeepDOC\nRecommended chunk size\nDelimiter for text\nChild chunk are used for retrieval\nDelimiter for text\nPageI",
+      "total_interactive": 63,
+      "probed": 30
+    },
+    {
+      "route": "/dataset/retrieval/a710b71c52b611f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Select value",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Select value",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Top 10",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Run",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Run\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button disabled type=\"submit\" data-inspector-line=\"132\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/pages/dataset/testing/testing-form.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-0 disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 bg-text-primary text-bg-base shadow-xs hover:bg-text-primary/90 focus-v…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    4 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/files/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "textarea",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Similarity threshold",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Vector similarity weight",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Rerank model",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Use knowledge graph",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Cross-language search",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Meta data",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Top",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\n全\n全部文件\n30329 files\n30 GB\nCreated 18/05/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nRetrieval testing\nConduct a retrieval test to check if RAGFlow can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.\nSetting\nSimilarity threshold\nVector similarity weight\n",
+      "total_interactive": 27,
+      "probed": 27
+    },
+    {
+      "route": "/dataset/knowledge-graph/a710b71c52b611f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/files/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/retrieval/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/a710b71c52b611f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/a710b71c52b611f193f62728e4a35a69"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\n全\n全部文件\n30329 files\n30 GB\nCreated 18/05/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nDelete",
+      "total_interactive": 16,
+      "probed": 15
+    },
+    {
+      "route": "/agent/f9e7dc32973e11f197ff23af4dabe863",
+      "ok": true,
+      "elements": [
+        {
+          "text": "Save",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Run",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Launch",
+          "role": "button",
+          "result": [
+            "nav -> /agent/f9e7dc32973e11f197ff23af4dabe863/explore"
+          ]
+        },
+        {
+          "text": "Publish",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Management",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Zoom In",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Zoom Out",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Fit View",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Toggle Interactivity",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "React Flow",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Agent\nui-probe-agent\nAutosaved 14/08/2026 01:46:56\nSave\nRun\nLaunch\nPublish\nManagement\nBegin\nConversational\nReact Flow",
+      "total_interactive": 11,
+      "probed": 11
+    },
+    {
+      "route": "/agent/f9e7dc32973e11f197ff23af4dabe863/explore",
+      "ok": true,
+      "elements": [
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Attach file",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Attach file\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" aria-controls=\":r0:\" data-inspector-line=\"232\" data-inspector-column=\"16\" data-slot=\"file-upload-trigger\" data-testid=\"chat-detail-attach\" data-inspector-relative-path=\"src/components/message-input/next.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary bg-transp…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - performing click action\u001b[22m\n"
+        },
+        {
+          "text": "Send message",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "textarea",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Agent\nLaunch\nSessions\n0\nPlease select a session or create a new one\n\nDrag & drop files here\n\nUpload max 5 files each up to 5MB\n\nAttach file\nSend message\nFile upload",
+      "total_interactive": 4,
+      "probed": 4
+    },
+    {
+      "route": "/memory/memory-message/0ee40d8a52b711f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Messages",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "button",
+          "result": [
+            "nav -> /memory/memory-setting/0ee40d8a52b711f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\n记\n记忆\nCreated 18/05/2026\nMessages\nConfiguration\nMessages\nMemory extract is configured with Prompts and Temperature from Advanced Settings.\nSession ID\n\tAgent\tType\tValid date\tForget at\tEnable\t\tAction\n\nNo data available\nTotal 0\n50 / Page",
+      "total_interactive": 16,
+      "probed": 16
+    },
+    {
+      "route": "/memory/memory-setting/0ee40d8a52b711f193f62728e4a35a69",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Messages",
+          "role": "button",
+          "result": [
+            "nav -> /memory/memory-message/0ee40d8a52b711f193f62728e4a35a69"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Upload",
+          "role": "button",
+          "result": "skipped: Error: locator.click: Target page, context or browser has been closed\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Upload\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-inspector-line=\"264\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/components/avatar-upload.tsx\" class=\"justify-center whitespace-nowrap text-sm transition-colors outline-0 disabled:pointer-events-none disabled:opacity-50 border-0.5 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary border-border-button border-dashed hover:text-text-primary hover:bg-border-button hover:border-border-default focus-visi…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - performing click action\u001b[22m\n"
+        },
+        {
+          "text": "raw semantic episodic procedural",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "header.Root",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "J",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Name",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Avatar",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Description",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Embedding model",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "LLM",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Memory type",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Memory size (Bytes)",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nJ\n记\n记忆\nCreated 18/05/2026\nMessages\nConfiguration\nConfiguration\n\nUpdate your dataset configuration here, particularly the LLM and prompts.\n\nBasic\nName\nAvatar\nUpload\nYou can upload an image up to 4 MB.\nDescription\nEmbedding model\nLLM\nMemory type\nraw\nsemantic\nepisodic\nprocedural\nMemory size (Bytes)\nAdvanced settings\nCancel\nConfirm",
+      "total_interactive": 24,
+      "probed": 22
+    }
+  ]
+}

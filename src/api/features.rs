@@ -939,6 +939,65 @@ impl ProviderStore {
         })
     }
 
+    /// Mark a catalog provider usable after a tenant has successfully
+    /// verified and attached an upstream-style provider instance. The catalog
+    /// flag contains no tenant secret; credentials remain exclusively on the
+    /// tenant instance.
+    pub fn ensure_enabled(&self, id: &str) -> anyhow::Result<PublicProvider> {
+        self.mutate(|providers| {
+            let provider = providers
+                .iter_mut()
+                .find(|provider| provider.id == id)
+                .context("Provider not found")?;
+            provider.enabled = true;
+            Ok(PublicProvider::from(&*provider))
+        })
+    }
+
+    /// Materialize one dynamic RAGFlow factory after its first successful
+    /// tenant connection. Factories such as `New API` intentionally have no
+    /// catalog endpoint or static model list, so they are absent from the
+    /// startup provider store. Credentials remain tenant-scoped; this shared
+    /// catalog record stores only the factory identity, base URL and selected
+    /// model names needed by the existing runtime resolver.
+    pub fn ensure_dynamic_factory(
+        &self,
+        id: &str,
+        name: &str,
+        api_base: &str,
+        models: &[String],
+    ) -> anyhow::Result<Provider> {
+        let id = crate::providers::provider_id_slug(id);
+        validate_provider_id(&id)?;
+        self.mutate(|providers| {
+            if let Some(provider) = providers.iter_mut().find(|provider| {
+                provider.id == id
+                    || crate::providers::canonical_provider_name(&provider.id, &provider.name)
+                        .eq_ignore_ascii_case(name)
+            }) {
+                provider.enabled = true;
+                for model in models {
+                    if !provider.models.contains(model) {
+                        provider.models.push(model.clone());
+                    }
+                }
+                validate_provider(provider)?;
+                return Ok(provider.clone());
+            }
+            let provider = Provider {
+                id,
+                name: name.trim().to_string(),
+                api_base: api_base.trim().trim_end_matches('/').to_string(),
+                models: models.to_vec(),
+                enabled: true,
+                api_key: None,
+            };
+            validate_provider(&provider)?;
+            providers.push(provider.clone());
+            Ok(provider)
+        })
+    }
+
     pub fn delete(&self, id: &str) -> anyhow::Result<bool> {
         self.mutate(|providers| {
             let previous_len = providers.len();
@@ -1200,10 +1259,15 @@ pub async fn list_provider_models(
     Path(id): Path<String>,
     Query(query): Query<ProviderModelsQuery>,
 ) -> axum::response::Response {
-    if !auth.is_admin {
-        return provider_admin_required();
-    }
-    let Some(provider) = state.providers.get_configured(&id) else {
+    // Upstream exposes this read-only discovery endpoint to every signed-in
+    // user opening Model providers. Tenant/admin mutation rights are checked
+    // only by Verify/Create, not by the picker itself.
+    let _ = auth;
+    let Some(provider) = crate::api::tenant_models::provider_connection_candidate(
+        &state.providers,
+        &id,
+        query.base_url.as_deref(),
+    ) else {
         return (
             axum::http::StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "code": 404, "message": "Provider not found" })),
@@ -1797,9 +1861,9 @@ impl MemoryStore {
         is_tenant_member: impl Fn(&str, &str) -> bool,
     ) -> anyhow::Result<bool> {
         self.mutate_if_changed(|entries| {
-            let removable = entries
-                .get(id)
-                .is_some_and(|entry| memory_accessible(entry, user_id, is_admin, &is_tenant_member));
+            let removable = entries.get(id).is_some_and(|entry| {
+                memory_accessible(entry, user_id, is_admin, &is_tenant_member)
+            });
             if removable {
                 entries.remove(id);
             }
@@ -1938,8 +2002,10 @@ pub async fn get_memory_config(
         auth.is_admin,
         |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
     ) {
-        Some(entry) => Json(serde_json::json!({ "code": 0, "data": memory_ret_data(&state, entry) }))
-            .into_response(),
+        Some(entry) => {
+            Json(serde_json::json!({ "code": 0, "data": memory_ret_data(&state, entry) }))
+                .into_response()
+        }
         None => memory_not_found(),
     }
 }
@@ -4587,7 +4653,11 @@ mod memory_store_tests {
                 .unwrap()
         );
         // The joined member may delete the team memory.
-        assert!(store.delete_accessible(&entry.id, "member", false, member).unwrap());
+        assert!(
+            store
+                .delete_accessible(&entry.id, "member", false, member)
+                .unwrap()
+        );
         assert!(store.get(&entry.id).is_none());
     }
 
@@ -4605,7 +4675,9 @@ mod memory_store_tests {
 
         // Indexed memory: rows are removed with the row.
         let memories = MemoryStore::in_memory();
-        let entry = memories.create("owner", create_request("With rows")).unwrap();
+        let entry = memories
+            .create("owner", create_request("With rows"))
+            .unwrap();
         let messages = crate::api::joint_services::MemoryMessageService::in_memory();
         messages
             .insert_messages(vec![crate::api::joint_services::MemoryMessage {
@@ -4638,8 +4710,7 @@ mod memory_store_tests {
         let owner_name = Some("Owner Nick".to_string());
         let projection = memory_ret_data_with_owner(entry.clone(), owner_name.clone());
         let object = projection.as_object().expect("projection is an object");
-        let keys: std::collections::BTreeSet<&str> =
-            object.keys().map(String::as_str).collect();
+        let keys: std::collections::BTreeSet<&str> = object.keys().map(String::as_str).collect();
         let expected: std::collections::BTreeSet<&str> = [
             "id",
             "name",
@@ -4665,14 +4736,28 @@ mod memory_store_tests {
         .into_iter()
         .collect();
         assert_eq!(keys, expected);
-        assert_eq!(object.get("owner_name"), Some(&serde_json::json!(owner_name)));
-        assert_eq!(object.get("create_time"), Some(&serde_json::json!(entry.created_at)));
-        assert_eq!(object.get("update_time"), Some(&serde_json::json!(entry.updated_at)));
-        assert_eq!(object.get("memory_type"), Some(&serde_json::json!(entry.memory_type)));
-        assert!(object
-            .get("create_date")
-            .and_then(|value| value.as_str())
-            .is_some_and(|value| !value.is_empty()));
+        assert_eq!(
+            object.get("owner_name"),
+            Some(&serde_json::json!(owner_name))
+        );
+        assert_eq!(
+            object.get("create_time"),
+            Some(&serde_json::json!(entry.created_at))
+        );
+        assert_eq!(
+            object.get("update_time"),
+            Some(&serde_json::json!(entry.updated_at))
+        );
+        assert_eq!(
+            object.get("memory_type"),
+            Some(&serde_json::json!(entry.memory_type))
+        );
+        assert!(
+            object
+                .get("create_date")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.is_empty())
+        );
         // Unknown owner → null, mirroring Python's hasattr guard.
         let anonymous = memory_ret_data_with_owner(entry, None);
         assert_eq!(anonymous.get("owner_name"), Some(&serde_json::Value::Null));

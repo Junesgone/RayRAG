@@ -84,7 +84,7 @@ impl BaiduTranslateClient {
     pub fn from_env() -> Self {
         Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(crate::common::cmd_timeout::duration())
                 .build()
                 .expect("build Baidu translate HTTP client"),
             appid: std::env::var("BAIDU_TRANSLATE_APPID").ok(),

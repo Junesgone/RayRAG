@@ -108,7 +108,7 @@ impl ArxivClient {
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(RedirectPolicy::none())
-                .timeout(Duration::from_secs(12))
+                .timeout(crate::common::cmd_timeout::duration())
                 .user_agent(ARXIV_USER_AGENT)
                 .build()
                 .context("could not build arXiv HTTP client")?,

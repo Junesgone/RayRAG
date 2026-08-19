@@ -143,7 +143,7 @@ impl PubMedClient {
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(RedirectPolicy::none())
-                .timeout(Duration::from_secs(12))
+                .timeout(crate::common::cmd_timeout::duration())
                 .build()
                 .context("could not build PubMed HTTP client")?,
             esearch_endpoint: esearch_endpoint

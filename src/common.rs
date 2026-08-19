@@ -1476,6 +1476,90 @@ pub mod connection_utils {
     }
 }
 
+/// RayRAG 统一命令超时（对标约束：所有命令必须带超时，最长 2 小时）。
+///
+/// - 超时值由用户 env 环境文件决定：`RAYRAG_CMD_TIMEOUT`（秒），默认 7200（2 小时），
+///   上限钳制 7200，避免再次卡死；
+/// - `load_user_env_file` 在启动时读取用户 env 文件（`RAYRAG_ENV_FILE` → 当前目录
+///   `.env` → 项目 `.env`），已设置的环境变量不被文件覆盖（真实环境优先）；
+/// - `http_client` 为统一 reqwest 客户端，所有外呼业务请求使用同一超时输入。
+pub mod cmd_timeout {
+    /// 默认命令超时：7200 秒（2 小时）
+    pub const DEFAULT_SECS: u64 = 7200;
+    /// 环境变量名（用户 env 环境文件配置项）
+    pub const ENV: &str = "RAYRAG_CMD_TIMEOUT";
+
+    /// 当前命令超时秒数：`RAYRAG_CMD_TIMEOUT`，默认 7200，钳制在 1..=7200
+    pub fn seconds() -> u64 {
+        let secs = std::env::var(ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_SECS);
+        secs.min(DEFAULT_SECS).max(1)
+    }
+
+    /// 当前命令超时 Duration
+    pub fn duration() -> std::time::Duration {
+        std::time::Duration::from_secs(seconds())
+    }
+
+    /// 统一 reqwest 客户端：请求超时 = 用户 env `RAYRAG_CMD_TIMEOUT`（默认 2 小时）
+    pub fn http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(duration())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    }
+
+    /// 加载用户 env 环境文件：`RAYRAG_ENV_FILE` → `./.env` → 项目 `.env`。
+    /// 已存在于进程环境的变量不被覆盖（真实环境优先），`#` 注释行忽略。
+    pub fn load_user_env_file() {
+        let candidates = [
+            std::env::var("RAYRAG_ENV_FILE").ok(),
+            Some(".env".to_string()),
+            Some(format!("{}/.env", env!("CARGO_MANIFEST_DIR"))),
+        ];
+        let Some(path) = candidates.into_iter().flatten().find(|path| std::path::Path::new(path).is_file()) else {
+            return;
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            if key.is_empty() || std::env::var(key).is_ok() {
+                continue;
+            }
+            // SAFETY: 启动期单线程初始化阶段调用
+            unsafe {
+                std::env::set_var(key, value.trim().trim_matches(['"', '\'']));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn default_is_two_hours_and_capped() {
+            assert_eq!(DEFAULT_SECS, 7200);
+            let d = duration();
+            assert!(d <= std::time::Duration::from_secs(7200));
+            assert!(d >= std::time::Duration::from_secs(1));
+            let _client = http_client();
+        }
+    }
+}
+
 /// `common/versions.py` — RAGFlow version resolution.
 pub mod versions {
     /// `get_ragflow_version` — `RAGFLOW_VERSION` env → `VERSION` file next to

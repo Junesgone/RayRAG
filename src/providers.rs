@@ -1076,6 +1076,17 @@ pub fn provider_preset_by_name(provider_name: &str) -> Option<&'static ProviderP
     })
 }
 
+/// Resolve a persisted/provider-store identity to the canonical RAGFlow
+/// factory name. Older RayRAG data may use the `conf/models` fixture key or
+/// display name (for example `aliyun` / `Aliyun`) while the v0.26.4 wire UI
+/// uses `Tongyi-Qianwen` consistently.
+pub fn canonical_provider_name(provider_id: &str, provider_name: &str) -> String {
+    provider_preset(provider_id)
+        .or_else(|| provider_preset_by_name(provider_name))
+        .map(|preset| preset.name.to_string())
+        .unwrap_or_else(|| provider_name.trim().to_string())
+}
+
 /// Resolve the default API base for a provider (id or name), if a preset exists.
 pub fn provider_default_base(provider_id: &str, provider_name: &str) -> Option<&'static str> {
     provider_preset(provider_id)
@@ -1318,6 +1329,21 @@ mod tests {
             let preset = provider_preset(id).unwrap();
             assert!(!preset.base_url.is_empty(), "{id} preset needs a base_url");
         }
+    }
+
+    #[test]
+    fn canonical_names_bridge_legacy_fixture_identities() {
+        assert_eq!(
+            canonical_provider_name("aliyun", "Aliyun"),
+            "Tongyi-Qianwen"
+        );
+        assert_eq!(canonical_provider_name("google", "Google"), "Google Cloud");
+        assert_eq!(
+            canonical_provider_name("hunyuan", "HunYuan"),
+            "Tencent Hunyuan"
+        );
+        assert_eq!(canonical_provider_name("nvidia", "Nvidia"), "NVIDIA");
+        assert_eq!(canonical_provider_name("custom", "My Custom"), "My Custom");
     }
 
     #[test]

@@ -1,6 +1,6 @@
-//! System / User / Tenant / Models / Langfuse / Backward Compat / LLM App APIs.
-//! Replaces RAGFlow's system_api, user_api, tenant_api, models_api, langfuse_api,
-//! backward_compat, and llm_app.
+//! System / User / Tenant / Models / Backward Compat / LLM App APIs.
+//! Replaces RAGFlow's system_api, user_api, tenant_api, models_api,
+//! backward_compat, and llm_app. Langfuse lives in `langfuse.rs`.
 
 use crate::kb::TenantRole;
 use crate::llm::ChatMessage;
@@ -373,7 +373,20 @@ pub async fn list_tenants(
             .cmp(&right.created_at)
             .then_with(|| left.tenant_id.cmp(&right.tenant_id))
     });
-    Json(serde_json::json!({ "code": 0, "data": tenants }))
+    let rows: Vec<serde_json::Value> = tenants
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "tenant_id": entry.tenant_id,
+                "user_id": entry.user_id,
+                "role": tenant_role_wire(entry.role),
+                "invited_by": entry.invited_by,
+                "created_at": entry.created_at,
+                "updated_at": entry.updated_at,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "code": 0, "data": rows }))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -394,6 +407,269 @@ pub async fn list_tenant_members(
     let mut members = state.tenants.list_members(tenant_id);
     members.sort_by_key(|member| member.created_at);
     Json(serde_json::json!({ "code": 0, "data": members })).into_response()
+}
+
+fn tenant_user_rows(state: &AppState, tenant_id: &str) -> Vec<serde_json::Value> {
+    let mut members = state.tenants.list_members(tenant_id);
+    if !members
+        .iter()
+        .any(|member| member.user_id == tenant_id && member.role == TenantRole::Owner)
+    {
+        members.push(crate::kb::TenantMembership {
+            tenant_id: tenant_id.to_string(),
+            user_id: tenant_id.to_string(),
+            role: TenantRole::Owner,
+            invited_by: tenant_id.to_string(),
+            created_at: 0,
+            updated_at: 0,
+        });
+    }
+    members.sort_by_key(|member| member.updated_at);
+    members
+        .into_iter()
+        .map(|member| {
+            let user = state.users.get_user_by_id(&member.user_id);
+            serde_json::json!({
+                "user_id": member.user_id,
+                "nickname": user.as_ref().map(|user| user.nickname.as_str()).unwrap_or(""),
+                "email": user.as_ref().map(|user| user.email.as_str()).unwrap_or(""),
+                "avatar": "",
+                "role": tenant_role_wire(member.role),
+                "update_date": member.updated_at,
+            })
+        })
+        .collect()
+}
+
+fn tenant_role_wire(role: TenantRole) -> &'static str {
+    match role {
+        TenantRole::Owner => "owner",
+        TenantRole::Admin => "admin",
+        TenantRole::Normal => "normal",
+        TenantRole::Invite => "invite",
+    }
+}
+
+/// GET `/api/v1/tenants/{tenant_id}/users` — the team's member rows joined
+/// with the user registry (upstream `tenant_api.user_list`).
+pub async fn list_tenant_users(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+) -> Response {
+    if !can_manage_tenant(&state, &auth, &tenant_id) {
+        return forbidden_tenant();
+    }
+    Json(serde_json::json!({ "code": 0, "data": tenant_user_rows(&state, &tenant_id) }))
+        .into_response()
+}
+
+/// POST `/api/v1/tenants/{tenant_id}/users` — invite a registered user with
+/// the upstream role-conflict error messages.
+pub async fn add_tenant_user(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if !can_manage_tenant(&state, &auth, &tenant_id) {
+        return forbidden_tenant();
+    }
+    let email = body
+        .get("email")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let Some(user) = state.users.get_user(&email) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 102, "message": "User not found." })),
+        )
+            .into_response();
+    };
+    if let Some(existing) = state.tenants.role(&tenant_id, &user.id) {
+        return match existing {
+            TenantRole::Owner => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": 102,
+                    "message": format!("{email} is the owner of the team.")
+                })),
+            )
+                .into_response(),
+            TenantRole::Normal | TenantRole::Admin => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": 102,
+                    "message": format!("{email} is already in the team.")
+                })),
+            )
+                .into_response(),
+            TenantRole::Invite => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": 102,
+                    "message": format!("{email} is already in the team.")
+                })),
+            )
+                .into_response(),
+        };
+    }
+    match state
+        .tenants
+        .invite_member(&tenant_id, &user.id, &auth.user_id)
+    {
+        Ok(_) => Json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "id": user.id,
+                "avatar": "",
+                "email": user.email,
+                "nickname": user.nickname,
+            }
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "code": 409, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveTenantUserRequest {
+    pub user_id: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateMeRequest {
+    #[serde(default)]
+    pub nickname: Option<String>,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub new_password: Option<String>,
+}
+
+/// Upstream `validate_nickname`: 1-100 characters of letters, digits and the
+/// fixed punctuation set.
+fn validate_nickname(nickname: &str) -> anyhow::Result<String> {
+    let trimmed = nickname.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("Nickname cannot be empty.");
+    }
+    if trimmed.chars().count() > 100 {
+        anyhow::bail!("Nickname must be at most 100 characters.");
+    }
+    if !trimmed.chars().all(|character| {
+        character.is_alphanumeric() || matches!(character, ' ' | '.' | '_' | '\'' | '-')
+    }) {
+        anyhow::bail!("Nickname contains invalid characters.");
+    }
+    Ok(trimmed.to_string())
+}
+
+/// PATCH `/api/v1/users/me` — profile fields plus the optional current/new
+/// password pair; a successful password change invalidates all user tokens.
+pub async fn update_me(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<UpdateMeRequest>,
+) -> Response {
+    if body.password.is_some() || body.new_password.is_some() {
+        let current = body.password.as_deref().unwrap_or("");
+        let new_password = body.new_password.as_deref().unwrap_or("");
+        match state
+            .users
+            .change_password(&auth.user_id, current, new_password)
+        {
+            Ok(()) => state.users.logout_user_tokens(&auth.user_id),
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "code": 102, "message": "Password error!" })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    let nickname = match body.nickname.as_deref().map(validate_nickname).transpose() {
+        Ok(nickname) => nickname,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "code": 102, "message": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    match state
+        .users
+        .update_profile(&auth.user_id, nickname, body.avatar, body.timezone)
+    {
+        Ok(()) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 102, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE `/api/v1/tenants/{tenant_id}/users` — the owner removes a member,
+/// or a member removes themselves (upstream allows both).
+pub async fn remove_tenant_user(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+    Json(body): Json<RemoveTenantUserRequest>,
+) -> Response {
+    if !can_manage_tenant(&state, &auth, &tenant_id) && auth.user_id != body.user_id {
+        return forbidden_tenant();
+    }
+    if tenant_id == body.user_id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 102, "message": "The owner cannot be removed." })),
+        )
+            .into_response();
+    }
+    match state.tenants.remove_member(&tenant_id, &body.user_id) {
+        Ok(_) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 102, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// PATCH `/api/v1/tenants/{tenant_id}` — accept an invitation (INVITE →
+/// NORMAL), mirroring upstream `tenant_api.agree`.
+pub async fn agree_tenant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+) -> Response {
+    match state.tenants.accept_invitation(&tenant_id, &auth.user_id) {
+        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Pending invitation not found" })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 102, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// PATCH /api/v1/tenant/invitations/{tenant_id}/accept — accept an invitation.
@@ -533,6 +809,7 @@ pub fn plan_llm_models(
                 "image2text" => ModelCapability::ImageToText,
                 "speech2text" => ModelCapability::SpeechToText,
                 "tts" => ModelCapability::TextToSpeech,
+                "ocr" => ModelCapability::Ocr,
                 _ => continue,
             };
             models.push(ModelConfig {
@@ -574,38 +851,6 @@ pub async fn list_models(
     let instances = state.tenant_models.list_configured(tenant_id);
     let models = plan_llm_models(&providers, &instances, &[]);
     Json(serde_json::json!({"code":0,"data":models})).into_response()
-}
-
-// ── Langfuse Observability ─────────────────────────────────────
-
-#[derive(Serialize, Deserialize)]
-pub struct LangfuseConfig {
-    pub enabled: bool,
-    pub host: String,
-    pub public_key: String,
-}
-
-/// GET /api/v1/langfuse — get langfuse config
-pub async fn get_langfuse() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "code": 0,
-        "data": LangfuseConfig {
-            enabled: false,
-            host: "https://cloud.langfuse.com".into(),
-            public_key: "".into(),
-        }
-    }))
-}
-
-/// POST /api/v1/langfuse — update langfuse config
-pub async fn update_langfuse(
-    Extension(auth): Extension<AuthContext>,
-    Json(body): Json<LangfuseConfig>,
-) -> Response {
-    if let Some(response) = require_admin(&auth) {
-        return response;
-    }
-    Json(serde_json::json!({"code":0,"message":"Updated","data":body})).into_response()
 }
 
 // ── LLM App Management ─────────────────────────────────────────
@@ -799,6 +1044,7 @@ pub async fn file2document(Json(body): Json<serde_json::Value>) -> impl IntoResp
 mod tests {
     use super::parse_related_questions;
     use super::plan_llm_models;
+    use super::validate_nickname;
     use crate::api::tenant_models::ModelCapability;
 
     fn provider(id: &str, name: &str) -> crate::api::features::Provider {
@@ -810,6 +1056,15 @@ mod tests {
             enabled: true,
             api_key: None,
         }
+    }
+
+    #[test]
+    fn nickname_validation_matches_the_fixed_contract() {
+        assert_eq!(validate_nickname("  Ray Rag 2.0 ").unwrap(), "Ray Rag 2.0");
+        assert_eq!(validate_nickname("O'Brien-2").unwrap(), "O'Brien-2");
+        assert!(validate_nickname("").is_err());
+        assert!(validate_nickname(&"x".repeat(101)).is_err());
+        assert!(validate_nickname("bad/name!").is_err());
     }
 
     fn instance(
@@ -826,6 +1081,7 @@ mod tests {
             instance_name: instance_name.into(),
             api_base: "http://127.0.0.1:8080/v1".into(),
             api_key: None,
+            region: None,
             models,
         }
     }
@@ -840,6 +1096,8 @@ mod tests {
             model_types: types.to_vec(),
             max_tokens: Some(8192),
             enabled,
+            is_tools: false,
+            ocr_config: None,
         }
     }
 
@@ -912,14 +1170,14 @@ mod tests {
             vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
         )];
         let models = plan_llm_models(&providers, &instances, &[]);
-        // The ocr-tagged factory rows surface their image2text side; an
-        // ocr-only capability has no ModelConfig representation.
-        assert!(
-            models.iter().any(|model| {
-                model.name == "qwen-vl-ocr-2025-11-20" && model.model_type == ModelCapability::ImageToText
-            })
-        );
-        // Every emitted entry carries a representable capability.
+        // The ocr-tagged factory rows surface their image2text side, while
+        // ocr-only capabilities now have an explicit ModelConfig type.
+        assert!(models.iter().any(|model| {
+            model.name == "qwen-vl-ocr-2025-11-20"
+                && model.model_type == ModelCapability::ImageToText
+        }));
+        // Every emitted entry carries a representable capability, including
+        // the explicit OCR type surfaced by the fixed factory catalog.
         for model in &models {
             assert!(matches!(
                 model.model_type,
@@ -929,6 +1187,7 @@ mod tests {
                     | ModelCapability::ImageToText
                     | ModelCapability::SpeechToText
                     | ModelCapability::TextToSpeech
+                    | ModelCapability::Ocr
             ));
         }
     }

@@ -79,7 +79,7 @@ pub fn asr_from_env() -> Result<Option<AsrClient>> {
 impl AsrClient {
     pub fn new(config: AudioConfig) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(300))
+            .timeout(crate::common::cmd_timeout::duration())
             .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("reqwest client build");
@@ -157,7 +157,7 @@ impl TtsClient {
 
     pub fn with_voice(config: AudioConfig, default_voice: impl Into<String>) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(crate::common::cmd_timeout::duration())
             .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("reqwest client build");

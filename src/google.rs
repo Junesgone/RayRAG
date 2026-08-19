@@ -72,7 +72,7 @@ impl GoogleClient {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(RedirectPolicy::none())
-            .timeout(Duration::from_secs(600))
+            .timeout(crate::common::cmd_timeout::duration())
             .build()
             .context("could not build Google HTTP client")?;
         Ok(Self {

@@ -102,7 +102,7 @@ impl Default for SandboxClient {
                         .and_then(json_u64)
                 })
             })
-            .unwrap_or(30);
+            .unwrap_or(crate::common::cmd_timeout::seconds());
         Self::with_timeout(&url, timeout)
     }
 }
@@ -112,7 +112,7 @@ impl SandboxClient {
         let timeout_secs = std::env::var("RAYRAG_SANDBOX_TIMEOUT")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
-            .unwrap_or(30);
+            .unwrap_or(crate::common::cmd_timeout::seconds());
         Self::with_timeout(base_url, timeout_secs)
     }
 
@@ -120,7 +120,7 @@ impl SandboxClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10 * 60))
+                .timeout(crate::common::cmd_timeout::duration())
                 .build()
                 .expect("sandbox http client"),
             timeout: Duration::from_secs(timeout_secs),

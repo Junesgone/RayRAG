@@ -2737,10 +2737,7 @@ impl MemoryMessageService {
             return Err(ApiError::admin("Failed to create message index."));
         }
 
-        let new_msg_size: usize = new_messages
-            .iter()
-            .map(MemoryMessage::calculate_size)
-            .sum();
+        let new_msg_size: usize = new_messages.iter().map(MemoryMessage::calculate_size).sum();
         let current_memory_size = size_cache.get(self, memory_id, uid) as usize;
         if new_msg_size + current_memory_size > memory_size {
             if forgetting_policy != "FIFO" {
@@ -2834,7 +2831,12 @@ impl MemorySizeCache {
     /// is unused by the in-process recomputation.
     pub fn get(&self, store: &MemoryMessageService, memory_id: &str, _uid: &str) -> i64 {
         let key = Self::key(memory_id);
-        if let Some(size) = self.entries.read().expect("size cache lock poisoned").get(&key) {
+        if let Some(size) = self
+            .entries
+            .read()
+            .expect("size cache lock poisoned")
+            .get(&key)
+        {
             return *size;
         }
         let size = store.calculate_memory_size(memory_id) as i64;
@@ -2865,11 +2867,7 @@ impl MemorySizeCache {
 
     /// `init_memory_size_cache`: warm the cache for every existing memory by
     /// forcing a get (recompute-on-miss). Returns the number warmed.
-    pub fn init(
-        &self,
-        store: &MemoryMessageService,
-        memories: &[(String, String)],
-    ) -> usize {
+    pub fn init(&self, store: &MemoryMessageService, memories: &[(String, String)]) -> usize {
         for (memory_id, tenant_id) in memories {
             self.get(store, memory_id, tenant_id);
         }
@@ -2932,9 +2930,12 @@ impl MessageIndexLifecycle {
         let index_name = message_index_name(uid);
         let response = self.store.search(&crate::doc_store::SearchQuery {
             select_fields: vec!["message_id".into(), "content".into()],
-            condition: [("memory_id".to_string(), Value::String(memory_id.to_string()))]
-                .into_iter()
-                .collect(),
+            condition: [(
+                "memory_id".to_string(),
+                Value::String(memory_id.to_string()),
+            )]
+            .into_iter()
+            .collect(),
             index_names: vec![index_name.clone()],
             dataset_ids: vec![memory_id.to_string()],
             ..Default::default()
@@ -2957,7 +2958,10 @@ impl MessageIndexLifecycle {
                 continue;
             };
             let condition: crate::doc_store::FilterCondition = [
-                ("memory_id".to_string(), Value::String(memory_id.to_string())),
+                (
+                    "memory_id".to_string(),
+                    Value::String(memory_id.to_string()),
+                ),
                 ("message_id".to_string(), message_id.clone()),
             ]
             .into_iter()
@@ -3747,9 +3751,11 @@ mod memory_index_cache_tests {
         // Index names are per-tenant: another uid does not see it.
         assert!(!lifecycle.has_index("tenant-2", "memory-1").unwrap());
         // The `memory_{uid}` name was applied to the native resource.
-        assert!(store
-            .index_exist(&message_index_name("tenant-1"), "memory-1")
-            .unwrap());
+        assert!(
+            store
+                .index_exist(&message_index_name("tenant-1"), "memory-1")
+                .unwrap()
+        );
         lifecycle.delete_index("tenant-1", "memory-1").unwrap();
         assert!(!lifecycle.has_index("tenant-1", "memory-1").unwrap());
     }
@@ -3757,8 +3763,14 @@ mod memory_index_cache_tests {
     #[test]
     fn prefix_application_matches_upstream_index_name_contract() {
         // Pure form: trimmed prefix yields `memory_{prefix}_{uid}`.
-        assert_eq!(message_index_name_with_prefix("u1", "rayrag"), "memory_rayrag_u1");
-        assert_eq!(message_index_name_with_prefix("u1", "  rayrag  "), "memory_rayrag_u1");
+        assert_eq!(
+            message_index_name_with_prefix("u1", "rayrag"),
+            "memory_rayrag_u1"
+        );
+        assert_eq!(
+            message_index_name_with_prefix("u1", "  rayrag  "),
+            "memory_rayrag_u1"
+        );
         assert_eq!(message_index_name_with_prefix("u1", ""), "memory_u1");
         assert_eq!(message_index_name_with_prefix("u 1", "p"), "memory_p_u 1");
     }
@@ -3773,7 +3785,10 @@ mod memory_index_cache_tests {
         complete.insert("memory_id".into(), Value::String("memory-1".into()));
         complete.insert("message_id".into(), Value::from(3i64));
         complete.insert("content".into(), Value::String("already tokenized".into()));
-        complete.insert("tokenized_content_ltks".into(), Value::String("tokens".into()));
+        complete.insert(
+            "tokenized_content_ltks".into(),
+            Value::String("tokens".into()),
+        );
         let mut missing = Map::new();
         missing.insert("id".into(), Value::String("memory-1_1".into()));
         missing.insert("memory_id".into(), Value::String("memory-1".into()));
@@ -3784,7 +3799,10 @@ mod memory_index_cache_tests {
         empty.insert("memory_id".into(), Value::String("memory-1".into()));
         empty.insert("message_id".into(), Value::from(2i64));
         empty.insert("content".into(), Value::String("second".into()));
-        empty.insert("tokenized_content_ltks".into(), Value::String(String::new()));
+        empty.insert(
+            "tokenized_content_ltks".into(),
+            Value::String(String::new()),
+        );
         store
             .insert(
                 &[complete.clone(), missing, empty],
@@ -3799,10 +3817,17 @@ mod memory_index_cache_tests {
         assert_eq!(repaired, 2);
         // The complete row is untouched (content unchanged, field intact).
         let after = store
-            .get("memory-1_3", &message_index_name("tenant-1"), &["memory-1".into()])
+            .get(
+                "memory-1_3",
+                &message_index_name("tenant-1"),
+                &["memory-1".into()],
+            )
             .unwrap()
             .unwrap();
-        assert_eq!(after.get("tokenized_content_ltks"), Some(&Value::String("tokens".into())));
+        assert_eq!(
+            after.get("tokenized_content_ltks"),
+            Some(&Value::String("tokens".into()))
+        );
     }
 
     #[test]
@@ -3827,11 +3852,22 @@ mod memory_index_cache_tests {
     #[test]
     fn size_cache_recomputes_on_miss_and_tracks_increase_decrease() {
         let store = MemoryMessageService::in_memory();
-        store.insert_messages(vec![message(1, "m1", "hello")]).unwrap();
+        store
+            .insert_messages(vec![message(1, "m1", "hello")])
+            .unwrap();
         let cache = MemorySizeCache::new();
-        assert_eq!(cache.get(&store, "m1", "tenant-1"), message(1, "m1", "hello").calculate_size() as i64);
-        assert_eq!(cache.increase("m1", 100), message(1, "m1", "hello").calculate_size() as i64 + 100);
-        assert_eq!(cache.decrease("m1", 30), message(1, "m1", "hello").calculate_size() as i64 + 70);
+        assert_eq!(
+            cache.get(&store, "m1", "tenant-1"),
+            message(1, "m1", "hello").calculate_size() as i64
+        );
+        assert_eq!(
+            cache.increase("m1", 100),
+            message(1, "m1", "hello").calculate_size() as i64 + 100
+        );
+        assert_eq!(
+            cache.decrease("m1", 30),
+            message(1, "m1", "hello").calculate_size() as i64 + 70
+        );
         cache.set("m2", 500);
         assert_eq!(cache.get(&store, "m2", "tenant-1"), 500);
         // Cache keys are per memory id, never per tenant.
@@ -3842,7 +3878,9 @@ mod memory_index_cache_tests {
     #[test]
     fn init_size_cache_warms_every_memory() {
         let store = MemoryMessageService::in_memory();
-        store.insert_messages(vec![message(1, "m1", "hello")]).unwrap();
+        store
+            .insert_messages(vec![message(1, "m1", "hello")])
+            .unwrap();
         let cache = MemorySizeCache::new();
         let warmed = cache.init(
             &store,
@@ -3866,7 +3904,16 @@ mod memory_index_cache_tests {
         let first = message(1, "m1", "oldest");
         let second = message(2, "m1", "middle");
         let two_row_size = first.calculate_size() + second.calculate_size();
-        store.save_messages_with_index_and_cache("tenant-1", "m1", "FIFO", budget, vec![first, second], &cache).unwrap();
+        store
+            .save_messages_with_index_and_cache(
+                "tenant-1",
+                "m1",
+                "FIFO",
+                budget,
+                vec![first, second],
+                &cache,
+            )
+            .unwrap();
         assert!(store.has_index("tenant-1", "m1"));
         let cached = cache.get(&store, "m1", "tenant-1");
         assert_eq!(cached, two_row_size as i64);
@@ -3884,7 +3931,10 @@ mod memory_index_cache_tests {
                 &cache,
             )
             .unwrap();
-        assert_eq!(store.calculate_memory_size("m1"), cache.get(&store, "m1", "tenant-1") as usize);
+        assert_eq!(
+            store.calculate_memory_size("m1"),
+            cache.get(&store, "m1", "tenant-1") as usize
+        );
         assert!(store.calculate_memory_size("m1") <= budget);
         assert!(store.get_by_message_id("m1", 3).is_some());
     }
@@ -3914,7 +3964,9 @@ mod memory_index_cache_tests {
     #[test]
     fn legacy_rows_without_index_bookkeeping_still_count_as_indexed() {
         let store = MemoryMessageService::in_memory();
-        store.insert_messages(vec![message(1, "m1", "legacy")]).unwrap();
+        store
+            .insert_messages(vec![message(1, "m1", "legacy")])
+            .unwrap();
         // No create_index call — rows alone must satisfy the has_index gate so
         // delete flows reach restored snapshots.
         assert!(store.has_index("tenant-1", "m1"));

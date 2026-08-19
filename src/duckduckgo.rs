@@ -82,7 +82,7 @@ impl DuckDuckGoClient {
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(RedirectPolicy::none())
-                .timeout(Duration::from_secs(10))
+                .timeout(crate::common::cmd_timeout::duration())
                 .user_agent(DUCKDUCKGO_USER_AGENT)
                 .build()
                 .context("could not build DuckDuckGo HTTP client")?,

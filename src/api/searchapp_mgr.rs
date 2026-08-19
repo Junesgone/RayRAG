@@ -90,10 +90,7 @@ impl SearchAppStore {
 
     /// Insert or replace a record (used by the partial-update handler).
     pub fn upsert(&self, record: SearchAppRecord) -> Result<()> {
-        self.apps
-            .write()
-            .unwrap()
-            .insert(record.id.clone(), record);
+        self.apps.write().unwrap().insert(record.id.clone(), record);
         self.persist()
     }
 
@@ -212,40 +209,69 @@ pub async fn update_search_app(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<UpdateSearchAppRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    let store = state
-        .search_apps
-        .as_ref()
-        .ok_or_else(|| (axum::http::StatusCode::NOT_IMPLEMENTED, "search apps disabled".into()))?;
-    let app = store
-        .get(&id)
-        .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "search app not found".into()))?;
+    let store = state.search_apps.as_ref().ok_or_else(|| {
+        (
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            "search apps disabled".into(),
+        )
+    })?;
+    let app = store.get(&id).ok_or_else(|| {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            "search app not found".into(),
+        )
+    })?;
     let mut next = app.clone();
     let mut changed = false;
     if let Some(name) = body.name {
         let name = name.trim().to_string();
         if name.is_empty() {
-            return Err((axum::http::StatusCode::BAD_REQUEST, "name is required".into()));
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "name is required".into(),
+            ));
         }
-        if name != next.name { next.name = name; changed = true; }
+        if name != next.name {
+            next.name = name;
+            changed = true;
+        }
     }
     if let Some(description) = body.description {
-        if description != next.description { next.description = description; changed = true; }
+        if description != next.description {
+            next.description = description;
+            changed = true;
+        }
     }
     if let Some(icon) = body.icon {
         let icon = icon.trim().to_string();
-        if icon != next.icon { next.icon = icon; changed = true; }
+        if icon != next.icon {
+            next.icon = icon;
+            changed = true;
+        }
     }
     if let Some(kb_ids) = body.kb_ids {
-        if kb_ids != next.kb_ids { next.kb_ids = kb_ids; changed = true; }
+        if kb_ids != next.kb_ids {
+            next.kb_ids = kb_ids;
+            changed = true;
+        }
     }
     if let Some(hybrid) = body.hybrid {
-        if hybrid != next.hybrid { next.hybrid = hybrid; changed = true; }
+        if hybrid != next.hybrid {
+            next.hybrid = hybrid;
+            changed = true;
+        }
     }
     if let Some(rerank) = body.rerank {
-        if rerank != next.rerank { next.rerank = rerank; changed = true; }
+        if rerank != next.rerank {
+            next.rerank = rerank;
+            changed = true;
+        }
     }
     if let Some(top_k) = body.top_k {
-        if top_k != next.top_k { next.top_k = top_k; changed = true; }
+        if top_k != next.top_k {
+            next.top_k = top_k;
+            changed = true;
+        }
     }
     if changed {
         store
@@ -275,7 +301,6 @@ pub async fn delete_search_app(
         _ => json(serde_json::json!({"code": 404, "message": "Not found"})),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

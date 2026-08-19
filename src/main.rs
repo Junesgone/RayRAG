@@ -182,6 +182,8 @@ fn display_results(results: &[rayrag::search::SearchResult]) {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let log_levels = rayrag::logging::init();
+    // 统一命令超时输入：用户 env 环境文件（RAYRAG_CMD_TIMEOUT，默认 7200 秒/2 小时）
+    rayrag::common::cmd_timeout::load_user_env_file();
     let cli = Cli::parse();
 
     match cli.command {

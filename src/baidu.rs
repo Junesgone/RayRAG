@@ -55,7 +55,7 @@ impl BaiduClient {
             // follow a bounded number of redirects while keeping the timeout.
             .redirect(RedirectPolicy::limited(3))
             .cookie_store(true)
-            .timeout(Duration::from_secs(15))
+            .timeout(crate::common::cmd_timeout::duration())
             .user_agent(BAIDU_USER_AGENT)
             .build()
             .context("could not build Baidu HTTP client")?;

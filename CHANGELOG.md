@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.4d] — 2026-08-19（未发版累积批次 v0.3.3ba–v0.3.4c）
+
+### Added
+
+- **聊天应用公共分享页**：`/chats/share?shared_id=&from=`（免登录，纯 Rust SSR），
+  `GET /api/v1/chatbots/{id}/info` + `POST .../completions` 免登录 SSE 端点，
+  对齐 RAGFlow share/widget 页；embed-dialog 式 `auth/release` 参数。
+- **统一命令超时输入**：`RAYRAG_CMD_TIMEOUT`（用户 env 环境文件，默认 7200s）钳制全部外呼客户端与沙箱超时。
+- **Data source 详情页**逐源动态字段集、Add 弹层 schema 驱动创建、列表页 35 卡分组 + Sync Logs 表
+  （1:1 RagFlow 列/徽章/分页），MCP 编辑对话框与卡片操作，Provider 模态框 API 面补齐（provider_api_service.py 对齐）。
+- Google Drive/Gmail web-OAuth token 字段 + start/callback/result 端点；Box web-OAuth 同套流程。
+- ChatChannelKey 23 渠道目录全量移植；reasoning/thinking toggle 端到端；chat settings drawer（rerank/reasoning/refmeta）。
+- meta_data_filter 表单（DatasetMetadata 4-method）+ AirTable/Box/RSS 等连接器去 Local stand-in。
+
+### Fixed
+
+- RAGFlow 前端产物边界清理（web/static/vs 等非必要静态文件移除，873 files → 精简）；
+  CDP 交互遍历基准 35 路由固化。
+
 ## [0.3.3] — 2026-08-06
 
 ### Added

@@ -48,7 +48,7 @@ impl CrawlerClient {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(60))
+                .timeout(crate::common::cmd_timeout::duration())
                 .user_agent("Mozilla/5.0 (compatible; RayRAG-Crawler/1.0)")
                 .redirect(reqwest::redirect::Policy::limited(5))
                 .build()
@@ -66,7 +66,7 @@ impl CrawlerClient {
         let raw = match &request.proxy {
             Some(proxy) if !proxy.trim().is_empty() => {
                 let client = Client::builder()
-                    .timeout(Duration::from_secs(60))
+                    .timeout(crate::common::cmd_timeout::duration())
                     .proxy(reqwest::Proxy::all(proxy)?)
                     .build()?;
                 client.get(url).send().await?.error_for_status()?

@@ -71,6 +71,9 @@ pub struct AppState {
     pub memory_messages: Arc<crate::api::joint_services::MemoryMessageService>,
     pub skill_index: Arc<crate::api::skill_index::SkillIndexStore>,
     pub system_settings: Arc<crate::api::system_settings::SystemSettingsStore>,
+    pub langfuse: Arc<crate::api::langfuse::LangfuseStore>,
+    pub mcp_servers: Arc<crate::api::mcp_mgr::McpServerStore>,
+    pub chat_channels: Arc<crate::api::chat_channel_mgr::ChatChannelStore>,
     pub tasks: Arc<crate::api::features::TaskQueue>,
     /// Async document task executor (RAGFlow `task_executor.py` port): the
     /// queue + worker pool that runs document processing off the request path.
@@ -472,14 +475,12 @@ pub(crate) fn kb_vision_for(
         .kbs
         .get(first_kb_id)
         .ok_or_else(|| anyhow::anyhow!("Knowledge base not found: {first_kb_id}"))?;
-    let Some(model) = state
-        .tenant_models
-        .resolve(
-            &state.providers,
-            &kb.owner_id,
-            crate::api::tenant_models::ModelCapability::ImageToText,
-            None,
-        )?
+    let Some(model) = state.tenant_models.resolve(
+        &state.providers,
+        &kb.owner_id,
+        crate::api::tenant_models::ModelCapability::ImageToText,
+        None,
+    )?
     else {
         return Ok(None);
     };
@@ -743,7 +744,9 @@ async fn update_dataset(
     } else {
         Some(serde_json::Value::Object(config).to_string())
     };
-    let requested_prompt_config = body.get("prompt_config").and_then(|value| value.as_object());
+    let requested_prompt_config = body
+        .get("prompt_config")
+        .and_then(|value| value.as_object());
     if name.is_none()
         && description.is_none()
         && permission.is_none()
@@ -786,7 +789,10 @@ async fn update_dataset(
     }
     // RAGFlow prompt_config: merge the incoming JSON object over the stored one
     // (object-level merge keeps other chat settings intact).
-    let prompt_config = body.get("prompt_config").and_then(|value| value.as_object()).cloned();
+    let prompt_config = body
+        .get("prompt_config")
+        .and_then(|value| value.as_object())
+        .cloned();
     let merged_prompt_config = prompt_config.map(|incoming| {
         let current = state
             .kbs
@@ -1460,8 +1466,8 @@ async fn process_document(
                 tracing::warn!(%error, "Vision model resolution failed; image parsing continues without vision");
                 None
             });
-        let mut pipeline_builder = crate::pipeline::Pipeline::new(config)
-            .with_shared_embedder(embedder);
+        let mut pipeline_builder =
+            crate::pipeline::Pipeline::new(config).with_shared_embedder(embedder);
         if let Some(vision) = vision {
             pipeline_builder = pipeline_builder.with_vision_client(vision);
         }
@@ -2132,10 +2138,7 @@ fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::
                     "failed",
                     "Skill generation requires the refactored task executor (TE_RUN_MODE=0).",
                 ),
-                "raptor" | "graphrag" => (
-                    "done",
-                    "already built inline during document parsing",
-                ),
+                "raptor" | "graphrag" => ("done", "already built inline during document parsing"),
                 _ => ("failed", "Unsupported persisted task type"),
             };
             let message = if matches!(task.task_type.as_str(), "raptor" | "graphrag") {
@@ -2840,19 +2843,20 @@ async fn chat_completion(
         .and_then(|v| v.as_u64())
         .unwrap_or(4)
         .clamp(1, 20) as usize;
-    let mut hits = state
-        .engine
-        .read()
-        .unwrap()
-        .hybrid_search_kbs(crate::search::HybridSearchQuery {
-            query: q,
-            query_embedding: None,
-            kb_ids: &kb_ids,
-            top_k,
-            vector_weight: 0.5,
-            doc_ids: None,
-            rank_feature: None,
-        });
+    let mut hits =
+        state
+            .engine
+            .read()
+            .unwrap()
+            .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                query: q,
+                query_embedding: None,
+                kb_ids: &kb_ids,
+                top_k,
+                vector_weight: 0.5,
+                doc_ids: None,
+                rank_feature: None,
+            });
     // RAGFlow dialog_service: when a KB's prompt_config declares
     // cross_languages, translate the question and merge extra-language hits
     // (deduped by chunk id). Degrades to the original-language hits when no
@@ -2861,7 +2865,11 @@ async fn chat_completion(
         let mut langs = Vec::new();
         for kb_id in &kb_ids {
             if let Some(kb) = state.kbs.get(kb_id) {
-                if let Some(list) = kb.prompt_config.get("cross_languages").and_then(|v| v.as_array()) {
+                if let Some(list) = kb
+                    .prompt_config
+                    .get("cross_languages")
+                    .and_then(|v| v.as_array())
+                {
                     for item in list.iter().filter_map(|v| v.as_str()) {
                         if !item.trim().is_empty() && !langs.contains(&item.trim().to_string()) {
                             langs.push(item.trim().to_string());
@@ -2901,11 +2909,8 @@ async fn chat_completion(
                 .map(str::trim)
                 .filter(|text| !text.is_empty() && *text != q)
             {
-                let extra = state
-                    .engine
-                    .read()
-                    .unwrap()
-                    .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                let extra = state.engine.read().unwrap().hybrid_search_kbs(
+                    crate::search::HybridSearchQuery {
                         query: translation,
                         query_embedding: None,
                         kb_ids: &kb_ids,
@@ -2913,7 +2918,8 @@ async fn chat_completion(
                         vector_weight: 0.5,
                         doc_ids: None,
                         rank_feature: None,
-                    });
+                    },
+                );
                 for hit in extra {
                     if seen.insert(hit.chunk.id.clone()) {
                         hits.push(hit);
@@ -2968,9 +2974,13 @@ fn public_api_path(path: &str) -> bool {
             | "/api/v1/version"
             // Chat channel inbound endpoints: platform webhook callbacks must
             // not need the RayRAG API token (RAGFlow channels are unauthenticated).
-            | "/api/v1/channels/webhook/{account_id}/inbound"
-            | "/api/v1/channels/feishu/{account_id}/event"
-    )
+            | "/api/v1/channels/{account_id}/webhook/inbound"
+            | "/api/v1/channels/{account_id}/feishu/event"
+    ) || {
+        // 公共分享端点（免登录）：动态 {chat_id} 无法用字面量匹配，
+        // 对齐 RAGFlow 分享页使用的 chatbots 端点（info / completions）。
+        path.starts_with("/api/v1/chatbots/")
+    }
 }
 
 async fn require_api_auth(
@@ -3099,13 +3109,9 @@ async fn component_catalog(Query(query): Query<ComponentCatalogQuery>) -> Respon
 
 async fn user_info(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    match token.and_then(|token| state.users.get_user_by_token(token)) {
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    match state.users.get_user_by_id(&auth.user_id) {
         Some(user) => Json(ApiResponse {
             code: 0,
             message: "ok".into(),
@@ -3113,15 +3119,22 @@ async fn user_info(
                 "id": user.id,
                 "nickname": user.nickname,
                 "email": user.email,
+                "avatar": user.avatar,
+                "timezone": user.timezone,
                 "role": user.role,
                 "created_at": user.created_at,
             })),
-        }),
-        None => Json(ApiResponse {
-            code: 401,
-            message: "Unauthorized".into(),
-            data: None,
-        }),
+        })
+        .into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse {
+                code: 401,
+                message: "Unauthorized".into(),
+                data: None,
+            }),
+        )
+            .into_response(),
     }
 }
 
@@ -3156,10 +3169,43 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/dashboard", get(crate::web::dashboard))
         .route("/kbs", get(crate::web::kbs_page))
         .route("/kbs/{id}", get(crate::web::kb_detail_page))
+        .route("/datasets", get(crate::web::datasets_alias))
         .route("/dataset/{tab}/{id}", get(crate::web::kb_detail_alias))
         .route("/search", get(crate::web::search_page))
         .route("/providers", get(crate::web::providers_page))
+        .route("/user-setting", get(crate::web::user_setting_index))
+        .route(
+            "/user-setting/data-source",
+            get(crate::web::datasources_page),
+        )
+        .route(
+            "/user-setting/data-source/{id}",
+            get(crate::web::data_source_detail_page),
+        )
+        .route(
+            "/user-setting/chat-channel",
+            get(crate::web::user_setting_chat_channel_page),
+        )
+        .route("/user-setting/model", get(crate::web::providers_page))
+        .route("/user-setting/mcp", get(crate::web::user_setting_mcp_page))
+        .route(
+            "/user-setting/team",
+            get(crate::web::user_setting_team_page),
+        )
+        .route(
+            "/user-setting/profile",
+            get(crate::web::user_setting_profile_page),
+        )
+        .route("/user-setting/api", get(crate::web::user_setting_api_page))
         .route("/skills", get(crate::web::skills_page))
+        // RAGFlow 0.26.4 route-graph parity: aliases that map to the same SSR pages.
+        .route("/home", get(crate::web::dashboard))
+        .route("/profile-setting", get(crate::web::user_setting_index))
+        .route("/files/skills", get(crate::web::skills_page))
+        .route("/explore", get(crate::web::agents_page))
+        .route("/agent-templates", get(crate::web::agents_page))
+        .route("/agent-list", get(crate::web::agents_page))
+        .route("/logout", get(crate::web::logout_page))
         .route(
             "/documents/{kb_id}/{doc_id}",
             get(crate::web::document_page),
@@ -3170,6 +3216,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/chat", get(crate::web::chat_page))
         // RAGFlow 0.26.4 route parity: /chats (chat apps) and /searches (search apps).
         .route("/chats", get(crate::web::chat_apps_page))
+        .route("/chats/share", get(crate::web::chat_share_page))
         .route("/chats/{id}", get(crate::web::chat_app_detail_page))
         .route("/searches", get(crate::web::search_apps_page))
         .route("/searches/{id}", get(crate::web::search_app_detail_page))
@@ -3425,6 +3472,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/files", get(crate::api::file_mgr::list_files))
         .route(
+            "/api/v1/files/folder",
+            axum::routing::post(crate::api::file_mgr::create_folder),
+        )
+        .route(
             "/api/v1/files/{file_id}",
             axum::routing::delete(crate::api::file_mgr::delete_file).patch(rename_file),
         )
@@ -3449,12 +3500,59 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::api::chatapp_mgr::delete_chat_app),
         )
         .route(
+        "/api/v1/chatbots/{chat_id}/info",
+        axum::routing::get(crate::api::chatapp_mgr::chatbot_info),
+    )
+        .route(
+            "/api/v1/chatbots/{session_id}/completions",
+            axum::routing::post(crate::api::chatapp_mgr::chatbot_completions),
+        )
+        .route(
             "/api/v1/data_sources/{id}",
-            axum::routing::delete(crate::api::data_source_mgr::delete_data_source),
+            axum::routing::get(crate::api::data_source_mgr::get_data_source)
+                .put(crate::api::data_source_mgr::update_data_source)
+                .patch(crate::api::data_source_mgr::update_data_source)
+                .delete(crate::api::data_source_mgr::delete_data_source),
+        )
+        .route(
+            "/api/v1/data_sources/{id}/logs",
+            axum::routing::get(crate::api::data_source_mgr::get_data_source_logs),
         )
         .route(
             "/api/v1/data_sources/{id}/connect",
             post(crate::api::data_source_mgr::connect_data_source),
+        )
+        .route(
+            "/api/v1/data_sources/{id}/test",
+            post(crate::api::data_source_mgr::connect_data_source),
+        )
+        .route(
+            "/api/v1/connectors/box/oauth/web/start",
+            post(crate::api::oauth_web::box_oauth_start),
+        )
+        .route(
+            "/api/v1/connectors/box/oauth/web/callback",
+            get(crate::api::oauth_web::box_oauth_callback),
+        )
+        .route(
+            "/api/v1/connectors/box/oauth/web/result",
+            post(crate::api::oauth_web::box_oauth_result),
+        )
+        .route(
+            "/api/v1/connectors/google/oauth/web/start",
+            post(crate::api::oauth_web::google_oauth_start),
+        )
+        .route(
+            "/api/v1/connectors/google/oauth/web/result",
+            post(crate::api::oauth_web::google_oauth_result),
+        )
+        .route(
+            "/api/v1/connectors/gmail/oauth/web/callback",
+            get(crate::api::oauth_web::gmail_oauth_callback),
+        )
+        .route(
+            "/api/v1/connectors/google-drive/oauth/web/callback",
+            get(crate::api::oauth_web::google_drive_oauth_callback),
         )
         .route(
             "/api/v1/data_sources/{id}/disconnect",
@@ -3514,7 +3612,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/rerank", post(crate::api::openai_proxy::rerank))
         .route(
             "/api/v1/providers",
-            get(crate::api::features::list_providers),
+            get(crate::api::features::list_providers)
+                .put(crate::api::tenant_models::add_ragflow_provider),
+        )
+        .route(
+            "/api/v1/providers/",
+            put(crate::api::tenant_models::add_ragflow_provider),
         )
         .route(
             "/api/v1/providers/presets",
@@ -3530,6 +3633,34 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/providers/{id}/models",
             get(crate::api::features::list_provider_models),
+        )
+        .route(
+            "/api/v1/providers/{provider_name}/models/{model_name}",
+            get(crate::api::tenant_models::show_ragflow_provider_model),
+        )
+        .route(
+            "/api/v1/providers/{provider_name}/instances",
+            get(crate::api::tenant_models::list_ragflow_provider_instances)
+                .post(crate::api::tenant_models::create_ragflow_provider_instance)
+                .delete(crate::api::tenant_models::delete_ragflow_provider_instances),
+        )
+        .route(
+            "/api/v1/providers/{provider_name}/connection",
+            post(crate::api::tenant_models::verify_ragflow_provider_connection),
+        )
+        .route(
+            "/api/v1/providers/{provider_name}/instances/{instance_name}",
+            get(crate::api::tenant_models::show_ragflow_provider_instance),
+        )
+        .route(
+            "/api/v1/providers/{provider_name}/instances/{instance_name}/models",
+            get(crate::api::tenant_models::list_ragflow_instance_models)
+                .post(crate::api::tenant_models::add_ragflow_instance_model)
+                .put(crate::api::tenant_models::edit_ragflow_instance_models),
+        )
+        .route(
+            "/api/v1/providers/{provider_name}/instances/{instance_name}/models/{model_name}",
+            axum::routing::patch(crate::api::tenant_models::update_ragflow_instance_model_status),
         )
         .route(
             "/api/v1/tenant/models",
@@ -3688,11 +3819,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/users", get(crate::api::system::list_users))
         .route("/api/v1/users/{id}", put(crate::api::system::update_user))
         .route(
+            "/api/v1/users/me",
+            axum::routing::patch(crate::api::system::update_me),
+        )
+        .route(
             "/api/v1/users/invite",
             post(crate::api::system::invite_user),
         )
         .route("/api/v1/tenant", get(crate::api::system::get_tenant))
         .route("/api/v1/tenants", get(crate::api::system::list_tenants))
+        .route(
+            "/api/v1/tenants/{tenant_id}",
+            axum::routing::patch(crate::api::system::agree_tenant),
+        )
+        .route(
+            "/api/v1/tenants/{tenant_id}/users",
+            get(crate::api::system::list_tenant_users)
+                .post(crate::api::system::add_tenant_user)
+                .delete(crate::api::system::remove_tenant_user),
+        )
         .route(
             "/api/v1/tenant/members",
             get(crate::api::system::list_tenant_members),
@@ -3712,10 +3857,43 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .post(crate::api::connector::create_connector),
         )
         .route("/api/v1/mcp/tools", get(crate::api::connector::mcp_tools))
+        .route(
+            "/api/v1/mcp/servers",
+            get(crate::api::mcp_mgr::list_mcp_servers).post(crate::api::mcp_mgr::create_mcp_server),
+        )
+        .route(
+            "/api/v1/mcp/servers/import",
+            axum::routing::post(crate::api::mcp_mgr::import_mcp_servers),
+        )
+        .route(
+            "/api/v1/mcp/servers/{id}",
+            get(crate::api::mcp_mgr::get_mcp_server)
+                .put(crate::api::mcp_mgr::update_mcp_server)
+                .delete(crate::api::mcp_mgr::delete_mcp_server),
+        )
+        .route(
+            "/api/v1/mcp/servers/{id}/test",
+            axum::routing::post(crate::api::mcp_mgr::test_mcp_server),
+        )
         .route("/api/v1/bots", get(crate::api::connector::list_bots))
         .route(
             "/api/v1/channels",
             get(crate::api::connector::list_channels),
+        )
+        .route(
+            "/api/v1/chat-channels",
+            get(crate::api::chat_channel_mgr::list_chat_channels)
+                .post(crate::api::chat_channel_mgr::create_chat_channel),
+        )
+        .route(
+            "/api/v1/chat-channels/{id}",
+            get(crate::api::chat_channel_mgr::get_chat_channel)
+                .patch(crate::api::chat_channel_mgr::update_chat_channel)
+                .delete(crate::api::chat_channel_mgr::delete_chat_channel),
+        )
+        .route(
+            "/api/v1/chat-channels/{id}/runtime",
+            get(crate::api::chat_channel_mgr::get_chat_channel_runtime),
         )
         .route("/api/v1/plugins", get(crate::api::connector::list_plugins))
         .route(
@@ -3787,8 +3965,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::system::file2document),
         )
         .route(
+            "/api/v1/langfuse/api-key",
+            get(crate::api::langfuse::get_langfuse_api_key)
+                .post(crate::api::langfuse::set_langfuse_api_key)
+                .put(crate::api::langfuse::set_langfuse_api_key)
+                .delete(crate::api::langfuse::delete_langfuse_api_key),
+        )
+        .route(
             "/api/v1/langfuse",
-            get(crate::api::system::get_langfuse).post(crate::api::system::update_langfuse),
+            get(crate::api::langfuse::get_langfuse_api_key)
+                .post(crate::api::langfuse::set_langfuse_api_key),
         )
         // Chat channel inbound endpoints (webhook / feishu event callbacks).
         // New routes only; existing route behavior is unchanged.
@@ -3837,6 +4023,8 @@ pub async fn run(
     static_dir: &str,
     log_levels: crate::logging::LogLevelManager,
 ) -> anyhow::Result<()> {
+    // 统一命令超时输入：用户 env 环境文件（RAYRAG_CMD_TIMEOUT，默认 7200 秒/2 小时）
+    crate::common::cmd_timeout::load_user_env_file();
     let u = format!("{}/../users.json", static_dir);
     let k = format!("{}/../kbs.json", static_dir);
     let tenants_path = format!("{}/../tenants.json", static_dir);
@@ -3853,6 +4041,9 @@ pub async fn run(
     let memory_messages_path = format!("{}/../memory_messages.json", static_dir);
     let skill_index_path = format!("{}/../skill_index.json", static_dir);
     let system_settings_path = format!("{}/../system_settings.json", static_dir);
+    let langfuse_path = format!("{}/../langfuse.json", static_dir);
+    let mcp_servers_path = format!("{}/../mcp_servers.json", static_dir);
+    let chat_channels_path = format!("{}/../chat_channels.json", static_dir);
     let agents_path = format!("{}/../agents.json", static_dir);
     let agent_checkpoints_path = format!("{}/../agent_checkpoints.json", static_dir);
     let canvas_versions_path = format!("{}/../canvas_versions.json", static_dir);
@@ -3981,6 +4172,11 @@ pub async fn run(
         )?),
         system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::new(
             &system_settings_path,
+        )?),
+        langfuse: Arc::new(crate::api::langfuse::LangfuseStore::new(&langfuse_path)?),
+        mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::new(&mcp_servers_path)?),
+        chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::new(
+            &chat_channels_path,
         )?),
         tasks: Arc::new(crate::api::features::TaskQueue::new(&t)?),
         task_executor: Arc::new(crate::task_executor::TaskExecutor::new(
@@ -4197,6 +4393,9 @@ mod tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
+            mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
+            chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
             tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
             task_executor: Arc::new(crate::task_executor::TaskExecutor::new("test_executor", 4)),
             agents: Arc::new(crate::api::features::AgentStore::in_memory()),
@@ -4215,6 +4414,123 @@ mod tests {
             memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         TestEnv { root, state, token }
+    }
+
+    #[tokio::test]
+    async fn upstream_model_provider_page_route_is_registered() {
+        let env = test_env();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/user-setting/model")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 2 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("data-testid='available-models-section'"));
+        assert!(body.contains("data-testid='default-model-llm_id'"));
+    }
+
+    #[tokio::test]
+    async fn user_setting_root_and_all_sidebar_routes_are_registered() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let redirect = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/user-setting")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(redirect.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            redirect.headers().get(header::LOCATION).unwrap(),
+            "/user-setting/data-source"
+        );
+
+        for key in [
+            "/data-source",
+            "/chat-channel",
+            "/model",
+            "/mcp",
+            "/team",
+            "/profile",
+            "/api",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/user-setting{key}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {key}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(body.contains("data-testid='user-setting-layout'"));
+            assert!(body.contains(&format!(
+                "class='user-setting-nav-item active' href='/user-setting{key}' data-setting-key='{key}'"
+            )));
+        }
+    }
+
+    #[tokio::test]
+    async fn current_user_accepts_bearer_and_cookie_auth() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (name, value) in [
+            (header::AUTHORIZATION, format!("Bearer {}", env.token)),
+            (header::COOKIE, format!("rayrag_token={}", env.token)),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/user/info")
+                        .header(name, value)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 0);
+            assert_eq!(body["data"]["email"], "test@example.com");
+        }
+
+        let unauthorized = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/user/info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -4289,6 +4605,8 @@ mod tests {
                             model_types: vec![ModelCapability::Embedding],
                             max_tokens: None,
                             enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
                         })
                         .collect(),
                 },
@@ -4358,6 +4676,9 @@ mod tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
+            mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
+            chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
             tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
             task_executor: Arc::new(crate::task_executor::TaskExecutor::new("test_executor", 4)),
             agents: Arc::new(crate::api::features::AgentStore::in_memory()),
@@ -4446,12 +4767,16 @@ mod tests {
                             model_types: vec![ModelCapability::Chat],
                             max_tokens: Some(4096),
                             enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
                         },
                         TenantModelSpec {
                             name: "MiniMax-M2".into(),
                             model_types: vec![ModelCapability::Embedding],
                             max_tokens: None,
                             enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
                         },
                     ],
                 },
@@ -4506,14 +4831,18 @@ mod tests {
         let models = catalog["data"].as_array().unwrap();
         // Factory-catalog expansion (upstream `list_tenant_added_models`):
         // every MiniMax factory model is exposed for the tenant instance, in
-        // factory order, with manual type overrides applied.
-        assert!(models.len() >= 7, "expected the full MiniMax factory catalog");
+        // factory order; an explicit compact record is the final effective
+        // capability set after upstream ACTIVE/INACTIVE/UNSUPPORTED folding.
+        assert!(
+            models.len() >= 7,
+            "expected the full MiniMax factory catalog"
+        );
         assert_eq!(models[0]["selector"], "MiniMax-M3@Primary@MiniMax");
+        assert_eq!(models[0]["provider_name"], "MiniMax");
+        assert_eq!(models[0]["provider"], "MiniMax");
         assert!(models.iter().all(|model| model.get("api_key").is_none()));
         assert!(models.iter().any(|model| {
-            model["name"] == "MiniMax-M2"
-                && model["model_type"]
-                    == serde_json::json!(["chat", "embedding"])
+            model["name"] == "MiniMax-M2" && model["model_type"] == serde_json::json!(["embedding"])
         }));
 
         let defaults = router
@@ -5547,6 +5876,7 @@ mod tests {
         let env = test_env();
         let router = build_router(env.state.clone());
         let create = router
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -6190,14 +6520,15 @@ mod tests {
         let response = build_router(member.state.clone())
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/providers/minimax/models")
+                    .uri("/api/v1/providers/New%20API/models")
                     .header(header::AUTHORIZATION, format!("Bearer {}", member.token))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(response_json(response).await["code"], 502);
 
         let response = build_router(env.state.clone())
             .oneshot(
@@ -6293,10 +6624,110 @@ mod tests {
         // the MiniMax factory catalog is exposed for the tenant instance, in
         // factory order, with the configured MiniMax-M3 entry expanded first
         // (chat + embedding), followed by the remaining factory chat models.
-        assert!(model_types.len() >= 7, "expected the full MiniMax factory catalog");
+        assert!(
+            model_types.len() >= 7,
+            "expected the full MiniMax factory catalog"
+        );
         assert_eq!(model_types[0], "chat");
         assert_eq!(model_types[1], "embedding");
         assert!(model_types[2..].iter().all(|t| *t == "chat"));
+
+        let added_instances = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/MiniMax/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(added_instances.status(), StatusCode::OK);
+        let added_instances = response_json(added_instances).await;
+        assert_eq!(
+            added_instances["data"][0]["instance_name"],
+            "Primary MiniMax"
+        );
+        assert_eq!(added_instances["data"][0]["api_key"], "");
+
+        let instance_models = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(instance_models.status(), StatusCode::OK);
+        let instance_models = response_json(instance_models).await;
+        let minimax_m3 = instance_models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["name"] == "MiniMax-M3")
+            .unwrap();
+        assert_eq!(minimax_m3["status"], "active");
+        assert_eq!(
+            minimax_m3["model_type"],
+            serde_json::json!(["chat", "embedding"])
+        );
+
+        let edit_model = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "model_name": ["MiniMax-M3"],
+                            "model_type": ["chat"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(edit_model.status(), StatusCode::OK);
+
+        let deactivate_model = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models/MiniMax-M3")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":"inactive"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deactivate_model.status(), StatusCode::OK);
+        assert!(!env.state.tenant_models.list("test-user")[0].models[0].enabled);
+
+        let reactivate_model = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models/MiniMax-M3")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":"active"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reactivate_model.status(), StatusCode::OK);
+        assert!(env.state.tenant_models.list("test-user")[0].models[0].enabled);
 
         let member_write = router
             .clone()
@@ -6337,6 +6768,22 @@ mod tests {
             .unwrap();
         assert_eq!(delete_provider.status(), StatusCode::CONFLICT);
 
+        let delete_instance = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/providers/MiniMax/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"instances":["Primary MiniMax"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_instance.status(), StatusCode::OK);
+        assert!(env.state.tenant_models.list("test-user").is_empty());
+
         let outsider = env
             .state
             .users
@@ -6363,6 +6810,264 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_modal_verify_is_ephemeral_and_create_persists_tenant_instance() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let probe = Router::new().route(
+            "/v1/models",
+            get(|| async {
+                Json(serde_json::json!({
+                    "data": [{ "id": "gpt-probe" }]
+                }))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, probe).await.unwrap();
+        });
+
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let base_url = format!("http://{address}/v1");
+        let verify = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/OpenAI/connection")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "api_key": "probe-key",
+                            "base_url": base_url.clone()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(verify.status(), StatusCode::OK);
+        assert_eq!(response_json(verify).await["code"], 0);
+        assert!(env.state.tenant_models.list("test-user").is_empty());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/OpenAI/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "instance_name": "Hosted OpenAI",
+                            "api_key": "probe-key",
+                            "base_url": base_url,
+                            "region": "default",
+                            "model_info": []
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let body = response_json(create).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["instance_name"], "Hosted OpenAI");
+        assert_eq!(body["data"]["api_key_configured"], true);
+        assert!(body["data"].get("api_key").is_none());
+        let instances = env.state.tenant_models.list("test-user");
+        assert_eq!(instances.len(), 1);
+        assert!(instances[0].models.is_empty());
+        assert!(
+            env.state
+                .providers
+                .get_configured("openai")
+                .unwrap()
+                .enabled
+        );
+
+        let models = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models?type=chat")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(models.status(), StatusCode::OK);
+        let models = response_json(models).await;
+        assert!(
+            models["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|model| { model["selector"] == "gpt-5.5@Hosted OpenAI@OpenAI" })
+        );
+        let resolved = env
+            .state
+            .tenant_models
+            .resolve(
+                &env.state.providers,
+                "test-user",
+                ModelCapability::Chat,
+                Some("gpt-5.5@Hosted OpenAI@OpenAI"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.model_name, "gpt-5.5");
+        assert_eq!(resolved.api_key.as_deref(), Some("probe-key"));
+    }
+
+    #[tokio::test]
+    async fn new_api_picker_discovers_then_persists_selected_tool_model() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let probe = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "data": [{ "id": "custom-chat" }, { "id": "custom-embed" }]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(|| async {
+                    Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "Hi" } }]
+                    }))
+                }),
+            );
+        tokio::spawn(async move {
+            axum::serve(listener, probe).await.unwrap();
+        });
+
+        let env = test_env();
+        assert!(env.state.providers.get_configured("new-api").is_none());
+        let router = build_router(env.state.clone());
+        let base_url = format!("http://{address}/v1");
+        let discovery = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/providers/New%20API/models?base_url={}",
+                        url::form_urlencoded::byte_serialize(base_url.as_bytes())
+                            .collect::<String>()
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(discovery.status(), StatusCode::OK);
+        let discovery = response_json(discovery).await;
+        assert_eq!(discovery["code"], 0);
+        assert!(
+            discovery["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|model| model["name"] == "custom-chat")
+        );
+        assert!(
+            env.state.providers.get_configured("new-api").is_none(),
+            "read-only discovery must not materialize a provider"
+        );
+
+        let model_info = serde_json::json!([{
+            "model_name": "custom-chat",
+            "model_type": ["chat"],
+            "max_tokens": 16384,
+            "extra": { "is_tools": true }
+        }]);
+        let verify = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/New%20API/connection")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "api_key": "",
+                            "base_url": base_url.clone(),
+                            "model_info": model_info.clone()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(verify).await["code"], 0);
+        assert!(env.state.providers.get_configured("new-api").is_none());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/New%20API/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "instance_name": "Local gateway",
+                            "api_key": "",
+                            "base_url": base_url,
+                            "model_info": model_info
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let create = response_json(create).await;
+        assert_eq!(create["code"], 0);
+        let provider = env.state.providers.get_configured("new-api").unwrap();
+        assert!(provider.enabled);
+        assert_eq!(provider.models, vec!["custom-chat"]);
+        assert!(provider.api_key.is_none());
+        let instances = env.state.tenant_models.list("test-user");
+        assert_eq!(instances[0].models[0].is_tools, true);
+        let instance_models = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/New%20API/instances/Local%20gateway/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let instance_models = response_json(instance_models).await;
+        assert_eq!(instance_models["data"][0]["features"][0], "is_tools");
+        let resolved = env
+            .state
+            .tenant_models
+            .resolve(
+                &env.state.providers,
+                "test-user",
+                ModelCapability::Chat,
+                Some("custom-chat@Local gateway@New API"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.model_name, "custom-chat");
+    }
+
+    #[tokio::test]
     async fn default_chat_model_route_enforces_shared_tenant_permissions_and_conflicts() {
         let env = test_env();
         env.state
@@ -6383,6 +7088,8 @@ mod tests {
                         model_types: vec![ModelCapability::Chat],
                         max_tokens: None,
                         enabled: true,
+                        is_tools: false,
+                        ocr_config: None,
                     }],
                 },
             )
@@ -10305,6 +11012,8 @@ mod tests {
                         model_types: vec![ModelCapability::Chat],
                         max_tokens: None,
                         enabled: true,
+                        is_tools: false,
+                        ocr_config: None,
                     }],
                 },
             )

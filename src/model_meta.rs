@@ -254,6 +254,247 @@ pub async fn discover_provider_models(
     Ok(merged.into_values().collect())
 }
 
+/// Probe the provider's authenticated model-list endpoint for the Model
+/// providers `Verify` button. RAGFlow probes one live model per capability;
+/// this Rust slice uses the provider-native catalog endpoint so verification
+/// is read-only while still rejecting bad credentials and unreachable bases.
+pub async fn verify_provider_connection(
+    provider_id: &str,
+    provider_name: &str,
+    api_base: &str,
+    api_key: Option<&str>,
+) -> Result<()> {
+    let dialect = ProviderDialect::from_provider(provider_id, provider_name);
+    if dialect == ProviderDialect::Replicate {
+        anyhow::bail!("Provider connection verification is not supported for Replicate yet");
+    }
+    let base = normalize_inference_base(provider_id, provider_name, api_base);
+    let url = if matches!(dialect, ProviderDialect::Ollama | ProviderDialect::LocalAi) {
+        parse_http_base(&base)?.join("api/tags")?
+    } else {
+        model_list_url(dialect, &base)?
+    };
+    let timeout = std::env::var("LLM_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10)
+        .clamp(1, 120);
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(5.min(timeout)))
+        .timeout(Duration::from_secs(timeout))
+        .build()?;
+    let normalized_key = normalize_provider_api_key(provider_id, provider_name, api_key);
+    let mut request = client.get(url);
+    if let Some(key) = normalized_key.as_deref().filter(|key| !key.is_empty()) {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("Provider verification returned HTTP {}", response.status());
+    }
+    let _: Value = response.json().await?;
+    Ok(())
+}
+
+/// Upstream `verify_api_key` capability inference: probe real chat /
+/// embedding / rerank requests for the selected models instead of relying on
+/// a model-list GET. Only OpenAI-compatible-style transports can be probed
+/// generically; provider-specific REST protocols (Baidu/Tencent/XunFei/Google
+/// and OCR/TTS/ASR models) are intentionally skipped and documented as
+/// partial. An empty `models` slice falls back to the model-list probe.
+pub async fn verify_provider_capabilities(
+    provider_id: &str,
+    provider_name: &str,
+    api_base: &str,
+    api_key: Option<&str>,
+    models: &[(String, Vec<ModelCapability>)],
+) -> Result<()> {
+    if models.is_empty() {
+        return verify_provider_connection(provider_id, provider_name, api_base, api_key).await;
+    }
+    let dialect = ProviderDialect::from_provider(provider_id, provider_name);
+    let chat_ok = matches!(
+        dialect,
+        ProviderDialect::OpenAiCompatible
+            | ProviderDialect::Vllm
+            | ProviderDialect::LmStudio
+            | ProviderDialect::NewApi
+            | ProviderDialect::Xinference
+            | ProviderDialect::OpenRouter
+            | ProviderDialect::VolcEngine
+    );
+    let embed_ok = matches!(
+        dialect,
+        ProviderDialect::OpenAiCompatible
+            | ProviderDialect::Vllm
+            | ProviderDialect::LmStudio
+            | ProviderDialect::NewApi
+            | ProviderDialect::Xinference
+            | ProviderDialect::OpenRouter
+    );
+    let rerank_ok = matches!(
+        dialect,
+        ProviderDialect::OpenAiCompatible
+            | ProviderDialect::Vllm
+            | ProviderDialect::LmStudio
+            | ProviderDialect::NewApi
+            | ProviderDialect::Xinference
+    );
+    if !chat_ok {
+        return Ok(());
+    }
+    let base = normalize_inference_base(provider_id, provider_name, api_base);
+    let timeout = std::env::var("LLM_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10)
+        .clamp(1, 120);
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(5.min(timeout)))
+        .timeout(Duration::from_secs(timeout))
+        .build()?;
+    let normalized_key = normalize_provider_api_key(provider_id, provider_name, api_key);
+    let bearer = normalized_key.as_deref().filter(|key| !key.is_empty());
+    let mut probed = false;
+    let mut errors = Vec::new();
+    for (model_name, capabilities) in models {
+        for capability in capabilities {
+            let result = match capability {
+                ModelCapability::Chat | ModelCapability::ImageToText => {
+                    probed = true;
+                    probe_chat_model(&client, dialect, &base, model_name, bearer).await
+                }
+                ModelCapability::Embedding if embed_ok => {
+                    probed = true;
+                    probe_embedding_model(&client, &base, model_name, bearer).await
+                }
+                ModelCapability::Rerank if rerank_ok => {
+                    probed = true;
+                    probe_rerank_model(&client, &base, model_name, bearer).await
+                }
+                ModelCapability::Embedding | ModelCapability::Rerank => Ok(()),
+                ModelCapability::Ocr
+                | ModelCapability::SpeechToText
+                | ModelCapability::TextToSpeech => Ok(()),
+            };
+            if let Err(error) = result {
+                errors.push(format!(
+                    "Fail to access model({provider_name}/{model_name}): {error}"
+                ));
+            }
+        }
+    }
+    if !probed {
+        return Ok(());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("{}", errors.join("\n"))
+    }
+}
+
+async fn probe_chat_model(
+    client: &Client,
+    dialect: ProviderDialect,
+    api_base: &str,
+    model: &str,
+    api_key: Option<&str>,
+) -> Result<()> {
+    let url = match dialect {
+        ProviderDialect::VolcEngine => {
+            let mut origin = parse_http_base(api_base)?;
+            origin.set_path("/api/v3/chat/completions");
+            origin.set_query(None);
+            origin
+        }
+        ProviderDialect::OpenRouter => {
+            let mut origin = parse_http_base(api_base)?;
+            origin.set_path("/api/v1/chat/completions");
+            origin.set_query(None);
+            origin
+        }
+        _ => openai_v1_base(parse_http_base(api_base)?).join("chat/completions")?,
+    };
+    let mut request = client.post(url).json(&serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": "Hi" }],
+        "max_tokens": 8,
+        "stream": false,
+    }));
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("chat probe returned HTTP {}", response.status());
+    }
+    let _: Value = response.json().await?;
+    Ok(())
+}
+
+async fn probe_embedding_model(
+    client: &Client,
+    api_base: &str,
+    model: &str,
+    api_key: Option<&str>,
+) -> Result<()> {
+    let url = openai_v1_base(parse_http_base(api_base)?).join("embeddings")?;
+    let mut request = client.post(url).json(&serde_json::json!({
+        "model": model,
+        "input": ["Test if the api key is available"],
+    }));
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("embedding probe returned HTTP {}", response.status());
+    }
+    let payload: Value = response.json().await?;
+    let non_empty = payload
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("embedding"))
+        .and_then(Value::as_array)
+        .is_some_and(|embedding| !embedding.is_empty());
+    if !non_empty {
+        anyhow::bail!("embedding probe returned an empty vector");
+    }
+    Ok(())
+}
+
+async fn probe_rerank_model(
+    client: &Client,
+    api_base: &str,
+    model: &str,
+    api_key: Option<&str>,
+) -> Result<()> {
+    let url = openai_v1_base(parse_http_base(api_base)?).join("rerank")?;
+    let mut request = client.post(url).json(&serde_json::json!({
+        "model": model,
+        "query": "What's the weather?",
+        "documents": ["Is it sunny today?"],
+    }));
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("rerank probe returned HTTP {}", response.status());
+    }
+    let payload: Value = response.json().await?;
+    let non_empty = payload
+        .get("results")
+        .and_then(Value::as_array)
+        .is_some_and(|results| !results.is_empty());
+    if !non_empty {
+        anyhow::bail!("rerank probe returned no results");
+    }
+    Ok(())
+}
+
 async fn discover_http_models(
     client: &Client,
     dialect: ProviderDialect,
@@ -436,6 +677,7 @@ fn parse_xinference_models(raw: &Value) -> Vec<DiscoveredModel> {
                 "image" => ModelCapability::ImageToText,
                 "TTS" => ModelCapability::TextToSpeech,
                 "speech2text" => ModelCapability::SpeechToText,
+                "ocr" => ModelCapability::Ocr,
                 _ => ModelCapability::Chat,
             };
             Some(DiscoveredModel {
@@ -641,6 +883,9 @@ fn parse_ollama_detail(name: &str, detail: &Value, local_ai: bool) -> Option<Dis
 
 fn infer_openai_model_types(name: &str) -> Vec<ModelCapability> {
     let name = name.to_ascii_lowercase();
+    if contains_hint(&name, &["ocr"]) {
+        return vec![ModelCapability::Ocr, ModelCapability::ImageToText];
+    }
     if contains_hint(&name, &["rerank", "reranker"]) {
         return vec![ModelCapability::Rerank];
     }
@@ -1242,7 +1487,6 @@ fn fixture_object<'a>(
         .find_map(|key| value.get(*key).and_then(Value::as_object))
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // RAGFlow conf/all_models.json — flat model alias index. The internal Go SDK
 // (internal/entity/models/model.go ProviderManager) builds `alias2ModelIndex`
@@ -1262,8 +1506,7 @@ pub struct AllModelEntry {
 }
 
 static ALL_MODELS: std::sync::OnceLock<Vec<AllModelEntry>> = std::sync::OnceLock::new();
-static ALL_MODEL_ALIASES: std::sync::OnceLock<BTreeMap<String, usize>> =
-    std::sync::OnceLock::new();
+static ALL_MODEL_ALIASES: std::sync::OnceLock<BTreeMap<String, usize>> = std::sync::OnceLock::new();
 
 fn all_models() -> &'static Vec<AllModelEntry> {
     ALL_MODELS.get_or_init(|| {
@@ -1327,6 +1570,74 @@ pub fn search_model_aliases(query: &str, limit: usize) -> Vec<&'static AllModelE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn capability_verification_probes_chat_embedding_and_rerank() {
+        use axum::routing::post;
+        let app = axum::Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "Hi" } }]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/embeddings",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "data": [{ "embedding": [0.1, 0.2] }]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/rerank",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "results": [{ "index": 0, "relevance_score": 0.9 }]
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        verify_provider_capabilities(
+            "openai",
+            "OpenAI",
+            &format!("http://{address}/v1"),
+            None,
+            &[
+                ("gpt-audit".to_string(), vec![ModelCapability::Chat]),
+                ("emb-audit".to_string(), vec![ModelCapability::Embedding]),
+                ("rer-audit".to_string(), vec![ModelCapability::Rerank]),
+            ],
+        )
+        .await
+        .unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn capability_verification_fails_closed_on_chat_4xx() {
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(|| async { axum::http::StatusCode::UNAUTHORIZED }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = verify_provider_capabilities(
+            "openai",
+            "OpenAI",
+            &format!("http://{address}/v1"),
+            None,
+            &[("gpt-audit".to_string(), vec![ModelCapability::Chat])],
+        )
+        .await;
+        server.abort();
+        assert!(result.is_err(), "non-2xx chat probe must fail closed");
+    }
 
     #[test]
     fn provider_key_normalization_matches_ragflow_json_credentials() {
@@ -1415,6 +1726,38 @@ mod tests {
             normalize_inference_base("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/"),
             "https://openrouter.ai/api/v1"
         );
+    }
+
+    #[tokio::test]
+    async fn provider_connection_probe_is_read_only_and_requires_success_json() {
+        use axum::{Json, Router, http::HeaderMap, routing::get};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/v1/models",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(
+                    headers
+                        .get(reqwest::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("Bearer probe-key")
+                );
+                Json(serde_json::json!({ "data": [{ "id": "probe-model" }] }))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        verify_provider_connection(
+            "openai",
+            "OpenAI",
+            &format!("http://{address}/v1"),
+            Some("probe-key"),
+        )
+        .await
+        .unwrap();
     }
 
     #[test]
@@ -1705,7 +2048,10 @@ mod tests {
         assert_eq!(entry.name, "gpt-4o");
         assert!(entry.model_types.iter().any(|t| t == "chat"));
         // Case-insensitive.
-        assert_eq!(resolve_model_alias("GPT-4O").map(|e| &e.name), Some(&"gpt-4o".to_string()));
+        assert_eq!(
+            resolve_model_alias("GPT-4O").map(|e| &e.name),
+            Some(&"gpt-4o".to_string())
+        );
         // Unknown alias resolves to nothing.
         assert!(resolve_model_alias("definitely-not-a-real-model-xyz").is_none());
     }
@@ -1725,5 +2071,4 @@ mod tests {
         // Limit is honored.
         assert!(search_model_aliases("gpt", 3).len() <= 3);
     }
-
 }

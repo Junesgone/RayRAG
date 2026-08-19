@@ -289,7 +289,7 @@ impl LlmClient {
     pub fn new(config: LlmConfig) -> Self {
         Self {
             config,
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::http_client(),
         }
     }
 

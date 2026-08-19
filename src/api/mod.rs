@@ -3,6 +3,7 @@
 //! Each module replaces a RAGFlow API component.
 
 pub mod admin;
+pub mod chat_channel_mgr;
 pub mod chatapp_mgr;
 pub mod chunks;
 pub mod common;
@@ -16,6 +17,9 @@ pub mod evaluation;
 pub mod features;
 pub mod file_mgr;
 pub mod joint_services;
+pub mod langfuse;
+pub mod mcp_mgr;
+pub mod oauth_web;
 pub mod openai_proxy;
 pub mod runtime_config;
 pub mod search;

@@ -302,8 +302,10 @@ pub async fn weighted_search(
                     String::new()
                 }
             };
-            let mut seen: std::collections::HashSet<String> =
-                results.iter().map(|result| result.chunk.id.clone()).collect();
+            let mut seen: std::collections::HashSet<String> = results
+                .iter()
+                .map(|result| result.chunk.id.clone())
+                .collect();
             for translation in translated
                 .split("###")
                 .map(str::trim)
@@ -316,11 +318,8 @@ pub async fn weighted_search(
                     },
                     Err(_) => None,
                 };
-                let extra = state
-                    .engine
-                    .read()
-                    .unwrap()
-                    .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                let extra = state.engine.read().unwrap().hybrid_search_kbs(
+                    crate::search::HybridSearchQuery {
                         query: translation,
                         query_embedding: embedding.as_deref(),
                         top_k: usize::MAX,
@@ -328,7 +327,8 @@ pub async fn weighted_search(
                         vector_weight,
                         doc_ids: filtered_doc_ids.as_deref(),
                         rank_feature: body.rank_feature.as_ref(),
-                    });
+                    },
+                );
                 for candidate in extra.into_iter().filter(|c| c.score >= post_threshold) {
                     if seen.insert(candidate.chunk.id.clone()) {
                         results.push(candidate);
@@ -612,14 +612,14 @@ pub async fn dify_retrieval(
     .into_response()
 }
 
-
 #[cfg(test)]
 mod search_request_schema_tests {
     use super::*;
 
     #[test]
     fn defaults_match_ragflow_single_dataset_request() {
-        let request: SearchRequest = serde_json::from_value(serde_json::json!({"question": "q"})).unwrap();
+        let request: SearchRequest =
+            serde_json::from_value(serde_json::json!({"question": "q"})).unwrap();
         assert_eq!(request.top_k, 10);
         assert_eq!(request.page, 1);
         assert!(request.cross_languages.is_empty());

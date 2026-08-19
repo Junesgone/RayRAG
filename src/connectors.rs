@@ -134,7 +134,10 @@ impl S3Connector {
     pub fn new(options: SourceOptions) -> Self {
         let (access_key, secret_key) = split_credentials(&options.token);
         let (bucket, prefix) = match options.target.split_once('/') {
-            Some((bucket, prefix)) => (bucket.trim().to_string(), prefix.trim().trim_matches('/').to_string()),
+            Some((bucket, prefix)) => (
+                bucket.trim().to_string(),
+                prefix.trim().trim_matches('/').to_string(),
+            ),
             None => (options.target.trim().to_string(), String::new()),
         };
         let endpoint = options.url.trim().trim_end_matches('/').to_string();
@@ -190,7 +193,10 @@ impl S3Connector {
         let payload_hash = EMPTY_SHA256;
         let canonical_query = canonical_query_string(query);
         let canonical_uri = canonical_uri(path);
-        let canonical_headers = format!("host:{}\nx-amz-content-sha256:{}\nx-amz-date:{}\n", host, payload_hash, amz_date);
+        let canonical_headers = format!(
+            "host:{}\nx-amz-content-sha256:{}\nx-amz-date:{}\n",
+            host, payload_hash, amz_date
+        );
         let signed_headers = "host;x-amz-content-sha256;x-amz-date";
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
@@ -203,7 +209,13 @@ impl S3Connector {
             scope,
             sha256_hex(canonical_request.as_bytes())
         );
-        let signature = sigv4_signature(&self.secret_key, &self.region, &date_stamp, &amz_date, &string_to_sign);
+        let signature = sigv4_signature(
+            &self.secret_key,
+            &self.region,
+            &date_stamp,
+            &amz_date,
+            &string_to_sign,
+        );
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
             self.access_key, scope, signed_headers, signature
@@ -220,7 +232,10 @@ impl S3Connector {
         );
         let response = self
             .client
-            .request(reqwest::Method::from_bytes(method.as_bytes()).context("s3: bad method")?, &url)
+            .request(
+                reqwest::Method::from_bytes(method.as_bytes()).context("s3: bad method")?,
+                &url,
+            )
             .header("Host", host)
             .header("x-amz-date", &amz_date)
             .header("x-amz-content-sha256", payload_hash)
@@ -284,10 +299,11 @@ impl Connector for S3Connector {
             bail!("s3: bucket required (target = bucket[/prefix])");
         }
         // Probe: list at most 1 key to validate credentials + reachability.
-        self.signed_request("GET", &format!("/{}", urlencode_path(&self.bucket)), &[
-            ("list-type", "2"),
-            ("max-keys", "1"),
-        ])
+        self.signed_request(
+            "GET",
+            &format!("/{}", urlencode_path(&self.bucket)),
+            &[("list-type", "2"), ("max-keys", "1")],
+        )
         .await?;
         Ok(())
     }
@@ -326,7 +342,11 @@ impl Connector for S3Connector {
                 .join("/")
         );
         let response = self.signed_request("GET", &path, &[]).await?;
-        response.bytes().await.context("s3: read object").map(|b| b.to_vec())
+        response
+            .bytes()
+            .await
+            .context("s3: read object")
+            .map(|b| b.to_vec())
     }
 
     fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
@@ -356,7 +376,10 @@ fn guess_s3_region(endpoint: &str) -> String {
         .map(|u| u.host_str().unwrap_or_default().to_string())
         .unwrap_or_default();
     for candidate in ["amazonaws.com.cn", "amazonaws.com"] {
-        if let Some(rest) = host.strip_prefix("s3.").and_then(|h| h.strip_suffix(candidate)) {
+        if let Some(rest) = host
+            .strip_prefix("s3.")
+            .and_then(|h| h.strip_suffix(candidate))
+        {
             let region = rest.trim_end_matches('.');
             if !region.is_empty() {
                 return region.to_string();
@@ -378,7 +401,10 @@ fn sigv4_signature(
     amz_date: &str,
     string_to_sign: &str,
 ) -> String {
-    let k_date = hmac_sha256(format!("AWS4{}", secret_key).as_bytes(), date_stamp.as_bytes());
+    let k_date = hmac_sha256(
+        format!("AWS4{}", secret_key).as_bytes(),
+        date_stamp.as_bytes(),
+    );
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, b"s3");
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
@@ -457,8 +483,8 @@ struct ListObjectsPage {
 /// Minimal ListBucketResult XML parser (quick-xml) — Key/Size/LastModified/ETag
 /// + IsTruncated/NextContinuationToken.
 fn parse_list_objects(xml: &str) -> Result<ListObjectsPage> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut objects = Vec::new();
@@ -480,7 +506,10 @@ fn parse_list_objects(xml: &str) -> Result<ListObjectsPage> {
                     updated.clear();
                     etag.clear();
                 } else if in_contents && name == b"Key" {
-                    key = reader.read_text(tag.name()).context("s3: Key text")?.to_string();
+                    key = reader
+                        .read_text(tag.name())
+                        .context("s3: Key text")?
+                        .to_string();
                 } else if in_contents && name == b"Size" {
                     size = reader
                         .read_text(tag.name())
@@ -518,7 +547,10 @@ fn parse_list_objects(xml: &str) -> Result<ListObjectsPage> {
         }
         buf.clear();
     }
-    Ok(ListObjectsPage { objects, next_token })
+    Ok(ListObjectsPage {
+        objects,
+        next_token,
+    })
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────
@@ -554,14 +586,21 @@ impl ConnectorRegistry {
             "azure_blob" => Ok(Box::new(BlobAdapter::new(options))),
             "rss" => Ok(Box::new(RssConnector::new(options)?)),
             "airtable" => Ok(Box::new(AirtableConnector::new(options)?)),
+            // PostgreSQL 外部库直读（RAGFlow rdbms 源的 postgresql 分支）。
+            "postgresql" => Ok(Box::new(RdbmsConnector::new(&options)?)),
             // 以下 RAGFlow 源已登记，连接器按域逐步实装。
             // 未实装前 connect 明确报错，避免静默失败。
-            "github" | "bitbucket" | "jira" | "dropbox" | "onedrive"
-            | "outlook" | "sharepoint" | "teams" | "slack" | "discord" | "zendesk"
-            | "salesforce" | "moodle" | "asana" | "imap"
-            | "seafile" | "rest_api" | "mysql"
-            | "postgresql" | "bigquery" => {
+            "github" | "bitbucket" | "jira" | "dropbox" | "onedrive" | "outlook" | "sharepoint"
+            | "teams" | "slack" | "discord" | "zendesk" | "salesforce" | "moodle" | "asana"
+            | "imap" | "seafile" | "rest_api" | "bigquery" => {
                 bail!("connector not implemented yet: {kind} (registered, coming soon)")
+            }
+            // RayRAG 技术栈不含 MySQL（用户决策：统一 postgres:18.4）——
+            // mysql 源明确不支持，读 MySQL 请走 postgresql 迁移。
+            "mysql" => {
+                bail!(
+                    "connector not implemented yet: mysql (RayRAG 不支持 MySQL 栈，请迁移到 PostgreSQL 后使用 postgresql 源)"
+                )
             }
             other => bail!("unsupported connector kind: {other}"),
         }
@@ -2052,10 +2091,7 @@ impl Connector for YuqueConnector {
         const PAGE_SIZE: usize = 20;
         loop {
             let value = self
-                .get_json(&format!(
-                    "/repos/{}/docs?offset={offset}",
-                    self.namespace
-                ))
+                .get_json(&format!("/repos/{}/docs?offset={offset}", self.namespace))
                 .await?;
             let docs = value
                 .get("data")
@@ -2064,10 +2100,7 @@ impl Connector for YuqueConnector {
                 .unwrap_or_default();
             let fetched = docs.len();
             for doc in &docs {
-                let id = doc
-                    .get("id")
-                    .map(|v| v.to_string())
-                    .unwrap_or_default();
+                let id = doc.get("id").map(|v| v.to_string()).unwrap_or_default();
                 let title = doc
                     .get("title")
                     .and_then(serde_json::Value::as_str)
@@ -2081,10 +2114,7 @@ impl Connector for YuqueConnector {
                 let updated_at = doc
                     .get("updated_at")
                     .and_then(serde_json::Value::as_str)
-                    .or_else(|| {
-                        doc.get("created_at")
-                            .and_then(serde_json::Value::as_str)
-                    })
+                    .or_else(|| doc.get("created_at").and_then(serde_json::Value::as_str))
                     .unwrap_or_default()
                     .to_string();
                 let mut metadata = HashMap::new();
@@ -2742,10 +2772,7 @@ impl DingTalkAiTableConnector {
     async fn sheets(&self) -> Result<Vec<(String, String)>> {
         let value = self
             .get_json(
-                &format!(
-                    "/v1.0/notable/tables/{}/sheets",
-                    urlencode(&self.table_id)
-                ),
+                &format!("/v1.0/notable/tables/{}/sheets", urlencode(&self.table_id)),
                 &[("operatorId", self.operator_id.clone())],
             )
             .await?;
@@ -2831,7 +2858,11 @@ fn dingtalk_ai_table_record_blob(fields: &serde_json::Value) -> String {
 /// Semantic identifier: `{sheet_name} - {first short string field[:50]}`,
 /// falling back to `{sheet_name} - Record {record_id}` (RAGFlow
 /// `_convert_record_to_document`).
-fn dingtalk_ai_table_record_name(fields: &serde_json::Value, sheet_name: &str, record_id: &str) -> String {
+fn dingtalk_ai_table_record_name(
+    fields: &serde_json::Value,
+    sheet_name: &str,
+    record_id: &str,
+) -> String {
     if let Some(object) = fields.as_object() {
         for value in object.values() {
             if let serde_json::Value::String(text) = value {
@@ -2940,8 +2971,8 @@ impl Connector for DingTalkAiTableConnector {
                     .unwrap_or_default();
                 // Fallback ids (row{index}) match records the API lists
                 // without an id.
-                let matched = (rid == record_id)
-                    || (rid.is_empty() && record_id == format!("row{index}"));
+                let matched =
+                    (rid == record_id) || (rid.is_empty() && record_id == format!("row{index}"));
                 if matched {
                     let fields = record
                         .get("fields")
@@ -2959,9 +2990,7 @@ impl Connector for DingTalkAiTableConnector {
                 bail!("dingtalk_ai_table: records pagination exceeded 1000 pages — aborting");
             }
         }
-        bail!(
-            "dingtalk_ai_table: record not found: {record_id} (sheet {sheet_id})"
-        )
+        bail!("dingtalk_ai_table: record not found: {record_id} (sheet {sheet_id})")
     }
 
     fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
@@ -3238,7 +3267,11 @@ impl BoxConnector {
 
     /// Bearer-authenticated GET; on 401, refresh the access token once and
     /// retry (RAGFlow Box SDK auto-refresh semantics).
-    async fn authed_request(&self, method: reqwest::Method, url: String) -> Result<reqwest::Response> {
+    async fn authed_request(
+        &self,
+        method: reqwest::Method,
+        url: String,
+    ) -> Result<reqwest::Response> {
         let token = self.access_token().await?;
         let mut response = self
             .client
@@ -3263,7 +3296,11 @@ impl BoxConnector {
     /// One folder-items page: `(entries, next_marker)` — marker-based
     /// pagination (`usemarker=true`, limit 1000, RAGFlow INDEX_BATCH_SIZE
     /// spirit with the SDK default).
-    async fn list_folder_page(&self, folder_id: &str, marker: &str) -> Result<(Vec<BoxEntry>, String)> {
+    async fn list_folder_page(
+        &self,
+        folder_id: &str,
+        marker: &str,
+    ) -> Result<(Vec<BoxEntry>, String)> {
         let mut query = vec![
             ("usemarker", "true".to_string()),
             ("limit", "1000".to_string()),
@@ -3367,9 +3404,7 @@ fn box_error_message(value: &serde_json::Value, status: u16, context: &str) -> S
                 .and_then(serde_json::Value::as_str)
         })
         .unwrap_or_default();
-    format!(
-        "box: {context} upstream error ({status}): code={code}, message={message}"
-    )
+    format!("box: {context} upstream error ({status}): code={code}, message={message}")
 }
 
 #[async_trait]
@@ -3387,10 +3422,7 @@ impl Connector for BoxConnector {
         let status = response.status();
         let value: serde_json::Value = response.json().await?;
         if !status.is_success() {
-            bail!(
-                "{}",
-                box_error_message(&value, status.as_u16(), "users/me")
-            );
+            bail!("{}", box_error_message(&value, status.as_u16(), "users/me"));
         }
         Ok(())
     }
@@ -3740,8 +3772,7 @@ impl Connector for RssConnector {
 /// checked directly; hostnames are resolved fail-closed (any private
 /// address ⇒ rejection, resolution failure ⇒ rejection).
 fn validate_feed_url(url: &str, allow_private: bool) -> Result<()> {
-    let parsed =
-        url::Url::parse(url).with_context(|| format!("rss: invalid feed URL: {url}"))?;
+    let parsed = url::Url::parse(url).with_context(|| format!("rss: invalid feed URL: {url}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => bail!("rss: feed_url must be http or https, got scheme: {other}"),
@@ -3777,7 +3808,7 @@ fn validate_feed_url(url: &str, allow_private: bool) -> Result<()> {
 
 /// RAGFlow `assert_url_is_safe` address policy: reject loopback, RFC1918
 /// private, link-local and unspecified addresses.
-fn is_private_ip(ip: std::net::IpAddr) -> bool {
+pub(crate) fn is_private_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
             let octets = v4.octets();
@@ -3823,10 +3854,9 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                     text.clear();
                 } else if current.is_some() {
                     match name.as_slice() {
-                        b"title" | b"guid" | b"id" | b"description" | b"summary"
-                        | b"content" | b"encoded" | b"pubDate" | b"updated"
-                        | b"published" | b"date" | b"author" | b"creator"
-                        | b"category" | b"term" | b"name" => {
+                        b"title" | b"guid" | b"id" | b"description" | b"summary" | b"content"
+                        | b"encoded" | b"pubDate" | b"updated" | b"published" | b"date"
+                        | b"author" | b"creator" | b"category" | b"term" | b"name" => {
                             field = Some(name.clone());
                             text.clear();
                         }
@@ -3972,9 +4002,9 @@ fn strip_html(input: &str) -> String {
             if in_tag {
                 tag_name.retain(|c: char| !c.is_whitespace());
                 match tag_name.as_str() {
-                    "br" | "br/" | "p" | "p/" | "div" | "div/" | "li" | "li/"
-                    | "tr" | "tr/" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                    | "h1/" | "h2/" | "h3/" | "h4/" | "h5/" | "h6/" | "blockquote" => {
+                    "br" | "br/" | "p" | "p/" | "div" | "div/" | "li" | "li/" | "tr" | "tr/"
+                    | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "h1/" | "h2/" | "h3/" | "h4/"
+                    | "h5/" | "h6/" | "blockquote" => {
                         out.push('\n');
                     }
                     _ => {}
@@ -4015,9 +4045,7 @@ fn extension_from_link(link: &str) -> String {
     if let Ok(parsed) = url::Url::parse(link) {
         if let Some(ext) = Path::new(parsed.path()).extension() {
             let ext = ext.to_string_lossy();
-            if !ext.is_empty()
-                && ext.len() <= 12
-                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            if !ext.is_empty() && ext.len() <= 12 && ext.chars().all(|c| c.is_ascii_alphanumeric())
             {
                 return format!(".{ext}");
             }
@@ -4198,11 +4226,7 @@ impl AirtableConnector {
         }
         let value = self
             .get_json(
-                &format!(
-                    "/v0/{}/{}",
-                    urlencode(&self.base_id),
-                    urlencode(table_id)
-                ),
+                &format!("/v0/{}/{}", urlencode(&self.base_id), urlencode(table_id)),
                 &query,
             )
             .await?;
@@ -4410,18 +4434,53 @@ mod registry_kind_tests {
             .collect();
         // RAGFlow v0.26.4 数据源管理页全量 35 源（constant/index.tsx DataSourceKey）
         for expected in [
-            "confluence", "notion", "google_drive", "gmail", "gcs", "oracle", "s3",
-            "r2", "jira", "box", "dropbox", "bitbucket", "gitlab", "github", "moodle",
-            "discord", "zendesk", "webdav", "airtable", "asana", "imap",
-            "dingtalk_ai_table", "seafile", "mysql", "postgresql", "bigquery",
-            "rest_api", "rss", "onedrive", "outlook", "salesforce", "azure_blob",
-            "teams", "slack", "sharepoint",
+            "confluence",
+            "notion",
+            "google_drive",
+            "gmail",
+            "gcs",
+            "oracle",
+            "s3",
+            "r2",
+            "jira",
+            "box",
+            "dropbox",
+            "bitbucket",
+            "gitlab",
+            "github",
+            "moodle",
+            "discord",
+            "zendesk",
+            "webdav",
+            "airtable",
+            "asana",
+            "imap",
+            "dingtalk_ai_table",
+            "seafile",
+            "mysql",
+            "postgresql",
+            "bigquery",
+            "rest_api",
+            "rss",
+            "onedrive",
+            "outlook",
+            "salesforce",
+            "azure_blob",
+            "teams",
+            "slack",
+            "sharepoint",
         ] {
-            assert!(kinds.contains(&expected), "missing RAGFlow source: {expected}");
+            assert!(
+                kinds.contains(&expected),
+                "missing RAGFlow source: {expected}"
+            );
         }
         // 中国大陆替代源
         for expected in ["feishu", "dingtalk", "tencent_docs", "yuque", "wechat_docs"] {
-            assert!(kinds.contains(&expected), "missing China source: {expected}");
+            assert!(
+                kinds.contains(&expected),
+                "missing China source: {expected}"
+            );
         }
         // 现有源不受影响（"blob" 已并入 azure_blob，分发保留兼容旧记录）
         for expected in ["gitlab", "azure_blob", "local", "webdav"] {
@@ -4464,7 +4523,10 @@ mod s3_connector_tests {
 
     #[test]
     fn canonical_uri_encodes_segments_but_keeps_slashes() {
-        assert_eq!(canonical_uri("/bucket/key with spaces.txt"), "/bucket/key%20with%20spaces.txt");
+        assert_eq!(
+            canonical_uri("/bucket/key with spaces.txt"),
+            "/bucket/key%20with%20spaces.txt"
+        );
         assert_eq!(canonical_uri("/plain/path"), "/plain/path");
     }
 
@@ -4714,9 +4776,7 @@ mod yuque_connector_tests {
     /// The handler receives the request path (query string stripped) and the
     /// raw query string, and returns `(status, json_body)`. No real network —
     /// the connector's `options.url` override points at this base.
-    fn mock_yuque_server(
-        handler: impl Fn(&str, &str) -> (u16, String) + Send + 'static,
-    ) -> String {
+    fn mock_yuque_server(handler: impl Fn(&str, &str) -> (u16, String) + Send + 'static) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
@@ -4819,8 +4879,14 @@ mod yuque_connector_tests {
             first.metadata.get("namespace").map(String::as_str),
             Some("team/kb")
         );
-        assert_eq!(first.metadata.get("source").map(String::as_str), Some("yuque"));
-        assert_eq!(first.metadata.get("slug").map(String::as_str), Some("doc-one"));
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("yuque")
+        );
+        assert_eq!(
+            first.metadata.get("slug").map(String::as_str),
+            Some("doc-one")
+        );
         assert_eq!(files[2].name, "Doc Three.md");
         assert_eq!(files[2].id, "yuque:103");
     }
@@ -4834,7 +4900,7 @@ mod yuque_connector_tests {
                 200,
                 json!({"data": {"id": 101, "slug": "doc-one", "title": "Doc One",
                                 "body": "# Hello\n\nYuque markdown body."}})
-                    .to_string(),
+                .to_string(),
             ),
             _ => (404, "{}".to_string()),
         });
@@ -4851,7 +4917,10 @@ mod yuque_connector_tests {
             metadata: HashMap::new(),
         };
         let raw = connector.fetch_file(&file).await.unwrap();
-        assert_eq!(String::from_utf8(raw).unwrap(), "# Hello\n\nYuque markdown body.");
+        assert_eq!(
+            String::from_utf8(raw).unwrap(),
+            "# Hello\n\nYuque markdown body."
+        );
     }
 
     /// load_credentials rejects an empty token before any network call.
@@ -4889,8 +4958,7 @@ mod yuque_connector_tests {
     /// a Yuque variant.
     #[test]
     fn normalize_marks_yuque_metadata() {
-        let connector =
-            YuqueConnector::new(options(String::new(), "tok-123", "team/kb")).unwrap();
+        let connector = YuqueConnector::new(options(String::new(), "tok-123", "team/kb")).unwrap();
         let file = RemoteFile {
             id: "yuque:101".into(),
             name: "Doc One.md".into(),
@@ -4906,9 +4974,18 @@ mod yuque_connector_tests {
         assert_eq!(doc.semantic_identifier, "Doc One.md");
         assert_eq!(doc.extension, ".md");
         assert_eq!(doc.size_bytes, 6);
-        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("yuque"));
-        assert_eq!(doc.metadata.get("namespace").map(String::as_str), Some("team/kb"));
-        assert_eq!(doc.metadata.get("slug").map(String::as_str), Some("doc-one"));
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("yuque")
+        );
+        assert_eq!(
+            doc.metadata.get("namespace").map(String::as_str),
+            Some("team/kb")
+        );
+        assert_eq!(
+            doc.metadata.get("slug").map(String::as_str),
+            Some("doc-one")
+        );
         assert_eq!(doc.source, DocumentSource::Yuque);
     }
 
@@ -4925,13 +5002,10 @@ mod yuque_connector_tests {
                 ]})
                 .to_string(),
             ),
-            ("/repos/team/kb/docs", "offset=20") => {
-                (200, json!({"data": []}).to_string())
+            ("/repos/team/kb/docs", "offset=20") => (200, json!({"data": []}).to_string()),
+            ("/repos/team/kb/docs/one", _) => {
+                (200, json!({"data": {"body": "# One body"}}).to_string())
             }
-            ("/repos/team/kb/docs/one", _) => (
-                200,
-                json!({"data": {"body": "# One body"}}).to_string(),
-            ),
             _ => (404, "{}".to_string()),
         });
 
@@ -4944,7 +5018,10 @@ mod yuque_connector_tests {
         let doc = &batch.docs[0];
         assert_eq!(doc.blob, "# One body");
         assert_eq!(doc.semantic_identifier, "One.md");
-        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("yuque"));
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("yuque")
+        );
     }
 }
 
@@ -5099,9 +5176,10 @@ mod dingtalk_connector_tests {
         let base = mock_dingtalk_server(move |method, path, _query, _headers, body| {
             let body = body.trim();
             match (method, path) {
-                ("POST", "/v1.0/oauth2/accessToken") => {
-                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
-                }
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
                 // Spaces page 1 (empty body) → sp1 + nextToken; page 2 → sp2.
                 ("POST", "/v1.0/storage/spaces/list") if body == "{}" => {
                     sc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -5122,7 +5200,9 @@ mod dingtalk_connector_tests {
                     )
                 }
                 // sp1 files page 1 (nextToken "") → 2 files + nextToken ft2.
-                ("POST", "/v1.0/storage/spaces/sp1/files") if body.contains("\"nextToken\":\"\"") => {
+                ("POST", "/v1.0/storage/spaces/sp1/files")
+                    if body.contains("\"nextToken\":\"\"") =>
+                {
                     fc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     (
                         200,
@@ -5172,10 +5252,7 @@ mod dingtalk_connector_tests {
         assert_eq!(first.updated_at, "2026-02-01T00:00:00Z");
         assert_eq!(first.fingerprint, "2026-02-01T00:00:00Z");
         assert_eq!(first.metadata.get("space").map(String::as_str), Some("sp1"));
-        assert_eq!(
-            first.metadata.get("fileId").map(String::as_str),
-            Some("f1")
-        );
+        assert_eq!(first.metadata.get("fileId").map(String::as_str), Some("f1"));
         assert_eq!(
             first.metadata.get("source").map(String::as_str),
             Some("dingtalk")
@@ -5195,9 +5272,10 @@ mod dingtalk_connector_tests {
     async fn fetch_file_follows_download_location() {
         let base = mock_dingtalk_server(move |method, path, _query, headers, _body| {
             match (method, path) {
-                ("POST", "/v1.0/oauth2/accessToken") => {
-                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
-                }
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
                 ("GET", "/v1.0/storage/spaces/sp1/files/f1/download") => {
                     if headers.contains("x-acs-dingtalk-access-token: tok") {
                         (
@@ -5273,9 +5351,10 @@ mod dingtalk_connector_tests {
     async fn registry_creates_and_fetches_all() {
         let base = mock_dingtalk_server(move |method, path, _query, _headers, _body| {
             match (method, path) {
-                ("POST", "/v1.0/oauth2/accessToken") => {
-                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
-                }
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
                 ("POST", "/v1.0/storage/spaces/sp1/files") => (
                     200,
                     json!({"files": [
@@ -5445,8 +5524,14 @@ mod rss_connector_tests {
         assert_eq!(first.updated_at, "2025-06-10T09:00:00Z");
         assert_eq!(first.fingerprint, first.updated_at);
         assert_eq!(first.size_bytes, "Post One\n\nHello & welcome".len() as u64);
-        assert_eq!(first.metadata.get("source").map(String::as_str), Some("rss"));
-        assert_eq!(first.metadata.get("feed").map(String::as_str), Some(feed_url.as_str()));
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("rss")
+        );
+        assert_eq!(
+            first.metadata.get("feed").map(String::as_str),
+            Some(feed_url.as_str())
+        );
         assert_eq!(
             first.metadata.get("author").map(String::as_str),
             Some("alice@example.com")
@@ -5461,7 +5546,10 @@ mod rss_connector_tests {
 
         // fetch_file refetches the feed and returns the assembled content.
         let raw = connector.fetch_file(first).await.unwrap();
-        assert_eq!(String::from_utf8(raw).unwrap(), "Post One\n\nHello & welcome");
+        assert_eq!(
+            String::from_utf8(raw).unwrap(),
+            "Post One\n\nHello & welcome"
+        );
 
         // normalize produces a ConnectorDoc with source=rss metadata.
         let raw = connector.fetch_file(first).await.unwrap();
@@ -5470,7 +5558,10 @@ mod rss_connector_tests {
         assert_eq!(doc.semantic_identifier, "Post One");
         assert_eq!(doc.extension, ".html");
         assert_eq!(doc.metadata.get("source").map(String::as_str), Some("rss"));
-        assert_eq!(doc.metadata.get("feed").map(String::as_str), Some(feed_url.as_str()));
+        assert_eq!(
+            doc.metadata.get("feed").map(String::as_str),
+            Some(feed_url.as_str())
+        );
         assert_eq!(doc.source, DocumentSource::Rss);
 
         // Unknown id → error.
@@ -5504,7 +5595,10 @@ mod rss_connector_tests {
             Some("Bob")
         );
         let raw = connector.fetch_file(first).await.unwrap();
-        assert_eq!(String::from_utf8(raw).unwrap(), "Atom One\n\nSummary text here");
+        assert_eq!(
+            String::from_utf8(raw).unwrap(),
+            "Atom One\n\nSummary text here"
+        );
 
         // Offset timestamp → UTC; link without extension → .html fallback.
         let second = &files[1];
@@ -5698,20 +5792,16 @@ mod dingtalk_ai_table_tests {
         let error =
             DingTalkAiTableConnector::new(options(String::new(), "no-colon", "tbl1")).unwrap_err();
         assert!(error.to_string().contains("appKey"), "got: {error:#}");
-        let error =
-            DingTalkAiTableConnector::new(options(String::new(), "", "tbl1")).unwrap_err();
+        let error = DingTalkAiTableConnector::new(options(String::new(), "", "tbl1")).unwrap_err();
         assert!(error.to_string().contains("appKey"), "got: {error:#}");
         let error =
             DingTalkAiTableConnector::new(options(String::new(), "appk:apps", "")).unwrap_err();
         assert!(error.to_string().contains("target"), "got: {error:#}");
 
         // operator_id:table_id target splits cleanly.
-        let connector = DingTalkAiTableConnector::new(options(
-            String::new(),
-            "appk:apps",
-            "op-union-1:tbl9",
-        ))
-        .unwrap();
+        let connector =
+            DingTalkAiTableConnector::new(options(String::new(), "appk:apps", "op-union-1:tbl9"))
+                .unwrap();
         assert_eq!(connector.table_id, "tbl9");
         assert_eq!(connector.operator_id, "op-union-1");
     }
@@ -5728,13 +5818,19 @@ mod dingtalk_ai_table_tests {
             match (method, path) {
                 ("POST", "/v1.0/oauth2/accessToken") => {
                     calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    (200, json!({"accessToken": "acc-abc", "expireIn": 7200}).to_string())
+                    (
+                        200,
+                        json!({"accessToken": "acc-abc", "expireIn": 7200}).to_string(),
+                    )
                 }
                 ("GET", "/v1.0/notable/tables/tbl1/sheets") => {
                     if headers.contains("x-acs-dingtalk-access-token: acc-abc") {
                         (200, json!({"value": []}).to_string())
                     } else {
-                        (403, json!({"code": "invalidToken", "message": "bad token"}).to_string())
+                        (
+                            403,
+                            json!({"code": "invalidToken", "message": "bad token"}).to_string(),
+                        )
                     }
                 }
                 _ => (404, "{}".to_string()),
@@ -5762,9 +5858,10 @@ mod dingtalk_ai_table_tests {
     async fn list_files_walks_sheets_and_paginates_records() {
         let base = mock_ai_table_server(move |method, path, query, _headers, _body| {
             match (method, path) {
-                ("POST", "/v1.0/oauth2/accessToken") => {
-                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
-                }
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
                 ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
                     200,
                     json!({"value": [
@@ -5815,11 +5912,26 @@ mod dingtalk_ai_table_tests {
         assert_eq!(first.name, "Sheet One - 例会纪要");
         assert_eq!(first.path, "tbl1/s1/r1");
         assert_eq!(first.extension, ".txt");
-        assert_eq!(first.metadata.get("source").map(String::as_str), Some("dingtalk_ai_table"));
-        assert_eq!(first.metadata.get("table_id").map(String::as_str), Some("tbl1"));
-        assert_eq!(first.metadata.get("sheet_id").map(String::as_str), Some("s1"));
-        assert_eq!(first.metadata.get("sheet_name").map(String::as_str), Some("Sheet One"));
-        assert_eq!(first.metadata.get("record_id").map(String::as_str), Some("r1"));
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("dingtalk_ai_table")
+        );
+        assert_eq!(
+            first.metadata.get("table_id").map(String::as_str),
+            Some("tbl1")
+        );
+        assert_eq!(
+            first.metadata.get("sheet_id").map(String::as_str),
+            Some("s1")
+        );
+        assert_eq!(
+            first.metadata.get("sheet_name").map(String::as_str),
+            Some("Sheet One")
+        );
+        assert_eq!(
+            first.metadata.get("record_id").map(String::as_str),
+            Some("r1")
+        );
 
         // Paginated page 2 lands under the same sheet.
         assert_eq!(files[2].id, "dingtalk_ai_table:tbl1:s1:r3");
@@ -5837,9 +5949,10 @@ mod dingtalk_ai_table_tests {
     async fn fetch_file_and_normalize_build_record_doc() {
         let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
             match (method, path) {
-                ("POST", "/v1.0/oauth2/accessToken") => {
-                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
-                }
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
                 ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
                     200,
                     json!({"value": [{"id": "s1", "name": "Sheet One"}]}).to_string(),
@@ -5863,14 +5976,25 @@ mod dingtalk_ai_table_tests {
         let blob = String::from_utf8(raw).unwrap();
         assert_eq!(blob, "标题: 例会纪要\n负责人: 张三\n人数: 3\n");
 
-        let doc = connector.normalize(&files[0], blob.clone().into_bytes()).unwrap();
+        let doc = connector
+            .normalize(&files[0], blob.clone().into_bytes())
+            .unwrap();
         assert_eq!(doc.blob, blob);
         assert_eq!(doc.source, DocumentSource::DingTalk);
         assert_eq!(doc.semantic_identifier, "Sheet One - 例会纪要");
         assert_eq!(doc.extension, ".txt");
-        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("dingtalk_ai_table"));
-        assert_eq!(doc.metadata.get("sheet_name").map(String::as_str), Some("Sheet One"));
-        assert_eq!(doc.metadata.get("record_id").map(String::as_str), Some("r1"));
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("dingtalk_ai_table")
+        );
+        assert_eq!(
+            doc.metadata.get("sheet_name").map(String::as_str),
+            Some("Sheet One")
+        );
+        assert_eq!(
+            doc.metadata.get("record_id").map(String::as_str),
+            Some("r1")
+        );
 
         // Unknown record id → readable error.
         let ghost = RemoteFile {
@@ -5899,13 +6023,15 @@ mod dingtalk_ai_table_tests {
         // GetAllSheets probe fails with a structured DingTalk error.
         let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
             match (method, path) {
-                ("POST", "/v1.0/oauth2/accessToken") => {
-                    (200, json!({"accessToken": "tok", "expireIn": 7200}).to_string())
-                }
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
                 ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
                     400,
                     json!({"code": "invalidParameter.value.invalid",
-                           "message": "table not found"}).to_string(),
+                           "message": "table not found"})
+                    .to_string(),
                 ),
                 _ => (404, "{}".to_string()),
             }
@@ -5923,7 +6049,8 @@ mod dingtalk_ai_table_tests {
                 ("POST", "/v1.0/oauth2/accessToken") => (
                     401,
                     json!({"code": "InvalidAuthentication",
-                           "message": "appSecret error"}).to_string(),
+                           "message": "appSecret error"})
+                    .to_string(),
                 ),
                 _ => (404, "{}".to_string()),
             }
@@ -5970,9 +6097,7 @@ mod box_connector_tests {
     /// request land on a fresh connection, matching the one-request-per-
     /// connection loop.
     fn mock_box_server(
-        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String)
-            + Send
-            + 'static,
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String) + Send + 'static,
     ) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -6113,59 +6238,63 @@ mod box_connector_tests {
     async fn load_credentials_refreshes_token_and_probes_user() {
         let refresh_calls = std::sync::Arc::new(AtomicUsize::new(0));
         let calls = refresh_calls.clone();
-        let base = mock_box_server(move |method, path, _query, headers, body| {
-            match (method, path) {
-                ("POST", "/oauth2/token") => {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    let lower = headers.to_ascii_lowercase();
-                    for required in [
-                        "grant_type=refresh_token",
-                        "refresh_token=rt-1",
-                        "client_id=cid-1",
-                        "client_secret=csec-1",
-                    ] {
-                        if !body.contains(required) {
-                            return (
-                                400,
-                                "application/json",
-                                json!({"code": "missing_form_field",
-                                       "message": required}).to_string(),
-                            );
+        let base =
+            mock_box_server(
+                move |method, path, _query, headers, body| match (method, path) {
+                    ("POST", "/oauth2/token") => {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        let lower = headers.to_ascii_lowercase();
+                        for required in [
+                            "grant_type=refresh_token",
+                            "refresh_token=rt-1",
+                            "client_id=cid-1",
+                            "client_secret=csec-1",
+                        ] {
+                            if !body.contains(required) {
+                                return (
+                                    400,
+                                    "application/json",
+                                    json!({"code": "missing_form_field",
+                                       "message": required})
+                                    .to_string(),
+                                );
+                            }
                         }
-                    }
-                    let _ = lower;
-                    (
-                        200,
-                        "application/json",
-                        json!({"access_token": "at-fresh", "expires_in": 3600}).to_string(),
-                    )
-                }
-                ("GET", "/2.0/users/me") => {
-                    if headers.to_ascii_lowercase().contains("authorization: bearer at-fresh") {
+                        let _ = lower;
                         (
                             200,
                             "application/json",
-                            json!({"type": "user", "id": "u1", "name": "Me"}).to_string(),
-                        )
-                    } else {
-                        (
-                            401,
-                            "application/json",
-                            json!({"code": "unauthorized", "message": "bad token"}).to_string(),
+                            json!({"access_token": "at-fresh", "expires_in": 3600}).to_string(),
                         )
                     }
-                }
-                ("GET", "/2.0/folders/0/items") => (
-                    200,
-                    "application/json",
-                    json!({"entries": [], "next_marker": ""}).to_string(),
-                ),
-                _ => (404, "application/json", "{}".to_string()),
-            }
-        });
+                    ("GET", "/2.0/users/me") => {
+                        if headers
+                            .to_ascii_lowercase()
+                            .contains("authorization: bearer at-fresh")
+                        {
+                            (
+                                200,
+                                "application/json",
+                                json!({"type": "user", "id": "u1", "name": "Me"}).to_string(),
+                            )
+                        } else {
+                            (
+                                401,
+                                "application/json",
+                                json!({"code": "unauthorized", "message": "bad token"}).to_string(),
+                            )
+                        }
+                    }
+                    ("GET", "/2.0/folders/0/items") => (
+                        200,
+                        "application/json",
+                        json!({"entries": [], "next_marker": ""}).to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
 
-        let mut connector =
-            BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
+        let mut connector = BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
         connector.load_credentials().await.unwrap();
 
         // list_files reuses the cached token — still exactly one refresh.
@@ -6184,59 +6313,60 @@ mod box_connector_tests {
     /// Entry mapping: id/name/path/extension(lowercased)/size/updated_at.
     #[tokio::test]
     async fn list_files_paginates_and_recurses_subfolders() {
-        let base = mock_box_server(move |method, path, query, _headers, _body| {
-            match (method, path) {
-                ("POST", "/oauth2/token") => (
-                    200,
-                    "application/json",
-                    json!({"access_token": "tok", "expires_in": 3600}).to_string(),
-                ),
-                ("GET", "/2.0/folders/0/items") => {
-                    if query.contains("marker=m1") {
-                        (
-                            200,
-                            "application/json",
-                            json!({
-                                "entries": [
-                                    {"type": "file", "id": "f2", "name": "second.md",
-                                     "size": 22, "modified_at": "2025-08-01T10:00:00Z"}
-                                ],
-                                "next_marker": ""
-                            })
-                            .to_string(),
-                        )
-                    } else {
-                        (
-                            200,
-                            "application/json",
-                            json!({
-                                "entries": [
-                                    {"type": "file", "id": "f1", "name": "report.PDF",
-                                     "size": 11, "modified_at": "2025-08-01T09:00:00Z"},
-                                    {"type": "folder", "id": "sub", "name": "Sub Folder",
-                                     "size": 0, "modified_at": "2025-08-01T08:00:00Z"}
-                                ],
-                                "next_marker": "m1"
-                            })
-                            .to_string(),
-                        )
+        let base =
+            mock_box_server(
+                move |method, path, query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        200,
+                        "application/json",
+                        json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                    ),
+                    ("GET", "/2.0/folders/0/items") => {
+                        if query.contains("marker=m1") {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "entries": [
+                                        {"type": "file", "id": "f2", "name": "second.md",
+                                         "size": 22, "modified_at": "2025-08-01T10:00:00Z"}
+                                    ],
+                                    "next_marker": ""
+                                })
+                                .to_string(),
+                            )
+                        } else {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "entries": [
+                                        {"type": "file", "id": "f1", "name": "report.PDF",
+                                         "size": 11, "modified_at": "2025-08-01T09:00:00Z"},
+                                        {"type": "folder", "id": "sub", "name": "Sub Folder",
+                                         "size": 0, "modified_at": "2025-08-01T08:00:00Z"}
+                                    ],
+                                    "next_marker": "m1"
+                                })
+                                .to_string(),
+                            )
+                        }
                     }
-                }
-                ("GET", "/2.0/folders/sub/items") => (
-                    200,
-                    "application/json",
-                    json!({
-                        "entries": [
-                            {"type": "file", "id": "f3", "name": "nested.docx",
-                             "size": 33, "modified_at": "2025-08-02T00:00:00Z"}
-                        ],
-                        "next_marker": ""
-                    })
-                    .to_string(),
-                ),
-                _ => (404, "application/json", "{}".to_string()),
-            }
-        });
+                    ("GET", "/2.0/folders/sub/items") => (
+                        200,
+                        "application/json",
+                        json!({
+                            "entries": [
+                                {"type": "file", "id": "f3", "name": "nested.docx",
+                                 "size": 33, "modified_at": "2025-08-02T00:00:00Z"}
+                            ],
+                            "next_marker": ""
+                        })
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
 
         let connector = BoxConnector::new(options(base, &oauth_json(true), "0")).unwrap();
         let files = connector.list_files().await.unwrap();
@@ -6272,21 +6402,22 @@ mod box_connector_tests {
     /// bytes onto a ConnectorDoc (Local stand-in + metadata source=box).
     #[tokio::test]
     async fn fetch_file_and_normalize_build_box_doc() {
-        let base = mock_box_server(move |method, path, _query, _headers, _body| {
-            match (method, path) {
-                ("POST", "/oauth2/token") => (
-                    200,
-                    "application/json",
-                    json!({"access_token": "tok", "expires_in": 3600}).to_string(),
-                ),
-                ("GET", "/2.0/files/f1/content") => (
-                    200,
-                    "application/octet-stream",
-                    "# Hello Box\n\nbody text".to_string(),
-                ),
-                _ => (404, "application/json", "{}".to_string()),
-            }
-        });
+        let base =
+            mock_box_server(
+                move |method, path, _query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        200,
+                        "application/json",
+                        json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                    ),
+                    ("GET", "/2.0/files/f1/content") => (
+                        200,
+                        "application/octet-stream",
+                        "# Hello Box\n\nbody text".to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
 
         let connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
         let file = remote_file("f1", "hello.md", ".md");
@@ -6315,38 +6446,40 @@ mod box_connector_tests {
     async fn unauthorized_response_triggers_single_refresh_then_retry() {
         let refresh_calls = std::sync::Arc::new(AtomicUsize::new(0));
         let calls = refresh_calls.clone();
-        let base = mock_box_server(move |method, path, _query, headers, _body| {
-            match (method, path) {
-                ("POST", "/oauth2/token") => {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    (
-                        200,
-                        "application/json",
-                        json!({"access_token": "at-refreshed", "expires_in": 3600}).to_string(),
-                    )
-                }
-                ("GET", "/2.0/files/f1/content") => {
-                    if headers
-                        .to_ascii_lowercase()
-                        .contains("authorization: bearer at-refreshed")
-                    {
+        let base =
+            mock_box_server(
+                move |method, path, _query, headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => {
+                        calls.fetch_add(1, Ordering::SeqCst);
                         (
                             200,
-                            "application/octet-stream",
-                            "retried-content".to_string(),
-                        )
-                    } else {
-                        (
-                            401,
                             "application/json",
-                            json!({"code": "unauthorized",
-                                   "message": "token expired"}).to_string(),
+                            json!({"access_token": "at-refreshed", "expires_in": 3600}).to_string(),
                         )
                     }
-                }
-                _ => (404, "application/json", "{}".to_string()),
-            }
-        });
+                    ("GET", "/2.0/files/f1/content") => {
+                        if headers
+                            .to_ascii_lowercase()
+                            .contains("authorization: bearer at-refreshed")
+                        {
+                            (
+                                200,
+                                "application/octet-stream",
+                                "retried-content".to_string(),
+                            )
+                        } else {
+                            (
+                                401,
+                                "application/json",
+                                json!({"code": "unauthorized",
+                                   "message": "token expired"})
+                                .to_string(),
+                            )
+                        }
+                    }
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
 
         let connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
         // Initial cached token is "at-init" → first download 401 → refresh →
@@ -6367,25 +6500,26 @@ mod box_connector_tests {
     #[tokio::test]
     async fn upstream_error_reports_code_and_message() {
         // Probe fails with a structured Box error.
-        let base = mock_box_server(move |method, path, _query, _headers, _body| {
-            match (method, path) {
-                ("POST", "/oauth2/token") => (
-                    200,
-                    "application/json",
-                    json!({"access_token": "tok", "expires_in": 3600}).to_string(),
-                ),
-                ("GET", "/2.0/users/me") => (
-                    403,
-                    "application/json",
-                    json!({"type": "error", "status": 403,
+        let base =
+            mock_box_server(
+                move |method, path, _query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        200,
+                        "application/json",
+                        json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                    ),
+                    ("GET", "/2.0/users/me") => (
+                        403,
+                        "application/json",
+                        json!({"type": "error", "status": 403,
                            "code": "access_denied_insufficient_permissions",
-                           "message": "Access denied"}).to_string(),
-                ),
-                _ => (404, "application/json", "{}".to_string()),
-            }
-        });
-        let mut connector =
-            BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+                           "message": "Access denied"})
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+        let mut connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
         let error = connector.load_credentials().await.unwrap_err().to_string();
         assert!(error.contains("403"), "{error}");
         assert!(
@@ -6395,19 +6529,20 @@ mod box_connector_tests {
         assert!(error.contains("Access denied"), "{error}");
 
         // A failing token exchange reports code/message as well.
-        let base = mock_box_server(move |method, path, _query, _headers, _body| {
-            match (method, path) {
-                ("POST", "/oauth2/token") => (
-                    400,
-                    "application/json",
-                    json!({"code": "invalid_grant",
-                           "error_description": "Refresh token has expired"}).to_string(),
-                ),
-                _ => (404, "application/json", "{}".to_string()),
-            }
-        });
-        let mut connector =
-            BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
+        let base =
+            mock_box_server(
+                move |method, path, _query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        400,
+                        "application/json",
+                        json!({"code": "invalid_grant",
+                           "error_description": "Refresh token has expired"})
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+        let mut connector = BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
         let error = connector.load_credentials().await.unwrap_err().to_string();
         assert!(error.contains("400"), "{error}");
         assert!(error.contains("invalid_grant"), "{error}");
@@ -6430,6 +6565,387 @@ mod box_connector_tests {
     }
 }
 
+// ── RdbmsConnector (PostgreSQL 外部库直读) ───────────────────────────────────
+
+/// RAGFlow `rdbms_connector.py` parity for PostgreSQL (RayRAG 栈不含 MySQL;
+/// mysql 源保持 registry bail 并注明"仅支持 PostgreSQL").
+///
+/// 语义: host/port/user/password/database（或整串 connect_str）→
+/// information_schema 列表 → 每表 `SELECT * FROM <table>`（或自定义 query，
+/// 支持 markdown 围栏清理）→ 每行生成一个文档（"列名: 值" 拼接）。
+#[derive(Debug)]
+pub struct RdbmsConnector {
+    base_url: String,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    database: String,
+    connect_str: Option<String>,
+    query: Option<String>,
+    id_column: String,
+    timestamp_column: String,
+    content_columns: Vec<String>,
+    http_client: reqwest::Client,
+}
+
+/// 清理用户粘贴的 SQL（strip ```sql 围栏 / 语言标签首行）——对齐
+/// `RDBMSConnector._sanitize_query`。
+pub fn sanitize_sql_query(raw: &str) -> String {
+    let mut query = raw.trim().to_string();
+    if query.is_empty() {
+        return query;
+    }
+    if query.starts_with("```") {
+        query = query[3..].trim().to_string();
+        if query.ends_with("```") {
+            query = query[..query.len() - 3].trim().to_string();
+        }
+    }
+    let fence_languages = [
+        "sql",
+        "tsql",
+        "t-sql",
+        "mssql",
+        "mysql",
+        "postgresql",
+        "psql",
+    ];
+    if let Some((head, tail)) = query.split_once('\n') {
+        if !tail.trim().is_empty()
+            && fence_languages.contains(&head.trim().to_ascii_lowercase().as_str())
+        {
+            query = tail.trim().to_string();
+        }
+    }
+    query
+}
+
+/// 把一行记录渲染成 "列名: 值" 多行文本（对齐 Airtable 同款行文档模式）。
+pub fn rdbms_row_blob(columns: &[String], values: &[Option<String>]) -> String {
+    columns
+        .iter()
+        .zip(values.iter())
+        .map(|(c, v)| format!("{c}: {}", v.clone().unwrap_or_default()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl RdbmsConnector {
+    pub fn new(options: &SourceOptions) -> Result<Self> {
+        let g = |k: &str| options.extra.get(k).cloned().unwrap_or_default();
+        let host = g("host");
+        let port = g("port").parse::<u16>().unwrap_or(5432);
+        let user = g("user");
+        let password = g("password");
+        let database = g("database");
+        let connect_str = options.extra.get("connect_str").cloned();
+        if connect_str.is_none() && (host.is_empty() || database.is_empty()) {
+            bail!("RDBMS (postgresql): missing connect_str or host+database");
+        }
+        Ok(Self {
+            base_url: String::new(),
+            host,
+            port,
+            user,
+            password,
+            database,
+            connect_str,
+            query: options
+                .extra
+                .get("query")
+                .cloned()
+                .filter(|q| !q.is_empty()),
+            id_column: {
+                let v = g("id_column");
+                if v.is_empty() { "id".to_string() } else { v }
+            },
+            timestamp_column: {
+                let v = g("timestamp_column");
+                if v.is_empty() {
+                    "create_time".to_string()
+                } else {
+                    v
+                }
+            },
+            content_columns: g("content_columns")
+                .split(',')
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .map(str::to_string)
+                .collect(),
+            http_client: reqwest::Client::new(),
+        })
+    }
+
+    fn connect_str(&self) -> String {
+        if let Some(cs) = &self.connect_str {
+            return cs.clone();
+        }
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            self.user, self.password, self.host, self.port, self.database
+        )
+    }
+
+    /// 列取外部 PostgreSQL 的所有表（同步 postgres crate，在 async 上下文中
+    /// 用 block_in_place 包装，避免阻塞 executor）。
+    #[cfg(feature = "postgres-backend")]
+    fn tables_sync(&self) -> Result<Vec<String>> {
+        let mut client = postgres::Client::connect(&self.connect_str(), postgres::NoTls)
+            .map_err(|e| anyhow!("RDBMS (postgresql): connect failed: {e}"))?;
+        let rows = client
+            .query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+                &[],
+            )
+            .map_err(|e| anyhow!("RDBMS (postgresql): listing tables failed: {e}"))?;
+        Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
+    }
+
+    /// 同步执行一条 SELECT 并渲染为 (columns, row_blobs)。
+    #[cfg(feature = "postgres-backend")]
+    fn query_rows_sync(&self, sql: &str) -> Result<Vec<(Vec<String>, Vec<Option<String>>)>> {
+        let mut client = postgres::Client::connect(&self.connect_str(), postgres::NoTls)
+            .map_err(|e| anyhow!("RDBMS (postgresql): connect failed: {e}"))?;
+        let rows = client
+            .query(sql, &[])
+            .map_err(|e| anyhow!("RDBMS (postgresql): query failed: {e}"))?;
+        let columns: Vec<String> = rows
+            .first()
+            .map(|r| {
+                (0..r.len())
+                    .map(|i| r.columns()[i].name().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        for row in &rows {
+            // 宽松序列化：String→i64→f64→bool 降级链，未知类型置空。
+            let mut vals = Vec::new();
+            for i in 0..row.len() {
+                let v: Option<String> = row
+                    .try_get::<_, Option<String>>(i)
+                    .or_else(|_| {
+                        row.try_get::<_, Option<i64>>(i)
+                            .map(|x| x.map(|v| v.to_string()))
+                    })
+                    .or_else(|_| {
+                        row.try_get::<_, Option<f64>>(i)
+                            .map(|x| x.map(|v| v.to_string()))
+                    })
+                    .or_else(|_| {
+                        row.try_get::<_, Option<bool>>(i)
+                            .map(|x| x.map(|v| v.to_string()))
+                    })
+                    .unwrap_or(None);
+                vals.push(v);
+            }
+            out.push((columns.clone(), vals));
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl Connector for RdbmsConnector {
+    fn kind(&self) -> &'static str {
+        "postgresql"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        #[cfg(feature = "postgres-backend")]
+        {
+            let tables = self.tables_sync()?;
+            let _ = tables;
+            Ok(())
+        }
+        #[cfg(not(feature = "postgres-backend"))]
+        bail!("RDBMS (postgresql): build without --features postgres-backend")
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        #[cfg(feature = "postgres-backend")]
+        {
+            let tables = self.tables_sync()?;
+            let mut files = Vec::new();
+            let queries: Vec<String> = if let Some(q) = &self.query {
+                vec![sanitize_sql_query(q)]
+            } else {
+                tables
+                    .iter()
+                    .map(|t| format!("SELECT * FROM {t}"))
+                    .collect()
+            };
+            let mut row_no = 0usize;
+            for sql in queries {
+                let table_hint = self
+                    .query
+                    .as_ref()
+                    .map(|_| "custom_query".to_string())
+                    .or_else(|| {
+                        sql.split_whitespace()
+                            .skip(1)
+                            .find(|w| !w.eq_ignore_ascii_case("from"))
+                            .map(|s| s.trim_end_matches(';').to_string())
+                    })
+                    .unwrap_or_default();
+                let rows = self.query_rows_sync(&sql)?;
+                for (columns, values) in rows {
+                    let name = if let Some(first) = values.first() {
+                        first
+                            .clone()
+                            .unwrap_or_default()
+                            .chars()
+                            .take(50)
+                            .collect::<String>()
+                    } else {
+                        format!("{table_hint}-{row_no}")
+                    };
+                    let id = format!("rdbms:{table_hint}:{row_no}");
+                    let blob = rdbms_row_blob(&columns, &values);
+                    files.push(RemoteFile {
+                        id,
+                        name,
+                        path: format!("rdbms://{table_hint}/{row_no}"),
+                        extension: ".md".into(),
+                        size_bytes: blob.len() as u64,
+                        updated_at: String::new(),
+                        fingerprint: String::new(),
+                        metadata: {
+                            let mut m = HashMap::new();
+                            m.insert("source".into(), "rdbms".into());
+                            m.insert("table".into(), table_hint.clone());
+                            m.insert("database".into(), self.database.clone());
+                            m
+                        },
+                    });
+                    row_no += 1;
+                }
+            }
+            Ok(files)
+        }
+        #[cfg(not(feature = "postgres-backend"))]
+        bail!("RDBMS (postgresql): build without --features postgres-backend")
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        // 行内容已在 list_files 阶段物化到 metadata（blob 由 normalize 重建，
+        // 见下）：此处重查该行所在的表以保证增量同步一致性。
+        let table = file.metadata.get("table").cloned().unwrap_or_default();
+        let row_no = file
+            .path
+            .trim_start_matches("rdbms://")
+            .rsplit('/')
+            .next()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
+        #[cfg(feature = "postgres-backend")]
+        {
+            let sql = if let Some(q) = &self.query {
+                sanitize_sql_query(q)
+            } else {
+                format!("SELECT * FROM {table}")
+            };
+            let rows = self.query_rows_sync(&sql)?;
+            if let Some((columns, values)) = rows.get(row_no) {
+                return Ok(rdbms_row_blob(columns, values).into_bytes());
+            }
+            bail!("RDBMS (postgresql): row {row_no} of table {table} disappeared");
+        }
+        #[cfg(not(feature = "postgres-backend"))]
+        bail!("RDBMS (postgresql): build without --features postgres-backend")
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata = HashMap::new();
+        for key in ["source", "table", "database"] {
+            if let Some(value) = file.metadata.get(key) {
+                metadata.insert(key.to_string(), value.clone());
+            }
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            source: DocumentSource::Local,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
+#[cfg(test)]
+mod rdbms_connector_tests {
+    use super::*;
+
+    fn opts(extra: &[(&str, &str)]) -> SourceOptions {
+        SourceOptions {
+            url: String::new(),
+            token: String::new(),
+            target: String::new(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 100,
+            extra: extra
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn requires_connect_str_or_host_database() {
+        let err = RdbmsConnector::new(&opts(&[])).unwrap_err();
+        assert!(err.to_string().contains("missing connect_str"), "{err}");
+        let err = RdbmsConnector::new(&opts(&[("host", "h")])).unwrap_err();
+        assert!(err.to_string().contains("missing connect_str"), "{err}");
+    }
+
+    #[test]
+    fn builds_connect_str_from_parts_and_defaults() {
+        let c = RdbmsConnector::new(&opts(&[
+            ("host", "db.example.com"),
+            ("user", "reader"),
+            ("password", "s3cret"),
+            ("database", "analytics"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.connect_str(),
+            "postgres://reader:s3cret@db.example.com:5432/analytics"
+        );
+        // 显式 connect_str 优先
+        let c2 = RdbmsConnector::new(&opts(&[("connect_str", "postgres://u:p@h:9999/d")])).unwrap();
+        assert_eq!(c2.connect_str(), "postgres://u:p@h:9999/d");
+        assert_eq!(c2.kind(), "postgresql");
+    }
+
+    #[test]
+    fn sanitizes_markdown_fenced_sql() {
+        assert_eq!(sanitize_sql_query("SELECT 1"), "SELECT 1");
+        assert_eq!(sanitize_sql_query("```sql\nSELECT 1\n```"), "SELECT 1");
+        assert_eq!(
+            sanitize_sql_query("sql\nSELECT * FROM t;"),
+            "SELECT * FROM t;"
+        );
+        assert_eq!(sanitize_sql_query(""), "");
+    }
+
+    #[test]
+    fn renders_row_blob_as_column_value_lines() {
+        let blob = rdbms_row_blob(
+            &["name".into(), "age".into()],
+            &[Some("Alice".into()), Some("30".into())],
+        );
+        assert_eq!(blob, "name: Alice\nage: 30");
+        assert_eq!(rdbms_row_blob(&["a".into()], &[None]), "a: ");
+    }
+}
+
 #[cfg(test)]
 mod airtable_connector_tests {
     use super::*;
@@ -6442,9 +6958,7 @@ mod airtable_connector_tests {
     /// override points here — no real network. `Connection: close` makes every
     /// request land on a fresh connection.
     fn mock_airtable_server(
-        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String)
-            + Send
-            + 'static,
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String) + Send + 'static,
     ) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -6526,8 +7040,7 @@ mod airtable_connector_tests {
         assert!(error.to_string().contains("base id"), "{error:#}");
 
         // Valid credentials → default API base, target carried as base id.
-        let connector =
-            AirtableConnector::new(options("", "pat123", "appBase1")).unwrap();
+        let connector = AirtableConnector::new(options("", "pat123", "appBase1")).unwrap();
         assert_eq!(connector.base_url, "https://api.airtable.com");
         assert_eq!(connector.base_id, "appBase1");
     }
@@ -6540,7 +7053,10 @@ mod airtable_connector_tests {
     #[tokio::test]
     async fn list_files_enumerates_tables_and_paginates_records() {
         let base = mock_airtable_server(move |method, path, query, headers, _body| {
-            if headers.to_ascii_lowercase().contains("authorization: bearer pat123") {
+            if headers
+                .to_ascii_lowercase()
+                .contains("authorization: bearer pat123")
+            {
                 match (method, path) {
                     ("GET", "/v0/meta/bases/appBase1/tables") => (
                         200,
@@ -6599,14 +7115,22 @@ mod airtable_connector_tests {
                     _ => (404, "application/json", "{}".to_string()),
                 }
             } else {
-                (401, "application/json", json!({"error": {"type": "AUTHENTICATION_REQUIRED", "message": "no token"}}).to_string())
+                (
+                    401,
+                    "application/json",
+                    json!({"error": {"type": "AUTHENTICATION_REQUIRED", "message": "no token"}})
+                        .to_string(),
+                )
             }
         });
 
-        let connector =
-            AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let connector = AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
         let files = connector.list_files().await.unwrap();
-        assert_eq!(files.len(), 4, "tbl1 page1 (rec1,rec2) + page2 (rec3) + tbl2 (rec9)");
+        assert_eq!(
+            files.len(),
+            4,
+            "tbl1 page1 (rec1,rec2) + page2 (rec3) + tbl2 (rec9)"
+        );
 
         // Row 1 of table "Users": id/name/metadata/extension/updated_at mapping.
         let first = &files[0];
@@ -6632,7 +7156,10 @@ mod airtable_connector_tests {
             Some("rec1")
         );
         // size_bytes = rendered `列名: 值` blob length.
-        assert_eq!(first.size_bytes as usize, "Name: Alice\nEmail: alice@example.com\n".len());
+        assert_eq!(
+            first.size_bytes as usize,
+            "Name: Alice\nEmail: alice@example.com\n".len()
+        );
 
         // Rows 2 and 3 (page 2 via offset).
         assert_eq!(files[1].id, "rec2");
@@ -6644,10 +7171,7 @@ mod airtable_connector_tests {
         let last = &files[3];
         assert_eq!(last.id, "rec9");
         assert_eq!(last.name, "Pets-1");
-        assert_eq!(
-            last.metadata.get("table").map(String::as_str),
-            Some("Pets")
-        );
+        assert_eq!(last.metadata.get("table").map(String::as_str), Some("Pets"));
     }
 
     /// fetch_file re-lists the table and re-renders the record blob; normalize
@@ -6680,8 +7204,7 @@ mod airtable_connector_tests {
             }
         });
 
-        let connector =
-            AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let connector = AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
         let files = connector.list_files().await.unwrap();
         assert_eq!(files.len(), 1);
         let file = files.into_iter().next().unwrap();
@@ -6699,10 +7222,19 @@ mod airtable_connector_tests {
         assert_eq!(doc.extension, ".txt");
         assert_eq!(doc.doc_updated_at, "2025-08-01T08:00:00.000Z");
         assert_eq!(doc.source, DocumentSource::AirTable);
-        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("airtable"));
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("airtable")
+        );
         assert_eq!(doc.metadata.get("table").map(String::as_str), Some("Users"));
-        assert_eq!(doc.metadata.get("table_id").map(String::as_str), Some("tbl1"));
-        assert_eq!(doc.metadata.get("record_id").map(String::as_str), Some("rec1"));
+        assert_eq!(
+            doc.metadata.get("table_id").map(String::as_str),
+            Some("tbl1")
+        );
+        assert_eq!(
+            doc.metadata.get("record_id").map(String::as_str),
+            Some("rec1")
+        );
     }
 
     /// Non-2xx upstream responses surface the Airtable error envelope
@@ -6726,15 +7258,17 @@ mod airtable_connector_tests {
             }
         });
 
-        let mut connector =
-            AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let mut connector = AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
         let error = connector.load_credentials().await.unwrap_err().to_string();
         assert!(error.contains("403"), "{error}");
         assert!(
             error.contains("INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND"),
             "{error}"
         );
-        assert!(error.contains("Permission denied for base appBase1"), "{error}");
+        assert!(
+            error.contains("Permission denied for base appBase1"),
+            "{error}"
+        );
     }
 
     /// Registry dispatch: `create("airtable", …)` returns an AirtableConnector

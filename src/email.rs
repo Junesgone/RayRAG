@@ -116,7 +116,7 @@ impl EmailClient {
         let transport = SmtpTransport::builder_dangerous(config.smtp_server.as_str())
             .port(config.smtp_port)
             .credentials(credentials)
-            .timeout(Some(Duration::from_secs(30)))
+            .timeout(Some(crate::common::cmd_timeout::duration()))
             .build();
 
         match transport.send(&message) {

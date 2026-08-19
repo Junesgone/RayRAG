@@ -55,7 +55,7 @@ impl BaikeClient {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(RedirectPolicy::limited(3))
-            .timeout(Duration::from_secs(15))
+            .timeout(crate::common::cmd_timeout::duration())
             .user_agent(BAIKE_USER_AGENT)
             .build()
             .context("build Baike HTTP client")?;

@@ -24,6 +24,12 @@ pub struct User {
     pub password_hash: String,
     /// User role: "admin" or "normal"
     pub role: String,
+    /// Optional profile avatar (data URL or asset path).
+    #[serde(default)]
+    pub avatar: String,
+    /// Optional IANA-style timezone display string.
+    #[serde(default)]
+    pub timezone: String,
     /// Account creation timestamp (Unix ms)
     pub created_at: u64,
 }
@@ -85,6 +91,8 @@ impl UserStore {
                 email: initial_email,
                 password_hash: hash_password(&initial_password)?,
                 role: "admin".into(),
+                avatar: String::new(),
+                timezone: String::new(),
                 created_at: now_ms(),
             };
             let mut map = HashMap::new();
@@ -167,6 +175,32 @@ impl UserStore {
         })
     }
 
+    /// Update the editable profile fields (nickname / avatar / timezone) for
+    /// the user with the given id. Only `Some` fields are applied.
+    pub fn update_profile(
+        &self,
+        user_id: &str,
+        nickname: Option<String>,
+        avatar: Option<String>,
+        timezone: Option<String>,
+    ) -> Result<()> {
+        self.mutate_if_changed(|users| {
+            let Some(user) = users.values_mut().find(|user| user.id == user_id) else {
+                anyhow::bail!("User not found");
+            };
+            if let Some(nickname) = nickname {
+                user.nickname = nickname;
+            }
+            if let Some(avatar) = avatar {
+                user.avatar = avatar;
+            }
+            if let Some(timezone) = timezone {
+                user.timezone = timezone;
+            }
+            Ok(((), true))
+        })
+    }
+
     /// 管理员：删除用户（保留主管理员，禁止删自己）。
     pub fn delete_user(&self, user_id: &str, acting_user: &str) -> Result<bool> {
         if user_id == acting_user {
@@ -221,6 +255,8 @@ impl UserStore {
             email: username.to_ascii_lowercase(),
             password_hash: hash_password(password.as_ref())?,
             role: role.to_string(),
+            avatar: String::new(),
+            timezone: String::new(),
             created_at: now_ms(),
         };
         self.mutate(|users| {
@@ -282,6 +318,8 @@ impl UserStore {
             email: email.clone(),
             password_hash: hash_password(password.as_ref())?,
             role: "normal".into(),
+            avatar: String::new(),
+            timezone: String::new(),
             created_at: now_ms(),
         };
         self.mutate(|users| {
@@ -334,6 +372,15 @@ impl UserStore {
     /// Logout (invalidate token).
     pub fn logout(&self, token: &str) {
         self.tokens.write().unwrap().remove(token);
+    }
+
+    /// Log out every active token belonging to a user (used after a password
+    /// change, mirroring upstream's access-token invalidation).
+    pub fn logout_user_tokens(&self, user_id: &str) {
+        self.tokens
+            .write()
+            .unwrap()
+            .retain(|_, entry| entry.user_id != user_id);
     }
 
     fn decode_password<'a>(&self, value: &'a str) -> Result<std::borrow::Cow<'a, str>> {
@@ -535,6 +582,8 @@ mod tests {
             email: "legacy@example.com".into(),
             password_hash: legacy_sha256("correct horse battery staple"),
             role: "admin".into(),
+            avatar: String::new(),
+            timezone: String::new(),
             created_at: now_ms(),
         };
         std::fs::write(&path, serde_json::to_vec(&vec![user]).unwrap()).unwrap();
@@ -575,6 +624,8 @@ mod tests {
             email: "token@example.com".into(),
             password_hash: hash_password("correct horse battery staple").unwrap(),
             role: "normal".into(),
+            avatar: String::new(),
+            timezone: String::new(),
             created_at: now_ms(),
         };
         std::fs::write(&path, serde_json::to_vec(&vec![user]).unwrap()).unwrap();
@@ -593,6 +644,8 @@ mod tests {
             email: "existing@example.com".into(),
             password_hash: hash_password("correct horse battery staple").unwrap(),
             role: "normal".into(),
+            avatar: String::new(),
+            timezone: String::new(),
             created_at: now_ms(),
         };
         std::fs::write(&path, serde_json::to_vec(&vec![user]).unwrap()).unwrap();

@@ -9,6 +9,9 @@
     "doc_count": 4,
     "embd_id": "default",
     "parser_config": "{\"chunk_token_num\":2048,\"overlapped_percent\":0.05}",
+    "tag_sets": "",
+    "avatar": "",
+    "prompt_config": {},
     "created_at": 1783777521152,
     "updated_at": 1783777560118
   }

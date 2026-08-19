@@ -61,7 +61,7 @@ impl TencentFinanceClient {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(RedirectPolicy::none())
-            .timeout(Duration::from_secs(15))
+            .timeout(crate::common::cmd_timeout::duration())
             .user_agent(TENCENT_USER_AGENT)
             .build()
             .context("could not build Tencent Finance HTTP client")?;

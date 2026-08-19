@@ -4,6 +4,7 @@
 //! The connector fetches external content and converts it into connector
 //! documents that can be synced into a knowledge base.
 
+use serde::Deserialize;
 use std::collections::HashMap;
 
 /// RAGFlow-aligned document source enum.
@@ -108,9 +109,16 @@ pub struct SourceOptions {
     pub include_merge_requests: bool,
     /// Max files to fetch (safety bound).
     pub max_items: usize,
+    /// Free-form credential / option key-values (RAGFlow `options` dict
+    /// parity) — connectors with multi-field credentials (rdbms: host/port/
+    /// user/password/database/connect_str/query/id_column/timestamp_column/
+    /// content_columns) read from here.
+    pub extra: std::collections::HashMap<String, String>,
 }
 
 pub mod gitlab;
 pub use gitlab::GitLabConnector;
+
 pub mod blob;
+pub mod form_fields;
 pub use blob::BlobConnector;

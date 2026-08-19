@@ -61,7 +61,7 @@ impl WikipediaClient {
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(RedirectPolicy::none())
-                .timeout(Duration::from_secs(60))
+                .timeout(crate::common::cmd_timeout::duration())
                 .user_agent(WIKIPEDIA_USER_AGENT)
                 .build()
                 .context("could not build Wikipedia HTTP client")?,

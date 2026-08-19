@@ -1,0 +1,28 @@
+[
+  {
+    "id": "2d20431e-2fcb-4eb3-90a1-113cc21c786f",
+    "tenant_id": "7b042c73-1151-4c09-ac52-8c6d2a253029",
+    "name": "CDP WAA",
+    "channel": "whatsapp",
+    "config": {
+      "credential": {}
+    },
+    "chat_id": null,
+    "created_at": 1787104486236,
+    "updated_at": 1787104486236
+  },
+  {
+    "id": "668af1be-d18e-4c70-80e1-37e474f3a97a",
+    "tenant_id": "7b042c73-1151-4c09-ac52-8c6d2a253029",
+    "name": "CDP TG",
+    "channel": "telegram",
+    "config": {
+      "credential": {
+        "token": "x"
+      }
+    },
+    "chat_id": null,
+    "created_at": 1787104500310,
+    "updated_at": 1787104500310
+  }
+]

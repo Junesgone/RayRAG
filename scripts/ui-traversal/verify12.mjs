@@ -1,0 +1,20 @@
+import { chromium } from 'playwright-core';
+const browser = await chromium.connectOverCDP('http://127.0.0.1:16002');
+const ctx = browser.contexts()[0];
+const page = await ctx.newPage();
+const errors = [];
+page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+await page.goto('http://127.0.0.1:9390/login');
+await page.evaluate(async () => {
+  const r = await fetch('/api/v1/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:'admin@rayrag.local', password:'rayrag-smoke-admin'})});
+  const j = await r.json();
+  localStorage.setItem('rayrag_token', j.data.access_token);
+  document.cookie = 'rayrag_token='+j.data.access_token+';path=/;max-age=86400';
+});
+await page.goto('http://127.0.0.1:9390/user-setting/model?cb=' + Date.now(), { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(4000);
+const state = await page.evaluate(() => ({ loading: !!document.querySelector('.added-model-loading'), cards: document.querySelectorAll('[data-testid="added-model-card"]').length, tok: (localStorage.getItem('rayrag_token')||'').slice(0,6) }));
+console.log(JSON.stringify({ state, errors }, null, 1));
+await page.close();
+await browser.close();

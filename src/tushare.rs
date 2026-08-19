@@ -40,7 +40,7 @@ impl Default for TuShareClient {
     fn default() -> Self {
         Self {
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
+                .timeout(crate::common::cmd_timeout::duration())
                 .build()
                 .expect("tushare http client"),
         }
@@ -168,7 +168,7 @@ mod tests {
         });
         let client = TuShareClient {
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .timeout(crate::common::cmd_timeout::duration())
                 .build()
                 .unwrap(),
         };
