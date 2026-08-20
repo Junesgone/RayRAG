@@ -1083,6 +1083,7 @@ mod tests {
             api_key: None,
             region: None,
             models,
+            extra: Default::default(),
         }
     }
 

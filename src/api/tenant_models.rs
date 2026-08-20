@@ -109,6 +109,9 @@ pub struct TenantModelInstance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
     pub models: Vec<TenantModelSpec>,
+    /// Per-provider credential/configuration extras (RAGFlow provider-config-map.ts fields).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub extra: std::collections::BTreeMap<String,String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -194,7 +197,9 @@ impl ResolvedTenantModel {
     pub fn id(&self) -> String {
         format!(
             "{}/{}/{}",
-            self.provider_id, self.instance_id, self.model_name
+            self.provider_id, self.instance_id,
+
+            self.model_name
         )
     }
 
@@ -588,6 +593,7 @@ impl TenantModelStore {
                 api_key,
                 region: None,
                 models: update.models,
+                extra: Default::default(),
             };
             validate_instance(&instance)?;
             let public = PublicTenantModelInstance::from(&instance);
@@ -659,6 +665,7 @@ impl TenantModelStore {
                     .filter(|value| !value.is_empty())
                     .map(str::to_string),
                 models,
+                extra: Default::default(),
             };
             validate_instance(&instance)?;
             let public = PublicTenantModelInstance::from(&instance);
@@ -2229,6 +2236,9 @@ pub struct CreateRagflowProviderInstanceRequest {
     pub model_info: Vec<RagflowCreateModelInfo>,
     #[serde(default)]
     pub tenant_id: Option<String>,
+
+    #[serde(default)]
+    pub extra: std::collections::BTreeMap<String,String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4377,6 +4387,7 @@ mod tests {
             api_key: None,
             region: None,
             models,
+            extra: Default::default(),
         }
     }
 
@@ -5347,5 +5358,40 @@ mod tests {
         );
         assert!(ocr_provider_api_base("OpenAI", Some(&loader)).is_none());
         assert!(ocr_provider_api_base("MinerU", Some("not-json")).is_none());
+    }    #[test]
+    fn create_request_deserializes_provider_extra_map_and_instance_round_trips_it() {
+                let raw = r#"{"instance_name":"spark-1","api_key":"k","model_info":[{"model_name":"x","model_type":["chat"]}],"extra":{"spark_app_id":"A1","spark_api_secret":"S9"}}"#;
+        let request: CreateRagflowProviderInstanceRequest = serde_json::from_str(&raw).unwrap();
+        assert_eq!(request.extra.get("spark_app_id").map(String::as_str), Some("A1"));
+        assert_eq!(request.extra.len(), 2);
+        let mut extra = std::collections::BTreeMap::new();
+        extra.insert("yiyan_ak".to_string(), "AK".to_string());
+        let instance = TenantModelInstance {
+            tenant_id: "t".into(),
+            provider_id: "p".into(),
+            instance_id: "i".into(),
+            instance_name: "n".into(),
+            api_base: "https://x".into(),
+            api_key: Some("k".into()),
+            region: None,
+            models: Vec::new(),
+            extra,
+        };
+        let json = serde_json::to_value(&instance).unwrap();
+        assert_eq!(json["extra"]["yiyan_ak"], "AK");
+        let empty = TenantModelInstance {
+            tenant_id: "t".into(),
+            provider_id: "p".into(),
+            instance_id: "i".into(),
+            instance_name: "n".into(),
+            api_base: "https://x".into(),
+            api_key: None,
+            region: None,
+            models: Vec::new(),
+            extra: Default::default(),
+        };
+        let json = serde_json::to_string(&empty).unwrap();
+        assert!(!json.contains("extra"));
     }
+
 }

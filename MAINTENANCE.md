@@ -1,3 +1,13 @@
+## 2026-10-30 第2轮（对标推进）：provider-config-map.ts 逐字段对齐 —— 实例 extra 持久化闭环
+
+- **目标文件**：`web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/provider-config-map.ts`（906 行，台账 partial → aligned）。该表定义 RAGFlow「添加 Provider 实例」弹窗的 10 个特殊提供商字段规格（AzureOpenAI/VolcEngine/GoogleCloud/TencentCloud/XunFeiSpark/BaiduYiYan/FishAudio/OpenDataLoader/PaddleOCR/MinerU），其余提供商走通用 instance_name+model_type+api_base+api_key。
+- **现状核对**：RayRAG `src/web.rs` 的 `PROVIDER_SPECIAL_FIELDS` 已含全部 10 项（上轮完成），逐字段 id/label/required/default 与上游一致；凭证类字段经各 entry 的 `buildKey()` 以 JSON 对象写入 api_key（与上游行为相同）。本轮缺口在**持久化闭环**：非凭证特殊字段（如 MinerU server_url/output_dir、PaddleOCR algorithm）此前只在前端渲染，不随实例落盘。
+- **实现（纯 Rust）**：
+  - `src/api/tenant_models.rs`：`TenantModelInstance` 新增 `extra: BTreeMap<String,String>`（serde default + 空时省略序列化）；`CreateRagflowProviderInstanceRequest` 同增 `extra` 透传；create/update 路径与测试 helper 构造点全部补齐；新增单测 `create_request_deserializes_provider_extra_map_and_instance_round_trips_it`（请求反序列化 extra + 实例往返 + 空 extra 不出现在 JSON）。
+  - `src/web.rs`：`providerSpecialPayload()` 通用化——遍历 `config.fields`，跳过 credential 标记字段与 model_name/max_tokens（已入 model_info），其余非空值以 `payload.extra{key:value}` 随 POST /providers/{p}/instances 提交。
+- **验证**：`cargo test --release --lib` **1419 passed / 0 failed**（较上轮 +1）；重建镜像后全页 JS 审计 `79 script 块 / 0 fail`；飞牛 Chrome CDP 实测：/user-setting/model → XunFei Spark「添加实例」弹窗渲染 Model name/Spark APIPassword/APP ID/APISecret/APIKey/Max tokens 六字段且类型勾选 chat+tts，BaiduYiyan 弹窗 ak/sk/max_tokens 正确（截图 /tmp/rayrag_prov_*.png）。
+- **台账**：provider-config-map.ts 行状态 partial→aligned 并补注记；`cargo run --bin ragflow-coverage -- --write` 刷新汇总（4441 files, unmapped=0, aligned 189 / partial 52）。
+
 ## 2026-10-30 第1轮（对标推进）：RagFlow 文件清单重建 + 国内镜像固化 + UI 全页 JS 审计与修复
 
 - **对标基线**：核对 GitHub tag：v0.26.4 = commit `cb93883f3`，本机检出 `/tmp/ragflow-v0.26.4`（HEAD 即该提交）；新增 `scripts/gen_file_manifest.py` 全量哈希生成 `docs/ragflow-file-manifest.json`（4447 文件逐个 SHA-256），与既有 `src/bin/ragflow_coverage.rs` 的固定提交门禁一致；本轮对照聚焦 Web 前端交互层。
