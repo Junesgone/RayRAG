@@ -1,0 +1,20 @@
+import { chromium } from 'playwright-core';
+const RBASE='http://127.0.0.1:9390';
+setTimeout(()=>{console.log('WATCHDOG');process.exit(9)},8*60*1000).unref?.();
+const b=await chromium.connectOverCDP('http://127.0.0.1:16002',{timeout:90000});
+const ctx=b.contexts()[0];
+let page=(ctx.pages().find(p=>p.url().startsWith(RBASE)))||(await ctx.newPage());
+page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE-ERR:',m.text().slice(0,200))});
+page.on('pageerror',e=>console.log('PAGE-ERR:',String(e).slice(0,300)));
+await page.goto(RBASE+'/kbs',{waitUntil:'domcontentloaded',timeout:45000});
+await new Promise(r=>setTimeout(r,2000));
+const info=await page.evaluate(()=>{
+  const btns=[...document.querySelectorAll('button')].filter(x=>/New KB|新建知识库/.test((x.innerText||'')));
+  return {n:btns.length, oc:btns.map(b=>b.getAttribute('onclick')), modalClass:(document.getElementById('createModal')||{}).className, hasFn:typeof showCreate==='function'};
+});
+console.log('INFO',JSON.stringify(info));
+if(info.n>0) await page.evaluate(()=>{[...document.querySelectorAll('button')].find(x=>/New KB|新建知识库/.test(x.innerText||'')).click();});
+await new Promise(r=>setTimeout(r,700));
+const after=await page.evaluate(()=>({cls:(document.getElementById('createModal')||{}).className, txt:((document.querySelector('#createModal .modal')||{innerText:''})).innerText.slice(0,120)}));
+console.log('AFTER',JSON.stringify(after));
+process.exit(0);

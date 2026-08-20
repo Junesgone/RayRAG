@@ -1,0 +1,9 @@
+2026-08-20T01:40:11.330Z creating audit page
+[12/7] /user-setting/model ok=true total=40 note=
+[13/7] /user-setting/mcp ok=true total=27 note=
+[14/7] /user-setting/team ok=true total=26 note=
+[15/7] /user-setting/api ok=true total=26 note=
+[16/7] /user-setting/data-source ok=true total=29 note=
+[17/7] /user-setting/chat-channel ok=true total=24 note=
+[18/7] /admin ok=true total=18 note=
+done -> /home/junesgone/.openclaw/workspace/RayRAG/docs/ui-traversal/rayrag-audit/rayrag-ui-map.json

@@ -1,0 +1,17 @@
+2026-08-20T02:02:11.577Z creating audit page
+[1/18] /dashboard ok=true total=21 note=
+[2/18] /kbs ok=true total=15 note=
+[3/18] /chats ok=true total=15 note=
+[4/18] /searches ok=true total=15 note=
+[5/18] /agents ok=true total=21 note=
+[6/18] /agent-templates ok=true total=16 note=
+[7/18] /memories ok=true total=21 note=
+[8/18] /files ok=true total=15 note=
+[9/18] /files/skills ok=true total=16 note=
+[10/18] /user-setting ok=true total=29 note=
+[11/18] /user-setting/profile ok=true total=16 note=
+[12/18] /user-setting/model ok=true total=16 note=
+[13/18] /user-setting/mcp ok=true total=16 note=
+[14/18] /user-setting/team ok=true total=16 note=
+[15/18] /user-setting/api ok=true total=16 note=
+2026-08-20T02:27:11.527Z WATCHDOG exit

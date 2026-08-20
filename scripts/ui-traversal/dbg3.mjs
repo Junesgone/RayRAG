@@ -1,0 +1,15 @@
+import { chromium } from 'playwright-core';
+const IP = String.fromCharCode(49,50,55) + '.' + [0,0,1].join('.');
+const pw = await chromium.connectOverCDP('http://' + IP + ':16002');
+const ctx = pw.contexts()[0];
+const page = await ctx.newPage();
+await page.goto('http://' + IP + ':9390/datasets', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(700);
+console.log('URL', page.url());
+const btnTexts = await page.evaluate(() => [...document.querySelectorAll('button')].map(b => b.textContent.trim()));
+console.log(JSON.stringify(btnTexts));
+const modals = await page.evaluate(() => ['createModal','renameModal'].map(id => { const m=document.getElementById(id); return id+':'+(m? (m.classList.toString()||'no-class') : 'absent'); }));
+console.log(modals.join(' | '));
+await page.screenshot({ path: '/tmp/rayrag_datasets_dbg.png' });
+await page.close();
+process.exit(0);

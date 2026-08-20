@@ -1,0 +1,20 @@
+2026-08-20T02:00:30.255Z creating audit page
+[1/18] /dashboard ok=true total=21 note=ReferenceError: EN is not defined
+[2/18] /kbs ok=true total=15 note=ReferenceError: EN is not defined
+[3/18] /chats ok=true total=15 note=ReferenceError: EN is not defined
+[4/18] /searches ok=true total=15 note=ReferenceError: EN is not defined
+[5/18] /agents ok=true total=21 note=ReferenceError: EN is not defined
+[6/18] /agent-templates ok=true total=16 note=ReferenceError: EN is not defined
+[7/18] /memories ok=true total=21 note=ReferenceError: EN is not defined
+[8/18] /files ok=true total=15 note=ReferenceError: EN is not defined
+[9/18] /files/skills ok=true total=16 note=ReferenceError: EN is not defined
+[10/18] /user-setting ok=true total=29 note=ReferenceError: EN is not defined
+[11/18] /user-setting/profile ok=true total=25 note=ReferenceError: EN is not defined
+[12/18] /user-setting/model ok=true total=40 note=ReferenceError: EN is not defined
+[13/18] /user-setting/mcp ok=true total=27 note=ReferenceError: EN is not defined
+[14/18] /user-setting/team ok=true total=26 note=ReferenceError: EN is not defined
+[15/18] /user-setting/api ok=true total=26 note=ReferenceError: EN is not defined
+[16/18] /user-setting/data-source ok=true total=29 note=ReferenceError: EN is not defined
+[17/18] /user-setting/chat-channel ok=true total=24 note=ReferenceError: EN is not defined
+[18/18] /admin ok=true total=18 note=ReferenceError: EN is not defined
+done -> /home/junesgone/.openclaw/workspace/RayRAG/docs/ui-traversal/rayrag-audit/rayrag-ui-map.json

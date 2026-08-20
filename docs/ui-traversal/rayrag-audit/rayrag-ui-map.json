@@ -1,0 +1,2310 @@
+{
+  "base": "http://127.0.0.1:9390",
+  "generated_at": "2026-08-20T02:29:04.245Z",
+  "routes": [
+    {
+      "route": "/dashboard",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "See all →",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "+ 新建知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索文档",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "新对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /chat/ad2b26a3-6c81-4103-a485-52db29d6f3a7"
+          ]
+        },
+        {
+          "text": "测试",
+          "role": "a",
+          "result": [
+            "nav -> /chat/7bd8fd6e-236f-4fb0-b03b-e4ff6c0f3288"
+          ]
+        },
+        {
+          "text": "RayRAG 是什么",
+          "role": "a",
+          "result": [
+            "nav -> /chat/a7f592f2-8374-4efd-9623-ced266b495ae"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "仪表盘 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n仪表盘\nKBS\n2\nCHUNKS\n22\nDOCS\n23\nCHATS\n13\nEMBEDDER\n✅\nLLM\n✅\n知识库\nSee all →\nG\ngpu-embed-test\n\n19 files · 19 chunks\n\nS\nsmoke-kb\n\n4 files · 3 chunks\n\nQuick Actions\n+ 新建知识库 搜索文档 新对话\nRecent Chats\nRayRAG\n\nID: 315 ├── Title: 百度一下，你就知道 ├── URL: https://www.baidu.com\n\nRayRAG\n\nID: 227 ├── Title: 梦幻西游黑风山副本抄写大全_百度知道 ├── URL: https://zhid\n\n测试\n\n收到！测试通过。👍 请问有什么具体的问题需要我回答，或者需要我协助完成什么任务吗？\n\n测试\n\nSearXNG request failed\n\nRayRAG 是什么\n\n**RayRAG** 是一个基于 **Ray**（一个用于构建和运行分布式应用程序的开源框架）构建的、高性能的 **RA",
+      "shot": "shot-dashboard.png",
+      "total_interactive": 21
+    },
+    {
+      "route": "/kbs",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "+ 新建知识库",
+          "role": "button",
+          "result": [
+            "popup: 新建知识库 Permission: Default 团队 Me Embedding: Default default Parse Type: Built-in Pipeline 分块方法: General Q&A Resume Manual Table Paper Book Laws Presentation Picture One Audio Email Tag Knowledge Graph 创建 Cancel"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "知识库 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n知识库\nSort: Name\nSort: Created\n+ 新建知识库\n⋯\nG\ngpu-embed-test\n\n19 files · 19 chunks\n\n-\n\n⋯\nS\nsmoke-kb\n\n4 files · 3 chunks\n\n-",
+      "shot": "shot-kbs.png",
+      "total_interactive": 15
+    },
+    {
+      "route": "/chats",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "+ 创建对话应用",
+          "role": "button",
+          "result": [
+            "popup: 创建对话应用 取消 保存"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "对话应用 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n对话应用\n+ 创建对话应用\n💬\n\n尚未创建对话应用\n\n点击创建你的第一个对话应用",
+      "shot": "shot-chats.png",
+      "total_interactive": 15
+    },
+    {
+      "route": "/searches",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "+ 创建检索应用",
+          "role": "button",
+          "result": [
+            "popup: 创建检索应用 取消 保存"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "检索应用 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n检索应用\n+ 创建检索应用\n🔎\n\n尚未创建检索应用\n\n点击创建你的第一个检索应用",
+      "shot": "shot-searches.png",
+      "total_interactive": 15
+    },
+    {
+      "route": "/agents",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "+ 新建智能体",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Run",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Edit",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Copy",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Rename",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Del",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Ask",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "智能体 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🤖 智能体\n+ 新建智能体\nNAME\tDESCRIPTION\tKBS\tACTIONS\nsx-test\tt\t\tRun Edit Copy Rename Del\nsx-bad3\tt\t\tRun Edit Copy Rename Del\nsearch-tpl2\ttpl\t\tRun Edit Copy Rename Del\nDefault Agent\tBuilt-in RAG agent\t\tRun Edit Copy Rename Del\nsx-e2e3\tt\t\tRun Edit Copy Rename Del\nsx-bad4\tt\t\tRun Edit Copy Rename Del\nsx-ok4\tt\t\tRun Edit Copy Rename Del\nrag-tpl-fixed\ttpl\t0bd5976a-6b50-49ba-8a07-07b4952a51cc\tRun Edit Copy Rename Del\nsx-e2e2\tt\t\tRun Edit Copy Rename Del\nsx-ok3\tt\t\tRun Edit Copy Rename Del\nrag-tpl-test2\ttpl\t0bd5976a-6b50-49ba-8a07-07b4952a51cc\tRun Edit Copy Rename Del\nsearxng-agent\tsx e2e\t\tRun Edit Copy Rename Del\nsx-bad\tt\t\tRun Edit Copy Rename Del\nTest Agent\nAsk",
+      "shot": "shot-agents.png",
+      "total_interactive": 21
+    },
+    {
+      "route": "/agent-templates",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "← Back to Dashboard",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "💬 对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "404 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n404\n页面不存在，请输入正确的地址。\n\nThe page you requested does not exist or has been moved.\n\n← Back to Dashboard💬 对话",
+      "shot": "shot-agent-templates.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/memories",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "＋ 创建记忆",
+          "role": "button",
+          "result": [
+            "popup: Create Memory Name Memory Type Raw is required for the original dialogue envelope. Raw Semantic Episodic Procedural Embedding Model default qwen3-embedding-4b Chat Model default qwen3.5-9b PaddleOCR-VL-1.6-GGUF 取消 保存"
+          ]
+        },
+        {
+          "text": "Clear",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Apply",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "•••",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Previous",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Next",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "Owner",
+          "role": "summary",
+          "result": [
+            "popup: Owner Owner Admin (1) Clear Apply"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "记忆 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n记忆\n\nBuild durable context for your agents.\n\n＋ 创建记忆\nOwner\nAll types\nRaw\nSemantic\nEpisodic\nProcedural\nAll storage\nTable\nV\nverify-mem\n\nNo description\n\nraw, semantic\n8/20/2026\n•••\n1 memories\nPrevious\n1 / 1\nNext",
+      "shot": "shot-memories.png",
+      "total_interactive": 21
+    },
+    {
+      "route": "/files",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "上传",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "文件 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n📁 文件\n上传\n上传\nFiles\n\tNAME\tSIZE\tTYPE\tUPLOADED\t",
+      "shot": "shot-files.png",
+      "total_interactive": 15
+    },
+    {
+      "route": "/files/skills",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "popup: Owner",
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "nav -> /datasources"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "← Back to Dashboard",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "💬 对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "404 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n404\n页面不存在，请输入正确的地址。\n\nThe page you requested does not exist or has been moved.\n\n← Back to Dashboard💬 对话",
+      "shot": "shot-files_skills.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/user-setting",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "◐ 主题",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "↪ 退出登录",
+          "role": "button",
+          "result": [
+            "nav -> /login"
+          ]
+        },
+        {
+          "text": "+ Add",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "Connect",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "Disconnect",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "List",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "Sync",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "▰ 数据源",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "◇ 聊天渠道",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "⬡ 模型提供商",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "M MCP",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "♟ 团队",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "● 个人资料",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "⌁ API",
+          "role": "a",
+          "result": "skipped:not-found"
+        }
+      ],
+      "note": "",
+      "title": "数据源 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\nA\nadmin@rayrag.local\n▰\n数据源\n◇\n聊天渠道\n⬡\n模型提供商\nM\nMCP\n♟\n团队\n●\n个人资料\n⌁\nAPI\nv0.1.2\n◐\n主题\n↪\n退出登录\n🔗 数据源（Data Sources）\n可用数据源\n\nAdd a connector and sync its content into your knowledge base.\n\nMySQL\n\nConnect to MySQL database to sync data from tables using SQL queries.\n\n+ Add\nS3\n\nConnect to your AWS S3 bucket to import and sync stored files.\n\n+ Add\nConfluence\n\nIntegrate your Confluence workspace to search documentation.\n\n+ Add\nAsana\n\nConnect to Asana and synchronize files from a specified workspace.\n\n+ Add\nBigQuery\n\nConnect to Google BigQuery to sync rows from a table or a custom GoogleSQL query.\n\n+ Add\nR2\n\nConnect your Cloudflare R2 bucket to import and sync files.\n\n+ Add\nJira\n\nConnect your Jira workspace to sync issues, comments, and attachments.\n",
+      "shot": "shot-user-setting.png",
+      "total_interactive": 29
+    },
+    {
+      "route": "/user-setting/profile",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-user-setting_profile.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/user-setting/model",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-user-setting_model.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/user-setting/mcp",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-user-setting_mcp.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/user-setting/team",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-user-setting_team.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/user-setting/api",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-user-setting_api.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/user-setting/data-source",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "◐ 主题",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "↪ 退出登录",
+          "role": "button",
+          "result": [
+            "nav -> /login"
+          ]
+        },
+        {
+          "text": "+ Add",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "Connect",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "Disconnect",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "List",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "Sync",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        },
+        {
+          "text": "▰ 数据源",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "◇ 聊天渠道",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "⬡ 模型提供商",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "M MCP",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "♟ 团队",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "● 个人资料",
+          "role": "a",
+          "result": "skipped:not-found"
+        },
+        {
+          "text": "⌁ API",
+          "role": "a",
+          "result": "skipped:not-found"
+        }
+      ],
+      "note": "",
+      "title": "数据源 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\nA\nadmin@rayrag.local\n▰\n数据源\n◇\n聊天渠道\n⬡\n模型提供商\nM\nMCP\n♟\n团队\n●\n个人资料\n⌁\nAPI\nv0.1.2\n◐\n主题\n↪\n退出登录\n🔗 数据源（Data Sources）\n可用数据源\n\nAdd a connector and sync its content into your knowledge base.\n\nMySQL\n\nConnect to MySQL database to sync data from tables using SQL queries.\n\n+ Add\nS3\n\nConnect to your AWS S3 bucket to import and sync stored files.\n\n+ Add\nConfluence\n\nIntegrate your Confluence workspace to search documentation.\n\n+ Add\nAsana\n\nConnect to Asana and synchronize files from a specified workspace.\n\n+ Add\nBigQuery\n\nConnect to Google BigQuery to sync rows from a table or a custom GoogleSQL query.\n\n+ Add\nR2\n\nConnect your Cloudflare R2 bucket to import and sync files.\n\n+ Add\nJira\n\nConnect your Jira workspace to sync issues, comments, and attachments.\n",
+      "shot": "shot-user-setting_data-source.png",
+      "total_interactive": 29
+    },
+    {
+      "route": "/user-setting/chat-channel",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "nav -> /search"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-user-setting_chat-channel.png",
+      "total_interactive": 16
+    },
+    {
+      "route": "/admin",
+      "ok": true,
+      "elements": [
+        {
+          "text": "🌓",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Login",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "Register",
+          "role": "button",
+          "result": [
+            "page-text-changed"
+          ]
+        },
+        {
+          "text": "R RayRAG",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "仪表盘",
+          "role": "a",
+          "result": [
+            "nav -> /dashboard"
+          ]
+        },
+        {
+          "text": "知识库",
+          "role": "a",
+          "result": [
+            "nav -> /kbs"
+          ]
+        },
+        {
+          "text": "搜索",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "对话",
+          "role": "a",
+          "result": [
+            "nav -> /chat"
+          ]
+        },
+        {
+          "text": "智能体",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "记忆",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "🔗",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "文件",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Skills",
+          "role": "a",
+          "result": [
+            "nav -> /skills"
+          ]
+        },
+        {
+          "text": "模型提供商",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/model"
+          ]
+        },
+        {
+          "text": "A",
+          "role": "a",
+          "result": [
+            "nav -> /user-setting/data-source"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "登录 · RayRAG",
+      "body_text_head": "R\nRayRAG\n仪表盘\n知识库\n搜索\n对话\n智能体\n记忆\n🔗\n文件\nSkills\n模型提供商\n🌓\nEN\nA\n🐠 RayRAG\nLogin\nRegister",
+      "shot": "shot-admin.png",
+      "total_interactive": 16
+    }
+  ],
+  "merged_prev_routes": 15
+}

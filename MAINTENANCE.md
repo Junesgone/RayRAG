@@ -1,3 +1,17 @@
+## 2026-10-30 第1轮（对标推进）：RagFlow 文件清单重建 + 国内镜像固化 + UI 全页 JS 审计与修复
+
+- **对标基线**：核对 GitHub tag：v0.26.4 = commit `cb93883f3`，本机检出 `/tmp/ragflow-v0.26.4`（HEAD 即该提交）；新增 `scripts/gen_file_manifest.py` 全量哈希生成 `docs/ragflow-file-manifest.json`（4447 文件逐个 SHA-256），与既有 `src/bin/ragflow_coverage.rs` 的固定提交门禁一致；本轮对照聚焦 Web 前端交互层。
+- **构建链路全部走国内源**：`Dockerfile` apt 换清华 debian 镜像、pip 换阿里云 pypi、crates.io 经 Docker Hub 代理 + USTC sparse index（`[source.crates-io] replace-with = 'ustc'` 写进镜像内 cargo config）；`.dockerignore` 排除本地 target 缓存避免把宿主机产物打进镜像。纯 Linux 与纯 Docker 两条路径均可用本机已下载镜像 `debian:bookworm-slim / rust:1.97.1-bookworm / postgres:18.4` 离线构建。
+- **存储**：rayrag-postgres-1（PostgreSQL 18.4）与 rayray 应用容器均 healthy；zvec-rust 向量层保持独立 collection 方案，代码/配置/脚本零 MySQL 依赖（复核通过）。
+- **UI 全页 JS 语法审计（debug+日志模式）**：抓取全部 35 类路由的渲染 HTML，抽取 79 个 `<script>` 块逐个用 acorn（node --check 对含模板串的块会误报，改判据为 ES2022 parse）解析。发现并修复 4 处历史遗留坏字符串（根因是早期"单引号转义"批处理把 `'` 与 `;` 错置、相邻字符串缺 `+`）：
+  1. `/datasets/{id}` logs 页 `logFile` 下拉生成串断裂 → option/表格行按 `\'` 重排；
+  2. `/chat/apps` 临时模型选择器 `textContent=this.value;"` 分号错位（`function(){...};fetch(...)` 应为 `...};;fetch` 语义修正为 `...};fetch`）；
+  3. admin 用户页过滤器 input handler 缺闭合括号（`oninput=\'filterU(this.value;`）→ 补 `)'`；
+  4. user-setting/data-source 页 `select` 重建语句相邻字符串无运算符 → 合并单串。
+- **验证**：三次重建镜像后全量 JS 语法审计 `79 script 块 / 0 fail`（含动态 detail 路由），acorn ES2022 逐块 parse；`cargo test --release --lib` **1418 passed / 0 failed**（26.4s）。交互实测：飞牛 Chrome CDP（127.0.0.1:16002, Chrome/150）走完整链路 登录 → `/datasets` →「+ 新建知识库」→ 填名 →「保存」→ 卡片出现 → API DELETE 清理，全通过（CREATE_OK/CLEANUP）。页面按浏览器 locale 中英双语渲染均覆盖。
+- **产物**：新增 `docs/ui-traversal/rayrag-ui-checklist.md`（RagFlow 35 路由逐元素对照表 + 功能级人工核对矩阵 + 审计结论）；`scripts/ui-traversal/interact-test1.mjs`（CDP 端到端点击测试，可复跑）。
+- **运维**：rayray 容器本轮重建 4 次（每次 fix 后 build+up -d），最终态 Up(healthy)；日志定位全程走 `docker logs` 过滤 + acorn parse 断言，未做重复性盲测。
+
 ## 2026-08-19 v0.3.4d：聊天应用公共分享页 + 免登录 chatbots 端点（1:1 对齐 RAGFlow share/widget）
 
 - **RagFlow 基准**：`next-chats/share/index.tsx` 公共分享页读 `?shared_id=&from=chatbots&auth=` 参数，`useFetchExternalChatInfo` 拉 `GET /api/v1/chatbots/{dialog_id}/info`（title/avatar/prologue/has_tavily_key/llm_id），`useSendSharedMessage` 以 `POST /api/v1/chatbots/{conversation_id}/completions`（SSE `data:` 帧 `chat.completion.chunk`/`chat.completion.references`/`[DONE]`）发送；`embed-dialog` 生成 `?shared_id=&from=&auth=&release=` 分享链接；`bot_api.py` 对应端点 `AUTH_BETA`（API token）鉴权。

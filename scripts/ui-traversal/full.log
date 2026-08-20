@@ -1,0 +1,20 @@
+2026-08-20T01:34:05.705Z creating audit page
+[1/18] /dashboard ok=true total=21 note=
+[2/18] /kbs ok=true total=15 note=
+[3/18] /chats ok=true total=15 note=
+[4/18] /searches ok=true total=15 note=
+[5/18] /agents ok=true total=21 note=
+[6/18] /agent-templates ok=true total=16 note=
+[7/18] /memories ok=true total=21 note=
+[8/18] /files ok=true total=15 note=
+[9/18] /files/skills ok=true total=16 note=
+[10/18] /user-setting ok=true total=29 note=
+[11/18] /user-setting/profile ok=true total=25 note=
+[12/18] /user-setting/model ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+[13/18] /user-setting/mcp ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+[14/18] /user-setting/team ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+[15/18] /user-setting/api ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+[16/18] /user-setting/data-source ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+[17/18] /user-setting/chat-channel ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+[18/18] /admin ok=false total=0 note=Error: page.goto: Target page, context or browser has been closed
+done -> /home/junesgone/.openclaw/workspace/RayRAG/docs/ui-traversal/rayrag-audit/rayrag-ui-map.json
