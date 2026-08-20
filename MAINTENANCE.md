@@ -1,3 +1,13 @@
+## 2026-10-30 第3轮（对标推进）：data-source constant/index.tsx —— 字段 tooltip 对齐闭环
+
+- **目标文件**：`web/src/pages/user-setting/data-source/constant/index.tsx`（2473 行，台账 partial → aligned）。上游 35 个连接器 × 203 个字段的表单规格中约 94 个字段带 `tooltip: t('setting.*Tip')` 提示文案；RayRAG 侧 `src/data_source/form_schema.json`（include_str 嵌入、OnceLock 解析为 FormFieldSpec）此前未携带提示文案。
+- **实现（纯 Rust）**：
+  - 从上游 `web/src/locales/en.ts / zh.ts` 解析 tip key→文案映射（en 227 / zh 183），按 `setting.` 前缀归一化后合并进 form_schema.json：**86 个字段**新增 `tooltip_en` / `tooltip_zh`。
+  - `FormFieldSpec` 增补两个 `#[serde(default)] Option<String>` 字段；新增单测 `onedrive_tenant_id_field_carries_upstream_tooltip`（en/zh 双断言）。
+  - `src/web.rs` add/detail 两个 schema 驱动构建器（dscBuildField / dsBuildField）在标签下渲染 `.ds-field-tip` 提示行，文案随 `window.DS_ZH` 语言开关切换；两端 `<style>` 补规则。
+- **验证**：`cargo test --release --lib` **1420 passed / 0 failed**（+1）；重建镜像后全页 JS 审计 `79 script 块 / 0 fail`；飞牛 Chrome CDP 实测：/user-setting/data-source → OneDrive「添加」弹窗 4 条、Jira「添加」弹窗 14 条中文提示正确渲染（截图 /tmp/rayrag_dstip_*.png）。
+- **台账**：constant/index.tsx 行 partial→aligned 并补注记；`--write` 刷新汇总（4441 files, unmapped=0）。
+
 ## 2026-10-30 第2轮（对标推进）：provider-config-map.ts 逐字段对齐 —— 实例 extra 持久化闭环
 
 - **目标文件**：`web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/provider-config-map.ts`（906 行，台账 partial → aligned）。该表定义 RAGFlow「添加 Provider 实例」弹窗的 10 个特殊提供商字段规格（AzureOpenAI/VolcEngine/GoogleCloud/TencentCloud/XunFeiSpark/BaiduYiYan/FishAudio/OpenDataLoader/PaddleOCR/MinerU），其余提供商走通用 instance_name+model_type+api_base+api_key。

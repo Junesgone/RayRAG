@@ -15,9 +15,9 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 188 | 48127 |
+| aligned | 189 | 50600 |
 | full | 566 | 267453 |
-| partial | 53 | 14123 |
+| partial | 52 | 11650 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3472 | 889495 |
@@ -4686,7 +4686,7 @@
 | `web/src/pages/user-setting/data-source/component/google-drive-token-field.tsx` | 459 | 14632 | `53ef6a60bf33fb36` | partial | `src/web.rs; src/api/oauth_web.rs` | Rust Google Drive token field replaces the raw textarea: JSON uploader, Uploaded (pending)/Needs authorization chips, verification dialog, Authorize with Google popup and Refresh status polling against the implemented Google OAuth endpoints; CDP-verified the full upload→start→106→callback→updated→create loop offline (v0.3.3ce) |
 | `web/src/pages/user-setting/data-source/constant/bitbucket-constant.tsx` | 83 | 2485 | `83f33c07fdeccc71` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Bitbucket field set (email/api token/workspace/index mode + conditional slugs/projects) embedded in the Rust form schema (v0.3.3ca) |
 | `web/src/pages/user-setting/data-source/constant/confluence-constant.tsx` | 120 | 3193 | `4aa70494e7e9bcf9` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Confluence field set (username/token/wiki base/is cloud/index mode + conditional page/space fields) embedded in the Rust form schema (v0.3.3ca) |
-| `web/src/pages/user-setting/data-source/constant/index.tsx` | 2473 | 66363 | `c542ded061262187` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Per-source `DataSourceFormFields` (30 inline sets incl. REST API pagination/auth conditionals) extracted into the embedded Rust form schema; tip/`FilterFormField` custom renderers and hidden fallback duplicates remain partial (v0.3.3ca) |
+| `web/src/pages/user-setting/data-source/constant/index.tsx` | 2473 | 66363 | `c542ded061262187` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Per-source `DataSourceFormFields` (30 inline sets incl. REST API pagination/auth conditionals) extracted into the embedded Rust form schema; tip/`FilterFormField` custom renderers and hidden fallback duplicates remain partial (v0.3.3ca)  第3轮（2026-10-30）补齐字段 tooltip：从上游 locales/en.ts、zh.ts 解析 tip key，为 form_schema.json 86 个字段合并 tooltip_en/tooltip_zh；add/detail schema 驱动构建器渲染 .ds-field-tip 提示行并注入 window.DS_ZH 语言开关，CSS 双端补规则。 |
 | `web/src/pages/user-setting/data-source/constant/jira-constant.tsx` | 149 | 4258 | `31af61c4783fd339` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | Jira field set (email/username/base URL/project/JQL/batch/attachment limit/mode/API token/password/scoped token) embedded in the Rust form schema; `!== false` cloud/server conditionals remain partial (v0.3.3ca) |
 | `web/src/pages/user-setting/data-source/constant/s3-constant.tsx` | 178 | 6028 | `40223f93a48d15af` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | S3 field set (bucket/region/prefix/mode/auth/access keys/role ARN/addressing style/endpoint) embedded in the Rust form schema with the Bedrock region list; the `access_key OR s3_compatible` OR-condition is approximated as access_key-only (v0.3.3ca) |
 | `web/src/pages/user-setting/data-source/constant/seafile-constant.tsx` | 214 | 6353 | `cc8a5b593c18fe35` | partial | `src/data_source/form_fields.rs; src/data_source/form_schema.json` | SeaFile field set (server URL/sync scope + conditional account/library/directory credentials) embedded in the Rust form schema (v0.3.3ca) |

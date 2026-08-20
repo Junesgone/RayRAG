@@ -104,6 +104,12 @@ pub struct FormFieldSpec {
     /// AND-ed visibility predicates; absent/empty means no restriction.
     #[serde(default)]
     pub show_when_all: Vec<ShowWhen>,
+    /// Upstream `tooltip` i18n strings resolved from locales/en.ts / zh.ts;
+    /// rendered as hint lines under the field label in the add/detail modals.
+    #[serde(default)]
+    pub tooltip_en: Option<String>,
+    #[serde(default)]
+    pub tooltip_zh: Option<String>,
 }
 
 impl FormFieldSpec {
@@ -408,4 +414,15 @@ mod tests {
         assert!(s3.description.contains("AWS S3"));
         assert!(source_info_for("not-a-source").is_none());
     }
+    #[test]
+    fn onedrive_tenant_id_field_carries_upstream_tooltip() {
+        let field = find("onedrive", "config.credentials.tenant_id");
+        assert!(
+            field.tooltip_en.as_deref().unwrap_or("").contains("tenant ID"),
+            "tooltip_en merged from upstream locale: {:?}",
+            field.tooltip_en
+        );
+        assert!(field.tooltip_zh.is_some(), "zh tooltip present for CN users");
+    }
+
 }
