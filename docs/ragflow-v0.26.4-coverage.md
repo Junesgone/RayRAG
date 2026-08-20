@@ -15,9 +15,9 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 189 | 50600 |
+| aligned | 190 | 50670 |
 | full | 566 | 267453 |
-| partial | 52 | 11650 |
+| partial | 51 | 11580 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3472 | 889495 |
@@ -4679,7 +4679,7 @@
 | `web/src/pages/user-setting/components/user-setting-header/index.tsx` | 31 | 846 | `4f6026f434aee4dd` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/constants.tsx` | 49 | 1320 | `1e32df75360caa5d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/data-source/add-datasource-modal.tsx` | 90 | 2653 | `16d4eff89ed5f9c2` | partial | `src/web.rs; src/api/data_source_mgr.rs; src/data_source/form_fields.rs` | Rust Add data source modal renders the selected source's schema-driven field set (title `Add data source: {name}`, required markers, options/defaults/show_when, Cancel/Confirm), validates required fields inline, and POSTs the nested upstream config; flat-fallback sources keep URL/Target/Token. CDP-verified 6 actions incl. S3 compatible-mode conditionals and both create shapes (v0.3.3cb) |
-| `web/src/pages/user-setting/data-source/component/added-source-card.tsx` | 70 | 2775 | `7c340c15653374aa` | partial | `src/web.rs; src/data_source/form_fields.rs` | Rust Added sources render per-type cards (icon+name header, name/badge rows, Settings→detail and Trash→delete modal, plus the legacy Connect/Disconnect/List/Sync row actions kept as a documented deviation); CDP-verified group, gear routing and delete (v0.3.3cc) |
+| `web/src/pages/user-setting/data-source/component/added-source-card.tsx` | 70 | 2775 | `7c340c15653374aa` | aligned | `src/web.rs; src/data_source/form_fields.rs` | Rust Added sources render per-type cards (icon+name header, name/badge rows, Settings→detail and Trash→delete modal, plus the legacy Connect/Disconnect/List/Sync row actions kept as a documented deviation); CDP-verified group, gear routing and delete (v0.3.3cc)  第4轮（2026-10-30）行操作收敛为一比一：移除 Added sources 卡片行的遗留 Connect/Disconnect/List/Sync 按钮，仅保留 Settings(gear→详情页)与 Trash(删除模态)，与上游 added-source-card.tsx 完全一致；详情文档表的同名快捷操作不受影响。CDP 实测行按钮=[Settings, Delete]。 |
 | `web/src/pages/user-setting/data-source/component/box-token-field.tsx` | 452 | 13971 | `4ae6bb2cf7696830` | partial | `src/web.rs; src/api/oauth_web.rs` | Rust Box token field replaces the raw textarea: Configure/Get Box credentials button, Configured/Authorized chips, Client ID/Secret/Redirect URI dialog, Submit & Authorize popup + Refresh status polling against the implemented start/callback/result endpoints; CDP-verified the full start→pending(106)→callback→authorized→create loop with an offline-aborted popup. Gmail/Drive fields and the real Box token exchange (requires `BOX_OAUTH_TOKEN_URL`) remain partial (v0.3.3cd) |
 | `web/src/pages/user-setting/data-source/component/delete-source-modal.tsx` | 85 | 2701 | `8f8b5ed02594d60f` | partial | `src/web.rs` | Rust delete dialog keeps the fixed `Delete data source` title, `Are you sure you want to delete this data source link?` body, source icon+name box and Cancel/Confirm(error) actions; CDP-verified cancel keeps and confirm deletes (v0.3.3cc) |
 | `web/src/pages/user-setting/data-source/component/gmail-token-field.tsx` | 460 | 14591 | `c347ed649d419e8e` | partial | `src/web.rs; src/api/oauth_web.rs` | Rust serves the shared Google token field for Gmail (JSON uploader, redirect extraction, Authorize with Google, Refresh status) through the implemented Google OAuth endpoints; the per-provider popup listener and real token minting remain partial (v0.3.3ce) |

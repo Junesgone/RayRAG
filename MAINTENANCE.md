@@ -1,3 +1,10 @@
+## 2026-10-30 第4轮（对标推进）：data-source added-source-card.tsx —— Added sources 行操作一比一收敛
+
+- **目标文件**：`web/src/pages/user-setting/data-source/component/added-source-card.tsx`（70 行，台账 partial → aligned）。上游卡片结构：icon+name 头 + 每行 `item.name` 左侧、右侧仅 Settings(gear) 与 Trash2 两个 ghost 图标按钮；Settings→数据源详情页，Trash→删除确认模态。
+- **差距与实现**：RayRAG 列表页分组行此前在 gear/trash 之外还保留遗留的 Connect/Disconnect/List/Sync 四个文字按钮（v0.3.3cc 记录的"documented deviation"），破坏一比一。本轮从 `data_source_list_section` 的行构建器中移除这四个按钮（详情文档表内的同名快捷操作不受影响，其调用 connDs/discDs/listDs/syncDss 定义保留）。
+- **验证**：`cargo test --release --lib` **1420 passed / 0 failed**；重建镜像后全页 JS 审计 `79 script 块 / 0 fail`；飞牛 Chrome CDP 实测：/user-setting/data-source Added sources 卡片行按钮恰为 `[Settings, Delete]`、无遗留文字按钮（截图 /tmp/rayrag_dsrows.png）。
+- **台账**：added-source-card.tsx 行 partial→aligned 并补注记；`--write` 刷新汇总（4441 files, unmapped=0）。
+
 ## 2026-10-30 第3轮（对标推进）：data-source constant/index.tsx —— 字段 tooltip 对齐闭环
 
 - **目标文件**：`web/src/pages/user-setting/data-source/constant/index.tsx`（2473 行，台账 partial → aligned）。上游 35 个连接器 × 203 个字段的表单规格中约 94 个字段带 `tooltip: t('setting.*Tip')` 提示文案；RayRAG 侧 `src/data_source/form_schema.json`（include_str 嵌入、OnceLock 解析为 FormFieldSpec）此前未携带提示文案。
