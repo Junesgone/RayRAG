@@ -186,6 +186,17 @@
 - 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留
   zvec-rust + PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。
 
+## 2026-08-24 v0.3.3bw6：setting-model/langfuse 4 条 partial→aligned
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 覆盖矩阵台账 partial→aligned (4 条)：
+  - `langfuse/index.tsx`（65 行）：Rust Langfuse 卡片渲染 title/描述/View（未配置隐藏）/Configuration，View 用存储的 host + 缓存的 project_id 拼项目 URL，self-hosted host 优先于硬编码 cloud.langfuse.com（适配大陆部署）。
+  - `langfuse/langfuse-configuration-dialog.tsx`（71 行）：Rust 弹层 Configuration Langfuse 含 Secret/Public/Host 表单、文档外链、删除确认流、Save；已存凭证重新打开预填、Delete 仅在存在条目时出现。
+  - `langfuse/langfuse-configuration-form.tsx`（126 行）：Rust 表单保持 secret_key/public_key 内联校验、host placeholder、密码 autocomplete-off、提交 `{secret_key,public_key,host}` body；host 空性在服务端强制（与上游一致）。
+  - `langfuse/use-save-langfuse-configuration.tsx`（33 行）：Rust 保存钩子：POST 成功关弹层并刷新卡片，失败保留弹层并展示服务端 message；loading 期间 Save 禁用。
+- 覆盖矩阵剩余 partial：38 → 34。
+- Rust 有意替换 React/Radix 组件（与 chat-channel 处理一致）；Langfuse 单测 `user_setting_api_page_wires_langfuse_card_dialog_and_persistence` 覆盖全部弹层+卡片+View URL 拼接。
+
 ## 2026-08-24 v0.3.3bw5：data-source/profile/team 9 条 CDP-verified partial→aligned
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
