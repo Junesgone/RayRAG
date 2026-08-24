@@ -186,6 +186,20 @@
 - 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留
   zvec-rust + PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。
 
+## 2026-08-24 v0.3.3bw4：chat-channel added-card + page 台账 partial→aligned
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- `web/src/pages/user-setting/chat-channel/component/added-channel-card.tsx`（225 行）台账
+  partial → aligned：Rust 已-channels 区块按渠道分组、Edit/Delete 动作、空状态提示完整，
+  CDP 实测闭环；React 卡片组合为 Rust 有意替换。
+- `web/src/pages/user-setting/chat-channel/index.tsx`（154 行）台账 partial → aligned：Rust
+  Chat channels 页包含已添加分组块 + 23 张可用渠道卡 + 全量字段弹层（含 select/number/switch/
+  textarea/tag、feishu domain、wecom connection_type showIf、hover + Add），add/edit/delete
+  全部 CDP 闭环。
+- 覆盖矩阵剩余 partial：49 → 47。
+- `constant/index.tsx`（761 行）仍留 partial：i18n 描述文案与 upstream FormFieldType Tag/
+  placeholder 像素级差异尚为真缺口，本轮未补丁。
+
 ## 2026-08-24 v0.3.3bw3：chat-channel delete-modal + hooks 台账 partial→aligned
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
