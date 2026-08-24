@@ -186,6 +186,23 @@
 - 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留
   zvec-rust + PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。
 
+## 2026-08-24 v0.3.3bw3：chat-channel delete-modal + hooks 台账 partial→aligned
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- `web/src/pages/user-setting/chat-channel/component/delete-channel-modal.tsx`（59 行）台账
+  partial → aligned：Rust 确认弹层已携固定标题/撤销警告与 DELETE /api/v1/chat-channels/{id}，
+  CDP 实测闭环。
+- `web/src/pages/user-setting/chat-channel/hooks.ts`（203 行）台账 partial → aligned：Rust
+  add/edit/delete 流程已走固定 GET/POST/PATCH/DELETE 端点并刷新分组列表，CDP 实测闭环。
+- 覆盖矩阵剩余 partial：51 → 49。
+- 同步检视：`provider_api_service.py`（925 行）SoMark OCR 的 `extra → ocr_config` 派送分支
+  已于 v0.3.3bu 合入（`src/api/tenant_models.rs:2544`），`verify_api_key` siliconflow intl region
+  回退与 `region_intl_base`（行 2325）一致，`show_provider_instance` 返回 RAGFlow 形态的
+  `id/instance_name/provider_id/region/status`（行 3140–3182），故本轮未额外补丁。
+- Langfuse 卡片/对话框/删除/文档外链与 View URL 拼接亦已纳入 Rust 单测
+  `user_setting_api_page_wires_langfuse_card_dialog_and_persistence`，与 `src/api/langfuse.rs`
+  的 `LangfuseStore` + `probe_langfuse` 配套；前端 React 分量是 Rust 有意替换而非遗留。
+
 ## 2026-08-17 v0.3.3bw2：ChatChannel 23 渠道目录全量移植
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
