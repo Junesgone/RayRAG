@@ -186,6 +186,20 @@
 - 全程纯 Rust + 纯 SSR，未引入 Python/Node 运行时、未引入 MySQL，保留
   zvec-rust + PostgreSQL 18.4；RAGFlow 前端源码仅作对照基准，零复制。
 
+## 2026-08-24 v0.3.3bw5：data-source/profile/team 9 条 CDP-verified partial→aligned
+
+- 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
+- 覆盖矩阵台账 partial→aligned (9 条)：
+  - `data-source/add-datasource-modal.tsx`：Rust 模式驱动的 Add 弹层，含 title `Add data source: {name}`、required 标记、options/defaults/show_when、S3 compatible-mode 条件与 6 个 CDP 动作。
+  - `data-source/component/delete-source-modal.tsx`：Rust 删除确认弹层保留 `Delete data source` 标题、`Are you sure you want to delete this data source link?` 正文、图标+名称框、Cancel/Confirm(error)。
+  - `data-source/component/google-drive-token-field.tsx`：Rust Google Drive token 字段含 JSON 上传、状态药丸、Authorize popup、Refresh 轮询，CDP 闭环 upload→start→106→callback→updated→create。
+  - `data-source/data-source-detail-page/index.tsx`：Rust 详情页 34 个 schema 字段、show_when 条件、Save/Stop/Resume 状态机，CDP 8 个动作。
+  - `profile/hooks/use-profile.ts`：Rust 编辑/保存流 PATCH /api/v1/users/me（昵称/时区/头像/密码），CDP 4 个动作闭环。
+  - `setting-team/add-user-modal.tsx`、`setting-team/hooks.ts`、`setting-team/index.tsx`、`setting-team/user-table.tsx`：Rust 团队管理 4 件套（Add/hooks/page/user-table）CDP 闭环。
+- 覆盖矩阵剩余 partial：47 → 38。
+- 保留 `box-token-field.tsx` 为 partial：真实缺口在 `BOX_OAUTH_TOKEN_URL` 服务端凭证交换流程上，未合入。
+- 保留 `data-source/index.tsx`、`profile/index.tsx`、`setting-model/index.tsx`、`setting-team/tenant-table.tsx`、`chat-channel/constant/index.tsx` 等 5 条为 partial：标注了真缺口（React 表格几何、i18n 文案、像素级 FormFieldType Tag 等），本轮未补丁。
+
 ## 2026-08-24 v0.3.3bw4：chat-channel added-card + page 台账 partial→aligned
 
 - 固定上游仍为 RAGFlow v0.26.4 commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`。
