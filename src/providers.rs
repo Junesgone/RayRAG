@@ -42,6 +42,59 @@ impl ProviderKind {
     }
 }
 
+/// Upstream `un-add-model.tsx::mapModelKey`: short display label per model type.
+/// `vision` and `speech2text` share labels with their canonical counterparts.
+pub const fn capability_short_label(capability: ProviderKind) -> &'static str {
+    match capability {
+        ProviderKind::Chat => "LLM",
+        ProviderKind::Embedding => "Embedding",
+        ProviderKind::Rerank => "Rerank",
+        ProviderKind::ImageToText => "VLM",
+        ProviderKind::TextToSpeech => "TTS",
+        ProviderKind::SpeechToText => "ASR",
+        ProviderKind::Ocr => "OCR",
+    }
+}
+
+/// Resolve the upstream model-type string (`"image2text"`/`"vision"`,
+/// `"asr"`/`"speech2text"`, …) to the same short label the React filter pills
+/// use. Returns `None` for unknown keys so the caller can fall back to the key
+/// verbatim (matching the upstream `|| tag.trim()` fallback).
+pub fn capability_short_label_from_str(key: &str) -> Option<&'static str> {
+    match key.trim() {
+        "chat" => Some("LLM"),
+        "embedding" => Some("Embedding"),
+        "rerank" => Some("Rerank"),
+        "tts" => Some("TTS"),
+        "asr" | "speech2text" => Some("ASR"),
+        "ocr" => Some("OCR"),
+        "image2text" | "vision" => Some("VLM"),
+        _ => None,
+    }
+}
+
+/// Upstream `un-add-model.tsx::orderMap`: chat=1, embedding=2, rerank=3,
+/// tts=4, asr/speech2text=5, image2text/vision=6, ocr=7. Unknown keys sink
+/// to 999 so newly-added capabilities don't accidentally sort first.
+/// Not `const`: `str` comparison/matching is not const-stable on rustc 1.97.
+pub fn model_type_sort_order(key: &str) -> u32 {
+    match key.trim() {
+        "chat" => 1,
+        "embedding" => 2,
+        "rerank" => 3,
+        "tts" => 4,
+        "asr" | "speech2text" => 5,
+        "image2text" | "vision" => 6,
+        "ocr" => 7,
+        _ => 999,
+    }
+}
+
+/// Upstream `un-add-model.tsx::sortModelTypes`: stable sort by `orderMap`.
+pub fn sort_model_types<T: AsRef<str>>(model_types: &mut [T]) {
+    model_types.sort_by_key(|t| model_type_sort_order(t.as_ref()));
+}
+
 /// One entry of the provider catalog.
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderPreset {
