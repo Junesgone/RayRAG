@@ -2586,6 +2586,69 @@ fn provider_icon_html(provider_name: &str, class: &str) -> String {
     }
 }
 
+/// Emit one RAGFlow default-model tree selector: trigger button, popover,
+/// search input and the `role='tree'` container. Extracted from
+/// `providers_page` so every page that upstream renders through
+/// `ModelTreeSelect` can reuse the identical markup.
+fn push_default_model_selector(b: &mut String, field: &DefaultModelField) {
+    b.push_str("<div class='provider-default-field' data-default-model-root='");
+    b.push_str(field.dom_id);
+    b.push_str("'><label id='");
+    b.push_str(field.dom_id);
+    b.push_str("Label' for='");
+    b.push_str(field.dom_id);
+    b.push_str("'>");
+    if field.required {
+        b.push_str("<span style='color:var(--d)'>*</span>");
+    }
+    b.push_str(field.label);
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(field.tooltip));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(field.tooltip));
+    b.push_str("'>?</span></label><div class='default-model-control'><button id='");
+    b.push_str(field.dom_id);
+    b.push_str("' type='button' class='default-model-trigger' aria-labelledby='");
+    b.push_str(field.dom_id);
+    b.push_str("Label ");
+    b.push_str(field.dom_id);
+    b.push_str("Value' aria-haspopup='dialog' aria-expanded='false' aria-controls='");
+    b.push_str(field.dom_id);
+    b.push_str("Popover' data-state='closed' data-testid='default-model-");
+    b.push_str(field.field_id);
+    b.push_str("' data-field-id='");
+    b.push_str(field.field_id);
+    b.push_str("' data-update-type='");
+    b.push_str(field.update_type);
+    b.push_str("' data-response-type='");
+    b.push_str(field.response_type);
+    b.push_str("' data-model-types='");
+    b.push_str(&field.accepted_types.join(" "));
+    b.push_str("' data-value='' data-saved-value='' onclick=\"toggleDefaultModelTree('");
+    b.push_str(field.update_type);
+    b.push_str("')\"");
+    if field.required {
+        b.push_str(" aria-required='true'");
+    }
+    b.push_str("><span id='");
+    b.push_str(field.dom_id);
+    b.push_str("Value' class='default-model-value'><span class='default-model-placeholder'>Select value</span></span><span id='");
+    b.push_str(field.dom_id);
+    b.push_str("Indicator' class='default-model-indicator' aria-hidden='true'>⌄</span></button><div id='");
+    b.push_str(field.dom_id);
+    b.push_str("Popover' class='default-model-popover' role='dialog' aria-label='");
+    b.push_str(field.label);
+    b.push_str(" model tree' hidden><div class='default-model-search-wrap'><span aria-hidden='true'>⌕</span><input id='");
+    b.push_str(field.dom_id);
+    b.push_str("Search' class='default-model-search' type='search' placeholder='Search' aria-label='Search ");
+    b.push_str(field.label);
+    b.push_str(" models' oninput=\"searchDefaultModelTree('");
+    b.push_str(field.update_type);
+    b.push_str("',this.value)\"></div><div id='");
+    b.push_str(field.dom_id);
+    b.push_str("Tree' class='default-model-tree' role='tree'></div></div></div></div>");
+}
+
 pub async fn providers_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -2629,62 +2692,7 @@ pub async fn providers_page(
     b.push_str(t("Please complete these settings before beginning", zh));
     b.push_str("</p><div class='provider-default-grid'>");
     for field in DEFAULT_MODEL_FIELDS {
-        b.push_str("<div class='provider-default-field' data-default-model-root='");
-        b.push_str(field.dom_id);
-        b.push_str("'><label id='");
-        b.push_str(field.dom_id);
-        b.push_str("Label' for='");
-        b.push_str(field.dom_id);
-        b.push_str("'>");
-        if field.required {
-            b.push_str("<span style='color:var(--d)'>*</span>");
-        }
-        b.push_str(field.label);
-        b.push_str(" <span class='tip' tabindex='0' aria-label='");
-        b.push_str(&html_escape(field.tooltip));
-        b.push_str("' data-tip='");
-        b.push_str(&html_escape(field.tooltip));
-        b.push_str("'>?</span></label><div class='default-model-control'><button id='");
-        b.push_str(field.dom_id);
-        b.push_str("' type='button' class='default-model-trigger' aria-labelledby='");
-        b.push_str(field.dom_id);
-        b.push_str("Label ");
-        b.push_str(field.dom_id);
-        b.push_str("Value' aria-haspopup='dialog' aria-expanded='false' aria-controls='");
-        b.push_str(field.dom_id);
-        b.push_str("Popover' data-state='closed' data-testid='default-model-");
-        b.push_str(field.field_id);
-        b.push_str("' data-field-id='");
-        b.push_str(field.field_id);
-        b.push_str("' data-update-type='");
-        b.push_str(field.update_type);
-        b.push_str("' data-response-type='");
-        b.push_str(field.response_type);
-        b.push_str("' data-model-types='");
-        b.push_str(&field.accepted_types.join(" "));
-        b.push_str("' data-value='' data-saved-value='' onclick=\"toggleDefaultModelTree('");
-        b.push_str(field.update_type);
-        b.push_str("')\"");
-        if field.required {
-            b.push_str(" aria-required='true'");
-        }
-        b.push_str("><span id='");
-        b.push_str(field.dom_id);
-        b.push_str("Value' class='default-model-value'><span class='default-model-placeholder'>Select value</span></span><span id='");
-        b.push_str(field.dom_id);
-        b.push_str("Indicator' class='default-model-indicator' aria-hidden='true'>⌄</span></button><div id='");
-        b.push_str(field.dom_id);
-        b.push_str("Popover' class='default-model-popover' role='dialog' aria-label='");
-        b.push_str(field.label);
-        b.push_str(" model tree' hidden><div class='default-model-search-wrap'><span aria-hidden='true'>⌕</span><input id='");
-        b.push_str(field.dom_id);
-        b.push_str("Search' class='default-model-search' type='search' placeholder='Search' aria-label='Search ");
-        b.push_str(field.label);
-        b.push_str(" models' oninput=\"searchDefaultModelTree('");
-        b.push_str(field.update_type);
-        b.push_str("',this.value)\"></div><div id='");
-        b.push_str(field.dom_id);
-        b.push_str("Tree' class='default-model-tree' role='tree'></div></div></div></div>");
+        push_default_model_selector(&mut b, &field);
     }
     b.push_str(
         "</div><p id='dmMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div>",
