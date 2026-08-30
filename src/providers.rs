@@ -1600,4 +1600,60 @@ mod tests {
             .collect();
         assert!(!rr.is_empty(), "SILICONFLOW rerank models missing");
     }
+
+    /// `un-add-model.tsx::mapModelKey` — every alias maps to the upstream pill
+    /// label, surrounding whitespace is trimmed, and unknown keys yield `None`
+    /// so the caller can reproduce the `|| tag.trim()` fallback.
+    #[test]
+    fn capability_short_label_matches_upstream_map_model_key() {
+        for (key, label) in [
+            ("chat", "LLM"),
+            ("embedding", "Embedding"),
+            ("rerank", "Rerank"),
+            ("tts", "TTS"),
+            ("asr", "ASR"),
+            ("speech2text", "ASR"),
+            ("image2text", "VLM"),
+            ("vision", "VLM"),
+            ("ocr", "OCR"),
+        ] {
+            assert_eq!(capability_short_label_from_str(key), Some(label), "{key}");
+        }
+        assert_eq!(
+            capability_short_label_from_str("  embedding  "),
+            Some("Embedding")
+        );
+        assert_eq!(capability_short_label_from_str("audio"), None);
+        assert_eq!(capability_short_label(ProviderKind::ImageToText), "VLM");
+        assert_eq!(capability_short_label(ProviderKind::SpeechToText), "ASR");
+        assert_eq!(capability_short_label(ProviderKind::Chat), "LLM");
+    }
+
+    /// `un-add-model.tsx::orderMap` + `sortModelTypes` — canonical order is
+    /// chat, embedding, rerank, tts, asr/speech2text, image2text/vision, ocr,
+    /// and an unranked capability sinks behind all known ones.
+    #[test]
+    fn sort_model_types_follows_upstream_order_map() {
+        for (key, order) in [
+            ("chat", 1),
+            ("embedding", 2),
+            ("rerank", 3),
+            ("tts", 4),
+            ("asr", 5),
+            ("speech2text", 5),
+            ("image2text", 6),
+            ("vision", 6),
+            ("ocr", 7),
+        ] {
+            assert_eq!(model_type_sort_order(key), order, "{key}");
+        }
+        assert_eq!(model_type_sort_order("audio"), 999);
+
+        let mut tags = ["ocr", "vision", "chat", "audio", "rerank", "speech2text"];
+        sort_model_types(&mut tags);
+        assert_eq!(
+            tags,
+            ["chat", "rerank", "speech2text", "vision", "ocr", "audio"]
+        );
+    }
 }

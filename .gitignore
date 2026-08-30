@@ -12,3 +12,4 @@ data/
 !src/data/providers/llm_factories.json
 zvec-data/
 *.index.json
+logs/

@@ -2369,17 +2369,11 @@ fn provider_capability_tags(provider_id: &str, provider_name: &str) -> Vec<&'sta
     .collect()
 }
 
+/// Upstream `un-add-model.tsx::mapModelKey[tag] || tag`. Delegates to the
+/// single `crate::providers` table so card badges and the filter pills can no
+/// longer drift apart; unknown tags fall back to the raw key verbatim.
 fn model_type_label(model_type: &str) -> &str {
-    match model_type {
-        "chat" => "LLM",
-        "embedding" => "Embedding",
-        "rerank" => "Rerank",
-        "tts" => "TTS",
-        "asr" | "speech2text" => "ASR",
-        "vision" | "image2text" => "VLM",
-        "ocr" => "OCR",
-        _ => model_type,
-    }
+    crate::providers::capability_short_label_from_str(model_type).unwrap_or(model_type)
 }
 
 /// Fixed v0.26.4 `LIST_MODEL_PROVIDERS`: these provider modals replace the
@@ -2701,21 +2695,26 @@ pub async fn providers_page(
             crate::api::tenant_models::factory_llm_entries(),
         );
         b.push_str("<section class='card' id='availableModels' data-testid='available-models-section'><h2>Available models <span id='availableShown' style='font-size:12px;color:var(--tm)'></span></h2><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All <span id='providerCountAll'></span></button>");
-        for (model_type, label) in [
-            ("chat", "LLM"),
-            ("embedding", "Embedding"),
-            ("rerank", "Rerank"),
-            ("tts", "TTS"),
-            ("speech2text", "ASR"),
-            ("image2text", "VLM"),
-            ("ocr", "OCR"),
-        ] {
+        // Upstream `un-add-model.tsx` orders the tag pills with `orderMap` and
+        // labels them with `mapModelKey[tag] || tag`. Both now come from the
+        // shared `crate::providers` table rather than a second literal copy.
+        let mut chip_types = [
+            "chat",
+            "embedding",
+            "rerank",
+            "tts",
+            "speech2text",
+            "image2text",
+            "ocr",
+        ];
+        crate::providers::sort_model_types(&mut chip_types);
+        for model_type in chip_types {
             b.push_str("<button class='btn btn-o btn-sm provider-chip' data-filter='");
             b.push_str(model_type);
             b.push_str("' onclick=\"selectProviderFilter('");
             b.push_str(model_type);
             b.push_str("',this)\">");
-            b.push_str(label);
+            b.push_str(model_type_label(model_type));
             b.push_str(" <span id='providerCount-");
             b.push_str(model_type);
             b.push_str("'></span></button>");
