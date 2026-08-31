@@ -1111,10 +1111,10 @@ impl DocStorePool {
     fn connect(&self) -> crate::Result<Arc<dyn DocStore>> {
         match &self.backend {
             DocStoreBackend::Memory => Ok(Arc::new(MemoryDocStore::new())),
-            DocStoreBackend::Postgres { url } => {
+            DocStoreBackend::Postgres { url: _url } => {
                 #[cfg(feature = "postgres-backend")]
                 {
-                    Ok(Arc::new(PostgresDocStore::from_config(url)?))
+                    Ok(Arc::new(PostgresDocStore::from_config(_url)?))
                 }
                 #[cfg(not(feature = "postgres-backend"))]
                 {

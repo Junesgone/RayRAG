@@ -6832,8 +6832,8 @@ impl Connector for RdbmsConnector {
     async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
         // 行内容已在 list_files 阶段物化到 metadata（blob 由 normalize 重建，
         // 见下）：此处重查该行所在的表以保证增量同步一致性。
-        let table = file.metadata.get("table").cloned().unwrap_or_default();
-        let row_no = file
+        let _table = file.metadata.get("table").cloned().unwrap_or_default();
+        let _row_no = file
             .path
             .trim_start_matches("rdbms://")
             .rsplit('/')
@@ -6845,13 +6845,13 @@ impl Connector for RdbmsConnector {
             let sql = if let Some(q) = &self.query {
                 sanitize_sql_query(q)
             } else {
-                format!("SELECT * FROM {table}")
+                format!("SELECT * FROM {_table}")
             };
             let rows = self.query_rows_sync(&sql)?;
-            if let Some((columns, values)) = rows.get(row_no) {
+            if let Some((columns, values)) = rows.get(_row_no) {
                 return Ok(rdbms_row_blob(columns, values).into_bytes());
             }
-            bail!("RDBMS (postgresql): row {row_no} of table {table} disappeared");
+            bail!("RDBMS (postgresql): row {_row_no} of table {_table} disappeared");
         }
         #[cfg(not(feature = "postgres-backend"))]
         bail!("RDBMS (postgresql): build without --features postgres-backend")

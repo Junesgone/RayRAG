@@ -6,7 +6,7 @@
 //! 结果按 max_records 截断（默认 1024 行）。
 
 use anyhow::{Result, bail};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 /// 支持的数据库类型（当前仅 postgres）。
 pub const SUPPORTED_DB_TYPES: &[&str] = &["postgres"];
@@ -148,6 +148,7 @@ impl ExeSqlConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn sample_config() -> ExeSqlConfig {
         ExeSqlConfig {

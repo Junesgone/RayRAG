@@ -6,12 +6,11 @@
 //! Falls back to alphabetically sorted `.xhtml/.html/.htm` files (excluding
 //! `META-INF/`) when the container/OPF is missing or malformed.
 
-use crate::chunk::estimate_tokens;
 use crate::parser::html::RAGFlowHtmlParser;
-use crate::parser::{Parse, new_document};
+use crate::parser::{new_document, Parse};
 use crate::{Document, Result};
-use quick_xml::Reader;
 use quick_xml::events::Event;
+use quick_xml::Reader;
 use std::io::Cursor;
 
 /// OPF XML namespace (epub_parser.py:26).
@@ -345,6 +344,7 @@ impl Parse for EpubParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk::estimate_tokens;
     use std::io::Write;
 
     /// Build a minimal EPUB in memory with the given chapter (name, html).

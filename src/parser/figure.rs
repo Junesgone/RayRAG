@@ -17,7 +17,7 @@
 
 use crate::ocr::OcrClient;
 use crate::parser::{Parse, new_document};
-use crate::vision::{VisionClient, VisionConfig};
+use crate::vision::VisionClient;
 use crate::{Document, Result};
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -615,6 +615,7 @@ fn detect_format(data: &[u8]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vision::VisionConfig;
 
     #[test]
     fn svg_text_parsing_handles_nested_spans_and_entities() {
