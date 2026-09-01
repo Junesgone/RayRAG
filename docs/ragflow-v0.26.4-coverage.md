@@ -401,6 +401,15 @@
 > 断言并入 `user_setting_chat_channel_page_wires_add_edit_delete_flows`；隔离端口 debug 实测 HTTP 200
 > 与双侧 diff PASS。FormFieldType Tag/placeholder 逐像素组合仍 partial。
 >
+> v0.3.4d（2026-09-01）Top K 标签按站点拆分：上游仅两个 i18n topK 标签——`knowledgeDetails.topK`=`Top-K`
+> （zh `Top-K`，components/rerank.tsx 的 useTranslate('knowledgeDetails') 消费方：KB/数据集检索配置与测试面板、
+> chat app settings、agent retrieval forms）与 `skillSearch.topK`=`Top K Results`（zh `返回结果数量`，skills 搜索
+> 配置弹层）；`next-search/search-setting.tsx:467` 硬编码字面量 `Top K`（不翻译）。RayRAG t() 表拆为
+> `Top-K`/`Top K Results` 两键并删除合并键 `Top K`(召回条数)：kb/dataset 检索配置+测试面板与 app 详情基本设置
+> 走 `Top-K`，skills 配置弹层走 `Top K Results`/`返回结果数量`，检索页侧栏保留字面量 `Top K`。回归测试
+> `top_k_labels_split_follow_upstream_sites`（en/zh×四页 + stale 反证）；部署 10 页机器 diff 0 失败；CDP 登录态
+> 实点 skills 弹层真点开合 + kb/app/search 三页可见文本 + 三张截图。
+>
 
 ## File Inventory
 

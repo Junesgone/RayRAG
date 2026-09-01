@@ -57,12 +57,14 @@ fn t(k: &str, zh: bool) -> &str {
         "Test search" => "测试检索",
         "Hybrid" => "混合检索",
         "Rerank" => "重排序",
-        // Upstream carries two distinct labels: `topK: 'Top K Results'` in the
-        // retrieval test panel (zh `返回结果数量`) and `topK: 'Top-K'` in the
-        // parse/rerank settings (zh `Top-K`). RayRAG renders both as "Top K";
-        // splitting this key per site is pending parity work, so the wording
-        // here is intentionally unchanged.
-        "Top K" => "召回条数",
+        // Upstream has exactly two i18n topK labels: `knowledgeDetails.topK`
+        // = `Top-K` (zh `Top-K`, components/rerank.tsx — KB testing, chat app
+        // settings, agent retrieval forms) and `skillSearch.topK` =
+        // `Top K Results` (zh `返回结果数量`, skill search config modal).
+        // `next-search/search-setting.tsx:467` hard-codes a literal `Top K`,
+        // mirrored untranslated at RayRAG's search settings sidebar.
+        "Top-K" => "Top-K",
+        "Top K Results" => "返回结果数量",
 
         "Agents" => "智能体",
         "Memories" => "记忆",
@@ -898,7 +900,7 @@ pub async fn kb_detail_page(
     b.push_str(t("Retrieval Configuration", zh));
     b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
-    b.push_str(t("Top K", zh));
+    b.push_str(t("Top-K", zh));
     b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'> <span class='tip' data-tip='The number of retrieved chunks to be fed into the LLM for answer generation. Higher values improve accuracy at the cost of retrieval speed.'>?</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Similarity Threshold", zh));
@@ -927,7 +929,7 @@ pub async fn kb_detail_page(
     b.push_str("</h3><label style='font-size:12px;display:block'>");
     b.push_str(t("Question", zh));
     b.push_str("</label><input id='tq' placeholder='输入测试问题…'><label style='font-size:12px;display:block;margin-top:8px'>");
-    b.push_str(t("Top K", zh));
+    b.push_str(t("Top-K", zh));
     b.push_str("</label><select id='tk'><option>5</option><option selected>10</option><option>20</option></select><label style='font-size:12px;display:block;margin-top:8px'>");
     b.push_str(t("Similarity Threshold", zh));
     b.push_str(": <span id='ttV' class='co'>0.2</span></label><input type='range' id='tt' min='0' max='1' step='0.05' value='0.2' style='width:100%' oninput='document.getElementById(\\\"ttV\\\").textContent=this.value'><label style='font-size:12px;display:block;margin-top:8px'>");
@@ -1101,7 +1103,7 @@ pub async fn dataset_page(
     b.push_str("</label><input id='testQ' placeholder='");
     b.push_str(t("Enter test query...", zh));
     b.push_str("'><label style='font-size:12px;margin-top:8px;display:block'>");
-    b.push_str(t("Top K", zh));
+    b.push_str(t("Top-K", zh));
     b.push_str("</label><select id='testK'><option>5</option><option selected>10</option><option>20</option></select><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Similarity Threshold", zh));
     b.push_str(": <span id='testTV' class='co'>0.2</span></label><input type='range' id='testT' min='0' max='1' step='0.05' value='0.2' style='width:100%' oninput='document.getElementById(\\\"testTV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'>");
@@ -1245,7 +1247,7 @@ pub async fn dataset_page(
     b.push_str(t("Retrieval Configuration", zh));
     b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
-    b.push_str(t("Top K", zh));
+    b.push_str(t("Top-K", zh));
     b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'> <span class='tip' data-tip='The number of retrieved chunks to be fed into the LLM for answer generation. Higher values improve accuracy at the cost of retrieval speed.'>?</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Similarity Threshold", zh));
@@ -1511,7 +1513,7 @@ pub async fn search_page(
     b.push_str("</label><select id='docType' style='font-size:12px'><option value=''>All types</option><option value='pdf'>PDF</option><option value='doc'>DOC</option><option value='docx'>DOCX</option><option value='xls'>XLS</option><option value='xlsx'>XLSX</option><option value='ppt'>PPT</option><option value='pptx'>PPTX</option><option value='txt'>TXT</option><option value='md'>MD</option><option value='html'>HTML</option></select></div><div id='kbChips' style='margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:12px'></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>💾 Save as App</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='results' style='margin-top:16px'></div></div>");
     // Settings sidebar
     b.push_str("<div class='card' style='width:240px;flex-shrink:0'><h3>Search Settings</h3><label style='font-size:12px;display:block;margin:8px 0'>");
-    b.push_str(t("Top K", zh));
+    b.push_str("Top K");
     b.push_str("</label><select id='topK'><option>5</option><option selected>10</option><option>20</option><option>50</option></select><label style='font-size:12px;display:block;margin:8px 0'>");
     b.push_str(t("Threshold", zh));
     b.push_str("</label><select id='thresh'><option>0.0</option><option selected>0.3</option><option>0.5</option><option>0.7</option></select><label style='font-size:12px;display:block;margin:8px 0'>");
@@ -2278,7 +2280,9 @@ pub async fn skills_page(
     ));
     b.push_str("</p><div class='toolbar' style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'><input id='skillSpace' value='default' placeholder='Space ID' style='max-width:180px'><input id='skillQuery' placeholder='Search skills by meaning...' style='min-width:260px;flex:1' onkeydown='if(event.key===&quot;Enter&quot;)searchSkills()'><button class='btn btn-p' onclick='searchSkills()'>Search</button><button class='btn btn-o' onclick='openSkillModal()'>+ Add Skill</button><button class='btn btn-o' onclick='openSkillConfig()'>⚙ Configure Search</button><button class='btn btn-o' onclick='reindexSkills()'>↻ Reindex All</button></div><p id='skillMeta' style='color:var(--tm);font-size:12px'></p><div id='skillList' class='kb-grid'><p style='color:var(--tm)'>Loading...</p></div>");
     b.push_str("<div class='modal-overlay' id='skillModal'><div class='modal' style='max-width:680px'><h2>Add Skill</h2><label>Skill ID</label><input id='skillId' placeholder='my-skill'><label>Name</label><input id='skillName' placeholder='My Skill'><label>Folder ID</label><input id='skillFolder' placeholder='optional folder id'><label>Version</label><input id='skillVersion' value='1.0.0'><label>Tags</label><input id='skillTags' placeholder='rag, rust, search'><label>Description</label><textarea id='skillDescription'></textarea><label>Content</label><textarea id='skillContent' style='min-height:160px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='indexSkill()'>Index</button><button class='btn btn-o' onclick='closeSkillModal()'>Cancel</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>Skill Search Configuration</h2><label>Embedding Model</label><input id='skillEmbd' value='default'><label>Vector Similarity Weight (0–1)</label><input id='skillVectorWeight' type='number' min='0' max='1' step='0.05' value='0.3'><label>Similarity Threshold (0–1)</label><input id='skillThreshold' type='number' min='0' max='1' step='0.05' value='0.2'><label>Top K</label><input id='skillTopK' type='number' min='1' value='10'><label><input id='skillContentEnabled' type='checkbox'> Include content in embedding text</label><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveSkillConfig()'>Save</button><button class='btn btn-o' onclick='document.getElementById(&quot;skillConfigModal&quot;).classList.remove(&quot;show&quot;)'>Cancel</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>Skill Search Configuration</h2><label>Embedding Model</label><input id='skillEmbd' value='default'><label>Vector Similarity Weight (0–1)</label><input id='skillVectorWeight' type='number' min='0' max='1' step='0.05' value='0.3'><label>Similarity Threshold (0–1)</label><input id='skillThreshold' type='number' min='0' max='1' step='0.05' value='0.2'><label>");
+    b.push_str(t("Top K Results", zh));
+    b.push_str("</label><input id='skillTopK' type='number' min='1' value='10'><label><input id='skillContentEnabled' type='checkbox'> Include content in embedding text</label><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveSkillConfig()'>Save</button><button class='btn btn-o' onclick='document.getElementById(&quot;skillConfigModal&quot;).classList.remove(&quot;show&quot;)'>Cancel</button></div></div></div>");
     b.push_str(r#"<script>
 function skillSpace(){return document.getElementById('skillSpace').value.trim()||'default'}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -3751,7 +3755,7 @@ pub async fn search_app_detail_page(
     ));
     b.push_str(&format!(
         "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><select id='sa_kbs' multiple style='width:100%;min-height:72px'>{}</select><div style='display:flex;gap:16px;margin-top:10px'><label class='set-switch'><input type='checkbox' id='sa_hybrid'{}><span class='set-sw-label'>{}</span></label><label class='set-switch'><input type='checkbox' id='sa_rerank'{}><span class='set-sw-label'>{}</span></label></div><label class='set-label'>{}</label><input id='sa_topk' type='number' min='1' max='128' value='{}' style='width:120px'></div>",
-        t("Basic Settings", zh), t("Knowledge Bases", zh), kb_opts, ck(app.hybrid), t("Hybrid", zh), ck(app.rerank), t("Rerank", zh), t("Top K", zh), app.top_k
+        t("Basic Settings", zh), t("Knowledge Bases", zh), kb_opts, ck(app.hybrid), t("Hybrid", zh), ck(app.rerank), t("Rerank", zh), t("Top-K", zh), app.top_k
     ));
     b.push_str(&format!(
         "<div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-p' onclick='saveSApp()'>{}</button></div>",
@@ -5099,6 +5103,90 @@ mod kb_ui_tests {
                 "zh chat channel description drifted from upstream: {key}={expected}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn top_k_labels_split_follow_upstream_sites() {
+        let (_root, state) = test_state();
+        let zh_request = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("cookie", "lang=zh-CN")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let kb = state.kbs.create_for("u1", "TopK KB", "d").unwrap();
+        let path = kb.id.clone();
+        let kb_en = body_of(
+            kb_detail_page(
+                State(state.clone()),
+                Path(path.clone()),
+                english_request("/kbs/x"),
+            )
+            .await,
+        )
+        .await;
+        let kb_zh = body_of(
+            kb_detail_page(State(state.clone()), Path(path.clone()), zh_request("/kbs/x"))
+                .await,
+        )
+        .await;
+        let ds_en = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(path.clone()),
+                english_request("/dataset/x"),
+            )
+            .await,
+        )
+        .await;
+        let ds_zh = body_of(
+            dataset_page(State(state.clone()), Path(path.clone()), zh_request("/dataset/x"))
+                .await,
+        )
+        .await;
+        let sp_en = body_of(search_page(State(state.clone()), english_request("/search")).await)
+            .await;
+        let sp_zh = body_of(search_page(State(state.clone()), zh_request("/search")).await)
+            .await;
+        let sk_en = body_of(skills_page(State(state.clone()), english_request("/skills")).await)
+            .await;
+        let sk_zh = body_of(skills_page(State(state.clone()), zh_request("/skills")).await)
+            .await;
+
+        // `knowledgeDetails.topK` = `Top-K` (zh `Top-K`) — the KB/dataset
+        // retrieval config + testing panels render components/rerank.tsx's
+        // label, not the old merged `Top K`.
+        for html in [&kb_en, &kb_zh, &ds_en, &ds_zh] {
+            assert!(html.contains(">Top-K<"), "upstream `Top-K` label missing");
+        }
+        // `next-search/search-setting.tsx:467` hard-codes `Top K`, so the
+        // search settings sidebar stays untranslated in both languages.
+        assert!(
+            sp_en.contains(">Top K<"),
+            "search sidebar literal Top K missing"
+        );
+        assert!(
+            sp_zh.contains(">Top K<"),
+            "zh search sidebar must stay literal Top K"
+        );
+        assert!(
+            !sp_zh.contains("召回条数"),
+            "stale Top K translation still present"
+        );
+        // `skillSearch.topK` = `Top K Results` (zh `返回结果数量`).
+        assert!(
+            sk_en.contains(">Top K Results<"),
+            "skill modal en label missing"
+        );
+        assert!(
+            sk_zh.contains(">返回结果数量<"),
+            "skill modal zh label missing"
+        );
+        assert!(
+            !sk_en.contains(">Top K<"),
+            "skill modal must not use the merged label"
+        );
     }
 
     #[tokio::test]
