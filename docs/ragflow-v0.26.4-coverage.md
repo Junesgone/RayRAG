@@ -410,6 +410,16 @@
 > `top_k_labels_split_follow_upstream_sites`（en/zh×四页 + stale 反证）；部署 10 页机器 diff 0 失败；CDP 登录态
 > 实点 skills 弹层真点开合 + kb/app/search 三页可见文本 + 三张截图。
 >
+> v0.3.4e（2026-09-01）profile 时区列表按上游运行时算法收口：上游 `pages/user-setting/constants.tsx` 由
+> `Intl.supportedValuesOf('timeZone')` + `longOffset` 生成 `name="GMT+08:00 Asia/Shanghai"` 并按 offset 排序，
+> 编辑弹层 `SelectWithSearch`（placeholder `Select a timeZone`、value/label=完整名、搜索过滤）、保存校验消息
+> `select your timezone`（zh `请选择时区`，页级 zh 归 profile 页 zh 残留）、展示行为 `tz?.name ?? ''`（按存储名
+> 查找，未匹配显示空）。RayRAG 改为同算法运行时计算（无静态清单、无新依赖），弹层改可搜索输入+选项列表
+> （`tzRenderList`/`.provider-tz-list` CSS），展示行同上游 find-else-empty，保存校验同消息；存量裸 IANA 值
+> 显示为空直至重选（与上游逻辑一致，已记录）。回归 `profile_timezone_list_follows_upstream_runtime`+
+> CSS 测试；部署机器 diff en/zh 双侧 PASS；CDP 真点 418 项列表、Tokyo 搜索过滤、选项点击、保存持久化、
+> 展示行刷新全链路 + before/after 截图。`web.rs` 顺带移除 L3309 无必要 `unsafe` 包裹（runner 阻塞项）。
+>
 
 ## File Inventory
 
@@ -4727,7 +4737,7 @@
 | `web/src/pages/user-setting/mcp/use-import-mcp.ts` | 75 | 2118 | `4f123fbf22cb9bce` | full | `src/web.rs; src/api/mcp_mgr.rs` | Rust import parses the uploaded {mcpServers} JSON, renames duplicates with the _N suffix and reports per-server results; CDP-verified (v0.3.3bt) |
 | `web/src/pages/user-setting/profile/constants.ts` | 3 | 98 | `a6df7d35739851d3` | partial | `src/web.rs; src/api/system.rs` | Rust keeps the fixed 1-100 nickname limit and the letter/digit/punctuation charset in both the client inline validation and the server PATCH /users/me guard (v0.3.3bv) |
 | `web/src/pages/user-setting/profile/hooks/use-profile.ts` | 155 | 4080 | `a349da5cc1b4f524` | aligned | `src/web.rs; src/api/system.rs` | Rust edit/save flows PATCH /api/v1/users/me for nickname/timezone/avatar and the current+new password pair with token invalidation on success; CDP-verified all four edits (v0.3.3bv) |
-| `web/src/pages/user-setting/profile/index.tsx` | 422 | 14718 | `56d78372785fc272` | partial | `src/web.rs; src/web_css.txt; src/api/system.rs` | Rust Profile page renders Username/Avatar/Time Zone/Email/Password rows with Edit Name / Edit Time Zone / Edit Password dialogs and inline avatar upload; CDP-verified name, timezone, avatar and password change. Exact React form composition and the full upstream timezone list remain partial (v0.3.3bv) |
+| `web/src/pages/user-setting/profile/index.tsx` | 422 | 14718 | `56d78372785fc272` | partial | `src/web.rs; src/web_css.txt; src/api/system.rs` | Rust Profile page renders Username/Avatar/Time Zone/Email/Password rows with Edit Name / Edit Time Zone / Edit Password dialogs and inline avatar upload; CDP-verified name, timezone, avatar and password change. The timezone list now follows the upstream runtime algorithm exactly (`Intl.supportedValuesOf` + longOffset GMT names, offset-sorted, searchable select with `Select a timeZone` placeholder, `select your timezone` save validation, display find-by-name-else-empty via `tzRenderList`/`PROFILE_LOADED`), CDP re-verified end-to-end (418 options, Tokyo filter, option click, save persisted, display refresh). Exact React form composition remains partial; zh-side page labels/validation copy belong to the page-level zh residue (v0.3.4e) |
 | `web/src/pages/user-setting/setting-api/index.module.less` | 7 | 96 | `772530dd955df02d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-api/index.tsx` | 7 | 189 | `d772a22d7ae2883d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/components/llm-header.tsx` | 34 | 1215 | `0c90cf6b74f59e94` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
