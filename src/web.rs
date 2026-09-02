@@ -98,6 +98,9 @@ fn t(k: &str, zh: bool) -> &str {
         "Chunk Size" => "分块大小",
         "Overlap" => "重叠",
         "Embedding Model" => "嵌入模型",
+        "The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it." => {
+            "知识库采用的默认嵌入模型。一旦知识库内已经产生了文本块，更换嵌入模型时，系统将随机抽取若干 chunk 进行兼容性校验，使用新嵌入模型重新编码并计算新旧向量的余弦相似度，样本平均相似度需 ≥ 0.9 方可切换。否则，必须删除知识库内的所有文本块后才能更改。"
+        }
         "Threshold" => "相似度阈值",
         "Name" => "名称",
         "Created" => "创建时间",
@@ -734,6 +737,20 @@ pub async fn datasets_alias(
     kbs_page(State(state), req).await
 }
 
+/// dataset/kb 配置页 embedding 树选择器字段（上游 common-item.tsx EmbeddingSelect，
+/// testId ds-settings-basic-embedding-model-select）。label/tip 由页面行内单元格
+/// 渲染（必填星标 + embeddingModelTip），此处留空以跳过共享 markup 的标签层。
+const CONFIG_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "embd_id",
+    dom_id: "embdSel",
+    label: "",
+    update_type: "embd_id",
+    response_type: "embedding",
+    accepted_types: &["embedding"],
+    required: true,
+    tooltip: "",
+};
+
 pub async fn kb_detail_page(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -840,8 +857,15 @@ pub async fn kb_detail_page(
     b.push_str(t("Me", zh));
     b.push_str("</option></select></td></tr>");
     b.push_str("<tr><td>");
+    b.push_str("<span style='color:var(--d)'>*</span> ");
     b.push_str(t("Embedding Model", zh));
-    b.push_str("</td><td><select id='embdSel' style='max-width:280px'><option value=''>default</option></select></td></tr>");
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(&t("The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it.", zh)));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(&t("The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it.", zh)));
+    b.push_str("'>?</span></td><td>");
+    push_default_model_selector(&mut b, &CONFIG_EMBD_SELECTOR_FIELD);
+    b.push_str("</td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Page rank", zh));
     b.push_str("</td><td><input id='cfgPageRank' type='number' min='0' value='0' style='max-width:120px'></td></tr>");
@@ -946,6 +970,22 @@ pub async fn kb_detail_page(
     b.push_str(t("Results", zh));
     b.push_str(" 将显示在这里</p></div></div></div></div></div>");
     // 页面 JS
+    let embd_fields_payload = serde_json::json!([
+        {
+            "fieldId": "embd_id",
+            "domId": "embdSel",
+            "updateType": "embd_id",
+            "responseType": "embedding",
+            "acceptedTypes": ["embedding"],
+            "required": true,
+        }
+    ]);
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&embd_fields_payload));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;trigger.dataset.value=value;trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}async function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}loadKbModelCatalog();</script>");
+    b.push_str("<script>var kbId='");
     b.push_str("<script>var kbId='");
     b.push_str(&id);
     b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){var m=location.pathname.match(/\\/dataset\\/(files|retrieval|logs|configuration)\\//);if(m){var map={files:0,retrieval:2,logs:5,configuration:3};n=map[m[1]]??n}for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
@@ -964,8 +1004,8 @@ pub async fn kb_detail_page(
     b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');setDocDisabled(id,!isDocDisabled(id));loadDocs()};");
     b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
-    b.push_str("function loadConfig(){fetch('/api/v1/datasets/'+kbId).then(r=>r.json()).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){for(var i=0;i<em.options.length;i++){if(em.options[i].value===kb.embd_id){em.selectedIndex=i;break}}}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('cfgMethod').value=pc.chunk_method;var tn=parseInt(pc.chunk_token_num,10);if(!isNaN(tn)&&tn>0)document.getElementById('cfgTokenNum').value=tn;var delims=Array.isArray(pc.delimiters)?pc.delimiters:(pc.delimiter?[pc.delimiter]:[]);document.getElementById('cfgDelims').value=delims.join('\\n');var op=parseFloat(pc.overlapped_percent);if(!isNaN(op))document.getElementById('cfgOverlap').value=Math.round(op*100);document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('cfgRaptor').checked=!!(pc.raptorEn||pc.raptor_enabled);document.getElementById('cfgGraph').checked=!!(pc.graphEn||pc.graphrag_enabled);var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
-    b.push_str("function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={name:document.getElementById('cfgName').value,permission:document.getElementById('cfgPerm').value,embd_id:document.getElementById('embdSel').value||'default',chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked,top_k:page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
+    b.push_str("function loadConfig(){fetch('/api/v1/datasets/'+kbId).then(r=>r.json()).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('cfgMethod').value=pc.chunk_method;var tn=parseInt(pc.chunk_token_num,10);if(!isNaN(tn)&&tn>0)document.getElementById('cfgTokenNum').value=tn;var delims=Array.isArray(pc.delimiters)?pc.delimiters:(pc.delimiter?[pc.delimiter]:[]);document.getElementById('cfgDelims').value=delims.join('\\n');var op=parseFloat(pc.overlapped_percent);if(!isNaN(op))document.getElementById('cfgOverlap').value=Math.round(op*100);document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('cfgRaptor').checked=!!(pc.raptorEn||pc.raptor_enabled);document.getElementById('cfgGraph').checked=!!(pc.graphEn||pc.graphrag_enabled);var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
+    b.push_str("function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={name:document.getElementById('cfgName').value,permission:document.getElementById('cfgPerm').value,embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked,top_k:page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
     b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var r=document.getElementById('tr').checked;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(r)body.rerank=true;document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     b.push_str("fetch('/api/v1/providers').then(r=>r.json()).then(function(d){var sel=document.getElementById('embdSel');if(!sel)return;(d.data||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o)})})}).catch(function(){});");
@@ -1136,8 +1176,15 @@ pub async fn dataset_page(
     b.push_str(t("Me", zh));
     b.push_str("</option></select></td></tr>");
     b.push_str("<tr><td>");
+    b.push_str("<span style='color:var(--d)'>*</span> ");
     b.push_str(t("Embedding Model", zh));
-    b.push_str("</td><td><select id='embdSel' style='max-width:280px'><option value=''>default</option></select></td></tr>");
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(&t("The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it.", zh)));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(&t("The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it.", zh)));
+    b.push_str("'>?</span></td><td>");
+    push_default_model_selector(&mut b, &CONFIG_EMBD_SELECTOR_FIELD);
+    b.push_str("</td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Page rank", zh));
     b.push_str("</td><td><input id='cfgPageRank' type='number' min='0' value='0' style='max-width:120px'></td></tr>");
@@ -1285,6 +1332,22 @@ pub async fn dataset_page(
     b.push_str("</p></div></div></div>");
     b.push_str("</div></div>");
     // JS
+    let embd_fields_payload = serde_json::json!([
+        {
+            "fieldId": "embd_id",
+            "domId": "embdSel",
+            "updateType": "embd_id",
+            "responseType": "embedding",
+            "acceptedTypes": ["embedding"],
+            "required": true,
+        }
+    ]);
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&embd_fields_payload));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;trigger.dataset.value=value;trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}async function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}loadKbModelCatalog();</script>");
+    b.push_str("<script>var kbId='");
     b.push_str("<script>var kbId='");
     b.push_str(&id);
     b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
@@ -1307,8 +1370,8 @@ pub async fn dataset_page(
     b.push_str("function updateOverview(docs){var done=0,run=0,fail=0,other=0;docs.forEach(function(x){if(x.run==='DONE')done++;else if(x.run==='RUNNING'||x.run==='UNSTARTED')run++;else if(x.run==='FAILED')fail++;else other++});var total=docs.length||1;function set(id,bar,v){var e=document.getElementById(id);if(e)e.textContent=v;var b=document.getElementById(bar);if(b)b.style.width=Math.round(v/total*100)+'%'};set('ovDone','ovDoneBar',done);set('ovRun','ovRunBar',run);set('ovFail','ovFailBar',fail);var act=document.getElementById('actList');if(act){var h='';docs.slice(0,10).forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td>'+badge(x.run)+'</td><td>'+(x.chunk_count||0)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(x.updated_at)+'</td></tr>'});act.innerHTML=h||'<tr><td colspan=4 style=color:var(--tm);text-align:center>暂无活动</td></tr>'}};");
     b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var r=document.getElementById('testRerank').checked;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(r)body.rerank=true;document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
-    b.push_str("function loadConfig(){fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){for(var i=0;i<em.options.length;i++){if(em.options[i].value===kb.embd_id){em.selectedIndex=i;break}}}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('chunkMethod').value=pc.chunk_method;var cs=parseInt(pc.chunk_size,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}if(pc.overlap){var ov=document.getElementById('overlap');for(var k=0;k<ov.options.length;k++){if(ov.options[k].value===pc.overlap){ov.selectedIndex=k;break}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
-    b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,permission:document.getElementById('cfgPerm').value,embd_id:document.getElementById('embdSel').value||'default',chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:document.getElementById('cfgLang').value,pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
+    b.push_str("function loadConfig(){fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('chunkMethod').value=pc.chunk_method;var cs=parseInt(pc.chunk_size,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}if(pc.overlap){var ov=document.getElementById('overlap');for(var k=0;k<ov.options.length;k++){if(ov.options[k].value===pc.overlap){ov.selectedIndex=k;break}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
+    b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,permission:document.getElementById('cfgPerm').value,embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:document.getElementById('cfgLang').value,pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
     b.push_str("function toggleLang(btn){btn.classList.toggle('on');var sel=[];document.querySelectorAll('.lang-chip.on').forEach(function(x){sel.push(x.dataset.lang)});var h=document.getElementById('cfgLangs');if(h)h.value=sel.join(',');}
 function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};");
     b.push_str("function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
@@ -2619,15 +2682,20 @@ fn push_default_model_selector(b: &mut String, field: &DefaultModelField) {
     b.push_str("Label' for='");
     b.push_str(field.dom_id);
     b.push_str("'>");
-    if field.required {
-        b.push_str("<span style='color:var(--d)'>*</span>");
+    if !field.label.is_empty() {
+        if field.required {
+            b.push_str("<span style='color:var(--d)'>*</span>");
+        }
+        b.push_str(field.label);
     }
-    b.push_str(field.label);
-    b.push_str(" <span class='tip' tabindex='0' aria-label='");
-    b.push_str(&html_escape(field.tooltip));
-    b.push_str("' data-tip='");
-    b.push_str(&html_escape(field.tooltip));
-    b.push_str("'>?</span></label><div class='default-model-control'><button id='");
+    if !field.tooltip.is_empty() {
+        b.push_str(" <span class='tip' tabindex='0' aria-label='");
+        b.push_str(&html_escape(field.tooltip));
+        b.push_str("' data-tip='");
+        b.push_str(&html_escape(field.tooltip));
+        b.push_str("'>?</span>");
+    }
+    b.push_str("</label><div class='default-model-control'><button id='");
     b.push_str(field.dom_id);
     b.push_str("' type='button' class='default-model-trigger' aria-labelledby='");
     b.push_str(field.dom_id);
@@ -2655,7 +2723,9 @@ fn push_default_model_selector(b: &mut String, field: &DefaultModelField) {
     b.push_str(field.dom_id);
     b.push_str("Value' class='default-model-value'><span class='default-model-placeholder'>Select value</span></span><span id='");
     b.push_str(field.dom_id);
-    b.push_str("Indicator' class='default-model-indicator' aria-hidden='true'>⌄</span></button><div id='");
+    b.push_str(
+        "Indicator' class='default-model-indicator' aria-hidden='true'>⌄</span></button><div id='",
+    );
     b.push_str(field.dom_id);
     b.push_str("Popover' class='default-model-popover' role='dialog' aria-label='");
     b.push_str(field.label);
@@ -2938,7 +3008,7 @@ pub async fn providers_page(
     );
     b.push_str("</button></div></div></div><script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&model_fields_payload));
-        b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
     b.push_str("function modelMessage(text,error){var message=document.getElementById('dmMsg');if(message){message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)'}}\n");
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
     b.push_str("loadModelOptions();\nconst providerModels=");
@@ -3308,14 +3378,18 @@ pub async fn chat_apps_page(
     b.push_str("function saveRenApp(){var n=document.getElementById('renAppName').value.trim();var id=document.getElementById('renAppId').value;if(!n)return;fetch('/api/v1/chatapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
     b.push_str("function delApp(id){if(!confirm('Delete this chat app?'))return;fetch('/api/v1/chatapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
     b.push_str("</script>");
-        Html(layout(t("Chat apps", zh), &b, zh))
+    Html(layout(t("Chat apps", zh), &b, zh))
 }
 
 /// RAGFlow share-page parity: public /chats/share?shared_id=...&from=chatbots.
 /// Unauthenticated; renders title/avatar/prologue and streams /api/v1/chatbots/{id}/completions.
 pub async fn chat_share_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let ph = if zh { "输入问题…" } else { "Ask a question…" };
+    let ph = if zh {
+        "输入问题…"
+    } else {
+        "Ask a question…"
+    };
     let send = if zh { "发送" } else { "Send" };
     let b = core::str::from_utf8(&include_bytes!("web_share.html")[..])
         .unwrap_or("")
@@ -4444,6 +4518,89 @@ mod kb_ui_tests {
         assert!(
             html.contains("/api/v1/datasets"),
             "datasets API call missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn kb_config_embedding_uses_shared_default_model_tree() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Tree KB", "d").unwrap();
+        let req = Request::builder()
+            .uri("/kbs/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        // 配置 tab embedding 行：必填星标 + 上游 tip + 共享树选择器 markup
+        // （上游 common-item.tsx EmbeddingSelect，testId ds-settings-basic-embedding-model-select）
+        assert!(
+            html.contains("data-testid='default-model-embd_id'"),
+            "tree trigger testid missing"
+        );
+        assert!(
+            html.contains("data-model-types='embedding'"),
+            "accepted model types missing"
+        );
+        assert!(
+            html.contains("aria-required='true'"),
+            "required marker missing"
+        );
+        assert!(
+            html.contains("The default embedding model used by the dataset.")
+                || html.contains("知识库采用的默认嵌入模型。"),
+            "upstream tooltip missing"
+        );
+        assert!(
+            !html.contains("<select id='embdSel'"),
+            "legacy select remains"
+        );
+        // 共享脚本：MODEL_FIELDS 载荷 + HEAD/BODY + 表单持久化钩子 + catalog 加载
+        assert!(html.contains("\"embdSel\""), "MODEL_FIELDS payload missing");
+        assert!(
+            html.contains("function modelField(type){return MODEL_FIELDS.find"),
+            "shared head missing"
+        );
+        assert!(
+            html.contains("function filterDefaultModelTree(nodes,term)"),
+            "shared body missing"
+        );
+        assert!(
+            html.contains(
+                "async function saveModelDefault(type,nextValue){var field=modelField(type)"
+            ),
+            "form persist hook missing"
+        );
+        assert!(
+            html.contains("loadKbModelCatalog"),
+            "catalog loader missing"
+        );
+        assert!(
+            html.contains("document.addEventListener('pointerdown'"),
+            "outside-close listener missing"
+        );
+        // saveConfig 读 dataset.value；loadConfig 写 dataset.value
+        assert!(
+            html.contains("(document.getElementById('embdSel').dataset.value||'default')"),
+            "saveConfig reads tree value"
+        );
+        assert!(
+            html.contains("em.dataset.value=kb.embd_id"),
+            "loadConfig writes tree value"
+        );
+        // dataset 页同构接线
+        let req2 = Request::builder()
+            .uri("/datasets/x")
+            .body(Body::empty())
+            .unwrap();
+        let html2 =
+            body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req2).await).await;
+        assert!(
+            html2.contains("data-testid='default-model-embd_id'"),
+            "dataset page tree missing"
+        );
+        assert!(
+            html2.contains("loadKbModelCatalog"),
+            "dataset page script missing"
         );
     }
 
