@@ -108,9 +108,9 @@ pub async fn chat_completions(
 
     if body.stream {
         use axum::response::sse::{Event, KeepAlive, Sse};
-        use futures_util::stream::Stream;
+        
         use std::convert::Infallible;
-        use std::pin::Pin;
+        
         let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(8);
         let llm2 = llm.clone();

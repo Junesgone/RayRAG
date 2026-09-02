@@ -513,11 +513,10 @@ fn parse_raster(
         let result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(client.ocr(data))
         });
-        if let Ok(found) = result {
-            if !found.is_empty() {
+        if let Ok(found) = result
+            && !found.is_empty() {
                 ocr_text = found;
             }
-        }
     }
 
     // picture.py gate: use OCR text directly when long enough, else ask the
@@ -541,7 +540,7 @@ fn parse_raster(
 
     if long_enough {
         text.push_str(&ocr_text);
-        if let Some(vision) = vision {
+        if let Some(_vision) = vision {
             // Also attach the vision description when available — RAGFlow
             // appends `txt += "\n" + ans` after describe for short text, but
             // for long OCR text it returns early with OCR only.

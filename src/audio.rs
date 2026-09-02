@@ -96,7 +96,7 @@ impl AsrClient {
             "{}/audio/transcriptions",
             self.config.api_base.trim_end_matches('/')
         );
-        let mut form = reqwest::multipart::Form::new()
+        let form = reqwest::multipart::Form::new()
             .part(
                 "file",
                 reqwest::multipart::Part::bytes(audio.to_vec()).file_name(filename.to_string()),

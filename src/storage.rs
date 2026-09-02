@@ -66,7 +66,7 @@ impl StorageConfig {
             access_key: std::env::var("RAYRAG_STORAGE_ACCESS_KEY").unwrap_or_default(),
             secret_key: std::env::var("RAYRAG_STORAGE_SECRET_KEY").unwrap_or_default(),
             path_style: std::env::var("RAYRAG_STORAGE_PATH_STYLE")
-                .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
                 .unwrap_or(true),
             timeout: Duration::from_secs(60),
         }

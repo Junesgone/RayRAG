@@ -236,12 +236,11 @@ pub async fn update_search_app(
             changed = true;
         }
     }
-    if let Some(description) = body.description {
-        if description != next.description {
+    if let Some(description) = body.description
+        && description != next.description {
             next.description = description;
             changed = true;
         }
-    }
     if let Some(icon) = body.icon {
         let icon = icon.trim().to_string();
         if icon != next.icon {
@@ -249,30 +248,26 @@ pub async fn update_search_app(
             changed = true;
         }
     }
-    if let Some(kb_ids) = body.kb_ids {
-        if kb_ids != next.kb_ids {
+    if let Some(kb_ids) = body.kb_ids
+        && kb_ids != next.kb_ids {
             next.kb_ids = kb_ids;
             changed = true;
         }
-    }
-    if let Some(hybrid) = body.hybrid {
-        if hybrid != next.hybrid {
+    if let Some(hybrid) = body.hybrid
+        && hybrid != next.hybrid {
             next.hybrid = hybrid;
             changed = true;
         }
-    }
-    if let Some(rerank) = body.rerank {
-        if rerank != next.rerank {
+    if let Some(rerank) = body.rerank
+        && rerank != next.rerank {
             next.rerank = rerank;
             changed = true;
         }
-    }
-    if let Some(top_k) = body.top_k {
-        if top_k != next.top_k {
+    if let Some(top_k) = body.top_k
+        && top_k != next.top_k {
             next.top_k = top_k;
             changed = true;
         }
-    }
     if changed {
         store
             .upsert(next)

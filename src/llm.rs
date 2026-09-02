@@ -366,7 +366,7 @@ impl LlmClient {
         if !self.config.api_key.is_empty() {
             request = request.bearer_auth(&self.config.api_key);
         }
-        let mut response = request.send().await?;
+        let response = request.send().await?;
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
@@ -391,15 +391,14 @@ impl LlmClient {
                     if data == "[DONE]" {
                         break;
                     }
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(delta) = value
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data)
+                        && let Some(delta) = value
                             .pointer("/choices/0/delta/content")
                             .and_then(|content| content.as_str())
                         {
                             full.push_str(delta);
                             on_chunk(delta);
                         }
-                    }
                 }
             }
         }
@@ -586,7 +585,7 @@ impl LlmClient {
         contexts: &[String],
         history: &[ChatMessage],
         patch: GenerationParamsPatch,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> Result<String>
     where
         F: FnMut(&str),
@@ -705,8 +704,8 @@ fn parse_openai_tool_chat_completion(json: &serde_json::Value) -> Result<ToolCha
         .get("tool_calls")
         .filter(|value| !value.is_null())
         .is_some_and(|value| !value.as_array().is_none_or(|calls| calls.is_empty()));
-    if !has_tool_calls {
-        if let Some(reasoning) = message
+    if !has_tool_calls
+        && let Some(reasoning) = message
             .get("reasoning_content")
             .and_then(serde_json::Value::as_str)
             .or_else(|| message.get("reasoning").and_then(serde_json::Value::as_str))
@@ -714,7 +713,6 @@ fn parse_openai_tool_chat_completion(json: &serde_json::Value) -> Result<ToolCha
         {
             content = format!("<think>{reasoning}</think>") + &content;
         }
-    }
     let tool_calls = message
         .get("tool_calls")
         .filter(|value| !value.is_null())

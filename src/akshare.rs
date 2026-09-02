@@ -6,7 +6,6 @@
 
 use anyhow::{Result, bail};
 use serde_json::Value;
-use std::time::Duration;
 
 const SEARCH_ENDPOINT: &str = "https://search-api-web.eastmoney.com/search/jsonp";
 

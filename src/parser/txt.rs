@@ -40,11 +40,10 @@ fn unicode_escape_expand(s: &str) -> String {
                         chars.next();
                     }
                 }
-                if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                    if let Some(ch) = char::from_u32(cp) {
+                if let Ok(cp) = u32::from_str_radix(&hex, 16)
+                    && let Some(ch) = char::from_u32(cp) {
                         out.push(ch);
                     }
-                }
             }
             Some(other) => {
                 out.push('\\');
@@ -64,7 +63,7 @@ pub fn parser_txt(txt: &str, chunk_token_num: usize, delimiter: &str) -> Vec<(St
 
     let delimiter = unicode_escape_expand(delimiter);
 
-    let mut add_chunk = |t: &str, cks: &mut Vec<String>, tk_nums: &mut Vec<usize>| {
+    let add_chunk = |t: &str, cks: &mut Vec<String>, tk_nums: &mut Vec<usize>| {
         let tnum = estimate_tokens(t);
         if tk_nums.last().copied().unwrap_or(0) > chunk_token_num {
             cks.push(t.to_string());

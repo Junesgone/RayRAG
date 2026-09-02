@@ -5,7 +5,6 @@
 
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
-use std::time::Duration;
 
 const TUSHARE_ENDPOINT: &str = "https://api.tushare.pro";
 

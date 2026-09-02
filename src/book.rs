@@ -13,7 +13,7 @@ use regex::Regex;
 
 /// random.choices with replacement — mirrors nlp:204-206. Deterministic:
 /// cycles through the input (index mod len) so tests are reproducible.
-pub fn random_choices<'a>(arr: &'a [String], k: usize) -> Vec<&'a str> {
+pub fn random_choices(arr: &[String], k: usize) -> Vec<&str> {
     let k = k.min(arr.len());
     if arr.is_empty() {
         return Vec::new();
@@ -211,7 +211,7 @@ pub fn naive_merge(
         .collect();
     let has_custom = !custom_delimiters.is_empty();
     if has_custom {
-        let mut pats: Vec<String> = custom_delimiters.iter().cloned().collect();
+        let mut pats: Vec<String> = custom_delimiters.to_vec();
         pats.sort_by_key(|p| std::cmp::Reverse(p.len()));
         let mut pats_dedup: Vec<String> = Vec::new();
         for p in pats {
@@ -331,7 +331,7 @@ pub fn parse_book_text(
     let bull = bullets_category(&sample100);
     let chunks: Vec<String> = if bull >= 0 {
         let family_len = BULLET_PATTERN[bull as usize].len();
-        hierarchical_merge(bull as i64, &sections, 5, family_len)
+        hierarchical_merge(bull, &sections, 5, family_len)
             .into_iter()
             .map(|ck| ck.join("\n"))
             .collect()

@@ -311,8 +311,8 @@ impl FlowLog {
     pub fn append(&mut self, component_id: &str, progress: f64, message: &str) {
         let timestamp = now_secs();
         let datetime = chrono::Local::now().format("%H:%M:%S").to_string();
-        if let Some(last) = self.components.last_mut() {
-            if last.component_id == component_id {
+        if let Some(last) = self.components.last_mut()
+            && last.component_id == component_id {
                 let prev = last.trace.last().map(|t| t.timestamp).unwrap_or(timestamp);
                 last.trace.push(TraceEntry {
                     progress,
@@ -323,7 +323,6 @@ impl FlowLog {
                 });
                 return;
             }
-        }
         self.components.push(ComponentTrace {
             component_id: component_id.to_string(),
             trace: vec![TraceEntry {

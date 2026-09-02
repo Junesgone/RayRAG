@@ -2,11 +2,10 @@
 //! (GitLab MVP). Mirrors RAGFlow's connector admin surface.
 
 use crate::data_source::{GitLabConnector, SourceOptions};
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use axum::Json;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
@@ -832,7 +831,6 @@ async fn perform_sync(
         Err(error) => {
             let _ = store.set_status(id, "fail");
             let kb_name = kb_id
-                .as_deref()
                 .and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
             let _ = store.append_sync_log(
                 id,
@@ -845,7 +843,7 @@ async fn perform_sync(
                 None,
                 Some(1),
                 Some(error.1.clone()),
-                kb_id.as_deref(),
+                kb_id,
                 kb_name.as_deref(),
             );
             return Err(error);
@@ -921,7 +919,6 @@ async fn perform_sync(
         })
         .collect();
     let kb_name = kb_id
-        .as_deref()
         .and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
     let _ = store.append_sync_log(
         id,
@@ -938,7 +935,7 @@ async fn perform_sync(
         None,
         Some(connector_failures.len() as u64),
         None,
-        kb_id.as_deref(),
+        kb_id,
         kb_name.as_deref(),
     );
     let _ = store.set_status(id, "schedule");

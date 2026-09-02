@@ -594,7 +594,7 @@ pub fn sandbox_base_image_from_env(language: &str) -> String {
 /// SANDBOX_MAX_MEMORY 覆盖）+ 可选 seccomp profile。
 pub fn build_container_create_args(
     name: &str,
-    language: &str,
+    _language: &str,
     image: &str,
     max_memory: Option<&str>,
     enable_seccomp: bool,
@@ -946,7 +946,7 @@ fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
     .expect("static regex");
 
     let mut issues: Vec<(String, i64)> = Vec::new();
-    let mut record = |description: String, line: i64, issues: &mut Vec<(String, i64)>| {
+    let record = |description: String, line: i64, issues: &mut Vec<(String, i64)>| {
         if !issues
             .iter()
             .any(|(existing, lineno)| *existing == description && *lineno == line)
@@ -982,7 +982,7 @@ fn analyze_python_security(code: &str) -> Vec<(String, i64)> {
             .trim_end_matches('(')
             .trim()
             .split('.')
-            .last()
+            .next_back()
             .unwrap_or("")
             .to_string();
         let line = code[..call.start()].matches('\n').count() as i64 + 1;
@@ -1606,11 +1606,10 @@ impl RemoteSandboxConfig {
                 .unwrap_or_else(|_| "9385".to_string());
             config.endpoint = format!("http://{host}:{port}");
         }
-        if let Ok(pool) = std::env::var("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE") {
-            if let Ok(parsed) = pool.trim().parse() {
+        if let Ok(pool) = std::env::var("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE")
+            && let Ok(parsed) = pool.trim().parse() {
                 config.pool_size = parsed;
             }
-        }
         config
     }
 }
@@ -1639,17 +1638,11 @@ pub fn build_run_payload(code: &str, language: &str, arguments: &Map<String, Val
 
 /// 自管理沙箱远程客户端（对齐 SelfManagedProvider）。
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct RemoteSandboxClient {
     pub config: RemoteSandboxConfig,
 }
 
-impl Default for RemoteSandboxClient {
-    fn default() -> Self {
-        Self {
-            config: RemoteSandboxConfig::default(),
-        }
-    }
-}
 
 impl RemoteSandboxClient {
     pub fn new(config: RemoteSandboxConfig) -> Self {

@@ -12,7 +12,6 @@ use futures_util::StreamExt;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
 
 const BAIKE_ENDPOINT: &str = "https://baike.baidu.com/api/openapi/BaikeLemmaCardApi";
 const BAIKE_APP_ID: &str = "379020";

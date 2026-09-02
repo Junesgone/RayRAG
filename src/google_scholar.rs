@@ -16,7 +16,6 @@ use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-use std::time::Duration;
 
 const GOOGLE_SCHOLAR_ENDPOINT: &str = "https://scholar.google.com/scholar";
 const SCHOLARLY_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36";

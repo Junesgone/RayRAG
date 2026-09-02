@@ -14,7 +14,6 @@
 //!    optional `start_line`/`end_line` metadata.
 
 use regex::Regex;
-use std::collections::HashSet;
 
 /// One extracted markdown block element.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,7 +62,7 @@ impl RAGFlowMarkdownParser {
         let mut tables: Vec<String> = Vec::new();
         let mut working_text = markdown_text.to_string();
 
-        let mut replace_tables =
+        let replace_tables =
             |pattern: &Regex, working_text: &mut String, tables: &mut Vec<String>| {
                 let mut new_text = String::new();
                 let mut last_end = 0usize;

@@ -266,13 +266,12 @@ fn collect_shapes(node: &XmlNode) -> Vec<Shape> {
 
 /// Position from `p:xfrm/a:off` (EMU). Missing → 0 (python-pptx None → 0).
 fn shape_position(node: &XmlNode) -> (i64, i64) {
-    if let Some(xfrm) = node.first_child("xfrm") {
-        if let Some(off) = xfrm.first_child("off") {
+    if let Some(xfrm) = node.first_child("xfrm")
+        && let Some(off) = xfrm.first_child("off") {
             let x = off.attr("x").and_then(|v| v.parse().ok()).unwrap_or(0);
             let y = off.attr("y").and_then(|v| v.parse().ok()).unwrap_or(0);
             return (y, x);
         }
-    }
     (0, 0)
 }
 

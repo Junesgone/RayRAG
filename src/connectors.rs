@@ -398,7 +398,7 @@ fn sigv4_signature(
     secret_key: &str,
     region: &str,
     date_stamp: &str,
-    amz_date: &str,
+    _amz_date: &str,
     string_to_sign: &str,
 ) -> String {
     let k_date = hmac_sha256(
@@ -1120,7 +1120,7 @@ impl Connector for WebDavConnector {
 /// Parse a WebDAV `multistatus` PROPFIND response into file entries.
 /// Non-collection (file) resources only, mirroring RAGFlow's WebDAV client
 /// `ls` behaviour.
-fn parse_propfind(xml: &str, base_url: &str) -> Result<Vec<RemoteFile>> {
+fn parse_propfind(xml: &str, _base_url: &str) -> Result<Vec<RemoteFile>> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
@@ -1153,7 +1153,7 @@ fn parse_propfind(xml: &str, base_url: &str) -> Result<Vec<RemoteFile>> {
                 }
             }
             Ok(Event::Text(t)) => {
-                text.push_str(&t.unescape().unwrap_or_default().to_string());
+                text.push_str(t.unescape().unwrap_or_default().as_ref());
             }
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
@@ -1174,11 +1174,11 @@ fn parse_propfind(xml: &str, base_url: &str) -> Result<Vec<RemoteFile>> {
                         _ => {}
                     }
                 }
-                if name == "response" {
-                    if let Some(map) = current.take() {
-                        if !in_collection {
-                            if let Some(href) = map.get("href") {
-                                if !href.ends_with('/') {
+                if name == "response"
+                    && let Some(map) = current.take()
+                        && !in_collection
+                            && let Some(href) = map.get("href")
+                                && !href.ends_with('/') {
                                     let raw_href = href.clone();
                                     let name = map
                                         .get("displayname")
@@ -1216,10 +1216,6 @@ fn parse_propfind(xml: &str, base_url: &str) -> Result<Vec<RemoteFile>> {
                                         metadata,
                                     });
                                 }
-                            }
-                        }
-                    }
-                }
                 text.clear();
             }
             Ok(Event::Eof) => break,
@@ -1602,7 +1598,7 @@ impl FeishuConnector {
             if kind == "folder" {
                 // recurse into sub-folder (mirrors RAGFlow recursive fetch);
                 // async recursion must be boxed (E0733)
-                let _ = Box::pin(self.list_folder(&file_token, depth + 1, out))
+                Box::pin(self.list_folder(&file_token, depth + 1, out))
                     .await
                     .unwrap_or_else(|error| {
                         tracing::warn!("feishu: skip folder {name}: {error:#}");
@@ -2664,11 +2660,10 @@ impl DingTalkAiTableConnector {
     async fn access_token(&self) -> Result<String> {
         {
             let guard = self.token_cache.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(cached) = guard.as_ref() {
-                if std::time::Instant::now() < cached.expires_at {
+            if let Some(cached) = guard.as_ref()
+                && std::time::Instant::now() < cached.expires_at {
                     return Ok(cached.token.clone());
                 }
-            }
         }
         let url = format!("{}/v1.0/oauth2/accessToken", self.base_url);
         let response = self
@@ -2865,14 +2860,13 @@ fn dingtalk_ai_table_record_name(
 ) -> String {
     if let Some(object) = fields.as_object() {
         for value in object.values() {
-            if let serde_json::Value::String(text) = value {
-                if !text.is_empty() && text.len() < 100 {
+            if let serde_json::Value::String(text) = value
+                && !text.is_empty() && text.len() < 100 {
                     return format!(
                         "{sheet_name} - {}",
                         text.chars().take(50).collect::<String>()
                     );
                 }
-            }
         }
     }
     format!("{sheet_name} - Record {record_id}")
@@ -3863,17 +3857,15 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                         b"link" => {
                             // Atom: `<link href="…"/>` — prefer the attribute.
                             for attr in tag.attributes().flatten() {
-                                if attr.key.local_name().as_ref() == b"href" {
-                                    if let Some(entry) = current.as_mut() {
-                                        if entry.link.is_empty() {
+                                if attr.key.local_name().as_ref() == b"href"
+                                    && let Some(entry) = current.as_mut()
+                                        && entry.link.is_empty() {
                                             entry.link = attr
                                                 .decode_and_unescape_value(reader.decoder())
                                                 .unwrap_or_default()
                                                 .trim()
                                                 .to_string();
                                         }
-                                    }
-                                }
                             }
                             // RSS: `<link>http://…</link>` — capture text too.
                             field = Some(name.clone());
@@ -3887,17 +3879,15 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                 let name = tag.local_name().as_ref().to_vec();
                 if current.is_some() && name.as_slice() == b"link" {
                     for attr in tag.attributes().flatten() {
-                        if attr.key.local_name().as_ref() == b"href" {
-                            if let Some(entry) = current.as_mut() {
-                                if entry.link.is_empty() {
+                        if attr.key.local_name().as_ref() == b"href"
+                            && let Some(entry) = current.as_mut()
+                                && entry.link.is_empty() {
                                     entry.link = attr
                                         .decode_and_unescape_value(reader.decoder())
                                         .unwrap_or_default()
                                         .trim()
                                         .to_string();
                                 }
-                            }
-                        }
                     }
                 }
             }
@@ -3921,11 +3911,10 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                     text.clear();
                 } else if current.is_some() && field.as_deref() == Some(name.as_slice()) {
                     let value = text.trim().to_string();
-                    if !value.is_empty() {
-                        if let Some(entry) = current.as_mut() {
+                    if !value.is_empty()
+                        && let Some(entry) = current.as_mut() {
                             assign_field(entry, &name, value);
                         }
-                    }
                     field = None;
                     text.clear();
                 }
@@ -4042,15 +4031,14 @@ fn strip_html(input: &str) -> String {
 /// blobs); falls back to `.html` when the link carries no plausible
 /// extension.
 fn extension_from_link(link: &str) -> String {
-    if let Ok(parsed) = url::Url::parse(link) {
-        if let Some(ext) = Path::new(parsed.path()).extension() {
+    if let Ok(parsed) = url::Url::parse(link)
+        && let Some(ext) = Path::new(parsed.path()).extension() {
             let ext = ext.to_string_lossy();
             if !ext.is_empty() && ext.len() <= 12 && ext.chars().all(|c| c.is_ascii_alphanumeric())
             {
                 return format!(".{ext}");
             }
         }
-    }
     ".html".to_string()
 }
 
@@ -4269,11 +4257,10 @@ fn airtable_record_blob(fields: &serde_json::Value) -> String {
 fn airtable_record_name(fields: &serde_json::Value, table_name: &str, row_n: usize) -> String {
     if let Some(object) = fields.as_object() {
         for value in object.values() {
-            if let serde_json::Value::String(text) = value {
-                if !text.is_empty() && text.len() < 100 {
+            if let serde_json::Value::String(text) = value
+                && !text.is_empty() && text.len() < 100 {
                     return text.chars().take(50).collect::<String>();
                 }
-            }
         }
     }
     format!("{table_name}-{row_n}")
@@ -6611,13 +6598,12 @@ pub fn sanitize_sql_query(raw: &str) -> String {
         "postgresql",
         "psql",
     ];
-    if let Some((head, tail)) = query.split_once('\n') {
-        if !tail.trim().is_empty()
+    if let Some((head, tail)) = query.split_once('\n')
+        && !tail.trim().is_empty()
             && fence_languages.contains(&head.trim().to_ascii_lowercase().as_str())
         {
             query = tail.trim().to_string();
         }
-    }
     query
 }
 

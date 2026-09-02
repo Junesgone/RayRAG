@@ -179,13 +179,12 @@ pub fn group_sections(sections: &[Section]) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
     let mut last_sid: i64 = -2;
     for ((txt, _), sec_id) in sections.iter().zip(sec_ids.iter()) {
-        if *sec_id as i64 == last_sid {
-            if let Some(last) = chunks.last_mut() {
+        if *sec_id as i64 == last_sid
+            && let Some(last) = chunks.last_mut() {
                 last.push('\n');
                 last.push_str(txt);
                 continue;
             }
-        }
         chunks.push(txt.to_string());
         last_sid = *sec_id as i64;
     }

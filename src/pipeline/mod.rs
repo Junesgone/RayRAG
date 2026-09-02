@@ -319,9 +319,9 @@ impl Pipeline {
         // `vision_llm_figure_describe_prompt.md` 提示词让多模态模型直接输出
         // Markdown）。视觉模型未配置时静默落到下方 FigureParser（无 OCR 时
         // 输出元数据占位，与上游 naive figure 行为一致）。
-        if crate::ocr::supports_ocr(mime) {
-            if let Some(vision) = &self.vision {
-                if data.len() >= 100 {
+        if crate::ocr::supports_ocr(mime)
+            && let Some(vision) = &self.vision
+                && data.len() >= 100 {
                     let prompt = crate::parser::figure::figure_describe_prompt();
                     let image = crate::vision::VisionClient::normalize_image(data, mime);
                     match vision.describe_with_prompt(&image, &prompt).await {
@@ -347,11 +347,9 @@ impl Pipeline {
                         }
                     }
                 }
-            }
-        }
         // 音频：配置 ASR 时转录（OpenAI 兼容 /audio/transcriptions），否则落到元数据占位
-        if (mime.starts_with("audio/") || mime == "application/ogg") && self.stt.is_some() {
-            if let Some(stt) = &self.stt {
+        if (mime.starts_with("audio/") || mime == "application/ogg") && self.stt.is_some()
+            && let Some(stt) = &self.stt {
                 match stt.transcribe(data, name).await {
                     Ok(transcription) => {
                         if !transcription.text.trim().is_empty() {
@@ -371,7 +369,6 @@ impl Pipeline {
                     }
                 }
             }
-        }
         let parser = parser::get_parser(mime)
             .ok_or_else(|| anyhow::anyhow!("No parser for MIME: {}", mime))?;
         parser.parse(name, data)

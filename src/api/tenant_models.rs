@@ -2050,9 +2050,9 @@ pub fn plan_added_models(
     }
 
     // TEI builtin embedding row (env-gated upstream).
-    if compose_profiles.contains("tei-") && !tei_model.is_empty() {
-        if filter.is_empty() || filter.iter().any(|capability| capability == "embedding") {
-            if !added
+    if compose_profiles.contains("tei-") && !tei_model.is_empty()
+        && (filter.is_empty() || filter.iter().any(|capability| capability == "embedding"))
+            && !added
                 .iter()
                 .any(|model| model.provider_name == "Builtin" && model.name == tei_model)
             {
@@ -2066,8 +2066,6 @@ pub fn plan_added_models(
                     max_tokens: None,
                 });
             }
-        }
-    }
 
     added.sort_by(|left, right| {
         factory_rank_key(&left.provider_name)

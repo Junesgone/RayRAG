@@ -145,7 +145,7 @@ impl RAGFlowHtmlParser {
                     let child_el = ElementRef::wrap(child).unwrap();
                     let name = child_el.value().name().to_lowercase();
                     if name == "table" {
-                        let table_id = format!("tbl-{}", parser_result.len());
+                        let _table_id = format!("tbl-{}", parser_result.len());
                         let raw = html_unescape(&child_el.html());
                         parser_result.push(HtmlItem {
                             content: raw,
@@ -188,11 +188,10 @@ impl RAGFlowHtmlParser {
             let block_id = item.block_id.clone();
 
             if block_id.is_some() {
-                if title_flag {
-                    if let Some((_, prefix)) = TITLE_TAGS.iter().find(|(t, _)| *t == tag_name) {
+                if title_flag
+                    && let Some((_, prefix)) = TITLE_TAGS.iter().find(|(t, _)| *t == tag_name) {
                         content = format!("{prefix} {content}");
                     }
-                }
                 if last_block_id != block_id {
                     if last_block_id.is_some() {
                         block_content.push(current_content.clone());
@@ -439,8 +438,8 @@ fn html_unescape(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
-        if bytes[i] == b'&' {
-            if let Some(end) = s[i..].find(';') {
+        if bytes[i] == b'&'
+            && let Some(end) = s[i..].find(';') {
                 let entity = &s[i + 1..i + end];
                 let decoded = match entity {
                     "amp" => Some('&'),
@@ -468,7 +467,6 @@ fn html_unescape(s: &str) -> String {
                     continue;
                 }
             }
-        }
         out.push(bytes[i] as char);
         i += 1;
     }

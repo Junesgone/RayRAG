@@ -13,7 +13,6 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 const ARXIV_PYTHON_ENDPOINT: &str = "https://export.arxiv.org/api/query";
 const ARXIV_GO_ENDPOINT: &str = "http://export.arxiv.org/api/query";

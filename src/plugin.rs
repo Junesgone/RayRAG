@@ -104,11 +104,10 @@ impl PluginEnv {
     pub fn snapshot(prefix: Option<&str>) -> Self {
         let mut vars = HashMap::new();
         for (key, value) in std::env::vars() {
-            if let Some(prefix) = prefix {
-                if !key.starts_with(prefix) {
+            if let Some(prefix) = prefix
+                && !key.starts_with(prefix) {
                     continue;
                 }
-            }
             vars.insert(key, value);
         }
         Self { vars }

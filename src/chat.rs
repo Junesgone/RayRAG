@@ -128,16 +128,14 @@ impl ChatPipelineConfig {
         if let Some(v) = env_f32("RAYRAG_CHAT_VECTOR_WEIGHT") {
             cfg.vector_weight = v;
         }
-        if let Ok(v) = std::env::var("RAYRAG_CHAT_SYSTEM_PROMPT") {
-            if !v.is_empty() {
+        if let Ok(v) = std::env::var("RAYRAG_CHAT_SYSTEM_PROMPT")
+            && !v.is_empty() {
                 cfg.system_prompt = Some(v);
             }
-        }
-        if let Ok(v) = std::env::var("RAYRAG_CHAT_LANGUAGE") {
-            if !v.is_empty() {
+        if let Ok(v) = std::env::var("RAYRAG_CHAT_LANGUAGE")
+            && !v.is_empty() {
                 cfg.language = Some(v);
             }
-        }
         cfg
     }
 
@@ -161,16 +159,14 @@ impl ChatPipelineConfig {
         if let Some(v) = kb_f32(flags, "chat_vector_weight") {
             self.vector_weight = v;
         }
-        if let Some(v) = flags.get("chat_system_prompt") {
-            if !v.is_empty() {
+        if let Some(v) = flags.get("chat_system_prompt")
+            && !v.is_empty() {
                 self.system_prompt = Some(v.clone());
             }
-        }
-        if let Some(v) = flags.get("chat_language") {
-            if !v.is_empty() {
+        if let Some(v) = flags.get("chat_language")
+            && !v.is_empty() {
                 self.language = Some(v.clone());
             }
-        }
     }
 }
 
@@ -210,11 +206,10 @@ impl<'a> ChatPipeline<'a> {
 
         // 1. Question rewrite (full_question)
         let mut final_question = question.to_string();
-        if cfg.full_question && !history.is_empty() {
-            if let Some(rewritten) = self.rewrite_full_question(question, history).await? {
+        if cfg.full_question && !history.is_empty()
+            && let Some(rewritten) = self.rewrite_full_question(question, history).await? {
                 final_question = rewritten;
             }
-        }
 
         // 2 + 3. Retrieval with optional multi-query fan-out
         let mut hits = self.retrieve(&final_question, cfg.top_k, kb_ids);
@@ -546,24 +541,19 @@ pub fn build_answer_messages(
 /// Returns an empty vector for malformed output.
 pub fn parse_multi_queries(json: &str) -> Vec<MultiQuery> {
     let mut out = Vec::new();
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
-        if let Some(questions) = value.get("questions").and_then(|q| q.as_array()) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(json)
+        && let Some(questions) = value.get("questions").and_then(|q| q.as_array()) {
             collect_queries(questions, &mut out);
             return out;
         }
-    }
     // Fallback: extract the first bracketed JSON array.
-    if let Some(start) = json.find('[') {
-        if let Some(end) = json.rfind(']') {
-            if end > start {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json[start..=end]) {
-                    if let Some(questions) = value.as_array() {
+    if let Some(start) = json.find('[')
+        && let Some(end) = json.rfind(']')
+            && end > start
+                && let Ok(value) = serde_json::from_str::<serde_json::Value>(&json[start..=end])
+                    && let Some(questions) = value.as_array() {
                         collect_queries(questions, &mut out);
                     }
-                }
-            }
-        }
-    }
     out
 }
 

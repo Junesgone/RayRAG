@@ -10,7 +10,6 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::OnceLock;
-use std::time::Duration;
 
 const BAIDU_ENDPOINT: &str = "https://www.baidu.com/s";
 const MAX_BAIDU_RESPONSE_BODY: usize = 16 << 20;

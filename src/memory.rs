@@ -782,7 +782,7 @@ impl MsgTextQuery {
     fn question_english(
         &self,
         txt: &str,
-        otxt: &str,
+        _otxt: &str,
         original_query: &str,
     ) -> (Option<MatchTextExpr>, Vec<String>) {
         let txt = rm_www(txt);
@@ -796,7 +796,7 @@ impl MsgTextQuery {
         let single_alpha = Regex::new(r"^[a-z0-9]$").expect("single-alpha regex is valid");
         let sign = Regex::new(r"^[+-]").expect("sign regex is valid");
 
-        let mut tks_w: Vec<(String, f64)> = self
+        let tks_w: Vec<(String, f64)> = self
             .tw
             .weights(&tokens, false)
             .into_iter()
@@ -894,7 +894,7 @@ impl MsgTextQuery {
                 continue;
             }
             keywords.push(term.clone());
-            let twts = self.tw.weights(&[term.clone()], false);
+            let twts = self.tw.weights(std::slice::from_ref(&term), false);
             let syns = self.syn.lookup(&term, 32);
             if !syns.is_empty() && keywords.len() < 32 {
                 keywords.extend(syns.iter().cloned());
@@ -928,7 +928,7 @@ impl MsgTextQuery {
                     keywords.extend(sm.iter().cloned());
                 }
 
-                let mut tk_syns: Vec<String> = self
+                let tk_syns: Vec<String> = self
                     .syn
                     .lookup(&tk, 32)
                     .iter()

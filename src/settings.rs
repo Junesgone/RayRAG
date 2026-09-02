@@ -193,11 +193,10 @@ pub fn resolve_per_model_config(
         .or_else(|| (!backup_base_url.is_empty()).then(|| backup_base_url.to_owned()));
 
     let mut name = name;
-    if !name.is_empty() && !name.contains('@') {
-        if let Some(factory) = &factory {
+    if !name.is_empty() && !name.contains('@')
+        && let Some(factory) = &factory {
             name = format!("{name}@{factory}");
         }
-    }
     ModelEntry {
         name,
         factory,
@@ -211,11 +210,10 @@ pub fn resolve_per_model_config(
 /// when it is at least 32 chars and differs from today's date (a stale
 /// placeholder); otherwise `None` (the runtime then generates one).
 pub fn init_secret_key(env_key: Option<&str>, configured_key: Option<&str>) -> Option<String> {
-    if let Some(key) = env_key {
-        if key.len() >= 32 {
+    if let Some(key) = env_key
+        && key.len() >= 32 {
             return Some(key.to_owned());
         }
-    }
     let today = {
         let now = time::OffsetDateTime::now_utc();
         format!(
@@ -225,11 +223,10 @@ pub fn init_secret_key(env_key: Option<&str>, configured_key: Option<&str>) -> O
             now.day()
         )
     };
-    if let Some(key) = configured_key {
-        if key.len() >= 32 && key != today {
+    if let Some(key) = configured_key
+        && key.len() >= 32 && key != today {
             return Some(key.to_owned());
         }
-    }
     None
 }
 
@@ -955,11 +952,10 @@ fn regex_matches(pattern: &str, field: &str) -> bool {
     }
     // ^.*(_dt|_time|_at)$ — the ES `dt` template: any field ending in one of
     // the date suffixes.
-    if let Some(rest) = body.strip_prefix(".*(") {
-        if let Some(alts) = rest.strip_suffix(')') {
+    if let Some(rest) = body.strip_prefix(".*(")
+        && let Some(alts) = rest.strip_suffix(')') {
             return alts.split('|').any(|suffix| field.ends_with(suffix));
         }
-    }
     body == field
 }
 

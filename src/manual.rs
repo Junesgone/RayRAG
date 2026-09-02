@@ -157,15 +157,14 @@ pub fn merge_chunks(
             .collect::<Vec<String>>()
             .join("\t");
         let sec_id = sec_ids[i];
-        if tk_cnt < min_tokens || (tk_cnt < max_tokens && (sec_id == last_sid || sec_id == -1)) {
-            if let Some(last) = chunks.last_mut() {
+        if (tk_cnt < min_tokens || (tk_cnt < max_tokens && (sec_id == last_sid || sec_id == -1)))
+            && let Some(last) = chunks.last_mut() {
                 last.push('\n');
                 last.push_str(txt);
                 last.push_str(&poss);
                 tk_cnt += txt.chars().count();
                 continue;
             }
-        }
         chunks.push(format!("{txt}{poss}"));
         tk_cnt = txt.chars().count();
         if sec_id > -1 {

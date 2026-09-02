@@ -378,7 +378,7 @@ impl CommunityReportsExtractor {
         let communities = partition_communities(graph);
         let mut res_str = Vec::new();
         let mut res_dict = Vec::new();
-        for (_level, level_comms) in &communities {
+        for level_comms in communities.values() {
             for comm in level_comms.values() {
                 if comm.nodes.len() < 2 {
                     continue; // mirrors `if len(ents) < 2: return`
@@ -1104,7 +1104,7 @@ impl KgSearch {
             ents_csv.push_str("\n---- Entities ----\n");
             ents_csv.push_str("Entity,Score,Description\n");
             for (name, ent) in &ents_sorted {
-                let desc = ent.description.replace(',', " ").replace('\n', " ");
+                let desc = ent.description.replace([',', '\n'], " ");
                 ents_csv.push_str(&format!(
                     "{},{:.2},{}\n",
                     name,
@@ -1118,7 +1118,7 @@ impl KgSearch {
             rels_csv.push_str("\n---- Relations ----\n");
             rels_csv.push_str("From Entity,To Entity,Score,Description\n");
             for ((f, t), rel) in &rels_sorted {
-                let desc = rel.description.replace(',', " ").replace('\n', " ");
+                let desc = rel.description.replace([',', '\n'], " ");
                 rels_csv.push_str(&format!("{f},{t},{:.2},{desc}\n", rel.sim * rel.pagerank));
             }
         }

@@ -11,7 +11,6 @@ use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::OnceLock;
-use std::time::Duration;
 
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q";
 const TENCENT_SUGGEST_ENDPOINT: &str = "https://smartbox.gtimg.cn/s3/?v=2&q=";

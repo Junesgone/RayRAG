@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::time::Duration;
 
 const JIN10_ENDPOINT: &str = "https://open-data-api.jin10.com/data-api";
 const MAX_JIN10_RESPONSE_BODY: usize = 16 << 20;

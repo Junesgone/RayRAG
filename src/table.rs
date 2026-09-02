@@ -70,7 +70,7 @@ pub fn looks_like_data(value: &str) -> bool {
     {
         return true;
     }
-    let digits = value.replace('.', "").replace('-', "").replace(',', "");
+    let digits = value.replace(['.', '-', ','], "");
     if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
         return true;
     }
@@ -82,17 +82,15 @@ pub fn row_looks_like_header(row: &[Option<String>]) -> bool {
     let mut header_like = 0usize;
     let mut data_like = 0usize;
     let mut non_empty = 0usize;
-    for cell in row {
-        if let Some(value) = cell {
-            if value.trim().is_empty() {
-                continue;
-            }
-            non_empty += 1;
-            if looks_like_header(value.trim()) {
-                header_like += 1;
-            } else if looks_like_data(value.trim()) {
-                data_like += 1;
-            }
+    for value in row.iter().flatten() {
+        if value.trim().is_empty() {
+            continue;
+        }
+        non_empty += 1;
+        if looks_like_header(value.trim()) {
+            header_like += 1;
+        } else if looks_like_data(value.trim()) {
+            data_like += 1;
         }
     }
     non_empty > 0 && header_like >= data_like
@@ -140,7 +138,7 @@ pub fn is_valid_header_part(value: &str) -> bool {
     if value.len() == 1 && matches!(value.to_ascii_uppercase().as_str(), "Y" | "N" | "M" | "X") {
         return false;
     }
-    let digits = value.replace('.', "").replace('-', "").replace(',', "");
+    let digits = value.replace(['.', '-', ','], "");
     if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
         return false;
     }
@@ -160,11 +158,10 @@ pub fn merged_value(
             // Anchor cell at (min_row, min_col), 1-based.
             let r = (*min_row as usize).saturating_sub(1);
             let c = (*min_col as usize).saturating_sub(1);
-            if let Some(row_cells) = grid.get(r) {
-                if let Some(cell) = row_cells.get(c) {
+            if let Some(row_cells) = grid.get(r)
+                && let Some(cell) = row_cells.get(c) {
                     return cell.clone();
                 }
-            }
             return None;
         }
     }

@@ -848,14 +848,12 @@ pub(crate) fn actual_row_count_from_xml(xml: &str, shared_strings: &[String]) ->
             {
                 if let Some(reference) =
                     attribute_value(&event, b"ref", reader.decoder()).unwrap_or(None)
-                {
-                    if let Some((row, col)) =
+                    && let Some((row, col)) =
                         reference.rsplit(':').next().and_then(parse_cell_reference)
                     {
                         max_row = max_row.max(row as usize);
                         max_col = max_col.max(col as usize);
                     }
-                }
             }
             Ok(Event::Start(event)) if event.local_name().as_ref() == b"row" => {
                 in_row = true;

@@ -280,8 +280,8 @@ pub async fn weighted_search(
     // RAGFlow cross_languages: translate the question via the tenant chat model
     // and merge extra-language results (deduped by chunk id). Translation
     // failure degrades gracefully to the original-language result set.
-    if !body.cross_languages.is_empty() {
-        if let Some(llm) = state.llm.clone() {
+    if !body.cross_languages.is_empty()
+        && let Some(llm) = state.llm.clone() {
             let langs = body.cross_languages.join(", ");
             let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
             vars.insert("query", &body.question);
@@ -336,7 +336,6 @@ pub async fn weighted_search(
                 }
             }
         }
-    }
 
     let begin = global_offset % window;
 

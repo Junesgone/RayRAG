@@ -658,7 +658,7 @@ pub mod text_utils {
 /// (mirroring `time.localtime` / `time.mktime`) and ISO-8601 conversion.
 pub mod time_utils {
     use anyhow::Context;
-    use chrono::{Local, NaiveDateTime, TimeZone, Timelike};
+    use chrono::{Local, NaiveDateTime, TimeZone};
 
     /// `time.strftime` default used across RAGFlow JSON encoding.
     pub const DEFAULT_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -737,11 +737,10 @@ pub mod time_utils {
             return naive.format(DEFAULT_TIME_FORMAT).to_string();
         }
         // Date-only input.
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, "%Y-%m-%d") {
-            if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, "%Y-%m-%d")
+            && let Some(naive) = date.and_hms_opt(0, 0, 0) {
                 return naive.format(DEFAULT_TIME_FORMAT).to_string();
             }
-        }
         time_str.to_string()
     }
 }
@@ -961,12 +960,12 @@ pub mod crypto_utils {
         let pad_len = block - (data.len() % block);
         let mut out = Vec::with_capacity(data.len() + pad_len);
         out.extend_from_slice(data);
-        out.extend(std::iter::repeat(pad_len as u8).take(pad_len));
+        out.extend(std::iter::repeat_n(pad_len as u8, pad_len));
         out
     }
 
     fn pkcs7_unpad(data: &[u8], block: usize) -> Result<Vec<u8>, CryptoError> {
-        if data.is_empty() || data.len() % block != 0 {
+        if data.is_empty() || !data.len().is_multiple_of(block) {
             return Err(CryptoError::InvalidData("ciphertext length"));
         }
         let pad_len = *data.last().unwrap() as usize;
@@ -1142,7 +1141,7 @@ pub mod ssrf_guard {
         let rest = &url[colon + 1..];
         let rest = rest.strip_prefix("//").unwrap_or(rest);
         let authority_end = rest
-            .find(|c| c == '/' || c == '?' || c == '#')
+            .find(['/', '?', '#'])
             .unwrap_or(rest.len());
         if rest[..authority_end].is_empty() {
             return Err(SsrfError::MissingHost);
@@ -1565,11 +1564,10 @@ pub mod versions {
     /// `get_ragflow_version` — `RAGFLOW_VERSION` env → `VERSION` file next to
     /// the crate manifest → `"unknown"` (Python falls back to `git describe`).
     pub fn get_ragflow_version() -> String {
-        if let Ok(value) = std::env::var("RAGFLOW_VERSION") {
-            if !value.is_empty() {
+        if let Ok(value) = std::env::var("RAGFLOW_VERSION")
+            && !value.is_empty() {
                 return value;
             }
-        }
         let version_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("VERSION");
         if let Ok(content) = std::fs::read_to_string(version_path) {
             let version = content.trim();

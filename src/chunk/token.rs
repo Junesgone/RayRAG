@@ -117,7 +117,7 @@ impl TokenChunker {
     ) -> Vec<Chunk> {
         let max_tokens = config.chunk_token_num;
         let overlap_pct = Self::normalize_overlapped(config.overlapped_percent);
-        let threshold = max_tokens * (100 - overlap_pct) / 100;
+        let _threshold = max_tokens * (100 - overlap_pct) / 100;
         let overlap_tokens = max_tokens * overlap_pct / 100;
 
         let mut chunks: Vec<Chunk> = Vec::new();

@@ -185,7 +185,7 @@ impl TitleChunker {
     /// 去掉尾部冒号。`prefix_len` 是已匹配前缀的字节长度。
     fn title_from_rest(line: &str, prefix_len: usize) -> String {
         line[prefix_len..]
-            .trim_start_matches(|c| c == '.' || c == '、' || c == '：')
+            .trim_start_matches(['.', '、', '：'])
             .trim()
             .trim_end_matches('：')
             .trim()
@@ -278,7 +278,7 @@ impl TitleChunker {
         let mut heading_iter = headings.iter().peekable();
 
         for line in doc.content.lines() {
-            let trimmed = line.trim();
+            let _trimmed = line.trim();
             let normalized = Self::normalize_line(line);
             // 命中标题行 → 开启新段（始终匹配下一个未消费的标题）。
             // PDF 大纲来源用相似度连续性检查（>0.8 视为同一标题，

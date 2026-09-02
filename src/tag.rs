@@ -17,7 +17,7 @@ pub struct TagPair {
 
 /// beAdoc — assemble a tag chunk dict (tag.py:27-34): content stays as-is,
 /// tags are comma-split, stripped, `.`→`_`.
-pub fn be_adoc_tags(content: &str, tags: &str) -> Vec<String> {
+pub fn be_adoc_tags(_content: &str, tags: &str) -> Vec<String> {
     tags.split(',')
         .map(|t| t.trim().replace('.', "_"))
         .filter(|t| !t.is_empty())

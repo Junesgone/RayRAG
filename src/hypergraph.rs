@@ -12,7 +12,7 @@
 use crate::Result;
 use crate::llm::{ChatMessage, LlmClient};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Render `_struct_render_fields`: (bulleted field descriptions, JSON
 /// skeleton for one item).

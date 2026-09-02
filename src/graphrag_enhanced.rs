@@ -281,11 +281,10 @@ impl EntityGraph {
 
     /// Append to a node's source_id list (used by graph_merge).
     pub fn append_source_id(&mut self, name: &str, source_id: &str) {
-        if let Some(node) = self.nodes.get_mut(name) {
-            if !node.source_id.iter().any(|s| s == source_id) {
+        if let Some(node) = self.nodes.get_mut(name)
+            && !node.source_id.iter().any(|s| s == source_id) {
                 node.source_id.push(source_id.to_string());
             }
-        }
     }
 
     /// Source ids of a node, if any.
@@ -366,7 +365,7 @@ impl EntityGraph {
 
     /// Overwrite (or create) the weight of an undirected edge.
     pub fn set_edge_weight(&mut self, a: &str, b: &str, weight: f64) {
-        let mut set = |node: &mut GraphNode| {
+        let set = |node: &mut GraphNode| {
             if let Some((_, w)) = node.connections.iter_mut().find(|(t, _)| t == b) {
                 *w = weight as f32;
             }
@@ -374,11 +373,10 @@ impl EntityGraph {
         if let Some(node) = self.nodes.get_mut(a) {
             set(node);
         }
-        if let Some(node) = self.nodes.get_mut(b) {
-            if let Some((_, w)) = node.connections.iter_mut().find(|(t, _)| t == a) {
+        if let Some(node) = self.nodes.get_mut(b)
+            && let Some((_, w)) = node.connections.iter_mut().find(|(t, _)| t == a) {
                 *w = weight as f32;
             }
-        }
     }
 
     /// Set a node's entity type (re-typing after extraction).

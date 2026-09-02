@@ -21,7 +21,6 @@
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 /// 问财 robot 数据端点（与 pywencai 一致，http 而非 https）。
 const WENCAI_ENDPOINT: &str = "http://www.iwencai.com/customized/chart/get-robot-data";
@@ -158,11 +157,9 @@ impl WenCaiClient {
             if let Some(rows) = self
                 .fetch_landing_rows(&components[0], request, top_n, query_type, endpoint)
                 .await?
-            {
-                if let Some(table) = render_rows_table(&rows) {
+                && let Some(table) = render_rows_table(&rows) {
                     return Ok(table);
                 }
-            }
             // 分页数据不可用时回退：渲染 condition/comp_id/uuid 字典
             let mut fallback = serde_json::Map::new();
             for key in ["condition", "comp_id", "uuid"] {
@@ -274,7 +271,7 @@ fn build_payload(query: &str, top_n: usize, query_type: &str) -> Value {
 }
 
 /// 提取 `data.answer[0].txt[0].content`（对齐 convert.py）。
-fn answer_content<'a>(body: &'a Value) -> Option<&'a Value> {
+fn answer_content(body: &Value) -> Option<&Value> {
     let answer = body.get("data")?.get("answer")?.as_array()?;
     let first = answer.first()?;
     let txt = first.get("txt")?.as_array()?;
@@ -385,11 +382,9 @@ fn render_components(components: &[Value]) -> Vec<String> {
                     .and_then(Value::as_array)
                     .and_then(|datas| datas.first())
                     .cloned()
-                {
-                    if let Some(table) = render_rows_table(&[row]) {
+                    && let Some(table) = render_rows_table(&[row]) {
                         sections.push(format!("{key}\n{table}"));
                     }
-                }
             }
             "textblocklinkone" => {
                 // 文本块链接：data.result.data 为行数组
@@ -399,11 +394,9 @@ fn render_components(components: &[Value]) -> Vec<String> {
                     .and_then(|result| result.get("data"))
                     .and_then(Value::as_array)
                     .cloned()
-                {
-                    if let Some(table) = render_rows_table(&rows) {
+                    && let Some(table) = render_rows_table(&rows) {
                         sections.push(format!("{key}\n{table}"));
                     }
-                }
             }
             "nestedblocks" | "wiki1" => {
                 // 需要额外 HTTP 拉取子页面，Rust 侧跳过（wiki1 上游亦已注释）

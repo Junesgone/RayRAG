@@ -273,6 +273,12 @@ mod tests {
 /// ("One file forms a chunk which maintains original text order").
 pub struct SingleChunker;
 
+impl Default for SingleChunker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SingleChunker {
     pub fn new() -> Self {
         Self

@@ -115,7 +115,7 @@ impl RAGFlowDocxParser {
         });
         for (re, name) in patterns {
             if re.is_match(b) {
-                return *name;
+                return name;
             }
         }
         // Token fallback approximating rag_tokenizer: whitespace words for
@@ -123,7 +123,7 @@ impl RAGFlowDocxParser {
         // yields word-level tokens, typically ~2 chars for Chinese).
         let mut tks: Vec<String> = Vec::new();
         for word in b.split_whitespace() {
-            if word.chars().any(|c| is_cjk(c)) {
+            if word.chars().any(is_cjk) {
                 let cjk_run: String = word.chars().filter(|c| is_cjk(*c)).collect();
                 let chars: Vec<char> = cjk_run.chars().collect();
                 let mut i = 0;
@@ -303,11 +303,9 @@ fn parse_style_names(xml: &str) -> HashMap<String, String> {
             Ok(Event::End(e)) => {
                 if e.local_name().as_ref() == b"style"
                     && let Some((id, name)) = cur_style.take()
-                {
-                    if !id.is_empty() && !name.is_empty() {
+                    && !id.is_empty() && !name.is_empty() {
                         out.insert(id, name);
                     }
-                }
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -385,9 +383,9 @@ fn parse_document_xml(
             }
             Ok(Event::Text(t)) => {
                 if in_text {
-                    cur_text.push_str(&String::from_utf8_lossy(&t.as_ref()));
+                    cur_text.push_str(&String::from_utf8_lossy(t.as_ref()));
                 } else if in_cell {
-                    cur_cell.push_str(&String::from_utf8_lossy(&t.as_ref()));
+                    cur_cell.push_str(&String::from_utf8_lossy(t.as_ref()));
                 }
             }
             Ok(Event::End(e)) => {
@@ -483,12 +481,11 @@ impl Parse for DocxParser {
         );
         // `get_picture` — docx_parser.py:33-70: count embedded images so
         // downstream image-context steps know whether this document has any.
-        if let Ok(images) = extract_images(data) {
-            if !images.is_empty() {
+        if let Ok(images) = extract_images(data)
+            && !images.is_empty() {
                 doc.metadata
                     .insert("image_count".to_string(), images.len().to_string());
             }
-        }
         Ok(doc)
     }
 }

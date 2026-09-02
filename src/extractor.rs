@@ -264,7 +264,7 @@ pub fn extract_key_terms_with_top_n(text: &str, top_n: usize) -> Vec<String> {
     for (token, offset) in &tokens {
         record(token, *offset, false);
     }
-    for (index, pair) in tokens.windows(2).enumerate() {
+    for pair in tokens.windows(2) {
         // Skip phrases that start with a stop word — the stop word still
         // contributes noise to the phrase (e.g. "the system").
         if is_stop_word(&pair[0].0) || is_stop_word(&pair[1].0) {

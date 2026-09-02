@@ -12,7 +12,6 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::OnceLock;
-use std::time::Duration;
 
 const BING_ENDPOINT: &str = "https://cn.bing.com/search";
 const BING_ENDPOINT_FALLBACK: &str = "https://www.bing.com/search";

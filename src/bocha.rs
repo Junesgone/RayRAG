@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::time::Duration;
 
 const BOCHA_ENDPOINT: &str = "https://api.bochaai.com/v1/web-search";
 const MAX_BOCHA_RESPONSE_BODY: usize = 16 << 20;

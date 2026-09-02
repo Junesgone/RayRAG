@@ -202,11 +202,10 @@ pub fn tree_merge(
                 return (i as i64 + 1, text);
             }
         }
-        if section.1.contains("title") || section.1.contains("head") {
-            if !not_title(text.split('@').next().unwrap_or_default()) {
+        if (section.1.contains("title") || section.1.contains("head"))
+            && !not_title(text.split('@').next().unwrap_or_default()) {
                 return (family_len as i64 + 1, text);
             }
-        }
         (family_len as i64 + 2, text)
     };
 
@@ -275,7 +274,7 @@ pub fn parse_laws_text(filename: &str, text: &str, depth: usize) -> Result<Vec<S
         .get(bull.max(0) as usize)
         .map(|f| f.len())
         .unwrap_or(0);
-    let bull_i = bull as i64;
+    let bull_i = bull;
     let res = if bull >= 0 {
         tree_merge(bull_i, &pairs, depth, family_len)
     } else {

@@ -12,7 +12,6 @@ use anyhow::{Result, anyhow, bail};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
 
 /// Crawler 组件参数，对齐 CrawlerParam（proxy / extract_type）。
 #[derive(Debug, Clone)]
@@ -102,7 +101,7 @@ async fn assert_url_is_safe(url: &reqwest::Url) -> Result<()> {
     let port = url
         .port_or_known_default()
         .ok_or_else(|| anyhow!("URL has no usable port"))?;
-    let addresses = if let Some(ip) = hostname.parse::<IpAddr>().ok() {
+    let addresses = if let Ok(ip) = hostname.parse::<IpAddr>() {
         vec![ip]
     } else {
         tokio::net::lookup_host((hostname, port))
@@ -243,7 +242,7 @@ fn walk_markdown(node: &scraper::ElementRef<'_>, document: &Html, out: &mut Stri
                 out.push_str(&"#".repeat(name[1..].parse::<usize>().unwrap_or(1)));
                 out.push(' ');
                 for text in element_ref.text() {
-                    out.push_str(&text);
+                    out.push_str(text);
                 }
                 out.push('\n');
             }
@@ -280,7 +279,7 @@ fn walk_markdown(node: &scraper::ElementRef<'_>, document: &Html, out: &mut Stri
             "pre" => {
                 out.push_str("\n```\n");
                 for text in element_ref.text() {
-                    out.push_str(&text);
+                    out.push_str(text);
                 }
                 out.push_str("\n```\n");
             }

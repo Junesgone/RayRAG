@@ -657,7 +657,6 @@ fn field_bm25_scores<'a>(
     let query_weights: Vec<(String, f64)> = tw
         .weights(&[query.to_string()], true)
         .into_iter()
-        .map(|(t, w)| (t, w))
         .collect();
     let weight_refs: Vec<(&str, f64)> = query_weights
         .iter()
@@ -696,7 +695,7 @@ pub fn ragflow_rerank(
                 .get("content_ltks")
                 .map(|s| s.split_whitespace().map(String::from).collect())
                 .unwrap_or_default();
-            let mut title_tks: Vec<String> = c
+            let title_tks: Vec<String> = c
                 .chunk
                 .metadata
                 .get("title_tks")

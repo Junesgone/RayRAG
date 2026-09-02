@@ -10,7 +10,6 @@ use futures_util::StreamExt;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
 
 const MAX_WIKIPEDIA_RESPONSE_BODY: usize = 16 << 20;
 const WIKIPEDIA_USER_AGENT: &str = "RayRAG/0.1.2 (RAGFlow-compatible Wikipedia tool)";

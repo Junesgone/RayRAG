@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::sync::OnceLock;
-use std::time::Duration;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const DUCKDUCKGO_TEXT_ENDPOINT: &str = "https://html.duckduckgo.com/html";

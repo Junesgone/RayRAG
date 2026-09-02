@@ -4,7 +4,6 @@
 //! The connector fetches external content and converts it into connector
 //! documents that can be synced into a knowledge base.
 
-use serde::Deserialize;
 use std::collections::HashMap;
 
 /// RAGFlow-aligned document source enum.

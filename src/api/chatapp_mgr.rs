@@ -279,18 +279,16 @@ pub async fn update_chat_app(
             changed = true;
         }
     }
-    if let Some(kb_ids) = body.kb_ids {
-        if kb_ids != app.kb_ids {
+    if let Some(kb_ids) = body.kb_ids
+        && kb_ids != app.kb_ids {
             app.kb_ids = kb_ids;
             changed = true;
         }
-    }
-    if let Some(llm_id) = body.llm_id {
-        if llm_id != app.llm_id {
+    if let Some(llm_id) = body.llm_id
+        && llm_id != app.llm_id {
             app.llm_id = llm_id;
             changed = true;
         }
-    }
     if let Some(llm_setting) = body.llm_setting {
         app.llm_setting = Some(llm_setting);
         changed = true;
@@ -299,18 +297,16 @@ pub async fn update_chat_app(
         app.prompt_config = Some(prompt_config);
         changed = true;
     }
-    if let Some(rerank_id) = body.rerank_id {
-        if rerank_id != app.rerank_id {
+    if let Some(rerank_id) = body.rerank_id
+        && rerank_id != app.rerank_id {
             app.rerank_id = rerank_id;
             changed = true;
         }
-    }
-    if let Some(top_k) = body.top_k {
-        if Some(top_k) != app.top_k {
+    if let Some(top_k) = body.top_k
+        && Some(top_k) != app.top_k {
             app.top_k = Some(top_k);
             changed = true;
         }
-    }
     if changed {
         store
             .insert(app)
@@ -384,7 +380,7 @@ pub async fn chatbot_completions(
     axum::extract::Path(chat_id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-    use axum::response::sse::{Event, Sse};
+    use axum::response::sse::Sse;
     use tokio_stream::wrappers::ReceiverStream;
     let store = match state.chat_apps.as_ref() {
         Some(s) => s,

@@ -294,9 +294,7 @@ fn parse_opf(
                     b"spine" => in_spine = false,
                     _ => {}
                 }
-                if depth > 0 {
-                    depth -= 1;
-                }
+                depth = depth.saturating_sub(1);
             }
             Ok(Event::Eof) => break,
             Err(_) => return None,

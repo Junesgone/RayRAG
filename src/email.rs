@@ -8,7 +8,6 @@ use anyhow::{Result, bail};
 use lettre::message::{Mailbox, Message, MultiPart, SinglePart, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{SmtpTransport, Transport};
-use std::time::Duration;
 
 /// SMTP 配置（对齐上游 EmailParam 固定配置项）。
 #[derive(Debug, Clone, Default)]

@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::time::Duration;
 
 const QWEATHER_GEO_ENDPOINT: &str = "https://geoapi.qweather.com/v2/city/lookup";
 const QWEATHER_DEV_ENDPOINT: &str = "https://devapi.qweather.com/v7";

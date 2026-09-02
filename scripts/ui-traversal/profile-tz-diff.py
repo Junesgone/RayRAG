@@ -9,6 +9,7 @@ Upstream (ragflow v0.26.4 profile/index.tsx + user-setting/constants.tsx):
     value/label = the full name, save validation message 'select your timezone';
   - display row: find by stored name, else empty (no fallback).
 """
+
 import sys
 from pathlib import Path
 
@@ -54,10 +55,14 @@ def main(argv: list[str]) -> int:
         for s in stale:
             if s in html:
                 failures.append(f"{page}: stale content {s}")
-    print(f"en markers={'all' if all(m in en for m in markers) else 'partial'} "
-          f"stale={'none' if not any(s in en for s in stale) else 'present'}")
-    print(f"zh markers={'all' if all(m in zh for m in markers) else 'partial'} "
-          f"stale={'none' if not any(s in zh for s in stale) else 'present'}")
+    print(
+        f"en markers={'all' if all(m in en for m in markers) else 'partial'} "
+        f"stale={'none' if not any(s in en for s in stale) else 'present'}"
+    )
+    print(
+        f"zh markers={'all' if all(m in zh for m in markers) else 'partial'} "
+        f"stale={'none' if not any(s in zh for s in stale) else 'present'}"
+    )
     print(f"failures={len(failures)}")
     for f in failures:
         print("FAIL:", f)

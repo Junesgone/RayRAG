@@ -269,13 +269,13 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str("</a><a href='/memories'>");
     h.push_str(mm);
     h.push_str("</a><a href='/datasources'>");
-    h.push_str("🔗");
+    h.push('🔗');
     h.push_str("</a><a href='/files'>");
     h.push_str(fl);
     h.push_str("</a><a href='/skills'>");
-    h.push_str(&sk);
+    h.push_str(sk);
     h.push_str("</a><a href='/user-setting/model'>");
-    h.push_str(&pr);
+    h.push_str(pr);
     h.push_str("</a></nav>");
     h.push_str("<div class='hr'><button onclick='toggleTheme()' title='Theme'>🌓</button><button onclick='toggleLang()' title='Language'>");
     h.push_str(lb);
@@ -1116,7 +1116,7 @@ pub async fn dataset_page(
     b.push_str(t("Results", zh));
     b.push_str("</h3><div id='testResults' style='min-height:300px'><p style='color:var(--tm);text-align:center;padding:40px'>");
     b.push_str(t("Results", zh));
-    b.push_str(" ");
+    b.push(' ');
     b.push_str(t("will appear here", zh));
     b.push_str("</p></div></div></div></div></div>");
     // Tab 3: Configuration
@@ -1275,7 +1275,7 @@ pub async fn dataset_page(
     ));
     b.push_str("</p><button class='btn btn-p' onclick='buildGraph()'>");
     b.push_str(t("Build", zh));
-    b.push_str(" ");
+    b.push(' ');
     b.push_str(t("Graph", zh));
     b.push_str("</button><div id='graphResult' style='margin-top:16px;background:var(--bg);padding:20px;border-radius:var(--r);min-height:200px;font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.8'><p style='color:var(--tm);text-align:center;padding:40px'>");
     b.push_str(t(
@@ -1338,7 +1338,7 @@ pub async fn chat_page(
             .unwrap_or('C')
             .to_uppercase()
             .collect::<String>();
-        let preview = c
+        let _preview = c
             .messages
             .last()
             .map(|m| m.content.chars().take(80).collect::<String>())
@@ -2223,7 +2223,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
 }
 
 pub async fn document_page(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     axum::extract::Path((kb_id, doc_id)): axum::extract::Path<(String, String)>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
@@ -2684,7 +2684,7 @@ pub async fn providers_page(
         let click = match &factory {
             Some(factory) => format!(
                 " style='cursor:pointer' data-factory='{}' data-k='{}' onclick='showProviderModels(this)'",
-                html_escape(&factory),
+                html_escape(factory),
                 kinds.join(" ")
             ),
             None => format!(" data-k='{}'", kinds.join(" ")),
@@ -3296,7 +3296,7 @@ pub async fn chat_apps_page(
     b.push_str("function saveRenApp(){var n=document.getElementById('renAppName').value.trim();var id=document.getElementById('renAppId').value;if(!n)return;fetch('/api/v1/chatapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
     b.push_str("function delApp(id){if(!confirm('Delete this chat app?'))return;fetch('/api/v1/chatapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
     b.push_str("</script>");
-        Html(layout(&t("Chat apps", zh), &b, zh))
+        Html(layout(t("Chat apps", zh), &b, zh))
 }
 
 /// RAGFlow share-page parity: public /chats/share?shared_id=...&from=chatbots.
@@ -3615,7 +3615,7 @@ pub async fn chat_app_detail_page(
         "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,refine_multiturn:document.getElementById('sw_refine_multiturn').checked,reasoning:document.getElementById('sw_reasoning').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,vector_similarity_weight:parseFloat(document.getElementById('f_vsw').value)||0.3,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value,reference_metadata:{{include:document.getElementById('sw_refmeta').checked,fields:document.getElementById('f_reffields').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}},meta_data_filter:{{method:document.getElementById('f_mfmethod').value,manual:document.getElementById('f_mfmanual').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}}}},rerank_id:document.getElementById('f_rerank').value.trim()||null,top_k:parseInt(document.getElementById('f_rtopk').value)||1024}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
-    Html(layout(&t("Chat apps", zh), &b, zh))
+    Html(layout(t("Chat apps", zh), &b, zh))
 }
 
 /// Minimal HTML escape for user-controlled strings.
@@ -3705,7 +3705,7 @@ pub async fn search_apps_page(
     b.push_str("function saveRenSApp(){var n=document.getElementById('renSAppName').value.trim();var id=document.getElementById('renSAppId').value;if(!n)return;fetch('/api/v1/searchapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
     b.push_str("function delSApp(id){if(!confirm('Delete this search app?'))return;fetch('/api/v1/searchapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
     b.push_str("</script>");
-    Html(layout(&t("Search apps", zh), &b, zh))
+    Html(layout(t("Search apps", zh), &b, zh))
 }
 
 /// RAGFlow 0.26.4 parity: search-app detail page (`/searches/{id}`).
@@ -3766,7 +3766,7 @@ pub async fn search_app_detail_page(
         "<script>function saveSApp(){{var id='{app_id}';var kbs=Array.from(document.getElementById('sa_kbs').selectedOptions).map(function(o){{return o.value}});fetch('/api/v1/searchapps/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{kb_ids:kbs,hybrid:document.getElementById('sa_hybrid').checked,rerank:document.getElementById('sa_rerank').checked,top_k:parseInt(document.getElementById('sa_topk').value)||8}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
-    Html(layout(&t("Search apps", zh), &b, zh))
+    Html(layout(t("Search apps", zh), &b, zh))
 }
 
 #[cfg(test)]
@@ -5128,8 +5128,12 @@ mod kb_ui_tests {
         )
         .await;
         let kb_zh = body_of(
-            kb_detail_page(State(state.clone()), Path(path.clone()), zh_request("/kbs/x"))
-                .await,
+            kb_detail_page(
+                State(state.clone()),
+                Path(path.clone()),
+                zh_request("/kbs/x"),
+            )
+            .await,
         )
         .await;
         let ds_en = body_of(
@@ -5142,18 +5146,20 @@ mod kb_ui_tests {
         )
         .await;
         let ds_zh = body_of(
-            dataset_page(State(state.clone()), Path(path.clone()), zh_request("/dataset/x"))
-                .await,
+            dataset_page(
+                State(state.clone()),
+                Path(path.clone()),
+                zh_request("/dataset/x"),
+            )
+            .await,
         )
         .await;
-        let sp_en = body_of(search_page(State(state.clone()), english_request("/search")).await)
-            .await;
-        let sp_zh = body_of(search_page(State(state.clone()), zh_request("/search")).await)
-            .await;
-        let sk_en = body_of(skills_page(State(state.clone()), english_request("/skills")).await)
-            .await;
-        let sk_zh = body_of(skills_page(State(state.clone()), zh_request("/skills")).await)
-            .await;
+        let sp_en =
+            body_of(search_page(State(state.clone()), english_request("/search")).await).await;
+        let sp_zh = body_of(search_page(State(state.clone()), zh_request("/search")).await).await;
+        let sk_en =
+            body_of(skills_page(State(state.clone()), english_request("/skills")).await).await;
+        let sk_zh = body_of(skills_page(State(state.clone()), zh_request("/skills")).await).await;
 
         // `knowledgeDetails.topK` = `Top-K` (zh `Top-K`) — the KB/dataset
         // retrieval config + testing panels render components/rerank.tsx's

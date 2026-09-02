@@ -306,7 +306,7 @@ fn extract_content_from_zip(zip_bytes: &[u8]) -> Result<Vec<serde_json::Value>> 
             .split('/')
             .filter(|p| !p.is_empty() && *p != ".")
             .collect();
-        if parts.iter().any(|part| *part == "..") {
+        if parts.contains(&"..") {
             bail!("[TCADP] Unsafe zip path (traversal): {name}");
         }
         if !(name.ends_with(".json") || name.ends_with(".md")) {

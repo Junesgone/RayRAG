@@ -403,17 +403,17 @@ pub fn naive_vertical_merge(
                 b_text
                     .chars()
                     .last()
-                    .map_or(false, |c| ",;:'\"，、‘“；：-".contains(c)),
+                    .is_some_and(|c| ",;:'\"，、‘“；：-".contains(c)),
                 b_text.chars().count() > 1
                     && b_text
                         .chars()
                         .nth(b_text.chars().count() - 2)
-                        .map_or(false, |c| ",;:'\"，‘“、；：".contains(c)),
+                        .is_some_and(|c| ",;:'\"，‘“、；：".contains(c)),
                 !b_text2.is_empty()
                     && b_text2
                         .chars()
                         .next()
-                        .map_or(false, |c| "。；？！?”）),，、：".contains(c)),
+                        .is_some_and(|c| "。；？！?”）),，、：".contains(c)),
             ];
             let last_char = b_text.chars().last().unwrap_or('\0');
             let feats = [
@@ -496,7 +496,6 @@ pub fn filter_forpages(bxs: &mut Vec<PdfBox>, page_image_count: usize) {
         let mut prefix = if eng {
             bxs[i]
                 .text
-                .trim()
                 .split_whitespace()
                 .take(2)
                 .collect::<Vec<_>>()
@@ -512,7 +511,6 @@ pub fn filter_forpages(bxs: &mut Vec<PdfBox>, page_image_count: usize) {
             prefix = if eng {
                 bxs[i]
                     .text
-                    .trim()
                     .split_whitespace()
                     .take(2)
                     .collect::<Vec<_>>()
@@ -546,11 +544,9 @@ pub fn filter_forpages(bxs: &mut Vec<PdfBox>, page_image_count: usize) {
         if regex::Regex::new(r"(··|··|··)")
             .map(|re| re.is_match(&b.text))
             .unwrap_or(false)
-        {
-            if let Some(slot) = page_dirty.get_mut(b.page_number.saturating_sub(1)) {
+            && let Some(slot) = page_dirty.get_mut(b.page_number.saturating_sub(1)) {
                 *slot += 1;
             }
-        }
     }
     let dirty: std::collections::HashSet<usize> = page_dirty
         .iter()
@@ -610,7 +606,7 @@ pub fn line_tag(
     page_image_heights_px: &[f64],
 ) -> String {
     let mut pns = vec![bx.page_number];
-    let mut top = bx.top
+    let top = bx.top
         - page_cum_height
             .get(bx.page_number.saturating_sub(1))
             .copied()

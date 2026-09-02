@@ -26,7 +26,7 @@
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
-    extract::{Query, State},
+    extract::Query,
     http::{HeaderMap, StatusCode},
     response::{
         IntoResponse, Response,
@@ -440,7 +440,7 @@ impl RetrievalBackend for InMemoryRetrievalBackend {
         let total_pages = if total == 0 {
             0
         } else {
-            (total + request.page_size - 1) / request.page_size
+            total.div_ceil(request.page_size)
         };
         Ok(json!({
             "chunks": chunks,

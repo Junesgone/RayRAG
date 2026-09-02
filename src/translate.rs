@@ -162,15 +162,14 @@ impl BaiduTranslateClient {
             );
         }
         let json: Value = serde_json::from_str(&body).context("parse Baidu translate VIP JSON")?;
-        if let Some(code) = json.get("error_code").and_then(Value::as_str) {
-            if code != "0" {
+        if let Some(code) = json.get("error_code").and_then(Value::as_str)
+            && code != "0" {
                 let msg = json
                     .get("error_msg")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown error");
                 bail!("BaiduTranslate VIP error {code}: {msg}");
             }
-        }
         let results = json
             .get("trans_result")
             .and_then(Value::as_array)

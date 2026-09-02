@@ -588,14 +588,13 @@ pub fn kb_prompt(
 fn parse_llm_json(text: &str) -> Option<serde_json::Value> {
     for open in ['{', '['] {
         let close = if open == '{' { '}' } else { ']' };
-        if let Some(start) = text.find(open) {
-            if let Some(end) = text[start..].rfind(close) {
+        if let Some(start) = text.find(open)
+            && let Some(end) = text[start..].rfind(close) {
                 let candidate = &text[start..start + end + 1];
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) {
                     return Some(value);
                 }
             }
-        }
     }
     None
 }
@@ -737,14 +736,12 @@ impl DeepResearchRetriever {
                 .map(|q| self.research(&q.question, &q.query, depth - 1))
                 .collect();
             let results = futures_util::future::join_all(futures).await;
-            for result in results {
-                if let Ok(sub) = result {
-                    if !sub.text.trim().is_empty() {
-                        outcome.text.push_str("\n");
-                        outcome.text.push_str(&sub.text);
-                    }
-                    outcome.chunks.extend(sub.chunks);
+            for sub in results.into_iter().flatten() {
+                if !sub.text.trim().is_empty() {
+                    outcome.text.push('\n');
+                    outcome.text.push_str(&sub.text);
                 }
+                outcome.chunks.extend(sub.chunks);
             }
         }
         Ok(outcome)

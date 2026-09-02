@@ -2349,7 +2349,7 @@ async fn query_graphrag(
     } else {
         state
             .graphs
-            .context_for_query(&[dataset_id.clone()], question)
+            .context_for_query(std::slice::from_ref(&dataset_id), question)
     };
     Json(ApiResponse {
         code: 0,
@@ -2864,8 +2864,8 @@ async fn chat_completion(
     let cross_langs: Vec<String> = {
         let mut langs = Vec::new();
         for kb_id in &kb_ids {
-            if let Some(kb) = state.kbs.get(kb_id) {
-                if let Some(list) = kb
+            if let Some(kb) = state.kbs.get(kb_id)
+                && let Some(list) = kb
                     .prompt_config
                     .get("cross_languages")
                     .and_then(|v| v.as_array())
@@ -2876,12 +2876,11 @@ async fn chat_completion(
                         }
                     }
                 }
-            }
         }
         langs
     };
-    if !cross_langs.is_empty() {
-        if let Some(llm_client) = &state.llm {
+    if !cross_langs.is_empty()
+        && let Some(llm_client) = &state.llm {
             let langs_str = cross_langs.join(", ");
             let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
             vars.insert("query", q);
@@ -2927,7 +2926,6 @@ async fn chat_completion(
                 }
             }
         }
-    }
     let mut context = String::new();
     let mut references = Vec::new();
     for (i, hit) in hits.iter().take(4).enumerate() {

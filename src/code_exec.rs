@@ -384,7 +384,7 @@ fn render_sorted_json(value: &Value) -> String {
                     .iter()
                     .map(|(key, val)| (key.clone(), sorted(val)))
                     .collect();
-                Value::Object(Map::from_iter(sorted.into_iter()))
+                Value::Object(Map::from_iter(sorted))
             }
             Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
             other => other.clone(),
@@ -455,13 +455,12 @@ pub fn process_result(result: &SandboxResult) -> Map<String, Value> {
     // stderr-only 且无结果/工件 → 错误（对齐上游分支）
     let has_artifacts = !result.artifacts.is_empty();
     let stdout_blank = result.stdout.trim().is_empty();
-    if let Some(stderr) = &result.stderr {
-        if !stderr.trim().is_empty() && !has_artifacts && stdout_blank {
+    if let Some(stderr) = &result.stderr
+        && !stderr.trim().is_empty() && !has_artifacts && stdout_blank {
             outputs.insert("_ERROR".into(), Value::String(stderr.clone()));
             outputs.insert("content".into(), Value::String(String::new()));
             return outputs;
         }
-    }
 
     // 业务输出选择 + canonical 渲染
     let base_content = match &resolved {

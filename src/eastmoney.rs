@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::time::Duration;
 
 /// EastMoney JSONP search endpoint (search-api-web), same one AkShare's
 /// `stock_news_em` calls under the hood.

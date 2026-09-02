@@ -299,11 +299,10 @@ impl SynonymDict {
             return res.iter().take(topn).cloned().collect();
         }
         // WordNet-equivalent fallback for pure lowercase alpha tokens
-        if key.chars().all(|c| c.is_ascii_lowercase()) {
-            if let Some(res) = self.synonyms.get(&key) {
+        if key.chars().all(|c| c.is_ascii_lowercase())
+            && let Some(res) = self.synonyms.get(&key) {
                 return res.iter().take(topn).cloned().collect();
             }
-        }
         Vec::new()
     }
 
@@ -1491,7 +1490,7 @@ pub fn build_keyword_query(question: &str) -> KeywordQuery {
         if keywords.len() < 32 {
             keywords.push(tt.clone());
         }
-        let mut twts = tw.weights(&[tt.clone()], false);
+        let mut twts = tw.weights(std::slice::from_ref(&tt), false);
         twts.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let mut tms: Vec<String> = Vec::new();
         for (tk, w) in twts {

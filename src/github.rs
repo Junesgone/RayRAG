@@ -13,7 +13,6 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderName, USER_AGEN
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use std::time::Duration;
 
 const GITHUB_SEARCH_ENDPOINT: &str = "https://api.github.com/search/repositories";
 const GITHUB_MEDIA_TYPE: &str = "application/vnd.github+json";

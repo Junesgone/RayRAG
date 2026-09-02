@@ -1985,9 +1985,9 @@ pub fn mcp_server_get_servers(
     let mut rows: Vec<McpServerRecord> = servers
         .iter()
         .filter(|s| s.tenant_id == tenant_id)
-        .filter(|s| id_list.map_or(true, |ids| ids.iter().any(|id| id == &s.id)))
+        .filter(|s| id_list.is_none_or(|ids| ids.iter().any(|id| id == &s.id)))
         .filter(|s| {
-            keywords.map_or(true, |kw| {
+            keywords.is_none_or(|kw| {
                 s.name.to_lowercase().contains(&kw.to_lowercase())
             })
         })
@@ -2051,9 +2051,9 @@ pub fn conversation_get_list(
     let mut rows: Vec<ConversationRow> = sessions
         .iter()
         .filter(|s| s.dialog_id == dialog_id)
-        .filter(|s| id.map_or(true, |v| v == s.id))
-        .filter(|s| name.map_or(true, |v| v == s.name))
-        .filter(|s| user_id.map_or(true, |v| v == s.user_id))
+        .filter(|s| id.is_none_or(|v| v == s.id))
+        .filter(|s| name.is_none_or(|v| v == s.name))
+        .filter(|s| user_id.is_none_or(|v| v == s.user_id))
         .cloned()
         .collect();
     rows.sort_by(|a, b| {

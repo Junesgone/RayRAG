@@ -310,8 +310,8 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
 
     // --- Phase 1: source-text validation ---
     let unknown_names = ["未知", "Unknown"];
-    if let Some(name) = _get_str(resume, "name_kwd") {
-        if !unknown_names.contains(&name.as_str()) {
+    if let Some(name) = _get_str(resume, "name_kwd")
+        && !unknown_names.contains(&name.as_str()) {
             let norm_name = normalize_for_comparison(&name);
             if !norm_full_text.is_empty()
                 && !norm_name.is_empty()
@@ -320,7 +320,6 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
                 resume["name_kwd"] = json!("");
             }
         }
-    }
 
     // Companies: strict full-name containment.
     if resume.get("corp_nm_tks").is_some() && !norm_full_text.is_empty() {
@@ -384,8 +383,7 @@ pub fn postprocess_resume(resume: &mut Resume, lines: &[String], lang: &str) {
     // --- Phase 2: domain normalization ---
     if let Some(birth) = _get_str(resume, "birth_dt") {
         let normalized = birth
-            .replace('年', "-")
-            .replace('月', "-")
+            .replace(['年', '月'], "-")
             .trim_end_matches('-')
             .to_string();
         resume["birth_dt"] = json!(normalized);
@@ -763,35 +761,30 @@ pub fn build_chunk_document(filename: &str, resume: &Resume, lang: &str) -> Vec<
 
     // Resume summary line.
     let mut summary_parts = Vec::new();
-    if let Some(name) = _get_str(resume, "name_kwd") {
-        if !name.is_empty() {
+    if let Some(name) = _get_str(resume, "name_kwd")
+        && !name.is_empty() {
             summary_parts.push(format!("{}:{name}", if en { "Name" } else { "姓名" }));
         }
-    }
-    if let Some(phone) = _get_str(resume, "phone_kwd") {
-        if !phone.is_empty() {
+    if let Some(phone) = _get_str(resume, "phone_kwd")
+        && !phone.is_empty() {
             summary_parts.push(format!("{}:{phone}", if en { "Phone" } else { "电话" }));
         }
-    }
-    if let Some(corp) = _get_str(resume, "corporation_name_tks") {
-        if !corp.is_empty() {
+    if let Some(corp) = _get_str(resume, "corporation_name_tks")
+        && !corp.is_empty() {
             summary_parts.push(format!("{}:{corp}", if en { "Company" } else { "公司" }));
         }
-    }
-    if let Some(degree) = _get_str(resume, "highest_degree_kwd") {
-        if !degree.is_empty() {
+    if let Some(degree) = _get_str(resume, "highest_degree_kwd")
+        && !degree.is_empty() {
             summary_parts.push(format!("{}:{degree}", if en { "Degree" } else { "学历" }));
         }
-    }
-    if let Some(exp) = resume.get("work_exp_flt").and_then(Value::as_f64) {
-        if exp > 0.0 {
+    if let Some(exp) = resume.get("work_exp_flt").and_then(Value::as_f64)
+        && exp > 0.0 {
             if en {
                 summary_parts.push(format!("Experience:{exp}yrs"));
             } else {
                 summary_parts.push(format!("经验:{exp}年"));
             }
         }
-    }
     let resume_summary = if summary_parts.is_empty() {
         String::new()
     } else {
@@ -1110,9 +1103,9 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
                 break;
             }
         }
-        if resume.get("name_kwd").is_none() {
-            if let Some(first) = lines.first() {
-                if first.len() <= 40
+        if resume.get("name_kwd").is_none()
+            && let Some(first) = lines.first()
+                && first.len() <= 40
                     && !first.chars().any(|c| c.is_ascii_digit())
                     && regex::Regex::new(r"^[A-Za-z][A-Za-z\s\-\.]+$")
                         .unwrap()
@@ -1120,8 +1113,6 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
                 {
                     resume["name_kwd"] = json!(first.to_string());
                 }
-            }
-        }
     } else {
         let re_label = regex::Regex::new(r"姓\s*名\s*[:：]\s*([\u{4e00}-\u{9fa5}]{2,4})").unwrap();
         for line in lines.iter().take(30) {
@@ -1157,9 +1148,9 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
                 }
             }
         }
-        if resume.get("name_kwd").is_none() {
-            if let Some(first) = lines.first() {
-                if first.len() <= 10 && !first.chars().any(|c| c.is_ascii_digit()) {
+        if resume.get("name_kwd").is_none()
+            && let Some(first) = lines.first()
+                && first.len() <= 10 && !first.chars().any(|c| c.is_ascii_digit()) {
                     let re_cn = regex::Regex::new(r"[\u{4e00}-\u{9fa5}]+").unwrap();
                     if let Some(m) = re_cn.find(first) {
                         let part = m.as_str();
@@ -1168,8 +1159,6 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
                         }
                     }
                 }
-            }
-        }
     }
 
     // --- Phone ---
@@ -1229,18 +1218,16 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
                 .captures(text)
                 .map(|c| c.get(1).unwrap().as_str().to_string());
         }
-        if let Some(a) = age {
-            if let Ok(v) = a.parse::<i64>() {
+        if let Some(a) = age
+            && let Ok(v) = a.parse::<i64>() {
                 resume["age_int"] = json!(v);
             }
-        }
     } else {
         let re_age = regex::Regex::new(r"(\d{1,2})\s*岁").unwrap();
-        if let Some(caps) = re_age.captures(text) {
-            if let Ok(v) = caps.get(1).unwrap().as_str().parse::<i64>() {
+        if let Some(caps) = re_age.captures(text)
+            && let Ok(v) = caps.get(1).unwrap().as_str().parse::<i64>() {
                 resume["age_int"] = json!(v);
             }
-        }
     }
 
     // --- Birth ---
@@ -1550,18 +1537,16 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
     if en {
         let re_exp =
             regex::Regex::new(r"(?i)(\d+)\+?\s*years?\s*(?:of\s*)?(?:experience|work)").unwrap();
-        if let Some(caps) = re_exp.captures(text) {
-            if let Ok(v) = caps.get(1).unwrap().as_str().parse::<f64>() {
+        if let Some(caps) = re_exp.captures(text)
+            && let Ok(v) = caps.get(1).unwrap().as_str().parse::<f64>() {
                 resume["work_exp_flt"] = json!(v);
             }
-        }
     } else {
         let re_exp = regex::Regex::new(r"(\d+)\s*年.*?经验").unwrap();
-        if let Some(caps) = re_exp.captures(text) {
-            if let Ok(v) = caps.get(1).unwrap().as_str().parse::<f64>() {
+        if let Some(caps) = re_exp.captures(text)
+            && let Ok(v) = caps.get(1).unwrap().as_str().parse::<f64>() {
                 resume["work_exp_flt"] = json!(v);
             }
-        }
     }
 
     // --- Graduation year ---
@@ -1569,18 +1554,16 @@ pub fn parse_with_regex(text: &str, lang: &str) -> Resume {
         let re_grad =
             regex::Regex::new(r"(?i)(?:Graduat(?:ed|ion)|Class\s*of)\s*[:：]?\s*((?:19|20)\d{2})")
                 .unwrap();
-        if let Some(caps) = re_grad.captures(text) {
-            if let Ok(v) = caps.get(1).unwrap().as_str().parse::<i64>() {
+        if let Some(caps) = re_grad.captures(text)
+            && let Ok(v) = caps.get(1).unwrap().as_str().parse::<i64>() {
                 resume["edu_end_int"] = json!(v);
             }
-        }
     } else {
         let re_grad = regex::Regex::new(r"((?:19|20)\d{2})\s*年.*?毕业").unwrap();
-        if let Some(caps) = re_grad.captures(text) {
-            if let Ok(v) = caps.get(1).unwrap().as_str().parse::<i64>() {
+        if let Some(caps) = re_grad.captures(text)
+            && let Ok(v) = caps.get(1).unwrap().as_str().parse::<i64>() {
                 resume["edu_end_int"] = json!(v);
             }
-        }
     }
 
     if resume.get("name_kwd").is_none() {
@@ -1776,11 +1759,10 @@ pub fn select(nm: &str) -> Option<serde_json::Value> {
     let mut nm = nm.to_string();
     if nm.starts_with('[') {
         // list input → first element (schools.py:72-74)
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&nm) {
-            if let Some(first) = v.as_array().and_then(|a| a.first()) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&nm)
+            && let Some(first) = v.as_array().and_then(|a| a.first()) {
                 nm = first.as_str().unwrap_or("").to_string();
             }
-        }
     }
     nm = split(&nm).first().cloned().unwrap_or_default();
     nm = nm.to_lowercase().trim().to_string();
@@ -1840,6 +1822,12 @@ pub struct SchoolTable {
     rows: Vec<SchoolRow>,
 }
 
+impl Default for SchoolTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SchoolTable {
     pub fn new() -> Self {
         let mut rows = parse_schools_csv();
@@ -1850,13 +1838,11 @@ impl SchoolTable {
     /// `select` with a prebuilt table (avoids reparsing per call).
     pub fn select(&self, nm: &str) -> Option<serde_json::Value> {
         let mut nm = nm.to_string();
-        if nm.starts_with('[') {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&nm) {
-                if let Some(first) = v.as_array().and_then(|a| a.first()) {
+        if nm.starts_with('[')
+            && let Ok(v) = serde_json::from_str::<serde_json::Value>(&nm)
+                && let Some(first) = v.as_array().and_then(|a| a.first()) {
                     nm = first.as_str().unwrap_or("").to_string();
                 }
-            }
-        }
         nm = split(&nm).first().cloned().unwrap_or_default();
         nm = nm.to_lowercase().trim().to_string();
         let re_paren = regex::Regex::new(r"[(（][^()（）]+[)）]").unwrap();
@@ -2201,11 +2187,10 @@ pub fn baike(cid: &str, default_v: i64) -> i64 {
     for line in CORP_BAIKE_CSV.lines().skip(1) {
         let mut cols = line.split('\t');
         let id = cols.next().unwrap_or("").trim();
-        if id == cid {
-            if let Some(len) = cols.next().and_then(|v| v.trim().parse::<i64>().ok()) {
+        if id == cid
+            && let Some(len) = cols.next().and_then(|v| v.trim().parse::<i64>().ok()) {
                 return len;
             }
-        }
     }
     default_v
 }

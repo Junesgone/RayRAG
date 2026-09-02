@@ -6840,11 +6840,10 @@ async fn execute_code_exec_with_provider(
         )]));
     }
     let mut arguments = Map::new();
-    if let Some(raw) = node.params.get("arguments") {
-        if let Value::Object(map) = raw {
+    if let Some(raw) = node.params.get("arguments")
+        && let Value::Object(map) = raw {
             arguments = map.clone();
         }
-    }
     let provider = std::env::var("RAYRAG_SANDBOX_PROVIDER")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -7096,8 +7095,8 @@ async fn execute_wencai_with_provider(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    if query.trim().is_empty() {
-        if let Some(input_query) = input.inputs.get("query") {
+    if query.trim().is_empty()
+        && let Some(input_query) = input.inputs.get("query") {
             query = match input_query {
                 Value::String(value) => value.clone(),
                 Value::Array(items) => items
@@ -7108,7 +7107,6 @@ async fn execute_wencai_with_provider(
                 other => other.to_string(),
             };
         }
-    }
     if query.trim().is_empty() {
         query = input.question.to_string();
     }
@@ -7205,11 +7203,10 @@ async fn execute_crawler_with_provider(
     if url.trim().is_empty() {
         url = input.question.to_string();
     }
-    if url.trim().is_empty() {
-        if let Some(query) = node.params.get("query").and_then(Value::as_str) {
+    if url.trim().is_empty()
+        && let Some(query) = node.params.get("query").and_then(Value::as_str) {
             url = query.to_string();
         }
-    }
     let extract_type = node
         .params
         .get("extract_type")
@@ -7258,11 +7255,10 @@ async fn execute_translate_with_provider(
     if text.trim().is_empty() {
         text = input.question.to_string();
     }
-    if text.trim().is_empty() {
-        if let Some(query) = node.params.get("query").and_then(Value::as_str) {
+    if text.trim().is_empty()
+        && let Some(query) = node.params.get("query").and_then(Value::as_str) {
             text = query.to_string();
         }
-    }
     let source_lang = node
         .params
         .get("source_lang")

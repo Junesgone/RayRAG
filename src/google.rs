@@ -10,7 +10,6 @@ use futures_util::StreamExt;
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
 
 const SERPAPI_ENDPOINT: &str = "https://serpapi.com/search";
 const PROGRAMMABLE_SEARCH_ENDPOINT: &str = "https://www.googleapis.com/customsearch/v1";

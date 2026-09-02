@@ -10,6 +10,7 @@ Upstream mapping (ragflow v0.26.4):
   skillSearch.topK     = 'Top K Results' (zh '返回结果数量') -> skills modal
   next-search/search-setting.tsx hard-codes 'Top K' -> search sidebar
 """
+
 import sys
 from pathlib import Path
 
@@ -28,7 +29,18 @@ def main(argv: list[str]) -> int:
         return 2
     base = Path(argv[1])
     pages = {}
-    for key in ["kb_en", "kb_zh", "ds_en", "ds_zh", "sp_en", "sp_zh", "sk_en", "sk_zh", "sa_en", "sa_zh"]:
+    for key in [
+        "kb_en",
+        "kb_zh",
+        "ds_en",
+        "ds_zh",
+        "sp_en",
+        "sp_zh",
+        "sk_en",
+        "sk_zh",
+        "sa_en",
+        "sa_zh",
+    ]:
         pages[key] = read(base / (key + ".html"))
         if not pages[key]:
             print(f"missing page file: {key}.html")
@@ -55,7 +67,9 @@ def main(argv: list[str]) -> int:
         failures.append("sk_en: stale merged 'Top K' label present")
 
     for key, html in sorted(pages.items()):
-        print(f"{key}: Top-K={'Top-K' in html} TopKLabel={'>Top K<' in html} Results={'>Top K Results<' in html} zhResults={'>返回结果数量<' in html} staleZh={'召回条数' in html}")
+        print(
+            f"{key}: Top-K={'Top-K' in html} TopKLabel={'>Top K<' in html} Results={'>Top K Results<' in html} zhResults={'>返回结果数量<' in html} staleZh={'召回条数' in html}"
+        )
     print(f"failures={len(failures)}")
     for f in failures:
         print("FAIL:", f)
