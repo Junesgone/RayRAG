@@ -6,6 +6,7 @@ Usage: python3 scripts/ui-traversal/page-script-syntax-scan.py [path] [lang]
   lang defaults to zh-CN (cookie). Login uses RAYRAG_ADMIN_PASSWORD from .env.
 Exits nonzero when any block fails to parse.
 """
+
 import http.client
 import json
 import os
@@ -115,7 +116,9 @@ def main():
         tok = login["data"]["access_token"]
         auth = {"Authorization": "Bearer " + tok}
         if not path or path.startswith("/kbs/auto"):
-            items = request_json("GET", "/api/v1/datasets", headers=auth).get("data") or []
+            items = (
+                request_json("GET", "/api/v1/datasets", headers=auth).get("data") or []
+            )
             if not items:
                 print("no datasets to scan")
                 return 1

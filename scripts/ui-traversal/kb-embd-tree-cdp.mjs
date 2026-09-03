@@ -72,7 +72,10 @@ try {
   });
   const initial = await page.evaluate(() => {
     const t = document.querySelector("[data-testid='default-model-embd_id']");
-    return { state: t.getAttribute("data-state"), value: t.dataset.value || "" };
+    return {
+      state: t.getAttribute("data-state"),
+      value: t.dataset.value || "",
+    };
   });
   results.initial = initial;
   mkdirSync("docs/ui-traversal/rayrag-audit", { recursive: true });
@@ -81,12 +84,16 @@ try {
   });
 
   // Simulated user click: open the default-model tree.
-  await page.locator("[data-testid='default-model-embd_id']").click({ timeout: 8000 });
+  await page
+    .locator("[data-testid='default-model-embd_id']")
+    .click({ timeout: 8000 });
   await page.waitForTimeout(700);
   const opened = await page.evaluate(() => {
     const t = document.querySelector("[data-testid='default-model-embd_id']");
     const pop = document.getElementById("embdSelPopover");
-    const rows = Array.from(document.querySelectorAll("#embdSelTree .default-model-node"));
+    const rows = Array.from(
+      document.querySelectorAll("#embdSelTree .default-model-node"),
+    );
     return {
       expanded: t.getAttribute("aria-expanded"),
       popoverHidden: pop ? pop.hidden : null,
@@ -107,7 +114,9 @@ try {
       await leaf.click();
       await page.waitForTimeout(500);
       const selected = await page.evaluate(() => {
-        const t = document.querySelector("[data-testid='default-model-embd_id']");
+        const t = document.querySelector(
+          "[data-testid='default-model-embd_id']",
+        );
         return {
           value: t.dataset.value || "",
           display: document.getElementById("embdSelValue").textContent,
@@ -135,7 +144,9 @@ try {
         await page.locator("a#nav1").click({ timeout: 8000 });
         await page.waitForTimeout(700);
         const after = await page.evaluate(() => {
-          const t = document.querySelector("[data-testid='default-model-embd_id']");
+          const t = document.querySelector(
+            "[data-testid='default-model-embd_id']",
+          );
           return {
             value: t.dataset.value || "",
             saved: t.dataset.savedValue || "",
@@ -159,7 +170,11 @@ try {
     opened.expanded === "true" &&
     opened.popoverHidden === false &&
     (results.catalogEmpty || (leafPicked && results.persisted));
-  results.result = ok ? (results.catalogEmpty ? "PASS_EMPTY_CATALOG" : "PASS") : "FAIL";
+  results.result = ok
+    ? results.catalogEmpty
+      ? "PASS_EMPTY_CATALOG"
+      : "PASS"
+    : "FAIL";
 } catch (e) {
   results.errors.push(String(e && e.message ? e.message : e));
   results.result = "FAIL";

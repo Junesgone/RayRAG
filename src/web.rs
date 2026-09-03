@@ -98,6 +98,7 @@ fn t(k: &str, zh: bool) -> &str {
         "Chunk Size" => "分块大小",
         "Overlap" => "重叠",
         "Embedding Model" => "嵌入模型",
+        "Please select an embedding model" => "请选择嵌入模型",
         "The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it." => {
             "知识库采用的默认嵌入模型。一旦知识库内已经产生了文本块，更换嵌入模型时，系统将随机抽取若干 chunk 进行兼容性校验，使用新嵌入模型重新编码并计算新旧向量的余弦相似度，样本平均相似度需 ≥ 0.9 方可切换。否则，必须删除知识库内的所有文本块后才能更改。"
         }
@@ -743,6 +744,19 @@ pub async fn datasets_alias(
 const CONFIG_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "embd_id",
     dom_id: "embdSel",
+    label: "",
+    update_type: "embd_id",
+    response_type: "embedding",
+    accepted_types: &["embedding"],
+    required: true,
+    tooltip: "",
+};
+
+/// skills 搜索配置弹层 embedding 树选择器字段（上游 search-config-modal.tsx 的
+/// ModelTreeSelect modelTypes=['embedding']，表单钩子经 saveSkillConfig 落库）。
+const SKILL_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "embd_id",
+    dom_id: "skillEmbd",
     label: "",
     update_type: "embd_id",
     response_type: "embedding",
@@ -2341,9 +2355,34 @@ pub async fn skills_page(
     ));
     b.push_str("</p><div class='toolbar' style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'><input id='skillSpace' value='default' placeholder='Space ID' style='max-width:180px'><input id='skillQuery' placeholder='Search skills by meaning...' style='min-width:260px;flex:1' onkeydown='if(event.key===&quot;Enter&quot;)searchSkills()'><button class='btn btn-p' onclick='searchSkills()'>Search</button><button class='btn btn-o' onclick='openSkillModal()'>+ Add Skill</button><button class='btn btn-o' onclick='openSkillConfig()'>⚙ Configure Search</button><button class='btn btn-o' onclick='reindexSkills()'>↻ Reindex All</button></div><p id='skillMeta' style='color:var(--tm);font-size:12px'></p><div id='skillList' class='kb-grid'><p style='color:var(--tm)'>Loading...</p></div>");
     b.push_str("<div class='modal-overlay' id='skillModal'><div class='modal' style='max-width:680px'><h2>Add Skill</h2><label>Skill ID</label><input id='skillId' placeholder='my-skill'><label>Name</label><input id='skillName' placeholder='My Skill'><label>Folder ID</label><input id='skillFolder' placeholder='optional folder id'><label>Version</label><input id='skillVersion' value='1.0.0'><label>Tags</label><input id='skillTags' placeholder='rag, rust, search'><label>Description</label><textarea id='skillDescription'></textarea><label>Content</label><textarea id='skillContent' style='min-height:160px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='indexSkill()'>Index</button><button class='btn btn-o' onclick='closeSkillModal()'>Cancel</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>Skill Search Configuration</h2><label>Embedding Model</label><input id='skillEmbd' value='default'><label>Vector Similarity Weight (0–1)</label><input id='skillVectorWeight' type='number' min='0' max='1' step='0.05' value='0.3'><label>Similarity Threshold (0–1)</label><input id='skillThreshold' type='number' min='0' max='1' step='0.05' value='0.2'><label>");
+    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>Skill Search Configuration</h2><label>");
+    b.push_str(t("Embedding Model", zh));
+    b.push_str("</label>");
+    push_default_model_selector(&mut b, &SKILL_EMBD_SELECTOR_FIELD);
+    b.push_str("<label>Vector Similarity Weight (0–1)</label><input id='skillVectorWeight' type='number' min='0' max='1' step='0.05' value='0.3'><label>Similarity Threshold (0–1)</label><input id='skillThreshold' type='number' min='0' max='1' step='0.05' value='0.2'><label>");
     b.push_str(t("Top K Results", zh));
     b.push_str("</label><input id='skillTopK' type='number' min='1' value='10'><label><input id='skillContentEnabled' type='checkbox'> Include content in embedding text</label><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveSkillConfig()'>Save</button><button class='btn btn-o' onclick='document.getElementById(&quot;skillConfigModal&quot;).classList.remove(&quot;show&quot;)'>Cancel</button></div></div></div>");
+    b.push_str("<script>const MODEL_FIELDS=");
+    let skill_fields_payload = serde_json::json!([
+        {
+            "fieldId": "embd_id",
+            "domId": "skillEmbd",
+            "updateType": "embd_id",
+            "responseType": "embedding",
+            "acceptedTypes": ["embedding"],
+            "required": true,
+        }
+    ]);
+    b.push_str(&json_script_value(&skill_fields_payload));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    b.push_str("function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;trigger.dataset.value=value;trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}async function loadSkillModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}loadSkillModelCatalog();</script>");
+    b.push_str("<script>var SKILL_EMBD_REQUIRED=");
+    b.push_str(&json_script_string(t(
+        "Please select an embedding model",
+        zh,
+    )));
+    b.push_str(";</script>");
     b.push_str(r#"<script>
 function skillSpace(){return document.getElementById('skillSpace').value.trim()||'default'}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -2352,8 +2391,8 @@ function openSkillModal(){document.getElementById('skillModal').classList.add('s
 function closeSkillModal(){document.getElementById('skillModal').classList.remove('show')}
 function indexSkill(){var tags=document.getElementById('skillTags').value.split(',').map(function(v){return v.trim()}).filter(Boolean);var body={space_id:skillSpace(),skills:[{id:document.getElementById('skillId').value,name:document.getElementById('skillName').value,folder_id:document.getElementById('skillFolder').value,version:document.getElementById('skillVersion').value,tags:tags,description:document.getElementById('skillDescription').value,content:document.getElementById('skillContent').value}]};fetch('/api/v1/skills/index',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Index failed');closeSkillModal();searchSkills()}).catch(function(e){alert(e.message)})}
 function deleteSkill(id){if(!confirm('Delete this skill index?'))return;fetch('/api/v1/skills/index?space_id='+encodeURIComponent(skillSpace())+'&skill_id='+encodeURIComponent(id),{method:'DELETE'}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Delete failed');searchSkills()}).catch(function(e){alert(e.message)})}
-function openSkillConfig(){fetch('/api/v1/skills/config?space_id='+encodeURIComponent(skillSpace())).then(r=>r.json()).then(function(d){var c=d.data||{};document.getElementById('skillEmbd').value=c.embd_id||'default';document.getElementById('skillVectorWeight').value=c.vector_similarity_weight==null?0.3:c.vector_similarity_weight;document.getElementById('skillThreshold').value=c.similarity_threshold==null?0.2:c.similarity_threshold;document.getElementById('skillTopK').value=c.top_k||10;document.getElementById('skillContentEnabled').checked=!!(c.field_config&&c.field_config.content&&c.field_config.content.enabled);document.getElementById('skillConfigModal').classList.add('show')})}
-function saveSkillConfig(){var fields={name:{enabled:true,weight:3},tags:{enabled:true,weight:2},description:{enabled:true,weight:1},content:{enabled:document.getElementById('skillContentEnabled').checked,weight:.5}};var body={space_id:skillSpace(),embd_id:document.getElementById('skillEmbd').value,vector_similarity_weight:Number(document.getElementById('skillVectorWeight').value),similarity_threshold:Number(document.getElementById('skillThreshold').value),top_k:Number(document.getElementById('skillTopK').value),field_config:fields};fetch('/api/v1/skills/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Save failed');document.getElementById('skillConfigModal').classList.remove('show');searchSkills()}).catch(function(e){alert(e.message)})}
+function openSkillConfig(){fetch('/api/v1/skills/config?space_id='+encodeURIComponent(skillSpace())).then(r=>r.json()).then(function(d){var c=d.data||{};var skillTrigger=document.getElementById('skillEmbd');skillTrigger.dataset.value=c.embd_id||'';skillTrigger.dataset.savedValue=skillTrigger.dataset.value;var skillField=modelField('embd_id');if(skillField){renderDefaultModelTrigger(skillField);renderDefaultModelTree(skillField)}normalizeDefaultModelStoredValues();document.getElementById('skillVectorWeight').value=c.vector_similarity_weight==null?0.3:c.vector_similarity_weight;document.getElementById('skillThreshold').value=c.similarity_threshold==null?0.2:c.similarity_threshold;document.getElementById('skillTopK').value=c.top_k||10;document.getElementById('skillContentEnabled').checked=!!(c.field_config&&c.field_config.content&&c.field_config.content.enabled);document.getElementById('skillConfigModal').classList.add('show')})}
+function saveSkillConfig(){var skillVal=(document.getElementById('skillEmbd').dataset.value||'');if(!skillVal){alert(SKILL_EMBD_REQUIRED);return}var fields={name:{enabled:true,weight:3},tags:{enabled:true,weight:2},description:{enabled:true,weight:1},content:{enabled:document.getElementById('skillContentEnabled').checked,weight:.5}};var body={space_id:skillSpace(),embd_id:skillVal,vector_similarity_weight:Number(document.getElementById('skillVectorWeight').value),similarity_threshold:Number(document.getElementById('skillThreshold').value),top_k:Number(document.getElementById('skillTopK').value),field_config:fields};fetch('/api/v1/skills/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Save failed');document.getElementById('skillConfigModal').classList.remove('show');searchSkills()}).catch(function(e){alert(e.message)})}
 function reindexSkills(){if(!confirm('Re-embed all indexed skills in this space?'))return;fetch('/api/v1/skills/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space_id:skillSpace()})}).then(r=>r.json()).then(function(d){if(d.code!==0)throw new Error(d.message||'Reindex failed');alert('Reindexed '+(d.data.indexed_count||0)+' skills · '+d.data.version);searchSkills()}).catch(function(e){alert(e.message)})}
 searchSkills();
 </script>"#);
@@ -4466,6 +4505,59 @@ mod kb_ui_tests {
         assert!(body.contains("/api/v1/providers/"));
         assert!(body.contains("/instances"));
         assert!(body.contains("/models"));
+    }
+
+    #[tokio::test]
+    async fn skills_config_modal_uses_shared_default_model_tree() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/skills")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(skills_page(State(state), req).await).await;
+        // 弹层 embedding 行：共享树选择器 markup + MODEL_FIELDS 载荷 + 共享脚本
+        assert!(
+            html.contains("data-testid='default-model-embd_id'"),
+            "tree trigger testid missing"
+        );
+        assert!(
+            html.contains("data-default-model-root='skillEmbd'"),
+            "skills selector root missing"
+        );
+        assert!(
+            html.contains("\"skillEmbd\""),
+            "MODEL_FIELDS payload missing"
+        );
+        assert!(
+            html.contains("function modelField(type){return MODEL_FIELDS.find"),
+            "shared head missing"
+        );
+        assert!(
+            html.contains("function filterDefaultModelTree(nodes,term)"),
+            "shared body missing"
+        );
+        assert!(
+            html.contains("normalizeDefaultModelStoredValues"),
+            "stored-value normalizer missing"
+        );
+        // 保存校验：未选择嵌入模型时按上游文案阻止（skillSearch.pleaseSelectEmbeddingModel）
+        assert!(
+            html.contains("SKILL_EMBD_REQUIRED"),
+            "required-model message missing"
+        );
+        assert!(
+            html.contains("Please select an embedding model") || html.contains("请选择嵌入模型"),
+            "upstream validation message missing"
+        );
+        // openSkillConfig 写 dataset.value；saveSkillConfig 读 dataset.value
+        assert!(
+            html.contains("skillTrigger.dataset.value=c.embd_id||''"),
+            "openSkillConfig writes tree value"
+        );
+        assert!(
+            html.contains("embd_id:skillVal"),
+            "saveSkillConfig reads tree value"
+        );
     }
 
     #[tokio::test]
