@@ -111,7 +111,7 @@ pub struct TenantModelInstance {
     pub models: Vec<TenantModelSpec>,
     /// Per-provider credential/configuration extras (RAGFlow provider-config-map.ts fields).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub extra: std::collections::BTreeMap<String,String>,
+    pub extra: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -197,9 +197,7 @@ impl ResolvedTenantModel {
     pub fn id(&self) -> String {
         format!(
             "{}/{}/{}",
-            self.provider_id, self.instance_id,
-
-            self.model_name
+            self.provider_id, self.instance_id, self.model_name
         )
     }
 
@@ -932,11 +930,7 @@ impl TenantModelStore {
                         && instance.instance_id == instance_id
                 })
                 .context("Cannot find tenant model instance.")?;
-            if instance
-                .models
-                .iter()
-                .any(|model| model.name == model_name)
-            {
+            if instance.models.iter().any(|model| model.name == model_name) {
                 anyhow::bail!("Model '{model_name}' already exists for this instance.");
             }
             instance.models.push(TenantModelSpec {
@@ -2035,7 +2029,9 @@ pub fn plan_added_models(
             .unwrap_or_default();
         let instance_name = instances
             .iter()
-            .find(|instance| instance.instance_id == instance_id)
+            .find(|instance| {
+                instance.instance_id == instance_id && instance.provider_id == provider_id
+            })
             .map(|instance| instance.instance_name.clone())
             .unwrap_or_default();
         added.push(AddedModelEntry {
@@ -2050,22 +2046,23 @@ pub fn plan_added_models(
     }
 
     // TEI builtin embedding row (env-gated upstream).
-    if compose_profiles.contains("tei-") && !tei_model.is_empty()
+    if compose_profiles.contains("tei-")
+        && !tei_model.is_empty()
         && (filter.is_empty() || filter.iter().any(|capability| capability == "embedding"))
-            && !added
-                .iter()
-                .any(|model| model.provider_name == "Builtin" && model.name == tei_model)
-            {
-                added.push(AddedModelEntry {
-                    model_type: vec!["embedding".to_string()],
-                    name: tei_model.to_string(),
-                    provider_id: String::new(),
-                    provider_name: "Builtin".to_string(),
-                    instance_id: String::new(),
-                    instance_name: "default".to_string(),
-                    max_tokens: None,
-                });
-            }
+        && !added
+            .iter()
+            .any(|model| model.provider_name == "Builtin" && model.name == tei_model)
+    {
+        added.push(AddedModelEntry {
+            model_type: vec!["embedding".to_string()],
+            name: tei_model.to_string(),
+            provider_id: String::new(),
+            provider_name: "Builtin".to_string(),
+            instance_id: String::new(),
+            instance_name: "default".to_string(),
+            max_tokens: None,
+        });
+    }
 
     added.sort_by(|left, right| {
         factory_rank_key(&left.provider_name)
@@ -2236,7 +2233,7 @@ pub struct CreateRagflowProviderInstanceRequest {
     pub tenant_id: Option<String>,
 
     #[serde(default)]
-    pub extra: std::collections::BTreeMap<String,String>,
+    pub extra: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3216,8 +3213,10 @@ pub async fn add_ragflow_instance_model(
     }
     let capabilities = match requested_model_types(&raw_types) {
         Ok(capabilities) => capabilities,
-        Err(error) => return Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
-            .into_response(),
+        Err(error) => {
+            return Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
+                .into_response();
+        }
     };
     let tenant_id = selected_tenant(&auth, update.tenant_id.as_deref()).to_string();
     if !state.tenants.can_manage(&tenant_id, &auth.user_id) {
@@ -3246,11 +3245,7 @@ pub async fn add_ragflow_instance_model(
         )
             .into_response();
     };
-    if instance
-        .models
-        .iter()
-        .any(|model| model.name == model_name)
-    {
+    if instance.models.iter().any(|model| model.name == model_name) {
         return Json(serde_json::json!({
             "code": 102,
             "message": format!(
@@ -3267,16 +3262,15 @@ pub async fn add_ragflow_instance_model(
         .unwrap_or(false);
     let canonical_provider =
         crate::providers::canonical_provider_name(&provider.id, &provider.name);
-    let ocr_config = if canonical_provider == "SoMark"
-        && capabilities.contains(&ModelCapability::Ocr)
-    {
-        update
-            .extra
-            .as_ref()
-            .and_then(|extra| extra.as_object().cloned())
-    } else {
-        None
-    };
+    let ocr_config =
+        if canonical_provider == "SoMark" && capabilities.contains(&ModelCapability::Ocr) {
+            update
+                .extra
+                .as_ref()
+                .and_then(|extra| extra.as_object().cloned())
+        } else {
+            None
+        };
     let max_tokens = update.max_tokens.filter(|value| *value > 0);
     match state.tenant_models.add_instance_model(
         &tenant_id,
@@ -3288,10 +3282,10 @@ pub async fn add_ragflow_instance_model(
         is_tools,
         ocr_config,
     ) {
-        Ok(()) => Json(serde_json::json!({ "code": 0, "message": "success" }))
-            .into_response(),
-        Err(error) => Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
-            .into_response(),
+        Ok(()) => Json(serde_json::json!({ "code": 0, "message": "success" })).into_response(),
+        Err(error) => {
+            Json(serde_json::json!({ "code": 102, "message": error.to_string() })).into_response()
+        }
     }
 }
 
@@ -3331,15 +3325,17 @@ pub async fn add_ragflow_provider(
         .into_response();
     };
     let configured = state.tenant_models.list_configured(&tenant_id);
-    if configured.iter().any(|instance| instance.provider_id == provider.id) {
+    if configured
+        .iter()
+        .any(|instance| instance.provider_id == provider.id)
+    {
         return Json(serde_json::json!({
             "code": 102,
             "message": format!("Provider {} already exists", provider.name)
         }))
         .into_response();
     }
-    Json(serde_json::json!({ "code": 0, "message": "success" }))
-        .into_response()
+    Json(serde_json::json!({ "code": 0, "message": "success" })).into_response()
 }
 
 /// GET `/api/v1/providers/{provider}/models/{model}` — RAGFlow
@@ -3722,36 +3718,42 @@ mod tests {
             None,
         );
         assert!(duplicate.is_err());
-        assert!(duplicate
-            .unwrap_err()
-            .to_string()
-            .contains("already exists"));
+        assert!(
+            duplicate
+                .unwrap_err()
+                .to_string()
+                .contains("already exists")
+        );
         // An empty capability list is rejected fail-closed.
-        assert!(store
-            .add_instance_model(
-                "tenant-a",
-                "local",
-                "inst-1",
-                "other-model",
-                &[],
-                None,
-                false,
-                None,
-            )
-            .is_err());
+        assert!(
+            store
+                .add_instance_model(
+                    "tenant-a",
+                    "local",
+                    "inst-1",
+                    "other-model",
+                    &[],
+                    None,
+                    false,
+                    None,
+                )
+                .is_err()
+        );
         // Unknown instance fails closed.
-        assert!(store
-            .add_instance_model(
-                "tenant-a",
-                "local",
-                "missing-instance",
-                "m",
-                &[ModelCapability::Chat],
-                None,
-                false,
-                None,
-            )
-            .is_err());
+        assert!(
+            store
+                .add_instance_model(
+                    "tenant-a",
+                    "local",
+                    "missing-instance",
+                    "m",
+                    &[ModelCapability::Chat],
+                    None,
+                    false,
+                    None,
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -3759,8 +3761,7 @@ mod tests {
         // The `show_provider_model` endpoint reads the embedded full factory
         // catalog; assert the detail fields it emits (name / type /
         // max_tokens) match the upstream llm_factories.json shape.
-        let deepseek =
-            crate::providers::factory_full_models("deepseek", "DeepSeek");
+        let deepseek = crate::providers::factory_full_models("deepseek", "DeepSeek");
         assert!(!deepseek.is_empty(), "DeepSeek catalog must not be empty");
         let model = deepseek
             .iter()
@@ -5007,6 +5008,47 @@ mod tests {
     }
 
     #[test]
+    fn plan_added_models_resolves_instance_name_by_provider_pair() {
+        // Two providers share the same `instance_id` ("primary") with
+        // different `instance_name`s. A manual-only model on the second
+        // provider must carry that provider's instance name; the flat
+        // instance_id-only lookup leaked the first provider's instance name
+        // into the selector (deployed catalog showed the embedding entry with
+        // "GPU Qwen3.5-9B" instead of "GPU Qwen3-Embedding-4B").
+        let providers = vec![
+            fake_provider("local-llm", "Local Qwen3.5-9B"),
+            fake_provider("local-embedding", "Qwen3-Embedding-4B"),
+        ];
+        let instances = vec![
+            fake_instance(
+                "tenant-a",
+                "local-llm",
+                "primary",
+                "GPU Qwen3.5-9B",
+                Vec::new(),
+            ),
+            fake_instance(
+                "tenant-a",
+                "local-embedding",
+                "primary",
+                "GPU Qwen3-Embedding-4B",
+                vec![spec(
+                    "qwen3-embedding-4b",
+                    &[ModelCapability::Embedding],
+                    true,
+                )],
+            ),
+        ];
+        let entries = plan_added_models(&providers, &instances, &[], &[], "", "");
+        let manual = entries
+            .iter()
+            .find(|entry| entry.name == "qwen3-embedding-4b")
+            .unwrap();
+        assert_eq!(manual.provider_name, "Qwen3-Embedding-4B");
+        assert_eq!(manual.instance_name, "GPU Qwen3-Embedding-4B");
+    }
+
+    #[test]
     fn plan_added_models_applies_authoritative_overrides_and_filters() {
         let providers = vec![fake_provider("oa", "OpenAI")];
         let instances = vec![fake_instance(
@@ -5356,11 +5398,15 @@ mod tests {
         );
         assert!(ocr_provider_api_base("OpenAI", Some(&loader)).is_none());
         assert!(ocr_provider_api_base("MinerU", Some("not-json")).is_none());
-    }    #[test]
+    }
+    #[test]
     fn create_request_deserializes_provider_extra_map_and_instance_round_trips_it() {
-                let raw = r#"{"instance_name":"spark-1","api_key":"k","model_info":[{"model_name":"x","model_type":["chat"]}],"extra":{"spark_app_id":"A1","spark_api_secret":"S9"}}"#;
+        let raw = r#"{"instance_name":"spark-1","api_key":"k","model_info":[{"model_name":"x","model_type":["chat"]}],"extra":{"spark_app_id":"A1","spark_api_secret":"S9"}}"#;
         let request: CreateRagflowProviderInstanceRequest = serde_json::from_str(&raw).unwrap();
-        assert_eq!(request.extra.get("spark_app_id").map(String::as_str), Some("A1"));
+        assert_eq!(
+            request.extra.get("spark_app_id").map(String::as_str),
+            Some("A1")
+        );
         assert_eq!(request.extra.len(), 2);
         let mut extra = std::collections::BTreeMap::new();
         extra.insert("yiyan_ak".to_string(), "AK".to_string());
@@ -5391,5 +5437,4 @@ mod tests {
         let json = serde_json::to_string(&empty).unwrap();
         assert!(!json.contains("extra"));
     }
-
 }
