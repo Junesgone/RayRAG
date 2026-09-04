@@ -19,23 +19,39 @@ try {
     const r = await fetch('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@rayrag.local', password }) });
     const j = await r.json();
     localStorage.setItem('rayrag_token', j.data.access_token);
+    document.cookie = 'rayrag_token=' + j.data.access_token + ';path=/;max-age=86400';
   }, { password: PASSWORD });
-  await page.goto(`${ORIGIN}/user-setting/setting-model`, { waitUntil: 'domcontentloaded', timeout: 40000 });
+  await page.goto(`${ORIGIN}/user-setting/model`, { waitUntil: 'domcontentloaded', timeout: 40000 });
   await page.waitForTimeout(1200);
   mkdirSync('docs/ui-traversal/rayrag-audit', { recursive: true });
-  await page.locator("[data-testid='available-model-card']").first().click({ timeout: 8000 });
-  await page.waitForTimeout(700);
-  results.modalOpened = await page.evaluate(() => document.getElementById('providerInstanceModal').classList.contains('show'));
-  await page.screenshot({ path: 'docs/ui-traversal/rayrag-audit/provider-modal-keyboard-20260904.png' });
-  await page.locator("button[onclick='toggleProviderModelPicker()']").click({ timeout: 8000 });
-  await page.waitForTimeout(1200);
-  const picker = await page.evaluate(() => {
-    const list = document.getElementById('piModelList');
-    const rows = Array.from(list.querySelectorAll('.provider-model-row'));
-    return { hidden: document.getElementById('piModelPanel').hidden, rows: rows.length, listRole: list.getAttribute('role'), rowRoles: rows.slice(0, 3).map((r) => r.getAttribute('role')), hasFooter: !!document.querySelector('.provider-model-add') };
-  });
+  const cards = page.locator("[data-testid='available-model-card'][data-model-picker='true']");
+  const count = await cards.count();
+  results.pickerCards = count;
+  let openedOk = false;
+  let picker = null;
+  for (let i = 0; i < Math.min(count, 6); i++) {
+    await cards.nth(i).click({ timeout: 8000 });
+    await page.waitForTimeout(600);
+    if (!(await page.evaluate(() => document.getElementById('providerInstanceModal').classList.contains('show')))) continue;
+    const provider = await page.evaluate(() => (providerInstanceCard ? providerInstanceCard.dataset.provider : null));
+    await page.locator("button[onclick='toggleProviderModelPicker()']").click({ timeout: 8000 });
+    await page.waitForTimeout(1500);
+    picker = await page.evaluate((prov) => {
+      const list = document.getElementById('piModelList');
+      const rows = Array.from(list.querySelectorAll('.provider-model-row'));
+      return { provider: prov, hidden: document.getElementById('piModelPanel').hidden, rows: rows.length, listRole: list.getAttribute('role'), rowRoles: rows.slice(0, 3).map((r) => r.getAttribute('role')), loading: document.getElementById('piModelLoading').textContent };
+    }, provider);
+    if (picker.rows > 0) {
+      openedOk = true;
+      await page.screenshot({ path: 'docs/ui-traversal/rayrag-audit/provider-modal-keyboard-20260904.png' });
+      break;
+    }
+    await page.evaluate(() => closeProviderInstanceModal());
+    await page.waitForTimeout(400);
+  }
+  results.modalOpened = openedOk;
   results.picker = picker;
-  if (picker.rows > 0 && picker.listRole === 'list' && picker.rowRoles.every((r) => r === 'listitem')) {
+  if (openedOk && picker.listRole === 'list' && picker.rowRoles.every((r) => r === 'listitem')) {
     await page.locator('#piModelSearch').click({ timeout: 5000 }).catch(() => {});
     await page.keyboard.press('Tab');
     await page.waitForTimeout(250);
@@ -56,7 +72,7 @@ try {
     results.dialogClosedByEscape = await page.evaluate(() => !document.getElementById('providerCustomModelModal').classList.contains('show'));
     results.result = results.modalOpened && results.afterSpace.checked === true && results.dialogOpened && results.dialogClosedByEscape ? 'PASS' : 'FAIL';
   } else {
-    results.result = picker.rows === 0 ? 'PASS_EMPTY_PICKER' : 'FAIL';
+    results.result = 'FAIL';
   }
 } catch (e) {
   results.error = String(e && e.message ? e.message : e);
