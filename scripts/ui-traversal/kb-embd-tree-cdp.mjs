@@ -108,59 +108,93 @@ try {
 
   let leafPicked = false;
   if (opened.rowCount > 0) {
-    const leaf = page.locator("#embdSelTree .default-model-leaf").first();
-    if (await leaf.count()) {
-      results.leaf = await leaf.textContent();
-      await leaf.click();
-      await page.waitForTimeout(500);
-      const selected = await page.evaluate(() => {
-        const t = document.querySelector(
-          "[data-testid='default-model-embd_id']",
-        );
+    // Radix keyboard parity: ArrowDown from the search input, in-tree
+    // navigation (ArrowDown/Up/Home/End), typeahead, then Enter-select.
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(250);
+    const nav1 = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll("#embdSelTree button.default-model-node"),
+      );
+      return { rows: rows.length, activeIdx: rows.indexOf(document.activeElement) };
+    });
+    results.kbNav1 = nav1;
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(250);
+    const nav2 = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll("#embdSelTree button.default-model-node"),
+      );
+      return { activeIdx: rows.indexOf(document.activeElement) };
+    });
+    results.kbNav2 = nav2;
+    await page.keyboard.press("q");
+    await page.waitForTimeout(250);
+    const nav3 = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll("#embdSelTree button.default-model-node"),
+      );
+      return { activeIdx: rows.indexOf(document.activeElement) };
+    });
+    results.kbTypeahead = nav3;
+    await page.keyboard.press("End");
+    await page.waitForTimeout(250);
+    const nav4 = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll("#embdSelTree button.default-model-node"),
+      );
+      const active = document.activeElement;
+      return {
+        activeIdx: rows.indexOf(active),
+        activeIsLeaf: active.classList.contains("default-model-leaf"),
+      };
+    });
+    results.kbNavEnd = nav4;
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(600);
+    const selected = await page.evaluate(() => {
+      const t = document.querySelector("[data-testid='default-model-embd_id']");
+      return {
+        value: t.dataset.value || "",
+        display: document.getElementById("embdSelValue").textContent,
+        state: t.getAttribute("data-state"),
+      };
+    });
+    results.selected = selected;
+    leafPicked = selected.value !== "";
+    await page.screenshot({
+      path: "docs/ui-traversal/rayrag-audit/kb-embd-selected-zh-20260902.png",
+    });
+    if (leafPicked) {
+      await page
+        .locator("button[onclick*='saveConfig']")
+        .first()
+        .click({ timeout: 8000 });
+      await page.waitForTimeout(1800);
+      const saved = await page.evaluate(() => {
+        const m = document.getElementById("cfgMsg");
+        return m ? m.textContent : null;
+      });
+      results.saved = saved;
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 40000 });
+      await page.waitForTimeout(1500);
+      await page.locator("a#nav1").click({ timeout: 8000 });
+      await page.waitForTimeout(700);
+      const after = await page.evaluate(() => {
+        const t = document.querySelector("[data-testid='default-model-embd_id']");
         return {
           value: t.dataset.value || "",
+          saved: t.dataset.savedValue || "",
           display: document.getElementById("embdSelValue").textContent,
-          state: t.getAttribute("data-state"),
         };
       });
-      results.selected = selected;
-      leafPicked = selected.value !== "";
+      results.after = after;
       await page.screenshot({
-        path: "docs/ui-traversal/rayrag-audit/kb-embd-selected-zh-20260902.png",
+        path: "docs/ui-traversal/rayrag-audit/kb-embd-after-zh-20260902.png",
       });
-      if (leafPicked) {
-        await page
-          .locator("button[onclick*='saveConfig']")
-          .first()
-          .click({ timeout: 8000 });
-        await page.waitForTimeout(1800);
-        const saved = await page.evaluate(() => {
-          const m = document.getElementById("cfgMsg");
-          return m ? m.textContent : null;
-        });
-        results.saved = saved;
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 40000 });
-        await page.waitForTimeout(1500);
-        await page.locator("a#nav1").click({ timeout: 8000 });
-        await page.waitForTimeout(700);
-        const after = await page.evaluate(() => {
-          const t = document.querySelector(
-            "[data-testid='default-model-embd_id']",
-          );
-          return {
-            value: t.dataset.value || "",
-            saved: t.dataset.savedValue || "",
-            display: document.getElementById("embdSelValue").textContent,
-          };
-        });
-        results.after = after;
-        await page.screenshot({
-          path: "docs/ui-traversal/rayrag-audit/kb-embd-after-zh-20260902.png",
-        });
-        results.persisted =
-          results.after.value === results.selected.value &&
-          results.after.saved === results.after.value;
-      }
+      results.persisted =
+        results.after.value === results.selected.value &&
+        results.after.saved === results.after.value;
     }
   } else {
     results.catalogEmpty = true;
@@ -169,7 +203,17 @@ try {
   const ok =
     opened.expanded === "true" &&
     opened.popoverHidden === false &&
-    (results.catalogEmpty || (leafPicked && results.persisted));
+    (results.catalogEmpty ||
+      (leafPicked &&
+        results.persisted &&
+        results.kbNav1 &&
+        results.kbNav1.activeIdx === 0 &&
+        results.kbNav2 &&
+        results.kbNav2.activeIdx === 1 &&
+        results.kbTypeahead &&
+        results.kbTypeahead.activeIdx === 0 &&
+        results.kbNavEnd &&
+        results.kbNavEnd.activeIsLeaf === true));
   results.result = ok
     ? results.catalogEmpty
       ? "PASS_EMPTY_CATALOG"
