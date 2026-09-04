@@ -99,6 +99,10 @@ fn t(k: &str, zh: bool) -> &str {
         "Overlap" => "重叠",
         "Embedding Model" => "嵌入模型",
         "Please select an embedding model" => "请选择嵌入模型",
+        "Please select" => "请选择",
+        "Please select a embedding model." => "请选择嵌入模型",
+        "Select an embedding model" => "选择嵌入模型",
+        "Skill Search Configuration" => "技能搜索配置",
         "The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it." => {
             "知识库采用的默认嵌入模型。一旦知识库内已经产生了文本块，更换嵌入模型时，系统将随机抽取若干 chunk 进行兼容性校验，使用新嵌入模型重新编码并计算新旧向量的余弦相似度，样本平均相似度需 ≥ 0.9 方可切换。否则，必须删除知识库内的所有文本块后才能更改。"
         }
@@ -750,6 +754,7 @@ const CONFIG_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     accepted_types: &["embedding"],
     required: true,
     tooltip: "",
+    placeholder: "Please select a embedding model.",
 };
 
 /// skills 搜索配置弹层 embedding 树选择器字段（上游 search-config-modal.tsx 的
@@ -763,6 +768,7 @@ const SKILL_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     accepted_types: &["embedding"],
     required: true,
     tooltip: "",
+    placeholder: "Select an embedding model",
 };
 
 pub async fn kb_detail_page(
@@ -878,7 +884,7 @@ pub async fn kb_detail_page(
     b.push_str("' data-tip='");
     b.push_str(&html_escape(t("The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it.", zh)));
     b.push_str("'>?</span></td><td>");
-    push_default_model_selector(&mut b, &CONFIG_EMBD_SELECTOR_FIELD);
+    push_default_model_selector(&mut b, &CONFIG_EMBD_SELECTOR_FIELD, zh);
     b.push_str("</td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Page rank", zh));
@@ -992,6 +998,7 @@ pub async fn kb_detail_page(
             "responseType": "embedding",
             "acceptedTypes": ["embedding"],
             "required": true,
+            "placeholder": "Please select a embedding model.",
         }
     ]);
     b.push_str("<script>const MODEL_FIELDS=");
@@ -1196,7 +1203,7 @@ pub async fn dataset_page(
     b.push_str("' data-tip='");
     b.push_str(&html_escape(t("The default embedding model used by the dataset. Once the dataset has chunks, when switching the embedding model, the system randomly samples a few chunks for a compatibility check, re-embeds them with the new embedding model, and computes cosine similarity between the new and old vectors. Switching is allowed only when the average similarity of the sample is ≥ 0.9. Otherwise, you must delete all chunks in the dataset before you can change it.", zh)));
     b.push_str("'>?</span></td><td>");
-    push_default_model_selector(&mut b, &CONFIG_EMBD_SELECTOR_FIELD);
+    push_default_model_selector(&mut b, &CONFIG_EMBD_SELECTOR_FIELD, zh);
     b.push_str("</td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Page rank", zh));
@@ -1353,6 +1360,7 @@ pub async fn dataset_page(
             "responseType": "embedding",
             "acceptedTypes": ["embedding"],
             "required": true,
+            "placeholder": "Please select a embedding model.",
         }
     ]);
     b.push_str("<script>const MODEL_FIELDS=");
@@ -2355,10 +2363,12 @@ pub async fn skills_page(
     ));
     b.push_str("</p><div class='toolbar' style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'><input id='skillSpace' value='default' placeholder='Space ID' style='max-width:180px'><input id='skillQuery' placeholder='Search skills by meaning...' style='min-width:260px;flex:1' onkeydown='if(event.key===&quot;Enter&quot;)searchSkills()'><button class='btn btn-p' onclick='searchSkills()'>Search</button><button class='btn btn-o' onclick='openSkillModal()'>+ Add Skill</button><button class='btn btn-o' onclick='openSkillConfig()'>⚙ Configure Search</button><button class='btn btn-o' onclick='reindexSkills()'>↻ Reindex All</button></div><p id='skillMeta' style='color:var(--tm);font-size:12px'></p><div id='skillList' class='kb-grid'><p style='color:var(--tm)'>Loading...</p></div>");
     b.push_str("<div class='modal-overlay' id='skillModal'><div class='modal' style='max-width:680px'><h2>Add Skill</h2><label>Skill ID</label><input id='skillId' placeholder='my-skill'><label>Name</label><input id='skillName' placeholder='My Skill'><label>Folder ID</label><input id='skillFolder' placeholder='optional folder id'><label>Version</label><input id='skillVersion' value='1.0.0'><label>Tags</label><input id='skillTags' placeholder='rag, rust, search'><label>Description</label><textarea id='skillDescription'></textarea><label>Content</label><textarea id='skillContent' style='min-height:160px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='indexSkill()'>Index</button><button class='btn btn-o' onclick='closeSkillModal()'>Cancel</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>Skill Search Configuration</h2><label>");
+    b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>");
+    b.push_str(t("Skill Search Configuration", zh));
+    b.push_str("</h2><label>");
     b.push_str(t("Embedding Model", zh));
     b.push_str("</label>");
-    push_default_model_selector(&mut b, &SKILL_EMBD_SELECTOR_FIELD);
+    push_default_model_selector(&mut b, &SKILL_EMBD_SELECTOR_FIELD, zh);
     b.push_str("<label>Vector Similarity Weight (0–1)</label><input id='skillVectorWeight' type='number' min='0' max='1' step='0.05' value='0.3'><label>Similarity Threshold (0–1)</label><input id='skillThreshold' type='number' min='0' max='1' step='0.05' value='0.2'><label>");
     b.push_str(t("Top K Results", zh));
     b.push_str("</label><input id='skillTopK' type='number' min='1' value='10'><label><input id='skillContentEnabled' type='checkbox'> Include content in embedding text</label><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveSkillConfig()'>Save</button><button class='btn btn-o' onclick='document.getElementById(&quot;skillConfigModal&quot;).classList.remove(&quot;show&quot;)'>Cancel</button></div></div></div>");
@@ -2371,6 +2381,7 @@ pub async fn skills_page(
             "responseType": "embedding",
             "acceptedTypes": ["embedding"],
             "required": true,
+            "placeholder": "Select an embedding model",
         }
     ]);
     b.push_str(&json_script_value(&skill_fields_payload));
@@ -2409,6 +2420,7 @@ struct DefaultModelField {
     accepted_types: &'static [&'static str],
     required: bool,
     tooltip: &'static str,
+    placeholder: &'static str,
 }
 
 const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
@@ -2421,6 +2433,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["chat", "image2text"],
         required: true,
         tooltip: "The default LLM for each newly created dataset.",
+        placeholder: "Please select",
     },
     DefaultModelField {
         field_id: "embd_id",
@@ -2431,6 +2444,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["embedding"],
         required: false,
         tooltip: "The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+        placeholder: "Please select",
     },
     DefaultModelField {
         field_id: "img2txt_id",
@@ -2441,6 +2455,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["image2text"],
         required: false,
         tooltip: "The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+        placeholder: "Please select",
     },
     DefaultModelField {
         field_id: "asr_id",
@@ -2451,6 +2466,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["speech2text"],
         required: false,
         tooltip: "The default ASR model for each newly created dataset. Use this model to translate voices to corresponding text.",
+        placeholder: "Please select",
     },
     DefaultModelField {
         field_id: "rerank_id",
@@ -2461,6 +2477,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["rerank"],
         required: false,
         tooltip: "The default rerank model for reranking chunks. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+        placeholder: "Please select",
     },
     DefaultModelField {
         field_id: "tts_id",
@@ -2471,6 +2488,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["tts"],
         required: false,
         tooltip: "The default text-to-speech model. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+        placeholder: "Please select",
     },
 ];
 
@@ -2711,7 +2729,7 @@ fn provider_icon_html(provider_name: &str, class: &str) -> String {
 /// search input and the `role='tree'` container. Extracted from
 /// `providers_page` so every page that upstream renders through
 /// `ModelTreeSelect` can reuse the identical markup.
-fn push_default_model_selector(b: &mut String, field: &DefaultModelField) {
+fn push_default_model_selector(b: &mut String, field: &DefaultModelField, zh: bool) {
     b.push_str("<div class='provider-default-field' data-default-model-root='");
     b.push_str(field.dom_id);
     b.push_str("'><label id='");
@@ -2758,7 +2776,9 @@ fn push_default_model_selector(b: &mut String, field: &DefaultModelField) {
     }
     b.push_str("><span id='");
     b.push_str(field.dom_id);
-    b.push_str("Value' class='default-model-value'><span class='default-model-placeholder'>Select value</span></span><span id='");
+    b.push_str("Value' class='default-model-value'><span class='default-model-placeholder'>");
+    b.push_str(t(field.placeholder, zh));
+    b.push_str("</span></span><span id='");
     b.push_str(field.dom_id);
     b.push_str(
         "Indicator' class='default-model-indicator' aria-hidden='true'>⌄</span></button><div id='",
@@ -2803,7 +2823,7 @@ function expandDefaultModelTree(field,nodes){var state=defaultModelState(field);
 function filterDefaultModelTree(nodes,term){if(!term)return nodes;var query=term.toLowerCase();return nodes.reduce(function(result,node){var children=node.children?filterDefaultModelTree(node.children,term):null;var match=node.title.toLowerCase().indexOf(query)>=0;if(match||children&&children.length){result.push(Object.assign({},node,{children:match&&node.children?node.children:children}))}return result},[])}
 	function defaultModelTreeRow(field,node,level,searching){var state=defaultModelState(field);var branch=!!(node.children&&node.children.length);var expanded=branch&&(searching||state.expanded.has(node.id));var row=document.createElement('button');row.type='button';row.className='default-model-node '+(branch?'default-model-branch':'default-model-leaf');row.style.paddingLeft=(level*20+4)+'px';row.setAttribute('role','treeitem');if(branch){row.setAttribute('aria-expanded',String(expanded))}else{var selected=document.getElementById(field.domId).dataset.value===node.id;row.setAttribute('aria-selected',String(selected));if(selected)row.classList.add('selected')}var chevron=document.createElement('span');chevron.className='default-model-chevron';chevron.textContent=branch?(expanded?'⌄':'›'):'';row.appendChild(chevron);if(!branch){var icon=document.createElement('span');icon.className='default-model-leaf-icon';icon.textContent=(node.provider||'M').charAt(0).toUpperCase();row.appendChild(icon)}var title=document.createElement('span');title.className='default-model-node-title';title.textContent=node.title;row.appendChild(title);row.addEventListener('click',function(event){event.stopPropagation();if(branch){if(state.expanded.has(node.id))state.expanded.delete(node.id);else state.expanded.add(node.id);renderDefaultModelTree(field)}else{selectDefaultModel(field.updateType,node.id)}});var wrapper=document.createElement('div');wrapper.appendChild(row);if(branch&&expanded){var group=document.createElement('div');group.setAttribute('role','group');node.children.forEach(function(child){group.appendChild(defaultModelTreeRow(field,child,level+1,searching))});wrapper.appendChild(group)}return wrapper}
 function renderDefaultModelTree(field){var tree=document.getElementById(field.domId+'Tree');if(!tree)return;var state=defaultModelState(field);var nodes=filterDefaultModelTree(buildDefaultModelTree(field),state.search);tree.replaceChildren();if(!nodes.length){var empty=document.createElement('div');empty.className='default-model-empty';empty.textContent='No data available';tree.appendChild(empty);return}nodes.forEach(function(node){tree.appendChild(defaultModelTreeRow(field,node,0,!!state.search))})}
-function renderDefaultModelTrigger(field){var trigger=document.getElementById(field.domId);var valueNode=document.getElementById(field.domId+'Value');var indicator=document.getElementById(field.domId+'Indicator');if(!trigger||!valueNode||!indicator)return;var value=trigger.dataset.value||'';var parsed=parseDefaultModelValue(value);valueNode.replaceChildren();if(parsed){var icon=document.createElement('span');icon.className='default-model-selected-icon';icon.textContent=parsed.model_provider.charAt(0).toUpperCase();var name=document.createElement('span');name.className='default-model-selected-name';name.textContent=parsed.model_name;var instance=document.createElement('span');instance.className='default-model-selected-instance';instance.textContent=parsed.model_instance;valueNode.append(icon,name,instance)}else{var placeholder=document.createElement('span');placeholder.className='default-model-placeholder';placeholder.textContent='Select value';valueNode.appendChild(placeholder)}indicator.onclick=null;if(!field.required&&value){indicator.textContent='×';indicator.classList.add('clear');indicator.setAttribute('aria-hidden','false');indicator.setAttribute('aria-label','Clear '+field.fieldId);indicator.onclick=function(event){event.stopPropagation();saveModelDefault(field.updateType,'')}}else{indicator.textContent='⌄';indicator.classList.remove('clear');indicator.setAttribute('aria-hidden','true');indicator.removeAttribute('aria-label')}}
+function renderDefaultModelTrigger(field){var trigger=document.getElementById(field.domId);var valueNode=document.getElementById(field.domId+'Value');var indicator=document.getElementById(field.domId+'Indicator');if(!trigger||!valueNode||!indicator)return;var value=trigger.dataset.value||'';var parsed=parseDefaultModelValue(value);valueNode.replaceChildren();if(parsed){var icon=document.createElement('span');icon.className='default-model-selected-icon';icon.textContent=parsed.model_provider.charAt(0).toUpperCase();var name=document.createElement('span');name.className='default-model-selected-name';name.textContent=parsed.model_name;var instance=document.createElement('span');instance.className='default-model-selected-instance';instance.textContent=parsed.model_instance;valueNode.append(icon,name,instance)}else{var placeholder=document.createElement('span');placeholder.className='default-model-placeholder';placeholder.textContent=field.placeholder||'Select value';valueNode.appendChild(placeholder)}indicator.onclick=null;if(!field.required&&value){indicator.textContent='×';indicator.classList.add('clear');indicator.setAttribute('aria-hidden','false');indicator.setAttribute('aria-label','Clear '+field.fieldId);indicator.onclick=function(event){event.stopPropagation();saveModelDefault(field.updateType,'')}}else{indicator.textContent='⌄';indicator.classList.remove('clear');indicator.setAttribute('aria-hidden','true');indicator.removeAttribute('aria-label')}}
 function closeDefaultModelTree(field,resetSearch){var trigger=document.getElementById(field.domId);var popover=document.getElementById(field.domId+'Popover');if(!trigger||!popover)return;popover.hidden=true;trigger.setAttribute('aria-expanded','false');trigger.dataset.state='closed';if(resetSearch){var state=defaultModelState(field);state.search='';var search=document.getElementById(field.domId+'Search');if(search)search.value=''}}
 function closeAllDefaultModelTrees(exceptType){MODEL_FIELDS.forEach(function(field){if(field.updateType!==exceptType)closeDefaultModelTree(field,false)})}
 function toggleDefaultModelTree(type){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);var popover=document.getElementById(field.domId+'Popover');var opening=popover.hidden;closeAllDefaultModelTrees(opening?type:null);if(!opening){closeDefaultModelTree(field,false);return}popover.hidden=false;trigger.setAttribute('aria-expanded','true');trigger.dataset.state='open';renderDefaultModelTree(field);var search=document.getElementById(field.domId+'Search');setTimeout(function(){if(search)search.focus()},0)}
@@ -2859,7 +2879,7 @@ pub async fn providers_page(
     b.push_str(t("Please complete these settings before beginning", zh));
     b.push_str("</p><div class='provider-default-grid'>");
     for field in DEFAULT_MODEL_FIELDS {
-        push_default_model_selector(&mut b, &field);
+        push_default_model_selector(&mut b, &field, zh);
     }
     b.push_str(
         "</div><p id='dmMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div>",
@@ -3039,6 +3059,7 @@ pub async fn providers_page(
                     "responseType": field.response_type,
                     "acceptedTypes": field.accepted_types,
                     "required": field.required,
+                    "placeholder": field.placeholder,
                 })
             })
             .collect(),
@@ -4540,6 +4561,14 @@ mod kb_ui_tests {
             html.contains("normalizeDefaultModelStoredValues"),
             "stored-value normalizer missing"
         );
+        assert!(
+            html.contains("Select an embedding model") || html.contains("选择嵌入模型"),
+            "upstream placeholder missing"
+        );
+        assert!(
+            html.contains("Skill Search Configuration") || html.contains("技能搜索配置"),
+            "upstream dialog title missing"
+        );
         // 保存校验：未选择嵌入模型时按上游文案阻止（skillSearch.pleaseSelectEmbeddingModel）
         assert!(
             html.contains("SKILL_EMBD_REQUIRED"),
@@ -4667,6 +4696,10 @@ mod kb_ui_tests {
         assert!(
             html.contains("normalizeDefaultModelStoredValues"),
             "stored-value normalizer missing"
+        );
+        assert!(
+            html.contains("Please select a embedding model.") || html.contains("请选择嵌入模型"),
+            "upstream placeholder missing"
         );
         assert!(
             html.contains("document.addEventListener('pointerdown'"),
