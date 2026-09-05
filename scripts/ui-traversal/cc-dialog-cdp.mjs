@@ -86,13 +86,15 @@ try {
   const irc = await page.evaluate(() => ({
     account: !!document.getElementById('cc-nickserv.account'),
     password: !!document.getElementById('cc-nickserv.password'),
+    accountEl: !!document.querySelector("[id='cc-nickserv.account']"),
     hostPlaceholder: (document.getElementById('cc-host') || {}).placeholder || null,
   }));
   results.ircFields = irc;
   await page.locator('#cc-host').fill('irc.libera.chat');
+  await page.locator('#cc-port').fill('6697');
   await page.locator('#cc-nick').fill('probe-bot');
-  await page.locator('#cc-nickserv.account').fill('probe-user');
-  await page.locator('#cc-nickserv.password').fill('probe-pass');
+  await page.locator("[id='cc-nickserv.account']").fill('probe-user');
+  await page.locator("[id='cc-nickserv.password']").fill('probe-pass');
   await page.locator('#ccName').fill('CC-Probe-Irc');
   await page.locator('#ccSave').click({ timeout: 8000 });
   await page.waitForTimeout(1500);
