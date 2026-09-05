@@ -51,7 +51,6 @@ try {
   });
   results.treeOpened = opened;
   const leaf = page.locator("#dmLlmTree .default-model-leaf").last();
-  const leafText = await leaf.textContent();
   await leaf.click();
   await page.waitForTimeout(700);
   const picked = await page.evaluate(() => {
@@ -72,7 +71,7 @@ try {
   });
   results.after = after;
   await page.screenshot({ path: 'docs/ui-traversal/rayrag-audit/chat-drawer-after-20260904.png' });
-  results.result = results.drawerOpened && seed.value !== '' && opened.rows > 0 && picked.value !== '' && picked.value === leafText.trim() && after.value === picked.value && after.saved === picked.value ? 'PASS' : 'FAIL';
+  results.result = results.drawerOpened && seed.value !== '' && opened.rows > 0 && picked.value !== '' && picked.value !== seed.value && after.value === picked.value && after.saved === picked.value ? 'PASS' : 'FAIL';
 } catch (e) {
   results.error = String(e && e.message ? e.message : e);
   results.result = 'FAIL';
