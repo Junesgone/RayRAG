@@ -3616,13 +3616,6 @@ pub async fn chat_app_detail_page(
             html_esc(&kb.name, 40)
         ));
     }
-    // LLM options: tenant models via providers/models endpoint is async; render current value as text input + datalist from providers.
-    let mut llm_opts = String::new();
-    for p in state.providers.list() {
-        for m in &p.models {
-            llm_opts.push_str(&format!("<option value='{}'>", html_esc(m, 60)));
-        }
-    }
 
     let mut b = String::new();
     // Header row: back + app identity + Settings button (RAGFlow chat-settings parity).
@@ -3675,9 +3668,10 @@ pub async fn chat_app_detail_page(
         "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><input id='f_icon' value='{}' placeholder='🤖' style='width:100%'><label class='set-label'>{}</label><input id='f_name' value='{}' style='width:100%'><label class='set-label'>{}</label><textarea id='f_desc' rows='2' style='width:100%'>{}</textarea>",
         t("Basic Settings", zh), t("Icon", zh), html_esc(&app.icon, 8), t("Name", zh), html_esc(&app.name, 128), t("Description", zh), html_esc(&app.description, 500)
     ));
+    push_default_model_selector(&mut b, &DEFAULT_MODEL_FIELDS[0], zh);
     b.push_str(&format!(
-        "<label class='set-label'>{} (llm_id)</label><input id='f_llm' value='{}' list='llmList' style='width:100%' placeholder='如 Qwen3.5-9B'><datalist id='llmList'>{}</datalist>",
-        t("LLM", zh), html_esc(&llm_id, 80), llm_opts
+        "<script>var dmSaved={};document.getElementById('dmLlm').dataset.value=dmSaved;document.getElementById('dmLlm').dataset.savedValue=dmSaved;</script>",
+        serde_json::to_string(&llm_id).unwrap_or_default()
     ));
     b.push_str(&format!(
         "<label class='set-label'>{} (prologue)</label><textarea id='f_prologue' rows='3' style='width:100%'>{}</textarea><label class='set-label'>{}</label><select id='f_kbs' multiple style='width:100%;min-height:72px'>{}</select>",
@@ -3757,8 +3751,28 @@ pub async fn chat_app_detail_page(
     ));
     b.push_str("</div>");
     // JS
+    let llm_fields_payload = serde_json::json!([
+        {
+            "fieldId": "llm_id",
+            "domId": "dmLlm",
+            "updateType": "chat",
+            "responseType": "chat",
+            "acceptedTypes": ["chat", "image2text"],
+            "placeholder": "Please select"
+        }
+    ]);
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&llm_fields_payload));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    let selector_boot = String::from("<script>async ")
+        + "function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}"
+        + "\n"
+        + "function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}"
+        + "\nloadKbModelCatalog().then(function(){var trig=document.getElementById('dmLlm');if(trig&&!trig.dataset.savedValue&&!trig.dataset.value){var first=DEFAULT_MODEL_CATALOG.find(function(m){return m.model_type.indexOf('chat')>=0});if(first){trig.dataset.value=first.selector;normalizeDefaultModelStoredValues();}}});</script>";
+    b.push_str(&selector_boot);
     b.push_str(&format!(
-        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('f_llm').value.trim()||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,refine_multiturn:document.getElementById('sw_refine_multiturn').checked,reasoning:document.getElementById('sw_reasoning').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,vector_similarity_weight:parseFloat(document.getElementById('f_vsw').value)||0.3,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value,reference_metadata:{{include:document.getElementById('sw_refmeta').checked,fields:document.getElementById('f_reffields').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}},meta_data_filter:{{method:document.getElementById('f_mfmethod').value,manual:document.getElementById('f_mfmanual').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}}}},rerank_id:document.getElementById('f_rerank').value.trim()||null,top_k:parseInt(document.getElementById('f_rtopk').value)||1024}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        "<script>function toggleSettings(){{var d=document.getElementById('settingsDrawer');d.classList.toggle('open')}}function toggleLang(el){{el.classList.toggle('on')}}function newConv(appId){{fetch('/api/v1/chats',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:'New conversation',app_id:appId}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0&&d.data){{location.href='/chat/'+d.data.id}}else{{alert(d.message||'create failed')}}}})}}function saveSettings(){{var appId='{app_id}';var langs=Array.from(document.querySelectorAll('#langChips .lang-chip.on')).map(function(x){{return x.getAttribute('data-lang')}});var kbs=Array.from(document.getElementById('f_kbs').selectedOptions).map(function(o){{return o.value}});var body={{name:document.getElementById('f_name').value,description:document.getElementById('f_desc').value,icon:document.getElementById('f_icon').value,kb_ids:kbs,llm_id:document.getElementById('dmLlm').dataset.value||null,llm_setting:null,prompt_config:{{prologue:document.getElementById('f_prologue').value,system:document.getElementById('f_system').value,cross_languages:langs,quote:document.getElementById('sw_quote').checked,keyword:document.getElementById('sw_keyword').checked,tts:document.getElementById('sw_tts').checked,use_kg:document.getElementById('sw_use_kg').checked,toc_enhance:document.getElementById('sw_toc_enhance').checked,refine_multiturn:document.getElementById('sw_refine_multiturn').checked,reasoning:document.getElementById('sw_reasoning').checked,similarity_threshold:parseFloat(document.getElementById('f_sim').value)||0.2,vector_similarity_weight:parseFloat(document.getElementById('f_vsw').value)||0.3,top_n:parseInt(document.getElementById('f_topn').value)||8,empty_response:document.getElementById('f_empty').value,reference_metadata:{{include:document.getElementById('sw_refmeta').checked,fields:document.getElementById('f_reffields').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}},meta_data_filter:{{method:document.getElementById('f_mfmethod').value,manual:document.getElementById('f_mfmanual').value.split(',').map(function(s){{return s.trim()}}).filter(Boolean)}}}},rerank_id:document.getElementById('f_rerank').value.trim()||null,top_k:parseInt(document.getElementById('f_rtopk').value)||1024}};fetch('/api/v1/chatapps/'+appId,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
     Html(layout(t("Chat apps", zh), &b, zh))
@@ -5016,6 +5030,22 @@ mod kb_ui_tests {
         );
         assert!(html.contains("sw_reasoning"), "reasoning switch missing");
         assert!(html.contains("f_vsw"), "vector weight missing");
+        assert!(
+            html.contains("default-model-llm_id"),
+            "shared llm selector missing"
+        );
+        assert!(
+            html.contains("loadKbModelCatalog"),
+            "selector catalog loader missing"
+        );
+        assert!(
+            html.contains("normalizeDefaultModelStoredValues"),
+            "selector normalizer missing"
+        );
+        assert!(
+            html.contains("getElementById('dmLlm').dataset.value"),
+            "llm save reads selector value missing"
+        );
     }
 
     #[tokio::test]

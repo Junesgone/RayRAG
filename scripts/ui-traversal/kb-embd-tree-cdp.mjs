@@ -116,7 +116,10 @@ try {
       const rows = Array.from(
         document.querySelectorAll("#embdSelTree button.default-model-node"),
       );
-      return { rows: rows.length, activeIdx: rows.indexOf(document.activeElement) };
+      return {
+        rows: rows.length,
+        activeIdx: rows.indexOf(document.activeElement),
+      };
     });
     results.kbNav1 = nav1;
     await page.keyboard.press("ArrowDown");
@@ -181,7 +184,9 @@ try {
       await page.locator("a#nav1").click({ timeout: 8000 });
       await page.waitForTimeout(700);
       const after = await page.evaluate(() => {
-        const t = document.querySelector("[data-testid='default-model-embd_id']");
+        const t = document.querySelector(
+          "[data-testid='default-model-embd_id']",
+        );
         return {
           value: t.dataset.value || "",
           saved: t.dataset.savedValue || "",
