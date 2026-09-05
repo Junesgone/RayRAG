@@ -3765,7 +3765,7 @@ pub async fn chat_app_detail_page(
     b.push_str(&json_script_value(&llm_fields_payload));
     b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
-    let selector_boot = String::from("<script>async ")
+    let selector_boot = String::from("async ")
         + "function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}"
         + "\n"
         + "function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}"
