@@ -423,8 +423,8 @@
 > v0.3.4o（2026-09-06）检索测试表单 reranking 收口：上游 `web/src/pages/dataset/testing/
 testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 RayRAG——kb_detail 与 dataset 两页
 测试面板去掉 legacy `<input type='checkbox'>`，改 `push_default_model_selector(TEST_RERANK_SELECTOR_FIELD)`
-（data-testid=`default-model-reranking_id`、accepted types=`reranking`、placeholder 走 t()），zh/en 提示文案
-经 html_escape；runTest/testSearch 读取 selector data-value 并在有值时发送 `body.reranking_id=`。
+（data-testid=`default-model-reranking_id`、accepted types=`rerank`、placeholder 走 t()），zh/en 提示文案
+经 html_escape；runTest/testSearch 读取 selector data-value 并在有值时发送 `body.rerank_id=`。
 回归：49 web 测试全绿（含 reranking_id 断言）、cargo check --tests 0 error、web.rs rustfmt 干净。
 >
 
@@ -4563,7 +4563,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/dataset/sidebar/hooks.tsx` | 17 | 451 | `3c2934bbf8b76b5d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/sidebar/index.tsx` | 137 | 3977 | `15c25cb39c8ec10d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/testing/index.tsx` | 95 | 3048 | `743cb1fbd1a175e1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/dataset/testing/testing-form.tsx` | 146 | 4175 | `7437500b20ab364c` | partial | `src/web.rs; web/static/` | Rust test panels (kb_detail + dataset) carry the full upstream form contract: query input, Top-K/similarity/vector sliders with live value spans, and RerankFormFields via the shared `push_default_model_selector(TEST_RERANK_SELECTOR_FIELD)` tree selector (data-testid `default-model-reranking_id`, accepted types `reranking`), zh/en tooltip copy through html_escape; runTest/testSearch send `body.reranking_id=` when a model is selected. 49 web tests green incl. reranking_id assertions (v0.3.4o). Exact React composition remains reference |
+| `web/src/pages/dataset/testing/testing-form.tsx` | 146 | 4175 | `7437500b20ab364c` | partial | `src/web.rs; web/static/` | Rust test panels (kb_detail + dataset) carry the full upstream form contract: query input, Top-K/similarity/vector sliders with live value spans, and RerankFormFields via the shared `push_default_model_selector(TEST_RERANK_SELECTOR_FIELD)` tree selector (data-testid `default-model-reranking_id`, accepted types `reranking`), zh/en tooltip copy through html_escape; runTest/testSearch send `body.rerank_id=` when a model is selected. 49 web tests green incl. reranking_id assertions (v0.3.4o). Exact React composition remains reference |
 | `web/src/pages/dataset/testing/testing-result.tsx` | 112 | 3703 | `05b7e679b6bca50f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/datasets/dataset-card.tsx` | 55 | 1753 | `ca23988286125c20` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/datasets/dataset-creating-dialog.tsx` | 190 | 5445 | `f43ce5e924ae100e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
