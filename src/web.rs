@@ -37,6 +37,7 @@ fn t(k: &str, zh: bool) -> &str {
         "Top N" => "检索条数",
         "Empty Response" => "空回复文案",
         "Rerank Model" => "重排模型",
+        "Reranking model" => "Reranking模型",
         "Rerank Top K" => "重排条数",
         "Refine Multiturn" => "多轮精炼",
         "Reasoning" => "推理模式",
@@ -100,6 +101,7 @@ fn t(k: &str, zh: bool) -> &str {
         "Embedding Model" => "嵌入模型",
         "Please select an embedding model" => "请选择嵌入模型",
         "Please select" => "请选择",
+        "Select value" => "請選 擇",
         "Please select a embedding model." => "请选择嵌入模型",
         "Select an embedding model" => "选择嵌入模型",
         "Skill Search Configuration" => "技能搜索配置",
@@ -772,6 +774,23 @@ const SKILL_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     placeholder: "Select an embedding model",
 };
 
+/// Upstream knowledgeDetails.rerankTip wording (verbatim from en.ts/zh.ts locales; rendered per-language on the retrieval-test panel).
+const RERANK_TIP_EN: &str = r#"Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity; if a rerank model is selected, a weighted reranking score will replace the weighted vector cosine similarity. Please be aware that using a rerank model will significantly increase the system's response time. If you wish to use a rerank model, ensure you use a SaaS reranker; if you prefer a locally deployed rerank model, ensure you start RAGFlow with docker-compose-gpu.yml."#;
+const RERANK_TIP_ZH: &str = r#"非必选项：若不选择 rerank 模型，系统将默认采用关键词相似度与向量余弦相似度相结合的混合查询方式；如果设置了 rerank 模型，则混合查询中的向量相似度部分将被 rerank 打分替代。请注意：采用 rerank 模型会非常耗时。如需选用 rerank 模型，建议使用 SaaS 的 rerank 模型服务；如果你倾向使用本地部署的 rerank 模型，请务必确保你使用 docker-compose-gpu.yml 启动 RAGFlow。"#;
+
+/// Retrieval-test-panel reranking tree selector field (upstream testing-form.tsx RerankFormFields -> ModelTreeSelect modelTypes=[rerank] allowClear optional; value is sent as `rerank_id` in the /retrieval request body only and is not persisted).
+const TEST_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "reranking_id",
+    dom_id: "testRerankingSel",
+    label: "",
+    update_type: "reranking_id",
+    response_type: "reranking",
+    accepted_types: &["reranking"],
+    required: false,
+    tooltip: "",
+    placeholder: "Select value",
+};
+
 pub async fn kb_detail_page(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -979,11 +998,15 @@ pub async fn kb_detail_page(
     b.push_str(t("Similarity Threshold", zh));
     b.push_str(": <span id='ttV' class='co'>0.2</span></label><input type='range' id='tt' min='0' max='1' step='0.05' value='0.2' style='width:100%' oninput='document.getElementById(\\\"ttV\\\").textContent=this.value'><label style='font-size:12px;display:block;margin-top:8px'>");
     b.push_str(t("Vector Weight", zh));
-    b.push_str(": <span id='twV' class='co'>0.3</span></label><input type='range' id='tw' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"twV\\\").textContent=this.value'><label style='font-size:12px;display:block;margin-top:8px'><input type='checkbox' id='tr'> ");
-    b.push_str(t("Rerank", zh));
-    b.push_str(
-        "</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>",
-    );
+    b.push_str(": <span id='twV' class='co'>0.3</span></label><input type='range' id='tw' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"twV\\\").textContent=this.value'><label style='font-size:12px;display:block;margin-top:8px'><");
+    b.push_str(t("Reranking model", zh));
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
+    b.push_str(">?</span></label>");
+    push_default_model_selector(&mut b, &TEST_RERANK_SELECTOR_FIELD, zh);
+    b.push_str("<button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()>");
     b.push_str(t("Test", zh));
     b.push_str("</button></div><div><h3>");
     b.push_str(t("Results", zh));
@@ -1000,6 +1023,15 @@ pub async fn kb_detail_page(
             "acceptedTypes": ["embedding"],
             "required": true,
             "placeholder": "Please select a embedding model.",
+        },
+        {
+            "fieldId": "reranking_id",
+            "domId": "testRerankingSel",
+            "updateType": "reranking_id",
+            "responseType": "reranking",
+            "acceptedTypes": ["reranking"],
+            "required": false,
+            "placeholder": "Select value"
         }
     ]);
     b.push_str("<script>const MODEL_FIELDS=");
@@ -1027,7 +1059,7 @@ pub async fn kb_detail_page(
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(r=>r.json()).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('cfgMethod').value=pc.chunk_method;var tn=parseInt(pc.chunk_token_num,10);if(!isNaN(tn)&&tn>0)document.getElementById('cfgTokenNum').value=tn;var delims=Array.isArray(pc.delimiters)?pc.delimiters:(pc.delimiter?[pc.delimiter]:[]);document.getElementById('cfgDelims').value=delims.join('\\n');var op=parseFloat(pc.overlapped_percent);if(!isNaN(op))document.getElementById('cfgOverlap').value=Math.round(op*100);document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('cfgRaptor').checked=!!(pc.raptorEn||pc.raptor_enabled);document.getElementById('cfgGraph').checked=!!(pc.graphEn||pc.graphrag_enabled);var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
     b.push_str("function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={name:document.getElementById('cfgName').value,permission:document.getElementById('cfgPerm').value,embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
-    b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var r=document.getElementById('tr').checked;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(r)body.rerank=true;document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+    b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var r=document.getElementById('tr').checked;var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(rerankingId)body.reranking_id=rerankingId;true;document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     b.push_str("fetch('/api/v1/providers').then(r=>r.json()).then(function(d){var sel=document.getElementById('embdSel');if(!sel)return;(d.data||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o)})})}).catch(function(){});");
     b.push_str("loadDocs();loadConfig();</script>");
@@ -1169,9 +1201,17 @@ pub async fn dataset_page(
     b.push_str(t("Similarity Threshold", zh));
     b.push_str(": <span id='testTV' class='co'>0.2</span></label><input type='range' id='testT' min='0' max='1' step='0.05' value='0.2' style='width:100%' oninput='document.getElementById(\\\"testTV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Vector Weight", zh));
-    b.push_str(": <span id='testWV' class='co'>0.3</span></label><input type='range' id='testW' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"testWV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'><input type='checkbox' id='testRerank'> ");
-    b.push_str(t("Rerank", zh));
-    b.push_str("</label><button class='btn btn-p' style='margin-top:12px;width:100%' onclick='testSearch()'>");
+    b.push_str(": <span id='testWV' class='co'>0.3</span></label><input type='range' id='testW' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"testWV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'><");
+    b.push_str(t("Reranking model", zh));
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
+    b.push_str(">?</span></label>");
+    push_default_model_selector(&mut b, &TEST_RERANK_SELECTOR_FIELD, zh);
+    b.push_str(
+        "<button class='btn btn-p' style='margin-top:12px;width:100%' onclick='testSearch()>",
+    );
     b.push_str(t("Test", zh));
     b.push_str("</button></div><div><h3>");
     b.push_str(t("Results", zh));
@@ -1362,6 +1402,15 @@ pub async fn dataset_page(
             "acceptedTypes": ["embedding"],
             "required": true,
             "placeholder": "Please select a embedding model.",
+        },
+        {
+            "fieldId": "reranking_id",
+            "domId": "testRerankingSel",
+            "updateType": "reranking_id",
+            "responseType": "reranking",
+            "acceptedTypes": ["reranking"],
+            "required": false,
+            "placeholder": "Select value"
         }
     ]);
     b.push_str("<script>const MODEL_FIELDS=");
@@ -1389,7 +1438,7 @@ pub async fn dataset_page(
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function clearAll(){if(!confirm('Delete ALL documents in this dataset?'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];if(!docs.length){loadDocs();return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()})}next()})};");
     b.push_str("function updateOverview(docs){var done=0,run=0,fail=0,other=0;docs.forEach(function(x){if(x.run==='DONE')done++;else if(x.run==='RUNNING'||x.run==='UNSTARTED')run++;else if(x.run==='FAILED')fail++;else other++});var total=docs.length||1;function set(id,bar,v){var e=document.getElementById(id);if(e)e.textContent=v;var b=document.getElementById(bar);if(b)b.style.width=Math.round(v/total*100)+'%'};set('ovDone','ovDoneBar',done);set('ovRun','ovRunBar',run);set('ovFail','ovFailBar',fail);var act=document.getElementById('actList');if(act){var h='';docs.slice(0,10).forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td>'+badge(x.run)+'</td><td>'+(x.chunk_count||0)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(x.updated_at)+'</td></tr>'});act.innerHTML=h||'<tr><td colspan=4 style=color:var(--tm);text-align:center>暂无活动</td></tr>'}};");
-    b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var r=document.getElementById('testRerank').checked;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(r)body.rerank=true;document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+    b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var r=document.getElementById('testRerank').checked;var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(rerankingId)body.reranking_id=rerankingId;true;document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     b.push_str("function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('chunkMethod').value=pc.chunk_method;var cs=parseInt(pc.chunk_size,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}if(pc.overlap){var ov=document.getElementById('overlap');for(var k=0;k<ov.options.length;k++){if(ov.options[k].value===pc.overlap){ov.selectedIndex=k;break}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
     b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,permission:document.getElementById('cfgPerm').value,embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:document.getElementById('cfgLang').value,pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
@@ -2494,7 +2543,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
 ];
 
 fn provider_capability_tags(provider_id: &str, provider_name: &str) -> Vec<&'static str> {
-    use crate::providers::{ProviderKind, provider_has_kind};
+    use crate::providers::{provider_has_kind, ProviderKind};
     [
         (ProviderKind::Chat, "chat"),
         (ProviderKind::Embedding, "embedding"),
@@ -4252,11 +4301,9 @@ mod kb_ui_tests {
             ]
         );
         assert!(DEFAULT_MODEL_FIELDS[0].required);
-        assert!(
-            DEFAULT_MODEL_FIELDS[1..]
-                .iter()
-                .all(|field| !field.required)
-        );
+        assert!(DEFAULT_MODEL_FIELDS[1..]
+            .iter()
+            .all(|field| !field.required));
     }
 
     #[tokio::test]
@@ -4794,6 +4841,23 @@ mod kb_ui_tests {
         // 检索测试 tab：输入框 / 检索按钮 / 相似度滑块 / 结果卡片
         assert!(html.contains("id='tq'"), "test query input missing");
         assert!(html.contains("runTest"), "test button missing");
+        // Reranking tree selector (upstream testing-form.tsx RerankFormFields)
+        assert!(
+            html.contains("data-testid='default-model-reranking_id'"),
+            "test reranking tree trigger missing"
+        );
+        assert!(
+            html.contains("data-model-types='reranking'"),
+            "reranking accepted types missing"
+        );
+        assert!(
+            !html.contains("<input type='checkbox' id='tr'>"),
+            "legacy reranking checkbox remains"
+        );
+        assert!(
+            html.contains("body.reranking_id="),
+            "runTest must send reranking_id"
+        );
         assert!(html.contains("id='tt'"), "similarity slider missing");
         assert!(html.contains("testRes"), "results area missing");
         assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
@@ -4828,6 +4892,23 @@ mod kb_ui_tests {
         assert!(html.contains("actList"), "recent activity missing");
         // 测试 tab：输入 / 检索按钮 / 相似度滑块 / 结果
         assert!(html.contains("id='testQ'"), "test query missing");
+        // Reranking tree selector (upstream testing-form.tsx RerankFormFields)
+        assert!(
+            html.contains("data-testid='default-model-reranking_id'"),
+            "test reranking tree trigger missing"
+        );
+        assert!(
+            html.contains("data-model-types='reranking'"),
+            "reranking accepted types missing"
+        );
+        assert!(
+            !html.contains("<input type='checkbox' id='testRerank'>"),
+            "legacy reranking checkbox remains"
+        );
+        assert!(
+            html.contains("body.reranking_id="),
+            "testSearch must send reranking_id"
+        );
         assert!(html.contains("testSearch"), "test button missing");
         assert!(html.contains("id='testT'"), "threshold slider missing");
         assert!(html.contains("id='testW'"), "vector slider missing");
