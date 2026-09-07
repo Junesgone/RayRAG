@@ -1678,14 +1678,14 @@ pub fn check_model_available(
     };
     let canonical_provider =
         crate::providers::canonical_provider_name(&provider.id, &provider.name);
-    let Some(factory_entry) = factory
+    // Upstream `set_default_models` validates the tenant's own model rows
+    // first; the factory catalog only backfills SaaS models the tenant has
+    // not instantiated. Tenant-local providers (e.g. `local-rerank`) are
+    // absent from the upstream factory JSON, so the entity check below must
+    // run before the factory gate.
+    let factory_entry = factory
         .iter()
-        .find(|entry| entry.name == canonical_provider)
-    else {
-        return Err(format!(
-            "Provider '{provider_name}' not found in factory info"
-        ));
-    };
+        .find(|entry| entry.name == canonical_provider);
     let mapped = model_tag_type(model_type);
     let entity = instance
         .models
@@ -1704,6 +1704,11 @@ pub fn check_model_available(
         }
         return Ok(());
     }
+    let Some(factory_entry) = factory_entry else {
+        return Err(format!(
+            "Provider '{provider_name}' not found in factory info"
+        ));
+    };
     let row = factory_entry
         .llm
         .iter()
@@ -4711,8 +4716,11 @@ mod tests {
             check("OpenAI", "nope", "x", "chat").unwrap_err(),
             "Instance 'nope' not found for provider 'OpenAI'"
         );
+        // The tenant's own instance model rows are the authority (upstream
+        // `set_default_models` validates tenant LLM rows first); the factory
+        // catalog only backfills models the instance does not carry.
         let empty_factory: Vec<FactoryLlmEntry> = vec![];
-        assert_eq!(
+        assert!(
             check_model_available(
                 &providers,
                 &instances,
@@ -4720,6 +4728,20 @@ mod tests {
                 "OpenAI",
                 "default",
                 "gpt-chat",
+                "chat",
+                "",
+                ""
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            check_model_available(
+                &providers,
+                &instances,
+                &empty_factory,
+                "OpenAI",
+                "default",
+                "ghost",
                 "chat",
                 "",
                 ""
@@ -4738,6 +4760,75 @@ mod tests {
         assert_eq!(
             check("OpenAI", "default", "embed-model", "chat").unwrap_err(),
             "Model 'embed-model' isn't a chat model"
+        );
+    }
+
+    #[test]
+    fn set_tenant_default_model_accepts_tenant_local_provider_without_factory_entry() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-local-rerank-default-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenant_models.json");
+        let provider_store = ProviderStore::in_memory();
+        provider_store
+            .create(
+                "local-rerank",
+                ProviderUpdate {
+                    name: "mxbai-rerank-large-v2".into(),
+                    api_base: "http://127.0.0.1:8080/v1".into(),
+                    models: vec!["mxbai-rerank-large-v2".to_string()],
+                    enabled: true,
+                    api_key: None,
+                    clear_api_key: false,
+                },
+            )
+            .unwrap();
+        let store = TenantModelStore::new(&path).unwrap();
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                "local-rerank",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "GPU mxbai-rerank".into(),
+                    api_base: None,
+                    api_key: None,
+                    clear_api_key: false,
+                    models: vec![spec(
+                        "mxbai-rerank-large-v2",
+                        &[ModelCapability::Rerank],
+                        true,
+                    )],
+                },
+            )
+            .unwrap();
+        // Premise: the tenant-local provider name is absent from the upstream
+        // factory JSON, so only the instance's own model row can authorise it.
+        assert!(factory_llm_entries().iter().all(|entry| {
+            crate::providers::canonical_provider_name(
+                "local-rerank",
+                "mxbai-rerank-large-v2",
+            ) != entry.name
+        }));
+        store
+            .set_tenant_default_model(
+                &provider_store,
+                "tenant-a",
+                "mxbai-rerank-large-v2",
+                "GPU mxbai-rerank",
+                "mxbai-rerank-large-v2",
+                "rerank",
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .default_capability_model("tenant-a", "rerank")
+                .as_deref(),
+            Some("mxbai-rerank-large-v2@GPU mxbai-rerank@mxbai-rerank-large-v2")
         );
     }
 
