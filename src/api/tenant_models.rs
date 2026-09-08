@@ -4809,10 +4809,8 @@ mod tests {
         // Premise: the tenant-local provider name is absent from the upstream
         // factory JSON, so only the instance's own model row can authorise it.
         assert!(factory_llm_entries().iter().all(|entry| {
-            crate::providers::canonical_provider_name(
-                "local-rerank",
-                "mxbai-rerank-large-v2",
-            ) != entry.name
+            crate::providers::canonical_provider_name("local-rerank", "mxbai-rerank-large-v2")
+                != entry.name
         }));
         store
             .set_tenant_default_model(

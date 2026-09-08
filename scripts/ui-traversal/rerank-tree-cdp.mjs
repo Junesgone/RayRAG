@@ -14,13 +14,17 @@ const page = await ctx.newPage();
 await page.setViewportSize({ width: 1440, height: 900 });
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 300)));
-  const apiCalls = [];
-  page.on("request", (req) => {
-    const u = req.url();
-    if (u.includes("/api/v1/") && !u.includes("/auth/login")) {
-      apiCalls.push({ method: req.method(), path: u.split(":9390")[1] || u, body: (req.postData() || "").slice(0, 200) });
-    }
-  });
+const apiCalls = [];
+page.on("request", (req) => {
+  const u = req.url();
+  if (u.includes("/api/v1/") && !u.includes("/auth/login")) {
+    apiCalls.push({
+      method: req.method(),
+      path: u.split(":9390")[1] || u,
+      body: (req.postData() || "").slice(0, 200),
+    });
+  }
+});
 const results = { steps: [], errors: [] };
 let probeKbId = null;
 
@@ -53,7 +57,10 @@ async function deleteKb(id) {
     return await page.evaluate(async (kbId) => {
       const res = await fetch("/api/v1/datasets/" + kbId, {
         method: "DELETE",
-        headers: { Authorization: "Bearer " + (localStorage.getItem("rayrag_token") || "") },
+        headers: {
+          Authorization:
+            "Bearer " + (localStorage.getItem("rayrag_token") || ""),
+        },
       });
       const text = await res.text();
       let code = null;
@@ -96,7 +103,9 @@ try {
 
   const cleaned = await page.evaluate(async () => {
     const res = await fetch("/api/v1/datasets?page=1&page_size=100", {
-      headers: { Authorization: "Bearer " + (localStorage.getItem("rayrag_token") || "") },
+      headers: {
+        Authorization: "Bearer " + (localStorage.getItem("rayrag_token") || ""),
+      },
     });
     const data = await res.json();
     if (data.code !== 0 || !data.data) return [];
@@ -107,7 +116,10 @@ try {
     for (const item of stale) {
       await fetch("/api/v1/datasets/" + item.id, {
         method: "DELETE",
-        headers: { Authorization: "Bearer " + (localStorage.getItem("rayrag_token") || "") },
+        headers: {
+          Authorization:
+            "Bearer " + (localStorage.getItem("rayrag_token") || ""),
+        },
       });
     }
     return stale.map((x) => x.name);
@@ -158,13 +170,15 @@ try {
     } catch {}
     return {
       catalogLen:
-        typeof DEFAULT_MODEL_CATALOG !== "undefined"
-          ? DEFAULT_MODEL_CATALOG.length
-          : -1,
+        typeof DEFAULT_MODEL_CATALOG === "undefined"
+          ? -1
+          : DEFAULT_MODEL_CATALOG.length,
       fields:
-        typeof MODEL_FIELDS !== "undefined"
-          ? MODEL_FIELDS.map((f) => f.fieldId + ":" + f.acceptedTypes.join(","))
-          : [],
+        typeof MODEL_FIELDS === "undefined"
+          ? []
+          : MODEL_FIELDS.map(
+              (f) => f.fieldId + ":" + f.acceptedTypes.join(","),
+            ),
       rowsInTree: document.querySelectorAll(
         "#testRerankingSelTree .default-model-node",
       ).length,
