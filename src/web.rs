@@ -29,6 +29,9 @@ fn t(k: &str, zh: bool) -> &str {
         "Icon" => "图标",
         "Description" => "描述",
         "LLM" => "大语言模型",
+        "Select model" => "选择模型",
+        "Converts text into numerical vectors for meaning similarity search and memory retrieval." => "将文本转换为数值向量，用于语义相似度搜索和记忆检索。",
+        "Analyzes conversation content, extracts key information, and generates structured memory summaries." => "分析对话内容，提取关键信息，并生成结构化的记忆摘要。",
         "Opener" => "开场白",
         "System Prompt" => "系统提示词",
         "Prompt Engine" => "提示引擎",
@@ -772,6 +775,34 @@ const SKILL_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     required: true,
     tooltip: "",
     placeholder: "Select an embedding model",
+};
+
+/// memory 设置页 embedding 树选择器字段（上游 memory-model-form.tsx 经 common-item
+/// EmbeddingSelect 共享嵌入选择；RayRAG 以共享默认模型树选择器落地，值随 memory 设置表单提交）。
+const MEMORY_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "embd_id",
+    dom_id: "cfgEmbd",
+    label: "",
+    update_type: "embd_id",
+    response_type: "embedding",
+    accepted_types: &["embedding"],
+    required: true,
+    tooltip: "",
+    placeholder: "Select model",
+};
+
+/// memory 设置页 llm 树选择器字段（上游 ModelTreeSelect 不传 modelTypes → 默认
+/// ModelTypeMap.llm_id=['chat']；值随 memory 设置表单提交，不写租户默认）。
+const MEMORY_LLM_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "llm_id",
+    dom_id: "cfgLlm",
+    label: "",
+    update_type: "llm_id",
+    response_type: "chat",
+    accepted_types: &["chat"],
+    required: true,
+    tooltip: "",
+    placeholder: "Select model",
 };
 
 /// Upstream knowledgeDetails.rerankTip wording (verbatim from en.ts/zh.ts locales; rendered per-language on the retrieval-test panel).
@@ -2240,11 +2271,21 @@ pub async fn memory_setting_page(
     b.push_str(t("Description", zh));
     b.push_str("<textarea id='cfgDescription' maxlength='2000'></textarea></label><label>");
     b.push_str(t("Embedding Model", zh));
-    b.push_str(
-        "<select id='cfgEmbd'><option value='default'>default</option></select></label><label>",
-    );
-    b.push_str(t("Chat Model", zh));
-    b.push_str("<select id='cfgLlm'><option value='default'>default</option></select></label><fieldset class='wide memory-fieldset'><legend>");
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(t("Converts text into numerical vectors for meaning similarity search and memory retrieval.", zh)));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(t("Converts text into numerical vectors for meaning similarity search and memory retrieval.", zh)));
+    b.push_str("'>?</span>");
+    push_default_model_selector(&mut b, &MEMORY_EMBD_SELECTOR_FIELD, zh);
+    b.push_str("</label><label>");
+    b.push_str(t("LLM", zh));
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(t("Analyzes conversation content, extracts key information, and generates structured memory summaries.", zh)));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(t("Analyzes conversation content, extracts key information, and generates structured memory summaries.", zh)));
+    b.push_str("'>?</span>");
+    push_default_model_selector(&mut b, &MEMORY_LLM_SELECTOR_FIELD, zh);
+    b.push_str("</label><fieldset class='wide memory-fieldset'><legend>");
     b.push_str(t("Memory Type", zh));
     b.push_str("</legend><div class='memory-type-grid'><label><input type='checkbox' class='cfg-type' value='raw' disabled> Raw (required)</label><label><input type='checkbox' class='cfg-type' value='semantic'> Semantic</label><label><input type='checkbox' class='cfg-type' value='episodic'> Episodic</label><label><input type='checkbox' class='cfg-type' value='procedural'> Procedural</label></div><p class='sub' id='cfgLockHint'></p></fieldset><label class='wide'>");
     b.push_str(t("Memory capacity (bytes)", zh));
@@ -2270,7 +2311,19 @@ pub async fn memory_setting_page(
     b.push_str(t("Reset", zh));
     b.push_str("</button><button class='btn btn-p' type='submit' id='cfgSave'>");
     b.push_str(t("Save", zh));
-    b.push_str("</button></div></form></main></div></section><div id='memoryToast' class='memory-toast' hidden></div><script>const memoryId=");
+    b.push_str("</button></div></form></main></div></section><div id='memoryToast' class='memory-toast' hidden></div>");
+    let memory_fields_payload = serde_json::json!([
+        {"fieldId": "embd_id", "domId": "cfgEmbd", "updateType": "embd_id", "responseType": "embedding", "acceptedTypes": ["embedding"], "required": true, "placeholder": "Select model"},
+        {"fieldId": "llm_id", "domId": "cfgLlm", "updateType": "llm_id", "responseType": "chat", "acceptedTypes": ["chat"], "required": true, "placeholder": "Select model"}
+    ]);
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&memory_fields_payload));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}");
+    b.push_str("function seedModelTrigger(type,value){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;trigger.dataset.value=String(value||'');trigger.dataset.savedValue=String(value||'');renderDefaultModelTrigger(field)}");
+    b.push_str("async function loadMemoryModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}loadMemoryModelCatalog();");
+    b.push_str("</script><script>const memoryId=");
     b.push_str(&memory_id_json);
     b.push_str(
         r#";
@@ -2278,12 +2331,9 @@ const byId=(id)=>document.getElementById(id);let avatarValue='';let configReques
 function node(tag,text){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);return n}
 function showToast(text){const toast=byId('memoryToast');toast.textContent=text;toast.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>toast.hidden=true,1600)}
 function setAvatar(memory){const name=(memory.name||'M').trim();byId('memoryAvatarInitial').textContent=name.charAt(0).toUpperCase()||'M';const image=byId('memoryAvatarImage');if(memory.avatar&&(memory.avatar.startsWith('data:image/')||/^https?:\/\//i.test(memory.avatar))){image.src=memory.avatar;image.hidden=false;byId('memoryAvatarInitial').hidden=true}else{image.removeAttribute('src');image.hidden=true;byId('memoryAvatarInitial').hidden=false}}
-function ensureOption(id,value){const select=byId(id);if(!Array.from(select.options).some((option)=>option.value===value)){const option=node('option',value);option.value=value;select.appendChild(option)}select.value=value}
-function appendModelOptions(selectId,models,types){const select=byId(selectId);const groups=new Map();const seen=new Set(Array.from(select.options).map((option)=>option.value));for(const model of models){const capabilities=Array.isArray(model.model_type)?model.model_type:[model.model_type];if(!capabilities.some((type)=>types.includes(type))||!model.selector||seen.has(model.selector))continue;seen.add(model.selector);const label=(model.provider||model.provider_id||'Provider')+' / '+(model.instance_name||model.instance_id||'default');let group=groups.get(label);if(!group){group=document.createElement('optgroup');group.label=label;groups.set(label,group);select.appendChild(group)}const option=node('option',model.name||model.selector);option.value=model.selector;group.appendChild(option)}}
-async function loadModels(){try{const response=await fetch('/api/v1/models');const data=await response.json();if(data.code!==0)return;const models=data.data||[];appendModelOptions('cfgEmbd',models,['embedding']);appendModelOptions('cfgLlm',models,['chat','image2text'])}catch(_error){}}
-function populate(memory,messageCount){byId('memoryName').textContent=memory.name||'Memory';byId('memoryDescription').textContent=memory.description||'';byId('memoryCreated').textContent='Created '+new Date(memory.created_at||Date.now()).toLocaleDateString();byId('memoryMessagesLink').href='/memory/memory-message/'+encodeURIComponent(memoryId);byId('memorySettingLink').href='/memory/memory-setting/'+encodeURIComponent(memoryId);setAvatar(memory);avatarValue=memory.avatar||'';byId('cfgName').value=memory.name||'';byId('cfgDescription').value=memory.description||'';ensureOption('cfgEmbd',memory.embd_id||'default');ensureOption('cfgLlm',memory.llm_id||'default');for(const checkbox of document.querySelectorAll('.cfg-type'))checkbox.checked=(memory.memory_type||[]).includes(checkbox.value);document.querySelector('.cfg-type[value="raw"]').checked=true;byId('cfgSize').value=String(Number(memory.memory_size)||5242880);byId('cfgPermissions').value=memory.permissions==='team'?'team':'me';byId('cfgStorage').value=memory.storage_type||'table';byId('cfgPolicy').value='FIFO';const temperature=Math.min(1,Math.max(0,Number.isFinite(Number(memory.temperature))?Number(memory.temperature):0.5));byId('cfgTemperature').value=String(temperature);byId('cfgTemperatureNumber').value=String(temperature);byId('cfgSystemPrompt').value=memory.system_prompt||'';byId('cfgUserPrompt').value=memory.user_prompt||'';const locked=messageCount>0;byId('cfgEmbd').disabled=locked;byId('cfgLlm').disabled=false;for(const checkbox of document.querySelectorAll('.cfg-type'))checkbox.disabled=locked||checkbox.value==='raw';byId('cfgLockHint').textContent=locked?'Embedding and memory types are locked after messages are stored.':'Raw memory is required.'}
-async function loadSetting(){const generation=++configRequest;byId('configStatus').textContent='Loading...';try{await loadModels();const [configResponse,messagesResponse]=await Promise.all([fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'/config'),fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'?page=1&page_size=1')]);const configData=await configResponse.json();const messagesData=await messagesResponse.json();if(generation!==configRequest)return;if(configData.code!==0)throw new Error(configData.message||'Memory not found');if(messagesData.code!==0)throw new Error(messagesData.message||'Messages unavailable');const count=Number(messagesData.data&&messagesData.data.messages&&messagesData.data.messages.total_count)||0;populate(configData.data||{},count);byId('configStatus').textContent=''}catch(error){byId('configStatus').textContent=error.message||String(error)}}
-async function saveSetting(event){event.preventDefault();const name=byId('cfgName').value.trim();if(!name){byId('cfgName').focus();return}const memorySize=Number(byId('cfgSize').value);const temperature=Number(byId('cfgTemperatureNumber').value);if(!Number.isInteger(memorySize)||memorySize<1||memorySize>10485760){alert('Memory capacity must be an integer from 1 to 10485760 bytes.');return}if(!Number.isFinite(temperature)||temperature<0||temperature>1){alert('Temperature must be in range [0, 1].');return}const types=Array.from(document.querySelectorAll('.cfg-type:checked')).map((item)=>item.value);if(!types.includes('raw'))types.unshift('raw');const body={name,avatar:avatarValue,description:byId('cfgDescription').value,memory_size:memorySize,permissions:byId('cfgPermissions').value,forgetting_policy:'FIFO',temperature,llm_id:byId('cfgLlm').value,system_prompt:byId('cfgSystemPrompt').value,user_prompt:byId('cfgUserPrompt').value};if(!byId('cfgEmbd').disabled)body.embd_id=byId('cfgEmbd').value;if(!document.querySelector('.cfg-type[value="semantic"]').disabled)body.memory_type=types;const button=byId('cfgSave');button.disabled=true;byId('configStatus').textContent='Saving...';try{const response=await fetch('/api/v1/memories/'+encodeURIComponent(memoryId),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Save failed');showToast('Saved');await loadSetting()}catch(error){byId('configStatus').textContent=error.message||String(error)}finally{button.disabled=false}}
+function populate(memory,messageCount){byId('memoryName').textContent=memory.name||'Memory';byId('memoryDescription').textContent=memory.description||'';byId('memoryCreated').textContent='Created '+new Date(memory.created_at||Date.now()).toLocaleDateString();byId('memoryMessagesLink').href='/memory/memory-message/'+encodeURIComponent(memoryId);byId('memorySettingLink').href='/memory/memory-setting/'+encodeURIComponent(memoryId);setAvatar(memory);avatarValue=memory.avatar||'';byId('cfgName').value=memory.name||'';byId('cfgDescription').value=memory.description||'';seedModelTrigger('embd_id',memory.embd_id||'default');seedModelTrigger('llm_id',memory.llm_id||'default');for(const checkbox of document.querySelectorAll('.cfg-type'))checkbox.checked=(memory.memory_type||[]).includes(checkbox.value);document.querySelector('.cfg-type[value="raw"]').checked=true;byId('cfgSize').value=String(Number(memory.memory_size)||5242880);byId('cfgPermissions').value=memory.permissions==='team'?'team':'me';byId('cfgStorage').value=memory.storage_type||'table';byId('cfgPolicy').value='FIFO';const temperature=Math.min(1,Math.max(0,Number.isFinite(Number(memory.temperature))?Number(memory.temperature):0.5));byId('cfgTemperature').value=String(temperature);byId('cfgTemperatureNumber').value=String(temperature);byId('cfgSystemPrompt').value=memory.system_prompt||'';byId('cfgUserPrompt').value=memory.user_prompt||'';const locked=messageCount>0;byId('cfgEmbd').disabled=locked;byId('cfgLlm').disabled=locked;for(const checkbox of document.querySelectorAll('.cfg-type'))checkbox.disabled=locked||checkbox.value==='raw';byId('cfgLockHint').textContent=locked?'Embedding and memory types are locked after messages are stored.':'Raw memory is required.'}
+async function loadSetting(){const generation=++configRequest;byId('configStatus').textContent='Loading...';try{await loadMemoryModelCatalog();const [configResponse,messagesResponse]=await Promise.all([fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'/config'),fetch('/api/v1/memories/'+encodeURIComponent(memoryId)+'?page=1&page_size=1')]);const configData=await configResponse.json();const messagesData=await messagesResponse.json();if(generation!==configRequest)return;if(configData.code!==0)throw new Error(configData.message||'Memory not found');if(messagesData.code!==0)throw new Error(messagesData.message||'Messages unavailable');const count=Number(messagesData.data&&messagesData.data.messages&&messagesData.data.messages.total_count)||0;populate(configData.data||{},count);byId('configStatus').textContent=''}catch(error){byId('configStatus').textContent=error.message||String(error)}}
+async function saveSetting(event){event.preventDefault();const name=byId('cfgName').value.trim();if(!name){byId('cfgName').focus();return}const memorySize=Number(byId('cfgSize').value);const temperature=Number(byId('cfgTemperatureNumber').value);if(!Number.isInteger(memorySize)||memorySize<1||memorySize>10485760){alert('Memory capacity must be an integer from 1 to 10485760 bytes.');return}if(!Number.isFinite(temperature)||temperature<0||temperature>1){alert('Temperature must be in range [0, 1].');return}const types=Array.from(document.querySelectorAll('.cfg-type:checked')).map((item)=>item.value);if(!types.includes('raw'))types.unshift('raw');const body={name,avatar:avatarValue,description:byId('cfgDescription').value,memory_size:memorySize,permissions:byId('cfgPermissions').value,forgetting_policy:'FIFO',temperature,llm_id:byId('cfgLlm').dataset.value||'default',system_prompt:byId('cfgSystemPrompt').value,user_prompt:byId('cfgUserPrompt').value};if(!byId('cfgEmbd').disabled)body.embd_id=byId('cfgEmbd').dataset.value||'default';if(!document.querySelector('.cfg-type[value="semantic"]').disabled)body.memory_type=types;const button=byId('cfgSave');button.disabled=true;byId('configStatus').textContent='Saving...';try{const response=await fetch('/api/v1/memories/'+encodeURIComponent(memoryId),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Save failed');showToast('Saved');await loadSetting()}catch(error){byId('configStatus').textContent=error.message||String(error)}finally{button.disabled=false}}
 byId('cfgAvatar').onchange=(event)=>{const file=event.target.files&&event.target.files[0];if(!file)return;if(!file.type.startsWith('image/')||file.size>2*1024*1024){alert('Choose a PNG, JPEG, WebP or GIF image up to 2 MiB.');event.target.value='';return}const reader=new FileReader();reader.onload=()=>{avatarValue=String(reader.result||'');setAvatar({name:byId('cfgName').value,avatar:avatarValue})};reader.readAsDataURL(file)};byId('cfgName').oninput=()=>{if(!avatarValue)setAvatar({name:byId('cfgName').value,avatar:''})};byId('cfgTemperature').oninput=()=>byId('cfgTemperatureNumber').value=byId('cfgTemperature').value;byId('cfgTemperatureNumber').oninput=()=>byId('cfgTemperature').value=byId('cfgTemperatureNumber').value;byId('cfgReset').onclick=loadSetting;byId('memorySettingForm').onsubmit=saveSetting;loadSetting();
 </script>"#,
     );
@@ -4253,6 +4303,9 @@ mod kb_ui_tests {
             "cfgDescription",
             "cfgEmbd",
             "cfgLlm",
+            "default-model-embd_id",
+            "default-model-llm_id",
+            "const MODEL_FIELDS=",
             "cfgSize",
             "cfgPermissions",
             "cfgPolicy",
