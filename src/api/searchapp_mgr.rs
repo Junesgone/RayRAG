@@ -25,6 +25,8 @@ pub struct SearchAppRecord {
     #[serde(default)]
     pub rerank: bool,
     #[serde(default)]
+    pub rerank_id: String,
+    #[serde(default)]
     pub top_k: u32,
     #[serde(default)]
     pub created_at: String,
@@ -39,6 +41,8 @@ pub struct SearchAppCreate {
     pub hybrid: bool,
     #[serde(default)]
     pub rerank: bool,
+    #[serde(default)]
+    pub rerank_id: String,
     #[serde(default)]
     pub top_k: u32,
 }
@@ -107,6 +111,7 @@ impl SearchAppStore {
             kb_ids: req.kb_ids,
             hybrid: req.hybrid,
             rerank: req.rerank,
+            rerank_id: req.rerank_id,
             top_k: req.top_k,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
@@ -200,6 +205,8 @@ pub struct UpdateSearchAppRequest {
     #[serde(default)]
     pub rerank: Option<bool>,
     #[serde(default)]
+    pub rerank_id: Option<String>,
+    #[serde(default)]
     pub top_k: Option<u32>,
 }
 
@@ -263,6 +270,11 @@ pub async fn update_search_app(
             next.rerank = rerank;
             changed = true;
         }
+    if let Some(rerank_id) = body.rerank_id
+        && rerank_id != next.rerank_id {
+            next.rerank_id = rerank_id;
+            changed = true;
+        }
     if let Some(top_k) = body.top_k
         && top_k != next.top_k {
             next.top_k = top_k;
@@ -302,6 +314,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn create_persists_rerank_id() {
+        let dir = std::env::temp_dir().join(format!("rayrag-searchapp-{}", uuid::Uuid::new_v4()));
+        let store = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let rec = store
+            .create(
+                "u1",
+                SearchAppCreate {
+                    name: "rerank-app".into(),
+                    kb_ids: vec![],
+                    hybrid: false,
+                    rerank: true,
+                    rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
+                    top_k: 8,
+                },
+            )
+            .unwrap();
+        assert_eq!(rec.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        let got = store.get(&rec.id).unwrap();
+        assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn upsert_replaces_existing_record() {
         let dir = std::env::temp_dir().join(format!("rayrag-searchapp-{}", uuid::Uuid::new_v4()));
         let store = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
@@ -313,6 +348,7 @@ mod tests {
                     kb_ids: vec!["kb1".into()],
                     hybrid: false,
                     rerank: false,
+                    rerank_id: String::new(),
                     top_k: 8,
                 },
             )
@@ -320,22 +356,25 @@ mod tests {
         let mut next = rec.clone();
         next.rerank = true;
         next.top_k = 16;
+        next.rerank_id = "prov/inst/bge-reranker-v2-m3".into();
         next.icon = "🔎".into();
         store.upsert(next).unwrap();
         let got = store.get(&rec.id).unwrap();
         assert!(got.rerank);
         assert_eq!(got.top_k, 16);
         assert_eq!(got.icon, "🔎");
+        assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
         std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
     fn update_request_parses_partial_fields() {
         let req: UpdateSearchAppRequest =
-            serde_json::from_str(r#"{"name":"新名","rerank":true,"top_k":12}"#).unwrap();
+            serde_json::from_str(r#"{"name":"新名","rerank":true,"rerank_id":"prov/inst/m3","top_k":12}"#).unwrap();
         assert_eq!(req.name.as_deref(), Some("新名"));
         assert!(req.rerank == Some(true));
         assert_eq!(req.top_k, Some(12));
         assert!(req.hybrid.is_none());
+        assert_eq!(req.rerank_id.as_deref(), Some("prov/inst/m3"));
     }
 }

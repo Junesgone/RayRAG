@@ -17,10 +17,10 @@
 |---|---:|---:|
 | aligned | 208 | 54046 |
 | full | 566 | 267453 |
-| partial | 36 | 9368 |
+| partial | 37 | 9978 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3469 | 888331 |
+| reference | 3468 | 887721 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -435,6 +435,11 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 
 > v0.3.4q（2026-09-08）memory 设置模型树选择器组件化收口：`web/src/pages/memory/memory-setting/memory-model-form.tsx` 的两个字段落地共享默认模型树选择器——embd_id 走 common-item EmbeddingSelect 同源（RayRAG 以 push_default_model_selector 落地）、llm_id 对齐上游 ModelTreeSelect 默认 modelTypes=ModelTypeMap.llm_id（chat）；保存走 memory 设置表单 PUT（上游 react-hook-form 表单本地语义，不写租户默认、无 /models/default 调用）；锁定语义对齐上游（messages>0 后 embd/llm 均禁用）且 LLM 标签（上游 memories.llm='LLM'）与两条 tooltip 逐字对齐 zh/en。
 > CDP 实点（memory-tree-cdp.mjs，headless Chrome/144@[::1]:16002）：创建记忆→实点打开 llm 树（3 行 provider→instance→model）→点选复合值 qwen3.5-9b@GPU Qwen3.5-9B@Local Qwen3.5-9B→Save（PUT 携带复合值）→重载 config/触发器均恢复复合值→探针记忆 DELETE code 0 零污染、零 /models/default 调用、0 page error；web 49/49、cargo check 0 错、coverage --check 通过。
+>
+> v0.3.4r（2026-09-09）检索应用设置 rerank 模型切片：上游 `web/src/pages/next-search/search-setting.tsx` 的 use_rerank Switch → rerank_id ModelTreeSelect(modelTypes=['rerank']) 条件段在 RayRAG `/searches/{id}` 检索应用详情页落地共享树选择器——SEARCH_RERANK_SELECTOR_FIELD(field_id rerank_id, dom saRerankSel, accepted rerank)+push_default_model_selector+MODEL_FIELDS 载荷+DEFAULT_MODEL_TREE_JS_HEAD/BODY+seedModelTrigger(window.__APP_SEED__ 取 app.rerank_id)+saRerankToggle(行随开关显隐)+loadSearchAppModelCatalog；
+> sa_rerank 开关标签 Rerank→Rerank Model（zh 重排模型，既有键）；saveSApp PUT /api/v1/searchapps/{id} 增加 rerank_id；SearchAppRecord/SearchAppCreate/UpdateSearchAppRequest 增加 rerank_id（serde default）+create/update 落库。测试：searchapp_mgr 3 测（create_persists_rerank_id/upsert/update_request）+web 页面测 search_app_detail_page_renders_rerank_tree_selector（testid/data-model-types/saRerankRow/saRerankToggle/rerank_id:/seedModelTrigger/Rerank Model 标签）。
+> CDP 实点（searchapp-rerank-tree-cdp.mjs，隔离 debug 实例 9493+部署租户/模型/用户快照注入）：建 KB+检索应用→初始行隐藏→勾选 sa_rerank 行显→开树(3 行 provider/instance/model)→点选 default-model-leaf 复合值 mxbai-rerank-large-v2@GPU mxbai-rerank@…→Save 捕获 PUT{rerank:true,rerank_id:复合值,top_k:8}→重载 seed 复现→GET 持久化一致→清理 200×2。
+> 语义差异（partial 留点）：RayRAG 应用 top_k 语义为检索 top_k（默认 8），上游 rerank 段 top_k 默认 1024 且禁用重置——未套用；检索页（search_page）侧栏与 /search?sapp= 执行链仍未消费应用配置（独立后续）；共享 BODY 引用的 modelMessage 仅在 /models 默认页定义（各选择器页潜在 ReferenceError，非阻断，留待共享脚本收口）。
 >
 
 ## File Inventory
@@ -4686,7 +4691,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/next-search/retrieval-documents/index.less` | 11 | 189 | `64e7806fd85ed2e8` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/retrieval-documents/index.tsx` | 254 | 8677 | `ba0e8604edf4e258` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/search-home.tsx` | 91 | 3368 | `7ef6e9ed97498b73` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/next-search/search-setting.tsx` | 610 | 21539 | `982b0bba17c39a2f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/next-search/search-setting.tsx` | 610 | 21539 | `982b0bba17c39a2f` | partial | `src/web.rs; src/api/searchapp_mgr.rs` | Rust search-app detail settings (`/searches/{id}`) carry the upstream rerank section: use_rerank switch reveals the shared rerank ModelTreeSelect (SEARCH_RERANK_SELECTOR_FIELD) with seed + conditional row + save wiring (`saveSApp` sends rerank_id; store/create/update persist it); kb multi-select and the remaining search_config fields stay simplified |
 | `web/src/pages/next-search/search-view.tsx` | 347 | 13209 | `3325fadaaa2b0c0c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/searching.tsx` | 33 | 837 | `98264e5aac7e933e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/share/index.tsx` | 68 | 2206 | `8e25dd32ce6aec95` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |

@@ -3967,6 +3967,21 @@ pub async fn search_apps_page(
     Html(layout(t("Search apps", zh), &b, zh))
 }
 
+/// Upstream next-search/search-setting.tsx parity: the search-app rerank
+/// section is a `use_rerank` switch that reveals a rerank `ModelTreeSelect`
+/// (shared tree selector, accepted type `rerank`) when enabled.
+const SEARCH_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "rerank_id",
+    dom_id: "saRerankSel",
+    label: "Model",
+    update_type: "rerank_id",
+    response_type: "rerank",
+    accepted_types: &["rerank"],
+    required: false,
+    tooltip: "",
+    placeholder: "Please select",
+};
+
 /// RAGFlow 0.26.4 parity: search-app detail page (`/searches/{id}`).
 pub async fn search_app_detail_page(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
@@ -4014,17 +4029,47 @@ pub async fn search_app_detail_page(
         initial, html_esc(&app.name, 40), html_esc(if app.description.is_empty() { "-" } else { &app.description }, 60), app_id, t("Test search", zh)
     ));
     b.push_str(&format!(
-        "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><select id='sa_kbs' multiple style='width:100%;min-height:72px'>{}</select><div style='display:flex;gap:16px;margin-top:10px'><label class='set-switch'><input type='checkbox' id='sa_hybrid'{}><span class='set-sw-label'>{}</span></label><label class='set-switch'><input type='checkbox' id='sa_rerank'{}><span class='set-sw-label'>{}</span></label></div><label class='set-label'>{}</label><input id='sa_topk' type='number' min='1' max='128' value='{}' style='width:120px'></div>",
-        t("Basic Settings", zh), t("Knowledge Bases", zh), kb_opts, ck(app.hybrid), t("Hybrid", zh), ck(app.rerank), t("Rerank", zh), t("Top-K", zh), app.top_k
+        "<div class='set-group'><b class='set-title'>{}</b><label class='set-label'>{}</label><select id='sa_kbs' multiple style='width:100%;min-height:72px'>{}</select><div style='display:flex;gap:16px;margin-top:10px'><label class='set-switch'><input type='checkbox' id='sa_hybrid'{}><span class='set-sw-label'>{}</span></label><label class='set-switch'><input type='checkbox' id='sa_rerank' onchange='saRerankToggle()'{}><span class='set-sw-label'>{}</span></label></div>",
+        t("Basic Settings", zh), t("Knowledge Bases", zh), kb_opts, ck(app.hybrid), t("Hybrid", zh), ck(app.rerank), t("Rerank Model", zh)
+    ));
+    // Upstream search-setting.tsx: the rerank model selector renders only
+    // when use_rerank is enabled.
+    b.push_str("<div id='saRerankRow' style='display:none;margin-top:8px'>");
+    push_default_model_selector(&mut b, &SEARCH_RERANK_SELECTOR_FIELD, zh);
+    b.push_str("</div>");
+    b.push_str(&format!(
+        "<label class='set-label'>{}</label><input id='sa_topk' type='number' min='1' max='128' value='{}' style='width:120px'></div>",
+        t("Top-K", zh), app.top_k
     ));
     b.push_str(&format!(
         "<div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-p' onclick='saveSApp()'>{}</button></div>",
         t("Save", zh)
     ));
     b.push_str(&format!(
-        "<script>function saveSApp(){{var id='{app_id}';var kbs=Array.from(document.getElementById('sa_kbs').selectedOptions).map(function(o){{return o.value}});fetch('/api/v1/searchapps/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{kb_ids:kbs,hybrid:document.getElementById('sa_hybrid').checked,rerank:document.getElementById('sa_rerank').checked,top_k:parseInt(document.getElementById('sa_topk').value)||8}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        "<script>function saveSApp(){{var id='{app_id}';var kbs=Array.from(document.getElementById('sa_kbs').selectedOptions).map(function(o){{return o.value}});fetch('/api/v1/searchapps/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{kb_ids:kbs,hybrid:document.getElementById('sa_hybrid').checked,rerank:document.getElementById('sa_rerank').checked,rerank_id:(document.getElementById('saRerankSel')&&document.getElementById('saRerankSel').dataset.value)||'',top_k:parseInt(document.getElementById('sa_topk').value)||8}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
+    let app_seed = json_script_value(&serde_json::json!({ "rerank_id": app.rerank_id }));
+    b.push_str("<script>window.__APP_SEED__=");
+    b.push_str(&app_seed);
+    b.push_str(";</script>");
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&serde_json::json!([{
+        "fieldId": "rerank_id",
+        "domId": "saRerankSel",
+        "updateType": "rerank_id",
+        "responseType": "rerank",
+        "acceptedTypes": ["rerank"],
+        "required": false,
+        "placeholder": "Please select"
+    }])));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    b.push_str("function seedModelTrigger(type,value){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;trigger.dataset.value=String(value||'');trigger.dataset.savedValue=String(value||'');renderDefaultModelTrigger(field)}");
+    b.push_str("function saRerankToggle(){var on=document.getElementById('sa_rerank').checked;var row=document.getElementById('saRerankRow');if(row)row.style.display=on?'':'none'}");
+    b.push_str("async function loadSearchAppModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}");
+    b.push_str("loadSearchAppModelCatalog().then(function(){var seed=window.__APP_SEED__||{};if(seed.rerank_id)seedModelTrigger('rerank_id',seed.rerank_id);saRerankToggle();});");
+    b.push_str("</script>");
     Html(layout(t("Search apps", zh), &b, zh))
 }
 
@@ -4914,6 +4959,59 @@ mod kb_ui_tests {
         assert!(html.contains("id='tt'"), "similarity slider missing");
         assert!(html.contains("testRes"), "results area missing");
         assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
+    }
+
+    #[tokio::test]
+    async fn search_app_detail_page_renders_rerank_tree_selector() {
+        let (_root, mut state) = test_state();
+        let dir = std::env::temp_dir().join(format!(
+            "rayrag-sapp-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "检索应用".into(),
+                    kb_ids: vec![],
+                    hybrid: false,
+                    rerank: false,
+                    rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
+                    top_k: 8,
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store);
+        let req = Request::builder()
+            .uri("/searches/x")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            search_app_detail_page(State(state.clone()), Path(app.id.clone()), req).await,
+        )
+        .await;
+        // Upstream next-search/search-setting.tsx: rerank switch + rerank_id
+        // ModelTreeSelect (rerank), revealed only when use_rerank is on.
+        assert!(
+            html.contains("data-testid='default-model-rerank_id'"),
+            "rerank tree trigger missing"
+        );
+        assert!(
+            html.contains("data-model-types='rerank'"),
+            "rerank accepted types missing"
+        );
+        assert!(html.contains("id='saRerankRow'"), "conditional row missing");
+        assert!(html.contains("saRerankToggle"), "row toggle missing");
+        assert!(html.contains("rerank_id:"), "saveSApp must send rerank_id");
+        assert!(html.contains("seedModelTrigger"), "seed wiring missing");
+        assert!(
+            html.contains("Rerank Model") || html.contains("重排模型"),
+            "rerank model switch label missing"
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
