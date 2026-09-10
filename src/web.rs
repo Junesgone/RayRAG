@@ -30,8 +30,12 @@ fn t(k: &str, zh: bool) -> &str {
         "Description" => "描述",
         "LLM" => "大语言模型",
         "Select model" => "选择模型",
-        "Converts text into numerical vectors for meaning similarity search and memory retrieval." => "将文本转换为数值向量，用于语义相似度搜索和记忆检索。",
-        "Analyzes conversation content, extracts key information, and generates structured memory summaries." => "分析对话内容，提取关键信息，并生成结构化的记忆摘要。",
+        "Converts text into numerical vectors for meaning similarity search and memory retrieval." => {
+            "将文本转换为数值向量，用于语义相似度搜索和记忆检索。"
+        }
+        "Analyzes conversation content, extracts key information, and generates structured memory summaries." => {
+            "分析对话内容，提取关键信息，并生成结构化的记忆摘要。"
+        }
         "Opener" => "开场白",
         "System Prompt" => "系统提示词",
         "Prompt Engine" => "提示引擎",
@@ -2272,9 +2276,15 @@ pub async fn memory_setting_page(
     b.push_str("<textarea id='cfgDescription' maxlength='2000'></textarea></label><label>");
     b.push_str(t("Embedding Model", zh));
     b.push_str(" <span class='tip' tabindex='0' aria-label='");
-    b.push_str(&html_escape(t("Converts text into numerical vectors for meaning similarity search and memory retrieval.", zh)));
+    b.push_str(&html_escape(t(
+        "Converts text into numerical vectors for meaning similarity search and memory retrieval.",
+        zh,
+    )));
     b.push_str("' data-tip='");
-    b.push_str(&html_escape(t("Converts text into numerical vectors for meaning similarity search and memory retrieval.", zh)));
+    b.push_str(&html_escape(t(
+        "Converts text into numerical vectors for meaning similarity search and memory retrieval.",
+        zh,
+    )));
     b.push_str("'>?</span>");
     push_default_model_selector(&mut b, &MEMORY_EMBD_SELECTOR_FIELD, zh);
     b.push_str("</label><label>");
@@ -2593,7 +2603,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
 ];
 
 fn provider_capability_tags(provider_id: &str, provider_name: &str) -> Vec<&'static str> {
-    use crate::providers::{provider_has_kind, ProviderKind};
+    use crate::providers::{ProviderKind, provider_has_kind};
     [
         (ProviderKind::Chat, "chat"),
         (ProviderKind::Embedding, "embedding"),
@@ -4399,9 +4409,11 @@ mod kb_ui_tests {
             ]
         );
         assert!(DEFAULT_MODEL_FIELDS[0].required);
-        assert!(DEFAULT_MODEL_FIELDS[1..]
-            .iter()
-            .all(|field| !field.required));
+        assert!(
+            DEFAULT_MODEL_FIELDS[1..]
+                .iter()
+                .all(|field| !field.required)
+        );
     }
 
     #[tokio::test]
@@ -4848,9 +4860,7 @@ mod kb_ui_tests {
             "shared body missing"
         );
         assert!(
-            html.contains(
-                "(type,nextValue){var field=modelField(type)"
-            ),
+            html.contains("(type,nextValue){var field=modelField(type)"),
             "form persist hook missing"
         );
         assert!(
@@ -4964,10 +4974,7 @@ mod kb_ui_tests {
     #[tokio::test]
     async fn search_app_detail_page_renders_rerank_tree_selector() {
         let (_root, mut state) = test_state();
-        let dir = std::env::temp_dir().join(format!(
-            "rayrag-sapp-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("rayrag-sapp-test-{}", uuid::Uuid::new_v4()));
         let store = std::sync::Arc::new(
             crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
         );
@@ -4989,10 +4996,9 @@ mod kb_ui_tests {
             .uri("/searches/x")
             .body(Body::empty())
             .unwrap();
-        let html = body_of(
-            search_app_detail_page(State(state.clone()), Path(app.id.clone()), req).await,
-        )
-        .await;
+        let html =
+            body_of(search_app_detail_page(State(state.clone()), Path(app.id.clone()), req).await)
+                .await;
         // Upstream next-search/search-setting.tsx: rerank switch + rerank_id
         // ModelTreeSelect (rerank), revealed only when use_rerank is on.
         assert!(

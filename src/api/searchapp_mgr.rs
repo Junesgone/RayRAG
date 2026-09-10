@@ -244,10 +244,11 @@ pub async fn update_search_app(
         }
     }
     if let Some(description) = body.description
-        && description != next.description {
-            next.description = description;
-            changed = true;
-        }
+        && description != next.description
+    {
+        next.description = description;
+        changed = true;
+    }
     if let Some(icon) = body.icon {
         let icon = icon.trim().to_string();
         if icon != next.icon {
@@ -256,30 +257,35 @@ pub async fn update_search_app(
         }
     }
     if let Some(kb_ids) = body.kb_ids
-        && kb_ids != next.kb_ids {
-            next.kb_ids = kb_ids;
-            changed = true;
-        }
+        && kb_ids != next.kb_ids
+    {
+        next.kb_ids = kb_ids;
+        changed = true;
+    }
     if let Some(hybrid) = body.hybrid
-        && hybrid != next.hybrid {
-            next.hybrid = hybrid;
-            changed = true;
-        }
+        && hybrid != next.hybrid
+    {
+        next.hybrid = hybrid;
+        changed = true;
+    }
     if let Some(rerank) = body.rerank
-        && rerank != next.rerank {
-            next.rerank = rerank;
-            changed = true;
-        }
+        && rerank != next.rerank
+    {
+        next.rerank = rerank;
+        changed = true;
+    }
     if let Some(rerank_id) = body.rerank_id
-        && rerank_id != next.rerank_id {
-            next.rerank_id = rerank_id;
-            changed = true;
-        }
+        && rerank_id != next.rerank_id
+    {
+        next.rerank_id = rerank_id;
+        changed = true;
+    }
     if let Some(top_k) = body.top_k
-        && top_k != next.top_k {
-            next.top_k = top_k;
-            changed = true;
-        }
+        && top_k != next.top_k
+    {
+        next.top_k = top_k;
+        changed = true;
+    }
     if changed {
         store
             .upsert(next)
@@ -369,8 +375,10 @@ mod tests {
 
     #[test]
     fn update_request_parses_partial_fields() {
-        let req: UpdateSearchAppRequest =
-            serde_json::from_str(r#"{"name":"新名","rerank":true,"rerank_id":"prov/inst/m3","top_k":12}"#).unwrap();
+        let req: UpdateSearchAppRequest = serde_json::from_str(
+            r#"{"name":"新名","rerank":true,"rerank_id":"prov/inst/m3","top_k":12}"#,
+        )
+        .unwrap();
         assert_eq!(req.name.as_deref(), Some("新名"));
         assert!(req.rerank == Some(true));
         assert_eq!(req.top_k, Some(12));

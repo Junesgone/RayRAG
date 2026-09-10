@@ -16,7 +16,11 @@ page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 240)));
 const putBodies = [];
 page.on("request", (req) => {
   const u = req.url();
-  if (u.includes("/api/v1/searchapps") && req.method() === "PUT" && req.postData()) {
+  if (
+    u.includes("/api/v1/searchapps") &&
+    req.method() === "PUT" &&
+    req.postData()
+  ) {
     try {
       putBodies.push(JSON.parse(req.postData()));
     } catch {}
@@ -102,7 +106,8 @@ try {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer " + (localStorage.getItem("rayrag_token") || ""),
+          Authorization:
+            "Bearer " + (localStorage.getItem("rayrag_token") || ""),
         },
         body: JSON.stringify({
           name: "CDP-SAPP-" + Date.now(),
@@ -174,9 +179,7 @@ try {
     .click({ timeout: 8000 });
   await page.waitForTimeout(700);
   const opened = await page.evaluate(() => {
-    const t = document.querySelector(
-      "[data-testid='default-model-rerank_id']",
-    );
+    const t = document.querySelector("[data-testid='default-model-rerank_id']");
     const pop = document.getElementById("saRerankSelPopover");
     const rows = Array.from(
       document.querySelectorAll("#saRerankSelTree .default-model-node"),
@@ -224,9 +227,7 @@ try {
   results.picked = picked;
 
   const afterPick = await page.evaluate(() => {
-    const t = document.querySelector(
-      "[data-testid='default-model-rerank_id']",
-    );
+    const t = document.querySelector("[data-testid='default-model-rerank_id']");
     return { value: (t && t.dataset.value) || "" };
   });
   results.afterPick = afterPick;
@@ -257,9 +258,7 @@ try {
   }
 
   const final = await page.evaluate(async () => {
-    const t = document.querySelector(
-      "[data-testid='default-model-rerank_id']",
-    );
+    const t = document.querySelector("[data-testid='default-model-rerank_id']");
     const c = document.getElementById("sa_rerank");
     const row = document.getElementById("saRerankRow");
     const res = await fetch("/api/v1/searchapps", {
