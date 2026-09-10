@@ -17,10 +17,10 @@
 |---|---:|---:|
 | aligned | 208 | 54046 |
 | full | 566 | 267453 |
-| partial | 37 | 9978 |
+| partial | 38 | 10600 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3468 | 887721 |
+| reference | 3467 | 887099 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -440,6 +440,11 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 > sa_rerank 开关标签 Rerank→Rerank Model（zh 重排模型，既有键）；saveSApp PUT /api/v1/searchapps/{id} 增加 rerank_id；SearchAppRecord/SearchAppCreate/UpdateSearchAppRequest 增加 rerank_id（serde default）+create/update 落库。测试：searchapp_mgr 3 测（create_persists_rerank_id/upsert/update_request）+web 页面测 search_app_detail_page_renders_rerank_tree_selector（testid/data-model-types/saRerankRow/saRerankToggle/rerank_id:/seedModelTrigger/Rerank Model 标签）。
 > CDP 实点（searchapp-rerank-tree-cdp.mjs，隔离 debug 实例 9493+部署租户/模型/用户快照注入）：建 KB+检索应用→初始行隐藏→勾选 sa_rerank 行显→开树(3 行 provider/instance/model)→点选 default-model-leaf 复合值 mxbai-rerank-large-v2@GPU mxbai-rerank@…→Save 捕获 PUT{rerank:true,rerank_id:复合值,top_k:8}→重载 seed 复现→GET 持久化一致→清理 200×2。
 > 语义差异（partial 留点）：RayRAG 应用 top_k 语义为检索 top_k（默认 8），上游 rerank 段 top_k 默认 1024 且禁用重置——未套用；检索页（search_page）侧栏与 /search?sapp= 执行链仍未消费应用配置（独立后续）；共享 BODY 引用的 modelMessage 仅在 /models 默认页定义（各选择器页潜在 ReferenceError，非阻断，留待共享脚本收口）。
+>
+> v0.3.4s（2026-09-09）检索应用运行时执行链：上游 `web/src/pages/next-search/hooks.ts` 的 search app 运行时（search_config 驱动检索）在 RayRAG `/search?sapp={id}` 落地——search_page 解析 sapp 查询参数并从 SearchAppStore 取应用，注入 window.__SAPP__（id/name/kb_ids/hybrid/rerank/rerank_id/top_k）；
+> applySapp() 在 loadKbs 后装配（kb chips 按应用勾选、__all__ 反选、rerank/hybrid 开关、topK 注入应用值选项）；runSearch 发送 body.rerank_id=__SAPP__.rerank_id（检索 API rerank=flag||rerank_id.is_some()+rerank 窗口 rerank_window(top_k,1024) 已对齐上游）并接线 hybrid 复选框（未选→vector_similarity_weight=0 纯 BM25，选中→检索默认 0.3/侧栏值）。检索应用详情页 Test search 按钮 href=/search?sapp={id} 全链闭环。
+> 测试：web 页面测 search_page_seeds_search_app_runtime_config（种子/装配/rerank_id/hybrid 接线/无参不泄漏）+ searchapp 3 测 + reranking 回归；CDP 实点（search-app-sapp-cdp.mjs）：建 KB+应用(rerank_id=目录 rerank 复合值,top_k 8,hybrid)→/search?sapp= 装配断言（__SAPP__/开关/topK=8/chip 勾选/__all__ 反选）→Search 捕获 POST /api/v1/retrieval{question,top_k:8,kb_ids:[kb],rerank_id:复合值}→渲染空结果→清理 200×2。
+> 留点：检索页侧栏 similarity_threshold/vector_similarity_weight 仍为侧栏值（应用未存该两键）；quickQ 硬编码两问；searchHome 问候未带应用名（cosmetic）；检索页 rerank_id 选择器仍为开关语义（应用值只读种子）。
 >
 
 ## File Inventory
@@ -4682,7 +4687,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/next-search/document-preview-modal/index.tsx` | 70 | 2139 | `93645337c96e5cf5` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/embed-app-modal.tsx` | 151 | 4807 | `aa2741f4ac0ce3ec` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/expandable-content.tsx` | 108 | 3090 | `310cd058757517e3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/next-search/hooks.ts` | 622 | 15144 | `33c86716a94bcc47` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/next-search/hooks.ts` | 622 | 15144 | `33c86716a94bcc47` | partial | `src/web.rs` | Rust `/search` page consumes the search app runtime: `/search?sapp={id}` seeds kb chips/select, rerank/hybrid switches, an injected Top-K option and `__SAPP__` (rerank_id) so `runSearch` sends the app config (kb_ids/top_k/rerank_id) to `/api/v1/retrieval`; mindmap/related-search/highlight flows remain simplified |
 | `web/src/pages/next-search/index.less` | 116 | 1756 | `dcdf21d4c8a46243` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/index.tsx` | 83 | 2578 | `2d00e5eac08d218c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/markdown-content/index.tsx` | 293 | 9201 | `7858fc6edf3fe899` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
