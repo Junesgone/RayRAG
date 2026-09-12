@@ -28,6 +28,10 @@ pub struct SearchAppRecord {
     pub rerank_id: String,
     #[serde(default)]
     pub top_k: u32,
+    #[serde(default = "default_similarity_threshold")]
+    pub similarity_threshold: f64,
+    #[serde(default = "default_vector_similarity_weight")]
+    pub vector_similarity_weight: f64,
     #[serde(default)]
     pub created_at: String,
 }
@@ -45,6 +49,18 @@ pub struct SearchAppCreate {
     pub rerank_id: String,
     #[serde(default)]
     pub top_k: u32,
+    #[serde(default = "default_similarity_threshold")]
+    pub similarity_threshold: f64,
+    #[serde(default = "default_vector_similarity_weight")]
+    pub vector_similarity_weight: f64,
+}
+
+fn default_similarity_threshold() -> f64 {
+    0.2
+}
+
+fn default_vector_similarity_weight() -> f64 {
+    0.3
 }
 
 pub struct SearchAppStore {
@@ -113,6 +129,8 @@ impl SearchAppStore {
             rerank: req.rerank,
             rerank_id: req.rerank_id,
             top_k: req.top_k,
+            similarity_threshold: req.similarity_threshold,
+            vector_similarity_weight: req.vector_similarity_weight,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
         self.apps
@@ -207,6 +225,10 @@ pub struct UpdateSearchAppRequest {
     #[serde(default)]
     pub rerank_id: Option<String>,
     #[serde(default)]
+    pub similarity_threshold: Option<f64>,
+    #[serde(default)]
+    pub vector_similarity_weight: Option<f64>,
+    #[serde(default)]
     pub top_k: Option<u32>,
 }
 
@@ -286,6 +308,18 @@ pub async fn update_search_app(
         next.top_k = top_k;
         changed = true;
     }
+    if let Some(similarity_threshold) = body.similarity_threshold
+        && similarity_threshold != next.similarity_threshold
+    {
+        next.similarity_threshold = similarity_threshold.clamp(0.0, 1.0);
+        changed = true;
+    }
+    if let Some(vector_similarity_weight) = body.vector_similarity_weight
+        && vector_similarity_weight != next.vector_similarity_weight
+    {
+        next.vector_similarity_weight = vector_similarity_weight.clamp(0.0, 1.0);
+        changed = true;
+    }
     if changed {
         store
             .upsert(next)
@@ -333,12 +367,16 @@ mod tests {
                     rerank: true,
                     rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
                     top_k: 8,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
                 },
             )
             .unwrap();
         assert_eq!(rec.rerank_id, "prov/inst/bge-reranker-v2-m3");
         let got = store.get(&rec.id).unwrap();
         assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(got.similarity_threshold, 0.2);
+        assert_eq!(got.vector_similarity_weight, 0.3);
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -356,6 +394,8 @@ mod tests {
                     rerank: false,
                     rerank_id: String::new(),
                     top_k: 8,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
                 },
             )
             .unwrap();
@@ -363,6 +403,8 @@ mod tests {
         next.rerank = true;
         next.top_k = 16;
         next.rerank_id = "prov/inst/bge-reranker-v2-m3".into();
+        next.similarity_threshold = 0.6;
+        next.vector_similarity_weight = 0.4;
         next.icon = "🔎".into();
         store.upsert(next).unwrap();
         let got = store.get(&rec.id).unwrap();
@@ -370,13 +412,15 @@ mod tests {
         assert_eq!(got.top_k, 16);
         assert_eq!(got.icon, "🔎");
         assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(got.similarity_threshold, 0.6);
+        assert_eq!(got.vector_similarity_weight, 0.4);
         std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
     fn update_request_parses_partial_fields() {
         let req: UpdateSearchAppRequest = serde_json::from_str(
-            r#"{"name":"新名","rerank":true,"rerank_id":"prov/inst/m3","top_k":12}"#,
+            r#"{"name":"新名","rerank":true,"rerank_id":"prov/inst/m3","top_k":12,"similarity_threshold":0.6,"vector_similarity_weight":0.4}"#,
         )
         .unwrap();
         assert_eq!(req.name.as_deref(), Some("新名"));
@@ -384,5 +428,7 @@ mod tests {
         assert_eq!(req.top_k, Some(12));
         assert!(req.hybrid.is_none());
         assert_eq!(req.rerank_id.as_deref(), Some("prov/inst/m3"));
+        assert_eq!(req.similarity_threshold, Some(0.6));
+        assert_eq!(req.vector_similarity_weight, Some(0.4));
     }
 }
