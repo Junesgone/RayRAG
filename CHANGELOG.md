@@ -4,7 +4,12 @@ All notable changes to RayRAG are documented in this file.
 
 ## [0.3.4] — 2026-09-14/15（对标批次 v0.3.4e–v0.3.5b）
 
-### Added
+### Changed
+
+- **`/user-setting/model` 收敛为上游三段结构**：移除自造页标题与 `Reranker` /
+  `RAG Chat Test` / provider administration 区块（整体迁至 `/admin`），
+  `Available models` 标题去掉计数后缀，提供商卡按钮统一为上游的 `Add`。
+
 
 - **`/memories` 列表页对齐上游**：共享渲染器新增 `form_extra` / `page_script` /
   `lpExtraPayload()` 三个页面级挂钩，`/memories` 渲染上游组合（ListFilterBar +

@@ -3142,6 +3142,32 @@ pub async fn admin_page(
     b.push_str("</button><button class='btn btn-o' onclick='closeAddUser()'>");
     b.push_str(t("Cancel", zh));
     b.push_str("</button></div></div></div><script>function userFilter(){var q=(document.getElementById('userQ').value||'').toLowerCase();document.querySelectorAll('#userTb tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';var e=tr.getAttribute('data-email')||'';tr.style.display=(!q||m.indexOf(q)>=0||e.indexOf(q)>=0)?'':'none'});}function resetPw(id){var n=prompt('New password (min 6 chars):');if(!n)return;fetch('/api/v1/admin/users/'+id+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function delUser(id){if(!confirm('Delete this user?'))return;fetch('/api/v1/admin/users/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function showAddUser(){document.getElementById('addUserModal').classList.add('show')};function closeAddUser(){document.getElementById('addUserModal').classList.remove('show')};function addUser(){var u=document.getElementById('uname').value;var p=document.getElementById('upass').value;if(!u||!p){alert('Username and password required');return}var r=document.getElementById('urole').value;fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,role:r})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script>");
+    // RayRAG-only surface moved off `/user-setting/model` so that page stays a
+    // 1:1 copy of the upstream Model providers composition.
+    b.push_str("<h2>");
+    b.push_str(t("Model providers", zh));
+    b.push_str("</h2>");
+    {
+        let reranker = state.reranker.public_config();
+        b.push_str(
+            "<div class='card'><h2>Reranker</h2><label><input id='rerank-enabled' type='checkbox'",
+        );
+        if reranker.enabled {
+            b.push_str(" checked");
+        }
+        b.push_str("> Enabled</label><label style='display:block;margin-top:12px'>API Base<input id='rerank-base' value='");
+        b.push_str(&html_escape(&reranker.api_base));
+        b.push_str("' placeholder='http://127.0.0.1:8899'></label><label style='display:block;margin-top:12px'>API Key<input id='rerank-key' type='password' placeholder='");
+        b.push_str(if reranker.api_key_configured {
+            "Configured; leave blank to keep"
+        } else {
+            "Optional"
+        });
+        b.push_str("'></label><label style='display:block;margin:12px 0'><input id='rerank-clear' type='checkbox'> Clear saved API key</label><button class='btn btn-p' onclick='saveReranker()'>Save</button><span id='rerank-status' style='margin-left:10px;color:var(--tm)'></span></div><script>function saveReranker(){var s=document.getElementById('rerank-status');fetch('/api/v1/reranker',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('rerank-enabled').checked,api_base:document.getElementById('rerank-base').value,api_key:document.getElementById('rerank-key').value||null,clear_api_key:document.getElementById('rerank-clear').checked})}).then(async r=>({ok:r.ok,data:await r.json()})).then(x=>{s.textContent=x.ok?'Saved':(x.data.message||'Failed')})}</script>");
+    }
+    b.push_str("<div class='card'><h2>RAG Chat Test</h2><input id='q' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='chat()'>Ask</button><div id='answer' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>function chat(){var q=document.getElementById('q').value;fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('answer').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
+    b.push_str("<details class='card provider-admin-details'><summary>RayRAG provider administration</summary><div style='display:flex;justify-content:flex-end;margin:12px 0'><button class='btn btn-p btn-sm' onclick='showAddProv()'>+ Add custom provider</button></div><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
+
     Html(layout(t("Admin", zh), &b, zh))
 }
 
@@ -3716,9 +3742,6 @@ pub async fn providers_page(
         ));
     }
     let mut b = String::new();
-    b.push_str("<h1>🤖 ");
-    b.push_str(t("Model providers", zh));
-    b.push_str("</h1>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Set default models", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>");
@@ -3735,7 +3758,7 @@ pub async fn providers_page(
         let summary = crate::api::tenant_models::plan_available_providers(
             crate::api::tenant_models::factory_llm_entries(),
         );
-        b.push_str("<section class='card' id='availableModels' data-testid='available-models-section'><h2>Available models <span id='availableShown' style='font-size:12px;color:var(--tm)'></span></h2><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All <span id='providerCountAll'></span></button>");
+        b.push_str("<section class='card' id='availableModels' data-testid='available-models-section'><h2>Available models</h2><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All <span id='providerCountAll'></span></button>");
         // Upstream `un-add-model.tsx` orders the tag pills with `orderMap` and
         // labels them with `mapModelKey[tag] || tag`. Both now come from the
         // shared `crate::providers` table rather than a second literal copy.
@@ -3834,7 +3857,7 @@ pub async fn providers_page(
                 })
                 .unwrap_or_default();
             b.push_str(&format!(
-                "<article class='available-provider-card' tabindex='0' data-testid='available-model-card' data-provider='{}' data-name='{}' data-k='{}' data-factory='{}' data-provider-id='{}' data-api-base='{}' data-api-base-options='{}' data-show-base='{}' data-models='{}' data-model-picker='{}' data-api-key-optional='{}' data-special-modal='{}' onclick='showProviderInstanceModal(this)' onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();showProviderInstanceModal(this)}}\"><div class='available-provider-head'><span class='available-provider-icon'>{}</span><span class='available-provider-name'>{}</span>{}<button class='btn btn-p btn-sm available-provider-add' aria-label='Add {}' onclick='event.stopPropagation();showProviderInstanceModal(this.closest(&quot;[data-testid=available-model-card]&quot;))'>+ Add</button></div><div class='available-provider-tags'>",
+                "<article class='available-provider-card' tabindex='0' data-testid='available-model-card' data-provider='{}' data-name='{}' data-k='{}' data-factory='{}' data-provider-id='{}' data-api-base='{}' data-api-base-options='{}' data-show-base='{}' data-models='{}' data-model-picker='{}' data-api-key-optional='{}' data-special-modal='{}' onclick='showProviderInstanceModal(this)' onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();showProviderInstanceModal(this)}}\"><div class='available-provider-head'><span class='available-provider-icon'>{}</span><span class='available-provider-name'>{}</span>{}<button class='btn btn-p btn-sm available-provider-add' aria-label='Add' onclick='event.stopPropagation();showProviderInstanceModal(this.closest(&quot;[data-testid=available-model-card]&quot;))'>Add</button></div><div class='available-provider-tags'>",
                 html_escape(name),
                 html_escape(&name.to_lowercase()),
                 kinds.join(" "),
@@ -3850,7 +3873,6 @@ pub async fn providers_page(
                 provider_icon_html(name, "provider-brand-icon"),
                 html_escape(name),
                 doc_link,
-                html_escape(name),
             ));
             for kind in &kinds {
                 b.push_str("<span class='badge'>");
@@ -3863,26 +3885,6 @@ pub async fn providers_page(
         }
         b.push_str("</div><p class='available-provider-empty' id='availableProviderEmpty'>No model providers found.</p></section>");
     }
-    {
-        let reranker = state.reranker.public_config();
-        b.push_str(
-            "<div class='card'><h2>Reranker</h2><label><input id='rerank-enabled' type='checkbox'",
-        );
-        if reranker.enabled {
-            b.push_str(" checked");
-        }
-        b.push_str("> Enabled</label><label style='display:block;margin-top:12px'>API Base<input id='rerank-base' value='");
-        b.push_str(&html_escape(&reranker.api_base));
-        b.push_str("' placeholder='http://127.0.0.1:8899'></label><label style='display:block;margin-top:12px'>API Key<input id='rerank-key' type='password' placeholder='");
-        b.push_str(if reranker.api_key_configured {
-            "Configured; leave blank to keep"
-        } else {
-            "Optional"
-        });
-        b.push_str("'></label><label style='display:block;margin:12px 0'><input id='rerank-clear' type='checkbox'> Clear saved API key</label><button class='btn btn-p' onclick='saveReranker()'>Save</button><span id='rerank-status' style='margin-left:10px;color:var(--tm)'></span></div><script>function saveReranker(){var s=document.getElementById('rerank-status');fetch('/api/v1/reranker',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('rerank-enabled').checked,api_base:document.getElementById('rerank-base').value,api_key:document.getElementById('rerank-key').value||null,clear_api_key:document.getElementById('rerank-clear').checked})}).then(async r=>({ok:r.ok,data:await r.json()})).then(x=>{s.textContent=x.ok?'Saved':(x.data.message||'Failed')})}</script>");
-    }
-    b.push_str("<div class='card'><h2>RAG Chat Test</h2><input id='q' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='chat()'>Ask</button><div id='answer' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>function chat(){var q=document.getElementById('q').value;fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('answer').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
-    b.push_str("<details class='card provider-admin-details'><summary>RayRAG provider administration</summary><div style='display:flex;justify-content:flex-end;margin:12px 0'><button class='btn btn-p btn-sm' onclick='showAddProv()'>+ Add custom provider</button></div><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
     b.push_str(&rows);
     b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
     b.push_str(t(
@@ -4006,7 +4008,7 @@ async function saveSoMark(){if(!somarkValidate())return;var button=document.getE
         r##"<div class='modal-overlay' id='addProvModal' onclick='if(event.target===this)this.classList.remove("show")'><div class='modal' style='max-width:520px'><h2>+ Add Provider</h2><label style='display:block;margin-top:12px'>Provider ID<input id='apId' placeholder='e.g. deepseek' style='width:100%'></label><label style='display:block;margin-top:12px'>Name<input id='apName' placeholder='Display name' style='width:100%'></label><label style='display:block;margin-top:12px'>API Base<input id='apBase' placeholder='https://api.example.com/v1' style='width:100%'></label><label style='display:block;margin-top:12px'>API Key<input id='apKey' type='password' placeholder='Optional' style='width:100%'></label><label style='display:block;margin-top:12px'>Models (comma separated)<input id='apModels' list='apModelSuggestions' placeholder='model-a, model-b' style='width:100%'></label><datalist id='apModelSuggestions'></datalist><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveAddProv()'>Save</button><button class='btn btn-o' onclick='document.getElementById("addProvModal").classList.remove("show")'>Cancel</button><span id='apStatus' style='margin-left:8px;color:var(--tm);font-size:12px'></span></div></div></div><script>
 var activeProviderFilter='';
 function availableCards(){return Array.from(document.querySelectorAll('[data-testid="available-model-card"]'))}
-function filterAvailableProviders(){var query=(document.getElementById('providerSearch').value||'').trim().toLowerCase();var searched=0;var shown=0;var counts={};availableCards().forEach(function(card){var searchMatch=(card.dataset.name||'').includes(query);var kinds=(card.dataset.k||'').split(' ').filter(Boolean);if(searchMatch){searched++;new Set(kinds).forEach(function(kind){counts[kind]=(counts[kind]||0)+1})}var visible=searchMatch&&(!activeProviderFilter||kinds.indexOf(activeProviderFilter)>=0);card.style.display=visible?'':'none';if(visible)shown++});document.getElementById('providerCountAll').textContent=searched;['chat','embedding','rerank','tts','speech2text','image2text','ocr'].forEach(function(kind){var count=document.getElementById('providerCount-'+kind);if(count)count.textContent=counts[kind]||0});document.getElementById('availableShown').textContent=shown+' shown';document.getElementById('availableProviderEmpty').style.display=shown?'none':'block'}
+function filterAvailableProviders(){var query=(document.getElementById('providerSearch').value||'').trim().toLowerCase();var searched=0;var shown=0;var counts={};availableCards().forEach(function(card){var searchMatch=(card.dataset.name||'').includes(query);var kinds=(card.dataset.k||'').split(' ').filter(Boolean);if(searchMatch){searched++;new Set(kinds).forEach(function(kind){counts[kind]=(counts[kind]||0)+1})}var visible=searchMatch&&(!activeProviderFilter||kinds.indexOf(activeProviderFilter)>=0);card.style.display=visible?'':'none';if(visible)shown++});document.getElementById('providerCountAll').textContent=searched;['chat','embedding','rerank','tts','speech2text','image2text','ocr'].forEach(function(kind){var count=document.getElementById('providerCount-'+kind);if(count)count.textContent=counts[kind]||0});document.getElementById('availableProviderEmpty').style.display=shown?'none':'block'}
 function selectProviderFilter(kind){activeProviderFilter=(kind&&activeProviderFilter===kind)?'':kind;document.querySelectorAll('.provider-chip').forEach(function(chip){chip.classList.toggle('on',(chip.dataset.filter||'')===activeProviderFilter)});filterAvailableProviders()}
 function showAddProv(card){var modal=document.getElementById('addProvModal');var selected=!!card;document.getElementById('apId').value=selected?(card.dataset.providerId||''):'';document.getElementById('apId').readOnly=selected;document.getElementById('apName').value=selected?(card.dataset.provider||''):'';document.getElementById('apBase').value=selected?(card.dataset.apiBase||''):'';document.getElementById('apKey').value='';document.getElementById('apModels').value=selected?(card.dataset.models||''):'';document.getElementById('apStatus').textContent='';modal.dataset.existing=selected?'true':'false';modal.classList.add('show')}
 async function saveAddProv(){var modal=document.getElementById('addProvModal');var id=document.getElementById('apId').value.trim();var name=document.getElementById('apName').value.trim();var base=document.getElementById('apBase').value.trim();var key=document.getElementById('apKey').value.trim();var models=document.getElementById('apModels').value.split(',').map(function(value){return value.trim()}).filter(Boolean);var status=document.getElementById('apStatus');if(!id||!name||!base||!models.length){status.textContent='ID, Name, API Base, and at least one model are required';return}var body={name:name,api_base:base,api_key:key||null,models:models,enabled:true};status.textContent='Saving…';try{var response=await fetch('/api/v1/providers/'+encodeURIComponent(id),{method:modal.dataset.existing==='true'?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));status.textContent='Saved ✓';setTimeout(function(){location.reload()},500)}catch(error){status.textContent='Error: '+error.message}}

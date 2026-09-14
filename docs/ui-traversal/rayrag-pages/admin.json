@@ -1,0 +1,672 @@
+{
+ "route": "/admin",
+ "url": "http://127.0.0.1:9390/admin",
+ "title": "Admin · RayRAG",
+ "bodyText": "R\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\n◐\nA\n⚙️ Admin\nSystem\nVersion\tv0.3.4 (parity v0.3.5b, rev e53cd56+dirty, built 2026-09-14T16:25:53Z)\nIndex\tweb/static/../index.json\nTasks (34)\nTASK\tSTATUS\t%\nParse e2e_paper.txt\tdone\t100%\nParse e2e_aquaculture.txt\tdone\t100%\nParse e2e_vision(1).png\tdone\t100%\nParse e2e_vision.png\tdone\t100%\nParse e2e_aquaculture.txt\tdone\t100%\nParse e2e_aquaculture.txt\tfailed\t100%\nParse e2e_aquaculture.txt\tfailed\t100%\nParse rayrag_dl_test.txt\tdone\t100%\nParse ocr_smoke(2).png\tdone\t100%\nParse ocr_smoke(1).png\tfailed\t100%\nSystem Variables\nDurable RAGFlow-compatible variables. Sandbox changes take effect on the next execution; secrets are never returned in plaintext.\nNAME\tTYPE\tVALUE\t\ndefault_role\tstring\t\tSave\nenable_whitelist\tbool\t\tSave\nmail.default_sender\tstring\t\tSave\nmail.password\tstring\t\tSave\nmail.port\tinteger\t\tSave\nmail.server\tstring\t\tSave\nmail.timeout\tinteger\t\tSave\nmail.use_ssl\tbool\t\tSave\nmail.use_tls\tbool\t\tSave\nmail.username\tstring\t\tSave\nsandbox.aliyun_codeinterpreter\tjson\t\tSave\nsandbox.e2b\tjson\t\tSave\nsandbox.provider_type\tstring\t\tSave\nsandbox.self_managed\tjson\t\tSave\nUsers (1) + Add User\nNAME\tEMAIL\tROLE\tACTIONS\nAdmin\tadmin@rayrag.local\tadmin\tReset PW Del\nModel providers\nReranker\n Enabled\nAPI Base\nAPI Key\n Clear saved API key\nSave\nRAG Chat Test\nAsk\nRayRAG provider administration",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "⚙️ Admin"
+  },
+  {
+   "tag": "h2",
+   "text": "System"
+  },
+  {
+   "tag": "h2",
+   "text": "Tasks (34)"
+  },
+  {
+   "tag": "h2",
+   "text": "System Variables"
+  },
+  {
+   "tag": "h2",
+   "text": "Users (1) + Add User"
+  },
+  {
+   "tag": "h2",
+   "text": "Model providers"
+  },
+  {
+   "tag": "h2",
+   "text": "Reranker"
+  },
+  {
+   "tag": "h2",
+   "text": "RAG Chat Test"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "language-menu",
+   "role": "",
+   "text": "English",
+   "selector": "button[data-testid=\"language-menu\"][type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add User",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Reset PW",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Del",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Save",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Ask",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add custom provider",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Home",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dataset",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasets",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-chat",
+   "role": "",
+   "text": "Chat",
+   "selector": "a[data-testid=\"nav-chat\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/chats",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-search",
+   "role": "",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "File",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Discord",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "GitHub",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Help",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "User settings",
+   "selector": "a[data-testid=\"settings-entrypoint\"][id=\"hdrAvatar\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"password\"]",
+   "disabled": false,
+   "type": "password",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"text\"]",
+   "disabled": false,
+   "type": "text",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "Search users...",
+   "selector": "input[id=\"userQ\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"checkbox\"][id=\"rerank-enabled\"]",
+   "disabled": false,
+   "type": "checkbox",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "http://127.0.0.1:8899",
+   "selector": "input[id=\"rerank-base\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "Configured; leave blank to keep",
+   "selector": "input[type=\"password\"][id=\"rerank-key\"]",
+   "disabled": false,
+   "type": "password",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"checkbox\"][id=\"rerank-clear\"]",
+   "disabled": false,
+   "type": "checkbox",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "Ask...",
+   "selector": "input[id=\"q\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "EnglishEnglish简体中文◐A",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [
+  "Task",
+  "Status",
+  "%",
+  "Name",
+  "Type",
+  "Value",
+  "",
+  "Name",
+  "Email",
+  "Role",
+  "Actions",
+  "Provider",
+  "API Base",
+  "Models"
+ ],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/admin.png",
+ "pageErrors": []
+}

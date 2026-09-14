@@ -1,6 +1,6 @@
 {
  "origin": "http://127.0.0.1:9390",
- "generatedAt": "2026-09-14T15:03:50.326Z",
+ "generatedAt": "2026-09-14T16:32:29.803Z",
  "auth": {
   "mode": "rayrag",
   "result": {
@@ -9,75 +9,27 @@
  },
  "pages": [
   {
-   "route": "/chats",
-   "finalUrl": "http://127.0.0.1:9390/chats",
-   "title": "Chat apps · RayRAG",
+   "route": "/user-setting/model",
+   "finalUrl": "http://127.0.0.1:9390/user-setting/model",
+   "title": "Model providers · RayRAG",
    "counts": {
-    "buttons": 3,
-    "links": 12,
+    "buttons": 89,
+    "links": 71,
     "fields": 1
    },
    "pageErrors": []
   },
   {
-   "route": "/searches",
-   "finalUrl": "http://127.0.0.1:9390/searches",
-   "title": "Search apps · RayRAG",
+   "route": "/admin",
+   "finalUrl": "http://127.0.0.1:9390/admin",
+   "title": "Admin · RayRAG",
    "counts": {
-    "buttons": 5,
+    "buttons": 22,
     "links": 12,
-    "fields": 1
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/agents",
-   "finalUrl": "http://127.0.0.1:9390/agents",
-   "title": "Agents · RayRAG",
-   "counts": {
-    "buttons": 69,
-    "links": 12,
-    "fields": 2
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/memories",
-   "finalUrl": "http://127.0.0.1:9390/memories",
-   "title": "Memories · RayRAG",
-   "counts": {
-    "buttons": 8,
-    "links": 12,
-    "fields": 4
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/files",
-   "finalUrl": "http://127.0.0.1:9390/files",
-   "title": "Files · RayRAG",
-   "counts": {
-    "buttons": 3,
-    "links": 12,
-    "fields": 2
-   },
-   "pageErrors": [
-    "TypeError: Cannot read properties of null (reading 'addEventListener')"
-   ]
-  },
-  {
-   "route": "/datasets",
-   "finalUrl": "http://127.0.0.1:9390/datasets",
-   "title": "Dataset · RayRAG",
-   "counts": {
-    "buttons": 17,
-    "links": 12,
-    "fields": 2
+    "fields": 20
    },
    "pageErrors": []
   }
  ],
- "pageErrors": [
-  "TypeError: Cannot read properties of null (reading 'addEventListener')"
- ]
+ "pageErrors": []
 }
