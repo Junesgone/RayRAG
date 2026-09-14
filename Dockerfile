@@ -32,6 +32,9 @@ ARG ZVEC_RUST_VERSION=0.7.1
 ARG ZVEC_RELEASE_BASE=https://xget.xi-xu.me/gh/zvec-ai/zvec-rust/releases/download
 ARG ZVEC_RELEASE_FALLBACK_BASE=https://github.com/zvec-ai/zvec-rust/releases/download
 ARG TARGETARCH
+# Supplied by docker compose from `git rev-parse --short HEAD`; the build
+# context has no .git, so build.rs cannot discover it on its own.
+ARG RAYRAG_BUILD_GIT_REV=
 RUN set -eux; \
     # Point the git dependency at the vendored crates so the build performs no
     # GitHub fetch; the lock file keeps every other dependency pinned.

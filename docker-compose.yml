@@ -32,6 +32,8 @@ services:
         # RAYRAG_MIRROR_PROFILE=cn (mainland mirrors) or =global (crates.io /
         # deb.debian.org / github.com direct).
         RAYRAG_MIRROR_PROFILE: ${RAYRAG_MIRROR_PROFILE:-auto}
+        # Build identity: the image has no .git, so pass the revision in.
+        RAYRAG_BUILD_GIT_REV: ${RAYRAG_BUILD_GIT_REV:-}
         DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
         DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-}
         ZVEC_RELEASE_BASE: ${ZVEC_RELEASE_BASE:-https://xget.xi-xu.me/gh/zvec-ai/zvec-rust/releases/download}

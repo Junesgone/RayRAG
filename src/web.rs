@@ -626,8 +626,152 @@ loadChatChannels();</script>"#;
 
 // ── Pages ───────────────────────────────────────────────────────
 
-pub async fn index() -> Redirect {
-    Redirect::permanent("/dashboard")
+/// RAGFlow `/` (`pages/home/index.tsx`): welcome heading, the Dataset section
+/// (up to six cards + "See all", or the dashed empty card) and the Applications
+/// section with the Chat/Search/Agent/Memory `Segmented` control. The lists are
+/// filled from the authenticated APIs exactly like the upstream hooks.
+pub async fn index(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let (
+        title,
+        welcome,
+        dataset_label,
+        chat_label,
+        search_label,
+        agent_label,
+        memory_label,
+        dataset_empty,
+        chat_empty,
+        search_empty,
+        agent_empty,
+        memory_empty,
+    ) = if zh {
+        (
+            "首页",
+            "欢迎来到",
+            "知识库",
+            "聊天",
+            "搜索",
+            "智能体",
+            "记忆",
+            "尚未创建知识库",
+            "尚未创建聊天应用",
+            "尚未创建搜索应用",
+            "尚未创建智能体",
+            "尚未创建记忆",
+        )
+    } else {
+        (
+            "Home",
+            "Welcome to",
+            "Dataset",
+            "Chat",
+            "Search",
+            "Agent",
+            "Memory",
+            "No dataset created yet",
+            "No chat app created yet",
+            "No search app created yet",
+            "No agent app created yet",
+            "No memory created yet",
+        )
+    };
+    let dataset_icon = "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><ellipse cx='12' cy='5' rx='8' ry='3'/><path d='M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5'/><path d='M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'/></svg>";
+    let mut b = String::with_capacity(4096);
+    b.push_str("<article class='home' data-testid='home-page'><header class='home-banner'><h1 class='home-welcome'><span class='home-welcome-text'>");
+    b.push_str(welcome);
+    b.push_str(" </span><span class='home-brand'>RayRAG</span></h1></header>");
+    b.push_str("<section class='home-section'><header class='home-section-head'><h2 class='home-section-title'><span class='home-section-icon'>");
+    b.push_str(dataset_icon);
+    b.push_str("</span>");
+    b.push_str(dataset_label);
+    b.push_str("</h2></header><div class='home-card-row' id='homeDatasets' data-testid='home-datasets'></div></section>");
+    b.push_str("<section class='home-section home-apps'><header class='home-section-head'><h2 class='home-section-title'><span class='home-section-icon' id='homeAppsIcon'>");
+    b.push_str(chat_icon());
+    b.push_str("</span><span id='homeAppsLabel'>");
+    b.push_str(chat_label);
+    b.push_str("</span></h2><div class='segmented' role='tablist' aria-label='Applications'>");
+    for (key, label, icon, selected) in [
+        ("chats", chat_label, chat_icon(), true),
+        ("searches", search_label, search_icon(), false),
+        ("agents", agent_label, agent_icon(), false),
+        ("memories", memory_label, memory_icon(), false),
+    ] {
+        b.push_str("<button type='button' role='tab' class='segmented-item");
+        if selected {
+            b.push_str(" active");
+        }
+        b.push_str("' data-app='");
+        b.push_str(key);
+        b.push_str("' data-icon=\"");
+        b.push_str(&icon.replace('\'', "&#39;"));
+        b.push_str("\" aria-selected='");
+        b.push_str(if selected { "true" } else { "false" });
+        b.push_str("' data-testid='home-tab-");
+        b.push_str(key);
+        b.push_str("' onclick='homeSelectApp(\"");
+        b.push_str(key);
+        b.push_str("\")'>");
+        b.push_str(label);
+        b.push_str("</button>");
+    }
+    b.push_str("</div></header><div class='home-card-row' id='homeApps' data-testid='home-apps'></div></section></article>");
+    b.push_str("<script>const HOME_LABELS={seeAll:");
+    b.push_str(&json_script_string(if zh {
+        "查看全部"
+    } else {
+        "See all"
+    }));
+    b.push_str(",empty:{datasets:");
+    b.push_str(&json_script_string(dataset_empty));
+    b.push_str(",chats:");
+    b.push_str(&json_script_string(chat_empty));
+    b.push_str(",searches:");
+    b.push_str(&json_script_string(search_empty));
+    b.push_str(",agents:");
+    b.push_str(&json_script_string(agent_empty));
+    b.push_str(",memories:");
+    b.push_str(&json_script_string(memory_empty));
+    b.push_str("},labels:{datasets:");
+    b.push_str(&json_script_string(dataset_label));
+    b.push_str(",chats:");
+    b.push_str(&json_script_string(chat_label));
+    b.push_str(",searches:");
+    b.push_str(&json_script_string(search_label));
+    b.push_str(",agents:");
+    b.push_str(&json_script_string(agent_label));
+    b.push_str(",memories:");
+    b.push_str(&json_script_string(memory_label));
+    b.push_str("},files:");
+    b.push_str(&json_script_string(if zh { "个文件" } else { "files" }));
+    b.push_str(",rename:");
+    b.push_str(&json_script_string(if zh { "重命名" } else { "Rename" }));
+    b.push_str(",remove:");
+    b.push_str(&json_script_string(if zh { "删除" } else { "Delete" }));
+    b.push_str(",removeConfirm:");
+    b.push_str(&json_script_string(if zh {
+        "确认删除该知识库？"
+    } else {
+        "Delete this dataset?"
+    }));
+    b.push_str("};var homeApp='chats';const HOME_ENDPOINT={chats:'/api/v1/chats',searches:'/api/v1/searchapps',agents:'/api/v1/agents',memories:'/api/v1/memories'};function homeEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function homeInitial(name){var text=String(name||'R').trim();return (text.charAt(0)||'R').toUpperCase()}function homeSeeAll(href){return \"<article class='home-card home-see-all' tabindex='0' role='button' onclick=\\\"location.href='\"+href+\"'\\\"><span>\"+HOME_LABELS.seeAll+\"</span><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m9 18 6-6-6-6'/></svg></article>\"}function homeEmpty(kind,href){return \"<article class='home-empty-card' tabindex='0' role='button' data-testid='home-empty-\"+kind+\"' onclick=\\\"location.href='\"+href+\"'\\\"><span class='home-empty-plus' aria-hidden='true'>+</span><span>\"+HOME_LABELS.empty[kind]+\"</span></article>\"}function homeAppCard(kind,item){var name=homeEscape(item.name||item.title);var stamp=item.update_time||item.update_date||item.created_at||'';var when=stamp?new Date(isNaN(Number(stamp))?stamp:Number(stamp)).toLocaleString():'';var href=kind==='chats'?'/chat/'+item.id:(kind==='searches'?'/search?sapp='+item.id:(kind==='agents'?'/agent/'+item.id:'/memory/'+item.id));return \"<article class='home-card' tabindex='0' role='button' data-testid='home-app-card' onclick=\\\"location.href='\"+href+\"'\\\"><span class='home-card-avatar' aria-hidden='true'>\"+homeInitial(name)+\"</span><span class='home-card-body'><span class='home-card-title'>\"+name+\"</span><span class='home-card-meta'>\"+homeEscape(when)+\"</span></span></article>\"}function homeDatasetCard(item){var name=homeEscape(item.name);var files=(item.doc_count||0)+' '+HOME_LABELS.files;return \"<article class='home-card' tabindex='0' role='button' data-testid='home-dataset-card' onclick=\\\"location.href='/dataset/\"+item.id+\"'\\\"><span class='home-card-avatar' aria-hidden='true'>\"+homeInitial(name)+\"</span><span class='home-card-body'><span class='home-card-title'>\"+name+\"</span><span class='home-card-meta'>\"+homeEscape(files)+\"</span></span><span class='home-card-more' role='button' tabindex='0' aria-label='More' data-testid='home-dataset-more' onclick=\\\"event.stopPropagation();homeDatasetMenu(event,'\"+item.id+\"','\"+name+\"')\\\">⋮</span></article>\"}function homeDatasetMenu(event,id,name){event.stopPropagation();var existing=document.getElementById('homeDatasetMenu');if(existing)existing.remove();var menu=document.createElement('div');menu.id='homeDatasetMenu';menu.className='home-card-menu';menu.innerHTML=\"<button type='button' onclick='homeRenameDataset(\\\"\"+id+\"\\\",\\\"\"+name+\"\\\")'>\"+HOME_LABELS.rename+\"</button><button type='button' class='danger' onclick='homeDeleteDataset(\\\"\"+id+\"\\\")'>\"+HOME_LABELS.remove+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-140)+'px';setTimeout(function(){document.addEventListener('click',homeCloseMenu,{once:true})},0)}function homeCloseMenu(){var menu=document.getElementById('homeDatasetMenu');if(menu)menu.remove()}function homeRenameDataset(id,name){homeCloseMenu();var next=prompt(HOME_LABELS.rename,name);if(!next||next===name)return;fetch('/api/v1/datasets/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:next})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');loadHomeDatasets()}).catch(function(error){alert(error.message)})}function homeDeleteDataset(id){homeCloseMenu();if(!confirm(HOME_LABELS.removeConfirm))return;fetch('/api/v1/datasets/'+id,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');loadHomeDatasets()}).catch(function(error){alert(error.message)})}function loadHomeDatasets(){fetch('/api/v1/datasets').then(function(response){return response.json()}).then(function(data){var list=(data.data&&(data.data.items||data.data))||[];if(!Array.isArray(list))list=[];var host=document.getElementById('homeDatasets');if(!host)return;if(!list.length){host.innerHTML=homeEmpty('datasets','/datasets?isCreate=true');return}var html=list.slice(0,6).map(homeDatasetCard).join('');html+=homeSeeAll('/datasets');host.innerHTML=html}).catch(function(){})}function homeSelectApp(kind){homeApp=kind;document.querySelectorAll('.segmented-item').forEach(function(button){var on=button.getAttribute('data-app')===kind;button.classList.toggle('active',on);button.setAttribute('aria-selected',on?'true':'false')});var label=document.getElementById('homeAppsLabel');if(label)label.textContent=HOME_LABELS.labels[kind]||kind;var icon=document.getElementById('homeAppsIcon');var source=document.querySelector('.segmented-item[data-app=\\\"'+kind+'\\\"]');if(icon&&source)icon.innerHTML=source.getAttribute('data-icon')||'';loadHomeApps()}function loadHomeApps(){var kind=homeApp;var endpoint=HOME_ENDPOINT[kind];var host=document.getElementById('homeApps');if(!host)return;host.innerHTML='';fetch(endpoint).then(function(response){return response.json()}).then(function(data){var payload=data.data||{};var list=Array.isArray(payload)?payload:(payload.items||payload.canvas||payload.memory_list||payload.chats||payload.list||[]);if(!Array.isArray(list))list=[];if(!list.length){host.innerHTML=homeEmpty(kind,kind==='chats'?'/chats?isCreate=true':(kind==='searches'?'/searches?isCreate=true':(kind==='agents'?'/agents?isCreate=true':'/memories?isCreate=true')));return}var html=list.slice(0,6).map(function(item){return homeAppCard(kind,item)}).join('');html+=homeSeeAll('/'+kind);host.innerHTML=html}).catch(function(){})}loadHomeDatasets();loadHomeApps()</script>");
+    Html(layout(title, &b, zh))
+}
+
+fn chat_icon() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z'/><path d='M8 9h8M8 13h5'/></svg>"
+}
+
+fn search_icon() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='7'/><path d='m20 20-3.5-3.5'/></svg>"
+}
+
+fn agent_icon() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='5' y='5' width='14' height='14' rx='2'/><path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/></svg>"
+}
+
+fn memory_icon() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12 5a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V8a3 3 0 0 0-3-3Z'/><path d='M9 8H6a3 3 0 0 0 0 6h3M15 8h3a3 3 0 0 1 0 6h-3'/></svg>"
 }
 
 /// RAGFlow `/logout`: clears the client-stored token (localStorage + cookie)
@@ -2589,7 +2733,7 @@ pub async fn admin_page(
 
 pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let b = "<div class='auth-card card'><h1 style='text-align:center;margin-bottom:24px'>🐠 RayRAG</h1><div id='loginForm'><input id='email' autocomplete='username' placeholder='Email'><input id='password' type='password' autocomplete='current-password' placeholder='Password'><button class='btn btn-p' onclick='login()' style='width:100%;margin-top:8px'>Login</button></div><div id='regForm' style='display:none'><input id='nickname' placeholder='Nickname'><input id='remail' placeholder='Email'><input id='rpassword' type='password' placeholder='Password (min 6)'> <button class='btn btn-p' onclick='register()' style='width:100%;margin-top:8px'>Register</button></div><button class='btn btn-o' onclick='toggleAuth()' style='width:100%;margin-top:12px' id='authToggle'>Register</button><div id='error' style='color:var(--d);margin-top:8px;font-size:13px'></div></div><script>function setTok(t){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400'};function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/dashboard'):document.getElementById('error').textContent=d.message})};function register(){var n=document.getElementById('nickname').value;var e=document.getElementById('remail').value;var p=document.getElementById('rpassword').value;fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(r=>r.json()).then(function(d){if(d.code===0){loginWith(e,p)}else{document.getElementById('error').textContent=d.message}})};function loginWith(e,p){fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/dashboard'):document.getElementById('error').textContent=d.message})};function toggleAuth(){var r=document.getElementById('regForm').style.display==='none';document.getElementById('regForm').style.display=r?'block':'none';document.getElementById('loginForm').style.display=r?'none':'block';document.getElementById('authToggle').textContent=r?'Login':'Register'}</script>";
+    let b = "<div class='auth-card card'><h1 style='text-align:center;margin-bottom:24px'>🐠 RayRAG</h1><div id='loginForm'><input id='email' autocomplete='username' placeholder='Email'><input id='password' type='password' autocomplete='current-password' placeholder='Password'><button class='btn btn-p' onclick='login()' style='width:100%;margin-top:8px'>Login</button></div><div id='regForm' style='display:none'><input id='nickname' placeholder='Nickname'><input id='remail' placeholder='Email'><input id='rpassword' type='password' placeholder='Password (min 6)'> <button class='btn btn-p' onclick='register()' style='width:100%;margin-top:8px'>Register</button></div><button class='btn btn-o' onclick='toggleAuth()' style='width:100%;margin-top:12px' id='authToggle'>Register</button><div id='error' style='color:var(--d);margin-top:8px;font-size:13px'></div></div><script>function setTok(t){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400'};function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/'):document.getElementById('error').textContent=d.message})};function register(){var n=document.getElementById('nickname').value;var e=document.getElementById('remail').value;var p=document.getElementById('rpassword').value;fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(r=>r.json()).then(function(d){if(d.code===0){loginWith(e,p)}else{document.getElementById('error').textContent=d.message}})};function loginWith(e,p){fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/'):document.getElementById('error').textContent=d.message})};function toggleAuth(){var r=document.getElementById('regForm').style.display==='none';document.getElementById('regForm').style.display=r?'block':'none';document.getElementById('loginForm').style.display=r?'none':'block';document.getElementById('authToggle').textContent=r?'Login':'Register'}</script>";
     Html(layout_plain(t("Login", zh), b, zh))
 }
 
@@ -5641,6 +5785,69 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[tokio::test]
+    async fn home_page_renders_welcome_dataset_and_application_sections() {
+        // Upstream pages/home/index.tsx: banner + Datasets + Applications with
+        // the Chat/Search/Agent/Memory Segmented control and per-type empty
+        // cards.
+        let request = Request::builder()
+            .uri("/")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(index(request).await).await;
+        let html = html.as_str();
+        assert!(
+            html.contains("data-testid='home-page'"),
+            "home shell missing"
+        );
+        assert!(html.contains("class='home-banner'"));
+        assert!(
+            html.contains("Welcome to") && html.contains("class='home-brand'>RayRAG"),
+            "welcome banner must lead with the upstream welcome label"
+        );
+        assert!(html.contains("data-testid='home-datasets'"));
+        assert!(html.contains("data-testid='home-apps'"));
+        for (key, label) in [
+            ("chats", ">Chat</button>"),
+            ("searches", ">Search</button>"),
+            ("agents", ">Agent</button>"),
+            ("memories", ">Memory</button>"),
+        ] {
+            assert!(
+                html.contains(&format!("data-testid='home-tab-{key}'")),
+                "segmented option {key} missing"
+            );
+            assert!(html.contains(label), "segmented label {label} missing");
+        }
+        assert!(html.contains("role='tablist'") && html.contains("aria-selected='true'"));
+        assert!(html.contains("No dataset created yet"));
+        assert!(html.contains("No chat app created yet"));
+        assert!(html.contains("No search app created yet"));
+        assert!(html.contains("No agent app created yet"));
+        assert!(html.contains("No memory created yet"));
+        assert!(html.contains("homeSelectApp") && html.contains("loadHomeDatasets"));
+        assert!(html.contains("/api/v1/searchapps") && html.contains("/api/v1/memories"));
+        assert!(html.contains("See all"));
+        let zh_request = Request::builder()
+            .uri("/")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(index(zh_request).await).await;
+        for label in [
+            "欢迎来到",
+            "知识库",
+            "聊天",
+            "搜索",
+            "智能体",
+            "记忆",
+            "查看全部",
+        ] {
+            assert!(zh_html.contains(label), "zh home label {label} missing");
+        }
     }
 
     #[test]

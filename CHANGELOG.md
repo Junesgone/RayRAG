@@ -2,9 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-14（对标批次 v0.3.4e–v0.3.4v）
+## [0.3.4] — 2026-09-14（对标批次 v0.3.4e–v0.3.4w）
 
 ### Added
+
+- **首页 `/` 对齐上游 `pages/home/index.tsx`**（原为 308 跳 `/dashboard`）：欢迎横幅
+  （`header.welcome` + 渐变品牌字）、Dataset 区（最多 6 张卡 + `common.seeAll` 卡，
+  空态为 `empty.datasetTitle` 虚线卡）、Applications 区（Chat/Search/Agent/Memory
+  分段控件 `role=tablist`/`aria-selected`，标题与卡行随选项切换，数据来自
+  `/api/v1/chats|searchapps|agents|memories`），每类空态用上游 en/zh `empty.*` 文案；
+  登录/注册成功后落到 `/`（与上游一致）。CDP 逐 Tab 实点验证（`home-dump-cdp.mjs`）。
+
 
 - **全局头部对齐 RAGFlow `layouts/components/header.tsx` + `global-navbar.tsx`**：
   导航胶囊只保留上游七个入口（Home 图标 → `/`、Dataset `/datasets`、

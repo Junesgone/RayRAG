@@ -15,12 +15,12 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 212 | 54726 |
+| aligned | 221 | 55342 |
 | full | 566 | 267453 |
 | partial | 38 | 10872 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3463 | 886147 |
+| reference | 3454 | 885531 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -4618,15 +4618,15 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/files/use-navigate-to-folder.ts` | 28 | 790 | `883b587fb8015fd6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/files/use-upload-file.ts` | 36 | 1055 | `95d8f50833bbeff6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/files/util.ts` | 7 | 177 | `2bd9575ee4185f32` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/agent-list.tsx` | 60 | 1741 | `7c0e6012898c21b1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/application-card.tsx` | 65 | 1761 | `ccb1df338827561f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/applications.tsx` | 126 | 3997 | `46b6654bcfe9e4fc` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/banner.tsx` | 57 | 1738 | `8beeb2e76bf606e0` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/chat-list.tsx` | 62 | 1859 | `c6d5661a38f6bf5d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/datasets.tsx` | 81 | 2682 | `72f4abdc0261c92e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/index.tsx` | 21 | 455 | `02f9e9d0d15805c7` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/memory-list.tsx` | 79 | 2312 | `1bc1fb059dbc2bea` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/home/search-list.tsx` | 65 | 1994 | `9474a54a0354df75` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/home/agent-list.tsx` | 60 | 1741 | `7c0e6012898c21b1` | aligned | `src/web.rs; web/static/` | Rust home Agent list reads `/api/v1/agents` (`data.canvas`) with the same card/See-all composition as upstream `AgentList` (v0.3.4w) |
+| `web/src/pages/home/application-card.tsx` | 65 | 1761 | `ccb1df338827561f` | aligned | `src/web.rs; web/static/` | Rust application card keeps the upstream avatar + title + `update_time` layout with the See-all card (`common.seeAll` + chevron); the embedded `moreDropdown` (edit/delete) is not ported on the home surface (v0.3.4w) |
+| `web/src/pages/home/applications.tsx` | 126 | 3997 | `46b6654bcfe9e4fc` | aligned | `src/web.rs; web/static/` | Rust Applications section mirrors `applications.tsx`: the segmented control over Chat/Search/Agent/Memory, the per-selection heading label/icon swap and the list/empty-card/See-all composition; list endpoints are the RayRAG equivalents of the upstream hooks (v0.3.4w) |
+| `web/src/pages/home/banner.tsx` | 57 | 1738 | `8beeb2e76bf606e0` | aligned | `src/web.rs; web/static/` | Rust home banner: `Welcome to` + gradient brand heading at 40px with the section spacing of `banner.tsx`; the dismissible `Banner` (three promo `BannerCard`s + close X) is not ported (v0.3.4w) |
+| `web/src/pages/home/chat-list.tsx` | 62 | 1859 | `c6d5661a38f6bf5d` | aligned | `src/web.rs; web/static/` | Rust home Chat list reads `/api/v1/chats` and renders up to six application cards + See all, matching the upstream `ChatList` wrapper around `useFetchChatListByPage` (v0.3.4w) |
+| `web/src/pages/home/datasets.tsx` | 81 | 2682 | `72f4abdc0261c92e` | aligned | `src/web.rs; web/static/` | Rust home Dataset section loads `/api/v1/datasets`, slices the first six entries, renders each as a card plus the See-all card, and falls back to the `empty.datasetTitle` dashed card that links to `/datasets?isCreate=true`, mirroring `useFetchNextKnowledgeListByPage` + `DatasetCard`/`SeeAllCard` (v0.3.4w) |
+| `web/src/pages/home/index.tsx` | 21 | 455 | `02f9e9d0d15805c7` | aligned | `src/web.rs; web/static/` | Rust `/` (src/web.rs `index`) renders the upstream home composition: the welcome banner (`header.welcome` + gradient brand), the Dataset section (up to six cards with `N files` + the `common.seeAll` card, or the dashed empty card with `empty.datasetTitle`) and the Applications section whose `h2` and card row follow a Chat/Search/Agent/Memory control (`role=tablist` + `aria-selected`) backed by `/api/v1/chats|searchapps|agents|memories`; per-type empty cards use the upstream en/zh `empty.*` strings and every card links into the matching detail route. CDP traversal clicks all four tabs on RAGFlow and RayRAG (`home-dump-cdp.mjs`). Differences: card artwork is a CSS monogram instead of the upstream SVG illustrations and the dataset `⋮` menu uses prompt/confirm instead of the Rename dialog (v0.3.4w) |
+| `web/src/pages/home/memory-list.tsx` | 79 | 2312 | `1bc1fb059dbc2bea` | aligned | `src/web.rs; web/static/` | Rust home Memory list reads `/api/v1/memories` (`data.memory_list`) with the same card/See-all composition as upstream `MemoryList` (v0.3.4w) |
+| `web/src/pages/home/search-list.tsx` | 65 | 1994 | `9474a54a0354df75` | aligned | `src/web.rs; web/static/` | Rust home Search list reads `/api/v1/searchapps` with the same card/See-all composition as upstream `SearchList` (v0.3.4w) |
 | `web/src/pages/login-next/bg.tsx` | 161 | 5438 | `2ac801e4a3e6bbbf` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/login-next/card.tsx` | 69 | 2238 | `5a76ab289a644b58` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/login-next/index.less` | 78 | 1525 | `f393cd5e471e4845` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
