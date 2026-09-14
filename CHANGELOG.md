@@ -19,6 +19,13 @@ All notable changes to RayRAG are documented in this file.
   200 ms 切面），新增 `Remember me`（邮箱本地记忆 + 请求带 `remember`）与
   `Sign in with {channel}` 渠道按钮区（`/api/v1/auth/login/channels`，无渠道自动隐藏）。
 
+### Fixed
+
+- **模型提供商弹层字段顺序对齐上游**：`Instance name → API-Key → Base-Url`（原为
+  Instance name → Base url → API-Key），标签统一为 `Base-Url`，去掉标题行重复的文档
+  链接；同时给该链接的 JS 加空值保护，避免打开弹层时 TypeError（同类问题此前在
+  `/files` 出现过）。
+
 ### Changed
 
 - **`/user-setting/model` 收敛为上游三段结构**：移除自造页标题与 `Reranker` /
