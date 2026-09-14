@@ -198,3 +198,46 @@ mod tests {
         );
     }
 }
+
+/// Template metadata fixture (`id`, localized title/description, canvas type),
+/// extracted verbatim from the upstream `agent/templates/*.json` catalogue.
+const AGENT_TEMPLATE_META: &str = include_str!("api/fixtures/agent_templates/meta.json");
+
+fn template_meta() -> Vec<serde_json::Value> {
+    serde_json::from_str(AGENT_TEMPLATE_META).unwrap_or_default()
+}
+
+/// Upstream `CanvasTemplateService.get_all()` payload without the DSL.
+pub fn template_metadata() -> Vec<serde_json::Value> {
+    template_meta()
+}
+
+/// One template including the seeded DSL.
+pub fn template_detail(id: &str) -> Option<serde_json::Value> {
+    let meta = template_meta()
+        .into_iter()
+        .find(|item| item.get("id").and_then(|value| value.as_str()) == Some(id))?;
+    let dsl = AGENT_TEMPLATES
+        .iter()
+        .find(|(slug, _, _, _)| *slug == id)
+        .map(|(_, _, _, dsl)| *dsl)?;
+    let mut value = meta;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "dsl".to_string(),
+            serde_json::from_str(dsl).unwrap_or(serde_json::Value::Null),
+        );
+        let title = object
+            .get("title")
+            .and_then(|title| title.get("en"))
+            .and_then(|title| title.as_str())
+            .unwrap_or(id)
+            .to_string();
+        object.insert(
+            "slug".to_string(),
+            serde_json::Value::String(id.to_string()),
+        );
+        object.insert("name".to_string(), serde_json::Value::String(title));
+    }
+    Some(value)
+}

@@ -3205,7 +3205,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/profile-setting", get(crate::web::user_setting_index))
         .route("/files/skills", get(crate::web::skills_page))
         .route("/explore", get(crate::web::agents_page))
-        .route("/agent-templates", get(crate::web::agents_page))
+        .route("/agent-templates", get(crate::web::agent_templates_page))
         .route("/agent-list", get(crate::web::agents_page))
         .route("/logout", get(crate::web::logout_page))
         .route(
@@ -3691,6 +3691,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/agents",
             get(crate::api::features::list_agents).post(crate::api::features::create_agent),
+        )
+        .route(
+            "/api/v1/agents/templates",
+            get(crate::api::features::list_agent_templates),
+        )
+        .route(
+            "/api/v1/agents/templates/{id}",
+            get(crate::api::features::get_agent_template),
         )
         .route(
             "/api/v1/agents/tags",

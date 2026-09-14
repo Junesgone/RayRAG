@@ -4,6 +4,14 @@ All notable changes to RayRAG are documented in this file.
 
 ## [0.3.4] — 2026-09-14/15（对标批次 v0.3.4e–v0.3.5b）
 
+### Added
+
+- **`/agent-templates` 模板画廊**：新增模板元数据 fixture（25 条，取自上游
+  `agent/templates/*.json` 的本地化 title/description + canvas_type/canvas_category）、
+  `GET /api/v1/agents/templates` 与 `/templates/{id}` 端点，以及上游组合的页面
+  （分类侧栏 + 搜索 + 模板卡片网格 + hover「使用」遮罩 + Use 弹层按模板 DSL 建 agent
+  后跳 `/agent/{id}`）。CDP 实点：25 模板 / 分类切换 3→10 卡 / Use 弹层预填。
+
 ### Changed
 
 - **`/user-setting/model` 收敛为上游三段结构**：移除自造页标题与 `Reranker` /

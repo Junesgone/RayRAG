@@ -2289,6 +2289,95 @@ pub async fn agent_detail_page(
 /// composition plus the create DropdownMenu (`flow.createFromBlank` /
 /// `flow.createFromTemplate` / `flow.importJsonFile`), the create dialog with
 /// `FlowType` cards and a card dropdown carrying Rename / Edit tags / Delete.
+/// Upstream `pages/agents/agent-templates.tsx`: a category sidebar
+/// (`template-sidebar.tsx` MenuItemKey items filtered by the template's
+/// `canvas_type`) beside a `CardContainer` of `TemplateCard`s whose hover
+/// overlay carries `flow.useTemplate`; using a template opens the create-agent
+/// dialog and seeds the new agent with the template DSL.
+pub async fn agent_templates_page(
+    State(_state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let labels: [(&str, &str, &str); 7] = [
+        ("Recommended", "Recommended", "推荐"),
+        ("Agent", "Agents", "智能体"),
+        ("Customer Support", "Customer support", "客户支持"),
+        ("Marketing", "Marketing", "营销"),
+        ("Consumer App", "Consumer app", "消费者应用"),
+        ("Ingestion Pipeline", "Ingestion pipeline", "数据摄入流程"),
+        ("Other", "Other", "其他"),
+    ];
+    let use_label = if zh { "使用" } else { "Use" };
+    let search_label = if zh { "搜索" } else { "Search" };
+    let save_label = if zh { "保存" } else { "Save" };
+    let cancel_label = if zh { "取消" } else { "Cancel" };
+    let close_label = if zh { "关闭" } else { "Close" };
+    let name_label = if zh { "名称" } else { "Name" };
+    let name_placeholder = if zh {
+        "请输入名称"
+    } else {
+        "Please input name"
+    };
+    let dialog_title = if zh {
+        "创建智能体"
+    } else {
+        "Create agent"
+    };
+
+    let mut b = String::with_capacity(8192);
+    b.push_str("<section class='templates-page' data-testid='agent-templates-page'><aside class='template-sidebar' aria-label='Template categories'><ul class='template-sidebar-list'>");
+    for (index, (key, en, cn)) in labels.iter().enumerate() {
+        b.push_str("<li><button type='button' class='template-sidebar-item");
+        if index == 0 {
+            b.push_str(" active");
+        }
+        b.push_str("' data-canvas-type='");
+        b.push_str(key);
+        b.push_str("' aria-pressed='");
+        b.push_str(if index == 0 { "true" } else { "false" });
+        b.push_str("' data-testid='template-category-");
+        b.push_str(&key.to_lowercase().replace(' ', "-"));
+        b.push_str("' onclick='templateSelectCategory(this)'>");
+        b.push_str(if zh { cn } else { en });
+        b.push_str("</button></li>");
+    }
+    b.push_str("</ul></aside><main class='template-main'><div class='template-toolbar'><input id='templateSearch' class='list-search' type='search' placeholder='");
+    b.push_str(search_label);
+    b.push_str("' aria-label='");
+    b.push_str(search_label);
+    b.push_str("' oninput='templateRender()'></div><div class='template-grid' id='templateGrid' data-testid='agent-templates-grid'></div></main></section>");
+
+    b.push_str("<div class='modal-overlay' id='templateUseDialog' data-testid='agent-template-dialog' onclick='if(event.target===this)templateCloseDialog()'><div class='modal' style='max-width:425px' role='dialog' aria-modal='true' aria-labelledby='templateDialogTitle'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='templateDialogTitle' style='flex:1;margin:0'>");
+    b.push_str(dialog_title);
+    b.push_str("</h2><button class='btn btn-ghost' type='button' aria-label='");
+    b.push_str(close_label);
+    b.push_str("' onclick='templateCloseDialog()'>×</button></div><label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(name_label);
+    b.push_str("</span><input id='templateAgentName' placeholder='");
+    b.push_str(name_placeholder);
+    b.push_str("' autocomplete='off'><span class='ds-field-error' id='templateAgentError'></span></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='templateCloseDialog()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-p' data-testid='template-use-save' onclick='templateCreateAgent()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+
+    b.push_str("<script>const TPL_LABELS={use:");
+    b.push_str(&json_script_string(use_label));
+    b.push_str(",nameRequired:");
+    b.push_str(&json_script_string(name_placeholder));
+    b.push_str("};let tplItems=[];let tplCategory='Recommended';let tplActive=null;function tplEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function tplLocale(){return document.documentElement.lang==='zh-CN'?'zh':'en'}function tplLocalized(value){if(!value)return '';if(typeof value==='string')return value;return value[tplLocale()]||value.en||value.zh||''}function templateSelectCategory(node){if(!node)return;tplCategory=node.getAttribute('data-canvas-type')||'';document.querySelectorAll('.template-sidebar-item').forEach(function(item){var on=item===node;item.classList.toggle('active',on);item.setAttribute('aria-pressed',on?'true':'false')});templateRender()}function tplMatches(item){var type=String(item.canvas_type||'');if(tplCategory&&type.toLowerCase()!==tplCategory.toLowerCase())return false;var query=(document.getElementById('templateSearch').value||'').trim().toLowerCase();if(!query)return true;return (tplLocalized(item.title)+' '+tplLocalized(item.description)).toLowerCase().indexOf(query)>=0}function templateRender(){var host=document.getElementById('templateGrid');if(!host)return;var list=tplItems.filter(tplMatches);if(!list.length){host.innerHTML='';return}host.innerHTML=list.map(function(item,index){var title=tplEscape(tplLocalized(item.title));var desc=tplEscape(tplLocalized(item.description));return \"<article class='template-card' tabindex='0' data-testid='agent-template-card' data-id='\"+tplEscape(item.id)+\"' data-index='\"+index+\"' onclick='templateUseByIndex(\"+index+\")'><div class='template-card-head'><span class='template-card-avatar' aria-hidden='true'>\"+tplEscape((title||'T').charAt(0).toUpperCase())+\"</span><span class='template-card-title'>\"+title+\"</span></div><p class='template-card-desc'>\"+desc+\"</p><div class='template-card-overlay'><button type='button' class='btn btn-p' data-testid='template-use' onclick=\\\"event.stopPropagation();templateUseByIndex(\"+index+\")\\\">\"+TPL_LABELS.use+\"</button></div></article>\"}).join('')}async function tplLoad(){try{var response=await fetch('/api/v1/agents/templates');var data=await response.json();if(!response.ok||data.code!==0)return;tplItems=data.data||[];templateRender()}catch(error){}}function templateUseByIndex(index){var list=tplItems.filter(tplMatches);var item=list[index];if(!item)return;tplActive=item;document.getElementById('templateDialogTitle').textContent=tplLocalized(item.title)||'';document.getElementById('templateAgentName').value=tplLocalized(item.title)||'';document.getElementById('templateAgentError').textContent='';document.getElementById('templateUseDialog').classList.add('show')}function templateCloseDialog(){document.getElementById('templateUseDialog').classList.remove('show')}async function templateCreateAgent(){if(!tplActive)return;var name=document.getElementById('templateAgentName').value.trim();if(!name){document.getElementById('templateAgentError').textContent=TPL_LABELS.nameRequired;return}var button=document.getElementById('templateUseSave');try{var detailResponse=await fetch('/api/v1/agents/templates/'+encodeURIComponent(tplActive.id));var detail=await detailResponse.json();if(!detailResponse.ok||detail.code!==0)throw new Error(detail.message||'Template unavailable');var body={name:name,dsl:(detail.data&&detail.data.dsl)||{},canvas_category:tplActive.canvas_category||'agent_canvas',canvas_type:tplActive.canvas_type||'',avatar:tplActive.avatar||'',description:tplLocalized(tplActive.description)};var response=await fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});var data=await response.json();if(data.code!==0)throw new Error(data.message||'Create failed');templateCloseDialog();var id=data.data&&data.data.id;if(id)location.href='/agent/'+id;else location.reload()}catch(error){document.getElementById('templateAgentError').textContent=error.message}}tplLoad()</script>");
+    Html(layout(
+        if zh {
+            "智能体模板"
+        } else {
+            "Agent templates"
+        },
+        &b,
+        zh,
+    ))
+}
+
 pub async fn agents_page(
     State(_state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -6359,6 +6448,68 @@ mod kb_ui_tests {
             "尚未创建记忆",
         ] {
             assert!(zh_html.contains(label), "zh memories label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_templates_page_matches_upstream_sidebar_cards_and_use_dialog() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agent-templates")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_templates_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='agent-templates-page'"));
+        assert!(html.contains("class='template-sidebar'"));
+        for key in [
+            "recommended",
+            "agent",
+            "customer-support",
+            "marketing",
+            "consumer-app",
+            "ingestion-pipeline",
+            "other",
+        ] {
+            assert!(
+                html.contains(&format!("data-testid='template-category-{key}'")),
+                "template category {key} missing"
+            );
+        }
+        assert!(html.contains("data-testid='agent-templates-grid'"));
+        assert!(html.contains("data-testid='agent-template-card'"));
+        assert!(html.contains("data-testid='template-use'"));
+        // The hover overlay button is rendered client-side from TPL_LABELS.use.
+        assert!(html.contains("TPL_LABELS.use"));
+        assert!(
+            html.contains("use:\"Use\"")
+                || html.contains("use: \"Use\"")
+                || html.contains("\"use\":\"Use\"")
+        );
+        assert!(html.contains("data-testid='agent-template-dialog'"));
+        assert!(html.contains("data-testid='template-use-save'"));
+        assert!(html.contains("placeholder='Please input name'"));
+        assert!(html.contains("'/api/v1/agents/templates'"));
+        assert!(html.contains("canvas_category"));
+        assert!(html.contains("tplLocale"));
+        let zh_request = Request::builder()
+            .uri("/agent-templates")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(agent_templates_page(State(state), zh_request).await).await;
+        for label in [
+            "推荐",
+            "智能体",
+            "客户支持",
+            "营销",
+            "消费者应用",
+            "数据摄入流程",
+            "其他",
+            "使用",
+        ] {
+            assert!(zh_html.contains(label), "zh template label {label} missing");
         }
     }
 

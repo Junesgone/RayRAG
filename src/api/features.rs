@@ -5740,6 +5740,32 @@ pub struct AgentCreateRequest {
     pub release: Option<bool>,
 }
 
+/// Upstream `GET /v1/agents/templates` (`CanvasTemplateService.get_all()`):
+/// the seeded RAGFlow workflow templates with their localized title and
+/// description. The DSL is omitted here and served per template so the list
+/// payload stays small.
+pub async fn list_agent_templates(Extension(_auth): Extension<AuthContext>) -> impl IntoResponse {
+    let templates = crate::agent_templates::template_metadata();
+    Json(serde_json::json!({
+        "code": 0,
+        "message": "ok",
+        "data": templates,
+    }))
+}
+
+/// `GET /v1/agents/templates/{id}` — one template including its DSL, used by
+/// the `/agent-templates` "Use" action to seed a new agent.
+pub async fn get_agent_template(Path(id): Path<String>) -> axum::response::Response {
+    match crate::agent_templates::template_detail(&id) {
+        Some(template) => Json(serde_json::json!({ "code": 0, "data": template })).into_response(),
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 102, "message": "Template not found" })),
+        )
+            .into_response(),
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct AgentUpdateRequest {
     #[serde(alias = "title")]
