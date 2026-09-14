@@ -6,6 +6,13 @@ All notable changes to RayRAG are documented in this file.
 
 ### Added
 
+- **`/chats` 与 `/searches` 列表页对齐上游**：抽出共享渲染器 `AppListSpec` +
+  `render_app_list_page`，两页复用上游组合（ListFilterBar = 标题/搜索/`Create chat`、
+  `Create search` 主按钮 → 卡片网格（字母头像/名称/描述或更新时间 + ⋮）→ 分页页脚 →
+  两分支空态；⋮ = Rename（共享弹层）/ Delete（`Delete chat`、`Delete search` 二次确认））。
+  CDP 实点两页的创建弹层、⋮ 菜单、删除弹层并截图；`web::` 58 passed、lib 1446 passed。
+
+
 - **`/files` 文件管理页对齐上游 `pages/files/index.tsx`**：ListFilterBar（Files 图标 +
   标题 + 搜索 + `Add file` 下拉 = Upload file / New folder）、选中后出现的批量栏
   （Move / Link to dataset / Delete）、上游六列表格（全选、Name、Upload date、Size、

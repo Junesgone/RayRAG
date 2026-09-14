@@ -4092,85 +4092,154 @@ pub async fn status_page(req: axum::http::Request<axum::body::Body>) -> impl Int
 }
 
 /// RAGFlow 0.26.4 parity: chat-apps list page (`/chats`).
+/// Shared renderer for the upstream "application list" pages
+/// (`next-chats/index.tsx`, `next-searches/index.tsx`): `ListFilterBar` with
+/// search + a `Plus` create button, a `CardContainer` grid of `HomeCard`s with
+/// a per-card Rename/Delete dropdown, the `RAGFlowPagination` footer, the
+/// create/rename dialog (`RenameDialog`) and the two upstream empty states.
+struct AppListSpec {
+    testid: &'static str,
+    create_testid: &'static str,
+    empty_testid: &'static str,
+    title: String,
+    create_label: String,
+    delete_title: String,
+    empty_label: String,
+    search_placeholder: String,
+    list_url: &'static str,
+    collection: &'static str,
+    rename_method: &'static str,
+    detail_prefix: &'static str,
+    empty_href: &'static str,
+    meta: &'static str,
+    icon: &'static str,
+}
+
+fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
+    let rename_label = if zh { "重命名" } else { "Rename" };
+    let delete_label = if zh { "删除" } else { "Delete" };
+    let save_label = if zh { "保存" } else { "Save" };
+    let cancel_label = if zh { "取消" } else { "Cancel" };
+    let close_label = if zh { "关闭" } else { "Close" };
+    let ok_label = if zh { "确认" } else { "Ok" };
+    let total_label = if zh { "共" } else { "Total" };
+    let name_label = if zh { "名称" } else { "Name" };
+    let name_placeholder = if zh {
+        "请输入名称"
+    } else {
+        "Please input name."
+    };
+
+    let mut b = String::with_capacity(16384);
+    b.push_str("<article class='list-page' data-testid='");
+    b.push_str(spec.testid);
+    b.push_str("'><header class='list-filter-bar'><h1 class='list-title'><span class='list-title-icon' aria-hidden='true'>");
+    b.push_str(spec.icon);
+    b.push_str("</span>");
+    b.push_str(&spec.title);
+    b.push_str("</h1><div class='list-bar-actions'><input id='lpSearch' class='list-search' type='search' placeholder='");
+    b.push_str(&spec.search_placeholder);
+    b.push_str("' aria-label='");
+    b.push_str(&spec.search_placeholder);
+    b.push_str("' oninput='lpSearchInput(this.value)'><button type='button' class='btn btn-p' data-testid='");
+    b.push_str(spec.create_testid);
+    b.push_str("' onclick='lpOpenCreate()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' aria-hidden='true'><path d='M12 5v14M5 12h14'/></svg>");
+    b.push_str(&spec.create_label);
+    b.push_str("</button></div></header><div class='ds-card-grid' id='lpCards' data-testid='");
+    b.push_str(spec.testid);
+    b.push_str(
+        "-cards'></div><footer class='list-pagination' id='lpPagination'></footer></article>",
+    );
+
+    // Create / rename dialog (upstream RenameDialog reused for both).
+    b.push_str("<div class='modal-overlay' id='lpFormDialog' data-testid='");
+    b.push_str(spec.testid);
+    b.push_str("-form-dialog' onclick='if(event.target===this)lpCloseForm()'><div class='modal' style='max-width:425px' role='dialog' aria-modal='true' aria-labelledby='lpFormTitle'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='lpFormTitle' style='flex:1;margin:0'>");
+    b.push_str(&spec.create_label);
+    b.push_str("</h2><button class='btn btn-ghost' type='button' aria-label='");
+    b.push_str(close_label);
+    b.push_str("' onclick='lpCloseForm()'>×</button></div><label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(name_label);
+    b.push_str("</span><input id='lpFormName' placeholder='");
+    b.push_str(name_placeholder);
+    b.push_str("' autocomplete='off'><span class='ds-field-error' id='lpFormError'></span></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='lpCloseForm()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-p' data-testid='");
+    b.push_str(spec.testid);
+    b.push_str("-form-save' onclick='lpSubmitForm()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+
+    // Destructive confirm dialog (upstream ConfirmDeleteDialog).
+    b.push_str("<div class='modal-overlay' id='lpDeleteDialog' data-testid='");
+    b.push_str(spec.testid);
+    b.push_str("-delete-dialog' onclick='if(event.target===this)lpCloseDelete()'><div class='modal' style='max-width:420px' role='dialog' aria-modal='true' aria-labelledby='lpDeleteTitle'><h2 id='lpDeleteTitle' style='margin-top:0'>");
+    b.push_str(&spec.delete_title);
+    b.push_str("</h2><div class='ds-delete-target'><span class='ds-delete-avatar' id='lpDeleteAvatar' aria-hidden='true'>A</span><span id='lpDeleteName'>...</span></div><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='lpCloseDelete()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-d' data-testid='");
+    b.push_str(spec.testid);
+    b.push_str("-delete-confirm' onclick='lpDeleteSubmit()'>");
+    b.push_str(ok_label);
+    b.push_str("</button></div></div></div>");
+
+    b.push_str("<script>const LP_SPEC=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "listUrl": spec.list_url,
+        "testid": spec.testid,
+        "emptyTestid": spec.empty_testid,
+        "icon": spec.icon,
+        "collection": spec.collection,
+        "renameMethod": spec.rename_method,
+        "detailPrefix": spec.detail_prefix,
+        "emptyHref": spec.empty_href,
+        "meta": spec.meta,
+        "createLabel": spec.create_label,
+        "deleteTitle": spec.delete_title,
+        "emptyLabel": spec.empty_label,
+        "labels": {
+            "rename": rename_label,
+            "delete": delete_label,
+            "total": total_label,
+            "nameRequired": name_placeholder,
+        },
+    })));
+    b.push_str(";let lpItems=[];let lpPage=1;let lpPageSize=12;let lpKeyword='';let lpEditId=null;let lpPendingDelete=null;let lpCreateMode=false;function lpEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function lpInitial(name){var text=String(name||'A').trim();return (text.charAt(0)||'A').toUpperCase()}function lpMeta(item){if(LP_SPEC.meta==='description'){var text=String(item.description||'').trim();return text?lpEscape(text).slice(0,60):lpHref(item)}if(LP_SPEC.meta==='types'){var types=item.memory_type||[];return lpEscape(Array.isArray(types)?types.join(', '):String(types||''))}return lpHref(item)}function lpHref(item){var stamp=item.update_time||item.update_date||item.created_at||item.create_time||'';if(!stamp)return '';var value=typeof stamp==='number'?stamp:Date.parse(stamp);if(!value||isNaN(value))return lpEscape(String(stamp));return new Date(value).toLocaleString()}function lpSearchInput(value){lpKeyword=String(value||'').trim().toLowerCase();lpPage=1;lpRender()}function lpFiltered(){if(!lpKeyword)return lpItems;return lpItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(lpKeyword)>=0})}function lpRender(){var host=document.getElementById('lpCards');if(!host)return;var page=document.querySelector('.list-page');var list=lpFiltered();if(!list.length&&!lpKeyword){if(page)page.classList.add('ds-page-blank');host.innerHTML=lpEmptyCard(true);lpRenderPagination(0);return}if(page)page.classList.remove('ds-page-blank');if(!list.length){host.innerHTML=lpEmptyCard(false);lpRenderPagination(0);return}var pages=Math.max(1,Math.ceil(list.length/lpPageSize));if(lpPage>pages)lpPage=pages;host.innerHTML=list.slice((lpPage-1)*lpPageSize,lpPage*lpPageSize).map(lpCard).join('');lpRenderPagination(list.length)}function lpEmptyCard(withAction){var action=withAction!==false?\" onclick='lpOpenCreate()'\":'';var role=withAction!==false?\" role='button' tabindex='0'\":'';return \"<article class='home-empty-card ds-empty-card'\"+role+action+\" data-testid='\"+LP_SPEC.emptyTestid+\"'><span class='ds-empty-icon' aria-hidden='true'>\"+LP_SPEC.icon+\"</span><span>\"+lpEscape(LP_SPEC.emptyLabel)+\"</span>\"+(withAction!==false?\"<span class='home-empty-plus' aria-hidden='true'>+</span>\":'')+\"</article>\"}function lpCard(item){var name=lpEscape(item.name);return \"<article class='ds-card' tabindex='0' role='button' data-testid='\"+LP_SPEC.testid+\"-card' data-id='\"+item.id+\"' onclick=\\\"location.href='\"+LP_SPEC.detailPrefix+item.id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+lpInitial(name)+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+lpMeta(item)+\"</span></span><span class='ds-card-more' role='button' tabindex='0' aria-label='More' data-testid='\"+LP_SPEC.testid+\"-card-more' onclick=\\\"event.stopPropagation();lpMenu(event,'\"+item.id+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function lpRenderPagination(total){var host=document.getElementById('lpPagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/lpPageSize));host.innerHTML=\"<span class='list-total'>\"+LP_SPEC.labels.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='lpPageSizeChange(this.value)'><option value='12'\"+(lpPageSize===12?' selected':'')+\">12</option><option value='24'\"+(lpPageSize===24?' selected':'')+\">24</option><option value='48'\"+(lpPageSize===48?' selected':'')+\">48</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(lpPage<=1?'disabled':'')+\" onclick='lpGoto(lpPage-1)'>‹</button><span class='list-page-now'>\"+lpPage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(lpPage>=pages?'disabled':'')+\" onclick='lpGoto(lpPage+1)'>›</button></span>\"}function lpGoto(page){lpPage=page;lpRender()}function lpPageSizeChange(value){lpPageSize=parseInt(value,10)||12;lpPage=1;lpRender()}function lpLoad(){fetch(LP_SPEC.listUrl).then(function(response){return response.json()}).then(function(data){var payload=data.data;if(Array.isArray(payload))lpItems=payload;else if(payload&&LP_SPEC.collection&&Array.isArray(payload[LP_SPEC.collection]))lpItems=payload[LP_SPEC.collection];else if(payload&&Array.isArray(payload.items))lpItems=payload.items;else lpItems=[];lpRender()}).catch(function(){})}function lpOpenCreate(){lpCreateMode=true;lpEditId=null;document.getElementById('lpFormTitle').textContent=LP_SPEC.createLabel;document.getElementById('lpFormName').value='';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpOpenRename(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpCreateMode=false;lpEditId=id;document.getElementById('lpFormTitle').textContent=LP_SPEC.labels.rename;document.getElementById('lpFormName').value=item.name||'';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpCloseForm(){document.getElementById('lpFormDialog').classList.remove('show')}function lpSubmitForm(){var name=document.getElementById('lpFormName').value.trim();if(!name){document.getElementById('lpFormError').textContent=LP_SPEC.labels.nameRequired;return}var request=lpCreateMode?{method:'POST',body:JSON.stringify({name:name})}:{method:LP_SPEC.renameMethod,body:JSON.stringify({name:name})};var url=lpCreateMode?LP_SPEC.listUrl:LP_SPEC.listUrl+'/'+lpEditId;fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},request)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Save failed');if(lpCreateMode&&data.data&&data.data.id){}lpCloseForm();lpLoad()}).catch(function(error){document.getElementById('lpFormError').textContent=error.message})}function lpMenu(event,id){event.stopPropagation();lpMenuClose();var menu=document.createElement('div');menu.id='lpCardMenu';menu.className='home-card-menu';menu.setAttribute('role','menu');menu.innerHTML=\"<button type='button' role='menuitem' onclick='lpOpenRename(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.rename+\"</button><button type='button' role='menuitem' class='danger' onclick='lpOpenDelete(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.delete+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-150)+'px';setTimeout(function(){document.addEventListener('click',lpMenuClose,{once:true})},0)}function lpMenuClose(){var menu=document.getElementById('lpCardMenu');if(menu)menu.remove()}function lpOpenDelete(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpPendingDelete=id;document.getElementById('lpDeleteName').textContent=item.name||'';document.getElementById('lpDeleteAvatar').textContent=lpInitial(item.name);document.getElementById('lpDeleteDialog').classList.add('show')}function lpCloseDelete(){document.getElementById('lpDeleteDialog').classList.remove('show')}function lpDeleteSubmit(){if(!lpPendingDelete)return;fetch(LP_SPEC.listUrl+'/'+lpPendingDelete,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');lpCloseDelete();lpLoad()}).catch(function(error){alert(error.message)})}lpLoad()</script>");
+    layout(&spec.title, &b, zh)
+}
+
+fn chat_apps_icon() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z'/></svg>"
+}
+
 pub async fn chat_apps_page(
-    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    State(_state): State<std::sync::Arc<crate::server::AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let apps = state
-        .chat_apps
-        .as_ref()
-        .map(|s| s.list())
-        .unwrap_or_default();
-    let mut cards = String::new();
-    for a in &apps {
-        let initial = if a.icon.is_empty() {
-            a.name
-                .chars()
-                .next()
-                .unwrap_or('C')
-                .to_uppercase()
-                .to_string()
+    let spec = AppListSpec {
+        testid: "chats-list",
+        create_testid: "create-chat",
+        empty_testid: "chats-empty",
+        title: if zh { "聊天" } else { "Chat apps" }.to_string(),
+        create_label: if zh { "创建聊天" } else { "Create chat" }.to_string(),
+        delete_title: if zh { "删除聊天" } else { "Delete chat" }.to_string(),
+        empty_label: if zh {
+            "尚未创建聊天应用"
         } else {
-            a.icon.clone()
-        };
-        let desc = if a.description.is_empty() {
-            "-".to_string()
-        } else {
-            a.description.clone()
-        };
-        cards.push_str(&format!(
-            "<div class='chat-card' data-name='{name}' data-testid='chat-card' onclick=\"location.href='/chats/{id}'\"><div class='cc-top'><div class='av' style='width:40px;height:40px;font-size:18px'>{icon}</div><div class='cc-meta'><h3 style='font-size:15px;margin:0'>{name}</h3><p style='font-size:12px;color:var(--tm);margin:2px 0 0'>{desc}</p></div><div class='cc-actions' onclick='event.stopPropagation()'><button class='btn btn-o btn-sm' onclick=\"renApp('{id}','{name}')\">✏️</button><button class='btn btn-d btn-sm' onclick=\"delApp('{id}')\">🗑</button></div></div></div>",
-            id = a.id, icon = initial, name = html_esc(&a.name, 30), desc = html_esc(&desc, 40)
-        ));
-    }
-    let mut b = String::new();
-    // Header: title + search + create button (ListFilterBar parity).
-    b.push_str("<div style='display:flex;align-items:center;gap:12px;margin-bottom:24px'>");
-    b.push_str(&format!("<h1 style='margin:0'>{}</h1>", t("Chat apps", zh)));
-    b.push_str(&format!(
-        "<input id='appSearch' placeholder='{}' style='margin-left:auto;width:240px' oninput='filterApps(this.value)'>",
-        t("Search", zh)
-    ));
-    b.push_str(&format!(
-        "<button class='btn btn-p' data-testid='create-chat' onclick='openNewApp()'>+ {}</button></div>",
-        t("Create chat", zh)
-    ));
-    b.push_str("<div class='chat-list' id='appList'>");
-    if apps.is_empty() {
-        // EmptyAppCard parity: clickable large card.
-        b.push_str(&format!(
-            "<div class='empty-card' data-testid='chats-empty-create' onclick='openNewApp()'><div style='font-size:44px'>💬</div><p style='margin:12px 0 4px;font-size:15px'>{}</p><p style='color:var(--tm);font-size:12px;margin:0'>{}</p></div>",
-            t("No chat app created yet", zh),
-            t("Click to create your first chat app", zh),
-        ));
-    } else {
-        b.push_str(&cards);
-    }
-    b.push_str("</div>");
-    // Create dialog (RenameDialog parity: name only, 425px).
-    b.push_str(&format!("<div class='modal-overlay' id='newAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='appName' placeholder='{}' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeNewApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveNewApp()'>{}</button></div></div></div>",
-        t("Create chat", zh), t("Name", zh), t("Cancel", zh), t("Save", zh)));
-    // Rename dialog.
-    b.push_str(&format!("<div class='modal-overlay' id='renAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='renAppName' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeRenApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveRenApp()'>{}</button></div></div></div>",
-        t("Rename", zh), t("Cancel", zh), t("Save", zh)));
-    b.push_str("<input id='renAppId' type='hidden'>");
-    // JS
-    b.push_str("<script>");
-    b.push_str("function filterApps(v){v=(v||'').toLowerCase();document.querySelectorAll('#appList .chat-card').forEach(function(c){c.style.display=(!v||(c.getAttribute('data-name')||'').toLowerCase().indexOf(v)>=0)?'':'none'})}");
-    b.push_str("function openNewApp(){document.getElementById('appName').value='';document.getElementById('newAppModal').classList.add('show')}");
-    b.push_str(
-        "function closeNewApp(){document.getElementById('newAppModal').classList.remove('show')}",
-    );
-    b.push_str("function saveNewApp(){var n=document.getElementById('appName').value.trim();if(!n){alert('Name required');return}fetch('/api/v1/chatapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'create failed')}})}");
-    b.push_str("function renApp(id,name){document.getElementById('renAppId').value=id;document.getElementById('renAppName').value=name;document.getElementById('renAppModal').classList.add('show')}");
-    b.push_str(
-        "function closeRenApp(){document.getElementById('renAppModal').classList.remove('show')}",
-    );
-    b.push_str("function saveRenApp(){var n=document.getElementById('renAppName').value.trim();var id=document.getElementById('renAppId').value;if(!n)return;fetch('/api/v1/chatapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
-    b.push_str("function delApp(id){if(!confirm('Delete this chat app?'))return;fetch('/api/v1/chatapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
-    b.push_str("</script>");
-    Html(layout(t("Chat apps", zh), &b, zh))
+            "No chat app created yet"
+        }
+        .to_string(),
+        search_placeholder: if zh { "搜索" } else { "Search" }.to_string(),
+        list_url: "/api/v1/chats",
+        collection: "",
+        rename_method: "PATCH",
+        detail_prefix: "/chats/",
+        empty_href: "/chats?isCreate=true",
+        meta: "description",
+        icon: chat_apps_icon(),
+    };
+    Html(render_app_list_page(&spec, zh))
 }
 
 /// RAGFlow share-page parity: public /chats/share?shared_id=...&from=chatbots.
@@ -4522,82 +4591,33 @@ fn html_esc(input: &str, max_chars: usize) -> String {
 
 /// RAGFlow 0.26.4 parity: search-apps list page (`/searches`).
 pub async fn search_apps_page(
-    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    State(_state): State<std::sync::Arc<crate::server::AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let apps = state
-        .search_apps
-        .as_ref()
-        .map(|s| s.list())
-        .unwrap_or_default();
-    let mut cards = String::new();
-    for a in &apps {
-        let initial = if a.icon.is_empty() {
-            a.name
-                .chars()
-                .next()
-                .unwrap_or('S')
-                .to_uppercase()
-                .to_string()
+    let spec = AppListSpec {
+        testid: "search-list",
+        create_testid: "create-search",
+        empty_testid: "search-empty-create",
+        title: if zh { "搜索" } else { "Search apps" }.to_string(),
+        create_label: if zh { "创建查询" } else { "Create search" }.to_string(),
+        delete_title: if zh { "删除搜索" } else { "Delete search" }.to_string(),
+        empty_label: if zh {
+            "尚未创建搜索应用"
         } else {
-            a.icon.clone()
-        };
-        let desc = if a.description.is_empty() {
-            "-".to_string()
-        } else {
-            a.description.clone()
-        };
-        cards.push_str(&format!(
-            "<div class='chat-card' data-name='{name}' data-testid='search-card' onclick=\"location.href='/searches/{id}'\"><div class='cc-top'><div class='av' style='width:40px;height:40px;font-size:18px'>{icon}</div><div class='cc-meta'><h3 style='font-size:15px;margin:0'>{name}</h3><p style='font-size:12px;color:var(--tm);margin:2px 0 0'>{desc}</p></div><div class='cc-actions' onclick='event.stopPropagation()'><button class='btn btn-o btn-sm' onclick=\"renSApp('{id}','{name}')\">✏️</button><button class='btn btn-d btn-sm' onclick=\"delSApp('{id}')\">🗑</button></div></div></div>",
-            id = a.id, icon = initial, name = html_esc(&a.name, 30), desc = html_esc(&desc, 40)
-        ));
-    }
-    let mut b = String::new();
-    b.push_str("<div style='display:flex;align-items:center;gap:12px;margin-bottom:24px'>");
-    b.push_str(&format!(
-        "<h1 style='margin:0'>{}</h1>",
-        t("Search apps", zh)
-    ));
-    b.push_str(&format!(
-        "<input id='sappSearch' placeholder='{}' style='margin-left:auto;width:240px' oninput='filterSApps(this.value)'>",
-        t("Search", zh)
-    ));
-    b.push_str(&format!(
-        "<button class='btn btn-p' data-testid='create-search' onclick='openNewSApp()'>+ {}</button></div>",
-        t("Create search", zh)
-    ));
-    b.push_str("<div class='chat-list' id='sappList'>");
-    if apps.is_empty() {
-        b.push_str(&format!(
-            "<div class='empty-card' data-testid='search-empty-create' onclick='openNewSApp()'><div style='font-size:44px'>🔎</div><p style='margin:12px 0 4px;font-size:15px'>{}</p><p style='color:var(--tm);font-size:12px;margin:0'>{}</p></div>",
-            t("No search app created yet", zh),
-            t("Click to create your first search app", zh),
-        ));
-    } else {
-        b.push_str(&cards);
-    }
-    b.push_str("</div>");
-    b.push_str(&format!("<div class='modal-overlay' id='newSAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='sappName' placeholder='{}' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeNewSApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveNewSApp()'>{}</button></div></div></div>",
-        t("Create search", zh), t("Name", zh), t("Cancel", zh), t("Save", zh)));
-    b.push_str(&format!("<div class='modal-overlay' id='renSAppModal'><div class='modal' style='max-width:425px' data-testid='rename-modal'><h2>{}</h2><input id='renSAppName' style='width:100%;margin:12px 0'><div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-o' onclick='closeRenSApp()'>{}</button><button class='btn btn-p' data-testid='rename-save' onclick='saveRenSApp()'>{}</button></div></div></div>",
-        t("Rename", zh), t("Cancel", zh), t("Save", zh)));
-    b.push_str("<input id='renSAppId' type='hidden'>");
-    b.push_str("<script>");
-    b.push_str("function filterSApps(v){v=(v||'').toLowerCase();document.querySelectorAll('#sappList .chat-card').forEach(function(c){c.style.display=(!v||(c.getAttribute('data-name')||'').toLowerCase().indexOf(v)>=0)?'':'none'})}");
-    b.push_str("function openNewSApp(){document.getElementById('sappName').value='';document.getElementById('newSAppModal').classList.add('show')}");
-    b.push_str(
-        "function closeNewSApp(){document.getElementById('newSAppModal').classList.remove('show')}",
-    );
-    b.push_str("function saveNewSApp(){var n=document.getElementById('sappName').value.trim();if(!n){alert('Name required');return}fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'create failed')}})}");
-    b.push_str("function renSApp(id,name){document.getElementById('renSAppId').value=id;document.getElementById('renSAppName').value=name;document.getElementById('renSAppModal').classList.add('show')}");
-    b.push_str(
-        "function closeRenSApp(){document.getElementById('renSAppModal').classList.remove('show')}",
-    );
-    b.push_str("function saveRenSApp(){var n=document.getElementById('renSAppName').value.trim();var id=document.getElementById('renSAppId').value;if(!n)return;fetch('/api/v1/searchapps/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'rename failed')}})}");
-    b.push_str("function delSApp(id){if(!confirm('Delete this search app?'))return;fetch('/api/v1/searchapps/'+id,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'delete failed')}})}");
-    b.push_str("</script>");
-    Html(layout(t("Search apps", zh), &b, zh))
+            "No search app created yet"
+        }
+        .to_string(),
+        search_placeholder: if zh { "搜索" } else { "Search" }.to_string(),
+        list_url: "/api/v1/searchapps",
+        collection: "",
+        rename_method: "PUT",
+        detail_prefix: "/searches/",
+        empty_href: "/searches?isCreate=true",
+        meta: "time",
+        icon: search_icon(),
+    };
+    Html(render_app_list_page(&spec, zh))
 }
 
 /// Upstream next-search/search-setting.tsx parity: the search-app rerank
@@ -6088,6 +6108,62 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[tokio::test]
+    async fn app_list_pages_match_upstream_filter_bar_cards_and_dialogs() {
+        let (_root, state) = test_state();
+        for (uri, testid, create_testid, button_label, empty_label) in [
+            (
+                "/chats",
+                "chats-list",
+                "create-chat",
+                "Create chat",
+                "No chat app created yet",
+            ),
+            (
+                "/searches",
+                "search-list",
+                "create-search",
+                "Create search",
+                "No search app created yet",
+            ),
+        ] {
+            let request = Request::builder()
+                .uri(uri)
+                .header("Cookie", "lang=en")
+                .body(Body::empty())
+                .unwrap();
+            let html = if uri == "/chats" {
+                body_of(chat_apps_page(State(state.clone()), request).await).await
+            } else {
+                body_of(search_apps_page(State(state.clone()), request).await).await
+            };
+            let html = html.as_str();
+            assert!(
+                html.contains(&format!("data-testid='{testid}'")),
+                "{uri} shell"
+            );
+            assert!(html.contains("class='list-filter-bar'"));
+            assert!(html.contains(&format!("data-testid='{create_testid}'")));
+            assert!(html.contains(&format!(">{button_label}</button>")));
+            assert!(html.contains(&format!("data-testid='{testid}-cards'")));
+            assert!(html.contains(&format!("data-testid='{testid}-form-dialog'")));
+            assert!(html.contains(&format!("data-testid='{testid}-delete-dialog'")));
+            assert!(html.contains(empty_label));
+            assert!(html.contains("lpSubmitForm") && html.contains("lpRenderPagination"));
+            assert!(html.contains("'/api/v1/models/default'") == false);
+        }
+        let zh_request = Request::builder()
+            .uri("/chats")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(chat_apps_page(State(state), zh_request).await).await;
+        for label in ["聊天", "创建聊天", "尚未创建聊天应用", "重命名", "删除聊天"]
+        {
+            assert!(zh_html.contains(label), "zh chats label {label} missing");
+        }
     }
 
     #[tokio::test]
