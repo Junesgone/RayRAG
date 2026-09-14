@@ -1,6 +1,6 @@
 {
  "origin": "http://127.0.0.1:9390",
- "generatedAt": "2026-09-14T12:30:25.133Z",
+ "generatedAt": "2026-09-14T15:03:50.326Z",
  "auth": {
   "mode": "rayrag",
   "result": {
@@ -9,24 +9,13 @@
  },
  "pages": [
   {
-   "route": "/",
-   "finalUrl": "http://127.0.0.1:9390/dashboard",
-   "title": "Dashboard · RayRAG",
-   "counts": {
-    "buttons": 2,
-    "links": 21,
-    "fields": 0
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/datasets",
-   "finalUrl": "http://127.0.0.1:9390/datasets",
-   "title": "Knowledge Bases · RayRAG",
+   "route": "/chats",
+   "finalUrl": "http://127.0.0.1:9390/chats",
+   "title": "Chat apps · RayRAG",
    "counts": {
     "buttons": 3,
     "links": 12,
-    "fields": 2
+    "fields": 1
    },
    "pageErrors": []
   },
@@ -77,79 +66,13 @@
    ]
   },
   {
-   "route": "/user-setting/data-source",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/data-source",
-   "title": "Data sources · RayRAG",
+   "route": "/datasets",
+   "finalUrl": "http://127.0.0.1:9390/datasets",
+   "title": "Dataset · RayRAG",
    "counts": {
-    "buttons": 42,
-    "links": 19,
+    "buttons": 17,
+    "links": 12,
     "fields": 2
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/user-setting/chat-channel",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/chat-channel",
-   "title": "Chat channels · RayRAG",
-   "counts": {
-    "buttons": 27,
-    "links": 19,
-    "fields": 0
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/user-setting/model",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/model",
-   "title": "Model providers · RayRAG",
-   "counts": {
-    "buttons": 92,
-    "links": 71,
-    "fields": 6
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/user-setting/mcp",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/mcp",
-   "title": "MCP · RayRAG",
-   "counts": {
-    "buttons": 8,
-    "links": 19,
-    "fields": 1
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/user-setting/team",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/team",
-   "title": "Team · RayRAG",
-   "counts": {
-    "buttons": 7,
-    "links": 19,
-    "fields": 2
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/user-setting/profile",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/profile",
-   "title": "Profile · RayRAG",
-   "counts": {
-    "buttons": 8,
-    "links": 19,
-    "fields": 0
-   },
-   "pageErrors": []
-  },
-  {
-   "route": "/user-setting/api",
-   "finalUrl": "http://127.0.0.1:9390/user-setting/api",
-   "title": "API · RayRAG",
-   "counts": {
-    "buttons": 6,
-    "links": 19,
-    "fields": 0
    },
    "pageErrors": []
   }

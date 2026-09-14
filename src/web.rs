@@ -249,6 +249,13 @@ const CSS: &str = include_str!("./web_css.txt");
 /// so the UI is a 1:1 copy, but each can be repointed through the environment
 /// so a mainland-China deployment can use reachable mirrors.
 fn header_link(kind: &str) -> String {
+    header_link_with(kind, |key| std::env::var(key).ok())
+}
+
+/// Testable core of [`header_link`]: the resolver is injected so tests never
+/// mutate process-wide environment variables (which would race with the other
+/// parallel tests that render the layout).
+fn header_link_with(kind: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
     let (env_key, default) = match kind {
         "discord" => (
             "RAYRAG_DISCORD_URL",
@@ -260,7 +267,9 @@ fn header_link(kind: &str) -> String {
             "https://ragflow.io/docs/dev/category/user-guides",
         ),
     };
-    std::env::var(env_key).unwrap_or_else(|_| default.to_string())
+    lookup(env_key)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// Shared `<head>` for every page: CSS bundle, tooltip/drawer helpers and the
@@ -2528,26 +2537,146 @@ pub async fn data_source_detail_page(
     .into_response()
 }
 
+/// Upstream `pages/files/index.tsx`: `ListFilterBar` (breadcrumb/title + search +
+/// the `Add file` dropdown with `Upload file` / `New folder`), the bulk bar
+/// (Move / Link to dataset / Delete) once rows are selected, the file table
+/// (select-all, Name, Upload date, Size, Dataset, Action) and the pagination
+/// footer. The previous revision had a dangling `addFileBtn` listener that
+/// threw before `loadF()` ran, leaving the table stuck on "Loading...".
 pub async fn files_page(
     State(_state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let mut b = String::new();
-    b.push_str("<h1>📁 ");
-    b.push_str(t("Files", zh));
-    b.push_str("</h1><div class='card'><h2>");
-    b.push_str(t("Upload", zh));
-    b.push_str("</h2><input type='file' id='fu' style='max-width:400px'><button class='btn btn-p' onclick='uploadF()'>");
-    b.push_str(t("Upload", zh));
-    b.push_str("</button></div><div class='card' id='fileBatchBar' style='display:none'><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span id='fileSelCount' style='font-size:13px;color:var(--tm)'></span><button class='btn btn-d btn-sm' onclick='batchDelSel()'>");
-    b.push_str(t("Bulk Delete", zh));
-    b.push_str("</button><button class='btn btn-o btn-sm' onclick='batchLinkSel()'>");
-    b.push_str(t("Link to KB", zh));
-    b.push_str("</button><button class='btn btn-o btn-sm' onclick='fileSelAll(false);updateFileBatch()'>✕ ");
-    b.push_str(t("Clear", zh));
-    b.push_str("</button></div></div><div class='card'><h2>Files</h2><input id='fileQ' placeholder='Search files...' oninput='fileFilter()' style='max-width:260px;margin-bottom:8px'><div id='fl'>Loading...</div></div><script>function fileFilter(){var q=(document.getElementById('fileQ').value||'').toLowerCase();document.querySelectorAll('#fl tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';tr.style.display=(!q||m.indexOf(q)>=0)?'':'none'})};function updateFileBatch(){var n=document.querySelectorAll('.fileCk:checked').length;var bar=document.getElementById('fileBatchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('fileSelCount');if(sc)sc.textContent=n+' selected'}};function fileSelAll(on){document.querySelectorAll('.fileCk').forEach(function(x){x.checked=on});updateFileBatch()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('fileCk'))updateFileBatch()});function loadF(){fetch('/api/v1/files').then(r=>r.json()).then(d=>{var files=d.data||[];var h='<table><thead><tr><th><input type=checkbox onclick=fileSelAll(this.checked)></th><th>Name</th><th>Size</th><th>Type</th><th>Uploaded</th><th></th></tr></thead><tbody>';files.forEach(function(f){var d=new Date(f.created_at);var ds=d?d.toLocaleString():'';var isF=(f.file_type==='folder');h+='<tr data-name=\\''+f.name.toLowerCase()+'\\'><td><input type=checkbox class=fileCk value='+f.id+'></td><td style=font-weight:500>'+(isF?'📁 ':'')+f.name+'</td><td>'+(isF?'-</td><td class=co>':(f.size/1024).toFixed(0)+'KB</td><td class=co>')+(isF?'folder':f.file_type)+'</td><td style=color:var(--tm);font-size:12px>'+ds+'</td><td>'+(isF?'<button class=btn btn-d btn-sm onclick=delFile('+f.id+')>Del</button>':'<a class=btn btn-o btn-sm href=/api/v1/files/'+f.id+'/download target=_blank>Download</a> <button class=btn btn-o btn-sm onclick=linkFile('+f.id+') title=Link>🔗 KB</button> <button class=btn btn-o btn-sm onclick=renameF('+f.id+',&quot;'+f.name.replace(/\"/g,'')+'&quot;)>Rename</button> <button class=btn btn-o btn-sm onclick=copyF('+f.id+')>Copy</button> ')+'</td></tr>';});document.getElementById('fl').innerHTML=h+'</tbody></table>';updateFileBatch()})};function linkFile(id){var kb=prompt('Link file to knowledge base (dataset ID):');if(!kb)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:[id],dataset_id:kb})}).then(r=>r.json()).then(d=>{alert(d.code===0?('Linked: '+(d.message||'ok')):('Error: '+(d.message||'unknown')))})};function selFileIds(){var ids=[];document.querySelectorAll('.fileCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchDelSel(){var ids=selFileIds();if(!ids.length){alert('请先选择文件');return}if(!confirm('Delete '+ids.length+' selected file(s)?'))return;var n=0;function next(){if(n>=ids.length){loadF();return}var id=ids[n++];fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()};function batchLinkSel(){var ids=selFileIds();if(!ids.length){alert('请先选择文件');return}var kb=prompt('Link '+ids.length+' file(s) to knowledge base (dataset ID):');if(!kb)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:ids,dataset_id:kb})}).then(r=>r.json()).then(d=>{alert(d.code===0?('Linked: '+(d.message||'ok')):('Error: '+(d.message||'unknown')))})};function renameF(id,cur){var n=prompt('New file name:',cur);if(!n)return;fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function copyF(id){fetch('/api/v1/files/'+id+'/copy',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function delFile(id){if(!confirm('Delete this file?'))return;fetch('/api/v1/files/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadF()}else{alert('Error: '+(d.message||'unknown'))}})};function uploadF(){var f=document.getElementById('fu').files[0];if(!f)return;var fd=new FormData();fd.append('file',f,f.name);fetch('/api/v1/files/upload',{method:'POST',body:fd}).then(function(){document.getElementById('fu').value='';loadF()});}function afItem(n){var m=document.getElementById('addFileMenu');m.classList.remove('open');if(n===1){document.getElementById('fu').click()}else{document.getElementById('folderName').value='';document.getElementById('newFolderModal').classList.add('show')}};function createFolder(){var n=document.getElementById('folderName').value.trim();if(!n){alert('Folder name is required');return}fetch('/api/v1/files/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){document.getElementById('newFolderModal').classList.remove('show');loadF()}else{alert('Error: '+(d.message||'unknown'))}});}document.getElementById('addFileBtn').addEventListener('click',function(e){e.stopPropagation();document.getElementById('addFileMenu').classList.toggle('open')});document.addEventListener('click',function(e){var m=document.getElementById('addFileMenu');if(m&&!m.contains(e.target)&&e.target.id!=='addFileBtn'){m.classList.remove('open')}});loadF()</script>");
-    Html(layout(t("Files", zh), &b, zh))
+    let title_label = if zh { "文件" } else { "Files" };
+    let add_file_label = if zh { "新增文件" } else { "Add file" };
+    let upload_file_label = if zh { "上传文件" } else { "Upload file" };
+    let new_folder_label = if zh { "新建文件夹" } else { "New folder" };
+    let search_label = if zh { "搜索" } else { "Search" };
+    let name_label = if zh { "名称" } else { "Name" };
+    let upload_date_label = if zh { "上传日期" } else { "Upload date" };
+    let size_label = if zh { "大小" } else { "Size" };
+    let dataset_label = if zh { "知识库" } else { "Dataset" };
+    let action_label = if zh { "操作" } else { "Action" };
+    let move_label = if zh { "移动" } else { "Move" };
+    let link_label = if zh {
+        "链接知识库"
+    } else {
+        "Link to dataset"
+    };
+    let delete_label = if zh { "删除" } else { "Delete" };
+    let rename_label = if zh { "重命名" } else { "Rename" };
+    let download_label = if zh { "下载" } else { "Download" };
+    let save_label = if zh { "保存" } else { "Save" };
+    let cancel_label = if zh { "取消" } else { "Cancel" };
+    let close_label = if zh { "关闭" } else { "Close" };
+    let total_label = if zh { "总共" } else { "Total" };
+    let folder_label = if zh { "文件夹" } else { "Folder" };
+    let folder_name_label = if zh { "名称" } else { "Name" };
+    let empty_label = if zh { "暂无文件" } else { "No file yet" };
+    let selected_label = if zh { "已选择" } else { "Selected" };
+    let destination_label = if zh {
+        "目标文件夹"
+    } else {
+        "Destination folder"
+    };
+    let dataset_id_label = if zh { "知识库 ID" } else { "Dataset ID" };
+    let folder_name_required = if zh {
+        "名称必填"
+    } else {
+        "Name is required"
+    };
+
+    let mut b = String::with_capacity(16384);
+    b.push_str("<article class='list-page' data-testid='files-list'><header class='list-filter-bar'><h1 class='list-title'><span class='list-title-icon' aria-hidden='true'>");
+    b.push_str(file_icon_svg());
+    b.push_str("</span><span id='fileBreadcrumb'>");
+    b.push_str(title_label);
+    b.push_str("</span></h1><div class='list-bar-actions'><input id='fileQ' class='list-search' type='search' placeholder='");
+    b.push_str(search_label);
+    b.push_str("' aria-label='");
+    b.push_str(search_label);
+    b.push_str("' oninput='fileFilter(this.value)'><div class='menu' id='addFileMenu'><button type='button' class='btn btn-p' id='addFileBtn' aria-haspopup='menu' aria-expanded='false' data-testid='files-add' onclick='toggleHeaderMenu(\"addFileMenu\",event)'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' aria-hidden='true'><path d='M12 5v14M5 12h14'/></svg>");
+    b.push_str(add_file_label);
+    b.push_str("</button><div class='menu-panel' role='menu'><button type='button' role='menuitem' class='menu-item' data-testid='files-upload' onclick='afUpload()'>");
+    b.push_str(upload_file_label);
+    b.push_str("</button><button type='button' role='menuitem' class='menu-item' data-testid='files-new-folder' onclick='afNewFolder()'>");
+    b.push_str(new_folder_label);
+    b.push_str("</button></div></div></div></header>");
+    b.push_str("<input type='file' id='fu' hidden onchange='uploadF()'>");
+    b.push_str("<div id='fileBatchBar' class='bulk-bar' hidden data-testid='files-bulk-bar'><span id='fileSelCount' class='bulk-count'></span><button type='button' class='btn btn-o btn-sm' onclick='batchMove()'>");
+    b.push_str(move_label);
+    b.push_str("</button><button type='button' class='btn btn-o btn-sm' onclick='batchLink()'>");
+    b.push_str(link_label);
+    b.push_str("</button><button type='button' class='btn btn-d btn-sm' onclick='batchDelete()'>");
+    b.push_str(delete_label);
+    b.push_str("</button></div>");
+    b.push_str("<div class='table-wrap'><table class='file-table' data-testid='files-table'><thead><tr><th class='col-select'><input type='checkbox' id='fileSelAll' aria-label='Select all' onchange='fileSelAll(this.checked)'></th><th>");
+    b.push_str(name_label);
+    b.push_str("</th><th>");
+    b.push_str(upload_date_label);
+    b.push_str("</th><th>");
+    b.push_str(size_label);
+    b.push_str("</th><th>");
+    b.push_str(dataset_label);
+    b.push_str("</th><th>");
+    b.push_str(action_label);
+    b.push_str("</th></tr></thead><tbody id='fl'><tr><td colspan='6' class='table-empty'>...</td></tr></tbody></table></div>");
+    b.push_str("<footer class='list-pagination' id='filePagination'></footer></article>");
+
+    // New-folder dialog + move/link prompts reuse one small modal each.
+    b.push_str("<div class='modal-overlay' id='newFolderModal' data-testid='files-new-folder-dialog' onclick='if(event.target===this)closeNewFolder()'><div class='modal' style='max-width:420px' role='dialog' aria-modal='true' aria-labelledby='newFolderTitle'><h2 id='newFolderTitle' style='margin-top:0'>");
+    b.push_str(new_folder_label);
+    b.push_str("</h2><label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(folder_name_label);
+    b.push_str("</span><input id='folderName' autocomplete='off'><span class='ds-field-error' id='folderNameError'></span></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='closeNewFolder()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-p' data-testid='files-new-folder-save' onclick='createFolder()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='moveFileModal' data-testid='files-move-dialog' onclick='if(event.target===this)closeMove()'><div class='modal' style='max-width:420px' role='dialog' aria-modal='true' aria-labelledby='moveFileTitle'><h2 id='moveFileTitle' style='margin-top:0'>");
+    b.push_str(move_label);
+    b.push_str("</h2><label class='ds-field'><span class='ds-field-label'>");
+    b.push_str(destination_label);
+    b.push_str("</span><select id='moveTarget'><option value=''>/</option></select></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='closeMove()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-p' onclick='moveSubmit()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='linkFileModal' data-testid='files-link-dialog' onclick='if(event.target===this)closeLink()'><div class='modal' style='max-width:420px' role='dialog' aria-modal='true' aria-labelledby='linkFileTitle'><h2 id='linkFileTitle' style='margin-top:0'>");
+    b.push_str(link_label);
+    b.push_str("</h2><label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(dataset_id_label);
+    b.push_str("</span><input id='linkDatasetId' autocomplete='off'></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='closeLink()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-p' onclick='linkSubmit()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+
+    b.push_str("<script>const FILE_LABELS={delete:");
+    b.push_str(&json_script_string(delete_label));
+    b.push_str(",rename:");
+    b.push_str(&json_script_string(rename_label));
+    b.push_str(",download:");
+    b.push_str(&json_script_string(download_label));
+    b.push_str(",link:");
+    b.push_str(&json_script_string(link_label));
+    b.push_str(",empty:");
+    b.push_str(&json_script_string(empty_label));
+    b.push_str(",total:");
+    b.push_str(&json_script_string(total_label));
+    b.push_str(",selected:");
+    b.push_str(&json_script_string(selected_label));
+    b.push_str(",folder:");
+    b.push_str(&json_script_string(folder_label));
+    b.push_str(",folderRequired:");
+    b.push_str(&json_script_string(folder_name_required));
+    b.push_str("};let fileItems=[];let filePage=1;let filePageSize=50;let fileKeyword='';let filePendingLink=[];function fe(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function fileFilter(value){fileKeyword=String(value||'').trim().toLowerCase();filePage=1;renderFiles()}function filteredFiles(){if(!fileKeyword)return fileItems;return fileItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(fileKeyword)>=0})}function fileSize(item){if(item.file_type==='folder')return '-';var bytes=Number(item.size||0);if(bytes>=1048576)return (bytes/1048576).toFixed(1)+' MB';if(bytes>=1024)return (bytes/1024).toFixed(0)+' KB';return bytes+' B'}function fileDate(item){var raw=item.create_time||item.created_at;if(!raw)return '';var value=typeof raw==='number'?raw:Date.parse(raw);if(!value||isNaN(value))return String(raw);return new Date(value).toLocaleDateString()}function fileDataset(item){var kb=item.kb_id||item.dataset_id;return kb?fe(String(kb).slice(0,8)):''}function renderFiles(){var body=document.getElementById('fl');if(!body)return;var list=filteredFiles();if(!list.length){body.innerHTML=\"<tr><td colspan='6' class='table-empty'>\"+FILE_LABELS.empty+\"</td></tr>\";renderFilePagination(0);return}var pages=Math.max(1,Math.ceil(list.length/filePageSize));if(filePage>pages)filePage=pages;var slice=list.slice((filePage-1)*filePageSize,filePage*filePageSize);body.innerHTML=slice.map(function(item){var isFolder=item.file_type==='folder';var actions=\"<button type='button' class='btn btn-o btn-sm' onclick='renameF(\\\"\"+item.id+\"\\\",\\\"\"+fe(item.name)+\"\\\")'>\"+FILE_LABELS.rename+\"</button> <button type='button' class='btn btn-d btn-sm' onclick='delFile(\\\"\"+item.id+\"\\\")'>\"+FILE_LABELS.delete+\"</button>\";if(!isFolder){actions=\"<a class='btn btn-o btn-sm' href='/api/v1/files/\"+item.id+\"/download' target='_blank' rel='noreferrer'>\"+FILE_LABELS.download+\"</a> <button type='button' class='btn btn-o btn-sm' onclick='linkFile(\\\"\"+item.id+\"\\\")'>\"+FILE_LABELS.link+\"</button> \"+actions}return \"<tr data-name=\\\"\"+fe(String(item.name||'').toLowerCase())+\"\\\"><td class='col-select'><input type='checkbox' class='fileCk' value='\"+item.id+\"' onchange='updateFileBatch()'></td><td class='file-name'>\"+(isFolder?'📁 ':'')+fe(item.name)+\"</td><td class='co'>\"+fileDate(item)+\"</td><td class='co'>\"+fileSize(item)+\"</td><td class='co'>\"+fileDataset(item)+\"</td><td class='file-actions'>\"+actions+\"</td></tr>\"}).join('');renderFilePagination(list.length);updateFileBatch()}function renderFilePagination(total){var host=document.getElementById('filePagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/filePageSize));host.innerHTML=\"<span class='list-total'>\"+FILE_LABELS.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='filePageSizeChange(this.value)'><option value='50'\"+(filePageSize===50?' selected':'')+\">50</option><option value='20'\"+(filePageSize===20?' selected':'')+\">20</option><option value='100'\"+(filePageSize===100?' selected':'')+\">100</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(filePage<=1?'disabled':'')+\" onclick='fileGoto(filePage-1)'>‹</button><span class='list-page-now'>\"+filePage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(filePage>=pages?'disabled':'')+\" onclick='fileGoto(filePage+1)'>›</button></span>\"}function fileGoto(page){filePage=page;renderFiles()}function filePageSizeChange(value){filePageSize=parseInt(value,10)||50;filePage=1;renderFiles()}function selFileIds(){var ids=[];document.querySelectorAll('.fileCk:checked').forEach(function(box){ids.push(box.value)});return ids}function updateFileBatch(){var ids=selFileIds();var bar=document.getElementById('fileBatchBar');var count=document.getElementById('fileSelCount');if(count)count.textContent=FILE_LABELS.selected+' '+ids.length;if(bar)bar.hidden=ids.length===0}function fileSelAll(on){document.querySelectorAll('.fileCk').forEach(function(box){box.checked=on});updateFileBatch()}function loadF(){fetch('/api/v1/files').then(function(response){return response.json()}).then(function(data){fileItems=Array.isArray(data.data)?data.data:[];fileFolders();renderFiles()}).catch(function(){})}function fileFolders(){var select=document.getElementById('moveTarget');if(!select)return;var folders=fileItems.filter(function(item){return item.file_type==='folder'});select.innerHTML=\"<option value=''>/</option>\"+folders.map(function(item){return \"<option value='\"+item.id+\"'>\"+fe(item.name)+\"</option>\"}).join('')}function afUpload(){document.getElementById('fu').click()}function afNewFolder(){document.getElementById('folderName').value='';var err=document.getElementById('folderNameError');if(err)err.textContent='';document.getElementById('newFolderModal').classList.add('show')}function closeNewFolder(){document.getElementById('newFolderModal').classList.remove('show')}function createFolder(){var name=document.getElementById('folderName').value.trim();if(!name){document.getElementById('folderNameError').textContent=FILE_LABELS.folderRequired;return}fetch('/api/v1/files/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create folder failed');closeNewFolder();loadF()}).catch(function(error){document.getElementById('folderNameError').textContent=error.message})}function uploadF(){var input=document.getElementById('fu');var file=input.files&&input.files[0];if(!file)return;var form=new FormData();form.append('file',file,file.name);fetch('/api/v1/files/upload',{method:'POST',body:form}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Upload failed');input.value='';loadF()}).catch(function(error){alert(error.message)})}function renameF(id,current){var next=prompt(FILE_LABELS.rename,current);if(!next||next===current)return;fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:next})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');loadF()}).catch(function(error){alert(error.message)})}function delFile(id){if(!confirm(FILE_LABELS.delete+'?'))return;fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');loadF()}).catch(function(error){alert(error.message)})}function batchDelete(){var ids=selFileIds();if(!ids.length)return;if(!confirm(FILE_LABELS.delete+' '+ids.length+'?'))return;var index=0;function next(){if(index>=ids.length){loadF();return}var id=ids[index++];fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()}function batchMove(){var ids=selFileIds();if(!ids.length)return;filePendingLink=[];document.getElementById('moveFileModal').classList.add('show');window.__moveIds=ids}function closeMove(){document.getElementById('moveFileModal').classList.remove('show')}function moveSubmit(){var ids=window.__moveIds||[];var target=document.getElementById('moveTarget').value;if(!ids.length)return;Promise.all(ids.map(function(id){return fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({parent_id:target})})})).then(function(){closeMove();loadF()}).catch(function(error){alert(error.message)})}function linkFile(id){filePendingLink=[id];document.getElementById('linkDatasetId').value='';document.getElementById('linkFileModal').classList.add('show')}function batchLink(){var ids=selFileIds();if(!ids.length)return;filePendingLink=ids;document.getElementById('linkDatasetId').value='';document.getElementById('linkFileModal').classList.add('show')}function closeLink(){document.getElementById('linkFileModal').classList.remove('show')}function linkSubmit(){var dataset=document.getElementById('linkDatasetId').value.trim();if(!dataset||!filePendingLink.length)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:filePendingLink,dataset_id:dataset})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Link failed');closeLink();loadF()}).catch(function(error){alert(error.message)})}loadF()</script>");
+    Html(layout(title_label, &b, zh))
+}
+
+fn file_icon_svg() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M14 3v5h5'/><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2Z'/></svg>"
 }
 pub async fn memories_page(
     State(state): State<Arc<AppState>>,
@@ -5688,8 +5817,9 @@ mod kb_ui_tests {
         let html = body_of(files_page(State(state), req).await).await;
         // 批量操作栏 + 勾选 + 关联知识库（RAGFlow: 上传/新建文件夹/批量移动/批量关联）
         assert!(html.contains("fileBatchBar"), "bulk bar missing");
-        assert!(html.contains("batchDelSel"), "bulk delete missing");
-        assert!(html.contains("batchLinkSel"), "bulk link missing");
+        assert!(html.contains("batchDelete"), "bulk delete missing");
+        assert!(html.contains("batchLink"), "bulk link missing");
+        assert!(html.contains("batchMove"), "bulk move missing");
         assert!(html.contains("fileSelAll"), "select-all missing");
         assert!(html.contains("linkFile"), "link-to-KB handler missing");
         assert!(
@@ -5961,6 +6091,61 @@ mod kb_ui_tests {
     }
 
     #[tokio::test]
+    async fn files_page_matches_upstream_filter_bar_table_and_bulk_bar() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='files-list'"));
+        assert!(html.contains("data-testid='files-add'"));
+        assert!(html.contains("data-testid='files-upload'"));
+        assert!(html.contains("data-testid='files-new-folder'"));
+        assert!(html.contains(">Add file</button>"));
+        assert!(html.contains(">Upload file</button>"));
+        assert!(html.contains(">New folder</button>"));
+        assert!(html.contains("data-testid='files-table'"));
+        for header in ["Name", "Upload date", "Size", "Dataset", "Action"] {
+            assert!(
+                html.contains(&format!(">{header}</th>")),
+                "missing column {header}"
+            );
+        }
+        assert!(html.contains("data-testid='files-bulk-bar'"));
+        assert!(html.contains(">Move</button>"));
+        assert!(html.contains(">Link to dataset</button>"));
+        assert!(html.contains("data-testid='files-new-folder-dialog'"));
+        assert!(html.contains("data-testid='files-move-dialog'"));
+        assert!(html.contains("data-testid='files-link-dialog'"));
+        // The old dangling listener that threw before loadF() must be gone.
+        assert!(
+            !html.contains("getElementById('addFileBtn').addEventListener"),
+            "dangling addFileBtn listener would abort the page script"
+        );
+        assert!(html.contains("loadF()"));
+        let zh_request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(files_page(State(state), zh_request).await).await;
+        for label in [
+            "新增文件",
+            "上传文件",
+            "新建文件夹",
+            "上传日期",
+            "大小",
+            "知识库",
+            "链接知识库",
+        ] {
+            assert!(zh_html.contains(label), "zh files label {label} missing");
+        }
+    }
+
+    #[tokio::test]
     async fn datasets_page_matches_upstream_list_filter_bar_cards_and_dialogs() {
         let (_root, state) = test_state();
         let request = Request::builder()
@@ -6183,21 +6368,30 @@ mod kb_ui_tests {
 
     #[test]
     fn global_header_external_links_follow_environment_overrides() {
-        // Safety: the test process has no other thread reading these variables.
-        unsafe {
-            std::env::set_var("RAYRAG_HELP_URL", "https://docs.example.cn/user-guides");
-            std::env::set_var("RAYRAG_GITHUB_URL", "https://git.example.cn/rayrag");
-        }
-        let html = layout("Home", "<p>body</p>", false);
-        assert!(html.contains("href='https://docs.example.cn/user-guides'"));
-        assert!(html.contains("href='https://git.example.cn/rayrag'"));
-        unsafe {
-            std::env::remove_var("RAYRAG_HELP_URL");
-            std::env::remove_var("RAYRAG_GITHUB_URL");
-        }
-        let restored = layout("Home", "<p>body</p>", false);
-        assert!(restored.contains("href='https://ragflow.io/docs/dev/category/user-guides'"));
-        assert!(restored.contains("href='https://github.com/infiniflow/ragflow'"));
+        // The resolver is injected, so this never mutates process-wide env and
+        // cannot race with the other layout tests running in parallel.
+        let overridden = |key: &str| match key {
+            "RAYRAG_HELP_URL" => Some("https://docs.example.cn/user-guides".to_string()),
+            "RAYRAG_GITHUB_URL" => Some("https://git.example.cn/rayrag".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            header_link_with("help", overridden),
+            "https://docs.example.cn/user-guides"
+        );
+        assert_eq!(
+            header_link_with("github", overridden),
+            "https://git.example.cn/rayrag"
+        );
+        assert_eq!(
+            header_link_with("discord", overridden),
+            "https://discord.com/invite/NjYzJD3GM3"
+        );
+        let blank = |_key: &str| Some("   ".to_string());
+        assert_eq!(
+            header_link_with("help", blank),
+            "https://ragflow.io/docs/dev/category/user-guides"
+        );
     }
 
     #[test]

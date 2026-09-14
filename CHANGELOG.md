@@ -6,6 +6,15 @@ All notable changes to RayRAG are documented in this file.
 
 ### Added
 
+- **`/files` 文件管理页对齐上游 `pages/files/index.tsx`**：ListFilterBar（Files 图标 +
+  标题 + 搜索 + `Add file` 下拉 = Upload file / New folder）、选中后出现的批量栏
+  （Move / Link to dataset / Delete）、上游六列表格（全选、Name、Upload date、Size、
+  Dataset、Action）与分页页脚（总共 N + 50/20/100 + ‹ ›），新建文件夹/移动/链接知识库
+  三个弹层。**修复**：旧脚本引用已删除的 `addFileBtn` 抛错导致 `loadF()` 不执行、
+  表格永挂 "Loading..."；顺带修 `.bulk-bar[hidden]` 被 `display:flex` 覆盖的问题，
+  并把头部外链环境变量测试改为注入式解析器（消除并行测试竞态）。
+
+
 - **`/datasets` 列表页对齐上游 `pages/datasets/index.tsx`**：ListFilterBar
   （标题 + 搜索 + `Create dataset` 主按钮）、卡片网格（字母头像/名称/`N files`/⋮ 菜单）、
   `RAGFlowPagination` 式页脚（共 N 条 + 每页 12/24/48 + 上一页/下一页）与两种空态

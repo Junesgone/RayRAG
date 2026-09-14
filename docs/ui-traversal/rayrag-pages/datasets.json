@@ -1,45 +1,175 @@
 {
  "route": "/datasets",
  "url": "http://127.0.0.1:9390/datasets",
- "title": "Knowledge Bases · RayRAG",
- "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\nKnowledge Bases\nSort: Name\nSort: Created\n+ New KB\n⋯\nL\nLIVECHK4-1788693713243\n0 files · 0 chunks\nlive check\n⋯\nS\nsmoke-kb\n4 files · 3 chunks\n-\n⋯\nL\nLIVECHK5-1788693756467\n0 files · 0 chunks\nlive check\n⋯\nG\ngpu-embed-test\n19 files · 19 chunks\n-\n⋯\nL\nLIVECHK2-1788693616224\n0 files · 0 chunks\nlive check\n⋯\nU\nUI交互测试KB-mt13ccbo\n0 files · 0 chunks\n-",
+ "title": "Dataset · RayRAG",
+ "bodyText": "R\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\n⌄\n◐\nA\nDataset\nCreate dataset\nL\nLIVECHK4-1788693713243\n0 files\nG\ngpu-embed-test\n19 files\nL\nLIVECHK2-1788693616224\n0 files\nL\nLIVECHK5-1788693756467\n0 files\nU\nUI交互测试KB-mt13ccbo\n0 files\nS\nsmoke-kb\n4 files\nTotal 6\n12\n24\n48\n‹\n1 / 1\n›",
  "headings": [
   {
    "tag": "h1",
-   "text": "Knowledge Bases"
-  },
-  {
-   "tag": "h3",
-   "text": "LIVECHK4-1788693713243"
-  },
-  {
-   "tag": "h3",
-   "text": "smoke-kb"
-  },
-  {
-   "tag": "h3",
-   "text": "LIVECHK5-1788693756467"
-  },
-  {
-   "tag": "h3",
-   "text": "gpu-embed-test"
-  },
-  {
-   "tag": "h3",
-   "text": "LIVECHK2-1788693616224"
-  },
-  {
-   "tag": "h3",
-   "text": "UI交互测试KB-mt13ccbo"
+   "text": "Dataset"
   }
  ],
  "buttons": [
   {
    "tag": "button",
+   "testid": "language-menu",
+   "role": "",
+   "text": "English",
+   "selector": "button[data-testid=\"language-menu\"][type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
    "testid": "",
    "role": "",
    "text": "Theme",
-   "selector": "button",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "datasets-create",
+   "role": "",
+   "text": "Create dataset",
+   "selector": "button[data-testid=\"datasets-create\"][type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "dataset-card",
+   "role": "button",
+   "text": "LLIVECHK4-17886937132430 files",
+   "selector": "article[data-testid=\"dataset-card\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "span",
+   "testid": "dataset-card-more",
+   "role": "button",
+   "text": "More",
+   "selector": "span[data-testid=\"dataset-card-more\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "dataset-card",
+   "role": "button",
+   "text": "Ggpu-embed-test19 files",
+   "selector": "article[data-testid=\"dataset-card\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "span",
+   "testid": "dataset-card-more",
+   "role": "button",
+   "text": "More",
+   "selector": "span[data-testid=\"dataset-card-more\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "dataset-card",
+   "role": "button",
+   "text": "LLIVECHK2-17886936162240 files",
+   "selector": "article[data-testid=\"dataset-card\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "span",
+   "testid": "dataset-card-more",
+   "role": "button",
+   "text": "More",
+   "selector": "span[data-testid=\"dataset-card-more\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "dataset-card",
+   "role": "button",
+   "text": "LLIVECHK5-17886937564670 files",
+   "selector": "article[data-testid=\"dataset-card\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "span",
+   "testid": "dataset-card-more",
+   "role": "button",
+   "text": "More",
+   "selector": "span[data-testid=\"dataset-card-more\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "dataset-card",
+   "role": "button",
+   "text": "UUI交互测试KB-mt13ccbo0 files",
+   "selector": "article[data-testid=\"dataset-card\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "span",
+   "testid": "dataset-card-more",
+   "role": "button",
+   "text": "More",
+   "selector": "span[data-testid=\"dataset-card-more\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "dataset-card",
+   "role": "button",
+   "text": "Ssmoke-kb4 files",
+   "selector": "article[data-testid=\"dataset-card\"][role=\"button\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "span",
+   "testid": "dataset-card-more",
+   "role": "button",
+   "text": "More",
+   "selector": "span[data-testid=\"dataset-card-more\"][role=\"button\"]",
    "disabled": false,
    "type": "",
    "href": "",
@@ -49,10 +179,10 @@
    "tag": "button",
    "testid": "",
    "role": "",
-   "text": "Language",
-   "selector": "button",
-   "disabled": false,
-   "type": "",
+   "text": "‹",
+   "selector": "button[type=\"button\"]",
+   "disabled": true,
+   "type": "button",
    "href": "",
    "state": ""
   },
@@ -60,10 +190,10 @@
    "tag": "button",
    "testid": "",
    "role": "",
-   "text": "+ New KB",
-   "selector": "button",
-   "disabled": false,
-   "type": "",
+   "text": "›",
+   "selector": "button[type=\"button\"]",
+   "disabled": true,
+   "type": "button",
    "href": "",
    "state": ""
   }
@@ -73,63 +203,63 @@
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "RRayRAG",
+   "text": "RayRAG",
    "selector": "a",
    "disabled": false,
    "type": "",
-   "href": "/dashboard",
+   "href": "/",
    "state": ""
   },
   {
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "Dashboard",
+   "text": "Home",
    "selector": "a",
    "disabled": false,
    "type": "",
-   "href": "/dashboard",
+   "href": "/",
    "state": ""
   },
   {
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "Knowledge Bases",
+   "text": "Dataset",
    "selector": "a",
    "disabled": false,
    "type": "",
-   "href": "/kbs",
+   "href": "/datasets",
    "state": ""
   },
   {
    "tag": "a",
-   "testid": "",
-   "role": "",
-   "text": "Search",
-   "selector": "a",
-   "disabled": false,
-   "type": "",
-   "href": "/search",
-   "state": ""
-  },
-  {
-   "tag": "a",
-   "testid": "",
+   "testid": "nav-chat",
    "role": "",
    "text": "Chat",
-   "selector": "a",
+   "selector": "a[data-testid=\"nav-chat\"]",
    "disabled": false,
    "type": "",
-   "href": "/chat",
+   "href": "/chats",
    "state": ""
   },
   {
    "tag": "a",
-   "testid": "",
+   "testid": "nav-search",
    "role": "",
-   "text": "Agents",
-   "selector": "a",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
    "disabled": false,
    "type": "",
    "href": "/agents",
@@ -139,7 +269,7 @@
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "Memories",
+   "text": "Memory",
    "selector": "a",
    "disabled": false,
    "type": "",
@@ -150,18 +280,7 @@
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "🔗",
-   "selector": "a",
-   "disabled": false,
-   "type": "",
-   "href": "/datasources",
-   "state": ""
-  },
-  {
-   "tag": "a",
-   "testid": "",
-   "role": "",
-   "text": "Files",
+   "text": "File",
    "selector": "a",
    "disabled": false,
    "type": "",
@@ -172,30 +291,41 @@
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "Skills",
+   "text": "Discord",
    "selector": "a",
    "disabled": false,
    "type": "",
-   "href": "/skills",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
    "state": ""
   },
   {
    "tag": "a",
    "testid": "",
    "role": "",
-   "text": "Model providers",
+   "text": "GitHub",
    "selector": "a",
    "disabled": false,
    "type": "",
-   "href": "/user-setting/model",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Help",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
    "state": ""
   },
   {
    "tag": "a",
    "testid": "settings-entrypoint",
    "role": "",
-   "text": "A",
-   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "text": "User settings",
+   "selector": "a[data-testid=\"settings-entrypoint\"][id=\"hdrAvatar\"]",
    "disabled": false,
    "type": "",
    "href": "/user-setting",
@@ -207,10 +337,10 @@
    "tag": "input",
    "testid": "",
    "role": "",
-   "text": "🔍 Search",
-   "selector": "input[id=\"kbSearch\"]",
+   "text": "Search",
+   "selector": "input[type=\"search\"][id=\"dsSearch\"]",
    "disabled": false,
-   "type": "",
+   "type": "search",
    "href": "",
    "state": ""
   },
@@ -218,20 +348,55 @@
    "tag": "select",
    "testid": "",
    "role": "",
-   "text": "Sort: NameSort: Created",
-   "selector": "select[id=\"kbSort\"]",
+   "text": "Page size",
+   "selector": "select",
    "disabled": false,
    "type": "",
    "href": "",
    "state": "",
    "options": [
-    "Sort: Name",
-    "Sort: Created"
+    "12",
+    "24",
+    "48"
    ],
-   "value": "name"
+   "value": "12"
   }
  ],
- "others": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "English⌄English简体中文◐A",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "datasets-list",
+   "role": "",
+   "text": "DatasetCreate datasetLLIVECHK4-17886937132430 filesGgpu-embed-test19 filesLLIVEC",
+   "selector": "article[data-testid=\"datasets-list\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "div",
+   "testid": "datasets-cards",
+   "role": "",
+   "text": "LLIVECHK4-17886937132430 filesGgpu-embed-test19 filesLLIVECHK2-17886936162240 fi",
+   "selector": "div[data-testid=\"datasets-cards\"][id=\"dsCards\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
  "tableHeaders": [],
  "tabs": [],
  "screenshot": "docs/ui-traversal/rayrag-pages/datasets.png",
