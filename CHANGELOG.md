@@ -12,6 +12,13 @@ All notable changes to RayRAG are documented in this file.
   （分类侧栏 + 搜索 + 模板卡片网格 + hover「使用」遮罩 + Use 弹层按模板 DSL 建 agent
   后跳 `/agent/{id}`）。CDP 实点：25 模板 / 分类切换 3→10 卡 / Use 弹层预填。
 
+### Added
+
+- **`/login` 3D 翻转卡片**：`FlipCard3D` 结构（三 JS/CSS 对齐上游：perspective 舞台、正反两面、
+  `rotate-y-180` 翻转、`backface-visibility:hidden`、活动面 `data-testid='auth-card-active'`、
+  200 ms 切面），新增 `Remember me`（邮箱本地记忆 + 请求带 `remember`）与
+  `Sign in with {channel}` 渠道按钮区（`/api/v1/auth/login/channels`，无渠道自动隐藏）。
+
 ### Changed
 
 - **`/user-setting/model` 收敛为上游三段结构**：移除自造页标题与 `Reranker` /

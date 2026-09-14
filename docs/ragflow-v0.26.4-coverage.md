@@ -15,12 +15,12 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 272 | 60148 |
+| aligned | 274 | 60295 |
 | full | 566 | 267453 |
-| partial | 38 | 10872 |
+| partial | 39 | 11033 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3403 | 880725 |
+| reference | 3400 | 880417 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -4627,10 +4627,10 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/home/index.tsx` | 21 | 455 | `02f9e9d0d15805c7` | aligned | `src/web.rs; web/static/` | Rust `/` (src/web.rs `index`) renders the upstream home composition: the welcome banner (`header.welcome` + gradient brand), the Dataset section (up to six cards with `N files` + the `common.seeAll` card, or the dashed empty card with `empty.datasetTitle`) and the Applications section whose `h2` and card row follow a Chat/Search/Agent/Memory control (`role=tablist` + `aria-selected`) backed by `/api/v1/chats|searchapps|agents|memories`; per-type empty cards use the upstream en/zh `empty.*` strings and every card links into the matching detail route. CDP traversal clicks all four tabs on RAGFlow and RayRAG (`home-dump-cdp.mjs`). Differences: card artwork is a CSS monogram instead of the upstream SVG illustrations and the dataset `⋮` menu uses prompt/confirm instead of the Rename dialog (v0.3.4w) |
 | `web/src/pages/home/memory-list.tsx` | 79 | 2312 | `1bc1fb059dbc2bea` | aligned | `src/web.rs; web/static/` | Rust home Memory list reads `/api/v1/memories` (`data.memory_list`) with the same card/See-all composition as upstream `MemoryList` (v0.3.4w) |
 | `web/src/pages/home/search-list.tsx` | 65 | 1994 | `9474a54a0354df75` | aligned | `src/web.rs; web/static/` | Rust home Search list reads `/api/v1/searchapps` with the same card/See-all composition as upstream `SearchList` (v0.3.4w) |
-| `web/src/pages/login-next/bg.tsx` | 161 | 5438 | `2ac801e4a3e6bbbf` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/login-next/card.tsx` | 69 | 2238 | `5a76ab289a644b58` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/login-next/index.less` | 78 | 1525 | `f393cd5e471e4845` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/login-next/index.tsx` | 416 | 13669 | `2d0d06b296216d8d` | partial | `src/web.rs; src/web_css.txt` | Rust `/login` is now a standalone page shell (shared `<head>`, no global header/nav/avatar fetch) like upstream, with login + register forms, client-side validation messages and the free-login token handoff. The 3D flip card, the login-channel buttons (SSO/GitHub/OIDC) and the remember-me checkbox are not ported yet (v0.3.4v) |
+| `web/src/pages/login-next/bg.tsx` | 161 | 5438 | `2ac801e4a3e6bbbf` | partial | `src/web.rs; web/static/` | The animated background (`BgSvg` + Spotlight) is not ported; the Rust login page uses the shared theme background (v0.3.5e)|
+| `web/src/pages/login-next/card.tsx` | 69 | 2238 | `5a76ab289a644b58` | aligned | `src/web.rs; web/static/` | Rust reproduces `FlipCard3D`: `.auth-scene`/`.auth-stage` with `perspective` + `transform-style: preserve-3d`, the two `.auth-face` panels (`authLoginFace`/`authRegisterFace`), the `flipped` rotateY(180deg) state, `backface-visibility: hidden`, the 200 ms face swap and the `data-testid='auth-card-active'` marker on the active face (verified by CDP flipping both ways) (v0.3.5e)|
+| `web/src/pages/login-next/index.less` | 78 | 1525 | `f393cd5e471e4845` | aligned | `src/web.rs; web/static/` | Rust `.auth-*` styles cover the upstream login layout (rounded 16px card, labelled fields with required stars, full-width submit, right-aligned switch row, channel stack separated by a divider); exact spacing/typography of the upstream less file remains an approximation (v0.3.5e)|
+| `web/src/pages/login-next/index.tsx` | 416 | 13669 | `2d0d06b296216d8d` | partial | `src/web.rs; src/web_css.txt` | Rust `/login` keeps the upstream composition: a standalone shell (no global header), Email/Password + Nickname register faces, `Remember me`, the `Sign in with {channel}` button list rendered from `/api/v1/auth/login/channels` (hidden when the tenant exposes none), `auth-email`/`auth-password`/`auth-nickname`/`auth-submit`/`auth-toggle-register`/`auth-toggle-login` test ids and a post-login redirect to `/`. Still missing: the 3D background art (`bg.tsx` Spotlight), the `registerEnabled` system-config gate and the OAuth channel handlers behind those buttons (v0.3.5e)|
 | `web/src/pages/memories/add-or-edit-modal.tsx` | 78 | 2181 | `859a8518e864a1af` | aligned | `src/web.rs; src/server.rs; src/api/features.rs; src/api/tenant_models.rs` | Rust create dialog mirrors the upstream `createMemoryFields`: Name (`memories.name` + placeholder), Memory type multi-select with Raw fixed+checked and the `memories.memoryTypeTooltip` tooltip, Embedding model and LLM through the shared default-model tree (seeded from `/api/v1/models/default`); the dialog doubles as rename like `isCreate=false` upstream (v0.3.5b)
 | `web/src/pages/memories/constants/index.tsx` | 68 | 2063 | `8b4cfaa33d954801` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` | Rust reproduces `MemoryOptions` (raw/semantic/episodic/procedural) and the `defaultMemoryFields` defaults (`memory_type: ['raw']`, empty model selectors until the tenant default is seeded) (v0.3.5b)
 | `web/src/pages/memories/hooks.ts` | 333 | 9362 | `dda708fd5aec36d4` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` | Rust list/create/rename/delete call the same memory APIs (`/api/v1/memories`, `PUT`/`DELETE /api/v1/memories/{id}`, `collection: memory_list`) (v0.3.5b)

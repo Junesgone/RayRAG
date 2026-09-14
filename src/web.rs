@@ -3262,8 +3262,100 @@ pub async fn admin_page(
 
 pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let b = "<div class='auth-card card'><h1 style='text-align:center;margin-bottom:24px'>🐠 RayRAG</h1><div id='loginForm'><input id='email' autocomplete='username' placeholder='Email'><input id='password' type='password' autocomplete='current-password' placeholder='Password'><button class='btn btn-p' onclick='login()' style='width:100%;margin-top:8px'>Login</button></div><div id='regForm' style='display:none'><input id='nickname' placeholder='Nickname'><input id='remail' placeholder='Email'><input id='rpassword' type='password' placeholder='Password (min 6)'> <button class='btn btn-p' onclick='register()' style='width:100%;margin-top:8px'>Register</button></div><button class='btn btn-o' onclick='toggleAuth()' style='width:100%;margin-top:12px' id='authToggle'>Register</button><div id='error' style='color:var(--d);margin-top:8px;font-size:13px'></div></div><script>function setTok(t){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400'};function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/'):document.getElementById('error').textContent=d.message})};function register(){var n=document.getElementById('nickname').value;var e=document.getElementById('remail').value;var p=document.getElementById('rpassword').value;fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(r=>r.json()).then(function(d){if(d.code===0){loginWith(e,p)}else{document.getElementById('error').textContent=d.message}})};function loginWith(e,p){fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/'):document.getElementById('error').textContent=d.message})};function toggleAuth(){var r=document.getElementById('regForm').style.display==='none';document.getElementById('regForm').style.display=r?'block':'none';document.getElementById('loginForm').style.display=r?'none':'block';document.getElementById('authToggle').textContent=r?'Login':'Register'}</script>";
-    Html(layout_plain(t("Login", zh), b, zh))
+    let login_title = if zh { "登录" } else { "Sign in" };
+    let register_title = if zh { "注册" } else { "Sign up" };
+    let email_label = if zh { "邮箱" } else { "Email" };
+    let password_label = if zh { "密码" } else { "Password" };
+    let nickname_label = if zh { "昵称" } else { "Nickname" };
+    let remember_label = if zh { "记住我" } else { "Remember me" };
+    let sign_in_tip = if zh {
+        "还没有账号？"
+    } else {
+        "Don’t have an account?"
+    };
+    let sign_up_tip = if zh {
+        "已有账号？"
+    } else {
+        "Already have an account?"
+    };
+    let login_button = if zh { "登录" } else { "Sign in" };
+    let register_button = if zh { "继续" } else { "Continue" };
+    let mut b = String::with_capacity(4096);
+    // Upstream `login-next/card.tsx` FlipCard3D: two faces inside a 3D scene,
+    // the active one carrying `data-testid='auth-card-active'`.
+    b.push_str("<div class='auth-scene'><div class='auth-stage' id='authStage'><div class='auth-face auth-face-front' id='authLoginFace' data-testid='auth-card-active'><div class='auth-card card'><div class='auth-heading'><h2 id='authTitle'>");
+    b.push_str(if zh {
+        "登录你的账号"
+    } else {
+        "Sign in to your account"
+    });
+    b.push_str("</h2></div><form class='auth-form' id='loginForm' data-testid='auth-form' data-active='true' onsubmit='event.preventDefault();login()'><label class='auth-field'><span class='auth-label required'>");
+    b.push_str(email_label);
+    b.push_str("</span><input id='email' data-testid='auth-email' placeholder='");
+    b.push_str(if zh {
+        "请输入邮箱"
+    } else {
+        "Please input email"
+    });
+    b.push_str("' autocomplete='email'></label><label class='auth-field'><span class='auth-label required'>");
+    b.push_str(password_label);
+    b.push_str(
+        "</span><input id='password' data-testid='auth-password' type='password' placeholder='",
+    );
+    b.push_str(if zh {
+        "请输入密码"
+    } else {
+        "Please input password"
+    });
+    b.push_str("' autocomplete='current-password'></label><label class='auth-remember'><input id='remember' type='checkbox'> <span>");
+    b.push_str(remember_label);
+    b.push_str("</span></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
+    b.push_str(login_button);
+    b.push_str("</button></form><div id='authChannels' class='auth-channels' hidden></div><div class='auth-switch'><span>");
+    b.push_str(sign_in_tip);
+    b.push_str("</span> <button type='button' class='auth-link' data-testid='auth-toggle-register' onclick='toggleAuth()'>");
+    b.push_str(register_title);
+    b.push_str("</button></div></div></div><div class='auth-face auth-face-back' id='authRegisterFace'><div class='auth-card card'><div class='auth-heading'><h2>");
+    b.push_str(if zh {
+        "创建账号"
+    } else {
+        "Create an account"
+    });
+    b.push_str("</h2></div><form class='auth-form' id='regForm' data-testid='auth-form' data-active='false' onsubmit='event.preventDefault();register()'><label class='auth-field'><span class='auth-label required'>");
+    b.push_str(email_label);
+    b.push_str("</span><input id='remail' data-testid='auth-email' placeholder='");
+    b.push_str(if zh {
+        "请输入邮箱"
+    } else {
+        "Please input email"
+    });
+    b.push_str("' autocomplete='email'></label><label class='auth-field'><span class='auth-label required'>");
+    b.push_str(nickname_label);
+    b.push_str("</span><input id='nickname' data-testid='auth-nickname' placeholder='");
+    b.push_str(if zh {
+        "请输入昵称"
+    } else {
+        "Please input nickname"
+    });
+    b.push_str("' autocomplete='username'></label><label class='auth-field'><span class='auth-label required'>");
+    b.push_str(password_label);
+    b.push_str(
+        "</span><input id='rpassword' data-testid='auth-password' type='password' placeholder='",
+    );
+    b.push_str(if zh {
+        "请输入密码"
+    } else {
+        "Please input password"
+    });
+    b.push_str("' autocomplete='new-password'></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
+    b.push_str(register_button);
+    b.push_str("</button></form><div class='auth-switch'><span>");
+    b.push_str(sign_up_tip);
+    b.push_str("</span> <button type='button' class='auth-link' data-testid='auth-toggle-login' onclick='toggleAuth()'>");
+    b.push_str(login_title);
+    b.push_str("</button></div></div></div></div></div><div id='error' class='auth-error' role='alert'></div>");
+    b.push_str("<script>var authFlipped=false;function setActiveFace(login){var stage=document.getElementById('authStage');var front=document.getElementById('authLoginFace');var back=document.getElementById('authRegisterFace');stage.classList.toggle('flipped',!login);front.toggleAttribute('data-testid',login);back.toggleAttribute('data-testid',!login);if(login){front.setAttribute('data-testid','auth-card-active');back.removeAttribute('data-testid')}else{back.setAttribute('data-testid','auth-card-active');front.removeAttribute('data-testid')}document.getElementById('loginForm').dataset.active=login?'true':'false';document.getElementById('regForm').dataset.active=login?'false':'true'}function toggleAuth(){authFlipped=!authFlipped;setTimeout(function(){setActiveFace(!authFlipped)},200)}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;if(!n){document.getElementById('error').textContent='Please input nickname';return}fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type='button' class='btn btn-o auth-channel'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('')}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
+    Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
 
 pub async fn document_page(
@@ -6448,6 +6540,45 @@ mod kb_ui_tests {
             "尚未创建记忆",
         ] {
             assert!(zh_html.contains(label), "zh memories label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_page_matches_upstream_flip_card_and_remember_me() {
+        let request = Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(login_page(request).await).await;
+        let html = html.as_str();
+        // Upstream login-next/card.tsx FlipCard3D: both faces + active marker.
+        assert!(html.contains("class='auth-scene'") && html.contains("class='auth-stage'"));
+        assert!(html.contains("id='authLoginFace'") && html.contains("id='authRegisterFace'"));
+        assert!(html.contains("data-testid='auth-card-active'"));
+        assert!(html.contains("data-testid='auth-form'"));
+        assert!(html.contains("data-testid='auth-email'"));
+        assert!(html.contains("data-testid='auth-password'"));
+        assert!(html.contains("data-testid='auth-nickname'"));
+        assert!(html.contains("data-testid='auth-submit'"));
+        assert!(html.contains("data-testid='auth-toggle-register'"));
+        assert!(html.contains("data-testid='auth-toggle-login'"));
+        // Remember me + channel buttons + post-login redirect to `/`.
+        assert!(html.contains("id='remember'") && html.contains("Remember me"));
+        assert!(html.contains("/api/v1/auth/login/channels"));
+        assert!(html.contains("rayrag_email"));
+        assert!(html.contains("location.href='/'"));
+        assert!(html.contains("setActiveFace"));
+        // The standalone shell must not carry the global header (loop guard).
+        assert!(!html.contains("class='gnav'"));
+        let zh_request = Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(login_page(zh_request).await).await;
+        for label in ["记住我", "邮箱", "密码", "昵称", "注册", "登录"] {
+            assert!(zh_html.contains(label), "zh login label {label} missing");
         }
     }
 
