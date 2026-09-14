@@ -2,9 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-14（对标批次 v0.3.4e–v0.3.4w）
+## [0.3.4] — 2026-09-14/15（对标批次 v0.3.4e–v0.3.5b）
 
 ### Added
+
+- **`/memories` 列表页对齐上游**：共享渲染器新增 `form_extra` / `page_script` /
+  `lpExtraPayload()` 三个页面级挂钩，`/memories` 渲染上游组合（ListFilterBar +
+  记忆卡片网格 + 分页 + 两分支空态 + ⋮ Rename/Delete），创建弹层按
+  `createMemoryFields` 提供 Name、Memory type（Raw 固定勾选）、Embedding model 与 LLM
+  （共享默认模型树，按 `/api/v1/models/default` 播种）；CDP 实点并截图。
+
 
 - **`/agents` 列表页对齐上游**：共享 `AppListSpec` 扩展出「创建下拉菜单 / FlowType 卡片 /
   额外 ⋮ 项 / JSON 导入」四个能力，`/agents` 渲染上游组合——Create agent 下拉

@@ -2869,47 +2869,52 @@ async fn chat_completion(
                     .prompt_config
                     .get("cross_languages")
                     .and_then(|v| v.as_array())
-                {
-                    for item in list.iter().filter_map(|v| v.as_str()) {
-                        if !item.trim().is_empty() && !langs.contains(&item.trim().to_string()) {
-                            langs.push(item.trim().to_string());
-                        }
+            {
+                for item in list.iter().filter_map(|v| v.as_str()) {
+                    if !item.trim().is_empty() && !langs.contains(&item.trim().to_string()) {
+                        langs.push(item.trim().to_string());
                     }
                 }
+            }
         }
         langs
     };
     if !cross_langs.is_empty()
-        && let Some(llm_client) = &state.llm {
-            let langs_str = cross_langs.join(", ");
-            let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-            vars.insert("query", q);
-            vars.insert("languages", langs_str.as_str());
-            let sys = crate::prompts::PromptLibrary::cross_languages_sys()
-                .render(&std::collections::HashMap::new());
-            let user = crate::prompts::PromptLibrary::cross_languages_user().render(&vars);
-            let translated = match llm_client
-                .chat_completion(&[
-                    crate::llm::ChatMessage::new("system", &sys),
-                    crate::llm::ChatMessage::new("user", &user),
-                ])
-                .await
-            {
-                Ok(completion) => completion.content,
-                Err(error) => {
-                    tracing::warn!(%error, "cross_languages translation failed; original hits used");
-                    String::new()
-                }
-            };
-            let mut seen: std::collections::HashSet<String> =
-                hits.iter().map(|hit| hit.chunk.id.clone()).collect();
-            for translation in translated
-                .split("###")
-                .map(str::trim)
-                .filter(|text| !text.is_empty() && *text != q)
-            {
-                let extra = state.engine.read().unwrap().hybrid_search_kbs(
-                    crate::search::HybridSearchQuery {
+        && let Some(llm_client) = &state.llm
+    {
+        let langs_str = cross_langs.join(", ");
+        let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        vars.insert("query", q);
+        vars.insert("languages", langs_str.as_str());
+        let sys = crate::prompts::PromptLibrary::cross_languages_sys()
+            .render(&std::collections::HashMap::new());
+        let user = crate::prompts::PromptLibrary::cross_languages_user().render(&vars);
+        let translated = match llm_client
+            .chat_completion(&[
+                crate::llm::ChatMessage::new("system", &sys),
+                crate::llm::ChatMessage::new("user", &user),
+            ])
+            .await
+        {
+            Ok(completion) => completion.content,
+            Err(error) => {
+                tracing::warn!(%error, "cross_languages translation failed; original hits used");
+                String::new()
+            }
+        };
+        let mut seen: std::collections::HashSet<String> =
+            hits.iter().map(|hit| hit.chunk.id.clone()).collect();
+        for translation in translated
+            .split("###")
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && *text != q)
+        {
+            let extra =
+                state
+                    .engine
+                    .read()
+                    .unwrap()
+                    .hybrid_search_kbs(crate::search::HybridSearchQuery {
                         query: translation,
                         query_embedding: None,
                         kb_ids: &kb_ids,
@@ -2917,15 +2922,14 @@ async fn chat_completion(
                         vector_weight: 0.5,
                         doc_ids: None,
                         rank_feature: None,
-                    },
-                );
-                for hit in extra {
-                    if seen.insert(hit.chunk.id.clone()) {
-                        hits.push(hit);
-                    }
+                    });
+            for hit in extra {
+                if seen.insert(hit.chunk.id.clone()) {
+                    hits.push(hit);
                 }
             }
         }
+    }
     let mut context = String::new();
     let mut references = Vec::new();
     for (i, hit) in hits.iter().take(4).enumerate() {
@@ -3503,9 +3507,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::api::chatapp_mgr::delete_chat_app),
         )
         .route(
-        "/api/v1/chatbots/{chat_id}/info",
-        axum::routing::get(crate::api::chatapp_mgr::chatbot_info),
-    )
+            "/api/v1/chatbots/{chat_id}/info",
+            axum::routing::get(crate::api::chatapp_mgr::chatbot_info),
+        )
         .route(
             "/api/v1/chatbots/{session_id}/completions",
             axum::routing::post(crate::api::chatapp_mgr::chatbot_completions),
@@ -4241,7 +4245,11 @@ pub async fn run(
     );
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    tracing::info!("RayRAG {} on http://0.0.0.0:{}", crate::build_info::version_line(), port);
+    tracing::info!(
+        "RayRAG {} on http://0.0.0.0:{}",
+        crate::build_info::version_line(),
+        port
+    );
     // Chat channel stop hook: on shutdown, stop every running channel.
     let shutdown = async move {
         if let Err(error) = tokio::signal::ctrl_c().await {
@@ -4708,7 +4716,7 @@ mod tests {
         let env = test_env();
         let router = build_router(env.state.clone());
         for (path, marker) in [
-            ("/memories", "id='memCreate'"),
+            ("/memories", "data-testid='memory-list'"),
             ("/memory/memory-message/memory-a", "id='messageSearch'"),
             ("/memory/memory-setting/memory-a", "id='memorySettingForm'"),
         ] {

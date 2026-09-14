@@ -2338,6 +2338,8 @@ pub async fn agents_page(
             .to_string(),
         )),
         import_url: "/api/v1/agents",
+        form_extra: String::new(),
+        page_script: String::new(),
     };
     Html(render_app_list_page(&spec, zh))
 }
@@ -2720,42 +2722,151 @@ pub async fn memories_page(
 
 /// Fixed-version Memory card surface. Business data is deliberately loaded
 /// through authenticated APIs rather than embedded in this public HTML shell.
+/// Upstream `pages/memories/index.tsx`: same list composition as the other
+/// application pages, with the `memories.*` labels, the memory type/model
+/// fields of `add-or-edit-modal.tsx` (`createMemoryFields`) and the
+/// `deleteModal.delMemory` confirm whose content carries `delMemoryWarn`.
 pub async fn memories_page_v2(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let mut b = String::new();
-    b.push_str("<div class='memory-list-head'><div><h1 style='margin-bottom:4px'>");
-    b.push_str(t("Memories", zh));
-    b.push_str("</h1><p style='color:var(--tm)'>Build durable context for your agents.</p></div><button class='btn btn-p' id='memCreate'>＋ ");
-    b.push_str(t("Create Memory", zh));
-    b.push_str("</button></div><div class='memory-filter card'><input id='memSearch' placeholder='Search memories' aria-label='Search memories'><details class='memory-filter-popover' id='memOwner'><summary class='btn btn-o'>Owner <span id='memOwnerCount'></span></summary><div class='memory-filter-panel'><strong>Owner</strong><div class='memory-agent-options' id='memOwnerOptions'><span class='sub'>Loading...</span></div><div class='memory-modal-actions'><button class='btn btn-o btn-sm' id='memOwnerClear' type='button'>Clear</button><button class='btn btn-p btn-sm' id='memOwnerApply' type='button'>Apply</button></div></div></details><select id='memType' aria-label='Memory type'><option value=''>All types</option><option value='raw'>Raw</option><option value='semantic'>Semantic</option><option value='episodic'>Episodic</option><option value='procedural'>Procedural</option></select><select id='memStorage' aria-label='Storage type'><option value=''>All storage</option><option value='table'>Table</option></select></div><div id='memList' class='kb-grid' aria-live='polite'><p style='color:var(--tm)'>Loading...</p></div><div class='memory-pager' id='memPager'></div>");
-    b.push_str("<div class='modal-overlay' id='memModal' role='dialog' aria-modal='true'><div class='modal'><h2 id='memModalTitle'>");
-    b.push_str(t("Create Memory", zh));
-    b.push_str("</h2><label>Name<input id='mname' maxlength='128'></label><div id='memCreateFields'><label>Memory Type</label><p class='sub'>Raw is required for the original dialogue envelope.</p><div class='memory-type-grid'><label><input type='checkbox' class='mtype' value='raw' checked disabled> Raw</label><label><input type='checkbox' class='mtype' value='semantic'> Semantic</label><label><input type='checkbox' class='mtype' value='episodic'> Episodic</label><label><input type='checkbox' class='mtype' value='procedural'> Procedural</label></div><label>Embedding Model<select id='membd'><option value='default'>default</option></select></label><label>Chat Model<select id='mllm'><option value='default'>default</option></select></label></div><div class='memory-modal-actions'><button class='btn btn-o' id='memCancel'>");
-    b.push_str(t("Cancel", zh));
-    b.push_str("</button><button class='btn btn-p' id='memSave'>");
-    b.push_str(t("Save", zh));
-    b.push_str("</button></div></div></div>");
-    b.push_str(
-        r#"<script>
-const memState={page:1,size:12,total:0,edit:null,request:0,owners:new Set(),ownerOptions:new Map()};
-const byId=(id)=>document.getElementById(id);
-function node(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text);return n}
-function openMemory(memory){memState.edit=memory||null;byId('memModalTitle').textContent=memory?'Edit Memory':'Create Memory';byId('mname').value=memory?(memory.name||''):'';byId('memCreateFields').hidden=!!memory;document.querySelectorAll('.mtype').forEach((item)=>{item.checked=item.value==='raw'});byId('memModal').classList.add('show');byId('mname').focus()}
-function closeMemory(){byId('memModal').classList.remove('show');memState.edit=null}
-async function saveMemory(){const name=byId('mname').value.trim();if(!name){alert('Name required');return}let url='/api/v1/memories',method='POST',body;if(memState.edit){url+='/'+encodeURIComponent(memState.edit.id);method='PUT';body={name}}else{const types=Array.from(document.querySelectorAll('.mtype:checked')).map((item)=>item.value);body={name,memory_type:types,embd_id:byId('membd').value||'default',llm_id:byId('mllm').value||'default',description:''}}const button=byId('memSave');button.disabled=true;try{const response=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(data.code!==0)throw new Error(data.message||'Save failed');closeMemory();await Promise.all([loadMemories(),loadOwners()])}catch(error){alert(error.message||String(error))}finally{button.disabled=false}}
-async function deleteMemory(memory){if(!confirm('Delete memory "'+(memory.name||'')+'"?\nAfter deletion, all messages in this memory are removed.'))return;const response=await fetch('/api/v1/memories/'+encodeURIComponent(memory.id),{method:'DELETE'});const data=await response.json();if(data.code!==0){alert(data.message||'Delete failed');return}await Promise.all([loadMemories(),loadOwners()])}
-function renderMemory(memory){const card=node('article','kb-card');card.tabIndex=0;card.addEventListener('click',()=>location.href='/memory/memory-message/'+encodeURIComponent(memory.id));card.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();card.click()}});card.appendChild(node('div','av-lg',(memory.name||'M').trim().charAt(0).toUpperCase()||'M'));card.appendChild(node('h3','',memory.name||'Memory'));card.appendChild(node('p','',memory.description||'No description'));const meta=node('div','memory-card-meta');meta.appendChild(node('span','badge bi',(memory.memory_type||[]).join(', ')||'raw'));meta.appendChild(node('span','sub',new Date(memory.created_at||Date.now()).toLocaleDateString()));card.appendChild(meta);const wrap=node('div','memory-more');const trigger=node('button','btn btn-o btn-sm','•••');trigger.type='button';trigger.title='More actions';trigger.setAttribute('aria-label','More actions');const menu=node('div','memory-menu');const rename=node('button','','Rename');rename.type='button';rename.addEventListener('click',(event)=>{event.stopPropagation();openMemory(memory)});const remove=node('button','danger','Delete');remove.type='button';remove.addEventListener('click',(event)=>{event.stopPropagation();deleteMemory(memory)});menu.append(rename,remove);trigger.addEventListener('click',(event)=>{event.stopPropagation();document.querySelectorAll('.memory-menu.show').forEach((item)=>{if(item!==menu)item.classList.remove('show')});menu.classList.toggle('show')});wrap.append(trigger,menu);card.appendChild(wrap);return card}
-function renderMemoryPager(){const pager=byId('memPager');pager.replaceChildren();const pages=Math.max(1,Math.ceil(memState.total/memState.size));const prev=node('button','btn btn-o btn-sm','Previous');prev.disabled=memState.page<=1;prev.onclick=()=>{memState.page--;loadMemories()};const next=node('button','btn btn-o btn-sm','Next');next.disabled=memState.page>=pages;next.onclick=()=>{memState.page++;loadMemories()};pager.append(node('span','sub',memState.total+' memories'),prev,node('span','badge bi',memState.page+' / '+pages),next)}
-async function loadMemories(){const generation=++memState.request;const params=new URLSearchParams({page:String(memState.page),page_size:String(memState.size)});const search=byId('memSearch').value.trim(),type=byId('memType').value,storage=byId('memStorage').value;if(search)params.set('keywords',search);if(memState.owners.size)params.set('owner_ids',Array.from(memState.owners).join(','));if(type)params.set('memory_type',type);if(storage)params.set('storage_type',storage);const list=byId('memList');list.replaceChildren(node('p','sub','Loading...'));try{const response=await fetch('/api/v1/memories?'+params);const data=await response.json();if(generation!==memState.request)return;if(data.code!==0)throw new Error(data.message||'Load failed');const memories=(data.data&&data.data.memory_list)||[];memState.total=(data.data&&data.data.total_count)||0;list.replaceChildren();if(!memories.length){const empty=node('div','card memory-empty');empty.append(node('div','memory-empty-icon','M'),node('h2','',search?'No matching memories':'Create your first memory'));const action=node('button','btn btn-p','+ Create Memory');action.onclick=()=>openMemory(null);empty.appendChild(action);list.appendChild(empty)}else{memories.forEach((memory)=>list.appendChild(renderMemory(memory)))}renderMemoryPager()}catch(error){list.replaceChildren(node('p','',error.message||String(error)))}}
-function renderOwnerOptions(){const host=byId('memOwnerOptions');host.replaceChildren();for(const [id,info] of memState.ownerOptions){const label=node('label');const input=node('input');input.type='checkbox';input.value=id;input.checked=memState.owners.has(id);label.append(input,document.createTextNode(' '+info.label+' ('+info.count+')'));host.appendChild(label)}if(!memState.ownerOptions.size)host.appendChild(node('span','sub','No owners'));byId('memOwnerCount').textContent=memState.owners.size?'('+memState.owners.size+')':''}
-async function loadOwners(){try{const response=await fetch('/api/v1/memories?page=1&page_size=200');const data=await response.json();if(data.code!==0)return;memState.ownerOptions.clear();for(const memory of ((data.data&&data.data.memory_list)||[])){const id=memory.tenant_id||'';if(!id)continue;const current=memState.ownerOptions.get(id)||{label:memory.owner_name||id,count:0};current.count++;memState.ownerOptions.set(id,current)}renderOwnerOptions()}catch(_error){}}
-function appendModelOptions(selectId,models,types){const select=byId(selectId);const groups=new Map();const seen=new Set(Array.from(select.options).map((option)=>option.value));for(const model of models){const capabilities=Array.isArray(model.model_type)?model.model_type:[model.model_type];if(!capabilities.some((type)=>types.includes(type))||!model.selector||seen.has(model.selector))continue;seen.add(model.selector);const label=(model.provider||model.provider_id||'Provider')+' / '+(model.instance_name||model.instance_id||'default');let group=groups.get(label);if(!group){group=document.createElement('optgroup');group.label=label;groups.set(label,group);select.appendChild(group)}const option=node('option','',model.name||model.selector);option.value=model.selector;group.appendChild(option)}}
-async function loadMemoryModels(){try{const [response,defaultsResponse]=await Promise.all([fetch('/api/v1/models'),fetch('/api/v1/models/default')]);const data=await response.json(),defaults=await defaultsResponse.json();if(data.code!==0)return;const models=data.data||[];appendModelOptions('membd',models,['embedding']);appendModelOptions('mllm',models,['chat','image2text']);for(const model of (((defaults.data||{}).models)||[])){if(!model.enable||!model.selector)continue;if(model.model_type==='embedding')byId('membd').value=model.selector;if(model.model_type==='chat'||model.model_type==='image2text')byId('mllm').value=model.selector}}catch(_error){}}
-let memorySearchTimer;byId('memSearch').addEventListener('input',()=>{clearTimeout(memorySearchTimer);memorySearchTimer=setTimeout(()=>{memState.page=1;loadMemories()},180)});byId('memType').onchange=byId('memStorage').onchange=()=>{memState.page=1;loadMemories()};byId('memOwnerApply').onclick=()=>{memState.owners=new Set(Array.from(byId('memOwnerOptions').querySelectorAll('input:checked')).map((item)=>item.value));memState.page=1;byId('memOwner').open=false;renderOwnerOptions();loadMemories()};byId('memOwnerClear').onclick=()=>{memState.owners.clear();memState.page=1;byId('memOwner').open=false;renderOwnerOptions();loadMemories()};byId('memCreate').onclick=()=>openMemory(null);byId('memCancel').onclick=closeMemory;byId('memSave').onclick=saveMemory;byId('memModal').addEventListener('click',(event)=>{if(event.target===byId('memModal'))closeMemory()});document.addEventListener('click',()=>document.querySelectorAll('.memory-menu.show').forEach((menu)=>menu.classList.remove('show')));loadOwners();loadMemories();loadMemoryModels();
-</script>"#,
-    );
-    Html(layout(t("Memories", zh), &b, zh))
+    let memory_type_label = if zh { "记忆类型" } else { "Memory type" };
+    let embedding_label = if zh {
+        "嵌入模型"
+    } else {
+        "Embedding model"
+    };
+    let llm_label = if zh { "大语言模型" } else { "LLM" };
+    let raw_label = "Raw";
+    let semantic_label = "Semantic";
+    let episodic_label = "Episodic";
+    let procedural_label = "Procedural";
+    let type_tooltip = if zh {
+        "Raw 记忆保留原始对话，是其它记忆类型的基础。"
+    } else {
+        "Raw memory keeps the original dialogue and is the base of every other type."
+    };
+
+    let mut form_extra = String::new();
+    form_extra.push_str("<div class='ds-field'><span class='ds-field-label required'>");
+    form_extra.push_str(memory_type_label);
+    form_extra.push_str(" <span class='tip' data-tip='");
+    form_extra.push_str(type_tooltip);
+    form_extra.push_str("'>?</span></span><div class='lp-memory-types'>");
+    for (value, label, checked, disabled) in [
+        ("raw", raw_label, true, true),
+        ("semantic", semantic_label, false, false),
+        ("episodic", episodic_label, false, false),
+        ("procedural", procedural_label, false, false),
+    ] {
+        form_extra.push_str(
+            "<label class='ds-radio'><input type='checkbox' class='lp-memory-type' value='",
+        );
+        form_extra.push_str(value);
+        form_extra.push('\'');
+        if checked {
+            form_extra.push_str(" checked");
+        }
+        if disabled {
+            form_extra.push_str(" disabled");
+        }
+        form_extra.push_str("> <span>");
+        form_extra.push_str(label);
+        form_extra.push_str("</span></label>");
+    }
+    form_extra.push_str("</div><span class='ds-field-error' id='lpMemoryTypeError'></span></div>");
+    form_extra.push_str("<div class='ds-field'><span class='ds-field-label required'>");
+    form_extra.push_str(embedding_label);
+    form_extra.push_str("</span>");
+    push_default_model_selector(&mut form_extra, &MEMORY_LIST_EMBD_SELECTOR_FIELD, zh);
+    form_extra.push_str("</div><div class='ds-field'><span class='ds-field-label required'>");
+    form_extra.push_str(llm_label);
+    form_extra.push_str("</span>");
+    push_default_model_selector(&mut form_extra, &MEMORY_LIST_LLM_SELECTOR_FIELD, zh);
+    form_extra.push_str("</div>");
+
+    let mut page_script = String::new();
+    page_script.push_str("<script>const MODEL_FIELDS=");
+    page_script.push_str(&json_script_value(&serde_json::json!([
+        {
+            "fieldId": MEMORY_LIST_EMBD_SELECTOR_FIELD.field_id,
+            "domId": MEMORY_LIST_EMBD_SELECTOR_FIELD.dom_id,
+            "updateType": MEMORY_LIST_EMBD_SELECTOR_FIELD.update_type,
+            "responseType": MEMORY_LIST_EMBD_SELECTOR_FIELD.response_type,
+            "acceptedTypes": MEMORY_LIST_EMBD_SELECTOR_FIELD.accepted_types,
+            "required": MEMORY_LIST_EMBD_SELECTOR_FIELD.required,
+            "placeholder": MEMORY_LIST_EMBD_SELECTOR_FIELD.placeholder,
+        },
+        {
+            "fieldId": MEMORY_LIST_LLM_SELECTOR_FIELD.field_id,
+            "domId": MEMORY_LIST_LLM_SELECTOR_FIELD.dom_id,
+            "updateType": MEMORY_LIST_LLM_SELECTOR_FIELD.update_type,
+            "responseType": MEMORY_LIST_LLM_SELECTOR_FIELD.response_type,
+            "acceptedTypes": MEMORY_LIST_LLM_SELECTOR_FIELD.accepted_types,
+            "required": MEMORY_LIST_LLM_SELECTOR_FIELD.required,
+            "placeholder": MEMORY_LIST_LLM_SELECTOR_FIELD.placeholder,
+        }
+    ])));
+    page_script.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    page_script.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    page_script.push_str(FORM_LOCAL_SAVE_MODEL_DEFAULT);
+    page_script.push_str("function lpMemoryTypes(){var values=[];document.querySelectorAll('.lp-memory-type:checked').forEach(function(box){values.push(box.value)});if(values.indexOf('raw')<0)values.unshift('raw');return values}function lpModelValue(id){var trigger=document.getElementById(id);return trigger?(trigger.dataset.value||''):''}function lpExtraPayload(){return {memory_type:lpMemoryTypes(),embd_id:lpModelValue('memListEmbd')||'default',llm_id:lpModelValue('memListLlm')||'default'}}async function lpSeedMemoryDefaults(){try{var response=await fetch('/api/v1/models/default');var data=await response.json();if(!response.ok||data.code!==0)return;var models=(data.data&&data.data.models)||[];[[\"memListEmbd\",\"embedding\"],[\"memListLlm\",\"chat\"]].forEach(function(pair){var trigger=document.getElementById(pair[0]);if(!trigger||trigger.dataset.value)return;var found=models.find(function(model){return String(model.model_type)===pair[1]});if(!found)return;trigger.dataset.value=found.selector||'';trigger.dataset.savedValue=found.selector||'';renderDefaultModelTrigger(modelField(pair[1]==='chat'?'llm_id':'embd_id'))})}catch(error){}}async function lpLoadModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});await lpSeedMemoryDefaults()}catch(error){}}lpLoadModelCatalog()</script>");
+
+    let spec = AppListSpec {
+        testid: "memory-list",
+        create_testid: "create-memory",
+        empty_testid: "memory-empty",
+        title: if zh { "记忆" } else { "Memory" }.to_string(),
+        create_label: if zh { "创建记忆" } else { "Create memory" }.to_string(),
+        delete_title: if zh { "删除记忆" } else { "Delete memory" }.to_string(),
+        empty_label: if zh {
+            "尚未创建记忆"
+        } else {
+            "No memory created yet"
+        }
+        .to_string(),
+        search_placeholder: if zh { "搜索" } else { "Search" }.to_string(),
+        list_url: "/api/v1/memories",
+        collection: "memory_list",
+        rename_method: "PUT",
+        detail_prefix: "/memory/",
+        empty_href: "/memories?isCreate=true",
+        meta: "types",
+        icon: memory_icon(),
+        create_menu: false,
+        templates_href: "",
+        extra_menu_label: String::new(),
+        flow_types: None,
+        import_url: "",
+        form_extra,
+        page_script,
+    };
+    Html(render_app_list_page(&spec, zh))
 }
+
+/// Memory list create-dialog selectors (upstream `EmbeddingSelect` / `LLMSelect`
+/// reused by `add-or-edit-modal.tsx`); the values only travel in the POST body.
+const MEMORY_LIST_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "embd_id",
+    dom_id: "memListEmbd",
+    label: "Embedding model",
+    update_type: "embd_id",
+    response_type: "embedding",
+    accepted_types: &["embedding"],
+    required: true,
+    tooltip: "",
+    placeholder: "Select a model",
+};
+
+const MEMORY_LIST_LLM_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "llm_id",
+    dom_id: "memListLlm",
+    label: "LLM",
+    update_type: "llm_id",
+    response_type: "chat",
+    accepted_types: &["chat"],
+    required: true,
+    tooltip: "",
+    placeholder: "Select a model",
+};
 
 /// `/memory/memory-message/:id` — the fixed Memory detail hierarchy and
 /// message operations, rendered as a data-free Rust shell. All mutable or
@@ -4124,6 +4235,12 @@ struct AppListSpec {
     flow_types: Option<(String, String)>,
     /// Endpoint the "Import JSON file" menu item posts the parsed document to.
     import_url: &'static str,
+    /// Raw HTML appended to the create dialog after the Name field (page
+    /// specific controls such as the memory type / model selectors).
+    form_extra: String,
+    /// Page script appended after the shared behaviour script (model catalog
+    /// loading, extra payload assembly, ...).
+    page_script: String,
 }
 
 fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
@@ -4216,6 +4333,7 @@ fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
         b.push_str(pipeline_label);
         b.push_str("</button></div></div>");
     }
+    b.push_str(&spec.form_extra);
     b.push_str("<div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='lpCloseForm()'>");
     b.push_str(cancel_label);
     b.push_str("</button><button type='button' class='btn btn-p' data-testid='");
@@ -4263,7 +4381,8 @@ fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
             "nameRequired": name_placeholder,
         },
     })));
-    b.push_str(";let lpItems=[];let lpPage=1;let lpPageSize=12;let lpKeyword='';let lpEditId=null;let lpPendingDelete=null;let lpCreateMode=false;function lpEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function lpInitial(name){var text=String(name||'A').trim();return (text.charAt(0)||'A').toUpperCase()}function lpMeta(item){if(LP_SPEC.meta==='description'){var text=String(item.description||'').trim();return text?lpEscape(text).slice(0,60):lpHref(item)}if(LP_SPEC.meta==='types'){var types=item.memory_type||[];return lpEscape(Array.isArray(types)?types.join(', '):String(types||''))}return lpHref(item)}function lpHref(item){var stamp=item.update_time||item.update_date||item.created_at||item.create_time||'';if(!stamp)return '';var value=typeof stamp==='number'?stamp:Date.parse(stamp);if(!value||isNaN(value))return lpEscape(String(stamp));return new Date(value).toLocaleString()}function lpSearchInput(value){lpKeyword=String(value||'').trim().toLowerCase();lpPage=1;lpRender()}function lpFiltered(){if(!lpKeyword)return lpItems;return lpItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(lpKeyword)>=0})}function lpRender(){var host=document.getElementById('lpCards');if(!host)return;var page=document.querySelector('.list-page');var list=lpFiltered();if(!list.length&&!lpKeyword){if(page)page.classList.add('ds-page-blank');host.innerHTML=lpEmptyCard(true);lpRenderPagination(0);return}if(page)page.classList.remove('ds-page-blank');if(!list.length){host.innerHTML=lpEmptyCard(false);lpRenderPagination(0);return}var pages=Math.max(1,Math.ceil(list.length/lpPageSize));if(lpPage>pages)lpPage=pages;host.innerHTML=list.slice((lpPage-1)*lpPageSize,lpPage*lpPageSize).map(lpCard).join('');lpRenderPagination(list.length)}function lpEmptyCard(withAction){var action=withAction!==false?\" onclick='lpOpenCreate()'\":'';var role=withAction!==false?\" role='button' tabindex='0'\":'';return \"<article class='home-empty-card ds-empty-card'\"+role+action+\" data-testid='\"+LP_SPEC.emptyTestid+\"'><span class='ds-empty-icon' aria-hidden='true'>\"+LP_SPEC.icon+\"</span><span>\"+lpEscape(LP_SPEC.emptyLabel)+\"</span>\"+(withAction!==false?\"<span class='home-empty-plus' aria-hidden='true'>+</span>\":'')+\"</article>\"}function lpCard(item){var name=lpEscape(item.name);return \"<article class='ds-card' tabindex='0' role='button' data-testid='\"+LP_SPEC.testid+\"-card' data-id='\"+item.id+\"' onclick=\\\"location.href='\"+LP_SPEC.detailPrefix+item.id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+lpInitial(name)+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+lpMeta(item)+\"</span></span><span class='ds-card-more' role='button' tabindex='0' aria-label='More' data-testid='\"+LP_SPEC.testid+\"-card-more' onclick=\\\"event.stopPropagation();lpMenu(event,'\"+item.id+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function lpRenderPagination(total){var host=document.getElementById('lpPagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/lpPageSize));host.innerHTML=\"<span class='list-total'>\"+LP_SPEC.labels.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='lpPageSizeChange(this.value)'><option value='12'\"+(lpPageSize===12?' selected':'')+\">12</option><option value='24'\"+(lpPageSize===24?' selected':'')+\">24</option><option value='48'\"+(lpPageSize===48?' selected':'')+\">48</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(lpPage<=1?'disabled':'')+\" onclick='lpGoto(lpPage-1)'>‹</button><span class='list-page-now'>\"+lpPage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(lpPage>=pages?'disabled':'')+\" onclick='lpGoto(lpPage+1)'>›</button></span>\"}function lpGoto(page){lpPage=page;lpRender()}function lpPageSizeChange(value){lpPageSize=parseInt(value,10)||12;lpPage=1;lpRender()}function lpCreateMenuToggle(event){event.stopPropagation();var menu=document.getElementById('lpCreateMenu');if(!menu)return;var open=menu.classList.contains('open');var trigger=menu.querySelector('button[aria-haspopup]');if(open){menu.classList.remove('open');if(trigger)trigger.setAttribute('aria-expanded','false')}else{menu.classList.add('open');if(trigger)trigger.setAttribute('aria-expanded','true')}}function lpCreateFromBlank(){lpCreateMenuToggle(new Event('click'));lpOpenCreate()}function lpCreateFromTemplate(){if(LP_SPEC.templatesHref)location.href=LP_SPEC.templatesHref}function lpImportJson(){var input=document.getElementById('lpImportFile');if(input)input.click()}function lpImportSubmit(){var input=document.getElementById('lpImportFile');var file=input&&input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){var payload;try{payload=JSON.parse(String(reader.result||'{}'))}catch(error){alert('Invalid JSON file');return}var body=Object.assign({},payload,{name:payload.name||payload.title||file.name.replace(/[.]json$/i,'')});fetch(LP_SPEC.importUrl||LP_SPEC.listUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Import failed');input.value='';lpLoad()}).catch(function(error){alert(error.message)})};reader.readAsText(file)}function lpFlowType(){var active=document.querySelector('.lp-flow-card.active');return active?active.getAttribute('data-flow'):'agent'}function lpSelectFlow(node){document.querySelectorAll('.lp-flow-card').forEach(function(card){card.classList.toggle('active',card===node)})}function lpEditTags(id){lpMenuClose();alert(LP_SPEC.labels.rename+'?')}function lpLoad(){fetch(LP_SPEC.listUrl).then(function(response){return response.json()}).then(function(data){var payload=data.data;if(Array.isArray(payload))lpItems=payload;else if(payload&&LP_SPEC.collection&&Array.isArray(payload[LP_SPEC.collection]))lpItems=payload[LP_SPEC.collection];else if(payload&&Array.isArray(payload.items))lpItems=payload.items;else lpItems=[];lpRender()}).catch(function(){})}function lpOpenCreate(){lpCreateMode=true;lpEditId=null;document.getElementById('lpFormTitle').textContent=LP_SPEC.createLabel;document.getElementById('lpFormName').value='';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpOpenRename(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpCreateMode=false;lpEditId=id;document.getElementById('lpFormTitle').textContent=LP_SPEC.labels.rename;document.getElementById('lpFormName').value=item.name||'';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpCloseForm(){document.getElementById('lpFormDialog').classList.remove('show')}function lpSubmitForm(){var name=document.getElementById('lpFormName').value.trim();if(!name){document.getElementById('lpFormError').textContent=LP_SPEC.labels.nameRequired;return}var payload={name:name};if(lpCreateMode&&LP_SPEC.hasFlowTypes)payload.type=lpFlowType();var request=lpCreateMode?{method:'POST',body:JSON.stringify(payload)}:{method:LP_SPEC.renameMethod,body:JSON.stringify({name:name})};var url=lpCreateMode?LP_SPEC.listUrl:LP_SPEC.listUrl+'/'+lpEditId;fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},request)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Save failed');if(lpCreateMode&&data.data&&data.data.id){}lpCloseForm();lpLoad()}).catch(function(error){document.getElementById('lpFormError').textContent=error.message})}function lpMenu(event,id){event.stopPropagation();lpMenuClose();var menu=document.createElement('div');menu.id='lpCardMenu';menu.className='home-card-menu';menu.setAttribute('role','menu');menu.innerHTML=\"<button type='button' role='menuitem' onclick='lpOpenRename(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.rename+\"</button>\"+(LP_SPEC.extraMenuLabel?\"<button type='button' role='menuitem' onclick='lpEditTags(\\\"\"+id+\"\\\")'>\"+LP_SPEC.extraMenuLabel+\"</button>\":'')+\"<button type='button' role='menuitem' class='danger' onclick='lpOpenDelete(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.delete+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-150)+'px';setTimeout(function(){document.addEventListener('click',lpMenuClose,{once:true})},0)}function lpMenuClose(){var menu=document.getElementById('lpCardMenu');if(menu)menu.remove()}function lpOpenDelete(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpPendingDelete=id;document.getElementById('lpDeleteName').textContent=item.name||'';document.getElementById('lpDeleteAvatar').textContent=lpInitial(item.name);document.getElementById('lpDeleteDialog').classList.add('show')}function lpCloseDelete(){document.getElementById('lpDeleteDialog').classList.remove('show')}function lpDeleteSubmit(){if(!lpPendingDelete)return;fetch(LP_SPEC.listUrl+'/'+lpPendingDelete,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');lpCloseDelete();lpLoad()}).catch(function(error){alert(error.message)})}lpLoad()</script>");
+    b.push_str(";let lpItems=[];let lpPage=1;let lpPageSize=12;let lpKeyword='';let lpEditId=null;let lpPendingDelete=null;let lpCreateMode=false;function lpEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function lpInitial(name){var text=String(name||'A').trim();return (text.charAt(0)||'A').toUpperCase()}function lpMeta(item){if(LP_SPEC.meta==='description'){var text=String(item.description||'').trim();return text?lpEscape(text).slice(0,60):lpHref(item)}if(LP_SPEC.meta==='types'){var types=item.memory_type||[];return lpEscape(Array.isArray(types)?types.join(', '):String(types||''))}return lpHref(item)}function lpHref(item){var stamp=item.update_time||item.update_date||item.created_at||item.create_time||'';if(!stamp)return '';var value=typeof stamp==='number'?stamp:Date.parse(stamp);if(!value||isNaN(value))return lpEscape(String(stamp));return new Date(value).toLocaleString()}function lpSearchInput(value){lpKeyword=String(value||'').trim().toLowerCase();lpPage=1;lpRender()}function lpFiltered(){if(!lpKeyword)return lpItems;return lpItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(lpKeyword)>=0})}function lpRender(){var host=document.getElementById('lpCards');if(!host)return;var page=document.querySelector('.list-page');var list=lpFiltered();if(!list.length&&!lpKeyword){if(page)page.classList.add('ds-page-blank');host.innerHTML=lpEmptyCard(true);lpRenderPagination(0);return}if(page)page.classList.remove('ds-page-blank');if(!list.length){host.innerHTML=lpEmptyCard(false);lpRenderPagination(0);return}var pages=Math.max(1,Math.ceil(list.length/lpPageSize));if(lpPage>pages)lpPage=pages;host.innerHTML=list.slice((lpPage-1)*lpPageSize,lpPage*lpPageSize).map(lpCard).join('');lpRenderPagination(list.length)}function lpEmptyCard(withAction){var action=withAction!==false?\" onclick='lpOpenCreate()'\":'';var role=withAction!==false?\" role='button' tabindex='0'\":'';return \"<article class='home-empty-card ds-empty-card'\"+role+action+\" data-testid='\"+LP_SPEC.emptyTestid+\"'><span class='ds-empty-icon' aria-hidden='true'>\"+LP_SPEC.icon+\"</span><span>\"+lpEscape(LP_SPEC.emptyLabel)+\"</span>\"+(withAction!==false?\"<span class='home-empty-plus' aria-hidden='true'>+</span>\":'')+\"</article>\"}function lpCard(item){var name=lpEscape(item.name);return \"<article class='ds-card' tabindex='0' role='button' data-testid='\"+LP_SPEC.testid+\"-card' data-id='\"+item.id+\"' onclick=\\\"location.href='\"+LP_SPEC.detailPrefix+item.id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+lpInitial(name)+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+lpMeta(item)+\"</span></span><span class='ds-card-more' role='button' tabindex='0' aria-label='More' data-testid='\"+LP_SPEC.testid+\"-card-more' onclick=\\\"event.stopPropagation();lpMenu(event,'\"+item.id+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function lpRenderPagination(total){var host=document.getElementById('lpPagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/lpPageSize));host.innerHTML=\"<span class='list-total'>\"+LP_SPEC.labels.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='lpPageSizeChange(this.value)'><option value='12'\"+(lpPageSize===12?' selected':'')+\">12</option><option value='24'\"+(lpPageSize===24?' selected':'')+\">24</option><option value='48'\"+(lpPageSize===48?' selected':'')+\">48</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(lpPage<=1?'disabled':'')+\" onclick='lpGoto(lpPage-1)'>‹</button><span class='list-page-now'>\"+lpPage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(lpPage>=pages?'disabled':'')+\" onclick='lpGoto(lpPage+1)'>›</button></span>\"}function lpGoto(page){lpPage=page;lpRender()}function lpPageSizeChange(value){lpPageSize=parseInt(value,10)||12;lpPage=1;lpRender()}function lpCreateMenuToggle(event){event.stopPropagation();var menu=document.getElementById('lpCreateMenu');if(!menu)return;var open=menu.classList.contains('open');var trigger=menu.querySelector('button[aria-haspopup]');if(open){menu.classList.remove('open');if(trigger)trigger.setAttribute('aria-expanded','false')}else{menu.classList.add('open');if(trigger)trigger.setAttribute('aria-expanded','true')}}function lpCreateFromBlank(){lpCreateMenuToggle(new Event('click'));lpOpenCreate()}function lpCreateFromTemplate(){if(LP_SPEC.templatesHref)location.href=LP_SPEC.templatesHref}function lpImportJson(){var input=document.getElementById('lpImportFile');if(input)input.click()}function lpImportSubmit(){var input=document.getElementById('lpImportFile');var file=input&&input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){var payload;try{payload=JSON.parse(String(reader.result||'{}'))}catch(error){alert('Invalid JSON file');return}var body=Object.assign({},payload,{name:payload.name||payload.title||file.name.replace(/[.]json$/i,'')});fetch(LP_SPEC.importUrl||LP_SPEC.listUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Import failed');input.value='';lpLoad()}).catch(function(error){alert(error.message)})};reader.readAsText(file)}function lpFlowType(){var active=document.querySelector('.lp-flow-card.active');return active?active.getAttribute('data-flow'):'agent'}function lpSelectFlow(node){document.querySelectorAll('.lp-flow-card').forEach(function(card){card.classList.toggle('active',card===node)})}function lpEditTags(id){lpMenuClose();alert(LP_SPEC.labels.rename+'?')}function lpLoad(){fetch(LP_SPEC.listUrl).then(function(response){return response.json()}).then(function(data){var payload=data.data;if(Array.isArray(payload))lpItems=payload;else if(payload&&LP_SPEC.collection&&Array.isArray(payload[LP_SPEC.collection]))lpItems=payload[LP_SPEC.collection];else if(payload&&Array.isArray(payload.items))lpItems=payload.items;else lpItems=[];lpRender()}).catch(function(){})}function lpOpenCreate(){lpCreateMode=true;lpEditId=null;document.getElementById('lpFormTitle').textContent=LP_SPEC.createLabel;document.getElementById('lpFormName').value='';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpOpenRename(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpCreateMode=false;lpEditId=id;document.getElementById('lpFormTitle').textContent=LP_SPEC.labels.rename;document.getElementById('lpFormName').value=item.name||'';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpCloseForm(){document.getElementById('lpFormDialog').classList.remove('show')}function lpSubmitForm(){var name=document.getElementById('lpFormName').value.trim();if(!name){document.getElementById('lpFormError').textContent=LP_SPEC.labels.nameRequired;return}var payload={name:name};if(lpCreateMode&&LP_SPEC.hasFlowTypes)payload.type=lpFlowType();if(lpCreateMode&&typeof lpExtraPayload==='function')Object.assign(payload,lpExtraPayload());var request=lpCreateMode?{method:'POST',body:JSON.stringify(payload)}:{method:LP_SPEC.renameMethod,body:JSON.stringify({name:name})};var url=lpCreateMode?LP_SPEC.listUrl:LP_SPEC.listUrl+'/'+lpEditId;fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},request)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Save failed');if(lpCreateMode&&data.data&&data.data.id){}lpCloseForm();lpLoad()}).catch(function(error){document.getElementById('lpFormError').textContent=error.message})}function lpMenu(event,id){event.stopPropagation();lpMenuClose();var menu=document.createElement('div');menu.id='lpCardMenu';menu.className='home-card-menu';menu.setAttribute('role','menu');menu.innerHTML=\"<button type='button' role='menuitem' onclick='lpOpenRename(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.rename+\"</button>\"+(LP_SPEC.extraMenuLabel?\"<button type='button' role='menuitem' onclick='lpEditTags(\\\"\"+id+\"\\\")'>\"+LP_SPEC.extraMenuLabel+\"</button>\":'')+\"<button type='button' role='menuitem' class='danger' onclick='lpOpenDelete(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.delete+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-150)+'px';setTimeout(function(){document.addEventListener('click',lpMenuClose,{once:true})},0)}function lpMenuClose(){var menu=document.getElementById('lpCardMenu');if(menu)menu.remove()}function lpOpenDelete(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpPendingDelete=id;document.getElementById('lpDeleteName').textContent=item.name||'';document.getElementById('lpDeleteAvatar').textContent=lpInitial(item.name);document.getElementById('lpDeleteDialog').classList.add('show')}function lpCloseDelete(){document.getElementById('lpDeleteDialog').classList.remove('show')}function lpDeleteSubmit(){if(!lpPendingDelete)return;fetch(LP_SPEC.listUrl+'/'+lpPendingDelete,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');lpCloseDelete();lpLoad()}).catch(function(error){alert(error.message)})}lpLoad()</script>");
+    b.push_str(&spec.page_script);
     layout(&spec.title, &b, zh)
 }
 
@@ -4302,6 +4421,8 @@ pub async fn chat_apps_page(
         extra_menu_label: String::new(),
         flow_types: None,
         import_url: "",
+        form_extra: String::new(),
+        page_script: String::new(),
     };
     Html(render_app_list_page(&spec, zh))
 }
@@ -4685,6 +4806,8 @@ pub async fn search_apps_page(
         extra_menu_label: String::new(),
         flow_types: None,
         import_url: "",
+        form_extra: String::new(),
+        page_script: String::new(),
     };
     Html(render_app_list_page(&spec, zh))
 }
@@ -4964,17 +5087,19 @@ mod kb_ui_tests {
 
     #[tokio::test]
     async fn memory_list_shell_uses_safe_dom_and_fixed_detail_route() {
+        // Upstream `pages/memories/index.tsx` list shell: shared list layout,
+        // the add-or-edit create fields and the fixed `/memory/{id}` detail
+        // route. User-controlled names are escaped before entering the card
+        // markup (the shared `lpEscape` helper).
         let html = body_of(memories_page_v2(english_request("/memories")).await).await;
-        assert!(html.contains("id='memSearch'"));
-        assert!(html.contains("id='memCreate'"));
-        assert!(html.contains("id='memOwner'"));
-        assert!(html.contains("owner_ids"));
+        assert!(html.contains("data-testid='memory-list'"));
+        assert!(html.contains("data-testid='create-memory'"));
+        assert!(html.contains("data-testid='memory-list-form-dialog'"));
         assert!(html.contains("/api/v1/models/default"));
-        assert!(html.contains("['chat','image2text']"));
-        assert!(html.contains("/memory/memory-message/"));
-        assert!(html.contains("document.createElement"));
-        assert!(html.contains("textContent"));
-        assert!(!html.contains("innerHTML"));
+        assert!(html.contains("acceptedTypes"));
+        assert!(html.contains("/memory/"));
+        assert!(html.contains("lpEscape"));
+        assert!(html.contains("memory_list"));
         assert!(!html.contains("Recent Conversations"));
     }
 
@@ -6180,6 +6305,59 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[tokio::test]
+    async fn memories_page_matches_upstream_filter_bar_cards_and_create_fields() {
+        let request = Request::builder()
+            .uri("/memories")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(memories_page_v2(request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='memory-list'"));
+        assert!(html.contains("data-testid='create-memory'"));
+        assert!(html.contains(">Create memory</button>"));
+        assert!(html.contains("data-testid='memory-list-form-dialog'"));
+        assert!(html.contains("data-testid='memory-list-delete-dialog'"));
+        assert!(html.contains(">Delete memory</h2>"));
+        assert!(html.contains("No memory created yet"));
+        // add-or-edit-modal createMemoryFields: name + memory_type + embd_id + llm_id
+        for label in [
+            "Memory type",
+            "Embedding model",
+            "LLM",
+            "Raw",
+            "Semantic",
+            "Episodic",
+            "Procedural",
+        ] {
+            assert!(html.contains(label), "memory create field {label} missing");
+        }
+        assert!(html.contains("class='lp-memory-type' value='raw' checked disabled"));
+        assert!(html.contains("data-testid='default-model-embd_id'"));
+        assert!(html.contains("data-testid='default-model-llm_id'"));
+        assert!(html.contains("'/api/v1/models/default'"));
+        assert!(html.contains("lpExtraPayload"));
+        assert!(html.contains("/api/v1/memories"));
+        assert!(html.contains("memory_list"));
+        let zh_request = Request::builder()
+            .uri("/memories")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(memories_page_v2(zh_request).await).await;
+        for label in [
+            "记忆",
+            "创建记忆",
+            "记忆类型",
+            "嵌入模型",
+            "大语言模型",
+            "尚未创建记忆",
+        ] {
+            assert!(zh_html.contains(label), "zh memories label {label} missing");
+        }
     }
 
     #[tokio::test]
