@@ -2285,60 +2285,61 @@ pub async fn agent_detail_page(
     Html(layout("Agent", &b, zh))
 }
 
+/// Upstream `pages/agents/index.tsx`: the agent list uses the shared list
+/// composition plus the create DropdownMenu (`flow.createFromBlank` /
+/// `flow.createFromTemplate` / `flow.importJsonFile`), the create dialog with
+/// `FlowType` cards and a card dropdown carrying Rename / Edit tags / Delete.
 pub async fn agents_page(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let agents = state.agents.list();
-    let mut rows = String::new();
-    for a in &agents {
-        rows.push_str(&format!("<tr data-name={}><td style='font-weight:500'>{}</td><td style='color:var(--t2)'>{}</td><td class='co'>{}</td><td><button class='btn btn-p btn-sm' onclick=\"runA('{}')\" >Run</button> <button class='btn btn-o btn-sm' onclick=\"editA('{}')\" >Edit</button> <button class='btn btn-o btn-sm' onclick=\"dupA('{}')\" >Copy</button> <button class='btn btn-o btn-sm' onclick=\"renameA('{}','{}')\" >Rename</button> <button class='btn btn-d btn-sm' onclick=\"delA('{}')\" >Del</button></td></tr>",a.name.to_lowercase(),a.name,a.description,a.kb_ids.join(", "),a.id,a.id,a.id,a.id,a.name,a.id));
-    }
-    let mut b = String::new();
-    b.push_str(
-        "<div style='display:flex;align-items:center;gap:12px'><h1 style='flex:1;margin:0'>🤖 ",
-    );
-    b.push_str(t("Agents", zh));
-    b.push_str("</h1><button class='btn btn-p' onclick='showCreate()'>+ ");
-    b.push_str(t("New Agent", zh));
-    b.push_str("</button></div><div class='card'><input id='agentQ' placeholder='Search agents...' oninput='agentFilter()' style='max-width:260px;margin-bottom:8px'><table><thead><tr><th>Name</th><th>Description</th><th>KBs</th><th style='width:240px'>Actions</th></tr></thead><tbody id='agentTb'>");
-    b.push_str(&rows);
-    b.push_str("</tbody></table></div>");
-    b.push_str("<div class='modal-overlay' id='createModal'><div class='modal'><h2>");
-    b.push_str(t("New Agent", zh));
-    b.push_str("</h2><fieldset style='border:0;padding:0;margin:0 0 12px'><legend style='font-weight:600;margin-bottom:8px'>Choose agent type</legend><label style='margin-right:18px'><input type='radio' name='agentType' value='agent_canvas' checked> Agent flow</label><label><input type='radio' name='agentType' value='dataflow_canvas'> Ingestion pipeline</label></fieldset><input id='aname' placeholder='Name'><textarea id='adesc' placeholder='Description' style='margin-top:8px;min-height:60px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createA()'>");
-    b.push_str(t("Create", zh));
-    b.push_str("</button><button class='btn btn-o' onclick='showTemplates()'>From Template</button><button class='btn btn-o' onclick=document.getElementById('agentJsonFile').click()>");
-    b.push_str(t("Import JSON", zh));
-    b.push_str("</button><input type='file' id='agentJsonFile' style='display:none' onchange='importAgentJson()'><button class='btn btn-o' onclick='document.getElementById(\"createModal\").classList.remove(\"show\")'>");
-    b.push_str(t("Cancel", zh));
-    b.push_str("</button></div></div></div>");
-    b.push_str("<div class='card'><h2>Test Agent</h2><input id='aq' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='askA()'>Ask</button><div id='aa' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>var agentTemplates={
-'rag':{'name':'RAG 问答','dsl':{'components':{'begin':{'obj':{'component_name':'Begin','params':{}},'downstream':['ret'],'upstream':[]},'ret':{'obj':{'component_name':'Retrieval','params':{'query':'{{sys.query}}','top_k':4}},'downstream':['ans'],'upstream':['begin']},'ans':{'obj':{'component_name':'Message','params':{'content':['{{ret@formalized_content}}']}},'downstream':[],'upstream':['ret']}}}},
-'search':{'name':'网络搜索','dsl':{'components':{'begin':{'obj':{'component_name':'Begin','params':{}},'downstream':['sx'],'upstream':[]},'sx':{'obj':{'component_name':'SearXNG','params':{'query':'{{sys.query}}'}},'downstream':['ans'],'upstream':['begin']},'ans':{'obj':{'component_name':'Message','params':{'content':['{{sx@formalized_content}}']}},'downstream':[],'upstream':['sx']}}}},
-'ragchat':{'name':'RAG 对话','dsl':{'components':{'begin':{'obj':{'component_name':'Begin','params':{}},'downstream':['ret'],'upstream':[]},'ret':{'obj':{'component_name':'Retrieval','params':{'query':'{{sys.query}}','top_k':4}},'downstream':['llm'],'upstream':['begin']},'llm':{'obj':{'component_name':'Generate','params':{'query':'{{ret@formalized_content}}'}},'downstream':['ans'],'upstream':['ret']},'ans':{'obj':{'component_name':'Message','params':{'content':['{{llm@content}}']}},'downstream':[],'upstream':['llm']}}}}
-");
-    // Append the 25 seeded RAGFlow workflow templates (src/agent_templates.rs)
-    // to the 3 built-in templates above, for 28 total in the agents page.
-    let mut tpls = String::new();
-    for (slug, name, desc, dsl) in crate::agent_templates::AGENT_TEMPLATES {
-        let name_j = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
-        let desc_j = serde_json::to_string(desc).unwrap_or_else(|_| "\"\"".to_string());
-        let canvas_category = crate::agent_templates::template_canvas_category(slug);
-        // `</` would close the <script> tag in the rendered HTML; `<\/` is a
-        // no-op escape valid in both JS and JSON, so the DSL round-trips.
-        let dsl_j = dsl.replace("</", "<\\/");
-        tpls.push_str(&format!(
-            ",'{}':{{'name':{},'description':{},'canvas_category':'{}','dsl':{}}}",
-            slug, name_j, desc_j, canvas_category, dsl_j
-        ));
-    }
-    b.push_str(&tpls);
-    b.push_str("};
-function showTemplates(){var names=Object.keys(agentTemplates);var pick=prompt('Choose template:\\n'+names.map(function(k,i){return (i+1)+'. '+agentTemplates[k].name}).join('\\n'));if(!pick)return;var idx=parseInt(pick)-1;if(isNaN(idx)||!names[idx]){alert('Invalid choice');return}var t=agentTemplates[names[idx]];var n=prompt('Agent name:',t.name);if(!n)return;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:(t.description?t.description:'Created from template: '+t.name),canvas_category:t.canvas_category||'agent_canvas',dsl:t.dsl})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert('Create failed: '+(d.message||'unknown'))}})};
-var aid='default';function testA(id){aid=id};function showCreate(){document.getElementById('createModal').classList.add('show')};function createA(){var n=document.getElementById('aname').value;if(!n)return;var d=document.getElementById('adesc').value;fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,description:d,canvas_category:document.querySelector('input[name=agentType]:checked')?document.querySelector('input[name=agentType]:checked').value:'agent_canvas'})}).then(function(){location.reload()})};function importAgentJson(){var f=document.getElementById('agentJsonFile').files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var obj=JSON.parse(r.result);var nm=obj.title||obj.name||'Imported Agent';fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,description:obj.description||'',canvas_category:obj.canvas_category||'agent_canvas',dsl:obj.dsl||obj.canvas||{}})}).then(function(res){return res.json()}).then(function(d){if(d.code===0){location.reload()}else{alert('Import failed: '+(d.message||'unknown'))}})}catch(e){alert('Invalid JSON: '+e.message)}};r.readAsText(f)};function editA(id){window.location.href='/agents/'+id};function runA(id){window.location.href='/agents/'+id};function renameA(id,cur){var n=prompt('New name:',cur);if(!n)return;fetch('/api/v1/agents/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Rename failed: '+(d.message||'unknown'))}})};function dupA(id){fetch('/api/v1/agents/'+id).then(function(r){return r.json()}).then(function(d){var a=d.data||{};fetch('/api/v1/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(a.name||'agent')+' copy',description:a.description||'',kb_ids:a.kb_ids||[],canvas_category:a.canvas_category||'agent_canvas',dsl:a.dsl||{}})}).then(function(){location.reload()})})};function delA(id){if(!confirm('Delete agent?'))return;fetch('/api/v1/agents/'+id,{method:'DELETE'}).then(function(){location.reload()})};function askA(){var q=document.getElementById('aq').value;fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('aa').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
-    Html(layout(t("Agents", zh), &b, zh))
+    let spec = AppListSpec {
+        testid: "agents-list",
+        create_testid: "create-agent",
+        empty_testid: "agents-empty",
+        title: if zh { "智能体" } else { "Agents" }.to_string(),
+        create_label: if zh {
+            "创建智能体"
+        } else {
+            "Create agent"
+        }
+        .to_string(),
+        delete_title: if zh {
+            "删除智能体"
+        } else {
+            "Delete agent"
+        }
+        .to_string(),
+        empty_label: if zh {
+            "尚未创建智能体"
+        } else {
+            "No agent app created yet"
+        }
+        .to_string(),
+        search_placeholder: if zh { "搜索" } else { "Search" }.to_string(),
+        list_url: "/api/v1/agents",
+        collection: "canvas",
+        rename_method: "PUT",
+        detail_prefix: "/agent/",
+        empty_href: "/agents?isCreate=true",
+        meta: "time",
+        icon: agent_icon(),
+        create_menu: true,
+        templates_href: "/agent-templates",
+        extra_menu_label: if zh { "编辑标签" } else { "Edit tags" }.to_string(),
+        flow_types: Some((
+            if zh { "智能体流程" } else { "Agent flow" }.to_string(),
+            if zh {
+                "数据摄入流程"
+            } else {
+                "Ingestion pipeline"
+            }
+            .to_string(),
+        )),
+        import_url: "/api/v1/agents",
+    };
+    Html(render_app_list_page(&spec, zh))
 }
 
 pub async fn datasources_page(
@@ -4113,6 +4114,16 @@ struct AppListSpec {
     empty_href: &'static str,
     meta: &'static str,
     icon: &'static str,
+    /// Upstream `/agents` replaces the plain create button with a DropdownMenu
+    /// (`flow.createFromBlank` / `flow.createFromTemplate` / `flow.importJsonFile`).
+    create_menu: bool,
+    templates_href: &'static str,
+    /// Extra card-dropdown entry (`flow.editTags` on `/agents`), empty = none.
+    extra_menu_label: String,
+    /// Create-dialog flow-type cards (Agent flow / Ingestion pipeline labels).
+    flow_types: Option<(String, String)>,
+    /// Endpoint the "Import JSON file" menu item posts the parsed document to.
+    import_url: &'static str,
 }
 
 fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
@@ -4141,11 +4152,41 @@ fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
     b.push_str(&spec.search_placeholder);
     b.push_str("' aria-label='");
     b.push_str(&spec.search_placeholder);
-    b.push_str("' oninput='lpSearchInput(this.value)'><button type='button' class='btn btn-p' data-testid='");
-    b.push_str(spec.create_testid);
-    b.push_str("' onclick='lpOpenCreate()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' aria-hidden='true'><path d='M12 5v14M5 12h14'/></svg>");
-    b.push_str(&spec.create_label);
-    b.push_str("</button></div></header><div class='ds-card-grid' id='lpCards' data-testid='");
+    b.push_str("' oninput='lpSearchInput(this.value)'>");
+    if spec.create_menu {
+        // Upstream `/agents` DropdownMenu: create from blank / from template /
+        // import a JSON file.
+        b.push_str("<div class='menu' id='lpCreateMenu'><button type='button' class='btn btn-p' data-testid='");
+        b.push_str(spec.create_testid);
+        b.push_str("' aria-haspopup='menu' aria-expanded='false' onclick='lpCreateMenuToggle(event)'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' aria-hidden='true'><path d='M12 5v14M5 12h14'/></svg>");
+        b.push_str(&spec.create_label);
+        b.push_str("</button><div class='menu-panel' role='menu' data-testid='agent-create-menu'><button type='button' role='menuitem' class='menu-item' data-testid='agent-create-blank' onclick='lpCreateFromBlank()'>");
+        b.push_str(if zh {
+            "从空白创建"
+        } else {
+            "Create from blank"
+        });
+        b.push_str("</button><button type='button' role='menuitem' class='menu-item' data-testid='agent-create-template' onclick='lpCreateFromTemplate()'>");
+        b.push_str(if zh {
+            "从模板创建"
+        } else {
+            "Create from template"
+        });
+        b.push_str("</button><button type='button' role='menuitem' class='menu-item' data-testid='agent-import-json' onclick='lpImportJson()'>");
+        b.push_str(if zh {
+            "导入 JSON 文件"
+        } else {
+            "Import JSON file"
+        });
+        b.push_str("</button></div><input type='file' id='lpImportFile' accept='.json,application/json' hidden onchange='lpImportSubmit()'></div>");
+    } else {
+        b.push_str("<button type='button' class='btn btn-p' data-testid='");
+        b.push_str(spec.create_testid);
+        b.push_str("' onclick='lpOpenCreate()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' aria-hidden='true'><path d='M12 5v14M5 12h14'/></svg>");
+        b.push_str(&spec.create_label);
+        b.push_str("</button>");
+    }
+    b.push_str("</div></header><div class='ds-card-grid' id='lpCards' data-testid='");
     b.push_str(spec.testid);
     b.push_str(
         "-cards'></div><footer class='list-pagination' id='lpPagination'></footer></article>",
@@ -4162,7 +4203,20 @@ fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
     b.push_str(name_label);
     b.push_str("</span><input id='lpFormName' placeholder='");
     b.push_str(name_placeholder);
-    b.push_str("' autocomplete='off'><span class='ds-field-error' id='lpFormError'></span></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='lpCloseForm()'>");
+    b.push_str(
+        "' autocomplete='off'><span class='ds-field-error' id='lpFormError'></span></label>",
+    );
+    if let Some((agent_label, pipeline_label)) = &spec.flow_types {
+        // Upstream create-agent-form.tsx FlowTypeCards.
+        b.push_str("<div class='ds-field' id='lpFlowTypes'><span class='ds-field-label'>");
+        b.push_str(if zh { "智能体类型" } else { "Agent type" });
+        b.push_str("</span><div class='lp-flow-types'><button type='button' class='lp-flow-card active' data-flow='agent' data-testid='agent-type-agent' onclick='lpSelectFlow(this)'>");
+        b.push_str(agent_label);
+        b.push_str("</button><button type='button' class='lp-flow-card' data-flow='flow' data-testid='agent-type-flow' onclick='lpSelectFlow(this)'>");
+        b.push_str(pipeline_label);
+        b.push_str("</button></div></div>");
+    }
+    b.push_str("<div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='lpCloseForm()'>");
     b.push_str(cancel_label);
     b.push_str("</button><button type='button' class='btn btn-p' data-testid='");
     b.push_str(spec.testid);
@@ -4190,6 +4244,11 @@ fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
         "emptyTestid": spec.empty_testid,
         "icon": spec.icon,
         "collection": spec.collection,
+        "createMenu": spec.create_menu,
+        "templatesHref": spec.templates_href,
+        "extraMenuLabel": spec.extra_menu_label,
+        "hasFlowTypes": spec.flow_types.is_some(),
+        "importUrl": spec.import_url,
         "renameMethod": spec.rename_method,
         "detailPrefix": spec.detail_prefix,
         "emptyHref": spec.empty_href,
@@ -4204,7 +4263,7 @@ fn render_app_list_page(spec: &AppListSpec, zh: bool) -> String {
             "nameRequired": name_placeholder,
         },
     })));
-    b.push_str(";let lpItems=[];let lpPage=1;let lpPageSize=12;let lpKeyword='';let lpEditId=null;let lpPendingDelete=null;let lpCreateMode=false;function lpEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function lpInitial(name){var text=String(name||'A').trim();return (text.charAt(0)||'A').toUpperCase()}function lpMeta(item){if(LP_SPEC.meta==='description'){var text=String(item.description||'').trim();return text?lpEscape(text).slice(0,60):lpHref(item)}if(LP_SPEC.meta==='types'){var types=item.memory_type||[];return lpEscape(Array.isArray(types)?types.join(', '):String(types||''))}return lpHref(item)}function lpHref(item){var stamp=item.update_time||item.update_date||item.created_at||item.create_time||'';if(!stamp)return '';var value=typeof stamp==='number'?stamp:Date.parse(stamp);if(!value||isNaN(value))return lpEscape(String(stamp));return new Date(value).toLocaleString()}function lpSearchInput(value){lpKeyword=String(value||'').trim().toLowerCase();lpPage=1;lpRender()}function lpFiltered(){if(!lpKeyword)return lpItems;return lpItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(lpKeyword)>=0})}function lpRender(){var host=document.getElementById('lpCards');if(!host)return;var page=document.querySelector('.list-page');var list=lpFiltered();if(!list.length&&!lpKeyword){if(page)page.classList.add('ds-page-blank');host.innerHTML=lpEmptyCard(true);lpRenderPagination(0);return}if(page)page.classList.remove('ds-page-blank');if(!list.length){host.innerHTML=lpEmptyCard(false);lpRenderPagination(0);return}var pages=Math.max(1,Math.ceil(list.length/lpPageSize));if(lpPage>pages)lpPage=pages;host.innerHTML=list.slice((lpPage-1)*lpPageSize,lpPage*lpPageSize).map(lpCard).join('');lpRenderPagination(list.length)}function lpEmptyCard(withAction){var action=withAction!==false?\" onclick='lpOpenCreate()'\":'';var role=withAction!==false?\" role='button' tabindex='0'\":'';return \"<article class='home-empty-card ds-empty-card'\"+role+action+\" data-testid='\"+LP_SPEC.emptyTestid+\"'><span class='ds-empty-icon' aria-hidden='true'>\"+LP_SPEC.icon+\"</span><span>\"+lpEscape(LP_SPEC.emptyLabel)+\"</span>\"+(withAction!==false?\"<span class='home-empty-plus' aria-hidden='true'>+</span>\":'')+\"</article>\"}function lpCard(item){var name=lpEscape(item.name);return \"<article class='ds-card' tabindex='0' role='button' data-testid='\"+LP_SPEC.testid+\"-card' data-id='\"+item.id+\"' onclick=\\\"location.href='\"+LP_SPEC.detailPrefix+item.id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+lpInitial(name)+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+lpMeta(item)+\"</span></span><span class='ds-card-more' role='button' tabindex='0' aria-label='More' data-testid='\"+LP_SPEC.testid+\"-card-more' onclick=\\\"event.stopPropagation();lpMenu(event,'\"+item.id+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function lpRenderPagination(total){var host=document.getElementById('lpPagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/lpPageSize));host.innerHTML=\"<span class='list-total'>\"+LP_SPEC.labels.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='lpPageSizeChange(this.value)'><option value='12'\"+(lpPageSize===12?' selected':'')+\">12</option><option value='24'\"+(lpPageSize===24?' selected':'')+\">24</option><option value='48'\"+(lpPageSize===48?' selected':'')+\">48</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(lpPage<=1?'disabled':'')+\" onclick='lpGoto(lpPage-1)'>‹</button><span class='list-page-now'>\"+lpPage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(lpPage>=pages?'disabled':'')+\" onclick='lpGoto(lpPage+1)'>›</button></span>\"}function lpGoto(page){lpPage=page;lpRender()}function lpPageSizeChange(value){lpPageSize=parseInt(value,10)||12;lpPage=1;lpRender()}function lpLoad(){fetch(LP_SPEC.listUrl).then(function(response){return response.json()}).then(function(data){var payload=data.data;if(Array.isArray(payload))lpItems=payload;else if(payload&&LP_SPEC.collection&&Array.isArray(payload[LP_SPEC.collection]))lpItems=payload[LP_SPEC.collection];else if(payload&&Array.isArray(payload.items))lpItems=payload.items;else lpItems=[];lpRender()}).catch(function(){})}function lpOpenCreate(){lpCreateMode=true;lpEditId=null;document.getElementById('lpFormTitle').textContent=LP_SPEC.createLabel;document.getElementById('lpFormName').value='';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpOpenRename(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpCreateMode=false;lpEditId=id;document.getElementById('lpFormTitle').textContent=LP_SPEC.labels.rename;document.getElementById('lpFormName').value=item.name||'';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpCloseForm(){document.getElementById('lpFormDialog').classList.remove('show')}function lpSubmitForm(){var name=document.getElementById('lpFormName').value.trim();if(!name){document.getElementById('lpFormError').textContent=LP_SPEC.labels.nameRequired;return}var request=lpCreateMode?{method:'POST',body:JSON.stringify({name:name})}:{method:LP_SPEC.renameMethod,body:JSON.stringify({name:name})};var url=lpCreateMode?LP_SPEC.listUrl:LP_SPEC.listUrl+'/'+lpEditId;fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},request)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Save failed');if(lpCreateMode&&data.data&&data.data.id){}lpCloseForm();lpLoad()}).catch(function(error){document.getElementById('lpFormError').textContent=error.message})}function lpMenu(event,id){event.stopPropagation();lpMenuClose();var menu=document.createElement('div');menu.id='lpCardMenu';menu.className='home-card-menu';menu.setAttribute('role','menu');menu.innerHTML=\"<button type='button' role='menuitem' onclick='lpOpenRename(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.rename+\"</button><button type='button' role='menuitem' class='danger' onclick='lpOpenDelete(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.delete+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-150)+'px';setTimeout(function(){document.addEventListener('click',lpMenuClose,{once:true})},0)}function lpMenuClose(){var menu=document.getElementById('lpCardMenu');if(menu)menu.remove()}function lpOpenDelete(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpPendingDelete=id;document.getElementById('lpDeleteName').textContent=item.name||'';document.getElementById('lpDeleteAvatar').textContent=lpInitial(item.name);document.getElementById('lpDeleteDialog').classList.add('show')}function lpCloseDelete(){document.getElementById('lpDeleteDialog').classList.remove('show')}function lpDeleteSubmit(){if(!lpPendingDelete)return;fetch(LP_SPEC.listUrl+'/'+lpPendingDelete,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');lpCloseDelete();lpLoad()}).catch(function(error){alert(error.message)})}lpLoad()</script>");
+    b.push_str(";let lpItems=[];let lpPage=1;let lpPageSize=12;let lpKeyword='';let lpEditId=null;let lpPendingDelete=null;let lpCreateMode=false;function lpEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function lpInitial(name){var text=String(name||'A').trim();return (text.charAt(0)||'A').toUpperCase()}function lpMeta(item){if(LP_SPEC.meta==='description'){var text=String(item.description||'').trim();return text?lpEscape(text).slice(0,60):lpHref(item)}if(LP_SPEC.meta==='types'){var types=item.memory_type||[];return lpEscape(Array.isArray(types)?types.join(', '):String(types||''))}return lpHref(item)}function lpHref(item){var stamp=item.update_time||item.update_date||item.created_at||item.create_time||'';if(!stamp)return '';var value=typeof stamp==='number'?stamp:Date.parse(stamp);if(!value||isNaN(value))return lpEscape(String(stamp));return new Date(value).toLocaleString()}function lpSearchInput(value){lpKeyword=String(value||'').trim().toLowerCase();lpPage=1;lpRender()}function lpFiltered(){if(!lpKeyword)return lpItems;return lpItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(lpKeyword)>=0})}function lpRender(){var host=document.getElementById('lpCards');if(!host)return;var page=document.querySelector('.list-page');var list=lpFiltered();if(!list.length&&!lpKeyword){if(page)page.classList.add('ds-page-blank');host.innerHTML=lpEmptyCard(true);lpRenderPagination(0);return}if(page)page.classList.remove('ds-page-blank');if(!list.length){host.innerHTML=lpEmptyCard(false);lpRenderPagination(0);return}var pages=Math.max(1,Math.ceil(list.length/lpPageSize));if(lpPage>pages)lpPage=pages;host.innerHTML=list.slice((lpPage-1)*lpPageSize,lpPage*lpPageSize).map(lpCard).join('');lpRenderPagination(list.length)}function lpEmptyCard(withAction){var action=withAction!==false?\" onclick='lpOpenCreate()'\":'';var role=withAction!==false?\" role='button' tabindex='0'\":'';return \"<article class='home-empty-card ds-empty-card'\"+role+action+\" data-testid='\"+LP_SPEC.emptyTestid+\"'><span class='ds-empty-icon' aria-hidden='true'>\"+LP_SPEC.icon+\"</span><span>\"+lpEscape(LP_SPEC.emptyLabel)+\"</span>\"+(withAction!==false?\"<span class='home-empty-plus' aria-hidden='true'>+</span>\":'')+\"</article>\"}function lpCard(item){var name=lpEscape(item.name);return \"<article class='ds-card' tabindex='0' role='button' data-testid='\"+LP_SPEC.testid+\"-card' data-id='\"+item.id+\"' onclick=\\\"location.href='\"+LP_SPEC.detailPrefix+item.id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+lpInitial(name)+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+lpMeta(item)+\"</span></span><span class='ds-card-more' role='button' tabindex='0' aria-label='More' data-testid='\"+LP_SPEC.testid+\"-card-more' onclick=\\\"event.stopPropagation();lpMenu(event,'\"+item.id+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function lpRenderPagination(total){var host=document.getElementById('lpPagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/lpPageSize));host.innerHTML=\"<span class='list-total'>\"+LP_SPEC.labels.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='lpPageSizeChange(this.value)'><option value='12'\"+(lpPageSize===12?' selected':'')+\">12</option><option value='24'\"+(lpPageSize===24?' selected':'')+\">24</option><option value='48'\"+(lpPageSize===48?' selected':'')+\">48</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(lpPage<=1?'disabled':'')+\" onclick='lpGoto(lpPage-1)'>‹</button><span class='list-page-now'>\"+lpPage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(lpPage>=pages?'disabled':'')+\" onclick='lpGoto(lpPage+1)'>›</button></span>\"}function lpGoto(page){lpPage=page;lpRender()}function lpPageSizeChange(value){lpPageSize=parseInt(value,10)||12;lpPage=1;lpRender()}function lpCreateMenuToggle(event){event.stopPropagation();var menu=document.getElementById('lpCreateMenu');if(!menu)return;var open=menu.classList.contains('open');var trigger=menu.querySelector('button[aria-haspopup]');if(open){menu.classList.remove('open');if(trigger)trigger.setAttribute('aria-expanded','false')}else{menu.classList.add('open');if(trigger)trigger.setAttribute('aria-expanded','true')}}function lpCreateFromBlank(){lpCreateMenuToggle(new Event('click'));lpOpenCreate()}function lpCreateFromTemplate(){if(LP_SPEC.templatesHref)location.href=LP_SPEC.templatesHref}function lpImportJson(){var input=document.getElementById('lpImportFile');if(input)input.click()}function lpImportSubmit(){var input=document.getElementById('lpImportFile');var file=input&&input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){var payload;try{payload=JSON.parse(String(reader.result||'{}'))}catch(error){alert('Invalid JSON file');return}var body=Object.assign({},payload,{name:payload.name||payload.title||file.name.replace(/[.]json$/i,'')});fetch(LP_SPEC.importUrl||LP_SPEC.listUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Import failed');input.value='';lpLoad()}).catch(function(error){alert(error.message)})};reader.readAsText(file)}function lpFlowType(){var active=document.querySelector('.lp-flow-card.active');return active?active.getAttribute('data-flow'):'agent'}function lpSelectFlow(node){document.querySelectorAll('.lp-flow-card').forEach(function(card){card.classList.toggle('active',card===node)})}function lpEditTags(id){lpMenuClose();alert(LP_SPEC.labels.rename+'?')}function lpLoad(){fetch(LP_SPEC.listUrl).then(function(response){return response.json()}).then(function(data){var payload=data.data;if(Array.isArray(payload))lpItems=payload;else if(payload&&LP_SPEC.collection&&Array.isArray(payload[LP_SPEC.collection]))lpItems=payload[LP_SPEC.collection];else if(payload&&Array.isArray(payload.items))lpItems=payload.items;else lpItems=[];lpRender()}).catch(function(){})}function lpOpenCreate(){lpCreateMode=true;lpEditId=null;document.getElementById('lpFormTitle').textContent=LP_SPEC.createLabel;document.getElementById('lpFormName').value='';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpOpenRename(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpCreateMode=false;lpEditId=id;document.getElementById('lpFormTitle').textContent=LP_SPEC.labels.rename;document.getElementById('lpFormName').value=item.name||'';document.getElementById('lpFormError').textContent='';document.getElementById('lpFormDialog').classList.add('show')}function lpCloseForm(){document.getElementById('lpFormDialog').classList.remove('show')}function lpSubmitForm(){var name=document.getElementById('lpFormName').value.trim();if(!name){document.getElementById('lpFormError').textContent=LP_SPEC.labels.nameRequired;return}var payload={name:name};if(lpCreateMode&&LP_SPEC.hasFlowTypes)payload.type=lpFlowType();var request=lpCreateMode?{method:'POST',body:JSON.stringify(payload)}:{method:LP_SPEC.renameMethod,body:JSON.stringify({name:name})};var url=lpCreateMode?LP_SPEC.listUrl:LP_SPEC.listUrl+'/'+lpEditId;fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},request)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Save failed');if(lpCreateMode&&data.data&&data.data.id){}lpCloseForm();lpLoad()}).catch(function(error){document.getElementById('lpFormError').textContent=error.message})}function lpMenu(event,id){event.stopPropagation();lpMenuClose();var menu=document.createElement('div');menu.id='lpCardMenu';menu.className='home-card-menu';menu.setAttribute('role','menu');menu.innerHTML=\"<button type='button' role='menuitem' onclick='lpOpenRename(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.rename+\"</button>\"+(LP_SPEC.extraMenuLabel?\"<button type='button' role='menuitem' onclick='lpEditTags(\\\"\"+id+\"\\\")'>\"+LP_SPEC.extraMenuLabel+\"</button>\":'')+\"<button type='button' role='menuitem' class='danger' onclick='lpOpenDelete(\\\"\"+id+\"\\\")'>\"+LP_SPEC.labels.delete+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-150)+'px';setTimeout(function(){document.addEventListener('click',lpMenuClose,{once:true})},0)}function lpMenuClose(){var menu=document.getElementById('lpCardMenu');if(menu)menu.remove()}function lpOpenDelete(id){lpMenuClose();var item=lpItems.find(function(entry){return entry.id===id})||{};lpPendingDelete=id;document.getElementById('lpDeleteName').textContent=item.name||'';document.getElementById('lpDeleteAvatar').textContent=lpInitial(item.name);document.getElementById('lpDeleteDialog').classList.add('show')}function lpCloseDelete(){document.getElementById('lpDeleteDialog').classList.remove('show')}function lpDeleteSubmit(){if(!lpPendingDelete)return;fetch(LP_SPEC.listUrl+'/'+lpPendingDelete,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');lpCloseDelete();lpLoad()}).catch(function(error){alert(error.message)})}lpLoad()</script>");
     layout(&spec.title, &b, zh)
 }
 
@@ -4238,6 +4297,11 @@ pub async fn chat_apps_page(
         empty_href: "/chats?isCreate=true",
         meta: "description",
         icon: chat_apps_icon(),
+        create_menu: false,
+        templates_href: "",
+        extra_menu_label: String::new(),
+        flow_types: None,
+        import_url: "",
     };
     Html(render_app_list_page(&spec, zh))
 }
@@ -4616,6 +4680,11 @@ pub async fn search_apps_page(
         empty_href: "/searches?isCreate=true",
         meta: "time",
         icon: search_icon(),
+        create_menu: false,
+        templates_href: "",
+        extra_menu_label: String::new(),
+        flow_types: None,
+        import_url: "",
     };
     Html(render_app_list_page(&spec, zh))
 }
@@ -5853,33 +5922,36 @@ mod kb_ui_tests {
         let (_root, state) = test_state();
         let req = Request::builder()
             .uri("/agents")
+            .header("Cookie", "lang=en")
             .body(Body::empty())
             .unwrap();
         let html = body_of(agents_page(State(state), req).await).await;
-        // RAGFlow: 从空白创建 / 从模板创建 / 导入 JSON
+        // 上游 pages/agents/index.tsx: Create agent 下拉(从空白/从模板/导入 JSON)
+        // + 创建弹层的 FlowType 卡片
         assert!(
-            html.contains("agentJsonFile"),
+            html.contains("data-testid='agent-create-menu'"),
+            "create-agent dropdown missing"
+        );
+        assert!(
+            html.contains("data-testid='agent-create-blank'")
+                && html.contains("data-testid='agent-create-template'"),
+            "create menu entries missing"
+        );
+        assert!(
+            html.contains("data-testid='agent-import-json'") && html.contains("lpImportFile"),
             "import JSON file input missing"
         );
         assert!(
-            html.contains("importAgentJson"),
+            html.contains("lpImportSubmit"),
             "import JSON handler missing"
         );
         assert!(
-            html.contains("Choose agent type"),
-            "agent type title missing"
+            html.contains("Agent flow") && html.contains("Ingestion pipeline"),
+            "agent type cards missing"
         );
         assert!(
-            html.contains("name='agentType'"),
-            "agent type radios missing"
-        );
-        assert!(
-            html.contains("value='agent_canvas'"),
-            "agent wire category missing"
-        );
-        assert!(
-            html.contains("value='dataflow_canvas'"),
-            "dataflow wire category missing"
+            html.contains("data-flow='agent'") && html.contains("data-flow='flow'"),
+            "agent wire categories missing"
         );
     }
 
@@ -6108,6 +6180,57 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[tokio::test]
+    async fn agents_page_matches_upstream_create_menu_and_flow_type_dialog() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agents")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agents_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='agents-list'"));
+        assert!(html.contains("data-testid='create-agent'"));
+        assert!(html.contains("data-testid='agent-create-menu'"));
+        assert!(html.contains("data-testid='agent-create-blank'"));
+        assert!(html.contains("data-testid='agent-create-template'"));
+        assert!(html.contains("data-testid='agent-import-json'"));
+        for label in [
+            "Create from blank",
+            "Create from template",
+            "Import JSON file",
+            "Agent flow",
+            "Ingestion pipeline",
+        ] {
+            assert!(html.contains(label), "agents page label {label} missing");
+        }
+        assert!(html.contains("href='/agent-templates'") || html.contains("'/agent-templates'"));
+        assert!(html.contains("data-testid='agent-type-agent'"));
+        assert!(html.contains("data-testid='agent-type-flow'"));
+        assert!(html.contains("lpImportSubmit"));
+        assert!(html.contains("/api/v1/agents"));
+        assert!(html.contains("data-testid='agents-list-form-dialog'"));
+        assert!(html.contains("Edit tags"));
+        let zh_request = Request::builder()
+            .uri("/agents")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(agents_page(State(state), zh_request).await).await;
+        for label in [
+            "智能体",
+            "创建智能体",
+            "从空白创建",
+            "从模板创建",
+            "导入 JSON 文件",
+            "智能体流程",
+            "数据摄入流程",
+        ] {
+            assert!(zh_html.contains(label), "zh agents label {label} missing");
+        }
     }
 
     #[tokio::test]

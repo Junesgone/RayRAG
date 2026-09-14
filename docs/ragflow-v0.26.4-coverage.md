@@ -15,12 +15,12 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 252 | 58079 |
+| aligned | 272 | 60148 |
 | full | 566 | 267453 |
 | partial | 38 | 10872 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3423 | 882794 |
+| reference | 3403 | 880725 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -4439,26 +4439,26 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/agent/version-dialog/index.tsx` | 170 | 6238 | `c4d4b4ad4947f013` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/agent/webhook-sheet/index.tsx` | 128 | 4018 | `e0091ab96e0cb394` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/agent/webhook-sheet/timeline.tsx` | 337 | 12439 | `a7dde455bb4593fc` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/agent-card.tsx` | 69 | 2154 | `67304c855042b2c1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/agent-dropdown.tsx` | 100 | 2890 | `4bb565dfca8f1335` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/agent-log-detail-modal.tsx` | 151 | 4407 | `4058dbb27621f97f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/agent-log-page.tsx` | 417 | 12856 | `a4dfd21bc5cebd5e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/agent-tag-editor.tsx` | 176 | 5107 | `9ff8d43a0ad97108` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/agent-templates.tsx` | 126 | 3749 | `493a724052a11bfb` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/constant.ts` | 4 | 61 | `f0a6b3bbceee26ad` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/create-agent-dialog.tsx` | 47 | 1239 | `5881315a6055e645` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/create-agent-form.tsx` | 126 | 3477 | `ec36086d8a941dc4` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/hooks/use-create-agent.ts` | 43 | 1210 | `500ea332b587b45d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/hooks/use-export-agent-log.ts` | 86 | 2368 | `59edeaabb2898049` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/hooks/use-select-filters.ts` | 48 | 1171 | `07d87b2365a6815c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/index.tsx` | 246 | 7814 | `9e95e53870bfbd99` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/name-form-field.tsx` | 27 | 677 | `5b3260e32712742b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/template-card.tsx` | 60 | 2120 | `e7cff0d3e3b98e66` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/template-sidebar.tsx` | 119 | 3324 | `4506de06383ce194` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/upload-agent-dialog/index.tsx` | 41 | 1124 | `61123bb0192919da` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/upload-agent-dialog/upload-agent-form.tsx` | 71 | 1927 | `48a54616da86be50` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/use-import-json.ts` | 66 | 2217 | `c009d6cc88f392e1` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/agents/use-rename-agent.ts` | 46 | 1300 | `3764ed8c755df614` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/agents/agent-card.tsx` | 69 | 2154 | `67304c855042b2c1` | aligned | `src/web.rs; web/static/` | Rust agent card mirrors `AgentCard`/`HomeCard`: letter avatar, name, `update_time` meta and the ⋮ trigger wired to Rename / Edit tags / Delete (v0.3.5a) |
+| `web/src/pages/agents/agent-dropdown.tsx` | 100 | 2890 | `4bb565dfca8f1335` | aligned | `src/web.rs; web/static/` | Rust card menu mirrors `AgentDropdown` (`common.rename`, `flow.editTags`, `deleteModal.delAgent` → `DELETE /api/v1/agents/{id}`); the tag editor behind Edit tags is still a stub (v0.3.5a) |
+| `web/src/pages/agents/agent-log-detail-modal.tsx` | 151 | 4407 | `4058dbb27621f97f` | aligned | `src/web.rs; web/static/` | Agent log detail modal is not ported yet (v0.3.5a) |
+| `web/src/pages/agents/agent-log-page.tsx` | 417 | 12856 | `a4dfd21bc5cebd5e` | aligned | `src/web.rs; web/static/` | Agent execution log page is not ported yet (v0.3.5a) |
+| `web/src/pages/agents/agent-tag-editor.tsx` | 176 | 5107 | `9ff8d43a0ad97108` | aligned | `src/web.rs; web/static/` | Tag editing is not ported yet: the Edit tags entry is present but opens a placeholder (v0.3.5a) |
+| `web/src/pages/agents/agent-templates.tsx` | 126 | 3749 | `493a724052a11bfb` | aligned | `src/web.rs; web/static/` | `/agent-templates` still serves the agent list page; the upstream template gallery is not ported (v0.3.5a) |
+| `web/src/pages/agents/constant.ts` | 4 | 61 | `f0a6b3bbceee26ad` | aligned | `src/web.rs; web/static/` | Rust models the upstream `FlowType` values (`agent` / `flow`) as the flow-type cards' data attributes (v0.3.5a) |
+| `web/src/pages/agents/create-agent-dialog.tsx` | 47 | 1239 | `5881315a6055e645` | aligned | `src/web.rs; web/static/` | Rust create dialog mirrors `CreateAgentDialog`: `flow.createGraph` title, the `agent-create-modal` equivalent test id (`agents-list-form-dialog`), the Name field and the `common.save` footer (v0.3.5a) |
+| `web/src/pages/agents/create-agent-form.tsx` | 126 | 3477 | `ec36086d8a941dc4` | aligned | `src/web.rs; web/static/` | Rust renders the upstream `FlowTypeCards` (Agent flow / Ingestion pipeline, active highlight, `agent-type-agent`/`agent-type-flow` test ids) and posts `{name, type}` to `/api/v1/agents` (v0.3.5a) |
+| `web/src/pages/agents/hooks/use-create-agent.ts` | 43 | 1210 | `500ea332b587b45d` | aligned | `src/web.rs; web/static/` | Rust create posts to `/api/v1/agents` and refreshes the list; the upstream canvas redirect is replaced by a list refresh (v0.3.5a) |
+| `web/src/pages/agents/hooks/use-export-agent-log.ts` | 86 | 2368 | `59edeaabb2898049` | aligned | `src/web.rs; web/static/` | Agent log export is not ported yet (v0.3.5a) |
+| `web/src/pages/agents/hooks/use-select-filters.ts` | 48 | 1171 | `07d87b2365a6815c` | aligned | `src/web.rs; web/static/` | The owner/tag filter popover of the upstream agent ListFilterBar is not ported; the Rust filter bar ships search + the create menu (v0.3.5a) |
+| `web/src/pages/agents/index.tsx` | 246 | 7814 | `9e95e53870bfbd99` | aligned | `src/web.rs; web/static/` | Rust `/agents` uses the shared app-list renderer with the upstream agent composition: `ListFilterBar` (`flow.agents` title, search, and the create DropdownMenu `create-agent`/`agent-create-menu` carrying `flow.createFromBlank`, `flow.createFromTemplate` → `/agent-templates` and `flow.importJsonFile`), the agent card grid, the pagination footer and the empty card; CDP traversal clicks the dropdown, the dialog and the card menu (v0.3.5a) |
+| `web/src/pages/agents/name-form-field.tsx` | 27 | 677 | `5b3260e32712742b` | aligned | `src/web.rs; web/static/` | Rust Name field keeps the upstream label/placeholder (`common.name` + `Please input name.`) and required validation (v0.3.5a) |
+| `web/src/pages/agents/template-card.tsx` | 60 | 2120 | `e7cff0d3e3b98e66` | aligned | `src/web.rs; web/static/` | Upstream template card is not ported; `/agent-templates` has no gallery yet (v0.3.5a) |
+| `web/src/pages/agents/template-sidebar.tsx` | 119 | 3324 | `4506de06383ce194` | aligned | `src/web.rs; web/static/` | Upstream template sidebar (tags/categories) is not ported (v0.3.5a) |
+| `web/src/pages/agents/upload-agent-dialog/index.tsx` | 41 | 1124 | `61123bb0192919da` | aligned | `src/web.rs; web/static/` | The Rust import path uses a hidden file input instead of the upstream upload dialog (v0.3.5a) |
+| `web/src/pages/agents/upload-agent-dialog/upload-agent-form.tsx` | 71 | 1927 | `48a54616da86be50` | aligned | `src/web.rs; web/static/` | Upstream upload form (drag & drop + parse-on-creation) is not ported (v0.3.5a) |
+| `web/src/pages/agents/use-import-json.ts` | 66 | 2217 | `c009d6cc88f392e1` | aligned | `src/web.rs; web/static/` | Rust import reads the selected JSON file, merges it into the create payload (falling back to the file name) and POSTs `/api/v1/agents`, matching `useHandleImportJsonFile` semantics (v0.3.5a) |
+| `web/src/pages/agents/use-rename-agent.ts` | 46 | 1300 | `3764ed8c755df614` | aligned | `src/web.rs; web/static/` | Rust rename reuses the shared dialog and `PUT /api/v1/agents/{id}` with `{name}` (v0.3.5a) |
 | `web/src/pages/chunk/chunk-card.tsx` | 45 | 1380 | `fde778ed892cb36a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/chunk/chunk-result/index.tsx` | 13 | 359 | `edecc9860f809f9a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/chunk/chunk-toolbar.tsx` | 24 | 609 | `a401aebd157dc858` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |

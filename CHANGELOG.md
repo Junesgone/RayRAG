@@ -6,6 +6,13 @@ All notable changes to RayRAG are documented in this file.
 
 ### Added
 
+- **`/agents` 列表页对齐上游**：共享 `AppListSpec` 扩展出「创建下拉菜单 / FlowType 卡片 /
+  额外 ⋮ 项 / JSON 导入」四个能力，`/agents` 渲染上游组合——Create agent 下拉
+  （Create from blank / Create from template → `/agent-templates` / Import JSON file）、
+  创建弹层（Name + Agent flow / Ingestion pipeline 卡片）、卡片 ⋮（Rename / Edit tags /
+  Delete → `Delete agent` 二次确认）与分页；CDP 实点四步并截图。
+
+
 - **`/chats` 与 `/searches` 列表页对齐上游**：抽出共享渲染器 `AppListSpec` +
   `render_app_list_page`，两页复用上游组合（ListFilterBar = 标题/搜索/`Create chat`、
   `Create search` 主按钮 → 卡片网格（字母头像/名称/描述或更新时间 + ⋮）→ 分页页脚 →
