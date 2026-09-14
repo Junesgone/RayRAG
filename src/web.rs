@@ -994,12 +994,23 @@ pub async fn kbs_page(
 /// RAGFlow-compatible KB detail alias: `/dataset/{tab}/{kb_id}` routes
 /// (files | retrieval | logs | configuration) render the unified detail page;
 /// the tab is pre-selected client-side from the URL path.
-pub async fn kb_detail_alias(
+
+/// `/dataset/{id}` → `/dataset/files/{id}` (upstream's `Routes.Dataset` is
+/// `/dataset/files`; the bare path is not a route of its own).
+pub async fn dataset_files_redirect(
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Redirect {
+    Redirect::temporary(&format!("/dataset/files/{id}"))
+}
+
+pub async fn dataset_tab_page(
     State(state): State<Arc<AppState>>,
     Path((_tab, id)): Path<(String, String)>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
-    kb_detail_page(State(state), Path(id), req).await
+    // The rich dataset shell resolves the active panel from the URL path
+    // (`files|retrieval|logs|configuration|knowledge-graph`).
+    dataset_page(State(state), Path(id), req).await
 }
 
 /// Upstream `pages/datasets/index.tsx`: `/datasets` is the dataset list page
@@ -1506,7 +1517,7 @@ pub async fn kb_detail_page(
     b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;var typeMap={embd_id:'embedding'};var persistType=typeMap[type];if(!persistType){renderDefaultModelTrigger(field);return}state.pending=true;fetch('/api/v1/models/default',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_type:persistType,model_provider:parsed.model_provider,model_instance:parsed.model_instance,model_name:parsed.model_name})}).then(function(response){return response.json()}).then(function(data){state.pending=false;if(data&&data.code===0){renderDefaultModelTrigger(field)}else{trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)}}).catch(function(){state.pending=false;trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)})}async function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}loadKbModelCatalog();var avatarDataUrl='';function onAvatarPick(input){var file=input.files&&input.files[0];if(!file){avatarDataUrl='';var pv=document.getElementById('cfgAvatarPreview');if(pv){pv.style.display='none';pv.removeAttribute('src')}return}if(!/^image\\/(png|jpeg|jpg|webp|gif)$/i.test(file.type)){var m=document.getElementById('cfgMsg');if(m){m.textContent='仅支持 PNG/JPG/WebP/GIF 图片';m.style.color='var(--d)'}input.value='';return}if(file.size>5*1024*1024){var m2=document.getElementById('cfgMsg');if(m2){m2.textContent='头像图片不能超过 5MB';m2.style.color='var(--d)'}input.value='';return}var reader=new FileReader();reader.onload=function(){avatarDataUrl=String(reader.result||'');var pv=document.getElementById('cfgAvatarPreview');if(pv){pv.src=avatarDataUrl;pv.style.display='inline-block'}};reader.readAsDataURL(file)}function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}</script>");
     b.push_str("<script>var kbId='");
     b.push_str(&id);
-    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){var m=location.pathname.match(/\\/dataset\\/(files|retrieval|logs|configuration)\\//);if(m){var map={files:0,retrieval:2,logs:5,configuration:3};n=map[m[1]]??n}for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
+    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){var m=location.pathname.match(/\\/dataset\\/(files|retrieval|logs|configuration|knowledge-graph)\\//);if(m){var map={files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4};n=map[m[1]]??n}for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
     b.push_str("function fmtSize(n){n=n||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB'};function fmtTime(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString()}catch(e){return ts}};");
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
@@ -1566,22 +1577,35 @@ pub async fn dataset_page(
     b.push_str(" chunks</div><div class='stats'>");
     b.push_str(&desc);
     b.push_str("</div>");
-    // Sidebar nav
-    b.push_str(
-        "<ul class='ds-nav'><li><a href='#' onclick='showTab(0)' id='nav0' class='active'>📂 ",
-    );
-    b.push_str(t("Documents", zh));
-    b.push_str("</a></li><li><a href='#' onclick='showTab(1)' id='nav1'>📊 ");
-    b.push_str(t("Overview", zh));
-    b.push_str("</a></li><li><a href='#' onclick='showTab(2)' id='nav2'>🧪 ");
-    b.push_str(t("Testing", zh));
-    b.push_str("</a></li><li><a href='#' onclick='showTab(3)' id='nav3'>⚙️ ");
-    b.push_str(t("Configuration", zh));
-    b.push_str("</a></li><li><a href='#' onclick='showTab(4)' id='nav4'>🕸️ ");
-    b.push_str(t("Knowledge Graph", zh));
-    b.push_str("</a></li><li><a href='#' onclick='showTab(5)' id='nav5'>📜 ");
-    b.push_str(t("Logs", zh));
-    b.push_str("</a></li></ul></div>");
+    // Sidebar nav — upstream `pages/dataset/sidebar/index.tsx`: real route links
+    // (`/dataset/{files|retrieval|logs|configuration|knowledge-graph}/{id}`) with
+    // the `knowledgeDetails.*` labels in source order.
+    b.push_str("<ul class='ds-nav'>");
+    for (idx, tab, label_en, label_zh) in [
+        (0usize, "files", "Files", "文件列表"),
+        (2, "retrieval", "Retrieval testing", "检索测试"),
+        (1, "logs", "Logs", "日志"),
+        (3, "configuration", "Configuration", "配置"),
+        (4, "knowledge-graph", "Knowledge graph", "知识图谱"),
+    ] {
+        b.push_str("<li><a href='/dataset/");
+        b.push_str(tab);
+        b.push_str("/");
+        b.push_str(&id);
+        b.push_str("' id='nav");
+        b.push_str(&idx.to_string());
+        b.push_str("' onclick='return showTab(");
+        b.push_str(&idx.to_string());
+        b.push_str(")'>");
+        b.push_str(if zh { label_zh } else { label_en });
+        b.push_str("</a></li>");
+    }
+    b.push_str("</ul></div>");
+    // The panel scripts below (the merged Logs panel in particular) reference
+    // `kbId`, so declare it before the content area.
+    b.push_str("<script>var kbId='");
+    b.push_str(&id);
+    b.push_str("';</script>");
     // Content
     b.push_str("<div class='ds-content'>");
     // Tab 0: Documents
@@ -1648,7 +1672,13 @@ pub async fn dataset_page(
     b.push_str(t("Chunks", zh));
     b.push_str("</th><th>");
     b.push_str(t("Date", zh));
-    b.push_str("</th></tr></thead><tbody id='actList'></tbody></table></div></div>");
+    b.push_str("</th></tr></thead><tbody id='actList'></tbody></table></div>");
+    // Tab 5: Logs (RAGFlow parity) — parse run status with File filter
+    b.push_str("<div id='datasetLogs'><div class='card'><h2>");
+    b.push_str(t("Logs", zh));
+    b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
+    b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
+    b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div>");
     // Tab 2: Testing
     b.push_str("<div id='tab2' style='display:none'><div class='card'><h2>");
     b.push_str(t("Testing", zh));
@@ -1885,7 +1915,7 @@ pub async fn dataset_page(
     b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;var typeMap={embd_id:'embedding'};var persistType=typeMap[type];if(!persistType){renderDefaultModelTrigger(field);return}state.pending=true;fetch('/api/v1/models/default',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_type:persistType,model_provider:parsed.model_provider,model_instance:parsed.model_instance,model_name:parsed.model_name})}).then(function(response){return response.json()}).then(function(data){state.pending=false;if(data&&data.code===0){renderDefaultModelTrigger(field)}else{trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)}}).catch(function(){state.pending=false;trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)})}async function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}loadKbModelCatalog();var avatarDataUrl='';function onAvatarPick(input){var file=input.files&&input.files[0];if(!file){avatarDataUrl='';var pv=document.getElementById('cfgAvatarPreview');if(pv){pv.style.display='none';pv.removeAttribute('src')}return}if(!/^image\\/(png|jpeg|jpg|webp|gif)$/i.test(file.type)){var m=document.getElementById('cfgMsg');if(m){m.textContent='仅支持 PNG/JPG/WebP/GIF 图片';m.style.color='var(--d)'}input.value='';return}if(file.size>5*1024*1024){var m2=document.getElementById('cfgMsg');if(m2){m2.textContent='头像图片不能超过 5MB';m2.style.color='var(--d)'}input.value='';return}var reader=new FileReader();reader.onload=function(){avatarDataUrl=String(reader.result||'');var pv=document.getElementById('cfgAvatarPreview');if(pv){pv.src=avatarDataUrl;pv.style.display='inline-block'}};reader.readAsDataURL(file)}function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}</script>");
     b.push_str("<script>var kbId='");
     b.push_str(&id);
-    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
+    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){var seg=(location.pathname.split('/')[2]||'');var map={files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4};if(map[seg]!==undefined)n=map[seg];for(var i=0;i<5;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
     b.push_str("function fmtSize(n){n=n||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB'};function fmtTime(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString()}catch(e){return ts}};");
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
@@ -1911,13 +1941,7 @@ pub async fn dataset_page(
 function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};");
     b.push_str("function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
     b.push_str("fetch('/api/v1/providers').then(function(r){return r.json()}).then(function(d){var sel=document.getElementById('embdSel');if(!sel)return;(d.data||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o)})})}).catch(function(){});");
-    b.push_str("loadDocs();loadConfig();</script>");
-    // Tab 5: Logs (RAGFlow parity) — parse run status with File filter
-    b.push_str("<div id='tab5' style='display:none'><div class='card'><h2>");
-    b.push_str(t("Logs", zh));
-    b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
-    b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
-    b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div>");
+    b.push_str("loadDocs();loadConfig();showTab(0);</script>");
     Html(layout(&name, &b, zh))
 }
 
@@ -6138,19 +6162,80 @@ mod kb_ui_tests {
     }
 
     #[tokio::test]
+    async fn dataset_detail_paths_follow_upstream_sidebar_routes() {
+        // Upstream `Routes.Dataset = /dataset/files`: the bare detail path
+        // redirects into the Files tab and every sidebar entry is a real route
+        // link that selects its panel on load.
+        let response = dataset_files_redirect(Path("kb-1".to_string()))
+            .await
+            .into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        let location = response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(location, "/dataset/files/kb-1");
+
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Route KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/retrieval/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // The panel is chosen from the URL path client-side.
+        assert!(html.contains("var seg=(location.pathname.split('/')[2]||'')"));
+        assert!(html.contains("{files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4}"));
+        assert!(html.contains("showTab(0);</script>"));
+        // `kbId` must be declared before the panel scripts that use it.
+        let kb_id_at = html.find("var kbId=").expect("kbId declaration");
+        let load_logs_at = html.find("function loadLogs()").expect("logs loader");
+        assert!(
+            kb_id_at < load_logs_at,
+            "kbId must be declared before the merged Logs panel script"
+        );
+    }
+
+    #[tokio::test]
     async fn dataset_page_renders_five_tabs_with_all_required_buttons() {
         let (_root, state) = test_state();
         let kb = state.kbs.create_for("u1", "Five Tab KB", "d").unwrap();
         let req = Request::builder()
-            .uri("/dataset/x")
+            .uri("/dataset/files/x")
+            .header("Cookie", "lang=en")
             .body(Body::empty())
             .unwrap();
         let html =
             body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
-        // 5 个 tab
+        // 5 个 tab —— 上游 sidebar 顺序与 route 链接
         for nav in ["nav0", "nav1", "nav2", "nav3", "nav4"] {
             assert!(html.contains(nav), "nav {} missing", nav);
         }
+        for (route, label) in [
+            ("files", "Files"),
+            ("retrieval", "Retrieval testing"),
+            ("logs", "Logs"),
+            ("configuration", "Configuration"),
+            ("knowledge-graph", "Knowledge graph"),
+        ] {
+            assert!(
+                html.contains(&format!("href='/dataset/{route}/")),
+                "dataset nav link {route} missing"
+            );
+            assert!(html.contains(label), "dataset nav label {label} missing");
+        }
+        // 解析日志面板并入 Logs 面板（上游 overview = /dataset/logs）
+        assert!(
+            html.contains("id='datasetLogs'"),
+            "logs panel merged missing"
+        );
+        assert!(!html.contains("id='tab5'"), "legacy logs tab remains");
         for tab in ["tab0", "tab1", "tab2", "tab3", "tab4"] {
             assert!(html.contains(&format!("id='{}'", tab)), "{} missing", tab);
         }

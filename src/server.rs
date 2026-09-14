@@ -3172,7 +3172,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/kbs", get(crate::web::kbs_page))
         .route("/kbs/{id}", get(crate::web::kb_detail_page))
         .route("/datasets", get(crate::web::datasets_alias))
-        .route("/dataset/{tab}/{id}", get(crate::web::kb_detail_alias))
+        .route("/dataset/{tab}/{id}", get(crate::web::dataset_tab_page))
         .route("/search", get(crate::web::search_page))
         .route("/providers", get(crate::web::providers_page))
         .route("/user-setting", get(crate::web::user_setting_index))
@@ -3223,7 +3223,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/searches", get(crate::web::search_apps_page))
         .route("/searches/{id}", get(crate::web::search_app_detail_page))
         .route("/chat/{id}", get(crate::web::chat_detail_page))
-        .route("/dataset/{id}", get(crate::web::dataset_page))
+        // Upstream `Routes.Dataset = /dataset/files`: the bare detail path
+        // redirects into the Files tab.
+        .route("/dataset/{id}", get(crate::web::dataset_files_redirect))
         .route("/datasources", get(crate::web::datasources_page))
         .route("/files", get(crate::web::files_page))
         .route("/agents", get(crate::web::agents_page))

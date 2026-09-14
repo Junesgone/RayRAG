@@ -19,6 +19,14 @@ All notable changes to RayRAG are documented in this file.
   200 ms 切面），新增 `Remember me`（邮箱本地记忆 + 请求带 `remember`）与
   `Sign in with {channel}` 渠道按钮区（`/api/v1/auth/login/channels`，无渠道自动隐藏）。
 
+### Added
+
+- **数据集详情改上游 route 导航**：侧栏五项（Files / Retrieval testing / Logs /
+  Configuration / Knowledge graph）改为真实路由链接 `/dataset/{tab}/{id}`，活动项按路径判定；
+  解析日志面板并入 Logs 面板；`/dataset/{id}` 307 跳 `/dataset/files/{id}`。
+  **修复**：面板脚本引用未定义的 `kbId` 导致 `showTab` 从不执行（所有路由都停在 Files 面板）、
+  以及 `showTab` 正则的 Rust 字符串转义错误。
+
 ### Fixed
 
 - **模型提供商弹层字段顺序对齐上游**：`Instance name → API-Key → Base-Url`（原为
