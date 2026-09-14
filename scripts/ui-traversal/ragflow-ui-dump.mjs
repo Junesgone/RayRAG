@@ -1,11 +1,20 @@
-// RAGFlow UI inventory dump: visits each route in the already-authenticated
-// CDP Chrome profile and records every interactive control (buttons, links,
-// inputs, selects, switches, tabs, table headers, dropdown triggers) plus a
-// screenshot. Output is the parity reference for the RayRAG Rust UI.
+// UI inventory dump: visits each route in the CDP Chrome profile and records
+// every interactive control (buttons, links, inputs, selects, switches, tabs,
+// table headers, dropdown triggers) plus a screenshot. Run it once against
+// RAGFlow (parity reference) and once against RayRAG, then diff the two
+// inventories route by route.
 //
 // Usage:
 //   node scripts/ui-traversal/ragflow-ui-dump.mjs [route ...]
-//   RAGFLOW_UI_ORIGIN=http://127.0.0.1:11526 RAYRAG_CDP_ENDPOINT=http://127.0.0.1:16002
+//
+// RAGFlow (session comes from ragflow-auth-cdp.mjs in the same Chrome profile):
+//   RAGFLOW_UI_ORIGIN=http://127.0.0.1:11526 \
+//   RAGFLOW_UI_DUMP_DIR=docs/ui-traversal/ragflow-pages
+//
+// RayRAG (script logs in itself via UI_DUMP_AUTH=rayrag):
+//   UI_DUMP_AUTH=rayrag RAGFLOW_UI_ORIGIN=http://127.0.0.1:9390 \
+//   UI_DUMP_EMAIL=admin@rayrag.local UI_DUMP_PASSWORD=... \
+//   RAGFLOW_UI_DUMP_DIR=docs/ui-traversal/rayrag-pages
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright-core";
@@ -14,6 +23,13 @@ const CDP_EP = process.env.RAYRAG_CDP_ENDPOINT || "http://127.0.0.1:16002";
 const ORIGIN = process.env.RAGFLOW_UI_ORIGIN || "http://127.0.0.1:11526";
 const OUT_DIR =
   process.env.RAGFLOW_UI_DUMP_DIR || "docs/ui-traversal/ragflow-pages";
+const AUTH = process.env.UI_DUMP_AUTH || "none";
+const EMAIL = process.env.UI_DUMP_EMAIL || "admin@rayrag.local";
+const PASSWORD = process.env.UI_DUMP_PASSWORD || "";
+// RayRAG detects its UI language from the `lang=zh-CN` cookie (English
+// otherwise). Pinning both dumps to one language keeps the parity diff
+// label-based instead of translation-based.
+const LANG = process.env.UI_DUMP_LANG || "";
 
 const DEFAULT_ROUTES = [
   "/",
@@ -161,9 +177,57 @@ const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
 
 await fs.mkdir(OUT_DIR, { recursive: true });
+
+// RayRAG issues its bearer token from POST /api/v1/auth/login and keeps it in
+// localStorage; the login page itself never redirects into the app.
+const authBootstrap = { mode: AUTH };
+if (AUTH === "rayrag") {
+  if (!PASSWORD) {
+    console.error("UI_DUMP_PASSWORD is required when UI_DUMP_AUTH=rayrag");
+    process.exit(2);
+  }
+  await page.goto(ORIGIN + "/login", {
+    waitUntil: "domcontentloaded",
+    timeout: 45000,
+  });
+  authBootstrap.result = await page.evaluate(
+    async ({ email, password }) => {
+      const response = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json();
+      if (data.code !== 0 || !data.data || !data.data.access_token) {
+        return { ok: false, body: data };
+      }
+      localStorage.setItem("rayrag_token", data.data.access_token);
+      return { ok: true };
+    },
+    { email: EMAIL, password: PASSWORD },
+  );
+  if (!authBootstrap.result.ok) {
+    console.error(
+      "RayRAG login failed: " + JSON.stringify(authBootstrap.result),
+    );
+    process.exit(1);
+  }
+}
+
 const index = [];
+const host = new URL(ORIGIN).hostname;
+if (LANG === "en") {
+  await ctx.addCookies([
+    { name: "lang", value: "en-US", domain: host, path: "/" },
+  ]);
+} else if (LANG) {
+  await ctx.addCookies([
+    { name: "lang", value: LANG, domain: host, path: "/" },
+  ]);
+}
 for (const route of routes) {
   const record = { route };
+  const routeStart = pageErrors.length;
   try {
     await page.goto(ORIGIN + route, {
       waitUntil: "domcontentloaded",
@@ -180,6 +244,7 @@ for (const route of routes) {
       300,
     );
   }
+  record.pageErrors = pageErrors.slice(routeStart);
   index.push({
     route,
     finalUrl: record.url,
@@ -189,6 +254,7 @@ for (const route of routes) {
       links: (record.links || []).length,
       fields: (record.fields || []).length,
     },
+    pageErrors: record.pageErrors,
     error: record.error,
   });
   await fs.writeFile(
@@ -203,6 +269,7 @@ await fs.writeFile(
     {
       origin: ORIGIN,
       generatedAt: new Date().toISOString(),
+      auth: authBootstrap,
       pages: index,
       pageErrors,
     },

@@ -244,22 +244,30 @@ fn json_script_value(value: &serde_json::Value) -> String {
 
 const CSS: &str = include_str!("./web_css.txt");
 
-fn layout(title: &str, body: &str, zh: bool) -> String {
-    let db = t("Dashboard", zh);
-    let kb = t("Knowledge Bases", zh);
-    let sr = t("Search", zh);
-    let ch = t("Chat", zh);
-    let ag = t("Agents", zh);
-    let mm = t("Memories", zh);
-    let fl = t("Files", zh);
-    let sk = t("Skills", zh);
-    let pr = t("Model providers", zh);
-    let st = t("Settings", zh);
-    let ad = t("Admin", zh);
-    let sc = t("Status", zh);
-    let lo = t("Login", zh);
+/// External links rendered by the global header (upstream `header.tsx`:
+/// Discord invite, GitHub repository, user-guide docs). Defaults match upstream
+/// so the UI is a 1:1 copy, but each can be repointed through the environment
+/// so a mainland-China deployment can use reachable mirrors.
+fn header_link(kind: &str) -> String {
+    let (env_key, default) = match kind {
+        "discord" => (
+            "RAYRAG_DISCORD_URL",
+            "https://discord.com/invite/NjYzJD3GM3",
+        ),
+        "github" => ("RAYRAG_GITHUB_URL", "https://github.com/infiniflow/ragflow"),
+        _ => (
+            "RAYRAG_HELP_URL",
+            "https://ragflow.io/docs/dev/category/user-guides",
+        ),
+    };
+    std::env::var(env_key).unwrap_or_else(|_| default.to_string())
+}
+
+/// Shared `<head>` for every page: CSS bundle, tooltip/drawer helpers and the
+/// fetch wrapper that attaches the bearer token and bounces expired sessions
+/// (never while the standalone login page is on screen, which would loop).
+fn page_head(title: &str, zh: bool) -> String {
     let lc = if zh { "zh-CN" } else { "en" };
-    let lb = if zh { "EN" } else { "中" };
     let mut h = String::with_capacity(8192);
     h.push_str("<!DOCTYPE html><html lang='");
     h.push_str(lc);
@@ -271,46 +279,121 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
 .tip:hover::after{content:attr(data-tip);position:absolute;left:22px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
 .lang-chip{border:1px solid var(--bd);border-radius:14px;padding:2px 10px;font-size:12px;background:transparent;color:var(--t);cursor:pointer}
 .lang-chip.on{background:var(--p);color:#fff;border-color:var(--p)}
-\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style><script>(function(){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})()</script></head><body>");
-    h.push_str("<header class='hdr'><a href='/dashboard' class='logo'><svg width='28' height='28'><circle cx='14' cy='14' r='12' fill='#4f46e5'/><text x='14' y='19' text-anchor='middle' fill='#fff' font-size='13' font-weight='700'>R</text></svg>RayRAG</a>");
-    h.push_str("<nav class='np'><a href='/dashboard'>");
-    h.push_str(db);
-    h.push_str("</a><a href='/kbs'>");
-    h.push_str(kb);
-    h.push_str("</a><a href='/search'>");
-    h.push_str(sr);
-    h.push_str("</a><a href='/chat'>");
-    h.push_str(ch);
-    h.push_str("</a><a href='/agents'>");
-    h.push_str(ag);
-    h.push_str("</a><a href='/memories'>");
-    h.push_str(mm);
-    h.push_str("</a><a href='/datasources'>");
-    h.push('🔗');
-    h.push_str("</a><a href='/files'>");
-    h.push_str(fl);
-    h.push_str("</a><a href='/skills'>");
-    h.push_str(sk);
-    h.push_str("</a><a href='/user-setting/model'>");
-    h.push_str(pr);
-    h.push_str("</a></nav>");
-    h.push_str("<div class='hr'><button onclick='toggleTheme()' title='Theme'>🌓</button><button onclick='toggleLang()' title='Language'>");
-    h.push_str(lb);
-    h.push_str(
-        "</button><div class='dd'><a class='av' href='/user-setting' data-testid='settings-entrypoint'>A</a><div class='dm'><a href='/settings'>⚙️ ",
-    );
-    h.push_str(st);
-    h.push_str("</a><a href='/admin'>🔧 ");
-    h.push_str(ad);
-    h.push_str("</a><a href='/status'>📊 ");
-    h.push_str(sc);
-    h.push_str("</a><a href='/api-docs'>📖 API</a><a href='/login' style='color:#ef4444'>🚪 ");
-    h.push_str(lo);
-    h.push_str("</a></div></div></div></header>");
+\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style><script>(function(){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'&&location.pathname!='/login'){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})()</script></head><body>");
+    h
+}
+
+/// Standalone page shell: upstream's `/login` renders the flip-card auth page
+/// without the global header (`login-next/index.tsx`), so RayRAG serves it with
+/// the shared head only — no navbar, no avatar fetch, no session bounce loop.
+fn layout_plain(title: &str, body: &str, zh: bool) -> String {
+    let mut h = page_head(title, zh);
+    h.push_str("<div class='ct'>");
+    h.push_str(body);
+    h.push_str("</div><script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark')}</script></body></html>");
+    h
+}
+
+fn layout(title: &str, body: &str, zh: bool) -> String {
+    // Upstream `header.*` labels (web/src/locales en.ts / zh.ts): Home /
+    // Dataset / Chat / Search / Agent / Memory / File. The global navbar
+    // carries exactly these seven entries; every other area (data sources,
+    // chat channels, model providers, MCP, team, profile, API) lives behind
+    // the avatar, which links to `/user-setting`.
+    let (home, dataset, chat, search, agent, memory, file, theme_label, avatar_label) = if zh {
+        (
+            "首页",
+            "知识库",
+            "聊天",
+            "搜索",
+            "智能体",
+            "记忆",
+            "文件管理",
+            "主题",
+            "用户设置",
+        )
+    } else {
+        (
+            "Home",
+            "Dataset",
+            "Chat",
+            "Search",
+            "Agent",
+            "Memory",
+            "File",
+            "Theme",
+            "User settings",
+        )
+    };
+    let language_name = if zh { "简体中文" } else { "English" };
+    let lc = if zh { "zh-CN" } else { "en" };
+    let mut h = page_head(title, zh);
+    // Upstream `layouts/components/header.tsx`: logo, the DesktopNavbar pill,
+    // then the right cluster — Discord, GitHub, language DropdownMenu, help
+    // link, ThemeButton and the avatar link to `/user-setting`.
+    h.push_str("<header class='hdr'><a href='/' class='logo' aria-label='RayRAG'><svg width='32' height='32' aria-hidden='true'><circle cx='16' cy='16' r='14' fill='#4f46e5'/><text x='16' y='22' text-anchor='middle' fill='#fff' font-size='15' font-weight='700'>R</text></svg></a>");
+    h.push_str("<nav class='gnav' aria-label='Global'>");
+    h.push_str("<a class='gnav-icon' href='/' data-nav='/' aria-label='");
+    h.push_str(home);
+    h.push_str("'><svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3 10.5 12 3l9 7.5'/><path d='M5 9.5V21h14V9.5'/><path d='M9.5 21v-6h5v6'/></svg></a>");
+    for (href, nav_key, label, testid) in [
+        ("/datasets", "/datasets", dataset, ""),
+        ("/chats", "/chats", chat, " data-testid='nav-chat'"),
+        (
+            "/searches",
+            "/searches",
+            search,
+            " data-testid='nav-search'",
+        ),
+        ("/agents", "/agents", agent, " data-testid='nav-agent'"),
+        ("/memories", "/memories", memory, ""),
+        ("/files", "/files", file, ""),
+    ] {
+        h.push_str("<a href='");
+        h.push_str(href);
+        h.push_str("' data-nav='");
+        h.push_str(nav_key);
+        h.push_str("'");
+        h.push_str(testid);
+        h.push_str(">");
+        h.push_str(label);
+        h.push_str("</a>");
+    }
+    h.push_str("</nav><div class='hr' data-testid='auth-status'>");
+    // Community and documentation links mirror upstream header.tsx; each URL
+    // can be pointed at a mainland-reachable mirror through the environment.
+    h.push_str("<a class='hdr-icon' href='");
+    h.push_str(&header_link("discord"));
+    h.push_str("' target='_blank' rel='noreferrer noopener' aria-label='Discord'><svg width='18' height='18' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><path d='M19.3 5.3A16 16 0 0 0 15.4 4l-.3.6a12 12 0 0 1 3.3 1.6 11.4 11.4 0 0 0-9-.3l-.3-.3A12 12 0 0 1 12.5 4.6L12.2 4a16 16 0 0 0-4 1.3C5.6 9.1 4.9 12.8 5.2 16.4a16.1 16.1 0 0 0 4.8 2.4l.6-1a10.4 10.4 0 0 1-1.6-.8l.4-.3a11.5 11.5 0 0 0 9.3 0l.4.3a10.4 10.4 0 0 1-1.6.8l.6 1a16.1 16.1 0 0 0 4.8-2.4c.3-4.2-.6-7.9-2.5-11.1ZM9.7 14.3c-.9 0-1.7-.9-1.7-1.9s.7-1.9 1.7-1.9 1.7.8 1.7 1.9-.8 1.9-1.7 1.9Zm4.6 0c-.9 0-1.7-.9-1.7-1.9s.7-1.9 1.7-1.9 1.7.8 1.7 1.9-.8 1.9-1.7 1.9Z'/></svg></a>");
+    h.push_str("<a class='hdr-icon' href='");
+    h.push_str(&header_link("github"));
+    h.push_str("' target='_blank' rel='noreferrer noopener' aria-label='GitHub'><svg width='18' height='18' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><path d='M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.3-3.4-1.3-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.7.4-1.1.6-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z'/></svg></a>");
+    h.push_str("<div class='menu' id='hdrLangMenu'><button type='button' class='hdr-icon' aria-haspopup='menu' aria-expanded='false' data-testid='language-menu' aria-label='");
+    h.push_str(language_name);
+    h.push_str("' onclick='toggleHeaderMenu(\"hdrLangMenu\",event)'>");
+    h.push_str(language_name);
+    h.push_str("<span aria-hidden='true'>⌄</span></button><div class='menu-panel' role='menu'>");
+    h.push_str("<button type='button' role='menuitemradio' class='menu-item' aria-checked='");
+    h.push_str(if zh { "false" } else { "true" });
+    h.push_str("' onclick='setLang(\"en\")'>English</button>");
+    h.push_str("<button type='button' role='menuitemradio' class='menu-item' aria-checked='");
+    h.push_str(if zh { "true" } else { "false" });
+    h.push_str("' onclick='setLang(\"zh-CN\")'>简体中文</button></div></div>");
+    h.push_str("<a class='hdr-icon' href='");
+    h.push_str(&header_link("help"));
+    h.push_str("' target='_blank' rel='noreferrer noopener' aria-label='Help'><svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' aria-hidden='true'><circle cx='12' cy='12' r='9.2'/><path d='M9.6 9.3a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.9.7-.9 1.3v.4'/><circle cx='12' cy='16.6' r='.9' fill='currentColor' stroke='none'/></svg></a>");
+    h.push_str("<button type='button' class='hdr-icon' onclick='toggleTheme()' aria-label='");
+    h.push_str(theme_label);
+    h.push_str("' title='");
+    h.push_str(theme_label);
+    h.push_str("'><span aria-hidden='true'>◐</span></button>");
+    h.push_str("<a class='av' id='hdrAvatar' href='/user-setting' data-testid='settings-entrypoint' aria-label='");
+    h.push_str(avatar_label);
+    h.push_str("'>U</a></div></header>");
     h.push_str("<div class='ct'>");
     h.push_str(body);
     h.push_str("</div>");
-    h.push_str("<script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark')};function toggleLang(){var n=document.cookie.indexOf('lang=zh-CN')>=0?'en':'zh-CN';document.cookie='lang='+n+';path=/;max-age=31536000';location.reload()}</script></body></html>");
+    h.push_str("<script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark');syncThemeSwitch()};function syncThemeSwitch(){var dark=!document.body.classList.contains('light');document.querySelectorAll('.theme-switch').forEach(function(node){node.setAttribute('aria-checked',dark?'true':'false');var sun=node.querySelector('.theme-sun');var moon=node.querySelector('.theme-moon');if(sun)sun.classList.toggle('on',!dark);if(moon)moon.classList.toggle('on',dark)})};syncThemeSwitch();function toggleLang(){var n=document.cookie.indexOf('lang=zh-CN')>=0?'en':'zh-CN';document.cookie='lang='+n+';path=/;max-age=31536000';location.reload()};function setLang(code){document.cookie='lang='+code+';path=/;max-age=31536000';location.reload()};function toggleHeaderMenu(id,event){if(event){event.stopPropagation()}var menu=document.getElementById(id);if(!menu)return;var open=menu.classList.contains('open');document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open');var trigger=item.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','false')});if(!open){menu.classList.add('open');var trigger=menu.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','true')}};document.addEventListener('click',function(){document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open');var trigger=item.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','false')})});document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open')})});(function(){var path=location.pathname;var map={'/':['/','/dashboard','/home'],'/datasets':['/datasets','/dataset','/kbs'],'/chats':['/chats','/chat'],'/searches':['/searches','/search'],'/agents':['/agents','/agent-list','/agent-templates'],'/memories':['/memories','/memory'],'/files':['/files']};Object.keys(map).forEach(function(key){var match=map[key].some(function(prefix){return path===prefix||path.indexOf(prefix+'/')===0});if(!match)return;var link=document.querySelector('.gnav a[data-nav=\"'+key+'\"]');if(link)link.setAttribute('aria-current','page')})})();(function(){if(location.pathname==='/login'||!localStorage.getItem('rayrag_token'))return;fetch('/api/v1/user/info').then(function(response){return response.json()}).then(function(result){var user=(result&&result.data)||{};var name=String(user.nickname||user.email||'U').trim()||'U';var avatar=document.getElementById('hdrAvatar');if(avatar)avatar.textContent=name.charAt(0).toUpperCase()}).catch(function(){})})()</script></body></html>");
     h
 }
 
@@ -338,15 +421,32 @@ impl UserSettingSection {
         }
     }
 
+    /// Upstream `pages/user-setting/sidebar/index.tsx` icons: LucideServer,
+    /// LucideMessagesSquare, LucideBox, the MCP glyph, LucideUsers,
+    /// LucideUser and LucideUnplug, inlined as SVG.
     fn icon(self) -> &'static str {
         match self {
-            Self::DataSource => "▰",
-            Self::ChatChannel => "◇",
-            Self::Model => "⬡",
-            Self::Mcp => "M",
-            Self::Team => "♟",
-            Self::Profile => "●",
-            Self::Api => "⌁",
+            Self::DataSource => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='2' y='2' width='20' height='8' rx='2'/><rect x='2' y='14' width='20' height='8' rx='2'/><path d='M6 6h.01M6 18h.01'/></svg>"
+            }
+            Self::ChatChannel => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z'/><path d='M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1'/></svg>"
+            }
+            Self::Model => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z'/><path d='m3.3 7 8.7 5 8.7-5'/><path d='M12 22V12'/></svg>"
+            }
+            Self::Mcp => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12 22v-5'/><path d='M9 8V2'/><path d='M15 8V2'/><path d='M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z'/></svg>"
+            }
+            Self::Team => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M22 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/></svg>"
+            }
+            Self::Profile => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/></svg>"
+            }
+            Self::Api => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m19 5 3-3'/><path d='m2 22 3-3'/><path d='M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z'/><path d='M7.5 13.5 10 11'/><path d='M10.5 16.5 13 14'/><path d='m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z'/></svg>"
+            }
         }
     }
 
@@ -357,7 +457,7 @@ impl UserSettingSection {
             (Self::Model, true) => "模型提供商",
             (Self::Mcp, true) => "MCP",
             (Self::Team, true) => "团队",
-            (Self::Profile, true) => "个人资料",
+            (Self::Profile, true) => "概要",
             (Self::Api, true) => "API",
             (Self::DataSource, false) => "Data sources",
             (Self::ChatChannel, false) => "Chat channels",
@@ -415,10 +515,14 @@ fn user_setting_layout(title: &str, body: &str, active: UserSettingSection, zh: 
         nav.push_str("</span></a>");
     }
 
+    // Upstream footer: version + ThemeSwitch on one row, then the Log out
+    // button (`setting.logout`).
+    let theme_pressed = if zh { "深色" } else { "dark" };
     let shell = format!(
-        r#"<div class='user-setting-layout' data-testid='user-setting-layout'><aside class='user-setting-sidebar' aria-label='User settings'><div class='user-setting-account'><span class='user-setting-avatar' id='userSettingAvatar' aria-hidden='true'>U</span><span class='user-setting-email' id='userSettingEmail'>...</span></div><nav class='user-setting-nav'>{nav}</nav><footer class='user-setting-footer'><span class='user-setting-version'>{version}</span><button type='button' class='user-setting-footer-button user-setting-theme' aria-label='{theme_label}' onclick='toggleTheme()'><span aria-hidden='true'>◐</span><span class='user-setting-footer-label'>{theme_label}</span></button><button type='button' class='user-setting-footer-button user-setting-logout' aria-label='{logout_label}' onclick='logoutUser()'><span aria-hidden='true'>↪</span><span class='user-setting-footer-label'>{logout_label}</span></button></footer></aside><main class='user-setting-content' data-setting-page='{active_key}'>{body}</main></div><script>function logoutUser(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/login'}}function settingUnauthorized(){{logoutUser()}}function loadSettingUser(){{fetch('/api/v1/user/info').then(function(response){{return response.json()}}).then(function(result){{if(result.code===401){{settingUnauthorized();return}}var user=result.data||{{}};var name=(user.nickname||user.email||'U').trim();document.getElementById('userSettingAvatar').textContent=name.charAt(0).toUpperCase()||'U';document.getElementById('userSettingEmail').textContent=user.email||user.nickname||''}}).catch(function(){{}})}}loadSettingUser()</script>"#,
+        r#"<div class='user-setting-layout' data-testid='user-setting-layout'><aside class='user-setting-sidebar' aria-label='{sidebar_label}'><div class='user-setting-account'><span class='user-setting-avatar' id='userSettingAvatar' aria-hidden='true'>U</span><span class='user-setting-email' id='userSettingEmail'>...</span></div><nav class='user-setting-nav'>{nav}</nav><footer class='user-setting-footer'><div class='user-setting-footer-row'><span class='user-setting-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_pressed}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='user-setting-footer-button user-setting-logout' aria-label='{logout_label}' onclick='logoutUser()'><span aria-hidden='true'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/><path d='m16 17 5-5-5-5'/><path d='M21 12H9'/></svg></span><span class='user-setting-footer-label'>{logout_label}</span></button></footer></aside><main class='user-setting-content' data-setting-page='{active_key}'>{body}</main></div><script>function logoutUser(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/login'}}function settingUnauthorized(){{logoutUser()}}function loadSettingUser(){{fetch('/api/v1/user/info').then(function(response){{return response.json()}}).then(function(result){{if(result.code===401){{settingUnauthorized();return}}var user=result.data||{{}};var name=(user.nickname||user.email||'U').trim();document.getElementById('userSettingAvatar').textContent=name.charAt(0).toUpperCase()||'U';document.getElementById('userSettingEmail').textContent=user.email||user.nickname||''}}).catch(function(){{}})}}loadSettingUser()</script>"#,
         version = crate::build_info::version_line(),
         active_key = active.key(),
+        sidebar_label = if zh { "用户设置" } else { "User settings" },
     );
     layout(title, &shell, zh)
 }
@@ -2486,7 +2590,7 @@ pub async fn admin_page(
 pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let b = "<div class='auth-card card'><h1 style='text-align:center;margin-bottom:24px'>🐠 RayRAG</h1><div id='loginForm'><input id='email' autocomplete='username' placeholder='Email'><input id='password' type='password' autocomplete='current-password' placeholder='Password'><button class='btn btn-p' onclick='login()' style='width:100%;margin-top:8px'>Login</button></div><div id='regForm' style='display:none'><input id='nickname' placeholder='Nickname'><input id='remail' placeholder='Email'><input id='rpassword' type='password' placeholder='Password (min 6)'> <button class='btn btn-p' onclick='register()' style='width:100%;margin-top:8px'>Register</button></div><button class='btn btn-o' onclick='toggleAuth()' style='width:100%;margin-top:12px' id='authToggle'>Register</button><div id='error' style='color:var(--d);margin-top:8px;font-size:13px'></div></div><script>function setTok(t){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400'};function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/dashboard'):document.getElementById('error').textContent=d.message})};function register(){var n=document.getElementById('nickname').value;var e=document.getElementById('remail').value;var p=document.getElementById('rpassword').value;fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(r=>r.json()).then(function(d){if(d.code===0){loginWith(e,p)}else{document.getElementById('error').textContent=d.message}})};function loginWith(e,p){fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(r=>r.json()).then(d=>{d.code===0?(setTok(d.data.access_token),location.href='/dashboard'):document.getElementById('error').textContent=d.message})};function toggleAuth(){var r=document.getElementById('regForm').style.display==='none';document.getElementById('regForm').style.display=r?'block':'none';document.getElementById('loginForm').style.display=r?'none':'block';document.getElementById('authToggle').textContent=r?'Login':'Register'}</script>";
-    Html(layout(t("Login", zh), b, zh))
+    Html(layout_plain(t("Login", zh), b, zh))
 }
 
 pub async fn document_page(
@@ -5537,6 +5641,126 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[test]
+    fn global_header_matches_upstream_navbar_and_right_cluster() {
+        // Upstream layouts/components/header.tsx + global-navbar.tsx: the pill
+        // carries Home/Dataset/Chat/Search/Agent/Memory/File in that order, and
+        // the right cluster is Discord, GitHub, the language menu, help, theme
+        // and the avatar link into `/user-setting`.
+        let html = layout("Home", "<p>body</p>", false);
+        let nav_start = html.find("<nav class='gnav'").expect("global navbar");
+        let nav_end = html.find("</nav>").expect("navbar close");
+        let nav = &html[nav_start..nav_end];
+        let mut cursor = 0;
+        for (href, marker) in [
+            ("/", "aria-label='Home'"),
+            ("/datasets", "data-nav='/datasets'"),
+            ("/chats", "data-testid='nav-chat'"),
+            ("/searches", "data-testid='nav-search'"),
+            ("/agents", "data-testid='nav-agent'"),
+            ("/memories", "data-nav='/memories'"),
+            ("/files", "data-nav='/files'"),
+        ] {
+            let needle = format!("href='{href}'");
+            let offset = nav[cursor..]
+                .find(&needle)
+                .unwrap_or_else(|| panic!("navbar entry {href} missing"));
+            cursor += offset + 1;
+            let entry_start = nav[..cursor].rfind("<a ").expect("entry start");
+            let entry_end = nav[cursor..]
+                .find("</a>")
+                .map(|end| cursor + end)
+                .expect("entry end");
+            let entry = &nav[entry_start..entry_end];
+            assert!(
+                entry.contains(marker),
+                "navbar entry {href} lost its upstream marker {marker}: {entry}"
+            );
+        }
+        // The seven upstream entries only: dashboard/data-source/skills/model
+        // provider shortcuts moved behind the avatar.
+        for legacy in [
+            "href='/dashboard'",
+            "href='/kbs'",
+            "href='/datasources'",
+            "href='/skills'",
+            "href='/user-setting/model'",
+        ] {
+            assert!(
+                !nav.contains(legacy),
+                "navbar still carries the non-upstream entry {legacy}"
+            );
+        }
+        let right = &html[nav_end..html.find("</header>").expect("header close")];
+        assert!(right.contains("href='https://discord.com/invite/NjYzJD3GM3'"));
+        assert!(right.contains("href='https://github.com/infiniflow/ragflow'"));
+        assert!(right.contains("href='https://ragflow.io/docs/dev/category/user-guides'"));
+        assert_eq!(
+            right
+                .matches("target='_blank' rel='noreferrer noopener'")
+                .count(),
+            3,
+            "Discord/GitHub/help must each open in a new tab"
+        );
+        assert!(right.contains("id='hdrLangMenu'"), "language menu missing");
+        assert!(right.contains("aria-haspopup='menu'"));
+        assert!(right.contains("onclick='toggleHeaderMenu(\"hdrLangMenu\",event)'"));
+        assert!(right.contains("role='menuitemradio'"));
+        assert!(right.contains("aria-checked='true'") && right.contains("aria-checked='false'"));
+        assert!(right.contains("onclick='toggleTheme()'"));
+        assert!(
+            right.contains("class='av' id='hdrAvatar' href='/user-setting'")
+                && right.contains("data-testid='settings-entrypoint'"),
+            "avatar must link into /user-setting"
+        );
+        // Active pill marking follows upstream's PathMap on the client.
+        assert!(html.contains("link.setAttribute('aria-current','page')"));
+        assert!(html.contains("'/memories':['/memories','/memory']"));
+    }
+
+    #[test]
+    fn global_header_localizes_navbar_labels_like_upstream() {
+        let zh = layout("首页", "<p>body</p>", true);
+        for label in [
+            "首页",
+            "知识库",
+            "聊天",
+            "搜索",
+            "智能体",
+            "记忆",
+            "文件管理",
+        ] {
+            assert!(zh.contains(label), "zh navbar label {label} missing");
+        }
+        assert!(zh.contains("简体中文") && zh.contains("English"));
+        assert!(zh.contains("aria-checked='true'"));
+        let en = layout("Home", "<p>body</p>", false);
+        for label in [
+            "Home", "Dataset", "Chat", "Search", "Agent", "Memory", "File",
+        ] {
+            assert!(en.contains(label), "en navbar label {label} missing");
+        }
+    }
+
+    #[test]
+    fn global_header_external_links_follow_environment_overrides() {
+        // Safety: the test process has no other thread reading these variables.
+        unsafe {
+            std::env::set_var("RAYRAG_HELP_URL", "https://docs.example.cn/user-guides");
+            std::env::set_var("RAYRAG_GITHUB_URL", "https://git.example.cn/rayrag");
+        }
+        let html = layout("Home", "<p>body</p>", false);
+        assert!(html.contains("href='https://docs.example.cn/user-guides'"));
+        assert!(html.contains("href='https://git.example.cn/rayrag'"));
+        unsafe {
+            std::env::remove_var("RAYRAG_HELP_URL");
+            std::env::remove_var("RAYRAG_GITHUB_URL");
+        }
+        let restored = layout("Home", "<p>body</p>", false);
+        assert!(restored.contains("href='https://ragflow.io/docs/dev/category/user-guides'"));
+        assert!(restored.contains("href='https://github.com/infiniflow/ragflow'"));
     }
 
     #[test]

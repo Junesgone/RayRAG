@@ -1,0 +1,220 @@
+{
+ "route": "/files",
+ "url": "http://127.0.0.1:9390/files",
+ "title": "Files · RayRAG",
+ "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\n📁 Files\nUpload\nUpload\nFiles\nLoading...",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "📁 Files"
+  },
+  {
+   "tag": "h2",
+   "text": "Upload"
+  },
+  {
+   "tag": "h2",
+   "text": "Files"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Language",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Upload",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RRayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dashboard",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Knowledge Bases",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Agents",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memories",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "🔗",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasources",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Files",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Skills",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/skills",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "A",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"file\"][id=\"fu\"]",
+   "disabled": false,
+   "type": "file",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "Search files...",
+   "selector": "input[id=\"fileQ\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "others": [],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/files.png",
+ "pageErrors": [
+  "TypeError: Cannot read properties of null (reading 'addEventListener')"
+ ]
+}

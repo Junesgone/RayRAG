@@ -1,0 +1,239 @@
+{
+ "route": "/datasets",
+ "url": "http://127.0.0.1:9390/datasets",
+ "title": "Knowledge Bases · RayRAG",
+ "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\nKnowledge Bases\nSort: Name\nSort: Created\n+ New KB\n⋯\nL\nLIVECHK4-1788693713243\n0 files · 0 chunks\nlive check\n⋯\nS\nsmoke-kb\n4 files · 3 chunks\n-\n⋯\nL\nLIVECHK5-1788693756467\n0 files · 0 chunks\nlive check\n⋯\nG\ngpu-embed-test\n19 files · 19 chunks\n-\n⋯\nL\nLIVECHK2-1788693616224\n0 files · 0 chunks\nlive check\n⋯\nU\nUI交互测试KB-mt13ccbo\n0 files · 0 chunks\n-",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "Knowledge Bases"
+  },
+  {
+   "tag": "h3",
+   "text": "LIVECHK4-1788693713243"
+  },
+  {
+   "tag": "h3",
+   "text": "smoke-kb"
+  },
+  {
+   "tag": "h3",
+   "text": "LIVECHK5-1788693756467"
+  },
+  {
+   "tag": "h3",
+   "text": "gpu-embed-test"
+  },
+  {
+   "tag": "h3",
+   "text": "LIVECHK2-1788693616224"
+  },
+  {
+   "tag": "h3",
+   "text": "UI交互测试KB-mt13ccbo"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Language",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ New KB",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RRayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dashboard",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Knowledge Bases",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Agents",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memories",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "🔗",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasources",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Files",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Skills",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/skills",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "A",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "🔍 Search",
+   "selector": "input[id=\"kbSearch\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "select",
+   "testid": "",
+   "role": "",
+   "text": "Sort: NameSort: Created",
+   "selector": "select[id=\"kbSort\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": "",
+   "options": [
+    "Sort: Name",
+    "Sort: Created"
+   ],
+   "value": "name"
+  }
+ ],
+ "others": [],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/datasets.png",
+ "pageErrors": []
+}

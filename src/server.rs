@@ -4107,7 +4107,8 @@ pub async fn run(
         (Some(api_base), Some(api_key), Some(model))
             if !api_base.is_empty() && !model.is_empty() =>
         {
-            tracing::info!(model = %model, api_base = %api_base, "OpenAI-compatible embedder enabled");
+            tracing::info!(model = %model, "Embedding model configured");
+            tracing::debug!(api_base = %api_base, "Embedding endpoint");
             Some(Arc::new(crate::embed::openai_compatible_embedder(
                 &api_base, &api_key, &model,
             )))
@@ -4228,16 +4229,15 @@ pub async fn run(
         tracing::info!(platform, account, "chat channel started");
     }
 
-    // Memory tokenized-field repair hook (RAGFlow
-    // `memory_message_service.fix_missing_tokenized_memory`): upstream only
-    // repairs on the elasticsearch doc engine and logs + returns on every
-    // other engine. RayRAG's zvec/postgres engine computes tokens at query
-    // time and never persists a `tokenized_content_ltks` field, so the guard
-    // short-circuits exactly like the upstream non-elasticsearch path. The
-    // full repair loop itself is ported and unit-tested in
+    // Memory tokenized-field repair hook (upstream
+    // `memory_message_service.fix_missing_tokenized_memory`): the repair only
+    // applies to engines that persist a `tokenized_content_ltks` field. The
+    // active RayRAG engines (zvec vector mirror + PostgreSQL metadata) compute
+    // tokens at query time and never persist that field, so the guard
+    // short-circuits. The full repair loop is ported and unit-tested in
     // `joint_services::fix_missing_tokenized_memory` / `repair_missing_field`.
-    tracing::info!(
-        "Not using elasticsearch as doc engine, no need to fix missing tokenized memory."
+    tracing::debug!(
+        "Memory tokenized-field repair skipped: the active document engine tokenizes at query time"
     );
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;

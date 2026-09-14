@@ -1,0 +1,915 @@
+{
+ "route": "/user-setting/chat-channel",
+ "url": "http://127.0.0.1:9390/user-setting/chat-channel",
+ "title": "Chat channels · RayRAG",
+ "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\nA\nadmin@rayrag.local\n▰\nData sources\n◇\nChat channels\n⬡\nModel providers\nM\nMCP\n♟\nTeam\n●\nProfile\n⌁\nAPI\nv0.3.4 (parity v0.3.4u, rev c7258bb+dirty, built 2026-09-14T12:18:41Z)\n◐\nTheme\n↪\nLog out\nChat channels\nManage your chat channel bots and credentials\nAdded channels\nNo chat channels added yet. Select one below to connect.\nAvailable channels\nSelect a chat channel to add\nC\nClickClack\n+ Add\nConnect a ClickClack bot\nD\nDiscord\n+ Add\nConnect a Discord bot\nD\nDingTalk\n+ Add\nConnect a DingTalk bot\nF\nFeishu / Lark\n+ Add\nConnect a Feishu / Lark bot\nG\nGoogle Chat\n+ Add\nConnect a Google Chat bot\nI\nIRC\n+ Add\nConnect to an IRC server\nL\nLINE\n+ Add\nConnect a LINE messaging bot\nM\nMatrix\n+ Add\nConnect a Matrix bot\nM\nMattermost\n+ Add\nConnect a Mattermost bot\nM\nMicrosoft Teams\n+ Add\nConnect a Microsoft Teams bot\nN\nNextcloud Talk\n+ Add\nConnect a Nextcloud Talk bot\nN\nNostr\n+ Add\nConnect a Nostr bot\nQ\nQQ Bot\n+ Add\nConnect a QQ bot\nS\nSlack\n+ Add\nConnect a Slack bot\nS\nSynology Chat\n+ Add\nConnect a Synology Chat bot\nT\nTelegram\n+ Add\nConnect a Telegram bot\nT\nTlon (Urbit)\n+ Add\nConnect a Tlon (Urbit) bot\nT\nTwitch\n+ Add\nConnect a Twitch chat bot\nW\nWeCom\n+ Add\nConnect a WeCom bot\nW\nWhatsApp\n+ Add\nConnect a WhatsApp bot (QR pairing)\nY\nYuanbao\n+ Add\nConnect a Tencent Yuanbao bot\nZ\nZalo\n+ Add\nConnect a Zalo bot\nZ\nZalo (Personal)\n+ Add\nConnect a personal Zalo account",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "Chat channels"
+  },
+  {
+   "tag": "h2",
+   "text": "Added channels"
+  },
+  {
+   "tag": "h2",
+   "text": "Available channels"
+  },
+  {
+   "tag": "h3",
+   "text": "ClickClack"
+  },
+  {
+   "tag": "h3",
+   "text": "Discord"
+  },
+  {
+   "tag": "h3",
+   "text": "DingTalk"
+  },
+  {
+   "tag": "h3",
+   "text": "Feishu / Lark"
+  },
+  {
+   "tag": "h3",
+   "text": "Google Chat"
+  },
+  {
+   "tag": "h3",
+   "text": "IRC"
+  },
+  {
+   "tag": "h3",
+   "text": "LINE"
+  },
+  {
+   "tag": "h3",
+   "text": "Matrix"
+  },
+  {
+   "tag": "h3",
+   "text": "Mattermost"
+  },
+  {
+   "tag": "h3",
+   "text": "Microsoft Teams"
+  },
+  {
+   "tag": "h3",
+   "text": "Nextcloud Talk"
+  },
+  {
+   "tag": "h3",
+   "text": "Nostr"
+  },
+  {
+   "tag": "h3",
+   "text": "QQ Bot"
+  },
+  {
+   "tag": "h3",
+   "text": "Slack"
+  },
+  {
+   "tag": "h3",
+   "text": "Synology Chat"
+  },
+  {
+   "tag": "h3",
+   "text": "Telegram"
+  },
+  {
+   "tag": "h3",
+   "text": "Tlon (Urbit)"
+  },
+  {
+   "tag": "h3",
+   "text": "Twitch"
+  },
+  {
+   "tag": "h3",
+   "text": "WeCom"
+  },
+  {
+   "tag": "h3",
+   "text": "WhatsApp"
+  },
+  {
+   "tag": "h3",
+   "text": "Yuanbao"
+  },
+  {
+   "tag": "h3",
+   "text": "Zalo"
+  },
+  {
+   "tag": "h3",
+   "text": "Zalo (Personal)"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Language",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Log out",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "+ Add",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RRayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dashboard",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Knowledge Bases",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Agents",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memories",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "🔗",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasources",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Files",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Skills",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/skills",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "A",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Data sources",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/data-source",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat channels",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/chat-channel",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-nav-model-providers",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a[data-testid=\"settings-nav-model-providers\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "MCP",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/mcp",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Team",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/team",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Profile",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/profile",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "API",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/api",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "user-setting-layout",
+   "role": "",
+   "text": "Aadmin@rayrag.local▰Data sources◇Chat channels⬡Model providersMMCP♟Team●Profile⌁",
+   "selector": "div[data-testid=\"user-setting-layout\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "section",
+   "testid": "added-channels-section",
+   "role": "",
+   "text": "Added channelsNo chat channels added yet. Select one below to connect.",
+   "selector": "section[data-testid=\"added-channels-section\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "section",
+   "testid": "available-channels-section",
+   "role": "",
+   "text": "Available channelsSelect a chat channel to addCClickClack+ AddConnect a ClickCla",
+   "selector": "section[data-testid=\"available-channels-section\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "CClickClack+ AddConnect a ClickClack bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "DDiscord+ AddConnect a Discord bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "DDingTalk+ AddConnect a DingTalk bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "FFeishu / Lark+ AddConnect a Feishu / Lark bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "GGoogle Chat+ AddConnect a Google Chat bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "IIRC+ AddConnect to an IRC server",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "LLINE+ AddConnect a LINE messaging bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "MMatrix+ AddConnect a Matrix bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "MMattermost+ AddConnect a Mattermost bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "MMicrosoft Teams+ AddConnect a Microsoft Teams bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "NNextcloud Talk+ AddConnect a Nextcloud Talk bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "NNostr+ AddConnect a Nostr bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "QQQ Bot+ AddConnect a QQ bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "SSlack+ AddConnect a Slack bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "SSynology Chat+ AddConnect a Synology Chat bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "TTelegram+ AddConnect a Telegram bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "TTlon (Urbit)+ AddConnect a Tlon (Urbit) bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "TTwitch+ AddConnect a Twitch chat bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "WWeCom+ AddConnect a WeCom bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "WWhatsApp+ AddConnect a WhatsApp bot (QR pairing)",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "YYuanbao+ AddConnect a Tencent Yuanbao bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "ZZalo+ AddConnect a Zalo bot",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "available-channel-card",
+   "role": "",
+   "text": "ZZalo (Personal)+ AddConnect a personal Zalo account",
+   "selector": "article[data-testid=\"available-channel-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/user-setting-chat-channel.png",
+ "pageErrors": []
+}

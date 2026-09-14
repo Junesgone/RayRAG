@@ -1,0 +1,319 @@
+{
+ "origin": "http://127.0.0.1:11526",
+ "steps": [
+  {
+   "step": "initial",
+   "dump": {
+    "header": true,
+    "controls": [
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "",
+      "href": "/",
+      "target": "",
+      "ariaCurrent": "page",
+      "classes": ""
+     },
+     {
+      "tag": "img",
+      "testid": "",
+      "text": "",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "size-10"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "header.Root",
+      "href": "/",
+      "target": "",
+      "ariaCurrent": "page",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Dataset",
+      "href": "/datasets",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "nav-chat",
+      "text": "Chat",
+      "href": "/chats",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "nav-search",
+      "text": "Search",
+      "href": "/searches",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "nav-agent",
+      "text": "Agent",
+      "href": "/agents",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Memory",
+      "href": "/memories",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "File",
+      "href": "/files",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visib"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "",
+      "href": "https://discord.com/invite/NjYzJD3GM3",
+      "target": "_blank",
+      "ariaCurrent": "",
+      "classes": "p-2 text-text-secondary hover:text-text-primary focus-visible:text-text-primary"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "",
+      "href": "https://github.com/infiniflow/ragflow",
+      "target": "_blank",
+      "ariaCurrent": "",
+      "classes": "p-2 text-text-secondary hover:text-text-primary focus-visible:text-text-primary"
+     },
+     {
+      "tag": "button",
+      "testid": "",
+      "text": "English",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "justify-center whitespace-nowrap text-sm transition-colors outline-0 disabled:pointer-even"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "",
+      "href": "https://ragflow.io/docs/dev/category/user-guides",
+      "target": "_blank",
+      "ariaCurrent": "",
+      "classes": "inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors "
+     },
+     {
+      "tag": "button",
+      "testid": "",
+      "text": "",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors "
+     },
+     {
+      "tag": "a",
+      "testid": "settings-entrypoint",
+      "text": "R",
+      "href": "/user-setting",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "relative ms-3"
+     }
+    ],
+    "navOrder": [
+     {
+      "text": "header.Root",
+      "href": "/",
+      "ariaCurrent": "page"
+     },
+     {
+      "text": "Dataset",
+      "href": "/datasets",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Chat",
+      "href": "/chats",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Search",
+      "href": "/searches",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Agent",
+      "href": "/agents",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Memory",
+      "href": "/memories",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "File",
+      "href": "/files",
+      "ariaCurrent": ""
+     }
+    ]
+   }
+  },
+  {
+   "step": "avatar-click",
+   "before": "http://127.0.0.1:11526/",
+   "after": "http://127.0.0.1:11526/user-setting/data-source",
+   "menus": []
+  },
+  {
+   "step": "language-open",
+   "buttonText": "English",
+   "items": {
+    "expanded": "true",
+    "items": [
+     "English",
+     "简体中文",
+     "繁體中文",
+     "Indonesia",
+     "日本語",
+     "Español",
+     "Tiếng Việt",
+     "Русский",
+     "Português (Brasil)",
+     "Deutsch",
+     "Français",
+     "Italiano",
+     "Български",
+     "العربية",
+     "Türkçe",
+     "한국어"
+    ]
+   }
+  },
+  {
+   "step": "nav-items",
+   "items": [
+    {
+     "text": "header.Root",
+     "href": "/",
+     "testid": "",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Dataset",
+     "href": "/datasets",
+     "testid": "",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Chat",
+     "href": "/chats",
+     "testid": "nav-chat",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Search",
+     "href": "/searches",
+     "testid": "nav-search",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Agent",
+     "href": "/agents",
+     "testid": "nav-agent",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Memory",
+     "href": "/memories",
+     "testid": "",
+     "ariaLabel": ""
+    },
+    {
+     "text": "File",
+     "href": "/files",
+     "testid": "",
+     "ariaLabel": ""
+    }
+   ]
+  },
+  {
+   "step": "nav-active-style",
+   "style": {
+    "background": "rgba(0, 0, 0, 0)",
+    "color": "rgb(22, 22, 24)",
+    "borderRadius": "9999px"
+   }
+  },
+  {
+   "step": "right-cluster",
+   "items": [
+    {
+     "tag": "a",
+     "text": "",
+     "ariaLabel": "",
+     "href": "https://discord.com/invite/NjYzJD3GM3",
+     "target": "_blank"
+    },
+    {
+     "tag": "a",
+     "text": "",
+     "ariaLabel": "",
+     "href": "https://github.com/infiniflow/ragflow",
+     "target": "_blank"
+    },
+    {
+     "tag": "button",
+     "text": "English",
+     "ariaLabel": "",
+     "href": "",
+     "target": ""
+    },
+    {
+     "tag": "a",
+     "text": "",
+     "ariaLabel": "",
+     "href": "https://ragflow.io/docs/dev/category/user-guides",
+     "target": "_blank"
+    },
+    {
+     "tag": "button",
+     "text": "",
+     "ariaLabel": "",
+     "href": "",
+     "target": ""
+    },
+    {
+     "tag": "a",
+     "text": "R",
+     "ariaLabel": "",
+     "href": "/user-setting",
+     "target": ""
+    }
+   ]
+  }
+ ],
+ "pageErrors": []
+}

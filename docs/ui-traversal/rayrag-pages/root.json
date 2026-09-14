@@ -1,0 +1,311 @@
+{
+ "route": "/",
+ "url": "http://127.0.0.1:9390/dashboard",
+ "title": "Dashboard · RayRAG",
+ "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\nDashboard\nKBS\n6\nCHUNKS\n22\nDOCS\n23\nCHATS\n13\nEMBEDDER\n✅\nLLM\n✅\nKnowledge Bases\nSee all →\nL\nLIVECHK4-1788693713243\n0 files · 0 chunks\nS\nsmoke-kb\n4 files · 3 chunks\nL\nLIVECHK5-1788693756467\n0 files · 0 chunks\nG\ngpu-embed-test\n19 files · 19 chunks\nL\nLIVECHK2-1788693616224\n0 files · 0 chunks\nU\nUI交互测试KB-mt13ccbo\n0 files · 0 chunks\nQuick Actions\n+ New KB Search Docs New Chat\nRecent Chats\n测试\n收到！测试通过。👍 请问有什么具体的问题需要我回答，或者需要我协助完成什么任务吗？\nRayRAG 的特点\nReference 1 | embed_test.txt RayRAG 是一个用 Rust 实现的知识库系统。 它对标\nverify-chat\nRayRAG\nID: 315 ├── Title: 百度一下，你就知道 ├── URL: https://www.baidu.com\n测试\n收到！测试通过。👍 请问有什么具体的问题需要我协助，或者想让我帮您完成什么任务吗？",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "Dashboard"
+  },
+  {
+   "tag": "h2",
+   "text": "Knowledge Bases See all →"
+  },
+  {
+   "tag": "h3",
+   "text": "LIVECHK4-1788693713243"
+  },
+  {
+   "tag": "h3",
+   "text": "smoke-kb"
+  },
+  {
+   "tag": "h3",
+   "text": "LIVECHK5-1788693756467"
+  },
+  {
+   "tag": "h3",
+   "text": "gpu-embed-test"
+  },
+  {
+   "tag": "h3",
+   "text": "LIVECHK2-1788693616224"
+  },
+  {
+   "tag": "h3",
+   "text": "UI交互测试KB-mt13ccbo"
+  },
+  {
+   "tag": "h2",
+   "text": "Quick Actions"
+  },
+  {
+   "tag": "h2",
+   "text": "Recent Chats"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Language",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RRayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dashboard",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Knowledge Bases",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Agents",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memories",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "🔗",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasources",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Files",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Skills",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/skills",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "A",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "See all →",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "+ New KB",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search Docs",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "New Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "测试",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat/220d8314-9c81-47c8-b66e-ceb15d8ca546",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RayRAG 的特点",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat/ec26533a-e046-413c-b473-14470bba82bd",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "verify-chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat/16ef2c64-26dd-467a-a867-5fe047e39892",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat/ad2b26a3-6c81-4103-a485-52db29d6f3a7",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "测试",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat/961d90cc-5c19-4528-ba69-8a15bebff4fb",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/root.png",
+ "pageErrors": []
+}

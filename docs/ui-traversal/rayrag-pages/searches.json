@@ -1,0 +1,237 @@
+{
+ "route": "/searches",
+ "url": "http://127.0.0.1:9390/searches",
+ "title": "Search apps · RayRAG",
+ "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\nSearch apps\n+ Create search\nT\ntopk-verify-app\n-\n✏️🗑",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "Search apps"
+  },
+  {
+   "tag": "h3",
+   "text": "topk-verify-app"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Language",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "create-search",
+   "role": "",
+   "text": "+ Create search",
+   "selector": "button[data-testid=\"create-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "✏️",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "🗑",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RRayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dashboard",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Knowledge Bases",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Agents",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memories",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "🔗",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasources",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Files",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Skills",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/skills",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "A",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "input[id=\"sappSearch\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "search-card",
+   "role": "",
+   "text": "Ttopk-verify-app-✏️🗑",
+   "selector": "div[data-testid=\"search-card\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/searches.png",
+ "pageErrors": []
+}

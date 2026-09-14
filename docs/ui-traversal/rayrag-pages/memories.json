@@ -1,0 +1,304 @@
+{
+ "route": "/memories",
+ "url": "http://127.0.0.1:9390/memories",
+ "title": "Memories · RayRAG",
+ "bodyText": "R\nRayRAG\nDashboard\nKnowledge Bases\nSearch\nChat\nAgents\nMemories\n🔗\nFiles\nSkills\nModel providers\n🌓\n中\nA\nMemories\nBuild durable context for your agents.\n＋ Create Memory\nOwner\nAll types\nRaw\nSemantic\nEpisodic\nProcedural\nAll storage\nTable\nV\nverify-mem\nNo description\nraw, semantic\n9/14/2026\n•••\n1 memories\nPrevious\n1 / 1\nNext",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "Memories"
+  },
+  {
+   "tag": "h3",
+   "text": "verify-mem"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Theme",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Language",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "＋ Create Memory",
+   "selector": "button[id=\"memCreate\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Clear",
+   "selector": "button[type=\"button\"][id=\"memOwnerClear\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Apply",
+   "selector": "button[type=\"button\"][id=\"memOwnerApply\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "More actions",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Previous",
+   "selector": "button",
+   "disabled": true,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Next",
+   "selector": "button",
+   "disabled": true,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "RRayRAG",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dashboard",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/dashboard",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Knowledge Bases",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/kbs",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/search",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/chat",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Agents",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memories",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "🔗",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasources",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Files",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Skills",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/skills",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Model providers",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting/model",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "A",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "Search memories",
+   "selector": "input[id=\"memSearch\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "input",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "input[type=\"checkbox\"]",
+   "disabled": false,
+   "type": "checkbox",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "select",
+   "testid": "",
+   "role": "",
+   "text": "Memory type",
+   "selector": "select[id=\"memType\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": "",
+   "options": [
+    "All types",
+    "Raw",
+    "Semantic",
+    "Episodic",
+    "Procedural"
+   ],
+   "value": ""
+  },
+  {
+   "tag": "select",
+   "testid": "",
+   "role": "",
+   "text": "Storage type",
+   "selector": "select[id=\"memStorage\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": "",
+   "options": [
+    "All storage",
+    "Table"
+   ],
+   "value": ""
+  }
+ ],
+ "others": [],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/rayrag-pages/memories.png",
+ "pageErrors": []
+}

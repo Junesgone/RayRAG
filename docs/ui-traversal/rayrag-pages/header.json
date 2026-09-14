@@ -1,0 +1,330 @@
+{
+ "origin": "http://127.0.0.1:9390",
+ "steps": [
+  {
+   "step": "initial",
+   "dump": {
+    "header": true,
+    "controls": [
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "RayRAG",
+      "href": "/",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "logo"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Home",
+      "href": "/",
+      "target": "",
+      "ariaCurrent": "page",
+      "classes": "gnav-icon"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Dataset",
+      "href": "/datasets",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": ""
+     },
+     {
+      "tag": "a",
+      "testid": "nav-chat",
+      "text": "Chat",
+      "href": "/chats",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": ""
+     },
+     {
+      "tag": "a",
+      "testid": "nav-search",
+      "text": "Search",
+      "href": "/searches",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": ""
+     },
+     {
+      "tag": "a",
+      "testid": "nav-agent",
+      "text": "Agent",
+      "href": "/agents",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": ""
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Memory",
+      "href": "/memories",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": ""
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "File",
+      "href": "/files",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": ""
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Discord",
+      "href": "https://discord.com/invite/NjYzJD3GM3",
+      "target": "_blank",
+      "ariaCurrent": "",
+      "classes": "hdr-icon"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "GitHub",
+      "href": "https://github.com/infiniflow/ragflow",
+      "target": "_blank",
+      "ariaCurrent": "",
+      "classes": "hdr-icon"
+     },
+     {
+      "tag": "button",
+      "testid": "language-menu",
+      "text": "English",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "hdr-icon"
+     },
+     {
+      "tag": "button",
+      "testid": "",
+      "text": "English",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "menu-item"
+     },
+     {
+      "tag": "button",
+      "testid": "",
+      "text": "简体中文",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "menu-item"
+     },
+     {
+      "tag": "a",
+      "testid": "",
+      "text": "Help",
+      "href": "https://ragflow.io/docs/dev/category/user-guides",
+      "target": "_blank",
+      "ariaCurrent": "",
+      "classes": "hdr-icon"
+     },
+     {
+      "tag": "button",
+      "testid": "",
+      "text": "Theme",
+      "href": "",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "hdr-icon"
+     },
+     {
+      "tag": "a",
+      "testid": "settings-entrypoint",
+      "text": "User settings",
+      "href": "/user-setting",
+      "target": "",
+      "ariaCurrent": "",
+      "classes": "av"
+     }
+    ],
+    "navOrder": [
+     {
+      "text": "",
+      "href": "/",
+      "ariaCurrent": "page"
+     },
+     {
+      "text": "Dataset",
+      "href": "/datasets",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Chat",
+      "href": "/chats",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Search",
+      "href": "/searches",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Agent",
+      "href": "/agents",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "Memory",
+      "href": "/memories",
+      "ariaCurrent": ""
+     },
+     {
+      "text": "File",
+      "href": "/files",
+      "ariaCurrent": ""
+     }
+    ]
+   }
+  },
+  {
+   "step": "avatar-click",
+   "before": "http://127.0.0.1:9390/dashboard",
+   "after": "http://127.0.0.1:9390/user-setting/data-source",
+   "menus": [
+    "English简体中文"
+   ]
+  },
+  {
+   "step": "language-open",
+   "buttonText": "English⌄",
+   "items": {
+    "expanded": "true",
+    "items": [
+     "English",
+     "简体中文"
+    ]
+   }
+  },
+  {
+   "step": "nav-items",
+   "items": [
+    {
+     "text": "",
+     "href": "/",
+     "testid": "",
+     "ariaLabel": "Home"
+    },
+    {
+     "text": "Dataset",
+     "href": "/datasets",
+     "testid": "",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Chat",
+     "href": "/chats",
+     "testid": "nav-chat",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Search",
+     "href": "/searches",
+     "testid": "nav-search",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Agent",
+     "href": "/agents",
+     "testid": "nav-agent",
+     "ariaLabel": ""
+    },
+    {
+     "text": "Memory",
+     "href": "/memories",
+     "testid": "",
+     "ariaLabel": ""
+    },
+    {
+     "text": "File",
+     "href": "/files",
+     "testid": "",
+     "ariaLabel": ""
+    }
+   ]
+  },
+  {
+   "step": "nav-active-style",
+   "style": {
+    "background": "rgb(246, 246, 247)",
+    "color": "rgb(11, 10, 18)",
+    "borderRadius": "999px"
+   }
+  },
+  {
+   "step": "right-cluster",
+   "items": [
+    {
+     "tag": "a",
+     "text": "",
+     "ariaLabel": "Discord",
+     "href": "https://discord.com/invite/NjYzJD3GM3",
+     "target": "_blank"
+    },
+    {
+     "tag": "a",
+     "text": "",
+     "ariaLabel": "GitHub",
+     "href": "https://github.com/infiniflow/ragflow",
+     "target": "_blank"
+    },
+    {
+     "tag": "button",
+     "text": "English⌄",
+     "ariaLabel": "English",
+     "href": "",
+     "target": ""
+    },
+    {
+     "tag": "button",
+     "text": "English",
+     "ariaLabel": "",
+     "href": "",
+     "target": ""
+    },
+    {
+     "tag": "button",
+     "text": "简体中文",
+     "ariaLabel": "",
+     "href": "",
+     "target": ""
+    },
+    {
+     "tag": "a",
+     "text": "",
+     "ariaLabel": "Help",
+     "href": "https://ragflow.io/docs/dev/category/user-guides",
+     "target": "_blank"
+    },
+    {
+     "tag": "button",
+     "text": "◐",
+     "ariaLabel": "Theme",
+     "href": "",
+     "target": ""
+    },
+    {
+     "tag": "a",
+     "text": "A",
+     "ariaLabel": "User settings",
+     "href": "/user-setting",
+     "target": ""
+    }
+   ]
+  }
+ ],
+ "pageErrors": []
+}

@@ -2,9 +2,55 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-14（对标批次 v0.3.4e–v0.3.4u）
+## [0.3.4] — 2026-09-14（对标批次 v0.3.4e–v0.3.4v）
 
 ### Added
+
+- **全局头部对齐 RAGFlow `layouts/components/header.tsx` + `global-navbar.tsx`**：
+  导航胶囊只保留上游七个入口（Home 图标 → `/`、Dataset `/datasets`、
+  Chat `/chats`、Search `/searches`、Agent `/agents`、Memory `/memories`、
+  File `/files`，含 `nav-chat`/`nav-search`/`nav-agent` test id 与
+  `aria-current='page'` 活动态）；右侧簇改为 Discord、GitHub、语言下拉菜单
+  （当前语言 + ⌄，点击展开、点击外部/Esc 关闭、`role=menuitemradio`）、
+  用户手册外链、主题按钮、头像 → `/user-setting`。原先挂在头部的
+  Dashboard/数据源/Skills/模型提供商入口全部移入头像之后的用户设置侧栏（与
+  上游一致）。外链默认与上游逐字相同，可用 `RAYRAG_DISCORD_URL` /
+  `RAYRAG_GITHUB_URL` / `RAYRAG_HELP_URL` 指向大陆可达镜像。
+- **用户设置侧栏对齐上游 `pages/user-setting/sidebar/index.tsx`**：七项顺序与
+  `setting.*` 标签（含 Profile=概要）、上游 Lucide 图标（server /
+  messages-square / box / plug / users / user / unplug）内联 SVG、底部
+  版本号 + 日/月 `ThemeSwitch` 药丸（`role=switch` + `aria-checked`）+
+  `Log out`/登出 按钮。
+- **`/login` 独立页面壳**（上游 `login-next/index.tsx` 无全局头部）：新增
+  `layout_plain`，登录/注册页不再渲染导航、不再触发用户信息请求。
+- **Docker 构建双网络适配**：新增 `docker/mirror-setup.sh` 与
+  `RAYRAG_MIRROR_PROFILE=auto|cn|global`——`auto` 先探测清华镜像再决定；
+  `cn` 走清华 apt + rsproxy crates.io + ghfast.top GitHub 代理，`global` 直连
+  deb.debian.org / crates.io / github.com；zvec 预编译库按 profile 决定
+  xget 与 GitHub 的先后顺序（另一侧始终作为回退）。
+- **`vendor/zvec-rust/`（v0.7.1 两 crate 逐字副本 + `VENDOR.md` 刷新步骤）**：
+  Docker 构建用 `[patch]` 指向本地副本，镜像构建不再 clone 上游仓库及其
+  C++ 子模块，构建可离线/可复现；crates.io 版本与 `--locked` 语义仅在
+  本地（非 Docker）构建保留。
+
+### Fixed
+
+- **登录页无限刷新**：全局头部脚本会在每个页面拉取 `/api/v1/user/info`，
+  配合 401 跳转在 `/login` 上形成「刷新 → 401 → 跳 /login → 刷新」死循环。
+  修复为：登录页使用独立壳（无头部脚本）；头像请求要求已登录且不在
+  `/login`；401 跳转在 `/login` 上短路。
+- **启动日志中立化**：删除含他家产品名与具体部署地址的日志
+  （原 `Not using elasticsearch as doc engine…` 改为描述自身行为的 debug；
+  embedding 端点从 info 降到 debug，info 只报模型名）。
+
+### Changed
+
+- 新增 3 个头部单测（导航顺序/test id/右侧簇/外链环境变量覆盖）与
+  `header-parity-cdp.mjs`（对 RAGFlow 与 RayRAG 跑同一采集器）、
+  `login-loop-cdp.mjs`（无限刷新回归）；`web::` 54 通过、lib 1442 通过。
+- 台账：`header.tsx`、`global-navbar.tsx`、`theme-button.tsx` 由 reference
+  改判 aligned，`user-setting/sidebar/index.tsx` 由 partial 改判 aligned，
+  `login-next/index.tsx` 记为 partial；汇总 aligned 208 → 212。
 
 - **zvec 0.5.1 → 0.7.1**：`Cargo.toml` 以 git tag `v0.7.1` 锁定
   `zvec-ai/zvec-rust`（该 patch 版本尚未发布到 crates.io，0.7.0 为最新已发布版），
