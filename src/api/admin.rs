@@ -423,7 +423,12 @@ pub async fn delete_user_api_key(
 
 /// GET /api/v1/admin/version
 pub async fn show_version() -> Response {
-    ok(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
+    ok(serde_json::json!({
+        "version": crate::build_info::VERSION,
+        "parity": crate::build_info::PARITY_SLICE,
+        "revision": crate::build_info::revision(),
+        "built_at": crate::build_info::BUILT_AT,
+    }))
 }
 
 /// GET /api/v1/admin/configs — static system configuration snapshot.
@@ -435,7 +440,9 @@ pub async fn get_config(
         return response;
     }
     ok(serde_json::json!([
-        { "name": "version", "value": env!("CARGO_PKG_VERSION") },
+        { "name": "version", "value": crate::build_info::VERSION },
+        { "name": "parity", "value": crate::build_info::PARITY_SLICE },
+        { "name": "revision", "value": crate::build_info::revision() },
         { "name": "timezone", "value": "Asia/Shanghai" },
         { "name": "language", "value": "zh-CN" },
         { "name": "max_file_size_mb", "value": 128 },

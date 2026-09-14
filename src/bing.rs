@@ -16,8 +16,10 @@ use std::sync::OnceLock;
 const BING_ENDPOINT: &str = "https://cn.bing.com/search";
 const BING_ENDPOINT_FALLBACK: &str = "https://www.bing.com/search";
 const MAX_BING_RESPONSE_BODY: usize = 16 << 20;
-const BING_USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) RayRAG/0.1.2";
+const BING_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) RayRAG/",
+    env!("CARGO_PKG_VERSION")
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BingSearchRequest {

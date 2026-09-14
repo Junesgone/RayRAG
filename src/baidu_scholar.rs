@@ -14,8 +14,10 @@ use std::sync::OnceLock;
 
 const BAIDU_SCHOLAR_ENDPOINT: &str = "https://xueshu.baidu.com/s";
 const MAX_BAIDU_SCHOLAR_RESPONSE_BODY: usize = 16 << 20;
-const BAIDU_SCHOLAR_USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) RayRAG/0.1.2";
+const BAIDU_SCHOLAR_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) RayRAG/",
+    env!("CARGO_PKG_VERSION")
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaiduScholarRequest {

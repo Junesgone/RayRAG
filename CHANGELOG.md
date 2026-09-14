@@ -2,6 +2,37 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.4] — 2026-09-14（对标批次 v0.3.4e–v0.3.4u）
+
+### Added
+
+- **zvec 0.5.1 → 0.7.1**：`Cargo.toml` 以 git tag `v0.7.1` 锁定
+  `zvec-ai/zvec-rust`（该 patch 版本尚未发布到 crates.io，0.7.0 为最新已发布版），
+  `Dockerfile` `ZVEC_RUST_VERSION=0.7.1` 拉取同名预编译 `libzvec_c_api.so`
+  （含 `data/jieba_dict/`）。0.7.1 的 Rust API 与既有用法完全兼容
+  （`--locked --all-targets` 0 错；1439 测试全绿），无需源码改动。
+- **构建标识**：新增 `build.rs` 注入 git rev / 工作树脏标记 / 构建时间，
+  `src/lib.rs::build_info` 暴露 `VERSION` + `PARITY_SLICE`；启动横幅与
+  `/api/v1/version`、`/api/v1/system`、`/api/v1/admin/version`、用户设置页脚
+  统一显示 `v0.3.4 (parity v0.3.4u, rev …, built …)`（此前恒为 0.1.2，
+  新旧二进制无法区分）。
+- **`/search` 检索页 rerank 模型树选择器**（上游 `next-search/hooks.ts` +
+  `search-setting.tsx` 的 `use_rerank` + `rerank_id` 段）：rerank 开关展开共享
+  默认模型树选择器（`SEARCH_PAGE_RERANK_SELECTOR_FIELD`），选中值随
+  `POST /api/v1/retrieval` body 的 `rerank_id` 下发；`/search?sapp={id}` 打开时
+  由 `__SAPP__.rerank_id` 反向播种。该选择器保持表单本地态（上游
+  react-hook-form 语义），不写租户默认模型。
+- **RAGFlow UI 遍历工具链**（`scripts/ui-traversal/`）：`ragflow-auth-cdp.mjs`
+  （翻转卡片登录/注册自举，会话持久化于 fnOS Chrome profile）、
+  `ragflow-ui-dump.mjs`（逐路由导出按钮/链接/字段/表头/标签页 + 截图，产物
+  `docs/ui-traversal/ragflow-pages/`），作为 RayRAG UI 一比一对标的结构化基准。
+
+### Changed
+
+- `RayRAG/<version>` User-Agent 统一取自 `CARGO_PKG_VERSION`（原先硬编码
+  0.1.2）；crate 版本 0.1.2 → 0.3.4；`FORM_LOCAL_SAVE_MODEL_DEFAULT` 抽为
+  共享常量（`/search` 与 memory 设置页同源）。
+
 ## [0.3.4d] — 2026-08-19（未发版累积批次 v0.3.3ba–v0.3.4c）
 
 ### Added

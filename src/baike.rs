@@ -16,7 +16,11 @@ use serde_json::Value;
 const BAIKE_ENDPOINT: &str = "https://baike.baidu.com/api/openapi/BaikeLemmaCardApi";
 const BAIKE_APP_ID: &str = "379020";
 const MAX_BAIKE_RESPONSE_BODY: usize = 4 << 20;
-const BAIKE_USER_AGENT: &str = "RayRAG/0.1.2 (Baidu Baike connector)";
+const BAIKE_USER_AGENT: &str = concat!(
+    "RayRAG/",
+    env!("CARGO_PKG_VERSION"),
+    " (Baidu Baike connector)"
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaikeSearchRequest {

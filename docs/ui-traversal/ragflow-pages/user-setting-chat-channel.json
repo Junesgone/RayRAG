@@ -1,0 +1,399 @@
+{
+ "route": "/user-setting/chat-channel",
+ "url": "http://127.0.0.1:11526/user-setting/chat-channel",
+ "title": "RAGFlow",
+ "bodyText": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nLog out\nChat channels\nManage your chat channel bots and credentials\nNo chat channels added yet. Select one below to connect.\nAvailable channels\nSelect a chat channel to add\nDiscord\nAdd\nConnect a Discord bot\nDingTalk\nAdd\nConnect a DingTalk bot\nFeishu / Lark\nAdd\nConnect a Feishu / Lark bot\nQQ Bot\nAdd\nConnect a QQ bot\nTelegram\nAdd\nConnect a Telegram bot\nWeCom\nAdd\nConnect a WeCom bot\nWhatsApp\nAdd\nConnect a WhatsApp bot (QR pairing)",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": ""
+  },
+  {
+   "tag": "h2",
+   "text": "Chat channels"
+  },
+  {
+   "tag": "h2",
+   "text": "Available channelsSelect a chat channel to add"
+  },
+  {
+   "tag": "h3",
+   "text": "Discord"
+  },
+  {
+   "tag": "h3",
+   "text": "DingTalk"
+  },
+  {
+   "tag": "h3",
+   "text": "Feishu / Lark"
+  },
+  {
+   "tag": "h3",
+   "text": "QQ Bot"
+  },
+  {
+   "tag": "h3",
+   "text": "Telegram"
+  },
+  {
+   "tag": "h3",
+   "text": "WeCom"
+  },
+  {
+   "tag": "h3",
+   "text": "WhatsApp"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "English",
+   "selector": "button[type=\"button\"][id=\"radix-:r7:\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "closed"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Data sources",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Chat channels",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "settings-nav-model-providers",
+   "role": "",
+   "text": "Model providers",
+   "selector": "button[data-testid=\"settings-nav-model-providers\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "MCP",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Team",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Profile",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "API",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "switch",
+   "text": "",
+   "selector": "button[role=\"switch\"][type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "true"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Log out",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "header.Root",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dataset",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasets",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-chat",
+   "role": "",
+   "text": "Chat",
+   "selector": "a[data-testid=\"nav-chat\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/chats",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-search",
+   "role": "",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "File",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "English",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/ragflow-pages/user-setting-chat-channel.png"
+}

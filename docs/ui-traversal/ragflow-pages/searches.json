@@ -1,0 +1,204 @@
+{
+ "route": "/searches",
+ "url": "http://127.0.0.1:11526/searches",
+ "title": "RAGFlow",
+ "bodyText": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nNo search app created yet",
+ "headings": [],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "English",
+   "selector": "button[type=\"button\"][id=\"radix-:r4:\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "closed"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "header.Root",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dataset",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasets",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-chat",
+   "role": "",
+   "text": "Chat",
+   "selector": "a[data-testid=\"nav-chat\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/chats",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-search",
+   "role": "",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "File",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "R",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "EnglishR",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "search-list",
+   "role": "",
+   "text": "No search app created yet",
+   "selector": "article[data-testid=\"search-list\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "search-empty-create",
+   "role": "",
+   "text": "No search app created yet",
+   "selector": "article[data-testid=\"search-empty-create\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/ragflow-pages/searches.png"
+}

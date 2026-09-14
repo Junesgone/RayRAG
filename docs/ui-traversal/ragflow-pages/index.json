@@ -1,0 +1,137 @@
+{
+ "origin": "http://127.0.0.1:11526",
+ "generatedAt": "2026-09-14T12:09:37.613Z",
+ "pages": [
+  {
+   "route": "/",
+   "finalUrl": "http://127.0.0.1:11526/",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 6,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/datasets",
+   "finalUrl": "http://127.0.0.1:11526/datasets",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 2,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/searches",
+   "finalUrl": "http://127.0.0.1:11526/searches",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 2,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/agents",
+   "finalUrl": "http://127.0.0.1:11526/agents",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 4,
+    "links": 13,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/memories",
+   "finalUrl": "http://127.0.0.1:11526/memories",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 2,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/files",
+   "finalUrl": "http://127.0.0.1:11526/files",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 8,
+    "links": 14,
+    "fields": 1
+   }
+  },
+  {
+   "route": "/user-setting/data-source",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/data-source",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 45,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/user-setting/chat-channel",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/chat-channel",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 18,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/user-setting/model",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/model",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 93,
+    "links": 57,
+    "fields": 1
+   }
+  },
+  {
+   "route": "/user-setting/mcp",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/mcp",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 15,
+    "links": 12,
+    "fields": 1
+   }
+  },
+  {
+   "route": "/user-setting/team",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/team",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 14,
+    "links": 12,
+    "fields": 2
+   }
+  },
+  {
+   "route": "/user-setting/profile",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/profile",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 15,
+    "links": 12,
+    "fields": 0
+   }
+  },
+  {
+   "route": "/user-setting/api",
+   "finalUrl": "http://127.0.0.1:11526/user-setting/api",
+   "title": "RAGFlow",
+   "counts": {
+    "buttons": 11,
+    "links": 12,
+    "fields": 0
+   }
+  }
+ ],
+ "pageErrors": []
+}

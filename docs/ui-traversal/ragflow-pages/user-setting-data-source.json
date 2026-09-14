@@ -1,0 +1,804 @@
+{
+ "route": "/user-setting/data-source",
+ "url": "http://127.0.0.1:11526/user-setting/data-source",
+ "title": "RAGFlow",
+ "bodyText": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nData sources\nChat channels\nModel providers\nMCP\nTeam\nProfile\nAPI\nLog out\nData sources\nManage your data source and connections\nNo data sources added yet. Select one below to connect.\nAvailable sources\nSelect a data source to add\nConfluence\nAdd\nIntegrate your Confluence workspace to search documentation.\nNotion\nAdd\nSync pages and databases from Notion for knowledge retrieval.\nGoogle Drive\nAdd\nConnect your Google Drive via OAuth and sync specific folders or drives.\nGmail\nAdd\nConnect your Gmail via OAuth to sync emails.\nGoogle Cloud Storage\nAdd\nConnect your Google Cloud Storage bucket to import and sync files.\nOracle Storage\nAdd\nConnect your Oracle Cloud Object Storage bucket to import and sync files.\nS3\nAdd\nConnect to your AWS S3 bucket to import and sync stored files.\nR2\nAdd\nConnect your Cloudflare R2 bucket to import and sync files.\nJira\nAdd\nConnect your Jira workspace to sync issues, comments, and attachments.\nBox\nAdd\nConnect your Box drive to sync files and folders.\nDropbox\nAdd\nConnect your Dropbox to sync files and folders from a chosen account.\nBitbucket\nAdd\nConnect Bitbucket to sync PR content.\nGitLab\nAdd\nConnect GitLab to sync repositories, issues, merge requests, and related documentation.\nGitHub\nAdd\nConnect GitHub to sync pull requests and issues for retrieval.\nMoodle\nAdd\nConnect to your Moodle LMS to sync course content, forums, and resources.\nDiscord\nAdd\nLink your Discord server to access and analyze chat data.",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": ""
+  },
+  {
+   "tag": "h2",
+   "text": "Data sources"
+  },
+  {
+   "tag": "h2",
+   "text": "Available sourcesSelect a data source to add"
+  },
+  {
+   "tag": "h3",
+   "text": "Confluence"
+  },
+  {
+   "tag": "h3",
+   "text": "Notion"
+  },
+  {
+   "tag": "h3",
+   "text": "Google Drive"
+  },
+  {
+   "tag": "h3",
+   "text": "Gmail"
+  },
+  {
+   "tag": "h3",
+   "text": "Google Cloud Storage"
+  },
+  {
+   "tag": "h3",
+   "text": "Oracle Storage"
+  },
+  {
+   "tag": "h3",
+   "text": "S3"
+  },
+  {
+   "tag": "h3",
+   "text": "R2"
+  },
+  {
+   "tag": "h3",
+   "text": "Jira"
+  },
+  {
+   "tag": "h3",
+   "text": "Box"
+  },
+  {
+   "tag": "h3",
+   "text": "Dropbox"
+  },
+  {
+   "tag": "h3",
+   "text": "Bitbucket"
+  },
+  {
+   "tag": "h3",
+   "text": "GitLab"
+  },
+  {
+   "tag": "h3",
+   "text": "GitHub"
+  },
+  {
+   "tag": "h3",
+   "text": "Moodle"
+  },
+  {
+   "tag": "h3",
+   "text": "Discord"
+  },
+  {
+   "tag": "h3",
+   "text": "Zendesk"
+  },
+  {
+   "tag": "h3",
+   "text": "WebDAV"
+  },
+  {
+   "tag": "h3",
+   "text": "Airtable"
+  },
+  {
+   "tag": "h3",
+   "text": "Asana"
+  },
+  {
+   "tag": "h3",
+   "text": "IMAP"
+  },
+  {
+   "tag": "h3",
+   "text": "Dingtalk AI Table"
+  },
+  {
+   "tag": "h3",
+   "text": "SeaFile"
+  },
+  {
+   "tag": "h3",
+   "text": "MySQL"
+  },
+  {
+   "tag": "h3",
+   "text": "PostgreSQL"
+  },
+  {
+   "tag": "h3",
+   "text": "REST API"
+  },
+  {
+   "tag": "h3",
+   "text": "RSS"
+  },
+  {
+   "tag": "h3",
+   "text": "OneDrive"
+  },
+  {
+   "tag": "h3",
+   "text": "Outlook"
+  },
+  {
+   "tag": "h3",
+   "text": "Salesforce"
+  },
+  {
+   "tag": "h3",
+   "text": "Azure Blob Storage"
+  },
+  {
+   "tag": "h3",
+   "text": "Microsoft Teams"
+  },
+  {
+   "tag": "h3",
+   "text": "Slack"
+  },
+  {
+   "tag": "h3",
+   "text": "SharePoint"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "English",
+   "selector": "button[type=\"button\"][id=\"radix-:r7:\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "closed"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Data sources",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Chat channels",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "settings-nav-model-providers",
+   "role": "",
+   "text": "Model providers",
+   "selector": "button[data-testid=\"settings-nav-model-providers\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "MCP",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Team",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Profile",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "API",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "switch",
+   "text": "",
+   "selector": "button[role=\"switch\"][type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "true"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Log out",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Add",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "header.Root",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dataset",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasets",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-chat",
+   "role": "",
+   "text": "Chat",
+   "selector": "a[data-testid=\"nav-chat\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/chats",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-search",
+   "role": "",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "File",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "English",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/ragflow-pages/user-setting-data-source.png"
+}

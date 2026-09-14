@@ -1,0 +1,237 @@
+{
+ "route": "/agents",
+ "url": "http://127.0.0.1:11526/agents",
+ "title": "RAGFlow",
+ "bodyText": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nNo agent app created yet\nCreate from blank\nCreate from template\nImport JSON file",
+ "headings": [],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "English",
+   "selector": "button[type=\"button\"][id=\"radix-:r4:\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "closed"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Create from blank",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Import JSON file",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "header.Root",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dataset",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasets",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-chat",
+   "role": "",
+   "text": "Chat",
+   "selector": "a[data-testid=\"nav-chat\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/chats",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-search",
+   "role": "",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "File",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "R",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Create from template",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/agent-templates",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "EnglishR",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "article",
+   "testid": "agents-list",
+   "role": "",
+   "text": "No agent app created yetCreate from blankCreate from templateImport JSON file",
+   "selector": "article[data-testid=\"agents-list\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "li",
+   "testid": "agents-empty-create",
+   "role": "",
+   "text": "Create from blank",
+   "selector": "li[data-testid=\"agents-empty-create\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/ragflow-pages/agents.png"
+}

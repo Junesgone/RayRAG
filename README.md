@@ -678,10 +678,13 @@ Python/Go 两份目标 parser、`rag/nlp/__init__.py` 和四-provider wrapper �
 ## zvec Rust 后端
 
 默认使用可移植的 JSON 索引。启用 `zvec-ai/zvec-rust` 原生后端时，需要提供
-`libzvec_c_api` 并显式开启 feature：
+`libzvec_c_api` 并显式开启 feature。当前锁定 **v0.7.1**：crate 走 git tag
+`v0.7.1`（该 patch 版本尚未发布到 crates.io），native 库取同名 release 预编译包，
+`ZVEC_LIB_DIR` 指向其解压目录（内含 `libzvec_c_api.so`、`TARGET` 与
+`data/jieba_dict/`）：
 
 ```bash
-export ZVEC_LIB_DIR=/path/to/zvec/build/lib
+export ZVEC_LIB_DIR=$HOME/.local/lib/zvec/0.7.1
 export RAYRAG_VECTOR_BACKEND=zvec
 export RAYRAG_ZVEC_DIR=./zvec-data
 cargo run --bin rayrag --features zvec-backend -- parse document.pdf \

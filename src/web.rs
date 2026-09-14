@@ -416,8 +416,8 @@ fn user_setting_layout(title: &str, body: &str, active: UserSettingSection, zh: 
     }
 
     let shell = format!(
-        r#"<div class='user-setting-layout' data-testid='user-setting-layout'><aside class='user-setting-sidebar' aria-label='User settings'><div class='user-setting-account'><span class='user-setting-avatar' id='userSettingAvatar' aria-hidden='true'>U</span><span class='user-setting-email' id='userSettingEmail'>...</span></div><nav class='user-setting-nav'>{nav}</nav><footer class='user-setting-footer'><span class='user-setting-version'>v{version}</span><button type='button' class='user-setting-footer-button user-setting-theme' aria-label='{theme_label}' onclick='toggleTheme()'><span aria-hidden='true'>◐</span><span class='user-setting-footer-label'>{theme_label}</span></button><button type='button' class='user-setting-footer-button user-setting-logout' aria-label='{logout_label}' onclick='logoutUser()'><span aria-hidden='true'>↪</span><span class='user-setting-footer-label'>{logout_label}</span></button></footer></aside><main class='user-setting-content' data-setting-page='{active_key}'>{body}</main></div><script>function logoutUser(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/login'}}function settingUnauthorized(){{logoutUser()}}function loadSettingUser(){{fetch('/api/v1/user/info').then(function(response){{return response.json()}}).then(function(result){{if(result.code===401){{settingUnauthorized();return}}var user=result.data||{{}};var name=(user.nickname||user.email||'U').trim();document.getElementById('userSettingAvatar').textContent=name.charAt(0).toUpperCase()||'U';document.getElementById('userSettingEmail').textContent=user.email||user.nickname||''}}).catch(function(){{}})}}loadSettingUser()</script>"#,
-        version = env!("CARGO_PKG_VERSION"),
+        r#"<div class='user-setting-layout' data-testid='user-setting-layout'><aside class='user-setting-sidebar' aria-label='User settings'><div class='user-setting-account'><span class='user-setting-avatar' id='userSettingAvatar' aria-hidden='true'>U</span><span class='user-setting-email' id='userSettingEmail'>...</span></div><nav class='user-setting-nav'>{nav}</nav><footer class='user-setting-footer'><span class='user-setting-version'>{version}</span><button type='button' class='user-setting-footer-button user-setting-theme' aria-label='{theme_label}' onclick='toggleTheme()'><span aria-hidden='true'>◐</span><span class='user-setting-footer-label'>{theme_label}</span></button><button type='button' class='user-setting-footer-button user-setting-logout' aria-label='{logout_label}' onclick='logoutUser()'><span aria-hidden='true'>↪</span><span class='user-setting-footer-label'>{logout_label}</span></button></footer></aside><main class='user-setting-content' data-setting-page='{active_key}'>{body}</main></div><script>function logoutUser(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/login'}}function settingUnauthorized(){{logoutUser()}}function loadSettingUser(){{fetch('/api/v1/user/info').then(function(response){{return response.json()}}).then(function(result){{if(result.code===401){{settingUnauthorized();return}}var user=result.data||{{}};var name=(user.nickname||user.email||'U').trim();document.getElementById('userSettingAvatar').textContent=name.charAt(0).toUpperCase()||'U';document.getElementById('userSettingEmail').textContent=user.email||user.nickname||''}}).catch(function(){{}})}}loadSettingUser()</script>"#,
+        version = crate::build_info::version_line(),
         active_key = active.key(),
     );
     layout(title, &shell, zh)
@@ -1650,6 +1650,28 @@ pub async fn chat_detail_page(
     Html(layout(&name, &b, zh))
 }
 
+/// Upstream next-search hooks.ts parity: the search page sidebar carries a
+/// rerank `ModelTreeSelect` (shared tree selector) revealed when the rerank
+/// switch is enabled; the search-app runtime seeds it via `__SAPP__`.
+const SEARCH_PAGE_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "rerank_id",
+    dom_id: "searchRerankSel",
+    label: "Model",
+    update_type: "rerank_id",
+    response_type: "rerank",
+    accepted_types: &["rerank"],
+    required: false,
+    tooltip: "",
+    placeholder: "Please select",
+};
+
+/// Upstream next-search `search-setting.tsx` keeps every drawer value in
+/// react-hook-form state; only `Save`/`Run` consume it. The shared tree body
+/// persists tenant defaults through `PATCH /api/v1/models/default`, so pages
+/// whose selector is purely form-local (retrieval testing, `/search`) redeclare
+/// the hook after the shared body to shadow it.
+const FORM_LOCAL_SAVE_MODEL_DEFAULT: &str = "async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}";
+
 pub async fn search_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -1701,11 +1723,13 @@ pub async fn search_page(
     b.push_str(&chunks.to_string());
     b.push_str(" chunks</p></div>");
     // Search results (hidden initially)
-    b.push_str("<div id='searchView' style='display:none'><div style='display:flex;gap:16px'><div style='flex:1'><div class='card'><div class='sb'><input id='q2' placeholder='Search...' onkeydown='if(event.key===&quot;Enter&quot;)doSearch2()'><button class='btn btn-p' onclick='doSearch2()'>Search</button></div><div style='display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap'><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='rerank'> Re-rank</label><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='hybrid'> BM25+Vector</label><label style='font-size:12px'>");
+    b.push_str("<div id='searchView' style='display:none'><div style='display:flex;gap:16px'><div style='flex:1'><div class='card'><div class='sb'><input id='q2' placeholder='Search...' onkeydown='if(event.key===&quot;Enter&quot;)doSearch2()'><button class='btn btn-p' onclick='doSearch2()'>Search</button></div><div style='display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap'><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='rerank' onchange='searchRerankToggle()'> Re-rank</label><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='hybrid'> BM25+Vector</label><label style='font-size:12px'>");
     b.push_str(t("Knowledge Base", zh));
     b.push_str("</label><select id='kbSel' style='font-size:12px;max-width:200px' onchange='kbSelChange()'><option value='__all__'>All knowledge bases</option></select><label style='font-size:12px'>");
     b.push_str(t("Document Type", zh));
-    b.push_str("</label><select id='docType' style='font-size:12px'><option value=''>All types</option><option value='pdf'>PDF</option><option value='doc'>DOC</option><option value='docx'>DOCX</option><option value='xls'>XLS</option><option value='xlsx'>XLSX</option><option value='ppt'>PPT</option><option value='pptx'>PPTX</option><option value='txt'>TXT</option><option value='md'>MD</option><option value='html'>HTML</option></select></div><div id='kbChips' style='margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:12px'></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>💾 Save as App</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='results' style='margin-top:16px'></div></div>");
+    b.push_str("</label><select id='docType' style='font-size:12px'><option value=''>All types</option><option value='pdf'>PDF</option><option value='doc'>DOC</option><option value='docx'>DOCX</option><option value='xls'>XLS</option><option value='xlsx'>XLSX</option><option value='ppt'>PPT</option><option value='pptx'>PPTX</option><option value='txt'>TXT</option><option value='md'>MD</option><option value='html'>HTML</option></select></div><div id='searchRerankRow' style='display:none;margin-top:8px'>");
+    push_default_model_selector(&mut b, &SEARCH_PAGE_RERANK_SELECTOR_FIELD, zh);
+    b.push_str("</div><div id='kbChips' style='margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:12px'></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>💾 Save as App</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='results' style='margin-top:16px'></div></div>");
     // Settings sidebar
     b.push_str("<div class='card' style='width:240px;flex-shrink:0'><h3>Search Settings</h3><label style='font-size:12px;display:block;margin:8px 0'>");
     b.push_str("Top K");
@@ -1714,7 +1738,28 @@ pub async fn search_page(
     b.push_str("</label><select id='thresh'><option>0.0</option><option selected>0.3</option><option>0.5</option><option>0.7</option></select><label style='font-size:12px;display:block;margin:8px 0'>");
     b.push_str(t("Vector Weight", zh));
     b.push_str("</label><select id='vWeight'><option>0.3</option><option>0.5</option><option selected>0.7</option><option>1.0</option></select><h3 style='margin-top:20px'>Quick Questions</h3><a href='#' onclick='quickQ(\"What is RayRAG?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>What is RayRAG?</a><a href='#' onclick='quickQ(\"How does RAG work?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>How does RAG work?</a></div></div></div>");
-    b.push_str("<script>function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function docTypeOk(c){var t=document.getElementById('docType').value;if(!t)return true;var n=(c.doc_name||c.document_name||'').toLowerCase();return n.indexOf('.'+t)>0};function runSearch(q){var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);var e=r?'/api/v1/retrieval':'/api/v1/search';var body={question:q,top_k:k};var kbs=[];var allOn=false;document.querySelectorAll('.kbCk:checked').forEach(function(c){if(c.value==='__all__'){allOn=true}else{kbs.push(c.value)}});if(kbs.length&&!allOn){body.kb_ids=kbs}if(window.__SAPP__&&__SAPP__.rerank_id){body.rerank_id=__SAPP__.rerank_id}body.similarity_threshold=t;body.vector_similarity_weight=parseFloat(document.getElementById('vWeight').value);if(!h){body.vector_similarity_weight=0};document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=(d.data.chunks||d.data.results||[]).filter(docTypeOk);var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||'<p style=color:var(--tm);padding:24px>No results found.</p>'})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
+    b.push_str("<script>function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;searchRerankToggle();var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function docTypeOk(c){var t=document.getElementById('docType').value;if(!t)return true;var n=(c.doc_name||c.document_name||'').toLowerCase();return n.indexOf('.'+t)>0};function runSearch(q){var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);var e=r?'/api/v1/retrieval':'/api/v1/search';var body={question:q,top_k:k};var kbs=[];var allOn=false;document.querySelectorAll('.kbCk:checked').forEach(function(c){if(c.value==='__all__'){allOn=true}else{kbs.push(c.value)}});if(kbs.length&&!allOn){body.kb_ids=kbs}var rrEl=document.getElementById('searchRerankSel');var rr=rrEl?(rrEl.dataset.value||''):'';if(r&&rr){body.rerank_id=rr}body.similarity_threshold=t;body.vector_similarity_weight=parseFloat(document.getElementById('vWeight').value);if(!h){body.vector_similarity_weight=0};document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(docTypeOk);var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||'<p style=color:var(--tm);padding:24px>No results found.</p>'})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&serde_json::json!([{
+        "fieldId": "rerank_id",
+        "domId": "searchRerankSel",
+        "updateType": "rerank_id",
+        "responseType": "rerank",
+        "acceptedTypes": ["rerank"],
+        "required": false,
+        "placeholder": "Please select"
+    }])));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    b.push_str("function seedModelTrigger(type,value){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;trigger.dataset.value=String(value||'');trigger.dataset.savedValue=String(value||'');renderDefaultModelTrigger(field)}");
+    // Upstream `/search` keeps its settings drawer in react-hook-form state: the
+    // picked rerank model only rides the retrieval request (`search_config
+    // .rerank_id`). Shadow the shared tenant-default persist hook.
+    b.push_str(FORM_LOCAL_SAVE_MODEL_DEFAULT);
+    b.push_str("function searchRerankToggle(){var on=document.getElementById('rerank').checked;var row=document.getElementById('searchRerankRow');if(row)row.style.display=on?'':'none'}");
+    b.push_str("async function loadSearchPageModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}");
+    b.push_str("loadSearchPageModelCatalog().then(function(){var s=window.__SAPP__;if(s&&s.rerank_id)seedModelTrigger('rerank_id',s.rerank_id);searchRerankToggle();});");
+    b.push_str("</script>");
     // Document preview modal
     b.push_str("<div class='modal-overlay' id='docPreview' onclick='if(event.target===this)closePreview()'><div class='modal' style='max-width:700px;max-height:80vh;overflow-y:auto'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='docPreviewTitle' style='flex:1;margin:0'>Document</h2><button class='btn btn-ghost' onclick='closePreview()'>×</button></div><div id='docPreviewContent' style='font-size:14px;line-height:1.8;color:var(--t2);white-space:pre-wrap'></div></div></div>");
     Html(layout(t("Search", zh), &b, zh))
@@ -2357,7 +2402,9 @@ pub async fn memory_setting_page(
     b.push_str(&json_script_value(&memory_fields_payload));
     b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
-    b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}");
+    // memory-model-form keeps embd_id/llm_id in local form state (upstream
+    // react-hook-form), so shadow the tenant-default persist hook.
+    b.push_str(FORM_LOCAL_SAVE_MODEL_DEFAULT);
     b.push_str("function seedModelTrigger(type,value){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;trigger.dataset.value=String(value||'');trigger.dataset.savedValue=String(value||'');renderDefaultModelTrigger(field)}");
     b.push_str("async function loadMemoryModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}loadMemoryModelCatalog();");
     b.push_str("</script><script>const memoryId=");
@@ -2400,8 +2447,8 @@ pub async fn admin_page(
     let mut b = String::new();
     b.push_str("<h1>⚙️ ");
     b.push_str(t("Admin", zh));
-    b.push_str("</h1><div class='card'><h2>System</h2><table><tr><td>Version</td><td class='co'>v");
-    b.push_str(env!("CARGO_PKG_VERSION"));
+    b.push_str("</h1><div class='card'><h2>System</h2><table><tr><td>Version</td><td class='co'>");
+    b.push_str(&crate::build_info::version_line());
     b.push_str("</td></tr><tr><td>Index</td><td class='co'>");
     b.push_str(&state.index_path);
     b.push_str("</td></tr></table></div><div class='card'><h2>Tasks (");
@@ -2947,7 +2994,7 @@ function modelField(type){return MODEL_FIELDS.find(function(field){return field.
 /// outside-pointerdown/Escape listeners. Pages must define the globals
 /// `MODEL_FIELDS`, `DEFAULT_MODEL_CATALOG`, `saveModelDefault` (persist
 /// hook) and a catalog loader (e.g. `loadModelOptions`) themselves.
-const DEFAULT_MODEL_TREE_JS_BODY: &str = r#"function parseDefaultModelValue(value){var parts=String(value||'').split('@');if(parts.length<3)return null;var provider=parts.pop();var instance=parts.pop();var name=parts.join('@');if(!provider||!instance||!name)return null;return {model_provider:provider,model_instance:instance,model_name:name}}
+const DEFAULT_MODEL_TREE_JS_BODY: &str = r#"function modelMessage(text,error){var message=document.getElementById('dmMsg');if(message){message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)'}}function parseDefaultModelValue(value){var parts=String(value||'').split('@');if(parts.length<3)return null;var provider=parts.pop();var instance=parts.pop();var name=parts.join('@');if(!provider||!instance||!name)return null;return {model_provider:provider,model_instance:instance,model_name:name}}
 var DEFAULT_MODEL_CATALOG=[];
 var DEFAULT_MODEL_STATES={};
 	function defaultModelState(field){if(!DEFAULT_MODEL_STATES[field.updateType])DEFAULT_MODEL_STATES[field.updateType]={search:'',expanded:new Set(),requestId:0,pending:false};return DEFAULT_MODEL_STATES[field.updateType]}
@@ -3204,7 +3251,6 @@ pub async fn providers_page(
     b.push_str("</button></div></div></div><script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&model_fields_payload));
     b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
-    b.push_str("function modelMessage(text,error){var message=document.getElementById('dmMsg');if(message){message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)'}}\n");
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
     b.push_str("loadModelOptions();\nconst providerModels=");
     b.push_str(&json_script_value(
@@ -3406,8 +3452,8 @@ pub async fn settings_page(
     let mut b = String::new();
     b.push_str("<h1>⚙️ ");
     b.push_str(t("Settings", zh));
-    b.push_str("</h1><div class='card'><h2>System</h2><table><tr><td>Version</td><td class='co'>v");
-    b.push_str(env!("CARGO_PKG_VERSION"));
+    b.push_str("</h1><div class='card'><h2>System</h2><table><tr><td>Version</td><td class='co'>");
+    b.push_str(&crate::build_info::version_line());
     b.push_str("</td></tr><tr><td>Language</td><td>Rust</td></tr><tr><td>Parsers</td><td>17</td></tr><tr><td>API</td><td>29</td></tr></table></div>" );
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Change Password", zh));
@@ -5056,6 +5102,29 @@ mod kb_ui_tests {
             html.contains("if(!h){body.vector_similarity_weight=0}"),
             "hybrid toggle wiring missing"
         );
+        assert!(
+            html.contains("data-testid='default-model-rerank_id'"),
+            "search page rerank tree trigger missing"
+        );
+        assert!(
+            html.contains("id='searchRerankRow'"),
+            "search page rerank row missing"
+        );
+        assert!(
+            html.contains("searchRerankToggle"),
+            "search page rerank toggle missing"
+        );
+        assert!(
+            html.contains("searchRerankSel"),
+            "runSearch must read searchRerankSel"
+        );
+        // Upstream `/search` keeps the drawer in react-hook-form state: picking a
+        // rerank model must not PATCH the tenant default (that belongs to the
+        // search-app detail page, which persists `search_config.rerank_id`).
+        assert!(
+            html.contains(FORM_LOCAL_SAVE_MODEL_DEFAULT),
+            "search page rerank picker must override the tenant-default persist hook"
+        );
         let plain = Request::builder()
             .uri("/search")
             .body(Body::empty())
@@ -5500,7 +5569,10 @@ mod kb_ui_tests {
             "class='user-setting-nav-item active' href='/user-setting/model' data-setting-key='/model'"
         ));
         assert_eq!(html.matches(" aria-current='page'").count(), 1);
-        assert!(html.contains("class='user-setting-version'>v0.1.2"));
+        assert!(html.contains(&format!(
+            "class='user-setting-version'>{}",
+            crate::build_info::version_line()
+        )));
         assert!(html.contains("onclick='toggleTheme()'"));
         assert!(html.contains("onclick='logoutUser()'"));
         assert!(html.contains("result.code===401"));

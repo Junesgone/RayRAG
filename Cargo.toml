@@ -1,10 +1,11 @@
 [package]
 name = "rayrag"
-version = "0.1.2"
+version = "0.3.4"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]
 license = "Apache-2.0"
+build = "build.rs"
 
 [features]
 default = []
@@ -16,7 +17,12 @@ flate2 = "1"
 # Real zvec vector database bindings. The backend is opt-in so the default
 # build never downloads or links a native library. Set ZVEC_LIB_DIR when
 # building with --features zvec-backend.
-zvec-rust = { version = "=0.5.1", optional = true }
+#
+# v0.7.1 is tracked by its release tag because the crate is not yet published
+# to crates.io at that patch level (0.7.0 is the newest published version);
+# the tag pins the exact source that the v0.7.1 prebuilt libzvec_c_api.so ships
+# with (Dockerfile ARG ZVEC_RUST_VERSION=0.7.1).
+zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.7.1", optional = true }
 
 # Optional synchronous PostgreSQL mirror used by the existing synchronous
 # atomic persistence boundary. PostgreSQL 18.4 is the deployment baseline.

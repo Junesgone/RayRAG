@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_WIKIPEDIA_RESPONSE_BODY: usize = 16 << 20;
-const WIKIPEDIA_USER_AGENT: &str = "RayRAG/0.1.2 (RAGFlow-compatible Wikipedia tool)";
+const WIKIPEDIA_USER_AGENT: &str = concat!(
+    "RayRAG/",
+    env!("CARGO_PKG_VERSION"),
+    " (RAGFlow-compatible Wikipedia tool)"
+);
 
 pub const WIKIPEDIA_LANGUAGES: &[&str] = &[
     "af", "pl", "ar", "ast", "az", "bg", "nan", "bn", "be", "ca", "cs", "cy", "da", "de", "et",

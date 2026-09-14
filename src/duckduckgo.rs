@@ -20,8 +20,10 @@ const DUCKDUCKGO_HOME_ENDPOINT: &str = "https://duckduckgo.com/";
 const DUCKDUCKGO_NEWS_ENDPOINT: &str = "https://duckduckgo.com/news.js";
 const DUCKDUCKGO_INSTANT_ENDPOINT: &str = "https://api.duckduckgo.com/";
 const MAX_DUCKDUCKGO_RESPONSE_BODY: usize = 16 << 20;
-const DUCKDUCKGO_USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 RayRAG/0.1.2";
+const DUCKDUCKGO_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 RayRAG/",
+    env!("CARGO_PKG_VERSION")
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DuckDuckGoChannel {

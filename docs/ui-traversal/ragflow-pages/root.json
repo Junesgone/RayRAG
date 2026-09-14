@@ -1,0 +1,239 @@
+{
+ "route": "/",
+ "url": "http://127.0.0.1:11526/",
+ "title": "RAGFlow",
+ "bodyText": "header.Root\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nWelcome to RAGFlow\nDataset\nNo dataset created yet\nChat\nChat\nSearch\nAgent\nMemory\nNo chat app created yet",
+ "headings": [
+  {
+   "tag": "h1",
+   "text": "Welcome to RAGFlow"
+  },
+  {
+   "tag": "h2",
+   "text": "Dataset"
+  },
+  {
+   "tag": "h2",
+   "text": "Chat"
+  }
+ ],
+ "buttons": [
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "English",
+   "selector": "button[type=\"button\"][id=\"radix-:r4:\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": "closed"
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "button",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Chat",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Search",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Agent",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  },
+  {
+   "tag": "button",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "button[type=\"button\"]",
+   "disabled": false,
+   "type": "button",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "links": [
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "header.Root",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Dataset",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/datasets",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-chat",
+   "role": "",
+   "text": "Chat",
+   "selector": "a[data-testid=\"nav-chat\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/chats",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-search",
+   "role": "",
+   "text": "Search",
+   "selector": "a[data-testid=\"nav-search\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/searches",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "nav-agent",
+   "role": "",
+   "text": "Agent",
+   "selector": "a[data-testid=\"nav-agent\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/agents",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "Memory",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/memories",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "File",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "/files",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://discord.com/invite/NjYzJD3GM3",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://github.com/infiniflow/ragflow",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "",
+   "role": "",
+   "text": "",
+   "selector": "a",
+   "disabled": false,
+   "type": "",
+   "href": "https://ragflow.io/docs/dev/category/user-guides",
+   "state": ""
+  },
+  {
+   "tag": "a",
+   "testid": "settings-entrypoint",
+   "role": "",
+   "text": "R",
+   "selector": "a[data-testid=\"settings-entrypoint\"]",
+   "disabled": false,
+   "type": "",
+   "href": "/user-setting",
+   "state": ""
+  }
+ ],
+ "fields": [],
+ "others": [
+  {
+   "tag": "div",
+   "testid": "auth-status",
+   "role": "",
+   "text": "EnglishR",
+   "selector": "div[data-testid=\"auth-status\"]",
+   "disabled": false,
+   "type": "",
+   "href": "",
+   "state": ""
+  }
+ ],
+ "tableHeaders": [],
+ "tabs": [],
+ "screenshot": "docs/ui-traversal/ragflow-pages/root.png"
+}

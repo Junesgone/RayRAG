@@ -17,6 +17,43 @@
 pub use embed::Embedder;
 pub use search::SearchEngine;
 
+/// Build identity reported by the startup banner and the version APIs.
+///
+/// `VERSION` is the crate version (`Cargo.toml`), `PARITY_SLICE` the RAGFlow
+/// parity slice currently landed (kept in step with
+/// `docs/ragflow-v0.26.4-coverage.md` and `运维记录.md`), and the remaining
+/// fields come from `build.rs` so a running process can be traced back to the
+/// revision it was built from.
+pub mod build_info {
+    /// Crate version from `Cargo.toml`.
+    pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+    /// RAGFlow parity slice currently landed in this build.
+    pub const PARITY_SLICE: &str = "v0.3.4u";
+    /// Short git revision the binary was built from.
+    pub const GIT_REV: &str = env!("RAYRAG_BUILD_GIT_REV");
+    /// `clean` or `dirty` working-tree marker captured at build time.
+    pub const GIT_DIRTY: &str = env!("RAYRAG_BUILD_GIT_DIRTY");
+    /// UTC timestamp of the build.
+    pub const BUILT_AT: &str = env!("RAYRAG_BUILD_TIME");
+
+    /// Revision plus working-tree marker, e.g. `c7258bb+dirty`.
+    pub fn revision() -> String {
+        if GIT_DIRTY == "dirty" {
+            format!("{GIT_REV}+dirty")
+        } else {
+            GIT_REV.to_string()
+        }
+    }
+
+    /// One-line identity used by the startup banner.
+    pub fn version_line() -> String {
+        format!(
+            "v{VERSION} (parity {PARITY_SLICE}, rev {}, built {BUILT_AT})",
+            revision()
+        )
+    }
+}
+
 pub mod advanced_rag;
 pub mod agent;
 pub mod agent_checkpoint;

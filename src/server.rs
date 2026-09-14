@@ -3247,7 +3247,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 Json(ApiResponse {
                     code: 0,
                     message: "ok".into(),
-                    data: Some(serde_json::json!({"version":env!("CARGO_PKG_VERSION")})),
+                    data: Some(serde_json::json!({
+                        "version": crate::build_info::VERSION,
+                        "parity": crate::build_info::PARITY_SLICE,
+                        "revision": crate::build_info::revision(),
+                        "built_at": crate::build_info::BUILT_AT,
+                    })),
                 })
             }),
         )
@@ -4236,11 +4241,7 @@ pub async fn run(
     );
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    tracing::info!(
-        "RayRAG v{} on http://0.0.0.0:{}",
-        env!("CARGO_PKG_VERSION"),
-        port
-    );
+    tracing::info!("RayRAG {} on http://0.0.0.0:{}", crate::build_info::version_line(), port);
     // Chat channel stop hook: on shutdown, stop every running channel.
     let shutdown = async move {
         if let Err(error) = tokio::signal::ctrl_c().await {

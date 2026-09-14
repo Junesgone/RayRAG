@@ -15,7 +15,10 @@ use std::sync::OnceLock;
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q";
 const TENCENT_SUGGEST_ENDPOINT: &str = "https://smartbox.gtimg.cn/s3/?v=2&q=";
 const MAX_TENCENT_RESPONSE_BODY: usize = 16 << 20;
-const TENCENT_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) RayRAG/0.1.2";
+const TENCENT_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (X11; Linux x86_64) RayRAG/",
+    env!("CARGO_PKG_VERSION")
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TencentFinanceRequest {

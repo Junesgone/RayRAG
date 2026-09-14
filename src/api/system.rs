@@ -95,7 +95,7 @@ pub async fn get_system() -> impl IntoResponse {
     Json(serde_json::json!({
         "code": 0,
         "data": SystemConfig {
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: crate::build_info::VERSION.into(),
             timezone: "Asia/Shanghai".into(),
             language: "zh-CN".into(),
             max_file_size_mb: 128,
@@ -185,7 +185,10 @@ pub async fn system_status_detail(
             },
             "database": database,
             "task_executor_heartbeats": task_executor_heartbeats,
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::build_info::VERSION,
+            "parity": crate::build_info::PARITY_SLICE,
+            "revision": crate::build_info::revision(),
+            "built_at": crate::build_info::BUILT_AT,
             "embedder_loaded": state.embedder.is_some(),
             "llm_configured": state.llm.is_some(),
             "index_size": if auth.is_admin { state.engine.read().unwrap().len() } else { 0 },
