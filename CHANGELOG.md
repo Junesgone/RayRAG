@@ -6,6 +6,15 @@ All notable changes to RayRAG are documented in this file.
 
 ### Added
 
+- **`/datasets` 列表页对齐上游 `pages/datasets/index.tsx`**：ListFilterBar
+  （标题 + 搜索 + `Create dataset` 主按钮）、卡片网格（字母头像/名称/`N files`/⋮ 菜单）、
+  `RAGFlowPagination` 式页脚（共 N 条 + 每页 12/24/48 + 上一页/下一页）与两种空态
+  （无数据无关键词 → 居中虚线空卡可点击创建；搜索无结果 → 保留工具栏、空卡不可点）。
+  创建弹层 = Name + Embedding model（共享默认模型树，默认取租户默认 embedding，
+  仅随 POST body 提交）+ Parse type（Built-in/Pipeline）+ Chunking method + Save/Close；
+  ⋮ 菜单 = Rename（弹层）/ Delete（`Delete dataset` 二次确认弹层）。⋮ 字形改内联 SVG。
+
+
 - **首页 `/` 对齐上游 `pages/home/index.tsx`**（原为 308 跳 `/dashboard`）：欢迎横幅
   （`header.welcome` + 渐变品牌字）、Dataset 区（最多 6 张卡 + `common.seeAll` 卡，
   空态为 `empty.datasetTitle` 虚线卡）、Applications 区（Chat/Search/Agent/Memory

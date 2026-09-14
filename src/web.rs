@@ -372,7 +372,7 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str(language_name);
     h.push_str("' onclick='toggleHeaderMenu(\"hdrLangMenu\",event)'>");
     h.push_str(language_name);
-    h.push_str("<span aria-hidden='true'>⌄</span></button><div class='menu-panel' role='menu'>");
+    h.push_str("<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m6 9 6 6 6-6'/></svg></button><div class='menu-panel' role='menu'>");
     h.push_str("<button type='button' role='menuitemradio' class='menu-item' aria-checked='");
     h.push_str(if zh { "false" } else { "true" });
     h.push_str("' onclick='setLang(\"en\")'>English</button>");
@@ -754,7 +754,7 @@ pub async fn index(req: axum::http::Request<axum::body::Body>) -> impl IntoRespo
     } else {
         "Delete this dataset?"
     }));
-    b.push_str("};var homeApp='chats';const HOME_ENDPOINT={chats:'/api/v1/chats',searches:'/api/v1/searchapps',agents:'/api/v1/agents',memories:'/api/v1/memories'};function homeEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function homeInitial(name){var text=String(name||'R').trim();return (text.charAt(0)||'R').toUpperCase()}function homeSeeAll(href){return \"<article class='home-card home-see-all' tabindex='0' role='button' onclick=\\\"location.href='\"+href+\"'\\\"><span>\"+HOME_LABELS.seeAll+\"</span><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m9 18 6-6-6-6'/></svg></article>\"}function homeEmpty(kind,href){return \"<article class='home-empty-card' tabindex='0' role='button' data-testid='home-empty-\"+kind+\"' onclick=\\\"location.href='\"+href+\"'\\\"><span class='home-empty-plus' aria-hidden='true'>+</span><span>\"+HOME_LABELS.empty[kind]+\"</span></article>\"}function homeAppCard(kind,item){var name=homeEscape(item.name||item.title);var stamp=item.update_time||item.update_date||item.created_at||'';var when=stamp?new Date(isNaN(Number(stamp))?stamp:Number(stamp)).toLocaleString():'';var href=kind==='chats'?'/chat/'+item.id:(kind==='searches'?'/search?sapp='+item.id:(kind==='agents'?'/agent/'+item.id:'/memory/'+item.id));return \"<article class='home-card' tabindex='0' role='button' data-testid='home-app-card' onclick=\\\"location.href='\"+href+\"'\\\"><span class='home-card-avatar' aria-hidden='true'>\"+homeInitial(name)+\"</span><span class='home-card-body'><span class='home-card-title'>\"+name+\"</span><span class='home-card-meta'>\"+homeEscape(when)+\"</span></span></article>\"}function homeDatasetCard(item){var name=homeEscape(item.name);var files=(item.doc_count||0)+' '+HOME_LABELS.files;return \"<article class='home-card' tabindex='0' role='button' data-testid='home-dataset-card' onclick=\\\"location.href='/dataset/\"+item.id+\"'\\\"><span class='home-card-avatar' aria-hidden='true'>\"+homeInitial(name)+\"</span><span class='home-card-body'><span class='home-card-title'>\"+name+\"</span><span class='home-card-meta'>\"+homeEscape(files)+\"</span></span><span class='home-card-more' role='button' tabindex='0' aria-label='More' data-testid='home-dataset-more' onclick=\\\"event.stopPropagation();homeDatasetMenu(event,'\"+item.id+\"','\"+name+\"')\\\">⋮</span></article>\"}function homeDatasetMenu(event,id,name){event.stopPropagation();var existing=document.getElementById('homeDatasetMenu');if(existing)existing.remove();var menu=document.createElement('div');menu.id='homeDatasetMenu';menu.className='home-card-menu';menu.innerHTML=\"<button type='button' onclick='homeRenameDataset(\\\"\"+id+\"\\\",\\\"\"+name+\"\\\")'>\"+HOME_LABELS.rename+\"</button><button type='button' class='danger' onclick='homeDeleteDataset(\\\"\"+id+\"\\\")'>\"+HOME_LABELS.remove+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-140)+'px';setTimeout(function(){document.addEventListener('click',homeCloseMenu,{once:true})},0)}function homeCloseMenu(){var menu=document.getElementById('homeDatasetMenu');if(menu)menu.remove()}function homeRenameDataset(id,name){homeCloseMenu();var next=prompt(HOME_LABELS.rename,name);if(!next||next===name)return;fetch('/api/v1/datasets/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:next})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');loadHomeDatasets()}).catch(function(error){alert(error.message)})}function homeDeleteDataset(id){homeCloseMenu();if(!confirm(HOME_LABELS.removeConfirm))return;fetch('/api/v1/datasets/'+id,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');loadHomeDatasets()}).catch(function(error){alert(error.message)})}function loadHomeDatasets(){fetch('/api/v1/datasets').then(function(response){return response.json()}).then(function(data){var list=(data.data&&(data.data.items||data.data))||[];if(!Array.isArray(list))list=[];var host=document.getElementById('homeDatasets');if(!host)return;if(!list.length){host.innerHTML=homeEmpty('datasets','/datasets?isCreate=true');return}var html=list.slice(0,6).map(homeDatasetCard).join('');html+=homeSeeAll('/datasets');host.innerHTML=html}).catch(function(){})}function homeSelectApp(kind){homeApp=kind;document.querySelectorAll('.segmented-item').forEach(function(button){var on=button.getAttribute('data-app')===kind;button.classList.toggle('active',on);button.setAttribute('aria-selected',on?'true':'false')});var label=document.getElementById('homeAppsLabel');if(label)label.textContent=HOME_LABELS.labels[kind]||kind;var icon=document.getElementById('homeAppsIcon');var source=document.querySelector('.segmented-item[data-app=\\\"'+kind+'\\\"]');if(icon&&source)icon.innerHTML=source.getAttribute('data-icon')||'';loadHomeApps()}function loadHomeApps(){var kind=homeApp;var endpoint=HOME_ENDPOINT[kind];var host=document.getElementById('homeApps');if(!host)return;host.innerHTML='';fetch(endpoint).then(function(response){return response.json()}).then(function(data){var payload=data.data||{};var list=Array.isArray(payload)?payload:(payload.items||payload.canvas||payload.memory_list||payload.chats||payload.list||[]);if(!Array.isArray(list))list=[];if(!list.length){host.innerHTML=homeEmpty(kind,kind==='chats'?'/chats?isCreate=true':(kind==='searches'?'/searches?isCreate=true':(kind==='agents'?'/agents?isCreate=true':'/memories?isCreate=true')));return}var html=list.slice(0,6).map(function(item){return homeAppCard(kind,item)}).join('');html+=homeSeeAll('/'+kind);host.innerHTML=html}).catch(function(){})}loadHomeDatasets();loadHomeApps()</script>");
+    b.push_str("};var homeApp='chats';const HOME_ENDPOINT={chats:'/api/v1/chats',searches:'/api/v1/searchapps',agents:'/api/v1/agents',memories:'/api/v1/memories'};function homeEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function homeInitial(name){var text=String(name||'R').trim();return (text.charAt(0)||'R').toUpperCase()}function homeSeeAll(href){return \"<article class='home-card home-see-all' tabindex='0' role='button' onclick=\\\"location.href='\"+href+\"'\\\"><span>\"+HOME_LABELS.seeAll+\"</span><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m9 18 6-6-6-6'/></svg></article>\"}function homeEmpty(kind,href){return \"<article class='home-empty-card' tabindex='0' role='button' data-testid='home-empty-\"+kind+\"' onclick=\\\"location.href='\"+href+\"'\\\"><span class='home-empty-plus' aria-hidden='true'>+</span><span>\"+HOME_LABELS.empty[kind]+\"</span></article>\"}function homeAppCard(kind,item){var name=homeEscape(item.name||item.title);var stamp=item.update_time||item.update_date||item.created_at||'';var when=stamp?new Date(isNaN(Number(stamp))?stamp:Number(stamp)).toLocaleString():'';var href=kind==='chats'?'/chat/'+item.id:(kind==='searches'?'/search?sapp='+item.id:(kind==='agents'?'/agent/'+item.id:'/memory/'+item.id));return \"<article class='home-card' tabindex='0' role='button' data-testid='home-app-card' onclick=\\\"location.href='\"+href+\"'\\\"><span class='home-card-avatar' aria-hidden='true'>\"+homeInitial(name)+\"</span><span class='home-card-body'><span class='home-card-title'>\"+name+\"</span><span class='home-card-meta'>\"+homeEscape(when)+\"</span></span></article>\"}function homeDatasetCard(item){var name=homeEscape(item.name);var files=(item.doc_count||0)+' '+HOME_LABELS.files;return \"<article class='home-card' tabindex='0' role='button' data-testid='home-dataset-card' onclick=\\\"location.href='/dataset/\"+item.id+\"'\\\"><span class='home-card-avatar' aria-hidden='true'>\"+homeInitial(name)+\"</span><span class='home-card-body'><span class='home-card-title'>\"+name+\"</span><span class='home-card-meta'>\"+homeEscape(files)+\"</span></span><span class='home-card-more' role='button' tabindex='0' aria-label='More' data-testid='home-dataset-more' onclick=\\\"event.stopPropagation();homeDatasetMenu(event,'\"+item.id+\"','\"+name+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function homeDatasetMenu(event,id,name){event.stopPropagation();var existing=document.getElementById('homeDatasetMenu');if(existing)existing.remove();var menu=document.createElement('div');menu.id='homeDatasetMenu';menu.className='home-card-menu';menu.innerHTML=\"<button type='button' onclick='homeRenameDataset(\\\"\"+id+\"\\\",\\\"\"+name+\"\\\")'>\"+HOME_LABELS.rename+\"</button><button type='button' class='danger' onclick='homeDeleteDataset(\\\"\"+id+\"\\\")'>\"+HOME_LABELS.remove+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-140)+'px';setTimeout(function(){document.addEventListener('click',homeCloseMenu,{once:true})},0)}function homeCloseMenu(){var menu=document.getElementById('homeDatasetMenu');if(menu)menu.remove()}function homeRenameDataset(id,name){homeCloseMenu();var next=prompt(HOME_LABELS.rename,name);if(!next||next===name)return;fetch('/api/v1/datasets/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:next})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');loadHomeDatasets()}).catch(function(error){alert(error.message)})}function homeDeleteDataset(id){homeCloseMenu();if(!confirm(HOME_LABELS.removeConfirm))return;fetch('/api/v1/datasets/'+id,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');loadHomeDatasets()}).catch(function(error){alert(error.message)})}function loadHomeDatasets(){fetch('/api/v1/datasets').then(function(response){return response.json()}).then(function(data){var list=(data.data&&(data.data.items||data.data))||[];if(!Array.isArray(list))list=[];var host=document.getElementById('homeDatasets');if(!host)return;if(!list.length){host.innerHTML=homeEmpty('datasets','/datasets?isCreate=true');return}var html=list.slice(0,6).map(homeDatasetCard).join('');html+=homeSeeAll('/datasets');host.innerHTML=html}).catch(function(){})}function homeSelectApp(kind){homeApp=kind;document.querySelectorAll('.segmented-item').forEach(function(button){var on=button.getAttribute('data-app')===kind;button.classList.toggle('active',on);button.setAttribute('aria-selected',on?'true':'false')});var label=document.getElementById('homeAppsLabel');if(label)label.textContent=HOME_LABELS.labels[kind]||kind;var icon=document.getElementById('homeAppsIcon');var source=document.querySelector('.segmented-item[data-app=\\\"'+kind+'\\\"]');if(icon&&source)icon.innerHTML=source.getAttribute('data-icon')||'';loadHomeApps()}function loadHomeApps(){var kind=homeApp;var endpoint=HOME_ENDPOINT[kind];var host=document.getElementById('homeApps');if(!host)return;host.innerHTML='';fetch(endpoint).then(function(response){return response.json()}).then(function(data){var payload=data.data||{};var list=Array.isArray(payload)?payload:(payload.items||payload.canvas||payload.memory_list||payload.chats||payload.list||[]);if(!Array.isArray(list))list=[];if(!list.length){host.innerHTML=homeEmpty(kind,kind==='chats'?'/chats?isCreate=true':(kind==='searches'?'/searches?isCreate=true':(kind==='agents'?'/agents?isCreate=true':'/memories?isCreate=true')));return}var html=list.slice(0,6).map(function(item){return homeAppCard(kind,item)}).join('');html+=homeSeeAll('/'+kind);host.innerHTML=html}).catch(function(){})}loadHomeDatasets();loadHomeApps()</script>");
     Html(layout(title, &b, zh))
 }
 
@@ -993,11 +993,184 @@ pub async fn kb_detail_alias(
     kb_detail_page(State(state), Path(id), req).await
 }
 
+/// Upstream `pages/datasets/index.tsx`: `/datasets` is the dataset list page
+/// (ListFilterBar with search + `knowledgeList.createKnowledgeBase` button,
+/// card grid with a per-card Rename/Delete dropdown, the `RAGFlowPagination`
+/// footer and the dashed `empty.datasetTitle` card that opens the create
+/// dialog). The legacy `/kbs` page stays available as the older surface.
+const DATASET_CREATE_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
+    field_id: "embedding_model",
+    dom_id: "dsCreateEmbd",
+    label: "Embedding model",
+    update_type: "embd_id",
+    response_type: "embedding",
+    accepted_types: &["embedding"],
+    required: true,
+    tooltip: "",
+    placeholder: "Select an embedding model",
+};
+
+pub async fn datasets_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let _ = &state;
+    let zh = detect_lang(req.headers());
+    let title_label = t("Dataset", zh);
+    let create_label = if zh {
+        "创建知识库"
+    } else {
+        "Create dataset"
+    };
+    let name_label = if zh { "名称" } else { "Name" };
+    let name_placeholder = if zh {
+        "请输入名称"
+    } else {
+        "Please input name."
+    };
+    let embedding_label = if zh {
+        "嵌入模型"
+    } else {
+        "Embedding model"
+    };
+    let parse_type_label = if zh { "解析方法" } else { "Parse type" };
+    let built_in_label = if zh { "内置" } else { "Built-in" };
+    let chunk_method_label = if zh {
+        "切片方法"
+    } else {
+        "Chunking method"
+    };
+    let search_placeholder = if zh { "搜索" } else { "Search" };
+    let save_label = if zh { "保存" } else { "Save" };
+    let close_label = if zh { "关闭" } else { "Close" };
+    let rename_label = if zh { "重命名" } else { "Rename" };
+    let delete_label = if zh { "删除" } else { "Delete" };
+    let ok_label = if zh { "确认" } else { "Ok" };
+    let cancel_label = if zh { "取消" } else { "Cancel" };
+    let delete_title = if zh {
+        "删除知识库"
+    } else {
+        "Delete dataset"
+    };
+    let empty_label = if zh {
+        "尚未创建知识库"
+    } else {
+        "No dataset created yet"
+    };
+    let files_label = if zh { "个文件" } else { "files" };
+    let total_label = if zh { "共" } else { "Total" };
+    let chunk_required = if zh {
+        "分块方法必填"
+    } else {
+        "Chunk method is required"
+    };
+    let embedding_required = if zh {
+        "选择嵌入模型"
+    } else {
+        "Select an embedding model"
+    };
+
+    let mut b = String::with_capacity(16384);
+    b.push_str("<article class='list-page' data-testid='datasets-list'><header class='list-filter-bar'><h1 class='list-title'><span class='list-title-icon' aria-hidden='true'>");
+    b.push_str(dataset_icon_svg());
+    b.push_str("</span>");
+    b.push_str(title_label);
+    b.push_str("</h1><div class='list-bar-actions'><input id='dsSearch' class='list-search' type='search' placeholder='");
+    b.push_str(search_placeholder);
+    b.push_str("' aria-label='");
+    b.push_str(search_placeholder);
+    b.push_str("' oninput='dsSearchInput(this.value)'><button type='button' class='btn btn-p' data-testid='datasets-create' onclick='dsOpenCreate()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' aria-hidden='true'><path d='M12 5v14M5 12h14'/></svg>");
+    b.push_str(create_label);
+    b.push_str("</button></div></header><div class='ds-card-grid' id='dsCards' data-testid='datasets-cards'></div><footer class='list-pagination' id='dsPagination'></footer></article>");
+
+    // Create dialog (upstream DatasetCreatingDialog + InputForm).
+    b.push_str("<div class='modal-overlay' id='dsCreateDialog' data-testid='dataset-create-dialog' onclick='if(event.target===this)dsCloseCreate()'><div class='modal' style='max-width:425px' role='dialog' aria-modal='true' aria-labelledby='dsCreateTitle'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='dsCreateTitle' style='flex:1;margin:0'>");
+    b.push_str(create_label);
+    b.push_str("</h2><button class='btn btn-ghost' type='button' aria-label='");
+    b.push_str(close_label);
+    b.push_str("' onclick='dsCloseCreate()'>×</button></div><div class='ds-form' id='dsCreateForm'><label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(name_label);
+    b.push_str("</span><input id='dsCreateName' placeholder='");
+    b.push_str(name_placeholder);
+    b.push_str("' autocomplete='off'><span class='ds-field-error' id='dsCreateNameError'></span></label><div class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(embedding_label);
+    b.push_str("</span>");
+    push_default_model_selector(&mut b, &DATASET_CREATE_EMBD_SELECTOR_FIELD, zh);
+    b.push_str("<span class='ds-field-error' id='dsCreateEmbdError'></span></div><div class='ds-field'><span class='ds-field-label'>");
+    b.push_str(parse_type_label);
+    b.push_str("</span><div class='ds-radio-row'><label class='ds-radio'><input type='radio' name='dsParseType' value='built_in' checked onchange='dsParseTypeChange()'> <span>");
+    b.push_str(built_in_label);
+    b.push_str("</span></label><label class='ds-radio'><input type='radio' name='dsParseType' value='pipeline' onchange='dsParseTypeChange()'> <span>Pipeline</span></label></div></div><label class='ds-field' id='dsChunkField'><span class='ds-field-label required'>");
+    b.push_str(chunk_method_label);
+    b.push_str("</span><select id='dsCreateChunk'><option value='naive'>General</option><option value='qa'>Q&amp;A</option><option value='manual'>Manual</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='one'>One</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='tag'>Tag</option><option value='knowledge_graph'>Knowledge Graph</option></select><span class='ds-field-error' id='dsCreateChunkError'></span></label></div><div class='ds-dialog-footer'><button type='button' class='btn btn-p' id='dsCreateSubmit' onclick='dsCreate()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+
+    // Rename dialog + destructive confirm dialog (upstream RenameDialog /
+    // ConfirmDeleteDialog).
+    b.push_str("<div class='modal-overlay' id='dsRenameDialog' data-testid='dataset-rename-dialog' onclick='if(event.target===this)dsCloseRename()'><div class='modal' style='max-width:420px' role='dialog' aria-modal='true' aria-labelledby='dsRenameTitle'><h2 id='dsRenameTitle' style='margin-top:0'>");
+    b.push_str(rename_label);
+    b.push_str("</h2><label class='ds-field'><span class='ds-field-label'>");
+    b.push_str(name_label);
+    b.push_str("</span><input id='dsRenameName' autocomplete='off'><span class='ds-field-error' id='dsRenameError'></span></label><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='dsCloseRename()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-p' onclick='dsRenameSubmit()'>");
+    b.push_str(save_label);
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='dsDeleteDialog' data-testid='dataset-delete-dialog' onclick='if(event.target===this)dsCloseDelete()'><div class='modal' style='max-width:420px' role='dialog' aria-modal='true' aria-labelledby='dsDeleteTitle'><h2 id='dsDeleteTitle' style='margin-top:0'>");
+    b.push_str(delete_title);
+    b.push_str("</h2><div class='ds-delete-target'><span class='ds-delete-avatar' id='dsDeleteAvatar' aria-hidden='true'>D</span><span id='dsDeleteName'>...</span></div><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='dsCloseDelete()'>");
+    b.push_str(cancel_label);
+    b.push_str("</button><button type='button' class='btn btn-d' data-testid='dataset-delete-confirm' onclick='dsDeleteSubmit()'>");
+    b.push_str(ok_label);
+    b.push_str("</button></div></div></div>");
+
+    // Behaviour: list loading/rendering, create, rename, delete, pagination.
+    b.push_str("<script>const DS_LABELS={empty:");
+    b.push_str(&json_script_string(empty_label));
+    b.push_str(",rename:");
+    b.push_str(&json_script_string(rename_label));
+    b.push_str(",remove:");
+    b.push_str(&json_script_string(delete_label));
+    b.push_str(",files:");
+    b.push_str(&json_script_string(files_label));
+    b.push_str(",total:");
+    b.push_str(&json_script_string(total_label));
+    b.push_str(",nameRequired:");
+    b.push_str(&json_script_string(name_placeholder));
+    b.push_str(",embeddingRequired:");
+    b.push_str(&json_script_string(embedding_required));
+    b.push_str(",chunkRequired:");
+    b.push_str(&json_script_string(chunk_required));
+    b.push_str("};let dsItems=[];let dsPage=1;let dsPageSize=12;let dsKeyword='';let dsPendingDelete=null;let dsPendingRename=null;function dsEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function dsInitial(name){var text=String(name||'D').trim();return (text.charAt(0)||'D').toUpperCase()}function dsModelValue(){var trigger=document.getElementById('dsCreateEmbd');return trigger?(trigger.dataset.value||''):''}function dsSearchInput(value){dsKeyword=String(value||'').trim().toLowerCase();dsPage=1;dsRender()}function dsFiltered(){if(!dsKeyword)return dsItems;return dsItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(dsKeyword)>=0})}function dsRender(){var host=document.getElementById('dsCards');if(!host)return;var page=document.querySelector('.list-page');var list=dsFiltered();if(!list.length&&!dsKeyword){if(page)page.classList.add('ds-page-blank');host.innerHTML=dsEmptyCard(true);dsRenderPagination(0);return}if(page)page.classList.remove('ds-page-blank');if(!list.length){host.innerHTML=dsEmptyCard(false);dsRenderPagination(0);return}var pages=Math.max(1,Math.ceil(list.length/dsPageSize));if(dsPage>pages)dsPage=pages;var slice=list.slice((dsPage-1)*dsPageSize,dsPage*dsPageSize);host.innerHTML=slice.map(dsCard).join('');dsRenderPagination(list.length)}function dsEmptyCard(withAction){var action=withAction!==false?\" onclick='dsOpenCreate()'\":'';var role=withAction!==false?\" role='button' tabindex='0'\":'';return \"<article class='home-empty-card ds-empty-card'\"+role+action+\" data-testid='datasets-empty'><span class='ds-empty-icon' aria-hidden='true'><svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><ellipse cx='12' cy='5' rx='8' ry='3'/><path d='M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5'/><path d='M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'/></svg></span><span>\"+DS_LABELS.empty+\"</span>\"+(withAction!==false?\"<span class='home-empty-plus' aria-hidden='true'>+</span>\":'')+\"</article>\"}function dsCard(item){var name=dsEscape(item.name);var files=(item.doc_count||0)+' '+DS_LABELS.files;return \"<article class='ds-card' tabindex='0' role='button' data-testid='dataset-card' data-id='\"+item.id+\"' onclick=\\\"location.href='/dataset/\"+item.id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+dsInitial(name)+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+dsEscape(files)+\"</span></span><span class='ds-card-more' role='button' tabindex='0' aria-label='More' data-testid='dataset-card-more' onclick=\\\"event.stopPropagation();dsMenu(event,'\"+item.id+\"')\\\"><svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='5' r='1.7'/><circle cx='12' cy='12' r='1.7'/><circle cx='12' cy='19' r='1.7'/></svg></span></article>\"}function dsRenderPagination(total){var host=document.getElementById('dsPagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/dsPageSize));host.innerHTML=\"<span class='list-total'>\"+DS_LABELS.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='dsPageSizeChange(this.value)'><option value='12'\"+(dsPageSize===12?' selected':'')+\">12</option><option value='24'\"+(dsPageSize===24?' selected':'')+\">24</option><option value='48'\"+(dsPageSize===48?' selected':'')+\">48</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(dsPage<=1?'disabled':'')+\" onclick='dsGoto(dsPage-1)'>‹</button><span class='list-page-now'>\"+dsPage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(dsPage>=pages?'disabled':'')+\" onclick='dsGoto(dsPage+1)'>›</button></span>\"}function dsGoto(page){dsPage=page;dsRender()}function dsPageSizeChange(value){dsPageSize=parseInt(value,10)||12;dsPage=1;dsRender()}function dsLoad(){fetch('/api/v1/datasets').then(function(response){return response.json()}).then(function(data){var payload=data.data;dsItems=Array.isArray(payload)?payload:((payload&&payload.items)||[]);dsRender()}).catch(function(){})}function dsOpenCreate(){document.getElementById('dsCreateDialog').classList.add('show')}function dsCloseCreate(){document.getElementById('dsCreateDialog').classList.remove('show')}function dsParseTypeChange(){var value=dsParseType();var field=document.getElementById('dsChunkField');if(field)field.style.display=value==='pipeline'?'none':''}function dsParseType(){var checked=document.querySelector(\"input[name='dsParseType']:checked\");return checked?checked.value:'built_in'}function dsSetError(id,text){var node=document.getElementById(id);if(node)node.textContent=text||''}function dsCreate(){var name=document.getElementById('dsCreateName').value.trim();var embedding=dsModelValue();var parseType=dsParseType();var chunk=document.getElementById('dsCreateChunk').value;var ok=true;dsSetError('dsCreateNameError','');dsSetError('dsCreateEmbdError','');dsSetError('dsCreateChunkError','');if(!name){dsSetError('dsCreateNameError',DS_LABELS.nameRequired);ok=false}if(!embedding){dsSetError('dsCreateEmbdError',DS_LABELS.embeddingRequired);ok=false}if(parseType==='built_in'&&!chunk){dsSetError('dsCreateChunkError',DS_LABELS.chunkRequired);ok=false}if(!ok)return;var body={name:name,embedding_model:embedding,parse_type:parseType};if(parseType==='built_in')body.chunk_method=chunk;fetch('/api/v1/datasets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create failed');document.getElementById('dsCreateName').value='';dsCloseCreate();dsLoad()}).catch(function(error){dsSetError('dsCreateNameError',error.message)})}function dsMenu(event,id){event.stopPropagation();var existing=document.getElementById('dsCardMenu');if(existing)existing.remove();var menu=document.createElement('div');menu.id='dsCardMenu';menu.className='home-card-menu';menu.setAttribute('role','menu');menu.innerHTML=\"<button type='button' role='menuitem' onclick='dsOpenRename(\\\"\"+id+\"\\\")'>\"+DS_LABELS.rename+\"</button><button type='button' role='menuitem' class='danger' onclick='dsOpenDelete(\\\"\"+id+\"\\\")'>\"+DS_LABELS.remove+\"</button>\";document.body.appendChild(menu);var rect=event.currentTarget.getBoundingClientRect();menu.style.top=(rect.bottom+window.scrollY+4)+'px';menu.style.left=(rect.right+window.scrollX-150)+'px';setTimeout(function(){document.addEventListener('click',dsCloseMenu,{once:true})},0)}function dsCloseMenu(){var menu=document.getElementById('dsCardMenu');if(menu)menu.remove()}function dsOpenRename(id){dsCloseMenu();var item=dsItems.find(function(entry){return entry.id===id})||{};dsPendingRename=id;document.getElementById('dsRenameName').value=item.name||'';dsSetError('dsRenameError','');document.getElementById('dsRenameDialog').classList.add('show')}function dsCloseRename(){document.getElementById('dsRenameDialog').classList.remove('show')}function dsRenameSubmit(){if(!dsPendingRename)return;var name=document.getElementById('dsRenameName').value.trim();if(!name){dsSetError('dsRenameError',DS_LABELS.nameRequired);return}fetch('/api/v1/datasets/'+dsPendingRename,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');dsCloseRename();dsLoad()}).catch(function(error){dsSetError('dsRenameError',error.message)})}function dsOpenDelete(id){dsCloseMenu();var item=dsItems.find(function(entry){return entry.id===id})||{};dsPendingDelete=id;document.getElementById('dsDeleteName').textContent=item.name||'';document.getElementById('dsDeleteAvatar').textContent=dsInitial(item.name);document.getElementById('dsDeleteDialog').classList.add('show')}function dsCloseDelete(){document.getElementById('dsDeleteDialog').classList.remove('show')}function dsDeleteSubmit(){if(!dsPendingDelete)return;fetch('/api/v1/datasets/'+dsPendingDelete,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');dsCloseDelete();dsLoad()}).catch(function(error){alert(error.message)})}async function dsSeedEmbeddingDefault(){try{var response=await fetch('/api/v1/models/default');var data=await response.json();if(!response.ok||data.code!==0)return;var models=(data.data&&data.data.models)||[];var embedding=models.find(function(model){return String(model.model_type)==='embedding'});var trigger=document.getElementById('dsCreateEmbd');if(!embedding||!trigger||trigger.dataset.value)return;trigger.dataset.value=embedding.selector||'';trigger.dataset.savedValue=embedding.selector||'';renderDefaultModelTrigger(modelField('embd_id'))}catch(error){}}async function loadDsModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});await dsSeedEmbeddingDefault()}catch(error){}}dsLoad();loadDsModelCatalog()</script>");
+    b.push_str("<script>const MODEL_FIELDS=");
+    b.push_str(&json_script_value(&serde_json::json!([{
+        "fieldId": DATASET_CREATE_EMBD_SELECTOR_FIELD.field_id,
+        "domId": DATASET_CREATE_EMBD_SELECTOR_FIELD.dom_id,
+        "updateType": DATASET_CREATE_EMBD_SELECTOR_FIELD.update_type,
+        "responseType": DATASET_CREATE_EMBD_SELECTOR_FIELD.response_type,
+        "acceptedTypes": DATASET_CREATE_EMBD_SELECTOR_FIELD.accepted_types,
+        "required": DATASET_CREATE_EMBD_SELECTOR_FIELD.required,
+        "placeholder": DATASET_CREATE_EMBD_SELECTOR_FIELD.placeholder,
+    }])));
+    b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
+    b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
+    // The create dialog keeps the embedding choice in form state: it travels in
+    // the POST body and never through PATCH /api/v1/models/default.
+    b.push_str(FORM_LOCAL_SAVE_MODEL_DEFAULT);
+    b.push_str("</script>");
+    Html(layout(title_label, &b, zh))
+}
+
+fn dataset_icon_svg() -> &'static str {
+    "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><ellipse cx='12' cy='5' rx='8' ry='3'/><path d='M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5'/><path d='M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'/></svg>"
+}
+
 pub async fn datasets_alias(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
-    kbs_page(State(state), req).await
+    datasets_page(State(state), req).await
 }
 
 /// dataset/kb 配置页 embedding 树选择器字段（上游 common-item.tsx EmbeddingSelect，
@@ -5785,6 +5958,63 @@ mod kb_ui_tests {
         // RAGFlow user-setting 团队页：邀请
         assert!(html.contains("inviteUser"), "invite button missing");
         assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[tokio::test]
+    async fn datasets_page_matches_upstream_list_filter_bar_cards_and_dialogs() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/datasets")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(datasets_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(
+            html.contains("data-testid='datasets-list'"),
+            "list shell missing"
+        );
+        assert!(html.contains("class='list-filter-bar'"));
+        assert!(html.contains("data-testid='datasets-create'"));
+        assert!(
+            html.contains(">Create dataset</button>"),
+            "upstream button label"
+        );
+        assert!(html.contains("placeholder='Search'"));
+        assert!(html.contains("data-testid='datasets-cards'"));
+        assert!(html.contains("data-testid='dataset-create-dialog'"));
+        assert!(html.contains("placeholder='Please input name.'"));
+        assert!(html.contains("data-testid='default-model-embedding_model'"));
+        assert!(html.contains("name='dsParseType' value='built_in' checked"));
+        assert!(html.contains("name='dsParseType' value='pipeline'"));
+        assert!(html.contains("data-testid='dataset-rename-dialog'"));
+        assert!(html.contains("data-testid='dataset-delete-dialog'"));
+        assert!(html.contains(">Delete dataset</h2>"));
+        assert!(html.contains("Chunk method is required"));
+        assert!(html.contains("No dataset created yet"));
+        assert!(html.contains(FORM_LOCAL_SAVE_MODEL_DEFAULT));
+        assert!(
+            html.contains("'/api/v1/models/default'"),
+            "tenant default seeding"
+        );
+        assert!(html.contains("dsRenderPagination") && html.contains("dsDeleteSubmit"));
+        let zh_request = Request::builder()
+            .uri("/datasets")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(datasets_page(State(state), zh_request).await).await;
+        for label in [
+            "创建知识库",
+            "名称",
+            "嵌入模型",
+            "解析方法",
+            "内置",
+            "切片方法",
+            "尚未创建知识库",
+        ] {
+            assert!(zh_html.contains(label), "zh datasets label {label} missing");
+        }
     }
 
     #[tokio::test]
