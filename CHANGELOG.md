@@ -20,6 +20,7 @@ All notable changes to RayRAG are documented in this file.
 - **登录页脚本 `SyntaxError`**：渠道按钮 `innerHTML` 模板中的嵌套双引号让整段登录脚本失效，改为
   `data-channel` + `addEventListener` 绑定。
 - **`/api/v1/auth/login/channels` 此前不存在**（页面静默失败、渠道区永不渲染），现补实现。
+- **`/api/v1/version` 短暂 401**：v0.3.5o 重写 `public_api_path` 时漏掉该自建端点，已补回并纳入白名单单测。
 
 
 ### Added

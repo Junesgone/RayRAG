@@ -2975,9 +2975,12 @@ fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
     // segment-wise instead of as literals.
-    const PATTERNS: [&str; 8] = [
+    const PATTERNS: [&str; 9] = [
         "/api/v1/auth/login",
         "/api/v1/user/register",
+        // RayRAG's own build-identity endpoint stays public; losing it broke the
+        // banner/version probes in the v0.3.5o rewrite.
+        "/api/v1/version",
         "/api/v1/system/password-public-key",
         "/api/v1/system/healthz",
         // Upstream `system_api.version` / `get_config`, plus the OAuth entry
@@ -4338,6 +4341,7 @@ mod tests {
         for path in [
             "/api/v1/auth/login",
             "/api/v1/user/register",
+            "/api/v1/version",
             "/api/v1/system/healthz",
             "/api/v1/system/version",
             "/api/v1/system/config",
