@@ -2,7 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5s）
+## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5t）
+
+### Changed
+
+- **技能检索配置弹层对齐上游 `search-config-modal.tsx`**：补 `configDesc` 说明、权重/阈值改滑杆并带实时读数
+  （`Hybrid (N% Keyword + M% Vector)` / `.toFixed(1)`）、三档说明与 Top K(1..100)、新增 Index Fields 四字段编辑器
+  （Name/Tags/Description/Content 各带开关与权重，保存写入 `field_config` 并支持回填），全量文案中英双语。
+- **CDP 探针** `scripts/ui-traversal/skills-config-cdp.mjs`：滑块实时文案、字段编辑、保存后 GET 复核与重开回填。
+
 
 ### Added
 
