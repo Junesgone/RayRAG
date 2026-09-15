@@ -133,3 +133,16 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .ds-tag-table th,.ds-tag-table td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left}
 .ds-tag-table td:last-child{text-align:right;white-space:nowrap}
 .ds-tag-table .btn{display:inline-flex;align-items:center;gap:4px}
+/* Joined teams table (upstream `tenant-table.tsx`): avatar + name column, the
+   tri-state update-date sort header, link-style invite actions and the icon-only
+   quit button, plus loading/no-data rows. */
+.team-table th .team-sort{padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.team-table th .team-sort:hover{color:var(--t)}
+.team-name-cell{display:flex;align-items:center;gap:6px}
+.team-avatar{display:inline-flex;width:20px;height:20px;flex:0 0 20px;align-items:center;justify-content:center;border-radius:50%;background:var(--nab);color:var(--p);font-size:11px;font-weight:700}
+.team-link,.team-agree,.team-refuse{margin-right:10px;padding:0;border:0;background:transparent;color:var(--p);font:inherit;cursor:pointer;text-decoration:none}
+.team-link:hover,.team-agree:hover,.team-refuse:hover{text-decoration:underline}
+.team-quit svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.team-loading{text-align:center;padding:24px}
+.team-spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--bd);border-right-color:transparent;border-radius:50%;animation:team-spin 1s linear infinite}
+@keyframes team-spin{to{transform:rotate(360deg)}}

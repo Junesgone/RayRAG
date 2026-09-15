@@ -28,7 +28,7 @@ pub mod build_info {
     /// Crate version from `Cargo.toml`.
     pub const VERSION: &str = env!("CARGO_PKG_VERSION");
     /// RAGFlow parity slice currently landed in this build.
-    pub const PARITY_SLICE: &str = "v0.3.5t";
+    pub const PARITY_SLICE: &str = "v0.3.5u";
     /// Short git revision the binary was built from.
     pub const GIT_REV: &str = env!("RAYRAG_BUILD_GIT_REV");
     /// `clean` or `dirty` working-tree marker captured at build time.
@@ -116,6 +116,7 @@ pub mod naive;
 pub mod naming;
 pub mod nlp;
 pub mod nlp_enhanced;
+pub mod oauth_config;
 pub mod ocr;
 pub mod one;
 pub mod paper;
@@ -123,7 +124,6 @@ pub mod parser;
 pub mod parser_config;
 pub mod password_transport;
 pub mod persistence;
-pub mod oauth_config;
 pub mod pipeline;
 pub mod plugin;
 pub mod presentation;

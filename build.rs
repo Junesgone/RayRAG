@@ -26,6 +26,11 @@ fn main() {
     // Re-run when the checked-out revision changes.
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");
+    // ...and whenever the compiled sources change, so `built_at` describes the
+    // source snapshot a binary was produced from instead of a cached value.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=Cargo.lock");
 
     let rev = std::env::var("RAYRAG_BUILD_GIT_REV")
         .ok()

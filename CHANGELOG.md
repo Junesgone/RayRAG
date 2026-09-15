@@ -2,9 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5t）
+## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5u）
 
 ### Changed
+
+- **Joined teams 表逐列对齐上游 `tenant-table.tsx`**：四列 Name（头像+昵称）/ Update date（三态排序按钮，↕/↑/↓）/
+  Email / Action；`invite` 行渲染链接式 Agree/Refuse，`normal` 且非本人租户渲染纯图标 ghost Quit，owner 行留空；
+  补 loading 转圈行与 `No data` 空行；日期统一走上游 `utils/date.ts::formatDate` 的 `DD/MM/YYYY HH:mm:ss`，
+  Quit 用 lucide `LogOut` 图标。后端 `/api/v1/tenants` 关联 owner 的 nickname/email/avatar 与 `update_date`
+  （自持租户合成行回退到账号创建时间），成员接口同步补 avatar。
+- **CDP 探针** `scripts/ui-traversal/joined-teams-cdp.mjs`：live payload 键、loading 行、四态排序顺序与图标、
+  搜索过滤、空数据行、恢复默认。
 
 - **技能检索配置弹层对齐上游 `search-config-modal.tsx`**：补 `configDesc` 说明、权重/阈值改滑杆并带实时读数
   （`Hybrid (N% Keyword + M% Vector)` / `.toFixed(1)`）、三档说明与 Top K(1..100)、新增 Index Fields 四字段编辑器

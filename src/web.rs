@@ -677,7 +677,19 @@ pub async fn user_setting_team_page(
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let title = if zh { "团队" } else { "Team" };
-    let body = r#"<h1>Team</h1><div class='card' data-testid='team-members-card'><div class='user-setting-card-head'><div><h2>Team members</h2><span id='teamWorkspaceTitle' class='team-workspace-label'>Workspace</span></div><div class='user-setting-actions'><input id='memberSearch' type='search' placeholder='Search' aria-label='Search team members' oninput='renderMemberTable()'><button class='btn btn-p btn-sm' type='button' onclick='openTeamInvite()'>Invite member</button></div></div><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Name</th><th><button class='team-sort' type='button' id='teamSort' onclick='toggleMemberSort()'>Date <span id='teamSortIcon'>↕</span></button></th><th>Email</th><th>State</th><th>Action</th></tr></thead><tbody id='memberRows'></tbody></table></div></div><div class='card' data-testid='joined-teams-card'><div class='user-setting-card-head'><h2>Joined teams</h2><div class='user-setting-actions'><input id='teamSearch' type='search' placeholder='Search' aria-label='Search joined teams' oninput='renderTeamTable()'></div></div><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Name</th><th>State</th><th>Action</th></tr></thead><tbody id='teamRows'></tbody></table></div></div><div class='modal-overlay' id='teamInviteDialog' data-testid='team-invite-dialog' onclick='if(event.target===this)closeTeamInvite()'><div class='modal' style='max-width:440px' role='dialog' aria-modal='true' aria-labelledby='teamInviteTitle'><h2 id='teamInviteTitle'>Add</h2><label class='provider-instance-field'>Email<input id='inviteEmail' type='email' autocomplete='email' placeholder='Email'><p id='inviteEmailError' class='provider-instance-error'></p></label><p class='user-setting-description'>Only registered users can be invited. Please register the account before sending an invitation.</p><p id='inviteStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeTeamInvite()'>Cancel</button><button class='btn btn-p' id='inviteOk' type='button' onclick='submitTeamInvite()'>Ok</button></div></div></div><div class='modal-overlay' id='teamConfirmDialog' data-testid='team-confirm-dialog' onclick='if(event.target===this)closeTeamConfirm()'><div class='modal' style='max-width:440px' role='alertdialog' aria-modal='true' aria-labelledby='teamConfirmTitle'><h2 id='teamConfirmTitle'>Confirm</h2><p id='teamConfirmText' class='user-setting-description'></p><p id='teamConfirmStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeTeamConfirm()'>Cancel</button><button class='btn btn-d' id='teamConfirmOk' type='button' onclick='runTeamConfirm()'>Delete</button></div></div></div><script>var teamState={members:[],teams:[],memberSort:null,memberFilter:'',teamFilter:'',selfId:null,confirmAction:null};function teamApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function formatTeamDate(ms){if(!ms)return '';var date=new Date(ms);var pad=function(value){return String(value).padStart(2,'0')};return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes())}function teamRoleBadge(role){var label={owner:'Owner',admin:'Admin',normal:'Member',invite:'Invited'}[role]||role;return "<span class='badge team-role-"+role+"'>"+label+"</span>"}async function loadTeam(){var info=await teamApi('/api/v1/user/info');var me=(info.data&&info.data.id)||null;teamState.selfId=me;var workspace=(info.data&&info.data.nickname)||'';document.getElementById('teamWorkspaceTitle').textContent=workspace+' workspace';if(me){var members=await teamApi('/api/v1/tenants/'+encodeURIComponent(me)+'/users');teamState.members=members.data||[]}var teams=await teamApi('/api/v1/tenants');teamState.teams=teams.data||[];renderMemberTable();renderTeamTable()}function sortedMembers(){var rows=teamState.members.filter(function(row){var query=teamState.memberFilter.toLowerCase();return !query||(row.nickname||'').toLowerCase().indexOf(query)>=0||(row.email||'').toLowerCase().indexOf(query)>=0});if(teamState.memberSort){rows=rows.slice().sort(function(left,right){var diff=(left.update_date||0)-(right.update_date||0);return teamState.memberSort==='asc'?diff:-diff})}return rows}function renderMemberTable(){teamState.memberFilter=document.getElementById('memberSearch').value;var body=document.getElementById('memberRows');body.replaceChildren();sortedMembers().forEach(function(row){var tr=document.createElement('tr');tr.dataset.testid='team-member-row';var name=document.createElement('td');name.textContent=row.nickname||'';var date=document.createElement('td');date.textContent=formatTeamDate(row.update_date);var email=document.createElement('td');email.textContent=row.email||'';var role=document.createElement('td');role.innerHTML=teamRoleBadge(row.role);var action=document.createElement('td');if(row.role!=='owner'){var remove=document.createElement('button');remove.type='button';remove.className='btn btn-d btn-sm';remove.textContent='Delete';remove.onclick=function(){confirmRemoveMember(row)};action.appendChild(remove)}tr.append(name,date,email,role,action);body.appendChild(tr)});if(!sortedMembers().length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=5;td.className='team-empty';td.textContent='No members.';tr.appendChild(td);body.appendChild(tr)}}function toggleMemberSort(){teamState.memberSort=teamState.memberSort==='asc'?'desc':teamState.memberSort==='desc'?null:'asc';document.getElementById('teamSortIcon').textContent=teamState.memberSort==='asc'?'↑':teamState.memberSort==='desc'?'↓':'↕';renderMemberTable()}function sortedTeams(){var query=teamState.teamFilter.toLowerCase();return teamState.teams.filter(function(row){var name=row.tenant_id===teamState.selfId?(document.getElementById('teamWorkspaceTitle').textContent.split(' workspace')[0]):row.tenant_id;return !query||name.toLowerCase().indexOf(query)>=0})}function renderTeamTable(){teamState.teamFilter=document.getElementById('teamSearch').value;var body=document.getElementById('teamRows');body.replaceChildren();sortedTeams().forEach(function(row){var tr=document.createElement('tr');tr.dataset.testid='joined-team-row';var name=document.createElement('td');name.textContent=row.tenant_id===teamState.selfId?(document.getElementById('teamWorkspaceTitle').textContent.split(' workspace')[0]):row.tenant_id;var role=document.createElement('td');role.innerHTML=teamRoleBadge(row.role||'normal');var action=document.createElement('td');if(row.role==='invite'){var accept=document.createElement('button');accept.type='button';accept.className='btn btn-p btn-sm';accept.textContent='Accept';accept.onclick=function(){agreeTeam(row.tenant_id)};action.appendChild(accept);var decline=document.createElement('button');decline.type='button';decline.className='btn btn-o btn-sm';decline.textContent='Decline';decline.onclick=function(){declineTeam(row.tenant_id)};action.appendChild(decline)}else{var quit=document.createElement('button');quit.type='button';quit.className='btn btn-o btn-sm';quit.textContent='Quit';quit.onclick=function(){confirmQuitTeam(row.tenant_id)};action.appendChild(quit)}tr.append(name,role,action);body.appendChild(tr)});if(!sortedTeams().length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=3;td.className='team-empty';td.textContent='No joined teams.';tr.appendChild(td);body.appendChild(tr)}}function openTeamInvite(){document.getElementById('inviteEmail').value='';document.getElementById('inviteEmailError').textContent='';document.getElementById('inviteStatus').textContent='';document.getElementById('teamInviteDialog').classList.add('show')}function closeTeamInvite(){document.getElementById('teamInviteDialog').classList.remove('show')}async function submitTeamInvite(){var email=document.getElementById('inviteEmail').value.trim();var error=document.getElementById('inviteEmailError');if(!email){error.textContent='Please input email';return}if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){error.textContent='Please input a valid email';return}var button=document.getElementById('inviteOk');button.disabled=true;document.getElementById('inviteStatus').textContent='Sending…';try{var data=await teamApi('/api/v1/tenants/'+encodeURIComponent(teamState.selfId)+'/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeTeamInvite();loadTeam()}catch(caught){document.getElementById('inviteStatus').textContent=caught.message}finally{button.disabled=false}}function confirmRemoveMember(row){teamState.confirmAction=function(){return removeMember(row.user_id)};document.getElementById('teamConfirmText').textContent='Are you sure to remove this member?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}async function removeMember(userId){return teamApi('/api/v1/tenants/'+encodeURIComponent(teamState.selfId)+'/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:userId})})}async function agreeTeam(tenantId){var data=await teamApi('/api/v1/tenants/'+encodeURIComponent(tenantId),{method:'PATCH'});if(data.code===0)loadTeam();else alert('Error: '+(data.message||'unknown'))}function declineTeam(tenantId){teamState.confirmAction=function(){return quitTeam(tenantId)};document.getElementById('teamConfirmText').textContent='Are you sure you want to quit the team you joined?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}function confirmQuitTeam(tenantId){teamState.confirmAction=function(){return quitTeam(tenantId)};document.getElementById('teamConfirmText').textContent='Are you sure you want to quit the team you joined?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}async function quitTeam(tenantId){return teamApi('/api/v1/tenants/'+encodeURIComponent(tenantId)+'/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:teamState.selfId})})}function closeTeamConfirm(){document.getElementById('teamConfirmDialog').classList.remove('show')}async function runTeamConfirm(){var button=document.getElementById('teamConfirmOk');button.disabled=true;document.getElementById('teamConfirmStatus').textContent='Processing…';try{var data=await teamState.confirmAction();if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeTeamConfirm();loadTeam()}catch(error){document.getElementById('teamConfirmStatus').textContent=error.message}finally{button.disabled=false}}loadTeam()</script>"#;
+    let body = r#"<h1>Team</h1><div class='card' data-testid='team-members-card'><div class='user-setting-card-head'><div><h2>Team members</h2><span id='teamWorkspaceTitle' class='team-workspace-label'>Workspace</span></div><div class='user-setting-actions'><input id='memberSearch' type='search' placeholder='Search' aria-label='Search team members' oninput='renderMemberTable()'><button class='btn btn-p btn-sm' type='button' onclick='openTeamInvite()'>Invite member</button></div></div><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Name</th><th><button class='team-sort' type='button' id='teamSort' onclick='toggleMemberSort()'>Date <span id='teamSortIcon'>↕</span></button></th><th>Email</th><th>State</th><th>Action</th></tr></thead><tbody id='memberRows'></tbody></table></div></div><div class='card' data-testid='joined-teams-card'><div class='user-setting-card-head'><h2>Joined teams</h2><div class='user-setting-actions'><input id='teamSearch' type='search' placeholder='Search' aria-label='Search joined teams' oninput='renderTeamTable()'></div></div><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Name</th><th><button class='team-sort' type='button' id='teamDateSort' aria-label='Sort by update date' onclick='toggleTeamDateSort()'>Update date <span id='teamDateSortIcon'>↕</span></button></th><th>Email</th><th>Action</th></tr></thead><tbody id='teamRows'></tbody></table></div></div><div class='modal-overlay' id='teamInviteDialog' data-testid='team-invite-dialog' onclick='if(event.target===this)closeTeamInvite()'><div class='modal' style='max-width:440px' role='dialog' aria-modal='true' aria-labelledby='teamInviteTitle'><h2 id='teamInviteTitle'>Add</h2><label class='provider-instance-field'>Email<input id='inviteEmail' type='email' autocomplete='email' placeholder='Email'><p id='inviteEmailError' class='provider-instance-error'></p></label><p class='user-setting-description'>Only registered users can be invited. Please register the account before sending an invitation.</p><p id='inviteStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeTeamInvite()'>Cancel</button><button class='btn btn-p' id='inviteOk' type='button' onclick='submitTeamInvite()'>Ok</button></div></div></div><div class='modal-overlay' id='teamConfirmDialog' data-testid='team-confirm-dialog' onclick='if(event.target===this)closeTeamConfirm()'><div class='modal' style='max-width:440px' role='alertdialog' aria-modal='true' aria-labelledby='teamConfirmTitle'><h2 id='teamConfirmTitle'>Confirm</h2><p id='teamConfirmText' class='user-setting-description'></p><p id='teamConfirmStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeTeamConfirm()'>Cancel</button><button class='btn btn-d' id='teamConfirmOk' type='button' onclick='runTeamConfirm()'>Delete</button></div></div></div><script>var teamState={members:[],teams:[],memberSort:null,memberFilter:'',teamFilter:'',teamDateSort:null,teamsLoading:true,selfId:null,confirmAction:null};function teamApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function formatTeamDate(ms){if(!ms)return '';var date=new Date(ms);var pad=function(value){return String(value).padStart(2,'0')};return pad(date.getDate())+'/'+pad(date.getMonth()+1)+'/'+date.getFullYear()+' '+pad(date.getHours())+':'+pad(date.getMinutes())+':'+pad(date.getSeconds())}function teamRoleBadge(role){var label={owner:'Owner',admin:'Admin',normal:'Member',invite:'Invited'}[role]||role;return "<span class='badge team-role-"+role+"'>"+label+"</span>"}async function loadTeam(){var info=await teamApi('/api/v1/user/info');var me=(info.data&&info.data.id)||null;teamState.selfId=me;var workspace=(info.data&&info.data.nickname)||'';document.getElementById('teamWorkspaceTitle').textContent=workspace+' workspace';if(me){var members=await teamApi('/api/v1/tenants/'+encodeURIComponent(me)+'/users');teamState.members=members.data||[]}teamState.teamsLoading=true;renderTeamTable();var teams=await teamApi('/api/v1/tenants');teamState.teams=teams.data||[];teamState.teamsLoading=false;renderMemberTable();renderTeamTable();var dateIcon=document.getElementById('teamDateSortIcon');if(dateIcon)dateIcon.textContent=teamState.teamDateSort==='asc'?'↑':(teamState.teamDateSort==='desc'?'↓':'↕')}function sortedMembers(){var rows=teamState.members.filter(function(row){var query=teamState.memberFilter.toLowerCase();return !query||(row.nickname||'').toLowerCase().indexOf(query)>=0||(row.email||'').toLowerCase().indexOf(query)>=0});if(teamState.memberSort){rows=rows.slice().sort(function(left,right){var diff=(left.update_date||0)-(right.update_date||0);return teamState.memberSort==='asc'?diff:-diff})}return rows}function renderMemberTable(){teamState.memberFilter=document.getElementById('memberSearch').value;var body=document.getElementById('memberRows');body.replaceChildren();sortedMembers().forEach(function(row){var tr=document.createElement('tr');tr.dataset.testid='team-member-row';var name=document.createElement('td');name.textContent=row.nickname||'';var date=document.createElement('td');date.textContent=formatTeamDate(row.update_date);var email=document.createElement('td');email.textContent=row.email||'';var role=document.createElement('td');role.innerHTML=teamRoleBadge(row.role);var action=document.createElement('td');if(row.role!=='owner'){var remove=document.createElement('button');remove.type='button';remove.className='btn btn-d btn-sm';remove.textContent='Delete';remove.onclick=function(){confirmRemoveMember(row)};action.appendChild(remove)}tr.append(name,date,email,role,action);body.appendChild(tr)});if(!sortedMembers().length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=5;td.className='team-empty';td.textContent='No members.';tr.appendChild(td);body.appendChild(tr)}}function toggleMemberSort(){teamState.memberSort=teamState.memberSort==='asc'?'desc':teamState.memberSort==='desc'?null:'asc';document.getElementById('teamSortIcon').textContent=teamState.memberSort==='asc'?'↑':teamState.memberSort==='desc'?'↓':'↕';renderMemberTable()}function sortedTeams(){var query=teamState.teamFilter.toLowerCase();return teamState.teams.filter(function(row){var name=row.tenant_id===teamState.selfId?(document.getElementById('teamWorkspaceTitle').textContent.split(' workspace')[0]):row.tenant_id;return !query||name.toLowerCase().indexOf(query)>=0})}function toggleTeamDateSort(){teamState.teamDateSort=teamState.teamDateSort==='asc'?'desc':(teamState.teamDateSort==='desc'?null:'asc');var icon=document.getElementById('teamDateSortIcon');if(icon)icon.textContent=teamState.teamDateSort==='asc'?'↑':(teamState.teamDateSort==='desc'?'↓':'↕');renderTeamTable()}
+function teamFormatDate(value){var ms=Number(value||0);if(!ms)return '';return formatTeamDate(ms)}
+function teamVisibleRows(){var rows=(teamState.teams||[]).slice();var filter=String(teamState.teamFilter||'').toLowerCase();if(filter){rows=rows.filter(function(row){return String(row.nickname||'').toLowerCase().indexOf(filter)>=0||String(row.email||'').toLowerCase().indexOf(filter)>=0})}if(teamState.teamDateSort){rows.sort(function(left,right){var a=Number(left.update_date||0);var b=Number(right.update_date||0);return teamState.teamDateSort==='asc'?a-b:b-a})}return rows}
+function teamActionCell(row){var action=document.createElement('td');if(row.role==='invite'){var accept=document.createElement('button');accept.type='button';accept.className='team-link team-agree';accept.textContent='Agree';accept.onclick=function(){agreeTeam(row.tenant_id)};action.appendChild(accept);var refuse=document.createElement('button');refuse.type='button';refuse.className='team-link team-refuse';refuse.textContent='Refuse';refuse.onclick=function(){declineTeam(row.tenant_id)};action.appendChild(refuse);return action}
+// Upstream renders the quit affordance only for joined (`normal`) tenants that
+// are not the signed-in user, as an icon-only ghost button.
+if(row.role==='normal'&&row.tenant_id!==teamState.selfId){var quit=document.createElement('button');quit.type='button';quit.className='btn btn-o btn-sm team-quit';quit.setAttribute('aria-label','Quit');quit.title='Quit';quit.innerHTML="<svg viewBox='0 0 24 24' aria-hidden='true' focusable='false'><path d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/><polyline points='16 17 21 12 16 7'/><line x1='21' x2='9' y1='12' y2='12'/></svg>";quit.onclick=function(){confirmQuitTeam(row.tenant_id)};action.appendChild(quit)}
+return action}
+function renderTeamTable(){teamState.teamFilter=(document.getElementById('teamSearch')||{}).value||'';var body=document.getElementById('teamRows');if(!body)return;body.replaceChildren();
+if(teamState.teamsLoading){var loadingRow=document.createElement('tr');var loadingCell=document.createElement('td');loadingCell.colSpan=4;loadingCell.className='team-loading';var spinner=document.createElement('span');spinner.className='team-spinner';spinner.setAttribute('aria-hidden','true');loadingCell.appendChild(spinner);loadingRow.appendChild(loadingCell);body.appendChild(loadingRow);return}
+var visible=teamVisibleRows();if(!visible.length){var emptyRow=document.createElement('tr');var emptyCell=document.createElement('td');emptyCell.colSpan=4;emptyCell.className='team-empty';emptyCell.textContent='No data';emptyRow.appendChild(emptyCell);body.appendChild(emptyRow);return}
+visible.forEach(function(row){var tr=document.createElement('tr');tr.dataset.testid='joined-team-row';tr.dataset.tenant=row.tenant_id;var name=document.createElement('td');name.className='team-name-cell';var avatar=document.createElement('span');avatar.className='team-avatar';avatar.setAttribute('aria-hidden','true');avatar.textContent=String(row.nickname||row.tenant_id||'?').charAt(0).toUpperCase();name.appendChild(avatar);var label=document.createElement('span');label.textContent=row.nickname||row.tenant_id;name.appendChild(label);var date=document.createElement('td');date.textContent=teamFormatDate(row.update_date);var email=document.createElement('td');email.textContent=row.email||'';tr.append(name,date,email,teamActionCell(row));body.appendChild(tr)})}
+function openTeamInvite(){document.getElementById('inviteEmail').value='';document.getElementById('inviteEmailError').textContent='';document.getElementById('inviteStatus').textContent='';document.getElementById('teamInviteDialog').classList.add('show')}function closeTeamInvite(){document.getElementById('teamInviteDialog').classList.remove('show')}async function submitTeamInvite(){var email=document.getElementById('inviteEmail').value.trim();var error=document.getElementById('inviteEmailError');if(!email){error.textContent='Please input email';return}if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){error.textContent='Please input a valid email';return}var button=document.getElementById('inviteOk');button.disabled=true;document.getElementById('inviteStatus').textContent='Sending…';try{var data=await teamApi('/api/v1/tenants/'+encodeURIComponent(teamState.selfId)+'/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeTeamInvite();loadTeam()}catch(caught){document.getElementById('inviteStatus').textContent=caught.message}finally{button.disabled=false}}function confirmRemoveMember(row){teamState.confirmAction=function(){return removeMember(row.user_id)};document.getElementById('teamConfirmText').textContent='Are you sure to remove this member?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}async function removeMember(userId){return teamApi('/api/v1/tenants/'+encodeURIComponent(teamState.selfId)+'/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:userId})})}async function agreeTeam(tenantId){var data=await teamApi('/api/v1/tenants/'+encodeURIComponent(tenantId),{method:'PATCH'});if(data.code===0)loadTeam();else alert('Error: '+(data.message||'unknown'))}function declineTeam(tenantId){teamState.confirmAction=function(){return quitTeam(tenantId)};document.getElementById('teamConfirmText').textContent='Are you sure you want to quit the team you joined?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}function confirmQuitTeam(tenantId){teamState.confirmAction=function(){return quitTeam(tenantId)};document.getElementById('teamConfirmText').textContent='Are you sure you want to quit the team you joined?';document.getElementById('teamConfirmStatus').textContent='';document.getElementById('teamConfirmDialog').classList.add('show')}async function quitTeam(tenantId){return teamApi('/api/v1/tenants/'+encodeURIComponent(tenantId)+'/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:teamState.selfId})})}function closeTeamConfirm(){document.getElementById('teamConfirmDialog').classList.remove('show')}async function runTeamConfirm(){var button=document.getElementById('teamConfirmOk');button.disabled=true;document.getElementById('teamConfirmStatus').textContent='Processing…';try{var data=await teamState.confirmAction();if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));closeTeamConfirm();loadTeam()}catch(error){document.getElementById('teamConfirmStatus').textContent=error.message}finally{button.disabled=false}}loadTeam()</script>"#;
     Html(user_setting_layout(
         title,
         body,
@@ -6132,6 +6144,128 @@ connection: close
         );
     }
 
+    /// Upstream `setting-team/tenant-table.tsx`: the Joined teams table shows the
+    /// owner's avatar/nickname, a tri-state update-date sort, the email and the
+    /// role-dependent action cell (Agree/Refuse for invitations, the icon-only
+    /// quit button for joined tenants), with loading and no-data rows; the
+    /// `/api/v1/tenants` payload is enriched with the owner profile.
+    #[tokio::test]
+    async fn joined_teams_table_matches_upstream_tenant_table() {
+        let (_root, state) = test_state();
+        // A second user owning a tenant we are invited to / a member of.
+        let owner = state
+            .users
+            .register("Team Owner", "owner@example.com", "owner password 123")
+            .expect("owner");
+        state
+            .users
+            .register("Member", "member@example.com", "member password 123")
+            .unwrap();
+        let member = state
+            .users
+            .get_user("member@example.com")
+            .expect("member user");
+        state
+            .tenants
+            .invite_member(&owner.id, &member.id, &owner.id)
+            .expect("invite");
+        let auth = crate::server::AuthContext {
+            user_id: member.id.clone(),
+            is_admin: false,
+        };
+        let body = body_of(
+            crate::api::system::list_tenants(
+                axum::extract::State(state.clone()),
+                axum::extract::Extension(auth.clone()),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "\"nickname\":\"Team Owner\"",
+            "\"email\":\"owner@example.com\"",
+            "\"role\":\"invite\"",
+            "\"update_date\":",
+            "\"avatar\":",
+        ] {
+            assert!(body.contains(marker), "tenant row marker missing: {marker}");
+        }
+        // The synthetic self row carries no membership timestamp, so it falls
+        // back to the account creation time rather than a blank date.
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("tenant json");
+        let self_row = parsed["data"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .find(|row| row["tenant_id"] == member.id.as_str())
+            .expect("self row");
+        assert_eq!(self_row["role"], "owner");
+        assert_eq!(self_row["nickname"], "Member");
+        assert!(
+            self_row["update_date"].as_u64().unwrap_or(0) > 0,
+            "self row needs a real date: {self_row}"
+        );
+        // Accepting turns the row into a joined (`normal`) tenant we can quit.
+        state
+            .tenants
+            .accept_invitation(&owner.id, &member.id)
+            .expect("agree");
+        let accepted = body_of(
+            crate::api::system::list_tenants(
+                axum::extract::State(state.clone()),
+                axum::extract::Extension(auth),
+            )
+            .await,
+        )
+        .await;
+        assert!(accepted.contains("\"role\":\"normal\""), "{accepted}");
+
+        // Markup + behaviour markers on the page.
+        let req = Request::builder()
+            .uri("/user-setting/team")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(user_setting_team_page(req).await).await;
+        for marker in [
+            "id='teamDateSort'",
+            "id='teamDateSortIcon'",
+            ">Update date <span id='teamDateSortIcon'>↕</span>",
+            "toggleTeamDateSort()",
+            "function teamVisibleRows()",
+            "function teamActionCell(row)",
+            "function teamFormatDate(value)",
+            "teamState.teamDateSort==='asc'?'desc'",
+            "accept.textContent='Agree'",
+            "refuse.textContent='Refuse'",
+            "row.role==='normal'&&row.tenant_id!==teamState.selfId",
+            "quit.setAttribute('aria-label','Quit')",
+            "function formatTeamDate(ms){if(!ms)return ''",
+            "pad(date.getDate())+'/'+pad(date.getMonth()+1)+'/'+date.getFullYear()",
+            "viewBox='0 0 24 24'",
+            "teamState.teamsLoading=true;renderTeamTable()",
+            "emptyCell.textContent='No data'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "joined teams marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("Quit</button>"),
+            "the quit action must be icon-only like upstream"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".team-table th .team-sort{",
+            ".team-avatar{",
+            ".team-link,.team-agree,.team-refuse{",
+            "@keyframes team-spin{",
+        ] {
+            assert!(css.contains(rule), "joined teams css missing: {rule}");
+        }
+    }
+
     /// Upstream `skills/components/search-config-modal.tsx`: the dialog carries the
     /// `skillSearch` title + description, sliders with the live search-type label
     /// (`pureKeyword`/`pureVector`/`hybrid (N% keyword + M% vector)`), the Top K
@@ -9222,9 +9356,11 @@ connection: close
             "Joined teams",
             "Invite member",
             "Only registered users can be invited",
-            "Accept",
-            "Decline",
-            "Quit",
+            // Upstream `tenant-table.tsx` labels the invitation actions
+            // `Agree` / `Refuse` and renders quit as an icon-only button.
+            "accept.textContent='Agree'",
+            "refuse.textContent='Refuse'",
+            "team-quit",
             "/api/v1/tenants/'+encodeURIComponent(me)+'/users'",
             "user_id:teamState.selfId",
             "Are you sure to remove this member?",

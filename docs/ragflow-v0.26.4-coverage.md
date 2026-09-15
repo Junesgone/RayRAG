@@ -15,9 +15,9 @@
 
 | Status | Files | Text source lines |
 |---|---:|---:|
-| aligned | 274 | 60295 |
+| aligned | 275 | 60462 |
 | full | 566 | 267453 |
-| partial | 41 | 11196 |
+| partial | 40 | 11029 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
 | reference | 3398 | 880254 |
@@ -166,6 +166,17 @@
 > 覆盖建/测/存、Search、Edit 改名、Export、批量 Delete、JSON Import，0 error。
 > 12 个 UI 文件由 reference 纠正为 partial，mcp_api.py 由空洞 aligned 更新为真实实现；
 > SSE 传输工具抓取、分页组件与逐像素 React 组合仍为 partial。
+>
+> v0.3.5u（2026-09-15）逐行复核 `setting-team/tenant-table.tsx` 167 行。Rust Joined teams
+> 表补齐上游四列：Name（头像 + 昵称）、Update date（三态 asc/desc/none 排序按钮与
+> ↑/↓/↕ 图标）、Email、Action（`invite` 行渲染链接式 Agree/Refuse；`normal` 且
+> `user.id !== tenant_id` 行渲染纯图标 ghost Quit；owner 行留空），并补 loading
+> 转圈行（colSpan=4）与 `No data` 空行；`/api/v1/tenants` 关联 owner 的
+> nickname/email/avatar 与 `update_date`（自持租户的合成行回退到账号创建时间），
+> 成员接口同步补 avatar。fnOS Chrome/CDP 真点：live 行 payload 键、loading 行、
+> 未排序/升/降/复位 4 态顺序、搜索过滤、空数据行、恢复默认，0 page error。日期单元格改用
+> 上游 `utils/date.ts::formatDate` 默认格式 `DD/MM/YYYY HH:mm:ss`（空值渲染空串），Quit 按钮内嵌
+> lucide `LogOut` SVG（与上游 `Button variant=ghost size=icon` 一致）。
 >
 > v0.3.3bu（2026-08-15）逐行复核 `user-setting/setting-team/` 五文件与
 > `tenant_api.py`。Rust `/user-setting/team` 由单一 Invite 升级为固定 Team 页：
@@ -4808,7 +4819,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/user-setting/setting-team/add-user-modal.tsx` | 80 | 2012 | `46caacf9c5e831d6` | aligned | `src/web.rs; src/api/system.rs` | Rust Add dialog renders the Email field, the registered-user tip and Cancel/Ok; inline email validation and the upstream User not found failure are CDP-verified (v0.3.3bu) |
 | `web/src/pages/user-setting/setting-team/hooks.ts` | 88 | 2326 | `81c7ed8e990ab795` | aligned | `src/web.rs; src/api/system.rs` | Rust add/remove/agree/quit flows hit the fixed POST/DELETE /tenants/{id}/users and PATCH /tenants/{id} endpoints; CDP-verified invite, remove, accept and quit (v0.3.3bu) |
 | `web/src/pages/user-setting/setting-team/index.tsx` | 106 | 3651 | `cd70b4d504e31dd8` | aligned | `src/web.rs; src/web_css.txt; src/api/system.rs` | Rust Team page renders {nickname} workspace, Team members and Joined teams cards with Search + Invite member; CDP-verified owner/invite/member flows (v0.3.3bu) |
-| `web/src/pages/user-setting/setting-team/tenant-table.tsx` | 167 | 5985 | `fa1d4b1dace4eacf` | partial | `src/web.rs; src/api/system.rs` | Rust Joined teams table covers the search, Accept/Decline and Quit rows and is CDP-verified; exact React table composition remains partial (v0.3.3bu) |
+| `web/src/pages/user-setting/setting-team/tenant-table.tsx` | 167 | 5985 | `fa1d4b1dace4eacf` | aligned | `src/web.rs; src/web_css.txt; src/api/system.rs` | Rust Joined teams table is column-for-column: Name (avatar + nickname), Update date with the tri-state asc/desc/none sort button and ArrowUp/ArrowDown/ArrowUpDown icon, Email, Action (link-style Agree/Refuse for `invite`, icon-only ghost quit for `normal` when `user.id !== tenant_id`, empty otherwise), plus the 4-col spinner row while `loading` and the `No data` row. `/api/v1/tenants` joins the owner profile (nickname/email/avatar) and `update_date`; the date cell shares upstream `utils/date.ts::formatDate` semantics (`DD/MM/YYYY HH:mm:ss`, empty for a falsy value) and quit embeds the lucide `LogOut` SVG; CDP-verified with live + fixture rows (v0.3.5u) |
 | `web/src/pages/user-setting/setting-team/user-table.tsx` | 189 | 6928 | `fd04f9192f91cf4a` | aligned | `src/web.rs; src/api/system.rs` | Rust member table renders Name/Date/Email/State/Action with the date sort toggle and owner-row no-delete rule; CDP-verified (v0.3.3bu) |
 | `web/src/pages/user-setting/sidebar/hooks.tsx` | 31 | 878 | `be490c8b8fa37ef3` | partial | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) |
 | `web/src/pages/user-setting/sidebar/index.tsx` | 144 | 4422 | `d9eb9b881a6005a9` | aligned | `src/web.rs; src/web_css.txt; src/server.rs` | Rust renders the seven upstream `menuItems` in source order (Data sources / Chat channels / Model providers / MCP / Team / Profile / API + `settings-nav-model-providers` test id) with the upstream Lucide icon artwork inlined as SVG (server, messages-square, box, plug, users, user, unplug) and the upstream `setting.*` labels (en + zh, including 概要 for Profile); the account header shows avatar + email, the footer row carries the build version, the sun/moon `ThemeSwitch` and the `setting.logout` button (`Log out` / 登出). Active item is computed per route with `bg-bg-card`-equivalent styling and `aria-current='page'`. Items are anchors rather than `button`+`navigate` (same target/active behaviour, works without JS); server-side token revocation on logout remains the only gap (v0.3.4v) |

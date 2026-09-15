@@ -548,9 +548,30 @@ pub async fn list_tenants(
             .cmp(&right.created_at)
             .then_with(|| left.tenant_id.cmp(&right.tenant_id))
     });
+    // Upstream `tenant-table.tsx` renders the tenant owner's avatar/nickname/email
+    // plus `update_date`, so join the rows with the user registry.
     let rows: Vec<serde_json::Value> = tenants
         .into_iter()
         .map(|entry| {
+            let owner = state.users.get_user_by_id(&entry.tenant_id);
+            let nickname = owner
+                .as_ref()
+                .map(|user| user.nickname.clone())
+                .unwrap_or_else(|| entry.tenant_id.clone());
+            let email = owner
+                .as_ref()
+                .map(|user| user.email.clone())
+                .unwrap_or_default();
+            let avatar = owner
+                .as_ref()
+                .map(|user| user.avatar.clone())
+                .unwrap_or_default();
+            // The owner's own membership row is synthetic (`created_at == 0`), so
+            // fall back to the account creation time instead of a blank date.
+            let mut update_date = entry.updated_at.max(entry.created_at);
+            if update_date == 0 {
+                update_date = owner.as_ref().map(|user| user.created_at).unwrap_or(0);
+            }
             serde_json::json!({
                 "tenant_id": entry.tenant_id,
                 "user_id": entry.user_id,
@@ -558,6 +579,11 @@ pub async fn list_tenants(
                 "invited_by": entry.invited_by,
                 "created_at": entry.created_at,
                 "updated_at": entry.updated_at,
+                "nickname": nickname,
+                "email": email,
+                "avatar": avatar,
+                // Upstream exposes `update_date`; keep the raw ms too.
+                "update_date": update_date,
             })
         })
         .collect();
@@ -604,13 +630,17 @@ fn tenant_user_rows(state: &AppState, tenant_id: &str) -> Vec<serde_json::Value>
         .into_iter()
         .map(|member| {
             let user = state.users.get_user_by_id(&member.user_id);
+            let mut update_date = member.updated_at.max(member.created_at);
+            if update_date == 0 {
+                update_date = user.as_ref().map(|user| user.created_at).unwrap_or(0);
+            }
             serde_json::json!({
                 "user_id": member.user_id,
                 "nickname": user.as_ref().map(|user| user.nickname.as_str()).unwrap_or(""),
                 "email": user.as_ref().map(|user| user.email.as_str()).unwrap_or(""),
-                "avatar": "",
+                "avatar": user.as_ref().map(|user| user.avatar.as_str()).unwrap_or(""),
                 "role": tenant_role_wire(member.role),
-                "update_date": member.updated_at,
+                "update_date": update_date,
             })
         })
         .collect()
