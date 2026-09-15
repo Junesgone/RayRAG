@@ -76,6 +76,11 @@ pub struct AppState {
     pub register_enabled: i64,
     /// `DISABLE_PASSWORD_LOGIN` — second field of the same payload.
     pub disable_password_login: bool,
+    /// Single-use OAuth `state` values (upstream keeps them in the session).
+    pub oauth_states: Arc<crate::oauth_config::StateStore>,
+    /// OAuth login channels (upstream `settings.OAUTH_CONFIG`), resolved once at
+    /// startup from `RAYRAG_OAUTH_CONFIG`/`OAUTH` and injectable in tests.
+    pub oauth_channels: Arc<std::sync::RwLock<Vec<crate::oauth_config::OAuthChannel>>>,
     pub langfuse: Arc<crate::api::langfuse::LangfuseStore>,
     pub mcp_servers: Arc<crate::api::mcp_mgr::McpServerStore>,
     pub chat_channels: Arc<crate::api::chat_channel_mgr::ChatChannelStore>,
@@ -2975,7 +2980,7 @@ fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
     // segment-wise instead of as literals.
-    const PATTERNS: [&str; 9] = [
+    const PATTERNS: [&str; 10] = [
         "/api/v1/auth/login",
         "/api/v1/user/register",
         // RayRAG's own build-identity endpoint stays public; losing it broke the
@@ -2990,6 +2995,7 @@ fn public_api_path(path: &str) -> bool {
         "/api/v1/system/config",
         "/api/v1/auth/login/channels",
         "/api/v1/auth/login/{channel}",
+        "/api/v1/auth/oauth/{channel}/callback",
     ];
     const CHANNEL_PATTERNS: [&str; 2] = [
         // Chat channel inbound endpoints: platform webhook callbacks must not
@@ -3990,6 +3996,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::system::oauth_login),
         )
         .route(
+            "/api/v1/auth/oauth/{channel}/callback",
+            get(crate::api::system::oauth_callback),
+        )
+        .route(
             "/api/v1/system/version",
             get(crate::api::system::system_version_public),
         )
@@ -4251,6 +4261,8 @@ pub async fn run(
         )?),
         register_enabled: crate::settings::Settings::from_env().register_enabled,
         disable_password_login: crate::settings::Settings::from_env().disable_password_login,
+        oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+        oauth_channels: Arc::new(std::sync::RwLock::new(crate::oauth_config::from_env())),
         langfuse: Arc::new(crate::api::langfuse::LangfuseStore::new(&langfuse_path)?),
         mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::new(&mcp_servers_path)?),
         chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::new(
@@ -4507,6 +4519,8 @@ mod tests {
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
+            oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+            oauth_channels: Arc::new(std::sync::RwLock::new(Vec::new())),
             langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
             mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
             chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
@@ -4792,6 +4806,8 @@ mod tests {
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
+            oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+            oauth_channels: Arc::new(std::sync::RwLock::new(Vec::new())),
             langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
             mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
             chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),

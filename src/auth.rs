@@ -283,6 +283,28 @@ impl UserStore {
         })
     }
 
+    /// Issue a session token for an already-authenticated user (OAuth callback).
+    pub fn issue_token_for(&self, user_id: &str) -> Option<String> {
+        let exists = self
+            .users
+            .read()
+            .unwrap()
+            .values()
+            .any(|user| user.id == user_id);
+        if !exists {
+            return None;
+        }
+        let token = generate_token();
+        self.tokens.write().unwrap().insert(
+            token.clone(),
+            TokenEntry {
+                user_id: user_id.to_string(),
+                expires_at: now_ms() + 24 * 3600 * 1000,
+            },
+        );
+        Some(token)
+    }
+
     /// Validate a token and return the user_id if valid.
     pub fn validate_token(&self, token: &str) -> Option<String> {
         let tokens = self.tokens.read().unwrap();

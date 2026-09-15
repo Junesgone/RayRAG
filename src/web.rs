@@ -5500,6 +5500,8 @@ mod kb_ui_tests {
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
+            oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+            oauth_channels: Arc::new(std::sync::RwLock::new(Vec::new())),
             langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
             mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
             chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
@@ -5708,6 +5710,243 @@ mod kb_ui_tests {
             DEFAULT_MODEL_FIELDS[1..]
                 .iter()
                 .all(|field| !field.required)
+        );
+    }
+
+    /// Upstream `oauth_callback` flow: the single-use state store, the token
+    /// exchange/userinfo requests and the `?error=` redirect mapping.
+    #[tokio::test]
+    async fn oauth_callback_flow_matches_upstream() {
+        use crate::oauth_config::{
+            StateStore, exchange_code, fetch_user_info, normalize_user_info,
+        };
+        use std::time::Duration;
+
+        // Single-use state with TTL (upstream keeps it in the Flask session).
+        let store = StateStore::new();
+        let state = store.issue();
+        assert!(!state.is_empty());
+        assert!(store.consume(&state), "first callback consumes the state");
+        assert!(!store.consume(&state), "replayed state is rejected");
+        assert!(!store.consume(""), "empty state is rejected");
+        assert!(store.is_empty());
+        let expired = store.issue_with_ttl(Duration::from_millis(0));
+        assert!(!store.consume(&expired), "expired state is rejected");
+
+        // `normalize_user_info` defaults.
+        let info = normalize_user_info(&serde_json::json!({"email": "a@b.c", "picture": "p.png"}));
+        assert_eq!(info.username, "a");
+        assert_eq!(info.nickname, "a");
+        assert_eq!(info.avatar_url, "p.png");
+        let named = normalize_user_info(
+            &serde_json::json!({"email": "a@b.c", "username": "u", "nickname": "N", "avatar_url": "x"}),
+        );
+        assert_eq!(named.nickname, "N");
+        assert_eq!(named.avatar_url, "x");
+
+        // A local fake provider drives the real exchange + userinfo requests.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0u8; 4096];
+                let read = std::io::Read::read(&mut stream, &mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                let body = if request.starts_with("POST /token") {
+                    assert!(
+                        request.contains("grant_type=authorization_code"),
+                        "{request}"
+                    );
+                    assert!(request.contains("code=abc123"), "{request}");
+                    assert!(request.contains("client_id=cid"), "{request}");
+                    assert!(request.contains("client_secret=sec"), "{request}");
+                    r#"{"access_token":"tok-1","id_token":"id-1"}"#.to_string()
+                } else {
+                    assert!(
+                        request.contains("authorization: Bearer tok-1")
+                            || request.contains("Authorization: Bearer tok-1"),
+                        "{request}"
+                    );
+                    r#"{"email":"dev@example.com","username":"dev","avatar_url":"https://img/x.png"}"#.to_string()
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK
+content-type: application/json
+content-length: {}
+connection: close
+
+{}",
+                    body.len(),
+                    body
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+
+        let channels = crate::oauth_config::parse(&format!(
+            r#"{{"oauth2":{{"display_name":"OAuth2","client_id":"cid","client_secret":"sec","authorization_url":"{base}/authorize","token_url":"{base}/token","userinfo_url":"{base}/userinfo","redirect_uri":"http://app/callback","scope":"openid email"}}}}"#
+        ));
+        let channel = crate::oauth_config::find(&channels, "oauth2").expect("channel");
+        let token = exchange_code(channel, "abc123")
+            .await
+            .expect("token exchange");
+        assert_eq!(token.access_token, "tok-1");
+        assert_eq!(token.id_token.as_deref(), Some("id-1"));
+        let info = fetch_user_info(channel, &token.access_token)
+            .await
+            .expect("userinfo");
+        assert_eq!(info.email, "dev@example.com");
+        assert_eq!(info.nickname, "dev");
+        assert_eq!(info.avatar_url, "https://img/x.png");
+        server.join().expect("fake provider thread");
+
+        // GitHub keeps the fixed endpoints/scope and reads the primary email.
+        let github = crate::oauth_config::parse(
+            r#"{"github":{"client_id":"c","client_secret":"s","redirect_uri":"http://app/v1/user/oauth/callback/github"}}"#,
+        );
+        let github = crate::oauth_config::find(&github, "github").expect("github");
+        assert_eq!(
+            github.authorization_url.as_deref(),
+            Some("https://github.com/login/oauth/authorize")
+        );
+        assert_eq!(
+            github.token_url.as_deref(),
+            Some("https://github.com/login/oauth/access_token")
+        );
+        assert_eq!(
+            github.userinfo_url.as_deref(),
+            Some("https://api.github.com/user")
+        );
+        assert_eq!(github.scope.as_deref(), Some("user:email"));
+        let form = crate::oauth_config::token_exchange_form(github, "code-1");
+        let keys: Vec<&str> = form.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "client_id",
+                "client_secret",
+                "code",
+                "redirect_uri",
+                "grant_type"
+            ]
+        );
+
+        // Flow errors map onto the upstream redirect codes.
+        let (_root, state_under_test) = test_state();
+        let injected = crate::oauth_config::parse(&format!(
+            r#"{{"oauth2":{{"client_id":"cid","client_secret":"sec","authorization_url":"{base}/authorize","token_url":"{base}/token","userinfo_url":"{base}/userinfo","redirect_uri":"http://app/callback"}}}}"#
+        ));
+        *state_under_test.oauth_channels.write().unwrap() = injected;
+        let missing_state = crate::api::system::oauth_callback(
+            axum::extract::State(state_under_test.clone()),
+            axum::extract::Path("oauth2".to_string()),
+            axum::extract::Query(std::collections::HashMap::new()),
+        )
+        .await;
+        assert_eq!(
+            missing_state.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        assert_eq!(
+            missing_state
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("/?error=invalid_state")
+        );
+        let mut query = std::collections::HashMap::new();
+        let issued = state_under_test.oauth_states.issue();
+        query.insert("state".to_string(), issued);
+        let missing_code = crate::api::system::oauth_callback(
+            axum::extract::State(state_under_test.clone()),
+            axum::extract::Path("oauth2".to_string()),
+            axum::extract::Query(query.clone()),
+        )
+        .await;
+        assert_eq!(
+            missing_code
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("/?error=missing_code")
+        );
+
+        // Success path: a fresh state + code goes through the fake provider,
+        // registers the unknown email (upstream `user_register`) and hands back
+        // the `rayrag_token` cookie with the `?auth=` redirect.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let provider = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0u8; 4096];
+                let read = std::io::Read::read(&mut stream, &mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                let body = if request.starts_with("POST /token") {
+                    r#"{"access_token":"tok-2"}"#.to_string()
+                } else {
+                    r#"{"email":"newcomer@example.com","nickname":"Newcomer","picture":"https://img/a.png"}"#
+                        .to_string()
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+        *state_under_test.oauth_channels.write().unwrap() = crate::oauth_config::parse(&format!(
+            r#"{{"oauth2":{{"client_id":"cid","client_secret":"sec","authorization_url":"{base}/authorize","token_url":"{base}/token","userinfo_url":"{base}/userinfo","redirect_uri":"http://app/callback"}}}}"#
+        ));
+        let mut success_query = std::collections::HashMap::new();
+        success_query.insert("state".to_string(), state_under_test.oauth_states.issue());
+        success_query.insert("code".to_string(), "code-2".to_string());
+        let success = crate::api::system::oauth_callback(
+            axum::extract::State(state_under_test.clone()),
+            axum::extract::Path("oauth2".to_string()),
+            axum::extract::Query(success_query),
+        )
+        .await;
+        provider.join().expect("fake provider thread");
+        assert_eq!(success.status(), axum::http::StatusCode::TEMPORARY_REDIRECT);
+        let location = success
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(location.starts_with("/?auth="), "{location}");
+        let cookie = success
+            .headers()
+            .get(axum::http::header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            cookie.starts_with("rayrag_token=") && cookie.contains("path=/"),
+            "{cookie}"
+        );
+        let created = state_under_test
+            .users
+            .get_user("newcomer@example.com")
+            .expect("oauth user registered");
+        assert_eq!(created.nickname, "Newcomer");
+        assert_eq!(created.avatar, "https://img/a.png");
+        let token = cookie
+            .trim_start_matches("rayrag_token=")
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            state_under_test.users.validate_token(&token).as_deref(),
+            Some(created.id.as_str())
         );
     }
 

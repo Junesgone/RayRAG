@@ -2,7 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5o）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5p）
+
+### Added
+
+- **OAuth 登录回调全链路**：`GET /api/v1/auth/oauth/{channel}/callback` —— 单次消费 `state`（10 分钟 TTL）、
+  `token_url` 换码、`userinfo_url` 取用户（github 另取 primary email）、未知邮箱自动注册（昵称/头像落库）、
+  签发会话并通过 `rayrag_token` cookie 跳 `/?auth=<id>`；失败按上游语义 302 到
+  `/?error=invalid_state|missing_code|token_failed|userinfo_failed|email_missing|register_failed`。
+- **`StateStore`/`UserStore::issue_token_for`**：前者为无状态服务提供 OAuth state 生命周期，后者为已认证用户签发 24h 会话。
+- **回归护栏** `oauth_callback_flow_matches_upstream`：本地假 provider 驱动真实换码/userinfo 请求，并覆盖
+  成功注册 → 发会话 → cookie 校验的完整链路。
+
 
 ### Added
 

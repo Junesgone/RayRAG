@@ -94,8 +94,11 @@ pub struct SystemConfig {
 /// the configured OAuth channels as `{channel, display_name, icon}`. The list is
 /// empty when no channel is configured, which the login page renders as no
 /// channel section at all.
-pub async fn login_channels() -> impl IntoResponse {
-    let channels: Vec<serde_json::Value> = crate::oauth_config::from_env()
+pub async fn login_channels(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let channels: Vec<serde_json::Value> = state
+        .oauth_channels
+        .read()
+        .unwrap()
         .iter()
         .map(crate::oauth_config::OAuthChannel::to_json)
         .collect();
@@ -105,8 +108,11 @@ pub async fn login_channels() -> impl IntoResponse {
 /// GET `/api/v1/auth/login/{channel}` — upstream `user_api.oauth_login`:
 /// redirect to the provider authorization URL, or fail with
 /// `Invalid channel name: {channel}` when the channel is not configured.
-pub async fn oauth_login(Path(channel): Path<String>) -> Response {
-    let channels = crate::oauth_config::from_env();
+pub async fn oauth_login(
+    State(state): State<Arc<AppState>>,
+    Path(channel): Path<String>,
+) -> Response {
+    let channels = state.oauth_channels.read().unwrap().clone();
     let Some(entry) = crate::oauth_config::find(&channels, &channel) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -117,8 +123,9 @@ pub async fn oauth_login(Path(channel): Path<String>) -> Response {
         )
             .into_response();
     };
-    let state = uuid::Uuid::new_v4().simple().to_string();
-    match entry.authorization_request(&state) {
+    // Upstream stores the state in the session; RayRAG keeps a single-use store.
+    let state_value = state.oauth_states.issue();
+    match entry.authorization_request(&state_value) {
         Some(url) => (
             StatusCode::TEMPORARY_REDIRECT,
             [(axum::http::header::LOCATION, url)],
@@ -133,6 +140,103 @@ pub async fn oauth_login(Path(channel): Path<String>) -> Response {
         )
             .into_response(),
     }
+}
+
+/// GET `/api/v1/auth/oauth/{channel}/callback` — upstream
+/// `user_api.oauth_callback`: validate the state, exchange the code, fetch the
+/// provider user info, then log the (existing or freshly registered) user in and
+/// redirect to `/?auth={user_id}`. Every failure redirects with the upstream
+/// `?error=` code instead of returning JSON.
+pub async fn oauth_callback(
+    State(state): State<Arc<AppState>>,
+    Path(channel): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    fn redirect_error(code: &str) -> Response {
+        (
+            StatusCode::TEMPORARY_REDIRECT,
+            [(axum::http::header::LOCATION, format!("/?error={code}"))],
+        )
+            .into_response()
+    }
+
+    let channels = state.oauth_channels.read().unwrap().clone();
+    let Some(entry) = crate::oauth_config::find(&channels, &channel) else {
+        return redirect_error(&format!("Invalid channel name: {channel}"));
+    };
+    let state_value = query.get("state").cloned().unwrap_or_default();
+    if !state.oauth_states.consume(&state_value) {
+        return redirect_error("invalid_state");
+    }
+    let Some(code) = query
+        .get("code")
+        .map(String::as_str)
+        .filter(|code| !code.is_empty())
+    else {
+        return redirect_error("missing_code");
+    };
+    let token = match crate::oauth_config::exchange_code(entry, code).await {
+        Ok(token) => token,
+        Err(error) => {
+            tracing::warn!(channel = %channel, %error, "oauth token exchange failed");
+            return redirect_error("token_failed");
+        }
+    };
+    let user_info = match crate::oauth_config::fetch_user_info(entry, &token.access_token).await {
+        Ok(info) => info,
+        Err(error) => {
+            tracing::warn!(channel = %channel, %error, "oauth userinfo failed");
+            return redirect_error("userinfo_failed");
+        }
+    };
+    if user_info.email.is_empty() {
+        return redirect_error("email_missing");
+    }
+    // Existing user → log in; unknown email → register like upstream
+    // `user_register(..., login_channel=channel)`.
+    let email = user_info.email.to_ascii_lowercase();
+    let user = match state.users.get_user(&email) {
+        Some(user) => user,
+        None => {
+            let password = uuid::Uuid::new_v4().simple().to_string();
+            let nickname = if user_info.nickname.is_empty() {
+                user_info.username.clone()
+            } else {
+                user_info.nickname.clone()
+            };
+            match state.users.register(&nickname, &email, &password) {
+                Ok(user) => {
+                    if !user_info.avatar_url.is_empty() {
+                        let _ = state.users.update_profile(
+                            &user.id,
+                            None,
+                            Some(user_info.avatar_url.clone()),
+                            None,
+                        );
+                    }
+                    user
+                }
+                Err(error) => {
+                    tracing::warn!(%email, %error, "oauth user registration failed");
+                    return redirect_error("register_failed");
+                }
+            }
+        }
+    };
+    let Some(access_token) = state.users.issue_token_for(&user.id) else {
+        return redirect_error("token_failed");
+    };
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [
+            (axum::http::header::LOCATION, format!("/?auth={}", user.id)),
+            (
+                axum::http::header::SET_COOKIE,
+                format!("rayrag_token={access_token}; path=/; max-age=86400"),
+            ),
+        ],
+    )
+        .into_response()
 }
 
 /// GET `/api/v1/system/version` — upstream `system_api.version` returns
