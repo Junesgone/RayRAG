@@ -2972,26 +2972,55 @@ async fn chat_completion(
 // ── API authentication ────────────────────────────────────────
 
 fn public_api_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/api/v1/auth/login"
-            | "/api/v1/user/register"
-            | "/api/v1/system/password-public-key"
-            | "/api/v1/system/healthz"
-            // Upstream `system_api.version` / `get_config` are unauthenticated:
-            // the login page needs the version and the register gate before it
-            // has a token.
-            | "/api/v1/system/version"
-            | "/api/v1/system/config"
-            | "/api/v1/version"
-            // Chat channel inbound endpoints: platform webhook callbacks must
-            // not need the RayRAG API token (RAGFlow channels are unauthenticated).
-            | "/api/v1/channels/{account_id}/webhook/inbound"
-            | "/api/v1/channels/{account_id}/feishu/event"
-    ) || {
-        // 公共分享端点（免登录）：动态 {chat_id} 无法用字面量匹配，
-        // 对齐 RAGFlow 分享页使用的 chatbots 端点（info / completions）。
-        path.starts_with("/api/v1/chatbots/")
+    // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
+    // the middleware sees the concrete request path, so placeholders are matched
+    // segment-wise instead of as literals.
+    const PATTERNS: [&str; 8] = [
+        "/api/v1/auth/login",
+        "/api/v1/user/register",
+        "/api/v1/system/password-public-key",
+        "/api/v1/system/healthz",
+        // Upstream `system_api.version` / `get_config`, plus the OAuth entry
+        // points, are unauthenticated: the login page needs them before it has
+        // a token.
+        "/api/v1/system/version",
+        "/api/v1/system/config",
+        "/api/v1/auth/login/channels",
+        "/api/v1/auth/login/{channel}",
+    ];
+    const CHANNEL_PATTERNS: [&str; 2] = [
+        // Chat channel inbound endpoints: platform webhook callbacks must not
+        // need the RayRAG API token (RAGFlow channels are unauthenticated).
+        "/api/v1/channels/{account_id}/webhook/inbound",
+        "/api/v1/channels/{account_id}/feishu/event",
+    ];
+    PATTERNS
+        .iter()
+        .chain(CHANNEL_PATTERNS.iter())
+        .any(|pattern| path_matches_pattern(pattern, path))
+        || {
+            // 公共分享端点（免登录）：动态 {chat_id} 无法用字面量匹配，
+            // 对齐 RAGFlow 分享页使用的 chatbots 端点（info / completions）。
+            path.starts_with("/api/v1/chatbots/")
+        }
+}
+
+/// Segment-wise pattern match where `{name}` segments match any single segment.
+fn path_matches_pattern(pattern: &str, path: &str) -> bool {
+    let mut pattern_segments = pattern.split('/');
+    let mut path_segments = path.split('/');
+    loop {
+        match (pattern_segments.next(), path_segments.next()) {
+            (None, None) => return true,
+            (Some(expected), Some(actual)) => {
+                let is_placeholder =
+                    expected.starts_with('{') && expected.ends_with('}') && expected.len() > 2;
+                if !is_placeholder && expected != actual {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
     }
 }
 
@@ -3950,6 +3979,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/system/healthz", get(crate::api::system::healthz))
         .route(
+            "/api/v1/auth/login/channels",
+            get(crate::api::system::login_channels),
+        )
+        .route(
+            "/api/v1/auth/login/{channel}",
+            get(crate::api::system::oauth_login),
+        )
+        .route(
             "/api/v1/system/version",
             get(crate::api::system::system_version_public),
         )
@@ -4295,6 +4332,40 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn public_api_path_matches_dynamic_segments() {
+        // Literal endpoints keep working.
+        for path in [
+            "/api/v1/auth/login",
+            "/api/v1/user/register",
+            "/api/v1/system/healthz",
+            "/api/v1/system/version",
+            "/api/v1/system/config",
+            "/api/v1/auth/login/channels",
+            "/api/v1/chatbots/abc/info",
+        ] {
+            assert!(super::public_api_path(path), "{path} must stay public");
+        }
+        // Single-segment placeholders now match the concrete request path.
+        for path in [
+            "/api/v1/auth/login/github",
+            "/api/v1/auth/login/oidc",
+            "/api/v1/channels/42/webhook/inbound",
+            "/api/v1/channels/42/feishu/event",
+        ] {
+            assert!(super::public_api_path(path), "{path} must stay public");
+        }
+        // Everything else still requires a token.
+        for path in [
+            "/api/v1/channels/42",
+            "/api/v1/auth/login/github/callback",
+            "/api/v1/users/me",
+            "/api/v1/datasets",
+        ] {
+            assert!(!super::public_api_path(path), "{path} must require auth");
+        }
+    }
+
     use super::*;
     use crate::api::tenant_models::{ModelCapability, TenantModelInstanceUpdate, TenantModelSpec};
     use axum::{

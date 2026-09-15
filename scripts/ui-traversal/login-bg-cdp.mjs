@@ -64,6 +64,43 @@ try {
   }));
   await page.screenshot({ path: `${SHOT}/rayrag-login-bg-gated.png` });
 
+  // SSO-only mode: `disablePasswordLogin` hides both password forms and the
+  // register/login toggles while keeping the channel section.
+  await page.unroute("**/api/v1/system/config");
+  await page.route("**/api/v1/system/config", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 0, data: { registerEnabled: 0, disablePasswordLogin: true } }),
+    }),
+  );
+  await page.route("**/api/v1/auth/login/channels", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 0,
+        data: [{ channel: "github", display_name: "Github", icon: "github" }],
+      }),
+    }),
+  );
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1200);
+  out.ssoOnly = await page.evaluate(() => ({
+    passwordFormHidden: document.getElementById("loginForm").hidden,
+    registerFormHidden: document.getElementById("regForm").hidden,
+    switchToRegisterHidden: document.getElementById("authSwitchToRegister").hidden,
+    switchToLoginHidden: document.getElementById("authSwitchToLogin").hidden,
+    channelsVisible: !document.getElementById("authChannels").hidden,
+    channelsSolo: document.getElementById("authChannels").classList.contains("auth-channels-solo"),
+    channelButtons: Array.from(document.querySelectorAll(".auth-channel-btn")).map((b) => b.textContent.trim()),
+    headingHidden: document.getElementById("authTitle").hidden,
+    passwordLoginDisabled: AUTH_PASSWORD_LOGIN_DISABLED,
+  }));
+  await page.screenshot({ path: `${SHOT}/rayrag-login-sso-only.png` });
+  await page.unroute("**/api/v1/system/config");
+  await page.unroute("**/api/v1/auth/login/channels");
+
   // Endpoints themselves.
   out.endpoints = await page.evaluate(async () => {
     const config = await (await fetch("/api/v1/system/config")).json();

@@ -111,3 +111,8 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .spotlight{position:absolute;inset:0;z-index:-1;border-radius:var(--r);opacity:.8;backdrop-filter:blur(30px);background:radial-gradient(circle at var(--sx,50%) var(--sy,190%),rgba(var(--srgb,128,255,248),var(--so,.4)) 0%,rgba(var(--srgb,128,255,248),0) var(--sc,60%));pointer-events:none}
 .auth-scene{position:relative}
 .auth-scene>.auth-bg,.auth-scene>.spotlight{z-index:0}
+/* Upstream login-next with `disablePasswordLogin`: the password form is not
+   rendered and the channel list becomes the only login affordance (py-8, w-full). */
+.auth-channels-solo{padding:32px 0}
+.auth-channels-solo .auth-channel-btn{width:100%;justify-content:center}
+.auth-channels{display:flex;flex-direction:column;gap:10px}

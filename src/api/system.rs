@@ -90,6 +90,51 @@ pub struct SystemConfig {
     pub indexing_strategy: String,
 }
 
+/// GET `/api/v1/auth/login/channels` — upstream `user_api.get_login_channels`:
+/// the configured OAuth channels as `{channel, display_name, icon}`. The list is
+/// empty when no channel is configured, which the login page renders as no
+/// channel section at all.
+pub async fn login_channels() -> impl IntoResponse {
+    let channels: Vec<serde_json::Value> = crate::oauth_config::from_env()
+        .iter()
+        .map(crate::oauth_config::OAuthChannel::to_json)
+        .collect();
+    Json(serde_json::json!({ "code": 0, "data": channels }))
+}
+
+/// GET `/api/v1/auth/login/{channel}` — upstream `user_api.oauth_login`:
+/// redirect to the provider authorization URL, or fail with
+/// `Invalid channel name: {channel}` when the channel is not configured.
+pub async fn oauth_login(Path(channel): Path<String>) -> Response {
+    let channels = crate::oauth_config::from_env();
+    let Some(entry) = crate::oauth_config::find(&channels, &channel) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": 102,
+                "message": format!("Invalid channel name: {channel}"),
+            })),
+        )
+            .into_response();
+    };
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    match entry.authorization_request(&state) {
+        Some(url) => (
+            StatusCode::TEMPORARY_REDIRECT,
+            [(axum::http::header::LOCATION, url)],
+        )
+            .into_response(),
+        None => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": 102,
+                "message": format!("Channel {channel} has no authorization_url or issuer configured"),
+            })),
+        )
+            .into_response(),
+    }
+}
+
 /// GET `/api/v1/system/version` — upstream `system_api.version` returns
 /// `get_ragflow_version()` directly, i.e. the bare version string.
 pub async fn system_version_public() -> impl IntoResponse {

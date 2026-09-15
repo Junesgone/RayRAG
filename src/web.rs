@@ -3497,8 +3497,9 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     b.push_str("</span> <button type='button' class='auth-link' data-testid='auth-toggle-login' onclick='toggleAuth()'>");
     b.push_str(login_title);
     b.push_str("</button></div></div></div></div></div><div id='error' class='auth-error' role='alert'></div>");
-    b.push_str("<script>var authFlipped=false;function setActiveFace(login){var stage=document.getElementById('authStage');var front=document.getElementById('authLoginFace');var back=document.getElementById('authRegisterFace');stage.classList.toggle('flipped',!login);front.toggleAttribute('data-testid',login);back.toggleAttribute('data-testid',!login);if(login){front.setAttribute('data-testid','auth-card-active');back.removeAttribute('data-testid')}else{back.setAttribute('data-testid','auth-card-active');front.removeAttribute('data-testid')}document.getElementById('loginForm').dataset.active=login?'true':'false';document.getElementById('regForm').dataset.active=login?'false':'true'}var AUTH_REGISTER_ENABLED=true;function authRegisterEnabled(){return AUTH_REGISTER_ENABLED!==false}function applyAuthRegisterGate(enabled){AUTH_REGISTER_ENABLED=enabled!==false;var switchRegister=document.getElementById('authSwitchToRegister');if(switchRegister)switchRegister.hidden=!authRegisterEnabled();var switchLogin=document.getElementById('authSwitchToLogin');if(switchLogin)switchLogin.hidden=false;if(!authRegisterEnabled()&&authFlipped){authFlipped=false;setTimeout(function(){setActiveFace(true)},200)}}function loadAuthSystemConfig(){fetch('/api/v1/system/config').then(function(response){return response.json()}).then(function(data){var config=(data&&data.data)||{};applyAuthRegisterGate(config.registerEnabled!==0)}).catch(function(){})}function toggleAuth(){if(!authFlipped&&!authRegisterEnabled())return;authFlipped=!authFlipped;setTimeout(function(){setActiveFace(!authFlipped)},200)}
-if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',loadAuthSystemConfig)}else{loadAuthSystemConfig()}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;if(!n){document.getElementById('error').textContent='Please input nickname';return}fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type='button' class='btn btn-o auth-channel'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('')}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
+    b.push_str("<script>var authFlipped=false;function setActiveFace(login){var stage=document.getElementById('authStage');var front=document.getElementById('authLoginFace');var back=document.getElementById('authRegisterFace');stage.classList.toggle('flipped',!login);front.toggleAttribute('data-testid',login);back.toggleAttribute('data-testid',!login);if(login){front.setAttribute('data-testid','auth-card-active');back.removeAttribute('data-testid')}else{back.setAttribute('data-testid','auth-card-active');front.removeAttribute('data-testid')}document.getElementById('loginForm').dataset.active=login?'true':'false';document.getElementById('regForm').dataset.active=login?'false':'true'}var AUTH_REGISTER_ENABLED=true;var AUTH_PASSWORD_LOGIN_DISABLED=false;function authRegisterEnabled(){return AUTH_REGISTER_ENABLED!==false}function authPasswordLoginDisabled(){return AUTH_PASSWORD_LOGIN_DISABLED===true}function applyAuthSystemConfig(config){config=config||{};AUTH_REGISTER_ENABLED=config.registerEnabled!==0;AUTH_PASSWORD_LOGIN_DISABLED=config.disablePasswordLogin===true;var switchRegister=document.getElementById('authSwitchToRegister');if(switchRegister)switchRegister.hidden=authPasswordLoginDisabled()||!authRegisterEnabled();var switchLogin=document.getElementById('authSwitchToLogin');if(switchLogin)switchLogin.hidden=authPasswordLoginDisabled();var loginForm=document.getElementById('loginForm');if(loginForm)loginForm.hidden=authPasswordLoginDisabled();var regForm=document.getElementById('regForm');if(regForm)regForm.hidden=authPasswordLoginDisabled();var channels=document.getElementById('authChannels');if(channels)channels.classList.toggle('auth-channels-solo',authPasswordLoginDisabled());if(authPasswordLoginDisabled()){var title=document.getElementById('authTitle');if(title)title.hidden=true}if((authPasswordLoginDisabled()||!authRegisterEnabled())&&authFlipped){authFlipped=false;setTimeout(function(){setActiveFace(true)},200)}}function loadAuthSystemConfig(){fetch('/api/v1/system/config').then(function(response){return response.json()}).then(function(data){applyAuthSystemConfig((data&&data.data)||{})}).catch(function(){})}function toggleAuth(){if(!authFlipped&&(authPasswordLoginDisabled()||!authRegisterEnabled()))return;authFlipped=!authFlipped;setTimeout(function(){setActiveFace(!authFlipped)},200)}
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',loadAuthSystemConfig)}else{loadAuthSystemConfig()}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;if(!n){document.getElementById('error').textContent='Please input nickname';return}fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loginWithChannel(channel){if(!channel)return;location.href='/api/v1/auth/login/'+encodeURIComponent(channel)}
+function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type=\\'button\\' class=\\'btn btn-o auth-channel auth-channel-btn\\' data-channel=\\'\"+(item.channel||'')+\"\\'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('');Array.prototype.forEach.call(host.querySelectorAll('.auth-channel-btn'),function(button){button.addEventListener('click',function(){loginWithChannel(button.dataset.channel)})})}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
 
@@ -5710,6 +5711,80 @@ mod kb_ui_tests {
         );
     }
 
+    /// Upstream login channels + `disablePasswordLogin`: the channel list comes
+    /// from `GET /api/v1/auth/login/channels` (`{channel, display_name, icon}`),
+    /// each button performs the upstream GET redirect to
+    /// `/api/v1/auth/login/{channel}`, and SSO-only mode hides both password
+    /// forms and the register/login toggles.
+    #[tokio::test]
+    async fn login_channels_and_sso_only_mode_match_upstream() {
+        let req = axum::http::Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(login_page(req).await).await;
+        for marker in [
+            "'/api/v1/auth/login/'+encodeURIComponent(channel)",
+            "loadAuthChannels()",
+            "id='authChannels'",
+            "auth-channel",
+            "authPasswordLoginDisabled()",
+            "applyAuthSystemConfig",
+            "config.disablePasswordLogin===true",
+            "loginForm.hidden=authPasswordLoginDisabled()",
+            "regForm.hidden=authPasswordLoginDisabled()",
+            "classList.toggle('auth-channels-solo',authPasswordLoginDisabled())",
+            "authPasswordLoginDisabled()||!authRegisterEnabled()",
+        ] {
+            assert!(
+                html.contains(marker),
+                "login channel marker missing: {marker}"
+            );
+        }
+        // Registry parsing follows the upstream `oauth:` shape.
+        let channels = crate::oauth_config::parse(
+            r#"{"github":{"type":"github","icon":"github","display_name":"Github","client_id":"cid","client_secret":"sec","redirect_uri":"https://app/v1/user/oauth/callback/github","authorization_url":"https://github.com/login/oauth/authorize","scope":"read:user"},
+                "oidc":{"display_name":"OIDC","issuer":"https://idp.example.com/protocol/openid-connect","client_id":"cid2","scope":"openid email profile"}}"#,
+        );
+        assert_eq!(
+            crate::oauth_config::channel_names(&channels),
+            vec!["github".to_string(), "oidc".to_string()]
+        );
+        let github = crate::oauth_config::find(&channels, "github").expect("github channel");
+        assert_eq!(github.display_name, "Github");
+        assert_eq!(github.icon, "github");
+        let url = github
+            .authorization_request("state-1")
+            .expect("authorization url");
+        assert!(
+            url.starts_with("https://github.com/login/oauth/authorize?"),
+            "{url}"
+        );
+        for part in [
+            "response_type=code",
+            "client_id=cid",
+            "redirect_uri=https%3A%2F%2Fapp%2Fv1%2Fuser%2Foauth%2Fcallback%2Fgithub",
+            "scope=read%3Auser",
+            "state=state-1",
+        ] {
+            assert!(
+                url.contains(part),
+                "authorization url missing {part}: {url}"
+            );
+        }
+        // OIDC entries derive the endpoint from `issuer`; defaults follow upstream.
+        let oidc = crate::oauth_config::find(&channels, "oidc").expect("oidc channel");
+        assert_eq!(
+            oidc.authorization_url.as_deref(),
+            Some("https://idp.example.com/protocol/openid-connect/auth")
+        );
+        let bare = crate::oauth_config::parse(r#"{"jumpcloud":{}}"#);
+        assert_eq!(bare[0].display_name, "Jumpcloud");
+        assert_eq!(bare[0].icon, "sso");
+        assert!(crate::oauth_config::parse("not-json").is_empty());
+    }
+
     /// Upstream `login-next/bg.tsx` (BgSvg) + `components/spotlight.tsx` and the
     /// `useSystemConfig()` register gate: the login page paints the three neon
     /// arcs with their 16s dash flow, three radial spotlights, and hides the
@@ -5750,7 +5825,7 @@ mod kb_ui_tests {
             "loadAuthSystemConfig()",
             "fetch('/api/v1/system/config')",
             "config.registerEnabled!==0",
-            "if(!authFlipped&&!authRegisterEnabled())return",
+            "if(!authFlipped&&(authPasswordLoginDisabled()||!authRegisterEnabled()))return",
         ] {
             assert!(
                 html.contains(marker),

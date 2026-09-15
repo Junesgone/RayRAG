@@ -2,7 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5n）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5o）
+
+### Added
+
+- **登录渠道端点**：`GET /api/v1/auth/login/channels`（`[{channel, display_name, icon}]`，无配置返回空数组）与
+  `GET /api/v1/auth/login/{channel}`（302 跳转授权地址，未知渠道 400 `Invalid channel name: …`），由新增的
+  `src/oauth_config.rs` 注册表驱动（`RAYRAG_OAUTH_CONFIG`/`OAUTH` JSON，按上游 `settings.OAUTH_CONFIG` 形状，
+  支持 OIDC `issuer` 推导端点），两条均免登录。
+- **SSO-only 模式**：登录页遵循 `disablePasswordLogin`——隐藏两个密码表单与两个切换链接，渠道区块切换为上游
+  `py-8`/`w-full` 单列布局；渠道按钮改为上游的 `GET /api/v1/auth/login/{channel}` 跳转。
+
+### Fixed
+
+- **`public_api_path` 动态段失效**：占位符（`{channel}`、`{account_id}`）此前按字面量匹配真实请求路径，导致
+  OAuth 入口与既有的渠道路由回调一律 401；改为逐段匹配并加单测（含必须仍需鉴权的反向用例）。
+- **登录页脚本 `SyntaxError`**：渠道按钮 `innerHTML` 模板中的嵌套双引号让整段登录脚本失效，改为
+  `data-channel` + `addEventListener` 绑定。
+- **`/api/v1/auth/login/channels` 此前不存在**（页面静默失败、渠道区永不渲染），现补实现。
+
 
 ### Added
 
