@@ -27,6 +27,13 @@ All notable changes to RayRAG are documented in this file.
   **修复**：面板脚本引用未定义的 `kbId` 导致 `showTab` 从不执行（所有路由都停在 Files 面板）、
   以及 `showTab` 正则的 Rust 字符串转义错误。
 
+### Added
+
+- **数据集配置页 Basic 字段对齐上游**：新增 `Language`（17 种语言，`ds-settings-basic-language-select`）
+  与 `Description` 字段，字段顺序调整为 Name → Language → Avatar → Description → Permission →
+  Embedding model → Page rank → Tag sets（上游 `general-form.tsx`），保存按钮加
+  `ds-settings-basic-save-btn`，`PUT /api/v1/datasets/{id}` payload 增加 `description`。
+
 ### Fixed
 
 - **模型提供商弹层字段顺序对齐上游**：`Instance name → API-Key → Base-Url`（原为

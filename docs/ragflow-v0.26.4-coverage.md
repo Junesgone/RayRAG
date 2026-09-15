@@ -17,10 +17,10 @@
 |---|---:|---:|
 | aligned | 274 | 60295 |
 | full | 566 | 267453 |
-| partial | 39 | 11033 |
+| partial | 41 | 11196 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3400 | 880417 |
+| reference | 3398 | 880254 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -4529,7 +4529,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/dataset/dataset-setting/configuration-form-container.tsx` | 17 | 508 | `f262e3ea8223561a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/configuration/audio.tsx` | 20 | 552 | `19a58e4771567edc` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/configuration/book.tsx` | 29 | 888 | `80b7f3996900dd29` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/dataset/dataset-setting/configuration/common-item.tsx` | 602 | 18123 | `51761f097ce9fa0b` | partial | `src/web.rs; web/static/` | The embedding slice is wired through the shared default-model tree selector (markup + MODEL_FIELDS payload + shared HEAD/BODY behaviour + form persist hook + catalog loader + stored-value normalizer) on both the kb and dataset configuration surfaces, CDP-verified with a real click, save (`✅ 已保存`) and reload persistence; the remaining common-item items (chunk method, parse type, auto-generate, metadata) stay reference (v0.3.4g) |
+| `web/src/pages/dataset/dataset-setting/configuration/common-item.tsx` | 602 | 18123 | `51761f097ce9fa0b` | partial | `src/web.rs; web/static/` | Rust `/dataset/configuration/{id}` Basic section now follows the upstream `general-form.tsx` order (Name → Language → Avatar → Description → Permission → Embedding model → Page rank → Tag sets), gained the `common.language` select with the 17 upstream language options (`data-testid='ds-settings-basic-language-select'`) and the `flow.description` textarea, and the save button carries `data-testid='ds-settings-basic-save-btn'` with `description` included in the `PUT /api/v1/datasets/{id}` payload. The embedding slice stays on the shared default-model tree; avatar crop/preview and tag-set word cloud remain approximations (v0.3.5h)|
 | `web/src/pages/dataset/dataset-setting/configuration/email.tsx` | 19 | 551 | `2ed09bdb1e6643fd` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/configuration/knowledge-graph.tsx` | 15 | 513 | `8912467faedb25b6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/configuration/laws.tsx` | 30 | 889 | `6450b2f827dd06a2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -4544,10 +4544,10 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/dataset/dataset-setting/configuration/table.tsx` | 155 | 4950 | `40febbf0e4a094e0` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/configuration/tag.tsx` | 5 | 186 | `b068ec26f6a0e9bb` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/form-schema.ts` | 157 | 5290 | `acb0eaf10947a67a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/dataset/dataset-setting/general-form.tsx` | 133 | 4432 | `1f214ba2f4b0369f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/dataset/dataset-setting/general-form.tsx` | 133 | 4432 | `1f214ba2f4b0369f` | partial | `src/web.rs; web/static/` | Rust keeps the upstream general-form field set and order; the avatar uploader accepts a data-URL preview instead of the upstream uploader component and the language select is a plain `<select>` rather than `SelectWithSearch` (v0.3.5h)|
 | `web/src/pages/dataset/dataset-setting/hooks.ts` | 116 | 3520 | `3389470d0fd2bdd3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/index.tsx` | 391 | 13237 | `072e84f87809623a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/dataset/dataset-setting/permission-form-field.tsx` | 30 | 919 | `33336a824197ec65` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/dataset/dataset-setting/permission-form-field.tsx` | 30 | 919 | `33336a824197ec65` | partial | `src/web.rs; web/static/` | Rust renders the permission select with the upstream `team`/`private` values (Team / Me); the shared-team option list of the upstream field is not ported (v0.3.5h)|
 | `web/src/pages/dataset/dataset-setting/saving-button.tsx` | 106 | 3359 | `37b0bd2350c25aee` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/tag-table/index.tsx` | 305 | 8865 | `f28e78804828e0b2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataset/dataset-setting/tag-table/rename-dialog/index.tsx` | 40 | 1163 | `7c601e7f45fe4fff` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
