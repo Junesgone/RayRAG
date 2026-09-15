@@ -71,6 +71,11 @@ pub struct AppState {
     pub memory_messages: Arc<crate::api::joint_services::MemoryMessageService>,
     pub skill_index: Arc<crate::api::skill_index::SkillIndexStore>,
     pub system_settings: Arc<crate::api::system_settings::SystemSettingsStore>,
+    /// `REGISTER_ENABLED` — exposed by `GET /api/v1/system/config` (upstream
+    /// `settings.REGISTER_ENABLED`, 0 disables the sign-up face).
+    pub register_enabled: i64,
+    /// `DISABLE_PASSWORD_LOGIN` — second field of the same payload.
+    pub disable_password_login: bool,
     pub langfuse: Arc<crate::api::langfuse::LangfuseStore>,
     pub mcp_servers: Arc<crate::api::mcp_mgr::McpServerStore>,
     pub chat_channels: Arc<crate::api::chat_channel_mgr::ChatChannelStore>,
@@ -2973,6 +2978,11 @@ fn public_api_path(path: &str) -> bool {
             | "/api/v1/user/register"
             | "/api/v1/system/password-public-key"
             | "/api/v1/system/healthz"
+            // Upstream `system_api.version` / `get_config` are unauthenticated:
+            // the login page needs the version and the register gate before it
+            // has a token.
+            | "/api/v1/system/version"
+            | "/api/v1/system/config"
             | "/api/v1/version"
             // Chat channel inbound endpoints: platform webhook callbacks must
             // not need the RayRAG API token (RAGFlow channels are unauthenticated).
@@ -3940,6 +3950,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/system/healthz", get(crate::api::system::healthz))
         .route(
+            "/api/v1/system/version",
+            get(crate::api::system::system_version_public),
+        )
+        .route(
+            "/api/v1/system/config",
+            get(crate::api::system::system_config),
+        )
+        .route(
             "/api/v1/system/new_api_key",
             post(crate::api::system::new_api_key),
         )
@@ -4191,6 +4209,8 @@ pub async fn run(
         system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::new(
             &system_settings_path,
         )?),
+        register_enabled: crate::settings::Settings::from_env().register_enabled,
+        disable_password_login: crate::settings::Settings::from_env().disable_password_login,
         langfuse: Arc::new(crate::api::langfuse::LangfuseStore::new(&langfuse_path)?),
         mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::new(&mcp_servers_path)?),
         chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::new(
@@ -4410,6 +4430,8 @@ mod tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            register_enabled: 1,
+            disable_password_login: false,
             langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
             mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
             chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
@@ -4693,6 +4715,8 @@ mod tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            register_enabled: 1,
+            disable_password_login: false,
             langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
             mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
             chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),

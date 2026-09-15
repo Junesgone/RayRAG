@@ -90,6 +90,29 @@ pub struct SystemConfig {
     pub indexing_strategy: String,
 }
 
+/// GET `/api/v1/system/version` — upstream `system_api.version` returns
+/// `get_ragflow_version()` directly, i.e. the bare version string.
+pub async fn system_version_public() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "code": 0,
+        "data": format!("v{}", crate::build_info::VERSION),
+    }))
+}
+
+/// GET `/api/v1/system/config` — upstream `system_api.get_config`:
+/// `{"registerEnabled": settings.REGISTER_ENABLED,
+///   "disablePasswordLogin": settings.DISABLE_PASSWORD_LOGIN}`.
+/// The login page reads `registerEnabled` to gate the sign-up face.
+pub async fn system_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "registerEnabled": state.register_enabled,
+            "disablePasswordLogin": state.disable_password_login,
+        }
+    }))
+}
+
 /// GET /api/v1/system — get system settings
 pub async fn get_system() -> impl IntoResponse {
     Json(serde_json::json!({

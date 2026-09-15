@@ -93,3 +93,21 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .avatar-upload-pencil{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;border-radius:var(--rs);background:rgba(0,0,0,.4);color:#fff;font-size:18px;opacity:0;transition:opacity .15s;cursor:pointer}
 .avatar-upload-remove{position:absolute;top:-8px;right:-8px;z-index:10;width:24px;height:24px;padding:0;border:2px solid var(--bg);border-radius:999px;background:var(--d);color:#fff;font-size:12px;line-height:1;cursor:pointer}
 .avatar-upload-tip{margin-left:4px;color:var(--tm);font-size:12px}
+/* Upstream `login-next/bg.tsx` + `components/spotlight.tsx`: three neon arcs
+   (aspectRatio 240/466/704, 'none' preserveAspectRatio) with the fixed 16s dash
+   flow, plus the radial blur spotlights behind the flip card. */
+.auth-bg{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.auth-bg-band{width:100%;margin-left:40px}
+.auth-bg-top{height:240px}
+.auth-bg-middle{height:466px;margin-top:-192px}
+.auth-bg-bottom{height:704px;margin-top:-288px}
+.auth-bg-svg{display:block;width:100%;height:100%}
+.mask-path{stroke-width:8}
+@keyframes auth-glow{0%{stroke-dashoffset:0}100%{stroke-dashoffset:-650}}
+@keyframes auth-highlight-flow{0%{stroke-dashoffset:50}100%{stroke-dashoffset:-600}}
+.animate-glow{animation:auth-glow 16s infinite linear}
+.animate-highlight{animation:auth-highlight-flow 16s linear infinite}
+.paused .animate-glow,.paused .animate-highlight{animation-play-state:paused}
+.spotlight{position:absolute;inset:0;z-index:-1;border-radius:var(--r);opacity:.8;backdrop-filter:blur(30px);background:radial-gradient(circle at var(--sx,50%) var(--sy,190%),rgba(var(--srgb,128,255,248),var(--so,.4)) 0%,rgba(var(--srgb,128,255,248),0) var(--sc,60%));pointer-events:none}
+.auth-scene{position:relative}
+.auth-scene>.auth-bg,.auth-scene>.spotlight{z-index:0}

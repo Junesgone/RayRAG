@@ -3394,6 +3394,11 @@ pub async fn admin_page(
     Html(layout(t("Admin", zh), &b, zh))
 }
 
+/// Upstream `pages/login-next/bg.tsx` — the three neon arcs drawn behind the
+/// login card. Geometry, gradients, masks and dash animation are copied from the
+/// React source (`aspectRatio` 240/466/704, `preserveAspectRatio='none'`).
+const LOGIN_BG_SVG: &str = r#"<div class='auth-bg' aria-hidden='true'><div class='auth-bg-band auth-bg-top'><svg class='auth-bg-svg' viewBox='0 0 1440 240' preserveAspectRatio='none' xmlns='http://www.w3.org/2000/svg'><defs><linearGradient id='glow0' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='0%' stop-color='#80FFF8' stop-opacity='0'/><stop offset='50%' stop-color='#80FFF8' stop-opacity='1'/><stop offset='100%' stop-color='#80FFF8' stop-opacity='0'/></linearGradient><linearGradient id='strokeWidthGradient' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='0%' stop-color='#000'/><stop offset='10%' stop-color='#fff'/><stop offset='50%' stop-color='#fff'/><stop offset='90%' stop-color='#fff'/><stop offset='100%' stop-color='#000'/></linearGradient><linearGradient id='highlight0' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='45%' stop-color='#FFF' stop-opacity='0.2'/><stop offset='48%' stop-color='#FFD700' stop-opacity='0.3'/></linearGradient><filter id='glowFilter0' x='-10%' y='-10%' width='120%' height='120%'><feGaussianBlur in='SourceGraphic' stdDeviation='5.2'/></filter><filter id='highlightFilter0' x='-5%' y='-5%' width='110%' height='110%'><feGaussianBlur in='SourceGraphic' stdDeviation='5.5'/></filter><mask id='glowMask0'><rect width='100%' height='100%' fill='transparent'/><path d='M1282.81 -45L999.839 147.611C988.681 155.206 975.496 159.267 961.999 159.267H746.504H330.429C317.253 159.267 304.368 155.397 293.373 148.137L0.88623 -45' fill='none' stroke='url(#strokeWidthGradient)' stroke-width='1' stroke-dasharray='50,600' stroke-dashoffset='0' filter='url(#glowFilter0)' class='animate-glow mask-path'/><path d='M1282.81 -45L999.839 147.611C988.681 155.206 975.496 159.267 961.999 159.267H746.504H330.429C317.253 159.267 304.368 155.397 293.373 148.137L0.88623 -45' fill='none' stroke='url(#highlight0)' stroke-width='0.5' stroke-dasharray='50,600' stroke-dashoffset='16' filter='url(#highlightFilter0)' class='animate-highlight mask-path'/></mask></defs><path d='M1282.81 -45L999.839 147.611C988.681 155.206 975.496 159.267 961.999 159.267H746.504H330.429C317.253 159.267 304.368 155.397 293.373 148.137L0.88623 -45' stroke='#00BEB4' stroke-width='1' fill='none' opacity='0.1'/><path d='M1282.81 -45L999.839 147.611C988.681 155.206 975.496 159.267 961.999 159.267H746.504H330.429C317.253 159.267 304.368 155.397 293.373 148.137L0.88623 -45' stroke='url(#glow0)' stroke-width='2' fill='none' opacity='0.8' mask='url(#glowMask0)'/></svg></div><div class='auth-bg-band auth-bg-middle'><svg class='auth-bg-svg' viewBox='0 0 1440 466' preserveAspectRatio='none' xmlns='http://www.w3.org/2000/svg'><defs><linearGradient id='glow1' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='0%' stop-color='#80FFF8' stop-opacity='0'/><stop offset='50%' stop-color='#80FFF8' stop-opacity='1'/><stop offset='100%' stop-color='#80FFF8' stop-opacity='0'/></linearGradient><linearGradient id='highlight1' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='45%' stop-color='#FFF' stop-opacity='0.2'/><stop offset='48%' stop-color='#FFD700' stop-opacity='0.3'/></linearGradient><filter id='glowFilter1' x='-10%' y='-10%' width='120%' height='120%'><feGaussianBlur in='SourceGraphic' stdDeviation='5.2'/></filter><filter id='highlightFilter1' x='-5%' y='-5%' width='110%' height='110%'><feGaussianBlur in='SourceGraphic' stdDeviation='5.5'/></filter><mask id='glowMask1'><rect width='100%' height='100%' fill='transparent'/><path d='M0 1L203.392 203.181C215.992 215.705 233.036 222.736 250.802 222.736H287.103C305.94 222.736 323.913 230.636 336.649 244.514L425.401 341.222C438.137 355.1 456.11 363 474.947 363H976.902C996.333 363 1014.81 354.595 1027.59 339.95L1104.79 251.424C1116.14 238.4 1132.08 230.248 1149.29 228.659L1191.13 224.796C1205.62 223.458 1219.28 217.461 1230.06 207.704L1440 17.7981' fill='none' stroke='url(#strokeWidthGradient)' stroke-width='1' stroke-dasharray='50,600' stroke-dashoffset='0' filter='url(#glowFilter1)' class='animate-glow mask-path'/><path d='M0 1L203.392 203.181C215.992 215.705 233.036 222.736 250.802 222.736H287.103C305.94 222.736 323.913 230.636 336.649 244.514L425.401 341.222C438.137 355.1 456.11 363 474.947 363H976.902C996.333 363 1014.81 354.595 1027.59 339.95L1104.79 251.424C1116.14 238.4 1132.08 230.248 1149.29 228.659L1191.13 224.796C1205.62 223.458 1219.28 217.461 1230.06 207.704L1440 17.7981' fill='none' stroke='url(#highlight1)' stroke-width='0.5' stroke-dasharray='50,600' stroke-dashoffset='16' filter='url(#highlightFilter1)' class='animate-highlight mask-path'/></mask></defs><path d='M0 1L203.392 203.181C215.992 215.705 233.036 222.736 250.802 222.736H287.103C305.94 222.736 323.913 230.636 336.649 244.514L425.401 341.222C438.137 355.1 456.11 363 474.947 363H976.902C996.333 363 1014.81 354.595 1027.59 339.95L1104.79 251.424C1116.14 238.4 1132.08 230.248 1149.29 228.659L1191.13 224.796C1205.62 223.458 1219.28 217.461 1230.06 207.704L1440 17.7981' stroke='#00BEB4' stroke-width='1' fill='none' opacity='0.1'/><path d='M0 1L203.392 203.181C215.992 215.705 233.036 222.736 250.802 222.736H287.103C305.94 222.736 323.913 230.636 336.649 244.514L425.401 341.222C438.137 355.1 456.11 363 474.947 363H976.902C996.333 363 1014.81 354.595 1027.59 339.95L1104.79 251.424C1116.14 238.4 1132.08 230.248 1149.29 228.659L1191.13 224.796C1205.62 223.458 1219.28 217.461 1230.06 207.704L1440 17.7981' stroke='url(#glow1)' stroke-width='2' fill='none' opacity='0.8' mask='url(#glowMask1)'/></svg></div><div class='auth-bg-band auth-bg-bottom'><svg class='auth-bg-svg' viewBox='0 0 1440 704' preserveAspectRatio='none' xmlns='http://www.w3.org/2000/svg'><defs><linearGradient id='glow2' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='0%' stop-color='#80FFF8' stop-opacity='0'/><stop offset='50%' stop-color='#80FFF8' stop-opacity='1'/><stop offset='100%' stop-color='#80FFF8' stop-opacity='0'/></linearGradient><linearGradient id='highlight2' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='45%' stop-color='#FFF' stop-opacity='0.2'/><stop offset='48%' stop-color='#FFD700' stop-opacity='0.3'/></linearGradient><filter id='glowFilter2' x='-10%' y='-10%' width='120%' height='120%'><feGaussianBlur in='SourceGraphic' stdDeviation='5.2'/></filter><filter id='highlightFilter2' x='-5%' y='-5%' width='110%' height='110%'><feGaussianBlur in='SourceGraphic' stdDeviation='5.5'/></filter><mask id='glowMask2'><rect width='100%' height='100%' fill='transparent'/><path d='M-10 1L57.1932 71.1509C67.7929 82.2171 74.2953 96.5714 75.6239 111.837L79.8042 159.87C81.3312 177.416 89.68 193.662 103.057 205.117L399.311 458.829C411.497 469.265 427.011 475 443.054 475H972.606C988.463 475 1003.81 469.396 1015.94 459.179L1310.78 210.75C1323.01 200.451 1331.16 186.136 1333.79 170.369L1341.87 121.837C1344.06 108.691 1350.11 96.492 1359.24 86.7885L1440 1' fill='none' stroke='url(#strokeWidthGradient)' stroke-width='1' stroke-dasharray='50,600' stroke-dashoffset='0' filter='url(#glowFilter2)' class='animate-glow mask-path'/><path d='M-10 1L57.1932 71.1509C67.7929 82.2171 74.2953 96.5714 75.6239 111.837L79.8042 159.87C81.3312 177.416 89.68 193.662 103.057 205.117L399.311 458.829C411.497 469.265 427.011 475 443.054 475H972.606C988.463 475 1003.81 469.396 1015.94 459.179L1310.78 210.75C1323.01 200.451 1331.16 186.136 1333.79 170.369L1341.87 121.837C1344.06 108.691 1350.11 96.492 1359.24 86.7885L1440 1' fill='none' stroke='url(#highlight2)' stroke-width='0.5' stroke-dasharray='50,600' stroke-dashoffset='16' filter='url(#highlightFilter2)' class='animate-highlight mask-path'/></mask></defs><path d='M-10 1L57.1932 71.1509C67.7929 82.2171 74.2953 96.5714 75.6239 111.837L79.8042 159.87C81.3312 177.416 89.68 193.662 103.057 205.117L399.311 458.829C411.497 469.265 427.011 475 443.054 475H972.606C988.463 475 1003.81 469.396 1015.94 459.179L1310.78 210.75C1323.01 200.451 1331.16 186.136 1333.79 170.369L1341.87 121.837C1344.06 108.691 1350.11 96.492 1359.24 86.7885L1440 1' stroke='#00BEB4' stroke-width='1' fill='none' opacity='0.1'/><path d='M-10 1L57.1932 71.1509C67.7929 82.2171 74.2953 96.5714 75.6239 111.837L79.8042 159.87C81.3312 177.416 89.68 193.662 103.057 205.117L399.311 458.829C411.497 469.265 427.011 475 443.054 475H972.606C988.463 475 1003.81 469.396 1015.94 459.179L1310.78 210.75C1323.01 200.451 1331.16 186.136 1333.79 170.369L1341.87 121.837C1344.06 108.691 1350.11 96.492 1359.24 86.7885L1440 1' stroke='url(#glow2)' stroke-width='2' fill='none' opacity='0.8' mask='url(#glowMask2)'/></svg></div></div><div class='spotlight spotlight-main' style='--sx:50%;--sy:190%;--so:0.4;--sc:60%;--srgb:128,255,248'></div><div class='spotlight spotlight-left' style='--sx:10%;--sy:-10%;--so:0.3;--sc:12%;--srgb:128,255,248'></div><div class='spotlight spotlight-right' style='--sx:90%;--sy:-10%;--so:0.3;--sc:12%;--srgb:128,255,248'></div>"#;
+
 pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let login_title = if zh { "登录" } else { "Sign in" };
@@ -3417,6 +3422,10 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     let mut b = String::with_capacity(4096);
     // Upstream `login-next/card.tsx` FlipCard3D: two faces inside a 3D scene,
     // the active one carrying `data-testid='auth-card-active'`.
+    // Upstream `login-next/bg.tsx` (BgSvg) + three `Spotlight` overlays sit
+    // behind the flip card; both are decorative (aria-hidden, pointer-events
+    // none) and animate with the fixed 16s dash flow.
+    b.push_str(LOGIN_BG_SVG);
     b.push_str("<div class='auth-scene'><div class='auth-stage' id='authStage'><div class='auth-face auth-face-front' id='authLoginFace' data-testid='auth-card-active'><div class='auth-card card'><div class='auth-heading'><h2 id='authTitle'>");
     b.push_str(if zh {
         "登录你的账号"
@@ -3445,7 +3454,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     b.push_str(remember_label);
     b.push_str("</span></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
     b.push_str(login_button);
-    b.push_str("</button></form><div id='authChannels' class='auth-channels' hidden></div><div class='auth-switch'><span>");
+    b.push_str("</button></form><div id='authChannels' class='auth-channels' hidden></div><div class='auth-switch' id='authSwitchToRegister'><span>");
     b.push_str(sign_in_tip);
     b.push_str("</span> <button type='button' class='auth-link' data-testid='auth-toggle-register' onclick='toggleAuth()'>");
     b.push_str(register_title);
@@ -3483,12 +3492,13 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     });
     b.push_str("' autocomplete='new-password'></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
     b.push_str(register_button);
-    b.push_str("</button></form><div class='auth-switch'><span>");
+    b.push_str("</button></form><div class='auth-switch' id='authSwitchToLogin'><span>");
     b.push_str(sign_up_tip);
     b.push_str("</span> <button type='button' class='auth-link' data-testid='auth-toggle-login' onclick='toggleAuth()'>");
     b.push_str(login_title);
     b.push_str("</button></div></div></div></div></div><div id='error' class='auth-error' role='alert'></div>");
-    b.push_str("<script>var authFlipped=false;function setActiveFace(login){var stage=document.getElementById('authStage');var front=document.getElementById('authLoginFace');var back=document.getElementById('authRegisterFace');stage.classList.toggle('flipped',!login);front.toggleAttribute('data-testid',login);back.toggleAttribute('data-testid',!login);if(login){front.setAttribute('data-testid','auth-card-active');back.removeAttribute('data-testid')}else{back.setAttribute('data-testid','auth-card-active');front.removeAttribute('data-testid')}document.getElementById('loginForm').dataset.active=login?'true':'false';document.getElementById('regForm').dataset.active=login?'false':'true'}function toggleAuth(){authFlipped=!authFlipped;setTimeout(function(){setActiveFace(!authFlipped)},200)}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;if(!n){document.getElementById('error').textContent='Please input nickname';return}fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type='button' class='btn btn-o auth-channel'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('')}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
+    b.push_str("<script>var authFlipped=false;function setActiveFace(login){var stage=document.getElementById('authStage');var front=document.getElementById('authLoginFace');var back=document.getElementById('authRegisterFace');stage.classList.toggle('flipped',!login);front.toggleAttribute('data-testid',login);back.toggleAttribute('data-testid',!login);if(login){front.setAttribute('data-testid','auth-card-active');back.removeAttribute('data-testid')}else{back.setAttribute('data-testid','auth-card-active');front.removeAttribute('data-testid')}document.getElementById('loginForm').dataset.active=login?'true':'false';document.getElementById('regForm').dataset.active=login?'false':'true'}var AUTH_REGISTER_ENABLED=true;function authRegisterEnabled(){return AUTH_REGISTER_ENABLED!==false}function applyAuthRegisterGate(enabled){AUTH_REGISTER_ENABLED=enabled!==false;var switchRegister=document.getElementById('authSwitchToRegister');if(switchRegister)switchRegister.hidden=!authRegisterEnabled();var switchLogin=document.getElementById('authSwitchToLogin');if(switchLogin)switchLogin.hidden=false;if(!authRegisterEnabled()&&authFlipped){authFlipped=false;setTimeout(function(){setActiveFace(true)},200)}}function loadAuthSystemConfig(){fetch('/api/v1/system/config').then(function(response){return response.json()}).then(function(data){var config=(data&&data.data)||{};applyAuthRegisterGate(config.registerEnabled!==0)}).catch(function(){})}function toggleAuth(){if(!authFlipped&&!authRegisterEnabled())return;authFlipped=!authFlipped;setTimeout(function(){setActiveFace(!authFlipped)},200)}
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',loadAuthSystemConfig)}else{loadAuthSystemConfig()}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;if(!n){document.getElementById('error').textContent='Please input nickname';return}fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type='button' class='btn btn-o auth-channel'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('')}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
 
@@ -5487,6 +5497,8 @@ mod kb_ui_tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            register_enabled: 1,
+            disable_password_login: false,
             langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
             mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
             chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
@@ -5696,6 +5708,77 @@ mod kb_ui_tests {
                 .iter()
                 .all(|field| !field.required)
         );
+    }
+
+    /// Upstream `login-next/bg.tsx` (BgSvg) + `components/spotlight.tsx` and the
+    /// `useSystemConfig()` register gate: the login page paints the three neon
+    /// arcs with their 16s dash flow, three radial spotlights, and hides the
+    /// sign-up toggle when `registerEnabled === 0`.
+    #[tokio::test]
+    async fn login_page_paints_upstream_background_and_honours_register_gate() {
+        let req = axum::http::Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(login_page(req).await).await;
+        for marker in [
+            "class='auth-bg'",
+            "auth-bg-top",
+            "auth-bg-middle",
+            "auth-bg-bottom",
+            "viewBox='0 0 1440 240'",
+            "viewBox='0 0 1440 466'",
+            "viewBox='0 0 1440 704'",
+            "preserveAspectRatio='none'",
+            "stroke='#00BEB4'",
+            "stroke-dasharray='50,600'",
+            "class='animate-glow mask-path'",
+            "class='animate-highlight mask-path'",
+            "feGaussianBlur in='SourceGraphic' stdDeviation='5.2'",
+            "feGaussianBlur in='SourceGraphic' stdDeviation='5.5'",
+            "<stop offset='50%' stop-color='#80FFF8' stop-opacity='1'/>",
+            "<stop offset='48%' stop-color='#FFD700' stop-opacity='0.3'/>",
+            "spotlight spotlight-main",
+            "spotlight spotlight-left",
+            "spotlight spotlight-right",
+            "--sx:50%;--sy:190%;--so:0.4;--sc:60%",
+            "--sx:10%;--sy:-10%;--so:0.3;--sc:12%",
+            "--sx:90%;--sy:-10%;--so:0.3;--sc:12%",
+            "id='authSwitchToRegister'",
+            "id='authSwitchToLogin'",
+            "loadAuthSystemConfig()",
+            "fetch('/api/v1/system/config')",
+            "config.registerEnabled!==0",
+            "if(!authFlipped&&!authRegisterEnabled())return",
+        ] {
+            assert!(
+                html.contains(marker),
+                "login background marker missing: {marker}"
+            );
+        }
+        // The two upstream system endpoints back the gate.
+        let state = test_state().1;
+        let version = body_of(crate::api::system::system_version_public().await).await;
+        assert!(version.contains("\"code\":0"), "version payload shape");
+        assert!(version.contains(&format!("\"data\":\"v{}\"", crate::build_info::VERSION)));
+        let config =
+            body_of(crate::api::system::system_config(axum::extract::State(state)).await).await;
+        assert!(
+            config.contains("\"registerEnabled\":1")
+                && config.contains("\"disablePasswordLogin\":false"),
+            "system config payload must expose both upstream fields: {config}"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".auth-bg-top{height:240px}",
+            ".auth-bg-middle{height:466px;margin-top:-192px}",
+            ".auth-bg-bottom{height:704px;margin-top:-288px}",
+            "@keyframes auth-glow{0%{stroke-dashoffset:0}100%{stroke-dashoffset:-650}}",
+            ".spotlight{position:absolute;inset:0;z-index:-1",
+        ] {
+            assert!(css.contains(rule), "login background css missing: {rule}");
+        }
     }
 
     /// Upstream `profile/index.tsx` + `components/avatar-upload.tsx`: the page

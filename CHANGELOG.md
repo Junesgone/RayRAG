@@ -2,7 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5m）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5n）
+
+### Added
+
+- **`/login` 上游 3D 背景**：`login-next/bg.tsx` 的三条霓虹弧带（viewBox 240/466/704、`#00BEB4` 底描边、
+  `#80FFF8` 辉光渐变 + dash 遮罩、`#FFD700` 高光、`feGaussianBlur` 5.2/5.5、16s dash 流动）与
+  `components/spotlight.tsx` 的三个径向辉光（0.4/0.3/0.3、coverage 60/12/12、`backdrop-filter: blur(30px)`）全部落地。
+- **`registerEnabled` 闸门**：登录页读取 `GET /api/v1/system/config`，为 0 时隐藏注册入口并禁止翻面。
+- **两个上游系统端点**（免登录）：`GET /api/v1/system/version`（返回版本字符串）与
+  `GET /api/v1/system/config`（`registerEnabled` / `disablePasswordLogin`，取自 `REGISTER_ENABLED` /
+  `DISABLE_PASSWORD_LOGIN`），并加入 `public_api_path` 白名单。
+- **CDP 探针** `scripts/ui-traversal/login-bg-cdp.mjs`：校验弧带高度/viewBox、spotlight 数量、动画名与时长、
+  闸门开关与两个端点响应。
+
 
 ### Added
 
