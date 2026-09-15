@@ -75,3 +75,21 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
    (`All`+`63`); the gap comes from CSS margin, not a literal space. */
 .provider-chip span{margin-left:4px;font-variant-numeric:tabular-nums;opacity:.6}
 .available-provider-add{white-space:nowrap}
+/* user-setting profile page: upstream rows use a 190px label column, a bordered
+   value box and a PenLine edit button; the avatar is an AvatarUpload control. */
+.profile-title{margin:0 0 4px;font-size:24px;font-weight:500;color:var(--t)}
+.profile-description{margin:0 0 16px;color:var(--tm);font-size:14px}
+.profile-row label{width:190px;flex:0 0 190px;font-size:14px;font-weight:500;color:var(--t)}
+.profile-box{display:inline-block;min-height:32px;flex:1 1 auto;min-width:0;padding:6px 8px;border:1px solid var(--bd);border-radius:var(--rs);color:var(--t);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-edit-btn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.profile-value-stacked{flex-direction:column;align-items:flex-start;gap:4px}
+.avatar-upload{display:inline-flex;align-items:flex-end;gap:8px}
+.avatar-upload-add{display:inline-flex;width:64px;height:64px;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0;border:1px dashed var(--bd);border-radius:var(--r);background:transparent;color:var(--t2);font-size:11px;cursor:pointer}
+.avatar-upload-add:hover{border-color:var(--p);color:var(--t)}
+.avatar-upload-add[hidden],.avatar-upload-preview[hidden]{display:none!important}
+.avatar-upload-preview{position:relative;display:inline-block;width:64px;height:64px}
+.avatar-upload-preview img{width:64px;height:64px;object-fit:cover;border-radius:var(--rs);display:block}
+.avatar-upload-preview:hover .avatar-upload-pencil{opacity:1}
+.avatar-upload-pencil{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;border-radius:var(--rs);background:rgba(0,0,0,.4);color:#fff;font-size:18px;opacity:0;transition:opacity .15s;cursor:pointer}
+.avatar-upload-remove{position:absolute;top:-8px;right:-8px;z-index:10;width:24px;height:24px;padding:0;border:2px solid var(--bg);border-radius:999px;background:var(--d);color:#fff;font-size:12px;line-height:1;cursor:pointer}
+.avatar-upload-tip{margin-left:4px;color:var(--tm);font-size:12px}

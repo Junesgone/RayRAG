@@ -2,7 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5l）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5m）
+
+### Added
+
+- **user-setting Profile 页对齐上游**：头部 `setting.profile` + `setting.profileDescription`，190px 标签列 + 边框值框 +
+  `PenLine` 编辑按钮（用户名/头像/时区/邮箱/密码），`setting.emailDescription` 与 `setting.avatarTip` 说明文案。
+- **AvatarUpload 交互**：无头像时 64×64 虚线上传按钮；有头像时 64×64 预览（hover 铅笔可重选）+ 右上角圆形
+  `Remove image` 按钮清空；文件名白名单 `jpg|jpeg|png|webp|bmp`；选中后 canvas 居中裁剪为 64×64 PNG 再上传。
+- **Profile 双语**：页面标签/说明/按钮与 JS 校验文案全部中英双语（概要/用户名/头像/时区/邮箱/密码/编辑、
+  请选择图片文件、请确认新密码…），弹窗标题按上游保持英文硬编码。
+- **CDP 探针** `scripts/ui-traversal/profile-page-cdp.mjs`：验证空态→上传→预览→删除→非法扩展名拒绝→三个编辑弹窗→zh 文案。
+
+### Fixed
+
+- **昵称前端字符集校验**：补 `PROFILE_NAME_PATTERN=/^[\p{L}\p{N} ._'-]+$/u`（对齐上游 `NICKNAME_PATTERN`），
+  与 100 字符上限及服务端 `validate_nickname` 一致。
+
 
 ### Added
 

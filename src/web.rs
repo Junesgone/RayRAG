@@ -210,6 +210,23 @@ fn t(k: &str, zh: bool) -> &str {
         "Bulk Delete" => "批量删除",
         "Clear" => "清空选择",
         "Temporary Conversation" => "临时对话",
+        // user-setting profile page (upstream `setting.*`).
+        "Profile" => "概要",
+        "Update your photo and personal details here." => "在此更新您的照片和个人详细信息。",
+        "Time zone" => "时区",
+        "Email" => "邮箱",
+        "Once registered, E-mail cannot be changed." => "一旦注册，电子邮件将无法更改。",
+        "Password" => "密码",
+        "Edit" => "编辑",
+        "This will be displayed on your profile." => "这会在你的个人主页展示",
+        "Please select an image file" => "请选择图片文件",
+        "Please input your username!" => "请输入用户名",
+        "Name must be at most 100 characters" => "名称最多 100 个字符",
+        "Only letters, numbers and . _ '- are allowed" => "只允许字母、数字和 . _ '- 字符",
+        "Please input the current password" => "请输入当前密码",
+        "Please input your password!" => "请输入新密码",
+        "Please confirm your password!" => "请确认新密码",
+        "The password must be at least 8 characters" => "密码长度至少 8 位",
         // Provider "List models" picker + custom-model dialog (setting.* keys).
         "List models" => "模型列表",
         "All models" => "所有模型",
@@ -584,10 +601,46 @@ pub async fn user_setting_profile_page(
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    let body = r#"<h1>Profile</h1><div class='card' data-testid='profile-card'><div class='profile-rows'><div class='profile-row'><label>Username</label><div class='profile-value'><span id='profileNickname'>...</span><button class='btn btn-o btn-sm' type='button' onclick='openProfileEdit("name")'>Edit</button></div></div><div class='profile-row'><label>Avatar</label><div class='profile-value'><img id='profileAvatar' class='profile-avatar' alt='Avatar' hidden><span id='profileAvatarFallback' class='profile-avatar profile-avatar-letter'>A</span><input id='profileAvatarFile' type='file' accept='image/*' hidden onchange='uploadAvatar()'><button class='btn btn-o btn-sm' type='button' onclick='document.getElementById("profileAvatarFile").click()'>Upload</button></div></div><div class='profile-row'><label>Time Zone</label><div class='profile-value'><span id='profileTimezone'>...</span><button class='btn btn-o btn-sm' type='button' onclick='openProfileEdit("timezone")'>Edit</button></div></div><div class='profile-row'><label>Email</label><div class='profile-value'><span id='profileEmail'>...</span><span class='user-setting-description' style='margin:0'>The email is your login account and cannot be changed here.</span></div></div><div class='profile-row'><label>Password</label><div class='profile-value'><span>********</span><button class='btn btn-o btn-sm' type='button' onclick='openProfileEdit("password")'>Edit</button></div></div></div></div><div class='modal-overlay' id='profileEditDialog' data-testid='profile-edit-dialog' onclick='if(event.target===this)closeProfileEdit()'><div class='modal' style='max-width:440px' role='dialog' aria-modal='true' aria-labelledby='profileEditTitle'><h2 id='profileEditTitle'>Edit Name</h2><div id='profileNameFields'><label class='provider-instance-field'>Username<input id='profileEditName' placeholder='Username' autocomplete='off'><p id='profileEditNameError' class='provider-instance-error'></p></label></div><div id='profileTimezoneFields' hidden><label class='provider-instance-field'>Time Zone<input id='profileEditTimezone' placeholder='Select a timeZone' autocomplete='off' oninput='tzRenderList()'><div id='profileTzList' class='provider-tz-list'></div><p id='profileEditTimezoneError' class='provider-instance-error'></p></label></div><div id='profilePasswordFields' hidden><label class='provider-instance-field'>Current Password<input id='profileCurPw' type='password' autocomplete='current-password'><p id='profileCurPwError' class='provider-instance-error'></p></label><label class='provider-instance-field'>New Password<input id='profileNewPw' type='password' placeholder='At least 8 characters' autocomplete='new-password'><p id='profileNewPwError' class='provider-instance-error'></p></label><label class='provider-instance-field'>Confirm Password<input id='profileConfirmPw' type='password' autocomplete='new-password'><p id='profileConfirmPwError' class='provider-instance-error'></p></label></div><p id='profileEditStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeProfileEdit()'>Cancel</button><button class='btn btn-p' id='profileEditSave' type='button' onclick='saveProfileEdit()'>Save</button></div></div></div><script>var PROFILE_TIMEZONES=(function(){var src=(typeof Intl.supportedValuesOf==='function')?Intl.supportedValuesOf('timeZone'):[];var arr=src.map(function(tz){var dtf=new Intl.DateTimeFormat('en-US',{hourCycle:'h24',timeZone:tz,timeZoneName:'longOffset'});var parts=dtf.formatToParts(new Date());var offsetString=parts[parts.length-1].value;var m=/^GMT([+-])(\d{2}):(\d{2})$/i.exec(offsetString);var sign=m?m[1]:'+';var hours=m?m[2]:'00';var minutes=m?m[3]:'00';return{name:offsetString+' '+tz,id:tz,offset:(sign==='-'?-1:1)*(Number(hours)*60+Number(minutes)),offsetString:offsetString}});arr.sort(function(a,b){return a.offset-b.offset});return arr})();var PROFILE_LOADED={timezone:''};var profileEditType='name';function profileApi(url,options){return fetch(url,options).then(function(response){return response.json()})}async function loadProfile(){var data=await profileApi('/api/v1/user/info');var user=data.data||{};document.getElementById('profileNickname').textContent=user.nickname||'';document.getElementById('profileEmail').textContent=user.email||'';var storedTz=user.timezone||'';PROFILE_LOADED.timezone=storedTz;document.getElementById('profileTimezone').textContent=(PROFILE_TIMEZONES.find(function(tz){return tz.name===storedTz})||{}).name||'';if(user.avatar){document.getElementById('profileAvatar').src=user.avatar;document.getElementById('profileAvatar').hidden=false;document.getElementById('profileAvatarFallback').hidden=true}else{document.getElementById('profileAvatar').hidden=true;document.getElementById('profileAvatarFallback').hidden=false;document.getElementById('profileAvatarFallback').textContent=(user.nickname||'A').charAt(0).toUpperCase()}}function openProfileEdit(type){profileEditType=type;var titles={name:'Edit Name',timezone:'Edit Time Zone',password:'Edit Password'};document.getElementById('profileEditTitle').textContent=titles[type]||'Edit';document.getElementById('profileNameFields').hidden=type!=='name';document.getElementById('profileTimezoneFields').hidden=type!=='timezone';document.getElementById('profilePasswordFields').hidden=type!=='password';['profileEditNameError','profileEditTimezoneError','profileCurPwError','profileNewPwError','profileConfirmPwError'].forEach(function(id){document.getElementById(id).textContent=''});document.getElementById('profileEditStatus').textContent='';if(type==='name'){document.getElementById('profileEditName').value=document.getElementById('profileNickname').textContent}if(type==='timezone'){var tzInput=document.getElementById('profileEditTimezone');tzInput.value=PROFILE_LOADED.timezone;tzRenderList()}if(type==='password'){['profileCurPw','profileNewPw','profileConfirmPw'].forEach(function(id){document.getElementById(id).value=''})}document.getElementById('profileEditDialog').classList.add('show')}function closeProfileEdit(){document.getElementById('profileEditDialog').classList.remove('show');document.getElementById('profileTzList').replaceChildren()}function tzRenderList(){var input=document.getElementById('profileEditTimezone');var q=input.value.trim().toLowerCase();var list=document.getElementById('profileTzList');list.replaceChildren();PROFILE_TIMEZONES.forEach(function(tz){if(q&&tz.name.toLowerCase().indexOf(q)<0)return;var item=document.createElement('div');item.textContent=tz.name;item.onclick=function(){input.value=tz.name;list.replaceChildren()};list.appendChild(item)})}async function saveProfileEdit(){var status=document.getElementById('profileEditStatus');var payload={};if(profileEditType==='name'){var name=document.getElementById('profileEditName').value.trim();if(!name){document.getElementById('profileEditNameError').textContent='Username is required';return}if(name.length>100){document.getElementById('profileEditNameError').textContent='Username must be at most 100 characters';return}payload={nickname:name}}else if(profileEditType==='timezone'){var tzValue=document.getElementById('profileEditTimezone').value.trim();if(!tzValue){document.getElementById('profileEditTimezoneError').textContent='select your timezone';return}payload={timezone:tzValue}}else{var current=document.getElementById('profileCurPw').value;var next=document.getElementById('profileNewPw').value;var confirm=document.getElementById('profileConfirmPw').value;var valid=true;if(!current){document.getElementById('profileCurPwError').textContent='Please input the current password';valid=false}if(next.length<8){document.getElementById('profileNewPwError').textContent='The new password must be at least 8 characters';valid=false}if(next!==confirm){document.getElementById('profileConfirmPwError').textContent='The two passwords do not match';valid=false}if(!valid)return;payload={password:current,new_password:next}}var button=document.getElementById('profileEditSave');button.disabled=true;status.textContent='Saving…';try{var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));if(profileEditType==='password'){localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=; path=/; max-age=0';location.href='/login';return}closeProfileEdit();loadProfile()}catch(error){status.textContent=error.message}finally{button.disabled=false}}async function uploadAvatar(){var file=document.getElementById('profileAvatarFile').files[0];if(!file)return;if(!file.type.startsWith('image/')){alert('Please select an image file');return}var dataUrl=await new Promise(function(resolve,reject){var reader=new FileReader();reader.onload=function(){resolve(reader.result)};reader.onerror=function(){reject(reader.error)};reader.readAsDataURL(file)});var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar:dataUrl})});if(data.code===0)loadProfile();else alert('Error: '+(data.message||'unknown'))}loadProfile()</script>"#;
+    let profile_labels = serde_json::json!({
+        "avatarTypeError": t("Please select an image file", zh),
+        "nameRequired": t("Please input your username!", zh),
+        "nameMax": t("Name must be at most 100 characters", zh),
+        "nameCharset": t("Only letters, numbers and . _ '- are allowed", zh),
+        "timezoneRequired": t("select your timezone", zh),
+        "oldPasswordRequired": t("Please input the current password", zh),
+        "newPasswordMessage": t("Please input your password!", zh),
+        "confirmPasswordMessage": t("Please confirm your password!", zh),
+        "passwordLength": t("The password must be at least 8 characters", zh),
+    });
+    let body = format!(
+        r#"<h2 class='profile-title'>{profile}</h2><p class='profile-description'>{profile_desc}</p><div class='card' data-testid='profile-card'><div class='profile-rows'><div class='profile-row'><label>{username}</label><div class='profile-value'><span class='profile-box' id='profileNickname'>...</span><button class='btn btn-o btn-sm profile-edit-btn' type='button' onclick='openProfileEdit("name")'><span aria-hidden='true'>✎</span> {edit}</button></div></div><div class='profile-row'><label>{avatar}</label><div class='profile-value'><span class='avatar-upload' id='profileAvatarUpload'><input id='profileAvatarFile' type='file' accept='image/*' hidden onchange='uploadAvatar()'><button class='avatar-upload-add' id='profileAvatarAdd' type='button' aria-label='{upload}' onclick='document.getElementById("profileAvatarFile").click()'><span aria-hidden='true'>＋</span><span>{upload}</span></button><span class='avatar-upload-preview' id='profileAvatarPreview' hidden><img id='profileAvatar' class='profile-avatar' alt='Avatar'><span class='avatar-upload-pencil' aria-hidden='true'>✎</span><button class='avatar-upload-remove' id='profileAvatarRemove' type='button' aria-label='Remove image' onclick='removeProfileAvatar()'>×</button></span><span id='profileAvatarFallback' class='profile-avatar profile-avatar-letter' hidden>A</span></span><span class='avatar-upload-tip'>{avatar_tip}</span></div></div><div class='profile-row'><label>{timezone}</label><div class='profile-value'><span class='profile-box' id='profileTimezone'></span><button class='btn btn-o btn-sm profile-edit-btn' type='button' onclick='openProfileEdit("timezone")'><span aria-hidden='true'>✎</span> {edit}</button></div></div><div class='profile-row'><label>{email}</label><div class='profile-value profile-value-stacked'><span id='profileEmail'>...</span><span class='user-setting-description' style='margin:0'>{email_desc}</span></div></div><div class='profile-row'><label>{password}</label><div class='profile-value'><span class='profile-box'><span class='profile-password-mask'>********</span></span><button class='btn btn-o btn-sm profile-edit-btn' type='button' onclick='openProfileEdit("password")'><span aria-hidden='true'>✎</span> {edit}</button></div></div></div></div>"#,
+        profile = t("Profile", zh),
+        profile_desc = t("Update your photo and personal details here.", zh),
+        username = if zh { "用户名" } else { "Name" },
+        avatar = t("Avatar", zh),
+        upload = t("Upload", zh),
+        avatar_tip = t("This will be displayed on your profile.", zh),
+        timezone = t("Time zone", zh),
+        edit = t("Edit", zh),
+        email = t("Email", zh),
+        email_desc = t("Once registered, E-mail cannot be changed.", zh),
+        password = t("Password", zh),
+    ) + r#"<div class='modal-overlay' id='profileEditDialog' data-testid='profile-edit-dialog' onclick='if(event.target===this)closeProfileEdit()'><div class='modal' style='max-width:440px' role='dialog' aria-modal='true' aria-labelledby='profileEditTitle'><h2 id='profileEditTitle'>Edit Name</h2><div id='profileNameFields'><label class='provider-instance-field'>Username<input id='profileEditName' placeholder='Username' autocomplete='off'><p id='profileEditNameError' class='provider-instance-error'></p></label></div><div id='profileTimezoneFields' hidden><label class='provider-instance-field'>Time Zone<input id='profileEditTimezone' placeholder='Select a timeZone' autocomplete='off' oninput='tzRenderList()'><div id='profileTzList' class='provider-tz-list'></div><p id='profileEditTimezoneError' class='provider-instance-error'></p></label></div><div id='profilePasswordFields' hidden><label class='provider-instance-field'>Current Password<input id='profileCurPw' type='password' autocomplete='current-password'><p id='profileCurPwError' class='provider-instance-error'></p></label><label class='provider-instance-field'>New Password<input id='profileNewPw' type='password' placeholder='At least 8 characters' autocomplete='new-password'><p id='profileNewPwError' class='provider-instance-error'></p></label><label class='provider-instance-field'>Confirm Password<input id='profileConfirmPw' type='password' autocomplete='new-password'><p id='profileConfirmPwError' class='provider-instance-error'></p></label></div><p id='profileEditStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeProfileEdit()'>Cancel</button><button class='btn btn-p' id='profileEditSave' type='button' onclick='saveProfileEdit()'>Save</button></div></div></div><script>var PROFILE_TIMEZONES=(function(){var src=(typeof Intl.supportedValuesOf==='function')?Intl.supportedValuesOf('timeZone'):[];var arr=src.map(function(tz){var dtf=new Intl.DateTimeFormat('en-US',{hourCycle:'h24',timeZone:tz,timeZoneName:'longOffset'});var parts=dtf.formatToParts(new Date());var offsetString=parts[parts.length-1].value;var m=/^GMT([+-])(\d{2}):(\d{2})$/i.exec(offsetString);var sign=m?m[1]:'+';var hours=m?m[2]:'00';var minutes=m?m[3]:'00';return{name:offsetString+' '+tz,id:tz,offset:(sign==='-'?-1:1)*(Number(hours)*60+Number(minutes)),offsetString:offsetString}});arr.sort(function(a,b){return a.offset-b.offset});return arr})();var PROFILE_LOADED={timezone:''};var profileEditType='name';function profileApi(url,options){return fetch(url,options).then(function(response){return response.json()})}async function loadProfile(){var data=await profileApi('/api/v1/user/info');var user=data.data||{};document.getElementById('profileNickname').textContent=user.nickname||'';document.getElementById('profileEmail').textContent=user.email||'';var storedTz=user.timezone||'';PROFILE_LOADED.timezone=storedTz;document.getElementById('profileTimezone').textContent=(PROFILE_TIMEZONES.find(function(tz){return tz.name===storedTz})||{}).name||'';profileAvatarSet(user.avatar||'',user.nickname||'')}
+function profileAvatarSet(avatar,nickname){var preview=document.getElementById('profileAvatarPreview');var add=document.getElementById('profileAvatarAdd');var img=document.getElementById('profileAvatar');var fallback=document.getElementById('profileAvatarFallback');if(avatar){img.src=avatar;img.hidden=false;if(preview)preview.hidden=false;if(add)add.hidden=true;fallback.hidden=true}else{img.removeAttribute('src');img.hidden=true;if(preview)preview.hidden=true;if(add)add.hidden=false;fallback.hidden=false;fallback.textContent=String(nickname||'A').charAt(0).toUpperCase()}}function openProfileEdit(type){profileEditType=type;var titles={name:'Edit Name',timezone:'Edit Time Zone',password:'Edit Password'};document.getElementById('profileEditTitle').textContent=titles[type]||'Edit';document.getElementById('profileNameFields').hidden=type!=='name';document.getElementById('profileTimezoneFields').hidden=type!=='timezone';document.getElementById('profilePasswordFields').hidden=type!=='password';['profileEditNameError','profileEditTimezoneError','profileCurPwError','profileNewPwError','profileConfirmPwError'].forEach(function(id){document.getElementById(id).textContent=''});document.getElementById('profileEditStatus').textContent='';if(type==='name'){document.getElementById('profileEditName').value=document.getElementById('profileNickname').textContent}if(type==='timezone'){var tzInput=document.getElementById('profileEditTimezone');tzInput.value=PROFILE_LOADED.timezone;tzRenderList()}if(type==='password'){['profileCurPw','profileNewPw','profileConfirmPw'].forEach(function(id){document.getElementById(id).value=''})}document.getElementById('profileEditDialog').classList.add('show')}function closeProfileEdit(){document.getElementById('profileEditDialog').classList.remove('show');document.getElementById('profileTzList').replaceChildren()}function tzRenderList(){var input=document.getElementById('profileEditTimezone');var q=input.value.trim().toLowerCase();var list=document.getElementById('profileTzList');list.replaceChildren();PROFILE_TIMEZONES.forEach(function(tz){if(q&&tz.name.toLowerCase().indexOf(q)<0)return;var item=document.createElement('div');item.textContent=tz.name;item.onclick=function(){input.value=tz.name;list.replaceChildren()};list.appendChild(item)})}async function saveProfileEdit(){var status=document.getElementById('profileEditStatus');var payload={};if(profileEditType==='name'){var name=document.getElementById('profileEditName').value.trim();if(!name){document.getElementById('profileEditNameError').textContent=PROFILE_LABELS.nameRequired;return}if(name.length>100){document.getElementById('profileEditNameError').textContent=PROFILE_LABELS.nameMax;return}if(!PROFILE_NAME_PATTERN.test(name)){document.getElementById('profileEditNameError').textContent=PROFILE_LABELS.nameCharset;return}payload={nickname:name}}else if(profileEditType==='timezone'){var tzValue=document.getElementById('profileEditTimezone').value.trim();if(!tzValue){document.getElementById('profileEditTimezoneError').textContent=PROFILE_LABELS.timezoneRequired;return}payload={timezone:tzValue}}else{var current=document.getElementById('profileCurPw').value;var next=document.getElementById('profileNewPw').value;var confirm=document.getElementById('profileConfirmPw').value;var valid=true;if(!current){document.getElementById('profileCurPwError').textContent=PROFILE_LABELS.oldPasswordRequired;valid=false}if(next.length<8){document.getElementById('profileNewPwError').textContent=PROFILE_LABELS.passwordLength;valid=false}if(next!==confirm){document.getElementById('profileConfirmPwError').textContent=PROFILE_LABELS.confirmPasswordMessage;valid=false}if(!valid)return;payload={password:current,new_password:next}}var button=document.getElementById('profileEditSave');button.disabled=true;status.textContent='Saving…';try{var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));if(profileEditType==='password'){localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=; path=/; max-age=0';location.href='/login';return}closeProfileEdit();loadProfile()}catch(error){status.textContent=error.message}finally{button.disabled=false}}
+var PROFILE_NAME_PATTERN=/^[\p{L}\p{N} ._'-]+$/u;
+var PROFILE_AVATAR_EXT=/\.(jpg|jpeg|png|webp|bmp)$/i;
+var PROFILE_LABELS=__PROFILE_LABELS__;
+async function profileAvatarCrop(file){return new Promise(function(resolve,reject){var reader=new FileReader();reader.onload=function(){var img=new Image();img.onload=function(){try{var side=Math.min(img.width,img.height);var canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;var ctx=canvas.getContext('2d');ctx.drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,64,64);resolve(canvas.toDataURL('image/png'))}catch(error){reject(error)}};img.onerror=function(){reject(new Error('image decode failed'))};img.src=String(reader.result||'')};reader.onerror=function(){reject(reader.error)};reader.readAsDataURL(file)})}
+async function uploadAvatar(){var input=document.getElementById('profileAvatarFile');var file=input.files&&input.files[0];if(!file)return;if(!PROFILE_AVATAR_EXT.test(file.name)){alert(PROFILE_LABELS.avatarTypeError);input.value='';return}try{var dataUrl=await profileAvatarCrop(file);var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar:dataUrl})});if(data.code===0){profileAvatarSet(dataUrl,String(document.getElementById('profileNickname').textContent||''));loadProfile()}else{alert('Error: '+(data.message||'unknown'))}}catch(error){alert('Error: '+error.message)}finally{input.value=''}}
+async function removeProfileAvatar(){var data=await profileApi('/api/v1/users/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar:''})});if(data.code===0)loadProfile();else alert('Error: '+(data.message||'unknown'))}
+loadProfile()</script>"#;
+    let body = body.replace(
+        "__PROFILE_LABELS__",
+        &serde_json::to_string(&profile_labels).expect("profile labels serialize"),
+    );
     Html(user_setting_layout(
         if zh { "个人资料" } else { "Profile" },
-        body,
+        &body,
         UserSettingSection::Profile,
         zh,
     ))
@@ -5645,7 +5698,98 @@ mod kb_ui_tests {
         );
     }
 
+    /// Upstream `profile/index.tsx` + `components/avatar-upload.tsx`: the page
+    /// header is `setting.profile` + `setting.profileDescription`, rows use a
+    /// 190px label column with a bordered value box and a `PenLine` edit button,
+    /// the avatar renders the AvatarUpload plus-button / preview+pencil /
+    /// remove-X states with `setting.avatarTip`, and every interactive label is
+    /// localized (nested `setting.*` keys).
     #[tokio::test]
+    async fn profile_page_matches_upstream_rows_and_avatar_upload() {
+        let (_root, state) = test_state();
+        let en = axum::http::Request::builder()
+            .uri("/user-setting/profile")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(user_setting_profile_page(en).await).await;
+        for marker in [
+            "<h2 class='profile-title'>Profile</h2>",
+            "Update your photo and personal details here.",
+            "<label>Name</label>",
+            "<label>Avatar</label>",
+            "<label>Time zone</label>",
+            "<label>Email</label>",
+            "<label>Password</label>",
+            "Once registered, E-mail cannot be changed.",
+            "This will be displayed on your profile.",
+            "id='profileAvatarUpload'",
+            "id='profileAvatarAdd'",
+            "id='profileAvatarPreview'",
+            "id='profileAvatarRemove'",
+            "aria-label='Remove image'",
+            "avatar-upload-pencil",
+            "profile-edit-btn",
+            "class='profile-box'",
+            "removeProfileAvatar()",
+            "profileAvatarCrop",
+            "PROFILE_AVATAR_EXT",
+            "PROFILE_AVATAR_EXT=/\\.(jpg|jpeg|png|webp|bmp)$/i",
+            "PROFILE_NAME_PATTERN",
+            "PROFILE_LABELS.nameRequired",
+            "PROFILE_LABELS.confirmPasswordMessage",
+            "profileAvatarSet(user.avatar||''",
+        ] {
+            assert!(body.contains(marker), "profile marker missing: {marker}");
+        }
+        // The label table is injected as JSON (both locales).
+        for label in [
+            "\"nameRequired\":\"Please input your username!\"",
+            "\"confirmPasswordMessage\":\"Please confirm your password!\"",
+        ] {
+            assert!(
+                body.contains(label),
+                "profile label payload missing: {label}"
+            );
+        }
+        assert!(
+            !body.contains("__PROFILE_LABELS__"),
+            "the profile label placeholder must be substituted"
+        );
+        let zh = axum::http::Request::builder()
+            .uri("/user-setting/profile")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(user_setting_profile_page(zh).await).await;
+        for marker in [
+            "<h2 class='profile-title'>概要</h2>",
+            "在此更新您的照片和个人详细信息。",
+            "<label>用户名</label>",
+            "<label>头像</label>",
+            "<label>时区</label>",
+            "<label>邮箱</label>",
+            "<label>密码</label>",
+            "一旦注册，电子邮件将无法更改。",
+            "这会在你的个人主页展示",
+            "编辑",
+            "\"nameRequired\":\"请输入用户名\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh profile marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".profile-row label{width:190px",
+            ".avatar-upload-add{display:inline-flex;width:64px;height:64px",
+            ".avatar-upload-remove{position:absolute;top:-8px;right:-8px",
+        ] {
+            assert!(css.contains(rule), "profile css missing: {rule}");
+        }
+    }
+
     /// Upstream `un-add-model.tsx` (Available models) + `local-llm-configs.ts`:
     /// the pill label and its count are adjacent siblings (CSS margin only), the
     /// card exposes a hover-only `setting.addTheModel` button, and the
@@ -8142,7 +8286,7 @@ mod kb_ui_tests {
             "saveProfileEdit",
             "/api/v1/users/me",
             "new_password",
-            "The two passwords do not match",
+            "PROFILE_LABELS.confirmPasswordMessage",
             "reader.readAsDataURL",
         ] {
             assert!(
@@ -8391,7 +8535,7 @@ mod kb_ui_tests {
             "a.offset-b.offset",
             "placeholder='Select a timeZone'",
             "tz.name===storedTz",
-            "'select your timezone'",
+            "PROFILE_LABELS.timezoneRequired",
             "provider-tz-list",
             "tzRenderList",
         ] {
