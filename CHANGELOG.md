@@ -13,6 +13,7 @@ All notable changes to RayRAG are documented in this file.
 - **`StateStore`/`UserStore::issue_token_for`**：前者为无状态服务提供 OAuth state 生命周期，后者为已认证用户签发 24h 会话。
 - **回归护栏** `oauth_callback_flow_matches_upstream`：本地假 provider 驱动真实换码/userinfo 请求，并覆盖
   成功注册 → 发会话 → cookie 校验的完整链路。
+- **配置透传**：`docker-compose.yml` 增加 `REGISTER_ENABLED` / `DISABLE_PASSWORD_LOGIN` / `RAYRAG_OAUTH_CONFIG`，`.env.example` 同步说明与示例。
 
 
 ### Added
