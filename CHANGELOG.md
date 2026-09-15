@@ -2,7 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5r）
+## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5s）
+
+### Added
+
+- **数据集标签接口**：`GET /api/v1/datasets/{id}/tags`（按文档元数据聚合 `[[tag, count], …]`，count 降序）、
+  `DELETE`（`{tags:[…]}`）与 `PUT`（`{from_tag,to_tag}` 重命名并去重），校验文案与未知数据集 404 对齐上游
+  `dataset_api`；实现位于 `src/api/dataset_tags.rs`。
+- **配置页标签云 / 标签表**：Tag sets 行下新增上游 `tag-tabs.tsx` 形态的分段切换——CSS 词云（字号随 count 变化、
+  hover 显示计数、点击重命名）与标签表（Tag/Count/重命名/删除、空态与状态行）。
+- **CDP 探针** `scripts/ui-traversal/dataset-tags-cdp.mjs`：种子标签 → 云/表视图 → 重命名 → 删除，逐步复核 GET 结果。
+
+### Fixed
+
+- **标签重命名会残留旧标签**：`batch_update` 对数组是合并语义，改用整条记录 `replace()` 重写。
+- **标签脚本跨页引用** `PI_PICKER_LABELS` 导致 `ReferenceError`，改为数据集页自带标签表；
+  并清理 `t()` 中重复的 `"Rerank Model"`/`"Cancel"` 分支（unreachable pattern）。
+
 
 ### Changed
 

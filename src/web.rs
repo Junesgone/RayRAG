@@ -44,6 +44,12 @@ fn t(k: &str, zh: bool) -> &str {
         "Top N" => "检索条数",
         "Empty Response" => "空回复文案",
         "Rerank Model" => "重排模型",
+        // dataset tag tabs (upstream `knowledgeConfiguration.tagCloud/tagTable`).
+        "Tag cloud" => "标签云",
+        "Rename tag" => "重命名标签",
+        "Tag table" => "标签表",
+        "Tag" => "标签",
+        "Count" => "数量",
         "Reranking model" => "Reranking模型",
         "Rerank Top K" => "重排条数",
         "Refine Multiturn" => "多轮精炼",
@@ -227,8 +233,6 @@ fn t(k: &str, zh: bool) -> &str {
         // dataset-settings permission field (upstream `knowledgeConfiguration.*`).
         "Permissions" => "权限",
         "Only me" => "只有我",
-        // next-search rerank field (upstream `search.rerankModel`).
-        "Rerank Model" => "重排模型",
         "Rerank model is required when rerank is enabled" => "启用重排时必须选择重排模型",
         "You can set the permissions of the team members here." => {
             "你可以在这里设置团队成员的权限。"
@@ -251,7 +255,6 @@ fn t(k: &str, zh: bool) -> &str {
         "Please select at least one model type" => "请至少选择一个模型类型",
         "Max tokens must be at least 0" => "最大 Token 数不能小于 0",
         "Confirm" => "确定",
-        "Cancel" => "取消",
         // setting.* strings used by the provider modal Base-Url combobox and the
         // Added-models section (upstream `en.ts`/`zh.ts`).
         "Add" => "添加",
@@ -1500,6 +1503,31 @@ pub async fn kb_detail_page(
     b.push_str("<tr><td>");
     b.push_str(t("Tag sets", zh));
     b.push_str("</td><td><input id='cfgTagSets' placeholder='tag1, tag2' style='max-width:280px'></td></tr>");
+    // Upstream `tag-tabs.tsx`: a Segmented Cloud/Table switch over the dataset tag
+    // aggregation (`GET /api/v1/datasets/{id}/tags`); table rows rename (PUT) or
+    // delete (DELETE) a tag across every document in the dataset.
+    b.push_str("<script>var DS_TAG_LABELS={empty:'");
+    b.push_str(t("No data", zh));
+    b.push_str("',edit:'");
+    b.push_str(t("Edit", zh));
+    b.push_str("',renameTitle:'");
+    b.push_str(t("Rename tag", zh));
+    b.push_str("'};</script>");
+    b.push_str("<tr id='dsTagTabsRow'><td colspan='2'><section class='ds-tag-tabs' data-testid='ds-tag-tabs'><div class='ds-segment' role='tablist'><button type='button' role='tab' aria-checked='true' id='dsTagTabCloud' onclick=\"dsTagTab('cloud')\">");
+    b.push_str(t("Tag cloud", zh));
+    b.push_str("</button><button type='button' role='tab' aria-checked='false' id='dsTagTabTable' onclick=\"dsTagTab('table')\">");
+    b.push_str(t("Tag table", zh));
+    b.push_str(
+        "</button></div><div id='dsTagCloud' class='ds-tag-cloud' data-testid='ds-tag-cloud'>",
+    );
+    b.push_str(t("Loading...", zh));
+    b.push_str("</div><div id='dsTagTableWrap' class='ds-tag-table-wrap' hidden><table class='ds-tag-table'><thead><tr><th>");
+    b.push_str(t("Tag", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Count", zh));
+    b.push_str("</th><th></th></tr></thead><tbody id='dsTagRows'></tbody></table><p id='dsTagEmpty' class='user-setting-description' hidden>");
+    b.push_str(t("No data", zh));
+    b.push_str("</p></div><p id='dsTagStatus' class='provider-instance-status' aria-live='polite'></p></section></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Avatar", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:8px'><input type='file' id='cfgAvatar' accept='image/*' onchange='onAvatarPick(this)'> <img id='cfgAvatarPreview' style='display:none;width:36px;height:36px;border-radius:50%;object-fit:cover'></label></td></tr>");
@@ -1651,7 +1679,7 @@ pub async fn kb_detail_page(
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     // Model options are rendered by the shared default-model tree (the field is a
     // popover trigger, not a <select>), so no legacy <option> injection here.
-    b.push_str("loadDocs();loadConfig();</script>");
+    b.push_str("loadDocs();loadConfig();dsTagLoad();</script>");
     Html(layout(&name, &b, zh))
 }
 
@@ -1898,6 +1926,31 @@ pub async fn dataset_page(
     b.push_str("<tr><td>");
     b.push_str(t("Tag sets", zh));
     b.push_str("</td><td><input id='cfgTagSets' placeholder='tag1, tag2' style='max-width:280px'></td></tr>");
+    // Upstream `tag-tabs.tsx`: a Segmented Cloud/Table switch over the dataset tag
+    // aggregation (`GET /api/v1/datasets/{id}/tags`); table rows rename (PUT) or
+    // delete (DELETE) a tag across every document in the dataset.
+    b.push_str("<script>var DS_TAG_LABELS={empty:'");
+    b.push_str(t("No data", zh));
+    b.push_str("',edit:'");
+    b.push_str(t("Edit", zh));
+    b.push_str("',renameTitle:'");
+    b.push_str(t("Rename tag", zh));
+    b.push_str("'};</script>");
+    b.push_str("<tr id='dsTagTabsRow'><td colspan='2'><section class='ds-tag-tabs' data-testid='ds-tag-tabs'><div class='ds-segment' role='tablist'><button type='button' role='tab' aria-checked='true' id='dsTagTabCloud' onclick=\"dsTagTab('cloud')\">");
+    b.push_str(t("Tag cloud", zh));
+    b.push_str("</button><button type='button' role='tab' aria-checked='false' id='dsTagTabTable' onclick=\"dsTagTab('table')\">");
+    b.push_str(t("Tag table", zh));
+    b.push_str(
+        "</button></div><div id='dsTagCloud' class='ds-tag-cloud' data-testid='ds-tag-cloud'>",
+    );
+    b.push_str(t("Loading...", zh));
+    b.push_str("</div><div id='dsTagTableWrap' class='ds-tag-table-wrap' hidden><table class='ds-tag-table'><thead><tr><th>");
+    b.push_str(t("Tag", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Count", zh));
+    b.push_str("</th><th></th></tr></thead><tbody id='dsTagRows'></tbody></table><p id='dsTagEmpty' class='user-setting-description' hidden>");
+    b.push_str(t("No data", zh));
+    b.push_str("</p></div><p id='dsTagStatus' class='provider-instance-status' aria-live='polite'></p></section></td></tr>");
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
     b.push_str(t("Parsing Configuration", zh));
     b.push_str("</h3></td></tr>");
@@ -2069,6 +2122,14 @@ function onPermBlur(){setTimeout(function(){var active=document.activeElement;if
 var DATASET_AVATAR_EXT=/\\.(jpg|jpeg|png|webp|bmp)$/i;
 var DATASET_AVATAR_TYPE_ERROR='Please select an image file';
 function cfgAvatarCrop(file){return new Promise(function(resolve,reject){var reader=new FileReader();reader.onload=function(){var img=new Image();img.onload=function(){try{var side=Math.min(img.width,img.height);var canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;var ctx=canvas.getContext('2d');ctx.drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,64,64);resolve(canvas.toDataURL('image/png'))}catch(error){reject(error)}};img.onerror=function(){reject(new Error('image decode failed'))};img.src=String(reader.result||'')};reader.onerror=function(){reject(reader.error)};reader.readAsDataURL(file)})}
+var DS_TAG_ACTIVE='cloud';var DS_TAG_LIST=[];var DS_TAG_RENAME=null;
+function dsTagTab(tab){DS_TAG_ACTIVE=tab==='table'?'table':'cloud';var cloud=document.getElementById('dsTagTabCloud');var table=document.getElementById('dsTagTabTable');if(cloud)cloud.setAttribute('aria-checked',String(DS_TAG_ACTIVE==='cloud'));if(table)table.setAttribute('aria-checked',String(DS_TAG_ACTIVE==='table'));var cloudBox=document.getElementById('dsTagCloud');var tableBox=document.getElementById('dsTagTableWrap');if(cloudBox)cloudBox.hidden=DS_TAG_ACTIVE!=='cloud';if(tableBox)tableBox.hidden=DS_TAG_ACTIVE!=='table'}
+function dsTagStatus(text,error){var node=document.getElementById('dsTagStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
+function dsTagRender(){var cloud=document.getElementById('dsTagCloud');var rows=document.getElementById('dsTagRows');var empty=document.getElementById('dsTagEmpty');if(!cloud||!rows)return;var list=DS_TAG_LIST||[];cloud.replaceChildren();rows.replaceChildren();if(empty)empty.hidden=list.length>0;if(!list.length){cloud.textContent=DS_TAG_LABELS.empty;return}var counts=list.map(function(pair){return pair[1]||0});var max=Math.max.apply(null,counts.concat([1]));var min=Math.min.apply(null,counts.concat([max]));list.forEach(function(pair){var tag=pair[0];var count=pair[1]||0;var chip=document.createElement('span');chip.className='ds-tag-chip';var scale=max===min?1:(count-min)/(max-min);chip.style.fontSize=(11+Math.round(scale*13))+'px';chip.dataset.tag=tag;chip.textContent=tag;chip.title=tag+' ('+count+')';chip.onclick=function(){dsTagRenameStart(tag,count)};cloud.appendChild(chip);var row=document.createElement('tr');row.dataset.tag=tag;var nameCell=document.createElement('td');nameCell.textContent=tag;var countCell=document.createElement('td');countCell.textContent=String(count);var actionCell=document.createElement('td');var rename=document.createElement('button');rename.type='button';rename.className='btn btn-o btn-sm ds-tag-rename';rename.textContent=DS_TAG_LABELS.edit;rename.onclick=function(){dsTagRenameStart(tag,count)};var remove=document.createElement('button');remove.type='button';remove.className='btn btn-d btn-sm ds-tag-delete';remove.textContent='🗑';remove.setAttribute('aria-label','Delete '+tag);remove.onclick=function(){dsTagDelete(tag)};actionCell.appendChild(rename);actionCell.appendChild(remove);row.appendChild(nameCell);row.appendChild(countCell);row.appendChild(actionCell);rows.appendChild(row)})}
+function dsTagRenameStart(tag,count){var next=prompt(DS_TAG_LABELS.renameTitle+': '+tag,tag);if(next===null)return;next=String(next).trim();if(!next||next===tag)return;dsTagRequest('PUT',{from_tag:tag,to_tag:next},'Renamed')}
+function dsTagDelete(tag){if(!confirm('Delete tag '+tag+' ?'))return;dsTagRequest('DELETE',{tags:[tag]},'Deleted')}
+function dsTagRequest(method,body,okText){var kb=document.getElementById('cfgName')?window.kbId:window.kbId;if(!kb)return;dsTagStatus('Saving…',false);fetch('/api/v1/datasets/'+encodeURIComponent(kb)+'/tags',{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(d.code!==0)throw new Error(d.message||('HTTP '+d.code));dsTagStatus(okText,false);return dsTagLoad()}).catch(function(error){dsTagStatus(String(error.message||error),true)})}
+async function dsTagLoad(){var kb=window.kbId;if(!kb)return;try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(kb)+'/tags');var data=await response.json();if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));DS_TAG_LIST=(data.data||[]).filter(function(pair){return Array.isArray(pair)&&pair.length>=2});dsTagRender()}catch(error){dsTagStatus(String(error.message||error),true)}}
 function cfgAvatarSet(dataUrl){var wrap=document.getElementById('cfgAvatarPreviewWrap');var add=document.getElementById('cfgAvatarAdd');var img=document.getElementById('cfgAvatarPreview');if(dataUrl){if(img)img.src=dataUrl;if(wrap)wrap.hidden=false;if(add)add.hidden=true}else{if(img)img.removeAttribute('src');if(wrap)wrap.hidden=true;if(add)add.hidden=false}}
 async function onAvatarPick(input){var file=input.files&&input.files[0];if(!file){avatarDataUrl='';cfgAvatarSet('');return}if(!DATASET_AVATAR_EXT.test(file.name)){var m=document.getElementById('cfgMsg');if(m){m.textContent=DATASET_AVATAR_TYPE_ERROR;m.style.color='var(--d)'}input.value='';return}if(file.size>5*1024*1024){var m2=document.getElementById('cfgMsg');if(m2){m2.textContent='Avatar image must not exceed 5 MB';m2.style.color='var(--d)'}input.value='';return}try{var dataUrl=await cfgAvatarCrop(file);avatarDataUrl=dataUrl;cfgAvatarSet(dataUrl)}catch(error){var m3=document.getElementById('cfgMsg');if(m3){m3.textContent=String(error.message||error);m3.style.color='var(--d)'}}finally{input.value=''}}
 function removeDatasetAvatar(){avatarDataUrl='';cfgAvatarSet('');var m=document.getElementById('cfgMsg');if(m){m.textContent='';m.style.color=''}}
@@ -2102,7 +2163,7 @@ function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value
     b.push_str("function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
     // Model options are rendered by the shared default-model tree (the field is a
     // popover trigger, not a <select>), so no legacy <option> injection here.
-    b.push_str("loadDocs();loadConfig();showTab(0);</script>");
+    b.push_str("loadDocs();loadConfig();dsTagLoad();showTab(0);</script>");
     Html(layout(&name, &b, zh))
 }
 
@@ -6012,6 +6073,161 @@ connection: close
             state_under_test.users.validate_token(&token).as_deref(),
             Some(created.id.as_str())
         );
+    }
+
+    /// Upstream `dataset_api.list_tags` / `delete_tags` / `rename_tag` +
+    /// `tag-tabs.tsx`: tags aggregate across the dataset's document metadata and
+    /// the Configuration tab exposes the Cloud/Table switch (word cloud sized by
+    /// count, table rows with rename/delete).
+    #[tokio::test]
+    async fn dataset_tags_aggregate_rename_and_delete_across_documents() {
+        use crate::api::dataset_tags::{delete_tags, list_tags, rename_tag, tag_counts};
+        use crate::api::document_metadata::MetadataUpdate;
+
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Tags KB", "d").unwrap();
+        for (doc_id, tags) in [
+            ("doc-1", vec!["Water", "Fish"]),
+            ("doc-2", vec!["Water"]),
+            ("doc-3", vec!["Feed", "Water"]),
+        ] {
+            state
+                .document_metadata
+                .batch_update(
+                    &kb.id,
+                    &[doc_id.to_string()],
+                    &[MetadataUpdate {
+                        key: "tags".into(),
+                        value: serde_json::json!(tags),
+                        r#match: None,
+                    }],
+                    &[],
+                )
+                .expect("seed tags");
+        }
+        // `GET` payload: `[[tag, count], …]`, count desc then name.
+        let counts = tag_counts(&state, &kb.id);
+        assert_eq!(
+            counts,
+            vec![
+                ("Water".to_string(), 3),
+                ("Feed".to_string(), 1),
+                ("Fish".to_string(), 1)
+            ]
+        );
+        let listed = body_of(
+            list_tags(
+                axum::extract::State(state.clone()),
+                axum::extract::Path(kb.id.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert!(listed.contains("[\"Water\",3]"), "{listed}");
+        // Unknown dataset → 404 like the other dataset endpoints.
+        let missing = list_tags(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("nope".to_string()),
+        )
+        .await;
+        assert_eq!(missing.status(), axum::http::StatusCode::NOT_FOUND);
+
+        // Rename propagates to every document and de-duplicates.
+        let renamed = rename_tag(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::Json(crate::api::dataset_tags::RenameTagRequest {
+                from_tag: Some("Water".into()),
+                to_tag: Some("H2O".into()),
+            }),
+        )
+        .await;
+        assert_eq!(renamed.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            tag_counts(&state, &kb.id),
+            vec![
+                ("H2O".to_string(), 3),
+                ("Feed".to_string(), 1),
+                ("Fish".to_string(), 1)
+            ]
+        );
+        // Validation mirrors the upstream messages.
+        let missing_fields = rename_tag(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::Json(crate::api::dataset_tags::RenameTagRequest {
+                from_tag: None,
+                to_tag: None,
+            }),
+        )
+        .await;
+        assert_eq!(missing_fields.status(), axum::http::StatusCode::BAD_REQUEST);
+        let empty_tag = rename_tag(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::Json(crate::api::dataset_tags::RenameTagRequest {
+                from_tag: Some("  ".into()),
+                to_tag: Some("x".into()),
+            }),
+        )
+        .await;
+        assert_eq!(empty_tag.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        // Delete removes the listed tags from every document.
+        let deleted = delete_tags(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::Json(crate::api::dataset_tags::DeleteTagsRequest {
+                tags: Some(vec!["Fish".into(), "Feed".into()]),
+            }),
+        )
+        .await;
+        assert_eq!(deleted.status(), axum::http::StatusCode::OK);
+        assert_eq!(tag_counts(&state, &kb.id), vec![("H2O".to_string(), 3)]);
+        let lacking = delete_tags(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::Json(crate::api::dataset_tags::DeleteTagsRequest { tags: None }),
+        )
+        .await;
+        assert_eq!(lacking.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        // The Configuration tab renders the upstream Cloud/Table surface.
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        for marker in [
+            "data-testid='ds-tag-tabs'",
+            "id='dsTagTabCloud'",
+            "id='dsTagTabTable'",
+            "id='dsTagCloud'",
+            "id='dsTagTableWrap'",
+            "id='dsTagRows'",
+            "id='dsTagEmpty'",
+            "id='dsTagStatus'",
+            "dsTagTab('cloud')",
+            "function dsTagLoad()",
+            "function dsTagRender()",
+            "function dsTagRenameStart(",
+            "function dsTagDelete(",
+            "/tags',{method:method",
+            "dsTagLoad();",
+            ">Tag cloud<",
+            ">Tag table<",
+        ] {
+            assert!(html.contains(marker), "tag tab marker missing: {marker}");
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".ds-tag-cloud{display:flex",
+            ".ds-tag-chip{",
+            ".ds-tag-table{width:100%",
+        ] {
+            assert!(css.contains(rule), "tag css missing: {rule}");
+        }
     }
 
     /// Upstream `next-search/search-setting.tsx` rerank slice: the switch carries

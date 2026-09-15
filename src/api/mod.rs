@@ -10,6 +10,7 @@ pub mod common;
 pub mod compilation_templates;
 pub mod connector;
 pub mod data_source_mgr;
+pub mod dataset_tags;
 pub mod db;
 pub mod document;
 pub mod document_metadata;

@@ -3330,6 +3330,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(get_dataset).put(update_dataset).delete(delete_dataset),
         )
         .route(
+            "/api/v1/datasets/{id}/tags",
+            get(crate::api::dataset_tags::list_tags)
+                .delete(crate::api::dataset_tags::delete_tags)
+                .put(crate::api::dataset_tags::rename_tag),
+        )
+        .route(
             "/api/v1/datasets/{id}/documents",
             post(upload_document).get(crate::api::document::list_docs),
         )
