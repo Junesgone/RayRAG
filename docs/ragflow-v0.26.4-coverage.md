@@ -404,7 +404,7 @@
 > v0.3.4d（2026-09-01）Top K 标签按站点拆分：上游仅两个 i18n topK 标签——`knowledgeDetails.topK`=`Top-K`
 > （zh `Top-K`，components/rerank.tsx 的 useTranslate('knowledgeDetails') 消费方：KB/数据集检索配置与测试面板、
 > chat app settings、agent retrieval forms）与 `skillSearch.topK`=`Top K Results`（zh `返回结果数量`，skills 搜索
-> 配置弹层）；`next-search/search-setting.tsx:467` 硬编码字面量 `Top K`（不翻译）。RayRAG t() 表拆为
+> 配置弹层）；`next-search/search-setting.tsx:467` 硬编码字面量 `Top K`（不翻译）。v0.3.5r: the search page quick bar now follows the upstream `use_rerank` contract — the switch carries the `search.rerankModel` label ("Rerank Model"/重排模型), enabling it reveals the shared rerank model tree (required: submitting without a model is blocked with the upstream copy "Rerank model is required when rerank is enabled"), disabling it restores `top_k = 1024`, and the run always posts to the upstream `/api/v1/retrieval` endpoint with `rerank_id` only while the switch is on (CDP-verified request bodies). RayRAG t() 表拆为
 > `Top-K`/`Top K Results` 两键并删除合并键 `Top K`(召回条数)：kb/dataset 检索配置+测试面板与 app 详情基本设置
 > 走 `Top-K`，skills 配置弹层走 `Top K Results`/`返回结果数量`，检索页侧栏保留字面量 `Top K`。回归测试
 > `top_k_labels_split_follow_upstream_sites`（en/zh×四页 + stale 反证）；部署 10 页机器 diff 0 失败；CDP 登录态

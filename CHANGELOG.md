@@ -2,7 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5q）
+## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5r）
+
+### Changed
+
+- **检索页重排字段对齐上游 `search-setting.tsx`**：开关文案改为 `search.rerankModel`（Rerank Model/重排模型），
+  打开后显示共享重排模型树（必填），无模型时提交被上游文案
+  「Rerank model is required when rerank is enabled」拦截且不发请求；关闭开关把 Top K 复位为上游默认 1024；
+  检索统一走 `/api/v1/retrieval`，`rerank_id` 仅在开关打开时随包发送。
+
+### Added
+
+- **CDP 探针** `scripts/ui-traversal/search-rerank-cdp.mjs`：home→results 视图、无模型校验、选中模型后的
+  请求体断言、关闭后 top_k=1024，逐步截图。
+
 
 ### Changed
 
