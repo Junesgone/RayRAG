@@ -2,7 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5k）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5l）
+
+### Added
+
+- **本地提供商字段集对齐上游 `local-llm-configs.ts`**：ModelScope/RAGcon/TogetherAI/Replicate/HuggingFace/GPUStack
+  改用显式字段（`model_type` 多选且不预选、`model_name`、`max_tokens` 默认 8192、`Enable tool call` 仅 chat/image2text、
+  `Does it support Vision?` 仅 chat、`Base url` 必填、API-Key 可选）；OpenRouter 增加 `Provider order`；
+  picker 厂（Ollama 等 10 个）保持模型列表并隐藏通用 Vision 开关。
+- **payload 对齐 `buildModelInfoFromValues`**：`model_info[0].extra.is_tools`、chat+vision → 追加 `image2text`、
+  `provider_order` 随提交带上，开关字段不再泄漏进 `payload.extra`。
+- **CDP 探针** `scripts/ui-traversal/local-provider-modal-cdp.mjs`：逐个打开六个本地厂与 OpenRouter 模态，
+  记录类型集/默认值/开关可见性与 payload。
+
+### Fixed
+
+- **Available models 计数胶囊格式**：标签与计数改为相邻节点（`All63`/`VLM17`，间距交给 CSS），卡片 `+ Add`
+  文案取自 `setting.addTheModel`（Add/添加）。
+
 
 ### Added
 

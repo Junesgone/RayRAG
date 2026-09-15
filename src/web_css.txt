@@ -71,3 +71,7 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .provider-model-row:hover .provider-model-edit,.provider-model-edit:focus-visible{opacity:1;pointer-events:auto}
 .provider-model-edit:hover{background:var(--bgch);color:var(--t)}
 .provider-model-nomatch{padding:12px;text-align:center}
+/* Upstream `un-add-model.tsx` renders the pill label and its count span adjacent
+   (`All`+`63`); the gap comes from CSS margin, not a literal space. */
+.provider-chip span{margin-left:4px;font-variant-numeric:tabular-nums;opacity:.6}
+.available-provider-add{white-space:nowrap}
