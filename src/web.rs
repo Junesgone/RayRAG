@@ -1772,7 +1772,7 @@ pub async fn dataset_page(
     b.push_str(t("Logs", zh));
     b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
     b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
-    b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
+    b.push_str("<script>function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};;function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
     // Close the overview (tab1) panel that hosts the merged Logs section so the
     // remaining panels stay siblings instead of nesting inside the hidden tab1.
     b.push_str("</div>");
@@ -5947,6 +5947,33 @@ connection: close
         assert_eq!(
             state_under_test.users.validate_token(&token).as_deref(),
             Some(created.id.as_str())
+        );
+    }
+
+    /// The dataset Logs panel runs its `loadLogs()` fetch before the page's
+    /// shared helper block has necessarily executed, so `badge` must be defined
+    /// inside the Logs script itself (a race on the first paint used to throw
+    /// `ReferenceError: badge is not defined` and leave the table empty).
+    #[tokio::test]
+    async fn dataset_logs_script_defines_badge_before_use() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Logs KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/logs/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        let logs_marker = html.find("id='logBody'").expect("logs table");
+        let definition = html.find("function badge(").expect("badge definition");
+        let first_call = html.find("badge(st)").expect("badge call");
+        assert!(
+            definition < logs_marker + 400,
+            "badge must be defined inside the Logs script, before its first use"
+        );
+        assert!(
+            definition < first_call,
+            "badge definition (at {definition}) must precede its first call (at {first_call})"
         );
     }
 

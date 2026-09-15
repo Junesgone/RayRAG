@@ -4,6 +4,12 @@ All notable changes to RayRAG are documented in this file.
 
 ## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5p）
 
+### Fixed
+
+- **Logs 面板偶发空白（竞态）**：`loadLogs()` 在页面 `badge()` 定义之前就可能拿到响应，触发
+  `ReferenceError: badge is not defined` 使日志表不渲染；现把 `badge()` 同时定义在 Logs 脚本内，并新增
+  `dataset_logs_script_defines_badge_before_use` 断言定义早于首次调用。
+
 ### Added
 
 - **OAuth 登录回调全链路**：`GET /api/v1/auth/oauth/{channel}/callback` —— 单次消费 `state`（10 分钟 TTL）、
