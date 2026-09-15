@@ -2,7 +2,27 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5i）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5j）
+
+### Added
+
+- **提供商弹层 Base-Url 对齐上游 `InputSelect`**：由「文本框 + datalist」改为组合控件（已选值 + × 清除 + 下拉箭头触发器、
+  可过滤弹层、每行 URL + region 徽标、`Add "<value>"` 自定义行、`No results found` 空态、Enter/Escape/Backspace
+  与 150ms blur 提交），默认选中 regionKey 为 `default` 的地址，占位符/提示按 provider 取上游
+  `setting.*BaseUrl*` 文案（minimax / tongyi-qianwen / siliconflow / anthropic / openai），zh/en 双语言。
+- **Added models 本地化与类型映射**：实例展开按钮改用 `setting.showMoreModels`/`hideModels`（View models/展示更多模型、
+  Hide models/隐藏模型），实例类型徽标改用共享 `crate::providers` 的 `mapModelKey` 映射（image2text→VLM、speech2text→ASR、chat→LLM 等）。
+- **弹层/弹窗不透明表面**：新增 `--bgm`（深色 `#15141c` / 浅色 `#fff`），`.modal` 与 6 个浮层选择器不再使用 5% 白的 `--bgc`，
+  修复弹窗背后卡片透字问题。
+- **CDP 探针** `scripts/ui-traversal/provider-base-url-cdp.mjs`：真实点击卡片 → 弹窗 → 打开 Base-Url 弹层 → 切 region → 清除 →
+  输入自定义 URL，逐步记录值与派生 region 并截图。
+
+### Fixed
+
+- **`region` 提交字段恒为空**：`data-api-base-options` 被 Rust 侧以 region 优先顺序输出（`[region, url]`），
+  与前端/上游 `buildBaseUrlOptions` 的 `{value: url, regionKey}` 相反，导致 region 徽标显示 URL 且
+  `providerRegionForBaseUrl` 永远返回 null；现改为 URL 优先并加断言防回归。
+
 
 ### Fixed
 

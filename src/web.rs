@@ -210,6 +210,28 @@ fn t(k: &str, zh: bool) -> &str {
         "Bulk Delete" => "批量删除",
         "Clear" => "清空选择",
         "Temporary Conversation" => "临时对话",
+        // setting.* strings used by the provider modal Base-Url combobox and the
+        // Added-models section (upstream `en.ts`/`zh.ts`).
+        "Add" => "添加",
+        "No results found" => "未查到结果",
+        "View models" => "展示更多模型",
+        "Hide models" => "隐藏模型",
+        "If your API key is from OpenAI, just ignore it. Any other intermediate providers will give this base url with the API key." => {
+            "如果您的 API 密钥来自 OpenAI，请忽略它。任何其他中间提供商都会提供带有 API 密钥的基本 URL。"
+        }
+        "(International users only, please see tip)" => "(仅国际用户需要)",
+        "(International users only, fill in https://api.minimax.io/v1)" => {
+            "(仅国际用户填写 https://api.minimax.io/v1)"
+        }
+        "International users only: use https://api.minimax.io/v1" => {
+            "仅国际用户：使用 https://api.minimax.io/v1。"
+        }
+        "For Chinese users, no need to fill in or use https://dashscope.aliyuncs.com/compatible-mode/v1. For international users, use https://dashscope-intl.aliyuncs.com/compatible-mode/v1" => {
+            "对于中国用户，不需要填写或使用 https://dashscope.aliyuncs.com/compatible-mode/v1。对于国际用户，使用 https://dashscope-intl.aliyuncs.com/compatible-mode/v1。"
+        }
+        "For Chinese users, no need to fill in or use https://api.siliconflow.cn/v1. For international users, use https://api.siliconflow.com/v1" => {
+            "对于中国用户，不需要填写或使用 https://api.siliconflow.cn/v1。对于国际用户，使用 https://api.siliconflow.com/v1。"
+        }
         _ => k,
     }
 }
@@ -4021,6 +4043,11 @@ pub async fn providers_page(
                 .cloned()
                 .or_else(|| provider.map(|provider| provider.api_base.clone()))
                 .unwrap_or_default();
+            // `available.url` maps region key -> URL (`{default, cn, intl, …}`).
+            // The card attribute mirrors upstream `buildBaseUrlOptions`, whose
+            // options are `{ value: <url>, regionKey: <key> }` — so the pair must
+            // be emitted URL-first; the previous order made the region chip show
+            // a URL and left `providerRegionForBaseUrl` unable to resolve.
             let base_options: Vec<(&String, &String)> = available
                 .url
                 .iter()
@@ -4031,7 +4058,7 @@ pub async fn providers_page(
                     "[{}]",
                     base_options
                         .iter()
-                        .map(|(url, region)| format!(
+                        .map(|(region, url)| format!(
                             "[\"{}\",\"{}\"]",
                             url.replace('\\', "\\\\").replace('"', "\\\""),
                             region.replace('\\', "\\\\").replace('"', "\\\"")
@@ -4149,7 +4176,7 @@ pub async fn providers_page(
     )));
     b.push_str(";body.appendChild(empty)}else{provider.models.forEach(function(model){var row=document.createElement('div');row.style.cssText='padding:8px 0;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;flex-wrap:wrap';var name=document.createElement('span');name.style.fontWeight='500';name.textContent=model.n;row.appendChild(name);(model.t||[]).forEach(function(tag){var badge=document.createElement('span');badge.className='badge bs';badge.textContent=tag;row.appendChild(badge)});body.appendChild(row)})}document.getElementById('modelModal').classList.add('show')}</script>");
     b.push_str(
-        r##"<div class='modal-overlay' id='providerInstanceModal' data-testid='provider-instance-dialog' onclick='if(event.target===this)closeProviderInstanceModal()'><div class='modal provider-instance-modal' role='dialog' aria-modal='true' aria-labelledby='providerInstanceTitle'><div class='provider-instance-title'><h2 id='providerInstanceTitle'></h2></div><label class='provider-instance-field'>Instance name<input id='piName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off'></label><p id='piNameError' class='provider-instance-error'></p><label class='provider-instance-field'>API-Key<input id='piKey' name='api_key' type='password' placeholder='Please enter the API key' autocomplete='new-password'></label><p id='piKeyError' class='provider-instance-error'></p><label class='provider-instance-field' id='piBaseField'>Base-Url<input id='piBase' name='base_url' list='piBaseOptions' placeholder='Please input your base url!' autocomplete='off'><datalist id='piBaseOptions'></datalist></label><p id='piBaseError' class='provider-instance-error'></p><label class='provider-instance-switch' id='piVisionField'><span>Vision</span><input id='piVision' type='checkbox' role='switch' aria-label='Vision'></label><label class='provider-instance-field' id='piGroupField'>Group ID<input id='piGroup' name='group_id' autocomplete='off'></label><section id='piModelPicker' class='provider-model-picker' aria-label='Provider models'><button class='btn btn-o provider-model-trigger' id='piListModels' type='button' aria-expanded='false' onclick='toggleProviderModelPicker()'>List models</button><div id='piModelPanel' class='provider-model-panel' hidden><input id='piModelSearch' type='search' placeholder='Search models' aria-label='Search models' oninput='renderProviderModelList()'><p id='piModelLoading' class='provider-model-empty'></p><div id='piModelList' class='provider-model-list' role='list'></div><button class='provider-model-add' type='button' aria-label='Add custom model' onclick='showProviderCustomModel()'>＋ <span>Add custom model</span></button></div><p id='piModelError' class='provider-instance-error'></p></section><p id='piStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='piVerify' type='button' onclick='verifyProviderInstance()'>Verify</button><button class='btn btn-o' type='button' onclick='closeProviderInstanceModal()'>Cancel</button><button class='btn btn-p' id='piOk' type='button' onclick='saveProviderInstance()'>Ok</button></div></div></div>
+        r##"<div class='modal-overlay' id='providerInstanceModal' data-testid='provider-instance-dialog' onclick='if(event.target===this)closeProviderInstanceModal()'><div class='modal provider-instance-modal' role='dialog' aria-modal='true' aria-labelledby='providerInstanceTitle'><div class='provider-instance-title'><h2 id='providerInstanceTitle'></h2></div><label class='provider-instance-field'>Instance name<input id='piName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off'></label><p id='piNameError' class='provider-instance-error'></p><label class='provider-instance-field'>API-Key<input id='piKey' name='api_key' type='password' placeholder='Please enter the API key' autocomplete='new-password'></label><p id='piKeyError' class='provider-instance-error'></p><label class='provider-instance-field' id='piBaseField'>Base-Url<span class='provider-base-tip tip' id='piBaseTip' tabindex='0' aria-label='' data-tip='' hidden>?</span><div class='input-select' id='piBaseSelect'><div class='input-select-trigger' id='piBaseTrigger' role='combobox' aria-haspopup='listbox' aria-expanded='false' aria-controls='piBasePopover' onclick='openPiBasePicker()'><div class='input-select-values'><span class='input-select-selected' id='piBaseSelected' hidden><span class='input-select-selected-label' id='piBaseSelectedLabel'></span><button class='input-select-clear' id='piBaseClear' type='button' aria-label='Clear base url' onclick='clearPiBase(event)'>×</button></span><input id='piBase' name='base_url' class='input-select-input' placeholder='Please input your base url!' autocomplete='off' oninput='onPiBaseInput()' onkeydown='onPiBaseKeydown(event)' onfocus='openPiBasePicker()' onblur='onPiBaseBlur()' onmousedown='event.stopPropagation()'></div><span class='input-select-chevron' aria-hidden='true'>⌄</span></div><div class='input-select-popover' id='piBasePopover' role='listbox' hidden><div class='input-select-list' id='piBaseList'></div></div></div></label><p id='piBaseError' class='provider-instance-error'></p><label class='provider-instance-switch' id='piVisionField'><span>Vision</span><input id='piVision' type='checkbox' role='switch' aria-label='Vision'></label><label class='provider-instance-field' id='piGroupField'>Group ID<input id='piGroup' name='group_id' autocomplete='off'></label><section id='piModelPicker' class='provider-model-picker' aria-label='Provider models'><button class='btn btn-o provider-model-trigger' id='piListModels' type='button' aria-expanded='false' onclick='toggleProviderModelPicker()'>List models</button><div id='piModelPanel' class='provider-model-panel' hidden><input id='piModelSearch' type='search' placeholder='Search models' aria-label='Search models' oninput='renderProviderModelList()'><p id='piModelLoading' class='provider-model-empty'></p><div id='piModelList' class='provider-model-list' role='list'></div><button class='provider-model-add' type='button' aria-label='Add custom model' onclick='showProviderCustomModel()'>＋ <span>Add custom model</span></button></div><p id='piModelError' class='provider-instance-error'></p></section><p id='piStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='piVerify' type='button' onclick='verifyProviderInstance()'>Verify</button><button class='btn btn-o' type='button' onclick='closeProviderInstanceModal()'>Cancel</button><button class='btn btn-p' id='piOk' type='button' onclick='saveProviderInstance()'>Ok</button></div></div></div>
 <div class='modal-overlay provider-custom-model-overlay' id='providerCustomModelModal' style='z-index:1001' data-testid='add-custom-model-dialog' onclick='if(event.target===this)closeProviderCustomModel()'><div class='modal provider-custom-model-modal' role='dialog' aria-modal='true' aria-labelledby='providerCustomModelTitle'><h2 id='providerCustomModelTitle'>Add custom model</h2><label class='provider-instance-field'>Model name<input id='pcmName' name='name' placeholder='Model name' autocomplete='off'></label><fieldset class='added-model-type-fieldset' id='pcmTypes'><legend>Model type</legend><label><input type='checkbox' value='chat'> LLM</label><label><input type='checkbox' value='embedding'> Embedding</label><label><input type='checkbox' value='rerank'> Rerank</label><label><input type='checkbox' value='tts'> TTS</label><label><input type='checkbox' value='image2text'> VLM</label><label><input type='checkbox' value='ocr'> OCR</label><label><input type='checkbox' value='speech2text'> ASR</label></fieldset><label class='provider-instance-field'>Max tokens<input id='pcmMaxTokens' name='max_tokens' type='number' min='0' value='0' placeholder='Max tokens'></label><fieldset class='added-model-type-fieldset'><legend>Model features</legend><label class='provider-instance-switch'><span>Tool call</span><input id='pcmTools' type='checkbox' role='switch' aria-label='Tool call'></label></fieldset><p id='pcmError' class='provider-instance-error'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeProviderCustomModel()'>Cancel</button><button class='btn btn-p' type='button' onclick='addProviderCustomModel()'>Confirm</button><button class='btn btn-o' type='button' aria-label='Close' onclick='closeProviderCustomModel()'>Close</button></div></div></div>
 <div class='modal-overlay' id='bedrockModal' data-testid='bedrock-dialog' onclick='if(event.target===this)closeBedrockModal()'><div class='modal provider-instance-modal bedrock-modal' role='dialog' aria-modal='true' aria-labelledby='bedrockTitle'><div class='provider-instance-title'><h2 id='bedrockTitle'></h2><a id='bedrockDoc' class='available-provider-doc' target='_blank' rel='noopener noreferrer' aria-label='Open provider documentation'>↗</a></div><label class='provider-instance-field'>Instance name<input id='bdName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off' oninput='bedrockRefreshInstanceState()'></label><p id='bdNameError' class='provider-instance-error'></p><fieldset class='bedrock-model-types'><legend>Model type</legend><label><input type='checkbox' name='bdType' value='chat'> Chat</label><label><input type='checkbox' name='bdType' value='embedding'> Embedding</label></fieldset><p id='bdTypeError' class='provider-instance-error'></p><label class='provider-instance-field'>Model name<input id='bdModelName' name='llm_name' placeholder='Please input your model name!' autocomplete='off'></label><p id='bdModelError' class='provider-instance-error'></p><div id='bdAuthSection'><div class='bedrock-auth-segment' id='bdAuthMode' role='radiogroup' aria-label='AWS authentication mode' data-testid='bedrock-auth-mode'><button type='button' role='radio' aria-checked='true' data-mode='access_key_secret' onclick='setBedrockAuthMode("access_key_secret")'>Access Key</button><button type='button' role='radio' aria-checked='false' data-mode='iam_role' onclick='setBedrockAuthMode("iam_role")'>IAM Role</button><button type='button' role='radio' aria-checked='false' data-mode='assume_role' onclick='setBedrockAuthMode("assume_role")'>Assume Role</button></div><div id='bdAkSk'><label class='provider-instance-field'>AWS Access Key ID<input id='bdAk' name='bedrock_ak' placeholder='Please input your ACCESS KEY' autocomplete='off'></label><p id='bdAkError' class='provider-instance-error'></p><label class='provider-instance-field'>AWS Secret Access Key<input id='bdSk' name='bedrock_sk' type='password' placeholder='Please input your SECRET KEY' autocomplete='new-password'></label><p id='bdSkError' class='provider-instance-error'></p></div><div id='bdRoleArnField' hidden><label class='provider-instance-field'>AWS Role ARN<input id='bdRoleArn' name='aws_role_arn' placeholder='Please enter AWS Role ARN' autocomplete='off'></label><p id='bdRoleArnError' class='provider-instance-error'></p></div><p id='bdAssumeTip' class='bedrock-assume-tip' hidden>If you select this mode, the Amazon EC2 instance will assume its existing role to access AWS services. No additional credentials are required.</p><label class='provider-instance-field'>AWS region<input id='bdRegion' name='bedrock_region' list='bdRegionOptions' placeholder='Please select!' data-testid='bedrock-region-select' autocomplete='off'><datalist id='bdRegionOptions'></datalist></label><p id='bdRegionError' class='provider-instance-error'></p></div><label class='provider-instance-field'>Max tokens<input id='bdMaxTokens' name='max_tokens' type='number' min='0' value='8192' placeholder='The maximum context size of the model'></label><p id='bdMaxTokensError' class='provider-instance-error'></p><p id='bdStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='bdVerify' type='button' onclick='verifyBedrock()'>Verify</button><button class='btn btn-o' type='button' onclick='closeBedrockModal()'>Cancel</button><button class='btn btn-p' id='bdOk' type='button' onclick='saveBedrock()'>Ok</button></div></div></div>
 <div class='modal-overlay' id='somarkModal' data-testid='somark-dialog' onclick='if(event.target===this)closeSoMarkModal()'><div class='modal provider-instance-modal somark-modal' role='dialog' aria-modal='true' aria-labelledby='somarkTitle'><div class='provider-instance-title'><h2 id='somarkTitle'></h2><a id='somarkDoc' class='available-provider-doc' target='_blank' rel='noopener noreferrer' aria-label='Open provider documentation'>↗</a></div><label class='provider-instance-field'>Instance name<input id='smName' name='instance_name' placeholder='Please input the instance name!' autocomplete='off'></label><p id='smNameError' class='provider-instance-error'></p><label class='provider-instance-field'>Model name<input id='smModelName' name='llm_name' placeholder='somark-from-env-1' autocomplete='off'></label><p id='smModelNameError' class='provider-instance-error'></p><label class='provider-instance-field'>Base URL<input id='smBaseUrl' name='somark_base_url' placeholder='For SoMark API, fill in https://somark.tech/api/v1; for self-hosted deployment, fill in your local Base URL' autocomplete='off'></label><p id='smBaseUrlError' class='provider-instance-error'></p><label class='provider-instance-field'>API Key<input id='smApiKey' name='somark_api_key' type='password' placeholder='Required for SoMark API; leave blank for self-hosted deployment' autocomplete='new-password'></label><h3 class='somark-section-title'>Element Formats</h3><label class='provider-instance-field'>Image Format<select id='smImageFormat'><option value='url'>URL</option><option value='base64'>Base64</option><option value='none'>None</option></select></label><label class='provider-instance-field'>Formula Format<select id='smFormulaFormat'><option value='latex'>LaTeX</option><option value='mathml'>MathML</option><option value='ascii'>ASCII</option></select></label><label class='provider-instance-field'>Table Format<select id='smTableFormat'><option value='html'>HTML</option><option value='markdown'>Markdown</option><option value='image'>Image</option></select></label><label class='provider-instance-field'>Chemical Structural Formula Format<select id='smCsFormat'><option value='image'>Image</option></select></label><h3 class='somark-section-title'>Feature Config</h3><label class='provider-instance-switch'><span>Enable Text Cross Page</span><input type='checkbox' role='switch' data-key='somark_enable_text_cross_page' aria-label='Enable Text Cross Page'></label><label class='provider-instance-switch'><span>Enable Table Cross Page</span><input type='checkbox' role='switch' data-key='somark_enable_table_cross_page' aria-label='Enable Table Cross Page'></label><label class='provider-instance-switch'><span>Enable Title Level Recognition</span><input type='checkbox' role='switch' data-key='somark_enable_title_level_recognition' aria-label='Enable Title Level Recognition'></label><label class='provider-instance-switch'><span>Enable Inline Image</span><input type='checkbox' role='switch' data-key='somark_enable_inline_image' aria-label='Enable Inline Image'></label><label class='provider-instance-switch'><span>Enable Table Image</span><input type='checkbox' role='switch' data-key='somark_enable_table_image' aria-label='Enable Table Image'></label><label class='provider-instance-switch'><span>Enable Image Understanding</span><input type='checkbox' role='switch' data-key='somark_enable_image_understanding' aria-label='Enable Image Understanding'></label><label class='provider-instance-switch'><span>Keep Header Footer</span><input type='checkbox' role='switch' data-key='somark_keep_header_footer' aria-label='Keep Header Footer'></label><p id='smStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='smVerify' type='button' onclick='verifySoMark()'>Verify</button><button class='btn btn-o' type='button' onclick='closeSoMarkModal()'>Cancel</button><button class='btn btn-p' id='smOk' type='button' onclick='saveSoMark()'>Add</button></div></div></div><script>
@@ -4175,9 +4202,24 @@ function providerInstanceSetStatus(text,error){var status=document.getElementByI
 function providerInstanceUsesPicker(){return !!providerInstanceCard&&providerInstanceCard.dataset.modelPicker==='true'}
 function providerInstanceValidate(){if(providerSpecialConfig)return providerSpecialValidate();var name=document.getElementById('piName');var key=document.getElementById('piKey');var base=document.getElementById('piBase');var picker=providerInstanceUsesPicker();var optional=providerInstanceCard&&providerInstanceCard.dataset.apiKeyOptional==='true';var valid=true;['piNameError','piKeyError','piBaseError','piModelError'].forEach(function(id){document.getElementById(id).textContent=''});if(!name.value.trim()){document.getElementById('piNameError').textContent='Instance name is required';valid=false}if(picker&&!base.value.trim()){document.getElementById('piBaseError').textContent='Base url is required';valid=false}if(!optional&&!key.value.trim()){document.getElementById('piKeyError').textContent='Please enter the API key';valid=false}if(picker&&!piSelectedModels.size){document.getElementById('piModelError').textContent='Select at least one model';valid=false}return valid}
 function resetProviderModelPicker(){piModels=[];piSelectedModels=new Set();piModelsLoaded=false;document.getElementById('piModelSearch').value='';document.getElementById('piModelLoading').textContent='';document.getElementById('piModelList').replaceChildren();document.getElementById('piModelPanel').hidden=true;document.getElementById('piListModels').setAttribute('aria-expanded','false')}
+function piBaseRegionFor(value){if(!value)return null;var options=providerBaseOptions(providerInstanceCard);for(var i=0;i<options.length;i++){if(options[i][0]===value)return options[i][1]}return null}
+function piBaseDefaultBase(card){var options=providerBaseOptions(card);for(var i=0;i<options.length;i++){if(options[i][1]==='default')return options[i][0]}return card.dataset.apiBase||''}
+function piBaseOptionsList(){var card=providerInstanceCard;if(!card)return [];var input=document.getElementById('piBase');var editing=input&&input.dataset.editing==='true';var raw=providerBaseOptions(card).map(function(entry){return {value:entry[0],region:entry[1]}});var custom=input?input.dataset.customValue||'':'';if(!editing&&custom&&!raw.some(function(item){return item.value===custom}))raw.push({value:custom,region:piBaseRegionFor(custom)});return raw}
+function piBaseRenderSelected(){var input=document.getElementById('piBase');var selected=document.getElementById('piBaseSelected');var label=document.getElementById('piBaseSelectedLabel');if(!input||!selected||!label)return;var value=input.value.trim();var editing=input.dataset.editing==='true';if(!value||editing){selected.hidden=true;input.hidden=false;return}var region=piBaseRegionFor(value);label.replaceChildren();var text=document.createElement('span');text.className='input-select-selected-value';text.textContent=value;label.appendChild(text);if(region){var chip=document.createElement('span');chip.className='input-select-region';chip.textContent=region;label.appendChild(chip)}selected.hidden=false;input.hidden=true}
+function piBaseRenderList(){var list=document.getElementById('piBaseList');if(!list)return;var input=document.getElementById('piBase');var query=(input.dataset.editing==='true'?(input.value||''):'').toLowerCase();var options=piBaseOptionsList();var matches=options.filter(function(item){return !query||String(item.value).toLowerCase().indexOf(query)>=0||String(item.region||'').toLowerCase().indexOf(query)>=0});list.replaceChildren();matches.forEach(function(item){var row=document.createElement('div');row.className='input-select-option';row.setAttribute('role','option');row.dataset.value=item.value;var text=document.createElement('span');text.className='input-select-option-value';text.textContent=item.value;row.appendChild(text);if(item.region){var chip=document.createElement('span');chip.className='input-select-region';chip.textContent=item.region;row.appendChild(chip)}row.addEventListener('mousedown',function(event){event.preventDefault();piBaseSelect(item.value)});list.appendChild(row)});var typed=(input.dataset.editing==='true'?(input.value||'').trim():'');var exact=options.some(function(item){return item.value===typed});if(typed&&!exact){var custom=document.createElement('div');custom.className='input-select-option input-select-add';custom.setAttribute('role','option');custom.textContent=(PI_BASE_LABELS.add||'Add')+' "'+typed+'"';custom.addEventListener('mousedown',function(event){event.preventDefault();piBaseSelect(typed)});list.appendChild(custom)}if(!matches.length&&!(typed&&!exact)){var empty=document.createElement('div');empty.className='input-select-empty';empty.textContent=PI_BASE_LABELS.noResults||'No results found';list.appendChild(empty)}}
+function openPiBasePicker(){var popover=document.getElementById('piBasePopover');var trigger=document.getElementById('piBaseTrigger');var input=document.getElementById('piBase');if(!popover||!trigger||!input)return;piBaseRenderList();popover.hidden=false;trigger.setAttribute('aria-expanded','true')}
+function closePiBasePicker(){var popover=document.getElementById('piBasePopover');var trigger=document.getElementById('piBaseTrigger');if(!popover||!trigger)return;popover.hidden=true;trigger.setAttribute('aria-expanded','false')}
+function piBaseSelect(value){var input=document.getElementById('piBase');if(!input)return;input.value=value;input.dataset.editing='false';input.dataset.customValue=(piBaseRegionFor(value)?'':value);piBaseRenderSelected();closePiBasePicker();['piBaseError'].forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=''})}
+function clearPiBase(event){if(event){event.stopPropagation();event.preventDefault()}var input=document.getElementById('piBase');if(!input)return;input.value='';input.dataset.customValue='';input.dataset.editing='true';piBaseRenderSelected();input.hidden=false;input.focus();openPiBasePicker()}
+function onPiBaseInput(){var input=document.getElementById('piBase');input.dataset.editing='true';input.dataset.customValue=input.value.trim();piBaseRenderSelected();openPiBasePicker();piBaseRenderList()}
+function onPiBaseKeydown(event){var input=document.getElementById('piBase');if(event.key==='Enter'){event.preventDefault();piBaseCommit();return}if(event.key==='Escape'){input.dataset.editing='false';piBaseRenderSelected();closePiBasePicker();input.blur();return}if(event.key==='Backspace'&&!input.value&&input.dataset.editing!=='true'){event.preventDefault();clearPiBase(event)}}
+function piBaseCommit(){var input=document.getElementById('piBase');var typed=(input.value||'').trim();var match=piBaseOptionsList().filter(function(item){return item.value===typed})[0];input.dataset.editing='false';if(match){input.dataset.customValue=''}else{input.dataset.customValue=typed}piBaseRenderSelected();closePiBasePicker()}
+function onPiBaseBlur(){var input=document.getElementById('piBase');if(input.dataset.editing!=='true')return;setTimeout(function(){if(document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#piBaseSelect'))return;piBaseCommit()},150)}
+function piBaseInitField(card){var input=document.getElementById('piBase');if(!input)return;input.value=piBaseDefaultBase(card);input.dataset.editing='false';input.dataset.customValue='';piBaseRenderSelected();closePiBasePicker();var tip=document.getElementById('piBaseTip');var info=providerBaseTextInfo(card.dataset.provider||'');if(tip){tip.hidden=!info.tip;tip.setAttribute('aria-label',info.tip||'');tip.setAttribute('data-tip',info.tip||'')}input.placeholder=info.placeholder}
+function providerBaseTextInfo(provider){var key=(provider||'').toLowerCase();var entry=PI_BASE_LABELS.byProvider[key];return entry?{tip:entry[0],placeholder:entry[1]}:{tip:PI_BASE_LABELS.defaultTip,placeholder:PI_BASE_LABELS.defaultPlaceholder}}
 function providerBaseOptions(card){try{var raw=card.dataset.apiBaseOptions;if(raw){var parsed=JSON.parse(raw);if(Array.isArray(parsed))return parsed.filter(function(item){return Array.isArray(item)&&item.length>=2})}}catch(error){}return card.dataset.apiBase?[[card.dataset.apiBase,'default']]:[]}
 function providerRegionForBaseUrl(base){if(!base)return null;var options=providerBaseOptions(providerInstanceCard);for(var i=0;i<options.length;i++){if(options[i][0]===base)return options[i][1]}return null}
-function showProviderInstanceModal(card){var special=card.dataset.specialModal||'';if(special==='bedrock'){showBedrockModal(card);return}if(special==='somark'){showSoMarkModal(card);return}providerInstanceCard=card;var provider=card.dataset.provider||'';providerSpecialConfig=providerSpecialFieldConfig(provider);providerSpecialInstanceNames=null;var picker=card.dataset.modelPicker==='true'&&!providerSpecialConfig;document.getElementById('providerInstanceTitle').textContent=provider;var doc=document.getElementById('providerInstanceDoc');if(doc){var cardDoc=card.querySelector('.available-provider-doc');if(cardDoc){doc.href=cardDoc.href;doc.hidden=false}else{doc.removeAttribute('href');doc.hidden=true}}document.getElementById('piName').value='';document.getElementById('piKey').value='';document.getElementById('piBase').value=card.dataset.apiBase||'';document.getElementById('piBaseOptions').replaceChildren();providerBaseOptions(card).forEach(function(entry){var option=document.createElement('option');option.value=entry[0];option.label=entry[1];option.dataset.region=entry[1];document.getElementById('piBaseOptions').appendChild(option)});var keyLabel=document.getElementById('piKey').closest('label');keyLabel.childNodes[0].textContent=providerSpecialConfig&&providerSpecialConfig.keyLabel?providerSpecialConfig.keyLabel:'API-Key';document.getElementById('piKey').placeholder=providerSpecialConfig&&providerSpecialConfig.keyPlaceholder?providerSpecialConfig.keyPlaceholder:'Please enter the API key';document.getElementById('piBaseField').hidden=providerSpecialConfig?!providerSpecialConfig.showBase:!picker&&card.dataset.showBase!=='true';document.getElementById('piKeyField').hidden=providerSpecialConfig?!providerSpecialConfig.showKey:false;document.getElementById('piVisionField').hidden=!!providerSpecialConfig||!picker;document.getElementById('piVision').checked=false;document.getElementById('piModelPicker').hidden=!!providerSpecialConfig||!picker;document.getElementById('piGroupField').hidden=provider.toLowerCase()!=='minimax';document.getElementById('piGroup').value='';['piNameError','piKeyError','piBaseError','piModelError'].forEach(function(id){document.getElementById(id).textContent=''});resetProviderModelPicker();if(providerSpecialConfig){renderSpecialProviderFields(providerSpecialConfig);loadProviderSpecialInstanceNames(provider)}else{ensureProviderExtraContainer().replaceChildren()}providerInstanceSetStatus('',false);document.getElementById('providerInstanceModal').classList.add('show')}
+function showProviderInstanceModal(card){var special=card.dataset.specialModal||'';if(special==='bedrock'){showBedrockModal(card);return}if(special==='somark'){showSoMarkModal(card);return}providerInstanceCard=card;var provider=card.dataset.provider||'';providerSpecialConfig=providerSpecialFieldConfig(provider);providerSpecialInstanceNames=null;var picker=card.dataset.modelPicker==='true'&&!providerSpecialConfig;document.getElementById('providerInstanceTitle').textContent=provider;var doc=document.getElementById('providerInstanceDoc');if(doc){var cardDoc=card.querySelector('.available-provider-doc');if(cardDoc){doc.href=cardDoc.href;doc.hidden=false}else{doc.removeAttribute('href');doc.hidden=true}}document.getElementById('piName').value='';document.getElementById('piKey').value='';piBaseInitField(card);var keyLabel=document.getElementById('piKey').closest('label');keyLabel.childNodes[0].textContent=providerSpecialConfig&&providerSpecialConfig.keyLabel?providerSpecialConfig.keyLabel:'API-Key';document.getElementById('piKey').placeholder=providerSpecialConfig&&providerSpecialConfig.keyPlaceholder?providerSpecialConfig.keyPlaceholder:'Please enter the API key';document.getElementById('piBaseField').hidden=providerSpecialConfig?!providerSpecialConfig.showBase:!picker&&card.dataset.showBase!=='true';document.getElementById('piKeyField').hidden=providerSpecialConfig?!providerSpecialConfig.showKey:false;document.getElementById('piVisionField').hidden=!!providerSpecialConfig||!picker;document.getElementById('piVision').checked=false;document.getElementById('piModelPicker').hidden=!!providerSpecialConfig||!picker;document.getElementById('piGroupField').hidden=provider.toLowerCase()!=='minimax';document.getElementById('piGroup').value='';['piNameError','piKeyError','piBaseError','piModelError'].forEach(function(id){document.getElementById(id).textContent=''});resetProviderModelPicker();if(providerSpecialConfig){renderSpecialProviderFields(providerSpecialConfig);loadProviderSpecialInstanceNames(provider)}else{ensureProviderExtraContainer().replaceChildren()}providerInstanceSetStatus('',false);document.getElementById('providerInstanceModal').classList.add('show')}
 function closeProviderInstanceModal(){closeProviderCustomModel();document.getElementById('providerInstanceModal').classList.remove('show');resetProviderModelPicker();providerInstanceCard=null}
 document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;var custom=document.getElementById('providerCustomModelModal');if(custom&&custom.classList.contains('show')){closeProviderCustomModel();return}if(document.getElementById('bedrockModal').classList.contains('show')){closeBedrockModal();return}if(document.getElementById('somarkModal').classList.contains('show')){closeSoMarkModal();return}var inst=document.getElementById('providerInstanceModal');if(inst&&inst.classList.contains('show')){closeProviderInstanceModal()}})
 function normalizeProviderModel(model){return {name:String(model.name||''),model_types:Array.isArray(model.model_types)?model.model_types.slice():[],max_tokens:Number(model.max_tokens)||0,features:Array.isArray(model.features)?model.features.slice():[]}}
@@ -4269,6 +4311,71 @@ document.getElementById('apModels').addEventListener('input',function(){apSearch
                 (entry.name.clone(), value)
             })
             .collect();
+    let model_type_label_js: serde_json::Map<String, serde_json::Value> = [
+        "chat",
+        "embedding",
+        "rerank",
+        "tts",
+        "asr",
+        "speech2text",
+        "image2text",
+        "vision",
+        "ocr",
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        crate::providers::capability_short_label_from_str(key)
+            .map(|label| (key.to_string(), serde_json::json!(label)))
+    })
+    .collect();
+    // Upstream `setting.baseUrlTip` / `*BaseUrlPlaceholder` per factory
+    // (`generic-api-key-config.ts`) plus `common.add` / `common.noResults`.
+    let pi_base_labels = serde_json::json!({
+        "add": t("Add", zh),
+        "noResults": t("No results found", zh),
+        "defaultTip": t(
+            "If your API key is from OpenAI, just ignore it. Any other intermediate providers will give this base url with the API key.",
+            zh,
+        ),
+        "defaultPlaceholder": "https://api.openai.com/v1",
+        "byProvider": {
+            "minimax": [
+                t("International users only: use https://api.minimax.io/v1", zh),
+                t("(International users only, fill in https://api.minimax.io/v1)", zh),
+            ],
+            "tongyi-qianwen": [
+                t(
+                    "For Chinese users, no need to fill in or use https://dashscope.aliyuncs.com/compatible-mode/v1. For international users, use https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    zh,
+                ),
+                t("(International users only, please see tip)", zh),
+            ],
+            "siliconflow": [
+                t(
+                    "For Chinese users, no need to fill in or use https://api.siliconflow.cn/v1. For international users, use https://api.siliconflow.com/v1",
+                    zh,
+                ),
+                "https://api.siliconflow.cn/v1",
+            ],
+            "anthropic": [
+                t(
+                    "If your API key is from OpenAI, just ignore it. Any other intermediate providers will give this base url with the API key.",
+                    zh,
+                ),
+                "https://api.anthropic.com/v1",
+            ],
+        },
+    });
+    let added_labels = serde_json::json!({
+        "showMoreModels": t("View models", zh),
+        "hideModels": t("Hide models", zh),
+    });
+    b.push_str(";const MODEL_TYPE_LABELS=");
+    b.push_str(&serde_json::to_string(&model_type_label_js).expect("model type labels serialize"));
+    b.push_str(";const PI_BASE_LABELS=");
+    b.push_str(&serde_json::to_string(&pi_base_labels).expect("base url labels serialize"));
+    b.push_str(";const ADDED_LABELS=");
+    b.push_str(&serde_json::to_string(&added_labels).expect("added labels serialize"));
     b.push_str(";const PROVIDER_ICON_DIRECTORY=");
     b.push_str(&serde_json::to_string(&icon_directory).expect("icon directory serializes"));
     b.push_str(
@@ -4280,10 +4387,10 @@ async function addedApi(url,options){var response=await fetch(url,options);var d
 function addedUrl(providerName,instanceName,suffix){var value='/api/v1/providers/'+encodeURIComponent(providerName)+'/instances';if(instanceName!==undefined)value+='/'+encodeURIComponent(instanceName)+'/models';if(suffix!==undefined)value+='/'+encodeURIComponent(suffix);return value}
 async function loadAddedModels(){var list=document.getElementById('addedModelList');list.replaceChildren(addedNode('p','added-model-loading','Loading…'));try{var instances=await addedApi('/api/v1/tenant/models');var groups=new Map();(instances||[]).forEach(function(instance){var directory=providerDirectoryEntry(instance.provider_id);var group=groups.get(instance.provider_id);if(!group){group={providerId:instance.provider_id,providerName:directory.name||instance.provider_id,instances:[]};groups.set(instance.provider_id,group)}group.instances.push(instance)});list.replaceChildren();if(!groups.size){list.appendChild(addedNode('p','added-model-empty','No model provider instances added.'));return}Array.from(groups.values()).forEach(function(group){list.appendChild(renderAddedProvider(group))})}catch(error){list.replaceChildren(addedNode('p','added-model-error','Error: '+error.message))}}
 function renderAddedProvider(group){var card=addedNode('article','added-model-card');card.dataset.testid='added-model-card';card.dataset.provider=group.providerName;var head=addedNode('div','added-model-provider-head');var icon=addedNode('span','added-model-provider-icon');icon.innerHTML=providerIconHtml(group.providerName);head.appendChild(icon);head.appendChild(addedNode('span','added-model-provider-name',group.providerName));card.appendChild(head);var instances=addedNode('div','added-model-instances');group.instances.forEach(function(instance,index){instances.appendChild(renderAddedInstance(group,instance,index))});card.appendChild(instances);return card}
-function renderAddedInstance(group,instance,index){var row=addedNode('section','added-model-instance');var header=addedNode('div','added-model-instance-head');header.appendChild(addedNode('span','added-model-instance-name',instance.instance_name));var actions=addedNode('div','added-model-instance-actions');var toggle=addedNode('button','btn btn-o btn-sm','View models');toggle.type='button';toggle.setAttribute('aria-expanded','false');var content=addedNode('div','added-model-content');content.hidden=true;content.dataset.loaded='false';content.id='added-model-content-'+group.providerId.replace(/[^a-zA-Z0-9_-]/g,'-')+'-'+instance.instance_id.replace(/[^a-zA-Z0-9_-]/g,'-')+'-'+index;toggle.addEventListener('click',function(){toggleAddedInstance(toggle,content,group.providerName,instance.instance_name)});actions.appendChild(toggle);var remove=addedNode('button','btn btn-d btn-sm added-model-delete','🗑');remove.type='button';remove.setAttribute('aria-label','Delete '+instance.instance_name);remove.addEventListener('click',function(){openDeleteModelInstance(group.providerName,instance.instance_name)});actions.appendChild(remove);header.appendChild(actions);row.appendChild(header);row.appendChild(content);return row}
-async function toggleAddedInstance(button,content,providerName,instanceName){var open=button.getAttribute('aria-expanded')==='true';if(open){button.setAttribute('aria-expanded','false');button.textContent='View models';content.hidden=true;return}button.disabled=true;try{if(content.dataset.loaded!=='true')await loadAddedInstanceModels(providerName,instanceName,content);content.hidden=false;button.setAttribute('aria-expanded','true');button.textContent='Hide models'}catch(error){content.replaceChildren(addedNode('p','added-model-error','Error: '+error.message));content.hidden=false}finally{button.disabled=false}}
+function renderAddedInstance(group,instance,index){var row=addedNode('section','added-model-instance');var header=addedNode('div','added-model-instance-head');header.appendChild(addedNode('span','added-model-instance-name',instance.instance_name));var actions=addedNode('div','added-model-instance-actions');var toggle=addedNode('button','btn btn-o btn-sm',ADDED_LABELS.showMoreModels);toggle.type='button';toggle.setAttribute('aria-expanded','false');var content=addedNode('div','added-model-content');content.hidden=true;content.dataset.loaded='false';content.id='added-model-content-'+group.providerId.replace(/[^a-zA-Z0-9_-]/g,'-')+'-'+instance.instance_id.replace(/[^a-zA-Z0-9_-]/g,'-')+'-'+index;toggle.addEventListener('click',function(){toggleAddedInstance(toggle,content,group.providerName,instance.instance_name)});actions.appendChild(toggle);var remove=addedNode('button','btn btn-d btn-sm added-model-delete','🗑');remove.type='button';remove.setAttribute('aria-label','Delete '+instance.instance_name);remove.addEventListener('click',function(){openDeleteModelInstance(group.providerName,instance.instance_name)});actions.appendChild(remove);header.appendChild(actions);row.appendChild(header);row.appendChild(content);return row}
+async function toggleAddedInstance(button,content,providerName,instanceName){var open=button.getAttribute('aria-expanded')==='true';if(open){button.setAttribute('aria-expanded','false');button.textContent=ADDED_LABELS.showMoreModels;content.hidden=true;return}button.disabled=true;try{if(content.dataset.loaded!=='true')await loadAddedInstanceModels(providerName,instanceName,content);content.hidden=false;button.setAttribute('aria-expanded','true');button.textContent=ADDED_LABELS.hideModels}catch(error){content.replaceChildren(addedNode('p','added-model-error','Error: '+error.message));content.hidden=false}finally{button.disabled=false}}
 function modelTypeBadge(type){return addedNode('span','badge added-model-type',type)}
-async function loadAddedInstanceModels(providerName,instanceName,content){content.replaceChildren(addedNode('p','added-model-loading','Loading…'));var models=await addedApi(addedUrl(providerName,instanceName));content.replaceChildren();content.dataset.loaded='true';var types=[];(models||[]).forEach(function(model){(model.model_type||[]).forEach(function(type){if(types.indexOf(type)<0)types.push(type)})});if(types.length){var summary=addedNode('div','added-model-type-summary');types.forEach(function(type){summary.appendChild(modelTypeBadge(type))});content.appendChild(summary)}var list=addedNode('ul','added-model-rows');(models||[]).forEach(function(model){list.appendChild(renderAddedModel(providerName,instanceName,model,content))});if(!models||!models.length)list.appendChild(addedNode('li','added-model-empty','No models.'));content.appendChild(list)}
+async function loadAddedInstanceModels(providerName,instanceName,content){content.replaceChildren(addedNode('p','added-model-loading','Loading…'));var models=await addedApi(addedUrl(providerName,instanceName));content.replaceChildren();content.dataset.loaded='true';var types=[];(models||[]).forEach(function(model){(model.model_type||[]).forEach(function(type){if(types.indexOf(type)<0)types.push(type)})});if(types.length){var summary=addedNode('div','added-model-type-summary');types.forEach(function(type){summary.appendChild(modelTypeBadge(MODEL_TYPE_LABELS[type]||type))});content.appendChild(summary)}var list=addedNode('ul','added-model-rows');(models||[]).forEach(function(model){list.appendChild(renderAddedModel(providerName,instanceName,model,content))});if(!models||!models.length)list.appendChild(addedNode('li','added-model-empty','No models.'));content.appendChild(list)}
 function renderAddedModel(providerName,instanceName,model,content){var row=addedNode('li','added-model-row');var details=addedNode('div','added-model-details');details.appendChild(addedNode('span','added-model-name',model.name));(model.model_type||[]).slice(0,3).forEach(function(type){details.appendChild(modelTypeBadge(type))});if((model.model_type||[]).length>3){var more=modelTypeBadge('...');more.title=model.model_type.slice(3).join('\\n');details.appendChild(more)}var edit=addedNode('button','btn btn-o btn-sm added-model-edit','✎');edit.type='button';edit.setAttribute('aria-label','Edit custom model');edit.addEventListener('click',function(event){event.stopPropagation();openEditInstanceModel(providerName,instanceName,model,content)});details.appendChild(edit);row.appendChild(details);var toggle=document.createElement('input');toggle.type='checkbox';toggle.className='added-model-switch';toggle.setAttribute('role','switch');toggle.setAttribute('aria-label','Set '+model.name+' active');toggle.checked=model.status==='active';toggle.setAttribute('aria-checked',String(toggle.checked));toggle.addEventListener('change',function(){updateAddedModelStatus(toggle,providerName,instanceName,model.name)});row.appendChild(toggle);return row}
 async function updateAddedModelStatus(toggle,providerName,instanceName,modelName){var checked=toggle.checked;toggle.disabled=true;try{await addedApi(addedUrl(providerName,instanceName,modelName),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:checked?'active':'inactive'})});toggle.setAttribute('aria-checked',String(checked));await loadModelOptions()}catch(error){toggle.checked=!checked;toggle.setAttribute('aria-checked',String(toggle.checked));alert(error.message)}finally{toggle.disabled=false}}
 function openDeleteModelInstance(providerName,instanceName){var modal=document.getElementById('deleteModelInstanceModal');modal.dataset.provider=providerName;modal.dataset.instance=instanceName;document.getElementById('deleteModelInstanceText').textContent='Are you sure you want to delete the instance "'+instanceName+'"?';document.getElementById('deleteModelInstanceStatus').textContent='';modal.classList.add('show')}
@@ -5478,6 +5585,107 @@ mod kb_ui_tests {
     }
 
     #[tokio::test]
+    /// Upstream `use-provider-fields.tsx` renders the `base_url` field as an
+    /// `inputSelect`: the modal must ship an InputSelect-shaped combobox (value
+    /// + clear button + chevron trigger, filterable popover with region chips,
+    /// custom value row) instead of a plain text input with a `<datalist>`.
+    async fn providers_modal_base_url_field_uses_upstream_input_select() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("accept-language", "en")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state.clone()), req).await).await;
+        for marker in [
+            "class='input-select' id='piBaseSelect'",
+            "class='input-select-trigger' id='piBaseTrigger'",
+            "role='combobox'",
+            "aria-haspopup='listbox'",
+            "id='piBasePopover'",
+            "id='piBaseList'",
+            "id='piBaseSelected'",
+            "id='piBaseClear'",
+            "input-select-chevron",
+            "input-select-region",
+            "input-select-add",
+            "input-select-empty",
+            "id='piBaseTip'",
+            // Behaviour: default = the option whose regionKey is `default`,
+            // typed values become custom entries, Enter commits, Escape closes,
+            // Backspace clears, blur commits after the upstream 150ms delay.
+            "function piBaseDefaultBase(card)",
+            "options[i][1]==='default'",
+            "region:entry[1]",
+            "function piBaseCommit()",
+            "function onPiBaseKeydown(event)",
+            "event.key==='Enter'",
+            "event.key==='Escape'",
+            "event.key==='Backspace'",
+            "150",
+            "PI_BASE_LABELS.add",
+            "PI_BASE_LABELS.noResults",
+            "providerBaseTextInfo(card.dataset.provider||'')",
+            // Region is still derived from the selected URL for verify/submit.
+            "region:providerRegionForBaseUrl",
+        ] {
+            assert!(
+                body.contains(marker),
+                "base url combobox marker missing: {marker}"
+            );
+        }
+        assert!(
+            !body.contains("list='piBaseOptions'") && !body.contains("id='piBaseOptions'"),
+            "the plain input + datalist Base-Url field must be gone"
+        );
+        // Per-factory tooltips/placeholders and the Added-models labels are
+        // injected as JSON so both languages render.
+        for label in [
+            "\"byProvider\"",
+            "\"minimax\"",
+            "\"tongyi-qianwen\"",
+            "\"siliconflow\"",
+            "\"anthropic\"",
+            "\"showMoreModels\":\"View models\"",
+            "\"hideModels\":\"Hide models\"",
+            "\"chat\":\"LLM\"",
+            "\"image2text\":\"VLM\"",
+            "\"speech2text\":\"ASR\"",
+        ] {
+            assert!(
+                body.contains(label),
+                "injected label payload missing: {label}"
+            );
+        }
+        for (en, zh) in [
+            ("View models", "展示更多模型"),
+            ("Hide models", "隐藏模型"),
+            ("No results found", "未查到结果"),
+            ("Add", "添加"),
+        ] {
+            assert_eq!(t(en, true), zh, "zh translation missing for {en}");
+        }
+        let zh_req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh_req).await).await;
+        for marker in [
+            "\"showMoreModels\":\"展示更多模型\"",
+            "\"hideModels\":\"隐藏模型\"",
+            "\"noResults\":\"未查到结果\"",
+            "\"add\":\"添加\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh label payload missing: {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn providers_page_wires_default_models_and_available_provider_clicks() {
         let (_root, state) = test_state();
         let req = axum::http::Request::builder()
@@ -5549,7 +5757,17 @@ mod kb_ui_tests {
             "providerBaseOptions",
             "providerRegionForBaseUrl",
             "region:providerRegionForBaseUrl",
-            "option.dataset.region=entry[1]",
+            // Upstream `use-provider-fields.tsx` renders the Base-Url field with
+            // `InputSelect`: selected value + clear button + chevron trigger and
+            // a filterable popover whose rows carry the region key chip.
+            "input-select-trigger",
+            "id='piBasePopover'",
+            "id='piBaseList'",
+            "piBaseRenderList",
+            "piBaseRegionFor",
+            "piBaseDefaultBase",
+            "providerBaseTextInfo",
+            "input-select-add",
         ] {
             assert!(
                 body.contains(marker),
@@ -5574,6 +5792,20 @@ mod kb_ui_tests {
             body.contains("https://api.siliconflow.cn/v1")
                 && body.contains("https://api.siliconflow.com/v1"),
             "SILICONFLOW card must advertise default and intl base URLs"
+        );
+        // `data-api-base-options` must be URL-first (`[[url, regionKey], …]`) to
+        // match upstream `buildBaseUrlOptions` (`{value, regionKey}`); the
+        // inverted order used to render a URL inside the region chip and made
+        // `providerRegionForBaseUrl` return null for every selection.
+        assert!(
+            body.contains(
+                "data-api-base-options='[[&quot;https://api.siliconflow.cn/v1&quot;,&quot;default&quot;],[&quot;https://api.siliconflow.com/v1&quot;,&quot;intl&quot;]]'"
+            ),
+            "provider cards must expose URL-first base url options"
+        );
+        assert!(
+            !body.contains("[[&quot;default&quot;,&quot;https://api.siliconflow.cn/v1&quot;]"),
+            "base url options must not be region-first"
         );
         assert!(
             body.contains("https://dashscope.aliyuncs.com/compatible-mode/v1")
@@ -5741,8 +5973,11 @@ mod kb_ui_tests {
         for marker in [
             "added-models-section",
             "added-model-card",
-            "View models",
-            "Hide models",
+            // Labels now come from the injected `ADDED_LABELS` payload so both
+            // languages render (upstream `setting.showMoreModels`/`hideModels`).
+            "ADDED_LABELS.showMoreModels",
+            "ADDED_LABELS.hideModels",
+            "MODEL_TYPE_LABELS[type]||type",
             "delete-model-instance-dialog",
             "edit-instance-model-dialog",
             "role','switch'",
@@ -7880,6 +8115,41 @@ mod kb_ui_tests {
         let css = include_str!("web_css.txt");
         assert!(css.contains(".provider-tz-list"));
         assert!(css.contains(".provider-tz-list div:hover"));
+    }
+
+    /// Dialogs and floating panels sit above page content, so their surface must
+    /// be opaque; `--bgc` (5% white) let the cards behind a modal bleed through.
+    #[test]
+    fn modal_and_popover_surfaces_are_opaque() {
+        let css = include_str!("web_css.txt");
+        assert!(
+            css.contains(":root{--bgm:"),
+            "dark theme needs an opaque modal surface"
+        );
+        assert!(
+            css.contains(".light{--bgm:"),
+            "light theme needs an opaque modal surface"
+        );
+        assert!(
+            css.contains(".modal{background:var(--bgm)"),
+            "modal must be opaque"
+        );
+        for selector in [
+            ".menu-panel{",
+            ".home-card-menu{",
+            ".memory-menu{",
+            ".memory-filter-panel{",
+            ".default-model-popover{",
+            ".input-select-popover{",
+        ] {
+            let start = css.find(selector).expect("selector");
+            let end = css[start..].find('}').expect("rule end") + start;
+            let rule = &css[start..end];
+            assert!(
+                rule.contains("background:var(--bgm)"),
+                "{selector} must paint an opaque surface"
+            );
+        }
     }
 
     /// A truncated rule (`.cc-runtime-qr{width:224px;max-width:100.` followed by
