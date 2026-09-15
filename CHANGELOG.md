@@ -2,7 +2,37 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-14/15（对标批次 v0.3.4e–v0.3.5b）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5i）
+
+### Fixed
+
+- **数据集 Configuration / Knowledge graph 面板错位（用户报告）**：Reranking 提示气泡
+  `data-tip='…` 缺收尾单引号，浏览器把其后的 `<div class='provider-default-field'>` 等
+  整段当作属性值吞掉，导致 `#tab3/#tab4` 落到 `.ds-layout`（侧栏列）而非 `.ds-content`。
+  `kb_detail_page` 与 `dataset_page` 两处同源缺陷一并修复；新增引号感知深度扫描单测
+  （`div_depth_at`，修复前 tab3 深度 7 vs tab0 4 必红）。
+- **「Reranking model」标签被吞**：`<label …display:block'><` 末尾多余的 `<` 生成伪元素
+  `<reranking model="" …>`，吞掉标签文字与 Use knowledge graph 复选框；同步修正
+  `.ds-content` 收尾与检索面板左右两列结构。
+- **配置页横向溢出 139677px**：dataset / kb_detail 两页残留 legacy JS 把 4000+ 个
+  `<option>` 塞进已是弹层触发按钮的 `#embdSel`；删除注入后仍由共享默认模型树
+  （`GET /api/v1/models`）提供模型列表，配置页宽度回到 1585px。
+- **头像行结构**：配置表补回 `<tr><td>Avatar</td>` 行头、删除遗留空 Avatar 行、文件选择框限宽。
+- **主样式表截断**：`src/web_css.txt` 中 `.cc-runtime-qr{width:224px;max-width:100.` 截断
+  使浏览器在解析中途放弃，其后全部规则（`.provider-tz-list`、`.set-switch` 等）静默失效
+  （CSSOM 517 → 537 条）；修复并新增 `stylesheet_has_no_truncated_rules` 结构化校验单测。
+
+### Added
+
+- **开关控件对齐上游 Switch**：`.set-switch input[type=checkbox]` 与
+  `input[type=checkbox][role=switch]` 渲染为 36×20 圆角滑块（`appearance:none` + 白色滑块），
+  替换原先在深色主题下显示为大白方块的浏览器原生复选框。
+- **侧栏/导航全量实点脚本** `scripts/ui-traversal/sidebar-routes-cdp.mjs`：顶部导航 7 项、
+  用户设置侧栏 7 项、数据集详情侧栏 5 项与 `/user-setting` 共 21 条路由逐页点击，记录状态码、
+  主列高度/文本长度、横向溢出、page error 与截图；本次结果 21/21 通过。
+- **诊断脚本**：`overflow-cdp.mjs`（定位横向溢出源头）、`testing-switch-cdp.mjs`（开关与伪标签）、
+  `cfg-overflow-cdp.mjs`、`embdsel-desc-cdp.mjs`。
+
 
 ### Added
 

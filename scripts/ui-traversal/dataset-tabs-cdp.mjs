@@ -41,6 +41,11 @@ try {
   );
   if (!ok) throw new Error("login failed");
 
+  // The dataset shell is served fresh each time, but Chromium may reuse a
+  // cached copy; drop the HTTP cache before the traversal.
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Network.clearBrowserCache").catch(() => {});
+
   const kb = await page.evaluate(async () => {
     const res = await fetch("/api/v1/datasets");
     const data = await res.json();
@@ -79,10 +84,33 @@ try {
       const visible = Array.from(document.querySelectorAll("[id^='tab']"))
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.id);
+      // The content column must actually render (regression guard: an
+      // unbalanced div once nested every panel inside the hidden tab1).
+      const panel = visible.length ? document.getElementById(visible[0]) : null;
+      const rect = panel
+        ? panel.getBoundingClientRect()
+        : { width: 0, height: 0 };
+      const content = document.querySelector(".ds-content");
+      const contentRect = content ? content.getBoundingClientRect() : null;
       return {
         activeNav: active ? active.textContent.trim() : "",
         visiblePanels: visible,
         logsPanelInsideOverview: !!document.querySelector("#tab1 #datasetLogs"),
+        panelVisible: rect.width > 0 && rect.height > 0,
+        // Regression guard: a stray `</div>` used to close `.ds-content` early
+        // and drop Configuration / Knowledge graph into the sidebar column.
+        insideContent: !!(
+          panel &&
+          content &&
+          content.contains(panel) &&
+          panel.parentElement === content
+        ),
+        contentWidth: contentRect ? Math.round(contentRect.width) : 0,
+        panelWidth: Math.round(rect.width),
+        panelText: panel
+          ? (panel.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60)
+          : "",
+        nestedInTab1: !!(panel && panel.closest("#tab1")),
       };
     });
     out.tabs.push({

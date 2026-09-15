@@ -1480,7 +1480,7 @@ pub async fn kb_detail_page(
     b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
     b.push_str("' data-tip='");
     b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
-    b.push_str(">?</span></label>");
+    b.push_str("'>?</span></label>");
     push_default_model_selector(&mut b, &TEST_RERANK_SELECTOR_FIELD, zh);
     b.push_str("<button class='btn btn-p' style='margin-top:12px;width:100%' onclick='runTest()'>");
     b.push_str(t("Test", zh));
@@ -1535,9 +1535,10 @@ pub async fn kb_detail_page(
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(r=>r.json()).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('cfgMethod').value=pc.chunk_method;var tn=parseInt(pc.chunk_token_num,10);if(!isNaN(tn)&&tn>0)document.getElementById('cfgTokenNum').value=tn;var delims=Array.isArray(pc.delimiters)?pc.delimiters:(pc.delimiter?[pc.delimiter]:[]);document.getElementById('cfgDelims').value=delims.join('\\n');var op=parseFloat(pc.overlapped_percent);if(!isNaN(op))document.getElementById('cfgOverlap').value=Math.round(op*100);document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('cfgRaptor').checked=!!(pc.raptorEn||pc.raptor_enabled);document.getElementById('cfgGraph').checked=!!(pc.graphEn||pc.graphrag_enabled);var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
     b.push_str("function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:document.getElementById('cfgPerm').value,embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
-    b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(rerankingId)body.rerank_id=rerankingId;document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+    b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId)body.rerank_id=rerankingId;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
-    b.push_str("fetch('/api/v1/providers').then(r=>r.json()).then(function(d){var sel=document.getElementById('embdSel');if(!sel)return;(d.data||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o)})})}).catch(function(){});");
+    // Model options are rendered by the shared default-model tree (the field is a
+    // popover trigger, not a <select>), so no legacy <option> injection here.
     b.push_str("loadDocs();loadConfig();</script>");
     Html(layout(&name, &b, zh))
 }
@@ -1678,36 +1679,46 @@ pub async fn dataset_page(
     b.push_str(t("Logs", zh));
     b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
     b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
-    b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div>");
+    b.push_str("<script>function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
+    // Close the overview (tab1) panel that hosts the merged Logs section so the
+    // remaining panels stay siblings instead of nesting inside the hidden tab1.
+    b.push_str("</div>");
     // Tab 2: Testing
     b.push_str("<div id='tab2' style='display:none'><div class='card'><h2>");
-    b.push_str(t("Testing", zh));
+    b.push_str(t("Retrieval testing", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>");
-    b.push_str(t("Test retrieval quality with sample queries.", zh));
+    b.push_str(t("Conduct a retrieval test to check if RAGFlow can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.", zh));
     b.push_str("</p><div style='display:grid;grid-template-columns:1fr 1fr;gap:16px'><div><h3>");
-    b.push_str(t("Test Settings", zh));
+    b.push_str(t("Setting", zh));
     b.push_str("</h3><label style='font-size:12px'>");
     b.push_str(t("Question", zh));
     b.push_str("</label><input id='testQ' placeholder='");
-    b.push_str(t("Enter test query...", zh));
+    b.push_str(t("Input your question here!", zh));
     b.push_str("'><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Top-K", zh));
     b.push_str("</label><select id='testK'><option>5</option><option selected>10</option><option>20</option></select><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Similarity Threshold", zh));
     b.push_str(": <span id='testTV' class='co'>0.2</span></label><input type='range' id='testT' min='0' max='1' step='0.05' value='0.2' style='width:100%' oninput='document.getElementById(\\\"testTV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Vector Weight", zh));
-    b.push_str(": <span id='testWV' class='co'>0.3</span></label><input type='range' id='testW' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"testWV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'><");
+    b.push_str(": <span id='testWV' class='co'>0.3</span></label><input type='range' id='testW' min='0' max='1' step='0.05' value='0.3' style='width:100%' oninput='document.getElementById(\\\"testWV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Reranking model", zh));
     b.push_str(" <span class='tip' tabindex='0' aria-label='");
     b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
     b.push_str("' data-tip='");
     b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
-    b.push_str(">?</span></label>");
+    b.push_str("'>?</span></label>");
     push_default_model_selector(&mut b, &TEST_RERANK_SELECTOR_FIELD, zh);
+    // Upstream `testing-form.tsx` also carries UseKnowledgeGraphFormField and
+    // CrossLanguageFormField before the submit button.
+    b.push_str("<label class='set-switch' style='font-size:12px;margin-top:10px;display:flex'><input type='checkbox' id='testUseKg'> <span>");
+    b.push_str(t("Use knowledge graph", zh));
+    b.push_str("</span></label><label style='font-size:12px;margin-top:8px;display:block'>");
+    b.push_str(t("Cross-language search", zh));
+    b.push_str("</label><select id='testCrossLangs' multiple size='4' style='width:100%'><option value='English'>English</option><option value='Chinese'>Chinese</option><option value='Japanese'>Japanese</option><option value='Korean'>Korean</option><option value='French'>French</option><option value='German'>German</option><option value='Spanish'>Spanish</option><option value='Russian'>Russian</option></select>");
     b.push_str(
         "<button class='btn btn-p' style='margin-top:12px;width:100%' onclick='testSearch()'>",
     );
-    b.push_str(t("Test", zh));
+    b.push_str(t("Run", zh));
     b.push_str("</button></div><div><h3>");
     b.push_str(t("Results", zh));
     b.push_str("</h3><div id='testResults' style='min-height:300px'><p style='color:var(--tm);text-align:center;padding:40px'>");
@@ -1727,7 +1738,11 @@ pub async fn dataset_page(
     b.push_str("<tr><td>");
     b.push_str(t("Language", zh));
     b.push_str("</td><td><select id='cfgLang' data-testid='ds-settings-basic-language-select' style='max-width:280px'><option value='English' selected>English</option><option value='Chinese'>简体中文</option><option value='Traditional Chinese'>繁體中文</option><option value='Russian'>Русский</option><option value='Indonesian'>Bahasa Indonesia</option><option value='Spanish'>Español</option><option value='Vietnamese'>Tiếng việt</option><option value='Japanese'>日本語</option><option value='Portuguese BR'>Português BR</option><option value='German'>Deutsch</option><option value='French'>Français</option><option value='Italian'>Italiano</option><option value='Bulgarian'>Български</option><option value='Arabic'>العربية</option><option value='Turkish'>Türkçe</option><option value='Korean'>한국어</option><option value='Dutch'>Nederlands</option></select></td></tr>");
-    b.push_str("</td><td><label style='display:flex;align-items:center;gap:8px'><input type='file' id='cfgAvatar' accept='image/*' onchange='onAvatarPick(this)'> <img id='cfgAvatarPreview' style='display:none;width:36px;height:36px;border-radius:50%;object-fit:cover'></label></td></tr>");
+    // Avatar row: the `<tr><td>Avatar</td>` header was missing, so the file
+    // picker fell into the Language row as an orphan cell.
+    b.push_str("<tr><td>");
+    b.push_str(t("Avatar", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:8px'><input type='file' id='cfgAvatar' accept='image/*' onchange='onAvatarPick(this)' style='max-width:220px'> <img id='cfgAvatarPreview' style='display:none;width:36px;height:36px;border-radius:50%;object-fit:cover'></label></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Description", zh));
     b.push_str("</td><td><textarea id='cfgDescription' rows='3' style='max-width:420px;width:100%'></textarea></td></tr>");
@@ -1754,8 +1769,6 @@ pub async fn dataset_page(
     b.push_str("<tr><td>");
     b.push_str(t("Tag sets", zh));
     b.push_str("</td><td><input id='cfgTagSets' placeholder='tag1, tag2' style='max-width:280px'></td></tr>");
-    b.push_str("<tr><td>");
-    b.push_str(t("Avatar", zh));
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
     b.push_str(t("Parsing Configuration", zh));
     b.push_str("</h3></td></tr>");
@@ -1936,14 +1949,15 @@ pub async fn dataset_page(
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function clearAll(){if(!confirm('Delete ALL documents in this dataset?'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];if(!docs.length){loadDocs();return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()})}next()})};");
     b.push_str("function updateOverview(docs){var done=0,run=0,fail=0,other=0;docs.forEach(function(x){if(x.run==='DONE')done++;else if(x.run==='RUNNING'||x.run==='UNSTARTED')run++;else if(x.run==='FAILED')fail++;else other++});var total=docs.length||1;function set(id,bar,v){var e=document.getElementById(id);if(e)e.textContent=v;var b=document.getElementById(bar);if(b)b.style.width=Math.round(v/total*100)+'%'};set('ovDone','ovDoneBar',done);set('ovRun','ovRunBar',run);set('ovFail','ovFailBar',fail);var act=document.getElementById('actList');if(act){var h='';docs.slice(0,10).forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td>'+badge(x.run)+'</td><td>'+(x.chunk_count||0)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(x.updated_at)+'</td></tr>'});act.innerHTML=h||'<tr><td colspan=4 style=color:var(--tm);text-align:center>暂无活动</td></tr>'}};");
-    b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w};if(rerankingId)body.rerank_id=rerankingId;document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+    b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId)body.rerank_id=rerankingId;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     b.push_str("function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'private';var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('chunkMethod').value=pc.chunk_method;var cs=parseInt(pc.chunk_size,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}if(pc.overlap){var ov=document.getElementById('overlap');for(var k=0;k<ov.options.length;k++){if(ov.options[k].value===pc.overlap){ov.selectedIndex=k;break}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
     b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:document.getElementById('cfgPerm').value,embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:document.getElementById('cfgLang').value,pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
     b.push_str("function toggleLang(btn){btn.classList.toggle('on');var sel=[];document.querySelectorAll('.lang-chip.on').forEach(function(x){sel.push(x.dataset.lang)});var h=document.getElementById('cfgLangs');if(h)h.value=sel.join(',');}
 function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};");
     b.push_str("function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
-    b.push_str("fetch('/api/v1/providers').then(function(r){return r.json()}).then(function(d){var sel=document.getElementById('embdSel');if(!sel)return;(d.data||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o)})})}).catch(function(){});");
+    // Model options are rendered by the shared default-model tree (the field is a
+    // popover trigger, not a <select>), so no legacy <option> injection here.
     b.push_str("loadDocs();loadConfig();showTab(0);</script>");
     Html(layout(&name, &b, zh))
 }
@@ -6164,6 +6178,228 @@ mod kb_ui_tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    /// Div balance of a page fragment with `<script>` bodies removed, used to
+    /// prove that a panel is a sibling of the overview panel rather than nested
+    /// inside it (a single missing `</div>` hides every later tab).
+    fn panel_div_balance(html: &str, start_marker: &str, end_marker: &str) -> i32 {
+        let start = html.find(start_marker).expect("start marker");
+        let end = html[start..].find(end_marker).expect("end marker") + start;
+        let mut fragment = html[start..end].to_string();
+        while let Some(open) = fragment.find("<script") {
+            let Some(close) = fragment[open..].find("</script>") else {
+                break;
+            };
+            fragment.replace_range(open..open + close + "</script>".len(), "");
+        }
+        let opens = fragment.matches("<div").count() as i32;
+        let closes = fragment.matches("</div>").count() as i32;
+        opens - closes
+    }
+
+    /// Quote-aware div-depth scanner used to prove that every dataset panel is
+    /// a sibling inside `.ds-content`. Attribute values are honoured and
+    /// `<script>` bodies skipped, so a malformed attribute (which makes a
+    /// browser parser swallow the tag that follows it) shows up as a depth
+    /// mismatch instead of being hidden by naive `<div>`/`</div>` counting.
+    fn div_depth_at(html: &str, index: usize) -> i32 {
+        let bytes = html.as_bytes();
+        let mut depth = 0i32;
+        let mut i = 0usize;
+        while i < index {
+            if bytes[i] != b'<' {
+                i += 1;
+                continue;
+            }
+            let rest = &html[i..];
+            let lower = rest.get(..7).map(|s| s.to_ascii_lowercase());
+            if lower.as_deref() == Some("<script") {
+                match rest.find("</script>") {
+                    Some(off) => {
+                        i += off + "</script>".len();
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+            if lower.as_deref().is_some_and(|s| s.starts_with("</div>")) {
+                depth -= 1;
+                i += 6;
+                continue;
+            }
+            if rest.get(..4).map(|s| s.to_ascii_lowercase()) == Some("<div".to_string())
+                && !rest[4..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+            {
+                depth += 1;
+            }
+            // Skip the whole tag, honouring quoted attribute values so a `>`
+            // inside an attribute does not terminate it early.
+            let mut quote: Option<char> = None;
+            let mut j = i + 1;
+            while j < index {
+                let c = rest[j - i..].chars().next().unwrap();
+                match quote {
+                    Some(q) => {
+                        if c == q {
+                            quote = None;
+                        }
+                    }
+                    None => {
+                        if c == '\'' || c == '"' {
+                            quote = Some(c);
+                        } else if c == '>' {
+                            break;
+                        }
+                    }
+                }
+                j += c.len_utf8();
+            }
+            i = j + 1;
+        }
+        depth
+    }
+
+    #[tokio::test]
+    async fn dataset_panels_stay_siblings_of_the_overview_tab() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Nesting KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/files/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // tab1 must close before tab2: the merged Logs section cannot swallow
+        // the retrieval/configuration/knowledge-graph panels.
+        assert_eq!(
+            panel_div_balance(&html, "id='tab1'", "id='tab2'"),
+            0,
+            "overview panel must be balanced before the testing panel"
+        );
+        for (start, end) in [("id='tab2'", "id='tab3'"), ("id='tab3'", "id='tab4'")] {
+            assert_eq!(
+                panel_div_balance(&html, start, end),
+                0,
+                "panel between {start} and {end} must be balanced"
+            );
+        }
+        // Every panel must sit at the same div depth: a stray `</div>` (or a
+        // malformed attribute swallowing the next `<div ...>`) closes
+        // `.ds-content` early and drops Configuration/Knowledge graph into the
+        // sidebar column.
+        let base = div_depth_at(&html, html.find("id='tab0'").expect("tab0"));
+        for tab in ["tab1", "tab2", "tab3", "tab4"] {
+            let marker = format!("id='{tab}'");
+            let at = html.find(&marker).expect("panel marker");
+            assert_eq!(
+                div_depth_at(&html, at),
+                base,
+                "{tab} must be a sibling of tab0 inside .ds-content"
+            );
+        }
+        assert!(
+            div_depth_at(&html, html.find("id='tab4'").expect("tab4")) >= base,
+            "content wrapper must stay open for the last panel"
+        );
+    }
+
+    /// The configuration tab used to (a) keep a legacy `<option>` loader that
+    /// appended every provider model into the popover-trigger element, blowing
+    /// the row up to ~139000px wide, and (b) emit the avatar picker without a
+    /// `<tr><td>Avatar</td>` header, landing it in the Language row.
+    #[tokio::test]
+    async fn dataset_configuration_rows_and_switch_style_match_upstream() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Config KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        let lang = html
+            .find("data-testid='ds-settings-basic-language-select'")
+            .expect("language select");
+        let avatar = html.find("id='cfgAvatar'").expect("avatar picker");
+        let avatar_row = html[..avatar].rfind("<tr>").expect("avatar row start");
+        assert!(
+            html[avatar_row..avatar].contains("Avatar"),
+            "avatar picker must sit in its own labelled table row"
+        );
+        assert!(
+            html[lang..avatar].contains("</tr><tr>"),
+            "avatar picker must start a new row after the language select"
+        );
+        assert_eq!(
+            html.matches(">Avatar</td>").count(),
+            1,
+            "the configuration table must expose exactly one Avatar row"
+        );
+        assert!(
+            html.contains("</td><td><label style='display:flex;align-items:center;gap:8px'><input type='file' id='cfgAvatar'"),
+            "avatar row keeps the upstream file-picker label markup"
+        );
+        assert!(
+            !html.contains("sel.appendChild(o)"),
+            "the popover trigger must not receive legacy <option> children"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".set-switch input[type=checkbox],",
+            ".set-switch input[type=checkbox]:checked,",
+            ".provider-instance-switch input[type=checkbox][role=switch]",
+            "input[type=checkbox][role=switch]:checked,",
+            ".set-switch input[type=checkbox]:disabled,",
+        ] {
+            assert!(css.contains(rule), "switch styling missing: {rule}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dataset_testing_tab_matches_upstream_testing_form() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Testing KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/retrieval/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // upstream testing/index.tsx + testing-form.tsx
+        assert!(html.contains(">Retrieval testing</h2>"), "page title");
+        assert!(
+            html.contains("Conduct a retrieval test to check if RAGFlow can recover"),
+            "testing description"
+        );
+        assert!(html.contains(">Setting</h3>"), "left column header");
+        assert!(
+            html.contains("Input your question here!"),
+            "question placeholder"
+        );
+        assert!(html.contains(">Run</button>"), "testingLabel");
+        assert!(html.contains("id='testUseKg'") && html.contains("Use knowledge graph"));
+        assert!(html.contains("id='testCrossLangs'") && html.contains("Cross-language search"));
+        assert!(html.contains("data-testid='default-model-reranking_id'"));
+        // A stray `<` after the label opener used to produce a bogus
+        // `<reranking model="" ...>` element that swallowed the field label and
+        // the Use-knowledge-graph checkbox that follow it.
+        assert!(
+            html.contains("display:block'>Reranking model <span class='tip'"),
+            "reranking label must render as text, not as part of a bogus tag"
+        );
+        assert!(
+            !html.contains("display:block'><"),
+            "no dangling tag opener may precede the reranking label"
+        );
+        assert!(html.contains("id='testUseKg'"), "switch stays an input");
+        // payload carries the upstream query params
+        assert!(html.contains("page:1,highlight:true"));
+        assert!(html.contains("body.use_kg=true"));
+        assert!(html.contains("body.cross_languages=picked"));
+    }
+
     #[tokio::test]
     async fn dataset_configuration_basic_fields_match_upstream_general_form() {
         let (_root, state) = test_state();
@@ -6334,7 +6570,13 @@ mod kb_ui_tests {
         assert!(html.contains("graphResult"), "graph result missing");
         // API 调用
         assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
-        assert!(html.contains("/api/v1/providers"), "providers API missing");
+        // The embedding-model field is a default-model popover trigger driven by
+        // the shared `/api/v1/models` catalog; the legacy `<option>` loader that
+        // injected every provider model into the trigger was removed.
+        assert!(
+            html.contains("loadKbModelCatalog()") && html.contains("'/api/v1/models'"),
+            "dataset configuration must load the model catalog for the embedding field"
+        );
     }
 
     #[tokio::test]
@@ -7638,6 +7880,70 @@ mod kb_ui_tests {
         let css = include_str!("web_css.txt");
         assert!(css.contains(".provider-tz-list"));
         assert!(css.contains(".provider-tz-list div:hover"));
+    }
+
+    /// A truncated rule (`.cc-runtime-qr{width:224px;max-width:100.` followed by
+    /// another selector) used to break the CSS parser mid-sheet: every rule
+    /// after it - `.provider-tz-list`, `.set-switch`, the switch toggles - was
+    /// silently dropped by the browser.
+    #[test]
+    fn stylesheet_has_no_truncated_rules() {
+        fn check(css: &str) -> Result<(), String> {
+            let bytes = css.as_bytes();
+            // `true` marks an at-rule block (`@media`, `@keyframes`, ...), which
+            // may legitimately contain nested rule blocks.
+            let mut stack: Vec<bool> = Vec::new();
+            let mut in_comment = false;
+            let mut prelude_start = 0usize;
+            let mut i = 0usize;
+            while i < bytes.len() {
+                if in_comment {
+                    if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                        in_comment = false;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    in_comment = true;
+                    i += 2;
+                    continue;
+                }
+                match bytes[i] {
+                    b'{' => {
+                        let prelude = css[prelude_start..i].trim();
+                        let is_at = prelude.starts_with('@');
+                        if !is_at && stack.iter().any(|outer_is_at| !*outer_is_at) {
+                            return Err(format!(
+                                "rule block nested inside a declaration block near `{}`",
+                                &prelude[..prelude.len().min(80)]
+                            ));
+                        }
+                        stack.push(is_at);
+                        prelude_start = i + 1;
+                    }
+                    b'}' => {
+                        if stack.pop().is_none() {
+                            return Err("unbalanced `}`".to_string());
+                        }
+                        prelude_start = i + 1;
+                    }
+                    b';' if stack.last() != Some(&false) => prelude_start = i + 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            if !stack.is_empty() {
+                return Err(format!("{} unclosed block(s)", stack.len()));
+            }
+            Ok(())
+        }
+        let css = include_str!("web_css.txt");
+        if let Err(problem) = check(css) {
+            panic!("stylesheet is not structurally valid: {problem}");
+        }
     }
 
     #[tokio::test]
