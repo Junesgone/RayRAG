@@ -116,3 +116,8 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .auth-channels-solo{padding:32px 0}
 .auth-channels-solo .auth-channel-btn{width:100%;justify-content:center}
 .auth-channels{display:flex;flex-direction:column;gap:10px}
+/* Dataset detail panels: the settings table's intrinsic width must never widen
+   the layout grid (auto table layout used to push `.ds-content` past the
+   viewport); the grid item is allowed to shrink and the card scrolls instead. */
+.ds-content{min-width:0}
+.ds-content>.card{overflow-x:auto}

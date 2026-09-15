@@ -6453,6 +6453,11 @@ connection: close
         assert!(css.contains(
             ".provider-chip span{margin-left:4px;font-variant-numeric:tabular-nums;opacity:.6}"
         ));
+        // The settings table can be intrinsically wide; the grid item shrinks and
+        // the card scrolls instead of pushing the page (CDP regression).
+        let css = include_str!("web_css.txt");
+        assert!(css.contains(".ds-content{min-width:0}"));
+        assert!(css.contains(".ds-content>.card{overflow-x:auto}"));
         // Both languages keep the count adjacent (no literal space in the markup).
         let zh_req = axum::http::Request::builder()
             .uri("/user-setting/model")

@@ -16,6 +16,8 @@ All notable changes to RayRAG are documented in this file.
 
 ### Fixed
 
+- **配置页横向溢出（28px）**：设置表格的固有宽度把 `.ds-content` 轨道撑出视口；现允许轨道收缩
+  （`.ds-content{min-width:0}`）并让卡片内部横向滚动（`.ds-content>.card{overflow-x:auto}`），实测 `docScrollW == clientW`。
 - **数据集头像脚本跨页引用**：初版误用 Profile 页的 `PROFILE_AVATAR_EXT`/`profileAvatarCrop`（页面脚本各自独立
   作用域）导致 `ReferenceError`，现改为数据集页自带的 `DATASET_AVATAR_EXT`/`cfgAvatarCrop`。
 
