@@ -597,10 +597,13 @@ async fn create_dataset(
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .trim();
-    let permission = body
-        .get("permission")
-        .and_then(|value| value.as_str())
-        .unwrap_or("private");
+    // Upstream `PermissionRole` uses `me`/`team`; accept the legacy `private`
+    // spelling and normalise so every payload matches RAGFlow.
+    let permission = crate::kb::normalize_permission(
+        body.get("permission")
+            .and_then(|value| value.as_str())
+            .unwrap_or("me"),
+    );
     let requested_embedding = body
         .get("embd_id")
         .or_else(|| body.get("embedding_model"))
@@ -676,7 +679,10 @@ async fn update_dataset(
     }
     let name = body.get("name").and_then(|value| value.as_str());
     let description = body.get("description").and_then(|value| value.as_str());
-    let permission = body.get("permission").and_then(|value| value.as_str());
+    let permission = body
+        .get("permission")
+        .and_then(|value| value.as_str())
+        .map(crate::kb::normalize_permission);
     let requested_embedding = body
         .get("embd_id")
         .or_else(|| body.get("embedding_model"))
@@ -7888,7 +7894,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(admin_manage.status(), StatusCode::OK);
-        assert_eq!(env.state.kbs.get(&kb.id).unwrap().permission, "private");
+        // A legacy `private` write is normalised to the upstream `me` spelling.
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().permission, "me");
 
         let restore_team = router
             .clone()

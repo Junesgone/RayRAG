@@ -301,7 +301,14 @@ impl KbStore {
         let kbs = if std::path::Path::new(file_path).exists() {
             let data = std::fs::read_to_string(file_path)?;
             let list: Vec<KnowledgeBase> = serde_json::from_str(&data)?;
-            list.into_iter().map(|kb| (kb.id.clone(), kb)).collect()
+            list.into_iter()
+                .map(|mut kb| {
+                    if kb.permission != "team" {
+                        kb.permission = "me".to_string();
+                    }
+                    (kb.id.clone(), kb)
+                })
+                .collect()
         } else {
             HashMap::new()
         };
@@ -381,7 +388,13 @@ impl KbStore {
         description: &str,
         permission: &str,
     ) -> Result<KnowledgeBase> {
-        self.create_for_with_config(owner_id, name, description, permission, "default")
+        self.create_for_with_config(
+            owner_id,
+            name,
+            description,
+            normalize_permission(permission),
+            "default",
+        )
     }
 
     pub fn create_for_with_config(
@@ -415,6 +428,7 @@ impl KbStore {
         parser_config: &str,
     ) -> Result<KnowledgeBase> {
         validate_permission(permission)?;
+        let permission = normalize_permission(permission);
         validate_embedding_selector(embd_id)?;
         self.mutate(|kbs| {
             if kbs
@@ -429,7 +443,7 @@ impl KbStore {
                 name: name.to_string(),
                 description: description.to_string(),
                 owner_id: owner_id.to_string(),
-                permission: permission.into(),
+                permission: normalize_permission(permission).to_string(),
                 chunk_count: 0,
                 doc_count: 0,
                 embd_id: embd_id.into(),
@@ -457,6 +471,7 @@ impl KbStore {
         parser_config: Option<&str>,
         prompt_config: Option<&serde_json::Value>,
     ) -> Result<Option<KnowledgeBase>> {
+        let permission = permission.map(normalize_permission);
         if let Some(permission) = permission {
             validate_permission(permission)?;
         }
@@ -470,8 +485,7 @@ impl KbStore {
             let permission_changed = permission.is_some_and(|value| kb.permission != value);
             let embedding_changed = embd_id.is_some_and(|value| kb.embd_id != value);
             let config_changed = parser_config.is_some_and(|value| kb.parser_config != value);
-            let prompt_changed =
-                prompt_config.is_some_and(|value| kb.prompt_config != *value);
+            let prompt_changed = prompt_config.is_some_and(|value| kb.prompt_config != *value);
             if !permission_changed && !embedding_changed && !config_changed && !prompt_changed {
                 return Ok((Some(kb.clone()), false));
             }
@@ -597,7 +611,7 @@ fn default_prompt_config() -> serde_json::Value {
 }
 
 fn default_permission() -> String {
-    "private".into()
+    "me".into()
 }
 
 fn default_member_role() -> TenantRole {
@@ -615,11 +629,22 @@ fn membership_key(tenant_id: &str, user_id: &str) -> TenantMembership {
     }
 }
 
+/// Upstream `PermissionRole` uses `me` / `team`; RayRAG historically stored
+/// `private`, so both spellings are accepted and normalised to `me` on write so
+/// the API payload matches RAGFlow.
+pub fn normalize_permission(permission: &str) -> &str {
+    match permission.trim() {
+        "team" => "team",
+        "private" | "me" => "me",
+        other => other,
+    }
+}
+
 fn validate_permission(permission: &str) -> Result<()> {
-    if matches!(permission, "private" | "team") {
+    if matches!(normalize_permission(permission), "me" | "team") {
         Ok(())
     } else {
-        anyhow::bail!("Knowledge base permission must be 'private' or 'team'")
+        anyhow::bail!("Knowledge base permission must be 'me' or 'team'")
     }
 }
 
@@ -655,7 +680,10 @@ mod create_seed_tests {
                 r#"{"chunk_method":"paper","parse_type":"Built-in"}"#,
             )
             .unwrap();
-        assert_eq!(kb.parser_config, r#"{"chunk_method":"paper","parse_type":"Built-in"}"#);
+        assert_eq!(
+            kb.parser_config,
+            r#"{"chunk_method":"paper","parse_type":"Built-in"}"#
+        );
     }
 
     #[test]
@@ -678,7 +706,9 @@ mod identity_update_tests {
     fn update_identity_persists_tags_and_avatar() {
         let dir = tempfile::tempdir().unwrap();
         let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
-        let kb = store.create_for_with_config("o", "n", "", "private", "default").unwrap();
+        let kb = store
+            .create_for_with_config("o", "n", "", "private", "default")
+            .unwrap();
         let updated = store
             .update_identity(
                 &kb.id,
@@ -701,7 +731,9 @@ mod identity_update_tests {
     fn update_name_description_still_works_via_identity() {
         let dir = tempfile::tempdir().unwrap();
         let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
-        let kb = store.create_for_with_config("o", "old", "", "private", "default").unwrap();
+        let kb = store
+            .create_for_with_config("o", "old", "", "private", "default")
+            .unwrap();
         let updated = store
             .update_name_description(&kb.id, Some("new"), Some("desc"))
             .unwrap()
@@ -757,7 +789,13 @@ mod prompt_config_tests {
             .create_for_with_config("owner", "kb", "desc", "private", "default")
             .unwrap();
         let updated = store
-            .update_config(&kb.id, None, None, None, Some(&serde_json::json!({"keyword": true})))
+            .update_config(
+                &kb.id,
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"keyword": true})),
+            )
             .unwrap()
             .unwrap();
         assert_eq!(updated.name, "kb");
@@ -854,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn old_kb_json_defaults_to_private() {
+    fn old_kb_json_private_is_normalised_to_me() {
         let root = std::env::temp_dir().join(format!("rayrag-kb-old-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("kbs.json");
@@ -877,7 +915,9 @@ mod tests {
         .unwrap();
 
         let store = KbStore::new(path.to_str().unwrap()).unwrap();
-        assert_eq!(store.get("legacy").unwrap().permission, "private");
+        // Legacy rows stored `private`; the store normalises them to the
+        // upstream `me` spelling on load.
+        assert_eq!(store.get("legacy").unwrap().permission, "me");
         assert!(!store.can_read("legacy", "member", false, |_, _| true));
         std::fs::remove_dir_all(root).ok();
     }
@@ -940,7 +980,13 @@ mod tests {
         assert_eq!(kb.embd_id, "local/primary/embed-a");
 
         let updated = store
-            .update_config(&kb.id, Some("team"), Some("local/primary/embed-b"), None, None)
+            .update_config(
+                &kb.id,
+                Some("team"),
+                Some("local/primary/embed-b"),
+                None,
+                None,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(updated.permission, "team");

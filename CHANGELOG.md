@@ -2,7 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5p）
+## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5q）
+
+### Changed
+
+- **数据集权限字段对齐上游 `PermissionFormField`**：改为可搜索组合控件（`SelectWithSearch` 形态）+
+  `PermissionRole` 两项（`me`=Only me / `team`=Team）+ 上游 label/tooltip + `ds-settings-basic-permissions-select`。
+- **权限值统一为 `me`/`team`**：`normalize_permission()` 在存储加载、创建、更新与数据集 API 四处归一，
+  历史 `private` 自动纠正；`GET /api/v1/datasets` 现在返回 `me`/`team`。
+- **数据集头像改用上游 `AvatarUpload` 组合**：空态「＋ Upload」、64×64 预览 + 铅笔重选、圆形 `Remove image`、
+  扩展名白名单与 64×64 canvas 裁剪，带 `ds-settings-basic-avatar-upload`。
+- **CDP 探针** `scripts/ui-traversal/dataset-permission-avatar-cdp.mjs`：覆盖权限弹层过滤/选择/保存回读与头像三态。
+
+### Fixed
+
+- **数据集头像脚本跨页引用**：初版误用 Profile 页的 `PROFILE_AVATAR_EXT`/`profileAvatarCrop`（页面脚本各自独立
+  作用域）导致 `ReferenceError`，现改为数据集页自带的 `DATASET_AVATAR_EXT`/`cfgAvatarCrop`。
+
 
 ### Fixed
 
