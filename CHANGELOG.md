@@ -2,7 +2,27 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5j）
+## [0.3.4] — 2026-09-15（对标批次 v0.3.4e–v0.3.5k）
+
+### Added
+
+- **提供商「List models」选择器对齐上游 ToggleList**：内联面板 + `role='list'`、选项 >10 才显示带清空按钮的搜索行、
+  `All models` 全选哨兵、每行能力胶囊（`setting.modelTypes` 文案，Chat/VLM/ASR）+ 悬停编辑铅笔、搜索无匹配
+  `No matching results`、空目录 `No models available`、底部固定「＋ Add custom model」，滚动区上限 400px。
+- **自定义模型弹窗编辑模式**：悬停铅笔进入 `Edit model`（名称锁定、回填类型/最大 Token/Tool call），保存写回目录与选中项；
+  对话框仅保留上游的 Cancel/Confirm 两个按钮，关闭时重置表单与错误文案；文案与校验按 `use-custom-model-fields.tsx`
+  （`modelNameRequired`/`modelNameDuplicate`/`modelTypeRequired`/`modelMaxTokensMinMessage`）本地化。
+- **CDP 探针** `scripts/ui-traversal/provider-model-picker-cdp.mjs`：用 `page.route` 桩出 12 个模型，逐步验证展开、
+  勾选、全选、搜索无匹配、清空、编辑、新增自定义模型与校验，全程截图。
+
+### Fixed
+
+- **点击模型行误开编辑弹窗**：整行用 `<label>` 包裹时，label 激活会转发给第一个可标注后代，而 `<button>` 也是
+  labelable —— 铅笔排在复选框之前导致点行体等于点铅笔。改为上游的 `div` 行 + 行内点击切换 + 铅笔/复选框
+  `stopPropagation`。
+- **隐藏的编辑铅笔仍可点击**：仅 `opacity:0` 不阻断命中测试，补 `pointer-events:none`（hover/focus 恢复），
+  与上游 `hidden group-hover:flex` 对齐。
+
 
 ### Added
 
