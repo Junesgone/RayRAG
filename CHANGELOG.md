@@ -2,7 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5y）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5z）
+
+### Changed
+
+- **模型供应商弹层的 List models / Add custom model 逐行对齐**：模型行改为上游渲染——类型 chip 直接显示
+  原始 `model_types` 字符串（不再经 `mapModelKey` 映射）、`All models` 哨兵行同款左右分组、空搜索行使用
+  上游 `setting.noMatchingResults`（两地语言均为字面量 "None"）；行内编辑改为上游 lucide `Pencil`（12px，
+  可访问名 `Edit model`）；底部 "Add custom model" 改为 `role=button tabindex=0` + lucide `Plus` +
+  键盘 Enter/Space 与上游内边距。
+- **Add custom model 弹层的 Model type 改为上游 `MultiSelect` 组合控件**：徽章触发器（含逐个 ×移除、
+  `Select value` 占位、悬停清除）、搜索框（`common.search` + "..."）、带 `h-4 w-4 rounded-sm border
+  border-primary` 勾选方块的选项行、底部 `common.clear` / `common.close`；`maxCount=100` 保持全部可见；
+  `Model features` 改为上游 `rounded-md border p-3` 容器。顺带修正两处 i18n 取值：`common.clear` 由
+  「清空选择」改为上游「清空」，`Select value` 由错误值改为「请选择」。
+
+### Fixed
+
+- **List models 目录请求会覆盖用户刚添加的自定义模型**：发现请求返回时整表替换，正在打开弹层期间新增/
+  编辑的模型会被静默丢弃。改为**合并**（保留本地自定义项）并对追加按名称去重，等价上游
+  `setModels(prev => prev.some(m => m.name === item.name) ? prev : [...prev, item])`。
 
 ### Added
 
