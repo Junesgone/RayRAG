@@ -4,7 +4,7 @@
 use crate::server::AppState;
 use axum::{
     extract::{Path, State},
-    response::{Html, IntoResponse, Redirect},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use std::sync::Arc;
 
@@ -109,6 +109,14 @@ fn t(k: &str, zh: bool) -> &str {
         "Files" => "文件",
         "Settings" => "设置",
         "Model providers" => "模型提供商",
+        // Upstream `locales/zh.ts` has no `admin:` block, so the console keeps
+        // the upstream English wording and only the shared `login.*` /
+        // `header.logout` keys are translated.
+        "Remember me" => "记住我",
+        "Sign in" => "登录",
+        "Please input email" => "请输入邮箱地址",
+        "Please input password" => "请输入密码",
+        "Log out" => "登出",
         "Set default models" => "设置默认模型",
         "Please complete these settings before beginning" => "开始前请完成这些设置",
         // Upstream `locales/{en,zh}.ts::setting` —— SystemSetting 六个字段的
@@ -3582,89 +3590,285 @@ byId('cfgAvatar').onchange=(event)=>{const file=event.target.files&&event.target
     Html(layout(t("Memory Configuration", zh), &b, zh))
 }
 
+/// Bearer/cookie token carried by a page request (the console pages gate
+/// themselves server-side, exactly like upstream's `AdminAuthorizedLayout`
+/// redirects unauthenticated visitors back to `/admin`).
+fn request_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    value.split(';').find_map(|part| {
+                        let part = part.trim();
+                        part.strip_prefix("rayrag_token=").map(str::to_string)
+                    })
+                })
+        })
+}
+
+fn request_admin(state: &Arc<AppState>, headers: &axum::http::HeaderMap) -> bool {
+    request_token(headers)
+        .and_then(|token| state.users.get_user_by_token(&token))
+        .map(|user| user.role == "admin")
+        .unwrap_or(false)
+}
+
+/// Upstream `pages/admin/layouts/navigation-layout.tsx` sections. The three
+/// community sections are always registered; upstream also mounts the
+/// enterprise-only whitelist / roles / monitoring entries behind
+/// `IS_ENTERPRISE`, which the open-source bundle never registers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AdminConsoleSection {
+    Services,
+    Users,
+    SandboxSettings,
+}
+
+const ADMIN_CONSOLE_SECTIONS: [AdminConsoleSection; 3] = [
+    AdminConsoleSection::Services,
+    AdminConsoleSection::Users,
+    AdminConsoleSection::SandboxSettings,
+];
+
+impl AdminConsoleSection {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Services => "/services",
+            Self::Users => "/users",
+            Self::SandboxSettings => "/sandbox-settings",
+        }
+    }
+
+    /// Upstream `admin.*` labels: absent from `zh.ts`, so they stay English.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Services => "Service status",
+            Self::Users => "User management",
+            Self::SandboxSettings => "Sandbox settings",
+        }
+    }
+
+    /// Lucide `ServerCrash` / `UserCog` / `Zap` (v0.577.0 path data, `size-[1em]`).
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Services => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 10H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2'/><path d='M6 14H4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2h-2'/><path d='M6 6h.01'/><path d='M6 18h.01'/><path d='m13 6-4 6h6l-4 6'/></svg>"
+            }
+            Self::Users => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10 15H6a4 4 0 0 0-4 4v2'/><path d='m14.305 16.53.923-.382'/><path d='m15.228 13.852-.923-.383'/><path d='m16.852 12.228-.383-.923'/><path d='m16.852 17.772-.383.924'/><path d='m19.148 12.228.383-.923'/><path d='m19.53 18.696-.382-.924'/><path d='m20.772 13.852.924-.383'/><path d='m20.772 16.148.924.383'/><circle cx='18' cy='15' r='3'/><circle cx='9' cy='7' r='4'/></svg>"
+            }
+            Self::SandboxSettings => {
+                "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z'/></svg>"
+            }
+        }
+    }
+}
+
+/// Upstream `pages/admin/layouts/navigation-layout.tsx`: a full-screen console
+/// with a 288 px sidebar (logo + `admin.title`, the section links, version,
+/// theme switch and the logout button) and the section body beside it. The
+/// console renders **without** the global header, matching the layout-less
+/// admin route in `routes.tsx`.
+/// Shared ThemeSwitch button (upstream `components/theme-switch.tsx`), used by
+/// the console sidebar and the console login card.
+fn theme_switch_markup(zh: bool) -> String {
+    format!(
+        r#"<button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{label}' data-theme-state='{state}' onclick='adminConsoleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button>"#,
+        label = if zh { "主题" } else { "Theme" },
+        state = if zh { "深色" } else { "dark" },
+    )
+}
+
+fn admin_console_shell(active: AdminConsoleSection, body: &str, zh: bool) -> String {
+    let mut nav = String::new();
+    for section in ADMIN_CONSOLE_SECTIONS {
+        nav.push_str("<li><a class='admin-console-nav-link");
+        if section == active {
+            nav.push_str(" active");
+        }
+        nav.push_str("' href='/admin");
+        nav.push_str(section.key());
+        nav.push_str("' aria-label='");
+        nav.push_str(section.label());
+        nav.push('\'');
+        if section == active {
+            nav.push_str(" aria-current='page'");
+        }
+        nav.push_str("><span class='admin-console-nav-icon' aria-hidden='true'>");
+        nav.push_str(section.icon());
+        nav.push_str("</span><span class='admin-console-nav-label'>");
+        nav.push_str(section.label());
+        nav.push_str("</span></a></li>");
+    }
+    format!(
+        r#"<main class='admin-console' data-testid='admin-console' data-section='{active_key}'><aside class='admin-console-aside'><div class='admin-console-brand'><img class='admin-console-logo' src='/logo.svg' alt=''><span class='admin-console-title'>RAGFlow</span></div><nav><ul class='admin-console-nav'>{nav}</ul></nav><div class='admin-console-footer'><div class='admin-console-footer-row'><span class='admin-console-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_state}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='admin-console-logout' onclick='adminConsoleLogout()'>{logout_label}</button></div></aside><section class='admin-console-main'>{body}</section></main><script>function adminConsoleTheme(){{document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){{node.setAttribute('aria-checked',light?'false':'true')}})}}function adminConsoleLogout(){{fetch('/api/v1/admin/logout').then(function(){{adminConsoleForget()}}).catch(function(){{adminConsoleForget()}})}}function adminConsoleForget(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/admin'}}</script>"#,
+        active_key = active.key(),
+        version = crate::build_info::version_line(),
+        theme_label = if zh { "主题" } else { "Theme" },
+        theme_state = if zh { "深色" } else { "dark" },
+        logout_label = t("Log out", zh),
+    )
+}
+
+/// Upstream `Routes.Admin` = `pages/admin/login.tsx`: the console entry point.
+/// A signed-in administrator is bounced to `/admin/services` exactly like the
+/// React page's `isLogin` effect.
 pub async fn admin_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
-) -> impl IntoResponse {
+) -> Response {
     let zh = detect_lang(req.headers());
-    let tasks = state.tasks.list();
-    let tr: String = tasks
-        .iter()
-        .rev()
-        .take(10)
-        .map(|t| {
-            format!(
-                "<tr><td>{}</td><td><span class='badge {}'>{}</span></td><td>{}%</td></tr>",
-                t.name,
-                if t.status == "done" { "bs" } else { "bi" },
-                t.status,
-                (t.progress * 100.0) as u32
-            )
-        })
-        .collect();
-    let mut b = String::new();
-    b.push_str("<h1>⚙️ ");
-    b.push_str(t("Admin", zh));
-    b.push_str("</h1><div class='card'><h2>System</h2><table><tr><td>Version</td><td class='co'>");
-    b.push_str(&crate::build_info::version_line());
-    b.push_str("</td></tr><tr><td>Index</td><td class='co'>");
-    b.push_str(&state.index_path);
-    b.push_str("</td></tr></table></div><div class='card'><h2>Tasks (");
-    b.push_str(&tasks.len().to_string());
+    if request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin/services").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str(LOGIN_BG_SVG);
+    b.push_str("<div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt=''><span class='admin-login-brand-name'>RAGFlow</span></div>");
+    b.push_str("<h1 class='admin-login-title'>Admin console</h1>");
+    b.push_str("<div class='admin-login-wrap'><div class='admin-login-card card'><label class='admin-login-field'><span class='admin-login-label required'>");
+    b.push_str(t("Email", zh));
+    b.push_str("</span><input id='adminEmail' data-testid='admin-email' type='email' autocomplete='email' placeholder='");
+    b.push_str(t("Please input email", zh));
     b.push_str(
-        ")</h2><table><thead><tr><th>Task</th><th>Status</th><th>%</th></tr></thead><tbody>",
+        "'></label><label class='admin-login-field'><span class='admin-login-label required'>",
     );
-    b.push_str(&tr);
-    b.push_str("</tbody></table></div>");
-    b.push_str("<div class='card'><h2>System Variables</h2><p style='color:var(--tm);font-size:12px;margin-bottom:10px'>Durable RAGFlow-compatible variables. Sandbox changes take effect on the next execution; secrets are never returned in plaintext.</p><div style='overflow-x:auto'><table><thead><tr><th>Name</th><th>Type</th><th>Value</th><th></th></tr></thead><tbody id='sysVarRows'><tr><td colspan='4' style='color:var(--tm)'>Loading administrator settings…</td></tr></tbody></table></div><p id='sysVarMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div><script>function sysVarCell(tr,text,cls){var td=document.createElement('td');td.textContent=text;if(cls)td.className=cls;tr.appendChild(td);return td}function loadSysVars(){var rows=document.getElementById('sysVarRows');var msg=document.getElementById('sysVarMsg');fetch('/api/v1/system/variables').then(async function(r){var d=await r.json();if(!r.ok||d.code!==0)throw new Error(d.message||'Administrator access required');rows.textContent='';(d.data||[]).forEach(function(s){var tr=document.createElement('tr');sysVarCell(tr,s.name,'co');var type=sysVarCell(tr,'');var badge=document.createElement('span');badge.className='badge bw';badge.textContent=s.data_type;type.appendChild(badge);var value=sysVarCell(tr,'');var input=document.createElement('input');input.type=s.name==='mail.password'?'password':'text';input.value=s.value;input.style='width:100%;min-width:260px;font-family:monospace;font-size:12px';value.appendChild(input);var action=sysVarCell(tr,'');var button=document.createElement('button');button.className='btn btn-p btn-sm';button.textContent='Save';button.dataset.name=s.name;button.onclick=function(){saveSysVar(button,input)};action.appendChild(button);rows.appendChild(tr)});if(!(d.data||[]).length)rows.textContent='No variables'}).catch(function(e){rows.textContent='';var tr=document.createElement('tr');var td=sysVarCell(tr,e.message);td.colSpan=4;td.style.color='var(--d)';rows.appendChild(tr);msg.textContent='Sign in with an administrator account to manage system variables.'})}function saveSysVar(button,input){var name=button.dataset.name;var msg=document.getElementById('sysVarMsg');msg.textContent='Saving…';fetch('/api/v1/system/variables',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({var_name:name,var_value:input.value})}).then(async function(r){var d=await r.json();if(!r.ok||d.code!==0)throw new Error(d.message||'Save failed');msg.textContent=name+' saved ✓';loadSysVars()}).catch(function(e){msg.textContent='Error: '+e.message})}loadSysVars()</script>");
-    let users = state.users.list_users();
-    let mut ur = String::new();
-    for user in &users {
-        ur.push_str(&format!(
-            "<tr data-name={} data-email={}><td style='font-weight:500'>{}</td><td class='co'>{}</td><td><span class='badge {}'>{}</span></td><td><button class='btn btn-o btn-sm' onclick='resetPw(\"{}\")'>Reset PW</button> <button class='btn btn-d btn-sm' onclick='delUser(\"{}\")'>Del</button></td></tr>",
-            user.nickname.to_lowercase(), user.email.to_lowercase(), user.nickname, user.email, if user.role == "admin" { "bs" } else { "bw" }, if user.role == "admin" { "admin" } else { "user" }, user.id, user.id
-        ));
-    }
-    b.push_str("<div class='card'><h2>Users (");
-    b.push_str(&users.len().to_string());
-    b.push_str(") <button class='btn btn-p' style='margin-left:12px' onclick='showAddUser()'>+ ");
-    b.push_str(t("Add User", zh));
-    b.push_str("</button></h2><input id='userQ' placeholder='Search users...' oninput='userFilter()' style='max-width:260px;margin-bottom:8px'><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th style='width:200px'>Actions</th></tr></thead><tbody id='userTb'>");
-    b.push_str(&ur);
-    b.push_str("</tbody></table></div><div class='modal-overlay' id='addUserModal'><div class='modal'><h2>");
-    b.push_str(t("Add User", zh));
-    b.push_str("</h2><input id='uname' placeholder='Username'><input id='upass' type='password' placeholder='Password (min 6)' style='margin-top:8px'><select id='urole' style='margin-top:8px'><option value='normal'>Normal User</option><option value='admin'>Superuser</option></select><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='addUser()'>");
-    b.push_str(t("Create", zh));
-    b.push_str("</button><button class='btn btn-o' onclick='closeAddUser()'>");
-    b.push_str(t("Cancel", zh));
-    b.push_str("</button></div></div></div><script>function userFilter(){var q=(document.getElementById('userQ').value||'').toLowerCase();document.querySelectorAll('#userTb tr').forEach(function(tr){var m=tr.getAttribute('data-name')||'';var e=tr.getAttribute('data-email')||'';tr.style.display=(!q||m.indexOf(q)>=0||e.indexOf(q)>=0)?'':'none'});}function resetPw(id){var n=prompt('New password (min 6 chars):');if(!n)return;fetch('/api/v1/admin/users/'+id+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:n})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function delUser(id){if(!confirm('Delete this user?'))return;fetch('/api/v1/admin/users/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function showAddUser(){document.getElementById('addUserModal').classList.add('show')};function closeAddUser(){document.getElementById('addUserModal').classList.remove('show')};function addUser(){var u=document.getElementById('uname').value;var p=document.getElementById('upass').value;if(!u||!p){alert('Username and password required');return}var r=document.getElementById('urole').value;fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,role:r})}).then(r=>r.json()).then(d=>{if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})}</script>");
-    // RayRAG-only surface moved off `/user-setting/model` so that page stays a
-    // 1:1 copy of the upstream Model providers composition.
-    b.push_str("<h2>");
-    b.push_str(t("Model providers", zh));
-    b.push_str("</h2>");
-    {
-        let reranker = state.reranker.public_config();
-        b.push_str(
-            "<div class='card'><h2>Reranker</h2><label><input id='rerank-enabled' type='checkbox'",
-        );
-        if reranker.enabled {
-            b.push_str(" checked");
-        }
-        b.push_str("> Enabled</label><label style='display:block;margin-top:12px'>API Base<input id='rerank-base' value='");
-        b.push_str(&html_escape(&reranker.api_base));
-        b.push_str("' placeholder='http://127.0.0.1:8899'></label><label style='display:block;margin-top:12px'>API Key<input id='rerank-key' type='password' placeholder='");
-        b.push_str(if reranker.api_key_configured {
-            "Configured; leave blank to keep"
-        } else {
-            "Optional"
-        });
-        b.push_str("'></label><label style='display:block;margin:12px 0'><input id='rerank-clear' type='checkbox'> Clear saved API key</label><button class='btn btn-p' onclick='saveReranker()'>Save</button><span id='rerank-status' style='margin-left:10px;color:var(--tm)'></span></div><script>function saveReranker(){var s=document.getElementById('rerank-status');fetch('/api/v1/reranker',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('rerank-enabled').checked,api_base:document.getElementById('rerank-base').value,api_key:document.getElementById('rerank-key').value||null,clear_api_key:document.getElementById('rerank-clear').checked})}).then(async r=>({ok:r.ok,data:await r.json()})).then(x=>{s.textContent=x.ok?'Saved':(x.data.message||'Failed')})}</script>");
-    }
-    b.push_str("<div class='card'><h2>RAG Chat Test</h2><input id='q' placeholder='Ask...' style='max-width:500px'><button class='btn btn-p' onclick='chat()'>Ask</button><div id='answer' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:40px;white-space:pre-wrap;line-height:1.6'></div></div><script>function chat(){var q=document.getElementById('q').value;fetch('/api/v1/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{document.getElementById('answer').textContent=d.data?d.data.answer:JSON.stringify(d)})}</script>");
-    b.push_str("<details class='card provider-admin-details'><summary>RayRAG provider administration</summary><div style='display:flex;justify-content:flex-end;margin:12px 0'><button class='btn btn-p btn-sm' onclick='showAddProv()'>+ Add custom provider</button></div><table><thead><tr><th>Provider</th><th>API Base</th><th>Models</th></tr></thead><tbody>");
+    b.push_str(t("Password", zh));
+    b.push_str("</span><input id='adminPassword' data-testid='admin-password' type='password' autocomplete='current-password' placeholder='");
+    b.push_str(t("Please input password", zh));
+    b.push_str("'></label><label class='admin-login-remember'><input id='adminRemember' type='checkbox'><span>");
+    b.push_str(t("Remember me", zh));
+    b.push_str("</span></label><button class='btn btn-p admin-login-submit' id='adminLoginButton' data-testid='admin-login-submit' type='button' onclick='adminConsoleLogin()'>");
+    b.push_str(t("Sign in", zh));
+    b.push_str("</button><p class='admin-login-error' id='adminLoginError' data-testid='admin-login-error' role='alert'></p></div><div class='admin-login-theme'>");
+    b.push_str(&theme_switch_markup(zh));
+    b.push_str(
+        "</div></div><script>function adminConsoleLogin(){var email=document.getElementById('adminEmail').value.trim();var password=document.getElementById('adminPassword').value;var remember=document.getElementById('adminRemember').checked;var error=document.getElementById('adminLoginError');var button=document.getElementById('adminLoginButton');error.textContent='';if(!email||!password){error.textContent='Please input email and password';return}button.disabled=true;fetch('/api/v1/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password})}).then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){button.disabled=false;if(!result.ok||result.data.code!==0){error.textContent=result.data.message||'Login failed';return}var token=(result.data.data||{}).access_token;if(!token){error.textContent='Login failed';return}localStorage.setItem('rayrag_token',token);document.cookie='rayrag_token='+token+';path=/;max-age='+(remember?86400:3600);location.href='/admin/services'}).catch(function(failure){button.disabled=false;error.textContent=failure.message})}document.getElementById('adminPassword').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});function adminConsoleTheme(){document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){node.setAttribute('aria-checked',light?'false':'true')})}document.getElementById('adminEmail').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});</script>",
+    );
+    Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh)).into_response()
+}
 
-    Html(layout(t("Admin", zh), &b, zh))
+/// Upstream `admin/service-status.tsx` at `/admin/services`: the component
+/// table (`admin.id` / `admin.name` / `admin.serviceType` / `admin.host` /
+/// `admin.port` / `admin.status` / `admin.actions`) with the service-type
+/// filter and the details dialog.
+pub async fn admin_services_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Service status</h2></div><div class='admin-toolbar'><label class='admin-filter'><span>Service type</span><select id='adminServiceType' data-testid='admin-service-type-filter' onchange='adminRenderServices()'><option value=''>All</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetServiceFilter()'>Reset</button></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-services-table'><thead><tr><th>ID</th><th>Name</th><th>Service type</th><th>Host</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead><tbody id='adminServiceRows'><tr><td colspan='7' class='admin-empty'>Loading…</td></tr></tbody></table></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminServiceDialog' onclick=\"if(event.target===this)adminCloseServiceDialog()\"><div class='modal admin-service-modal'><h2>Service details</h2><p class='admin-dialog-sub' id='adminServiceName'></p><h3 class='admin-dialog-section'>Extra info</h3><pre class='admin-code' id='adminServiceDetail'></pre><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick='adminCloseServiceDialog()'>Close</button></div></div></div>");
+    b.push_str(
+        r#"<script>var ADMIN_SERVICES=[];function adminServiceStatusBadge(status){var badge=document.createElement('span');badge.className='badge '+(status==='alive'?'bs':(status==='disabled'?'bw':'bd'));badge.textContent=status||'timeout';return badge}function adminRenderServices(){var filter=document.getElementById('adminServiceType').value;var rows=document.getElementById('adminServiceRows');var list=ADMIN_SERVICES.filter(function(service){return !filter||service.service_type===filter});rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(service){var row=document.createElement('tr');row.dataset.testid='admin-service-row';[service.id,service.name,service.service_type,service.host,service.port].forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value==null?'':String(value);if(index===2)cell.className='co';row.appendChild(cell)});var statusCell=document.createElement('td');statusCell.appendChild(adminServiceStatusBadge(service.status));row.appendChild(statusCell);var actionCell=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent='Show details';button.onclick=function(){adminShowService(service.id)};actionCell.appendChild(button);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetServiceFilter(){document.getElementById('adminServiceType').value='';adminRenderServices()}function adminFillServiceTypes(){var select=document.getElementById('adminServiceType');(ADMIN_SERVICES||[]).forEach(function(service){var type=String(service.service_type||'');if(!type||Array.prototype.some.call(select.options,function(option){return option.value===type}))return;var option=document.createElement('option');option.value=type;option.textContent=type;select.appendChild(option)})}function adminLoadServices(){fetch('/api/v1/admin/services').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load services');ADMIN_SERVICES=data.data||[];adminFillServiceTypes();adminRenderServices()}).catch(function(error){var rows=document.getElementById('adminServiceRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}function adminShowService(id){fetch('/api/v1/admin/services/'+id).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load details');var detail=data.data||{};document.getElementById('adminServiceName').textContent=detail.service_name||'';document.getElementById('adminServiceDetail').textContent=JSON.stringify(detail.message,null,2);document.getElementById('adminServiceDialog').classList.add('show')}).catch(function(error){alert(error.message)})}function adminCloseServiceDialog(){document.getElementById('adminServiceDialog').classList.remove('show')}adminLoadServices()</script>"#,
+    );
+    Html(layout_plain(
+        "Service status",
+        &admin_console_shell(AdminConsoleSection::Services, &b, zh),
+        zh,
+    ))
+    .into_response()
+}
+
+/// Upstream `admin/users.tsx` at `/admin/users`: the user table
+/// (`admin.email` / `admin.nickname` / `admin.role` / `admin.status` /
+/// `admin.userType` / `admin.actions`) with the role and status filters, the
+/// new-user dialog, the change-password dialog and the delete confirmation.
+pub async fn admin_users_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>User management</h2><button class='btn btn-p' type='button' data-testid='admin-new-user' onclick='adminOpenCreateUser()'>New user</button></div><div class='admin-toolbar'><label class='admin-filter'><span>Role</span><select id='adminUserRole' onchange='adminRenderUsers()'><option value=''>All</option><option value='admin'>Superuser</option><option value='normal'>Normal</option></select></label><label class='admin-filter'><span>Status</span><select id='adminUserStatus' onchange='adminRenderUsers()'><option value=''>All</option><option value='active'>Active</option><option value='inactive'>Inactive</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetUserFilters()'>Reset</button></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-users-table'><thead><tr><th>Email</th><th>Nickname</th><th>Role</th><th>Status</th><th>User type</th><th>Actions</th></tr></thead><tbody id='adminUserRows'><tr><td colspan='6' class='admin-empty'>Loading…</td></tr></tbody></table></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminCreateUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Create new user</h2><label class='admin-field'><span>Email</span><input id='adminNewUserEmail' type='email' autocomplete='off'></label><label class='admin-field'><span>Password</span><input id='adminNewUserPassword' type='password' autocomplete='new-password'></label><label class='admin-field'><span>Role</span><select id='adminNewUserRole'><option value='normal'>Normal</option><option value='admin'>Superuser</option></select></label><p class='admin-dialog-error' id='adminCreateUserError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminCreateUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' data-testid='admin-create-user-submit' onclick='adminCreateUser()'>Confirm</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminPasswordDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Change password</h2><p class='admin-dialog-sub' id='adminPasswordTarget'></p><label class='admin-field'><span>New password</span><input id='adminNewPassword' type='password' autocomplete='new-password'></label><p class='admin-dialog-error' id='adminPasswordError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminPasswordDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' onclick='adminSubmitPassword()'>Change password</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminDeleteUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Delete user</h2><p class='admin-dialog-sub' id='adminDeleteTarget'></p><p class='admin-dialog-sub'>This action cannot be undone.</p><p class='admin-dialog-error' id='adminDeleteError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminDeleteUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button></div></div></div>");
+    b.push_str(
+        r#"<script>var ADMIN_USERS=[];var ADMIN_PASSWORD_TARGET='';var ADMIN_DELETE_TARGET='';function adminEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}function adminRenderUsers(){var role=document.getElementById('adminUserRole').value;var status=document.getElementById('adminUserStatus').value;var rows=document.getElementById('adminUserRows');var list=ADMIN_USERS.filter(function(user){if(role&&String(user.role)!==role)return false;if(status&&String(user.status)!==status)return false;return true});rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=6;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(user){var row=document.createElement('tr');row.dataset.testid='admin-user-row';var emailCell=document.createElement('td');var link=document.createElement('a');link.className='admin-link';link.href='/admin/users/'+encodeURIComponent(user.username||user.email||'');link.textContent=user.email||user.username||'';emailCell.appendChild(link);row.appendChild(emailCell);var nicknameCell=document.createElement('td');nicknameCell.textContent=user.nickname||'';row.appendChild(nicknameCell);var roleCell=document.createElement('td');var roleBadge=document.createElement('span');roleBadge.className='badge '+(String(user.role)==='admin'?'bs':'bw');roleBadge.textContent=user.role||'normal';roleCell.appendChild(roleBadge);row.appendChild(roleCell);var statusCell=document.createElement('td');statusCell.textContent=String(user.status)==='active'?'Active':'Inactive';row.appendChild(statusCell);var typeCell=document.createElement('td');typeCell.textContent=String(user.role)==='admin'?'Superuser':'Normal';row.appendChild(typeCell);var actionCell=document.createElement('td');actionCell.className='admin-actions-cell';var toggle=document.createElement('button');toggle.type='button';toggle.className='btn btn-o btn-sm';toggle.textContent=String(user.status)==='active'?'Disable':'Enable';toggle.onclick=function(){adminToggleUser(user,String(user.status)==='active'?'off':'on')};actionCell.appendChild(toggle);var password=document.createElement('button');password.type='button';password.className='btn btn-o btn-sm';password.textContent='Change password';password.onclick=function(){adminOpenPassword(user)};actionCell.appendChild(password);var remove=document.createElement('button');remove.type='button';remove.className='btn btn-d btn-sm';remove.textContent='Delete';remove.onclick=function(){adminOpenDelete(user)};actionCell.appendChild(remove);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetUserFilters(){document.getElementById('adminUserRole').value='';document.getElementById('adminUserStatus').value='';adminRenderUsers()}function adminLoadUsers(){fetch('/api/v1/admin/users').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load users');ADMIN_USERS=data.data||[];adminRenderUsers()}).catch(function(error){var rows=document.getElementById('adminUserRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=6;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}function adminOpenCreateUser(){document.getElementById('adminNewUserEmail').value='';document.getElementById('adminNewUserPassword').value='';document.getElementById('adminNewUserRole').value='normal';document.getElementById('adminCreateUserError').textContent='';document.getElementById('adminCreateUserDialog').classList.add('show')}function adminCreateUser(){var email=document.getElementById('adminNewUserEmail').value.trim();var password=document.getElementById('adminNewUserPassword').value;var role=document.getElementById('adminNewUserRole').value;var error=document.getElementById('adminCreateUserError');error.textContent='';if(!email||!password){error.textContent='Email and password are required';return}fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:email,password:password,role:role})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create failed');document.getElementById('adminCreateUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){error.textContent=failure.message})}function adminToggleUser(user,status){fetch('/api/v1/admin/users/'+encodeURIComponent(user.username||user.email)+'/activate',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activate_status:status==='on'})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadUsers()}).catch(function(failure){alert(failure.message)})}function adminOpenPassword(user){ADMIN_PASSWORD_TARGET=user.username||user.email;document.getElementById('adminPasswordTarget').textContent=ADMIN_PASSWORD_TARGET;document.getElementById('adminNewPassword').value='';document.getElementById('adminPasswordError').textContent='';document.getElementById('adminPasswordDialog').classList.add('show')}function adminSubmitPassword(){var password=document.getElementById('adminNewPassword').value;var error=document.getElementById('adminPasswordError');error.textContent='';if(!password){error.textContent='Please input the new password';return}fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_PASSWORD_TARGET)+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:password})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');document.getElementById('adminPasswordDialog').classList.remove('show')}).catch(function(failure){error.textContent=failure.message})}function adminOpenDelete(user){ADMIN_DELETE_TARGET=user.username||user.email;document.getElementById('adminDeleteTarget').textContent=ADMIN_DELETE_TARGET;document.getElementById('adminDeleteError').textContent='';document.getElementById('adminDeleteUserDialog').classList.add('show')}function adminSubmitDeleteUser(){fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DELETE_TARGET),{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');document.getElementById('adminDeleteUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){document.getElementById('adminDeleteError').textContent=failure.message})}adminLoadUsers()</script>"#,
+    );
+    Html(layout_plain(
+        "User management",
+        &admin_console_shell(AdminConsoleSection::Users, &b, zh),
+        zh,
+    ))
+    .into_response()
+}
+
+/// Upstream `admin/user-detail.tsx` at `/admin/users/:id`: the account summary
+/// with the status, password and deletion actions. Upstream additionally lists
+/// the user's datasets, agents and API keys; the dataset/agent listings have no
+/// RayRAG admin endpoint yet, so they stay open in the parity ledger.
+pub async fn admin_user_detail_page(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(user_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let known = state
+        .users
+        .list_users()
+        .into_iter()
+        .any(|user| user.email == user_id || user.id == user_id);
+    let mut b = String::with_capacity(4096);
+    if !known {
+        b.push_str("<div class='admin-panel'><h2 class='admin-panel-title'>User management</h2><p class='admin-empty'>User not found</p><p><a class='admin-link' href='/admin/users'>Back</a></p></div>");
+    } else {
+        b.push_str("<div class='admin-panel' data-testid='admin-user-detail-panel'><div class='admin-panel-head'><a class='admin-link' href='/admin/users'>&larr; Back</a></div><section class='admin-detail-head'><span class='admin-detail-avatar' id='adminDetailAvatar' aria-hidden='true'>U</span><span class='admin-detail-email' id='adminDetailEmail'></span><span class='badge bs' id='adminDetailStatus'></span><span class='badge bw' id='adminDetailRole'></span></section><section class='admin-detail-fields' id='adminDetailFields'></section><div class='admin-detail-actions'><button class='btn btn-o' type='button' data-testid='admin-detail-toggle' onclick='adminDetailToggle()'>Enable / Disable</button><button class='btn btn-o' type='button' onclick='adminDetailPassword()'>Change password</button><button class='btn btn-d' type='button' onclick='adminDetailDelete()'>Delete</button></div><div class='admin-tabs' role='tablist'><button type='button' role='tab' class='admin-tab active' data-tab='dataset' aria-selected='true' onclick='adminDetailTab(this)'>Dataset</button><button type='button' role='tab' class='admin-tab' data-tab='flow' aria-selected='false' onclick='adminDetailTab(this)'>Agent</button></div><div class='admin-tab-panel' id='adminDetailDatasetPanel'><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-user-datasets'><thead><tr><th>Name</th></tr></thead><tbody id='adminUserDatasetRows'></tbody></table></div></div><div class='admin-tab-panel' id='adminDetailFlowPanel' hidden><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-user-agents'><thead><tr><th>Agent</th></tr></thead><tbody id='adminUserAgentRows'></tbody></table></div></div></div>");
+        b.push_str("<script>var ADMIN_DETAIL_USER=");
+        b.push_str(&json_script_value(&serde_json::json!(user_id)));
+        b.push_str(
+            r#";var ADMIN_DETAIL=null;function adminDetailField(name,value){var box=document.createElement('div');box.className='admin-detail-field';var label=document.createElement('div');label.className='admin-detail-field-label';label.textContent=name;var text=document.createElement('div');text.textContent=value==null||value===''?'-':String(value);box.appendChild(label);box.appendChild(text);document.getElementById('adminDetailFields').appendChild(box)}function adminDetailTab(button){Array.prototype.forEach.call(document.querySelectorAll('.admin-tab'),function(tab){var on=tab===button;tab.classList.toggle('active',on);tab.setAttribute('aria-selected',on?'true':'false')});document.getElementById('adminDetailDatasetPanel').hidden=button.dataset.tab!=='dataset';document.getElementById('adminDetailFlowPanel').hidden=button.dataset.tab!=='flow'}function adminDetailTable(bodyId,items,empty){var body=document.getElementById(bodyId);body.textContent='';if(!items||!items.length){var row=document.createElement('tr');var cell=document.createElement('td');cell.className='admin-empty';cell.textContent=empty;row.appendChild(cell);body.appendChild(row);return}items.forEach(function(item){var row=document.createElement('tr');var cell=document.createElement('td');var wrap=document.createElement('span');wrap.className='admin-detail-asset';var avatar=document.createElement('span');avatar.className='admin-detail-asset-avatar';var name=String(item.name||item.title||'?');avatar.textContent=name.charAt(0).toUpperCase();var label=document.createElement('span');label.textContent=name;wrap.appendChild(avatar);wrap.appendChild(label);cell.appendChild(wrap);row.appendChild(cell);body.appendChild(row)})}function adminLoadDetail(){fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DETAIL_USER)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load user');var user=data.data||{};ADMIN_DETAIL=user;var email=user.email||user.username||'';document.getElementById('adminDetailEmail').textContent=email;document.getElementById('adminDetailAvatar').textContent=(email.charAt(0)||'U').toUpperCase();var active=String(user.status)==='active'||String(user.is_active)==='1';var statusBadge=document.getElementById('adminDetailStatus');statusBadge.textContent=active?'Active':'Inactive';statusBadge.className='badge '+(active?'bs':'bd');document.getElementById('adminDetailRole').textContent=user.role||'normal';var fields=document.getElementById('adminDetailFields');fields.textContent='';adminDetailField('Last login time',user.last_login_time);adminDetailField('Create time',user.create_date);adminDetailField('Last update time',user.update_date);adminDetailField('Language',user.language);adminDetailField('Is anonymous',String(user.is_anonymous)==='1'||user.is_anonymous===true?'Yes':'No');adminDetailField('Is superuser',String(user.role)==='admin'||user.is_superuser===true?'Yes':'No');adminDetailTable('adminUserDatasetRows',user.datasets||[],'No dataset');adminDetailTable('adminUserAgentRows',user.agents||[],'No agent')}).catch(function(error){var fields=document.getElementById('adminDetailFields');fields.textContent=error.message})}function adminDetailToggle(){if(!ADMIN_DETAIL)return;var active=String(ADMIN_DETAIL.status)==='active'||String(ADMIN_DETAIL.is_active)==='1';fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DETAIL_USER)+'/activate',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activate_status:!active})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadDetail()}).catch(function(error){alert(error.message)})}function adminDetailPassword(){var password=prompt('New password');if(!password)return;fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DETAIL_USER)+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:password})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');alert('Password updated')}).catch(function(error){alert(error.message)})}function adminDetailDelete(){if(!confirm('Delete this user?'))return;fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DETAIL_USER),{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');location.href='/admin/users'}).catch(function(error){alert(error.message)})}adminLoadDetail()</script>"#,
+        );
+    }
+    Html(layout_plain(
+        "User details",
+        &admin_console_shell(AdminConsoleSection::Users, &b, zh),
+        zh,
+    ))
+    .into_response()
+}
+
+/// Upstream `admin/sandbox-settings.tsx` at `/admin/sandbox-settings`. The
+/// upstream page configures a remote code-execution sandbox provider
+/// (`/admin/sandbox/providers|config|test`, an enterprise-oriented feature);
+/// RayRAG executes code in its own local sandbox, so this page hosts the
+/// durable sandbox/system variables that the executor reads — the same
+/// administrator surface, with the provider dialogs still open in the ledger.
+pub async fn admin_sandbox_settings_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Sandbox settings</h2></div><p class='admin-panel-description'>Configure your code execution sandbox provider. The sandbox is used by the Code component in agents.</p><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-sandbox-table'><thead><tr><th>Name</th><th>Type</th><th>Value</th><th>Actions</th></tr></thead><tbody id='adminSandboxRows'><tr><td colspan='4' class='admin-empty'>Loading administrator settings…</td></tr></tbody></table></div><p class='admin-panel-message' id='adminSandboxMessage'></p></div>");
+    b.push_str(
+        r#"<script>function adminSandboxCell(row,text,className){var cell=document.createElement('td');cell.textContent=text==null?'':String(text);if(className)cell.className=className;row.appendChild(cell);return cell}function adminLoadSandbox(){var rows=document.getElementById('adminSandboxRows');var message=document.getElementById('adminSandboxMessage');fetch('/api/v1/system/variables').then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){if(!result.ok||result.data.code!==0)throw new Error(result.data.message||'Administrator access required');var list=result.data.data||[];rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=4;cell.className='admin-empty';cell.textContent='No variables';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(variable){var row=document.createElement('tr');adminSandboxCell(row,variable.name,'co');var typeCell=adminSandboxCell(row,'');var badge=document.createElement('span');badge.className='badge bw';badge.textContent=variable.data_type;typeCell.appendChild(badge);var valueCell=adminSandboxCell(row,'');var input=document.createElement('input');input.type=variable.name==='mail.password'?'password':'text';input.value=variable.value;input.className='admin-value-input';valueCell.appendChild(input);var actionCell=adminSandboxCell(row,'');var button=document.createElement('button');button.type='button';button.className='btn btn-p btn-sm';button.textContent='Save';button.onclick=function(){adminSaveSandbox(variable.name,input,button)};actionCell.appendChild(button);rows.appendChild(row)})}).catch(function(error){rows.textContent='';var row=document.createElement('tr');var cell=adminSandboxCell(row,error.message);cell.colSpan=4;cell.className='admin-empty';row.appendChild(cell);rows.appendChild(row);message.textContent='Sign in with an administrator account to manage sandbox settings.'})}function adminSaveSandbox(name,input,button){var message=document.getElementById('adminSandboxMessage');message.textContent='Saving…';button.disabled=true;fetch('/api/v1/system/variables',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({var_name:name,var_value:input.value})}).then(function(response){return response.json()}).then(function(data){button.disabled=false;if(data.code!==0)throw new Error(data.message||'Save failed');message.textContent=name+' saved';adminLoadSandbox()}).catch(function(error){button.disabled=false;message.textContent='Error: '+error.message})}adminLoadSandbox()</script>"#,
+    );
+    Html(layout_plain(
+        "Sandbox settings",
+        &admin_console_shell(AdminConsoleSection::SandboxSettings, &b, zh),
+        zh,
+    ))
+    .into_response()
 }
 
 /// Upstream `pages/login-next/bg.tsx` — the three neon arcs drawn behind the
@@ -6522,6 +6726,7 @@ connection: close
         let auth = crate::server::AuthContext {
             user_id: member.id.clone(),
             is_admin: false,
+            token: String::new(),
         };
         let body = body_of(
             crate::api::system::list_tenants(
@@ -8192,6 +8397,7 @@ connection: close
         let auth = crate::server::AuthContext {
             user_id: "u1".into(),
             is_admin: false,
+            token: String::new(),
         };
         let ask =
             |state: Arc<AppState>, auth: crate::server::AuthContext, search_id: Option<String>| {
@@ -9094,17 +9300,198 @@ connection: close
     }
 
     #[tokio::test]
-    async fn admin_page_loads_system_variables_through_the_protected_api() {
+    async fn admin_sandbox_settings_hosts_the_variable_editor() {
         let (_root, state) = test_state();
-        let req = Request::builder()
-            .uri("/admin")
-            .body(Body::empty())
+        let req = || {
+            Request::builder()
+                .uri("/admin")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
             .unwrap();
-        let html = body_of(admin_page(State(state), req).await).await;
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let auth = || {
+            Request::builder()
+                .uri("/admin/sandbox-settings")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let html = body_of(admin_sandbox_settings_page(State(state.clone()), auth()).await).await;
         assert!(html.contains("/api/v1/system/variables"));
         assert!(html.contains("Loading administrator settings"));
         assert!(!html.contains("sandbox.self_managed"));
         assert!(!html.contains("http://sandbox-executor-manager:9385"));
+        // Unauthenticated visitors are bounced back to the console login.
+        let denied = admin_services_page(State(state), req()).await;
+        assert_eq!(denied.status(), axum::http::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(denied.headers().get("location").unwrap(), "/admin");
+    }
+
+    /// Upstream `pages/admin/**` at the v0.26.4 routes: `/admin` is the console
+    /// **login** (`admin/login.tsx`), `/admin/services` hosts the component
+    /// table of `admin/service-status.tsx` behind the navigation layout of
+    /// `admin/layouts/navigation-layout.tsx`, `/admin/users` the user table and
+    /// `/admin/users/:id` the account detail. `admin.*` labels stay English
+    /// because `locales/zh.ts` has no `admin:` block, while the shared
+    /// `login.*` / `header.logout` keys are translated.
+    #[tokio::test]
+    async fn admin_console_subtree_matches_upstream_layout() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let page_req = |path: &str, lang: &str| {
+            Request::builder()
+                .uri(path)
+                .header("cookie", format!("lang={lang}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        // `/admin` is the console login for anonymous visitors.
+        let login = body_of(
+            admin_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(login.contains("<h1 class='admin-login-title'>Admin console</h1>"));
+        assert!(login.contains("data-testid='admin-login-submit'"));
+        assert!(login.contains("src='/logo.svg'"));
+        assert!(login.contains("/api/v1/admin/login"));
+        assert!(login.contains("Please input email"));
+        assert!(!login.contains("data-testid='admin-console'"));
+        // A signed-in administrator skips the login card.
+        let signed_in = admin_page(State(state.clone()), page_req("/admin", "en")).await;
+        assert_eq!(
+            signed_in.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        assert_eq!(
+            signed_in.headers().get("location").unwrap(),
+            "/admin/services"
+        );
+
+        // The three community sections share the upstream navigation layout.
+        for (path, section) in [
+            ("/admin/services", "/services"),
+            ("/admin/users", "/users"),
+            ("/admin/sandbox-settings", "/sandbox-settings"),
+        ] {
+            let body = match section {
+                "/services" => {
+                    body_of(admin_services_page(State(state.clone()), page_req(path, "en")).await)
+                        .await
+                }
+                "/users" => {
+                    body_of(admin_users_page(State(state.clone()), page_req(path, "en")).await)
+                        .await
+                }
+                _ => {
+                    body_of(
+                        admin_sandbox_settings_page(State(state.clone()), page_req(path, "en"))
+                            .await,
+                    )
+                    .await
+                }
+            };
+            assert!(
+                body.contains("data-testid='admin-console'"),
+                "{path}: shell"
+            );
+            assert!(
+                body.contains("class='admin-console-aside'"),
+                "{path}: aside"
+            );
+            assert!(body.contains("src='/logo.svg'"), "{path}: brand logo");
+            assert!(body.contains(">RAGFlow</span>"), "{path}: admin.title");
+            assert!(body.contains("adminConsoleLogout()"), "{path}: logout");
+            assert!(
+                body.contains(&format!("data-section='{section}'")),
+                "{path}: active section"
+            );
+            assert!(
+                body.contains(&format!(
+                    "class='admin-console-nav-link active' href='/admin{section}'"
+                )),
+                "{path}: active nav link"
+            );
+            // All three upstream links render in every console page.
+            for link in ["/admin/services", "/admin/users", "/admin/sandbox-settings"] {
+                assert!(
+                    body.contains(&format!("href='{link}'")),
+                    "{path}: nav {link}"
+                );
+            }
+        }
+
+        // Upstream labels are English in both languages; the login template
+        // comes from the translated `login` namespace.
+        let zh_login = body_of(
+            admin_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(zh_login.contains(">Admin console</h1>"));
+        assert!(zh_login.contains(">邮箱</span>"));
+        assert!(zh_login.contains(">密码</span>"));
+        assert!(zh_login.contains("placeholder='请输入邮箱地址'"));
+        assert!(zh_login.contains(">记住我</span>"));
+        assert!(zh_login.contains(">登录</button>"));
+        let zh_services = body_of(
+            admin_services_page(State(state.clone()), page_req("/admin/services", "zh-CN")).await,
+        )
+        .await;
+        assert!(zh_services.contains(">Service status</h2>"));
+        assert!(zh_services.contains(">User management</span>"));
+        assert!(zh_services.contains(">登出</button>"));
+
+        // User detail keeps the account summary and the upstream actions.
+        let detail = body_of(
+            admin_user_detail_page(
+                State(state.clone()),
+                Path("boss@example.com".to_string()),
+                page_req("/admin/users/boss@example.com", "en"),
+            )
+            .await,
+        )
+        .await;
+        assert!(detail.contains("data-testid='admin-user-detail-panel'"));
+        assert!(detail.contains("data-testid='admin-user-datasets'"));
+        assert!(detail.contains("data-testid='admin-user-agents'"));
+        assert!(detail.contains(">Dataset</button>"));
+        assert!(detail.contains(">Agent</button>"));
+        assert!(detail.contains("/api/v1/admin/users/"));
+        let missing = body_of(
+            admin_user_detail_page(
+                State(state),
+                Path("nobody@example.com".to_string()),
+                page_req("/admin/users/nobody@example.com", "en"),
+            )
+            .await,
+        )
+        .await;
+        assert!(missing.contains("User not found"));
     }
 
     #[tokio::test]
@@ -10349,6 +10736,7 @@ connection: close
         let auth = crate::server::AuthContext {
             user_id: "u1".into(),
             is_admin: true,
+            token: String::new(),
         };
         let body: UpdateDataSourceRequest =
             serde_json::from_value(serde_json::json!({ "status": "cancel" })).unwrap();
@@ -10478,6 +10866,7 @@ connection: close
         let auth = crate::server::AuthContext {
             user_id: "u1".into(),
             is_admin: true,
+            token: String::new(),
         };
         let body: UpdateDataSourceRequest = serde_json::from_value(serde_json::json!({
             "config": {

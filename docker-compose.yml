@@ -38,6 +38,9 @@ services:
         DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-}
         ZVEC_RELEASE_BASE: ${ZVEC_RELEASE_BASE:-https://xget.xi-xu.me/gh/zvec-ai/zvec-rust/releases/download}
         ZVEC_RELEASE_FALLBACK_BASE: ${ZVEC_RELEASE_FALLBACK_BASE:-https://github.com/zvec-ai/zvec-rust/releases/download}
+        # Each zvec mirror attempt is capped so a stalled mirror cannot hang the
+        # build; the second mirror is tried afterwards.
+        ZVEC_DOWNLOAD_TIMEOUT: ${ZVEC_DOWNLOAD_TIMEOUT:-900}
     image: ${RAYRAG_IMAGE:-rayrag:local}
     restart: unless-stopped
     depends_on:

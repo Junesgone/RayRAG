@@ -359,6 +359,10 @@ async fn copy_file(
 pub struct AuthContext {
     pub user_id: String,
     pub is_admin: bool,
+    /// Bearer/cookie token that authenticated this request. Kept so handlers
+    /// that must invalidate the session (the admin console logout) can revoke
+    /// exactly the credential that was presented.
+    pub token: String,
 }
 
 pub(crate) fn kb_accessible(state: &AppState, kb_id: &str, auth: &AuthContext) -> bool {
@@ -2986,8 +2990,11 @@ fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
     // segment-wise instead of as literals.
-    const PATTERNS: [&str; 10] = [
+    const PATTERNS: [&str; 11] = [
         "/api/v1/auth/login",
+        // Upstream mounts the admin console login on the unauthenticated group
+        // (`internal/router/router.go`): it is how the console obtains a token.
+        "/api/v1/admin/login",
         "/api/v1/user/register",
         // RayRAG's own build-identity endpoint stays public; losing it broke the
         // banner/version probes in the v0.3.5o rewrite.
@@ -3077,10 +3084,13 @@ async fn require_api_auth(
         .and_then(|token| state.users.validate_token(token))
     {
         let is_admin = state.users.is_admin(&user_id);
+        let token = token.unwrap_or_default();
         let mut request = request;
-        request
-            .extensions_mut()
-            .insert(AuthContext { user_id, is_admin });
+        request.extensions_mut().insert(AuthContext {
+            user_id,
+            is_admin,
+            token,
+        });
         next.run(request).await
     } else {
         (
@@ -3304,7 +3314,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/memory/memory-setting/{memory_id}",
             get(crate::web::memory_setting_page),
         )
+        // RAGFlow admin console (`pages/admin/**`): `/admin` is the console
+        // login and the console pages live under the navigation layout.
         .route("/admin", get(crate::web::admin_page))
+        .route("/admin/services", get(crate::web::admin_services_page))
+        .route("/admin/users", get(crate::web::admin_users_page))
+        .route(
+            "/admin/users/{user_id}",
+            get(crate::web::admin_user_detail_page),
+        )
+        .route(
+            "/admin/sandbox-settings",
+            get(crate::web::admin_sandbox_settings_page),
+        )
         .route("/login", get(crate::web::login_page))
         .route("/metrics", get(prometheus_metrics))
         // API
@@ -3420,6 +3442,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // ── RAGFlow admin API (admin/server/routes.py port) ──
         .route("/api/v1/admin/ping", get(crate::api::admin::ping))
+        // ── RAGFlow admin console (internal/admin) ──
+        .route("/api/v1/admin/login", post(crate::api::admin::login))
+        .route("/api/v1/admin/logout", get(crate::api::admin::logout))
+        .route(
+            "/api/v1/admin/services",
+            get(crate::api::admin::list_services),
+        )
+        .route(
+            "/api/v1/admin/services/{service_id}",
+            get(crate::api::admin::service_details),
+        )
         .route(
             "/api/v1/admin/users",
             get(crate::api::admin::list_users).post(crate::api::admin::create_user),
@@ -4645,6 +4678,265 @@ mod tests {
                 "class='user-setting-nav-item active' href='/user-setting{key}' data-setting-key='{key}'"
             )));
         }
+    }
+
+    /// Upstream admin console API (`internal/admin/handler.go` +
+    /// `internal/admin/service.go`): superuser-only login, logout, the service
+    /// list and per-service details.
+    #[tokio::test]
+    async fn admin_console_api_matches_upstream_handlers() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        // Wrong password -> 401 with the upstream shape.
+        let denied = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"email": "test@example.com", "password": "nope"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream answers HTTP 200 with `code: 109` for bad credentials.
+        assert_eq!(denied.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(denied.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["code"], 109);
+        assert_eq!(payload["message"], "email and password do not match!");
+
+        // Administrator login mirrors `AdminService.LoginData` and echoes the
+        // token in the Authorization response header.
+        let ok = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "email": "test@example.com",
+                            "password": "correct horse battery staple",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert!(ok.headers().get("authorization").is_some());
+        let body = String::from_utf8(
+            to_bytes(ok.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let login: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(login["code"], 0);
+        assert_eq!(login["message"], "Welcome back!");
+        assert_eq!(login["data"]["is_superuser"], true);
+        assert_eq!(login["data"]["is_active"], "1");
+        assert_eq!(login["data"]["status"], "1");
+        assert!(login["data"]["access_token"].as_str().unwrap().len() > 8);
+
+        // Non-superusers are refused with the upstream message.
+        let plain = env
+            .state
+            .users
+            .create_user("plain@example.com", "plain-password-1", "normal")
+            .unwrap();
+        assert!(env.state.users.get_user_by_id(&plain.id).is_some());
+        let forbidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "email": "plain@example.com",
+                            "password": "plain-password-1",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(forbidden.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["code"], 403);
+        assert_eq!(payload["message"], "Only superuser can login admin system");
+        // An unknown account reports the upstream "not registered" message.
+        let unknown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "email": "nobody@example.com",
+                            "password": "whatever-password",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(unknown.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["code"], 109);
+        assert_eq!(
+            payload["message"],
+            "email: nobody@example.com is not registered!"
+        );
+
+        // Service list: the upstream `{id,name,service_type,host,port,status}`
+        // shape over the components RayRAG runs.
+        let services = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(services.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(services.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let list = payload["data"].as_array().unwrap();
+        assert_eq!(list.len(), 5);
+        for (index, service) in list.iter().enumerate() {
+            assert_eq!(service["id"], index);
+            for key in ["name", "service_type", "host", "port", "status"] {
+                assert!(service.get(key).is_some(), "service {index} lacks {key}");
+            }
+        }
+        assert_eq!(list[0]["service_type"], "ragflow_server");
+        assert_eq!(list[1]["service_type"], "meta_data");
+        assert_eq!(list[2]["service_type"], "retrieval");
+        assert_eq!(list[3]["service_type"], "file_store");
+        assert_eq!(list[4]["service_type"], "task_executor");
+        // Unauthenticated access stays closed.
+        let anonymous = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+        for (path, status) in [
+            ("/api/v1/admin/services/0", StatusCode::OK),
+            ("/api/v1/admin/services/4", StatusCode::OK),
+            ("/api/v1/admin/services/99", StatusCode::NOT_FOUND),
+            ("/api/v1/admin/services/abc", StatusCode::BAD_REQUEST),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+        }
+        let details = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services/4")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(details.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["data"]["service_name"], "task_executor");
+        assert!(payload["data"]["message"]["rayrag"].is_array());
+
+        // Logout revokes the presented token.
+        let logout = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/logout")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::OK);
+        let after = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
     }
 
     /// Upstream `routes.tsx` parity for the paths that map onto existing

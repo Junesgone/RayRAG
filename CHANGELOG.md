@@ -2,7 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5x）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5y）
+
+### Added
+
+- **RAGFlow 管理控制台（`/admin` 子树）**：`/admin` 由旧的 RayRAG 仪表盘改为上游语义的
+  **管理端登录页**（`pages/admin/login.tsx`：共享登录背景 + 三束 spotlight、logo + `RAGFlow`、
+  `Admin console` 标题、邮箱/密码/记住我 + 全宽登录按钮、卡片下方主题开关），登录走
+  `POST /api/v1/admin/login`（仅超级管理员，非管理员返回上游文案
+  `Only superuser can login admin system`，令牌写入 `Authorization` 响应头）。
+  新增导航布局（288px 侧栏：logo + `admin.title`、三个社区入口 `Service status` /
+  `User management` / `Sandbox settings` 配 lucide `ServerCrash`/`UserCog`/`Zap` 图标、
+  版本号 + 主题开关 + 登出）：`/admin/services`（组件表 + 类型筛选 + 详情弹层）、
+  `/admin/users`（用户表 + 角色/状态筛选 + 新建/改密/删除弹层）、
+  `/admin/users/{id}`（账号详情 + 状态/密码/删除操作）、`/admin/sandbox-settings`
+  （沙箱变量表）。新增 API：`POST /api/v1/admin/login`、`GET /api/v1/admin/logout`、
+  `GET /api/v1/admin/services`、`GET /api/v1/admin/services/{id}`。
+  未登录/非管理员访问控制台页面由服务端 307 回 `/admin`（对齐上游 `AdminAuthorizedLayout`）。
 
 ### Added
 
@@ -36,6 +52,10 @@ All notable changes to RayRAG are documented in this file.
 
 ### Fixed
 
+- **Docker 构建可能无限挂起**：zvec 预编译库下载只有 `--retry` 而没有连接/总超时，国内镜像站卡死时
+  构建会静默等待（本轮实测挂起 20+ 分钟）。改为 `--connect-timeout 20` +
+  `--max-time ${ZVEC_DOWNLOAD_TIMEOUT}`（默认 900 秒，`docker-compose.yml`/`.env.example` 可覆盖）
+  `--retry 3 --retry-all-errors`，主镜像超时后清理半包并自动切换备用镜像。
 - **一条从未执行的测试**：`available_models_pills_and_local_provider_fields_match_upstream`
   缺少 `#[tokio::test]` 属性，长期被当作死代码；补属性后首次真实执行并通过。
 - **`t()` 死分支**：删除被 `"混合搜索"` 永久遮蔽的 `"Hybrid" => "混合检索"`。

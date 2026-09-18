@@ -43,6 +43,18 @@ fn ok(data: serde_json::Value) -> Response {
     Json(serde_json::json!({ "code": 0, "data": data })).into_response()
 }
 
+/// Upstream `common.ErrorWithCode`: HTTP 200 with `{code, message}` so the
+/// console can render the failure inside the login card (a real 401 would hit
+/// the global session interceptor and bounce to the app login page).
+fn console_error(code: u16, message: &str) -> Response {
+    Json(serde_json::json!({
+        "code": code,
+        "message": message,
+        "data": serde_json::Value::Null,
+    }))
+    .into_response()
+}
+
 fn ok_with_message(message: &str, data: serde_json::Value) -> Response {
     Json(serde_json::json!({ "code": 0, "message": message, "data": data })).into_response()
 }
@@ -52,6 +64,14 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// RFC 3339 timestamp for the `*_date` fields upstream returns alongside the
+/// raw `*_time` epoch values.
+fn format_ms(ms: u64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms as i64)
+        .map(|value| value.to_rfc3339())
+        .unwrap_or_default()
 }
 
 // ── Process-local admin registry ────────────────────────────────
@@ -89,6 +109,299 @@ fn resolve_user(state: &AppState, username: &str) -> Option<crate::auth::User> {
 // ── Ping / auth ─────────────────────────────────────────────────
 
 /// GET /api/v1/admin/ping
+/// Body of `POST /api/v1/admin/login` (upstream `service.EmailLoginRequest`).
+#[derive(Deserialize)]
+pub struct AdminLoginRequest {
+    #[serde(default)]
+    pub email: String,
+    /// Upstream accepts `email`; the admin service also posts `username`.
+    #[serde(default)]
+    pub username: String,
+    pub password: String,
+}
+
+/// `POST /api/v1/admin/login` — upstream `internal/admin/handler.go::Login`.
+///
+/// The console is superuser-only: valid credentials on a non-admin account fail
+/// with `CodeForbidden` and the upstream message, and the token minted while
+/// verifying the password is revoked so no live credential leaks out. The
+/// successful payload is `AdminService.LoginData` (`is_superuser`, `is_active`,
+/// `status` as `"0"`/`"1"` strings, plus the token), and the token is mirrored
+/// into the `Authorization` response header exactly like the Go handler.
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AdminLoginRequest>,
+) -> Response {
+    let email = if body.email.trim().is_empty() {
+        body.username.trim().to_string()
+    } else {
+        body.email.trim().to_string()
+    };
+    // Upstream `common.ErrorWithCode` answers HTTP 200 with a business code in
+    // the body, and `UserService.LoginByEmail` distinguishes an unknown account
+    // (109 "is not registered!") from a wrong password (109 "do not match!").
+    let Some(existing) = state.users.get_user(&email) else {
+        return console_error(109, &format!("email: {email} is not registered!"));
+    };
+    let disabled = admin_registry()
+        .activate_status
+        .lock()
+        .unwrap()
+        .get(&existing.email)
+        .copied()
+        .map(|active| !active)
+        .unwrap_or(false);
+    if disabled {
+        return console_error(
+            403,
+            "This account has been disabled, please contact the administrator!",
+        );
+    }
+    let token = match state.users.login(&email, &body.password) {
+        Ok(Some(token)) => token,
+        _ => return console_error(109, "email and password do not match!"),
+    };
+    if existing.role != "admin" {
+        state.users.logout(&token);
+        return console_error(403, "Only superuser can login admin system");
+    }
+    let user = existing;
+    let data = serde_json::json!({
+        "access_token": token,
+        "id": user.id,
+        "email": user.email,
+        "nickname": user.nickname,
+        "avatar": if user.avatar.is_empty() { serde_json::Value::Null } else { serde_json::json!(user.avatar) },
+        "is_superuser": true,
+        "is_active": "1",
+        "status": "1",
+        "is_anonymous": "0",
+        "is_authenticated": "1",
+        "language": "en",
+        "timezone": user.timezone,
+        "create_time": user.created_at,
+        "create_date": format_ms(user.created_at),
+        "last_login_time": format_ms(now_ms()),
+        "login_channel": serde_json::Value::Null,
+        "color_schema": "Bright",
+    });
+    let mut response = Json(serde_json::json!({
+        "code": 0,
+        "message": "Welcome back!",
+        "data": data,
+    }))
+    .into_response();
+    if let Ok(value) = axum::http::HeaderValue::from_str(&token) {
+        response.headers_mut().insert("Authorization", value);
+    }
+    response
+}
+
+/// `GET /api/v1/admin/logout` — upstream `Handler.Logout`: invalidate the
+/// caller's token and report success.
+pub async fn logout(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    if let Some(response) = require_admin(&auth) {
+        return response;
+    }
+    state.users.logout(&auth.token);
+    ok_with_message("Logout successfully", serde_json::json!(true))
+}
+
+/// Components reported by `/api/v1/admin/services`, mirroring the upstream
+/// `service_type` vocabulary (`internal/server/config.go`): the application
+/// server, the metadata store, the retrieval engine, the file store and the
+/// task executor.
+fn admin_services_payload(state: &Arc<AppState>) -> Vec<serde_json::Value> {
+    let postgres = crate::persistence::snapshot_mirror_health();
+    let zvec = state.vector_mirror.health();
+    let postgres_url = std::env::var("RAYRAG_POSTGRES_URL").unwrap_or_default();
+    let (pg_host, pg_port) = postgres_endpoint(&postgres_url);
+    let storage = std::env::var("RAYRAG_STORAGE_ENDPOINT").unwrap_or_default();
+    let host = std::env::var("RAYRAG_ADVERTISE_HOST")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port: u16 = std::env::var("RAYRAG_ADVERTISE_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(9380);
+    let alive = |health: &anyhow::Result<bool>| match health {
+        Ok(true) => "alive",
+        Ok(false) => "disabled",
+        Err(_) => "fail",
+    };
+    vec![
+        serde_json::json!({
+            "name": "rayrag_server",
+            "service_type": "ragflow_server",
+            "host": host,
+            "port": port,
+            "status": "alive",
+            "extra": {
+                "version": crate::build_info::VERSION,
+                "parity": crate::build_info::PARITY_SLICE,
+                "revision": crate::build_info::GIT_REV,
+            },
+        }),
+        serde_json::json!({
+            "name": "postgres",
+            "service_type": "meta_data",
+            "host": pg_host,
+            "port": pg_port,
+            "status": alive(&postgres),
+            "extra": { "required_version": std::env::var("RAYRAG_POSTGRES_REQUIRED_VERSION").unwrap_or_else(|_| "18.4".into()) },
+        }),
+        serde_json::json!({
+            "name": "zvec",
+            "service_type": "retrieval",
+            "host": host,
+            "port": 0,
+            "status": alive(&zvec),
+            "extra": { "dir": std::env::var("RAYRAG_ZVEC_DIR").unwrap_or_default() },
+        }),
+        serde_json::json!({
+            "name": if storage.is_empty() { "local-filesystem" } else { "object-storage" },
+            "service_type": "file_store",
+            "host": if storage.is_empty() { "127.0.0.1".to_string() } else { storage.clone() },
+            "port": 0,
+            "status": "alive",
+            "extra": {},
+        }),
+        serde_json::json!({
+            "name": "task_executor",
+            "service_type": "task_executor",
+            "host": host,
+            "port": 0,
+            "status": "alive",
+            "extra": { "pending": state.tasks.list().iter().filter(|task| task.status != "done").count() },
+        }),
+    ]
+}
+
+/// `host:port` of the configured metadata store, defaulting to the local
+/// PostgreSQL baseline when only a password/port pair is configured.
+fn postgres_endpoint(url: &str) -> (String, u16) {
+    let rest = url.split("://").nth(1).unwrap_or("");
+    let authority = rest.split('/').next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    match host_port.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() => (host.to_string(), port.parse().unwrap_or(5432)),
+        _ => (
+            if host_port.is_empty() {
+                "127.0.0.1".to_string()
+            } else {
+                host_port.to_string()
+            },
+            std::env::var("RAYRAG_POSTGRES_PORT")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(5432),
+        ),
+    }
+}
+
+/// `GET /api/v1/admin/services` — upstream `Service.ListServices()`: every
+/// component with `{id,name,service_type,host,port,status,extra}` and the id
+/// assigned by list position.
+pub async fn list_services(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    if let Some(response) = require_admin(&auth) {
+        return response;
+    }
+    let services: Vec<serde_json::Value> = admin_services_payload(&state)
+        .into_iter()
+        .enumerate()
+        .map(|(id, mut service)| {
+            if let Some(map) = service.as_object_mut() {
+                map.insert("id".to_string(), serde_json::json!(id));
+            }
+            service
+        })
+        .collect();
+    ok_with_message("List services", serde_json::json!(services))
+}
+
+/// `GET /api/v1/admin/services/{service_id}` — upstream
+/// `Service.GetServiceDetails`: `{service_name,status,message}`, where the
+/// message carries the probe result for that component.
+pub async fn service_details(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(service_id): Path<String>,
+) -> Response {
+    if let Some(response) = require_admin(&auth) {
+        return response;
+    }
+    let services = admin_services_payload(&state);
+    let index: usize = match service_id.parse() {
+        Ok(value) => value,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": 400,
+                    "message": "service_id must be an integer",
+                })),
+            )
+                .into_response();
+        }
+    };
+    let Some(service) = services.get(index) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": 404,
+                "message": "Service not found",
+            })),
+        )
+            .into_response();
+    };
+    let name = service
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let status = service
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("timeout");
+    let message = if name == "task_executor" {
+        serde_json::json!({
+            "rayrag": [{
+                "name": "rayrag",
+                "boot_at": crate::build_info::BUILT_AT,
+                "now": format_ms(now_ms()),
+                "ip_address": service.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1"),
+                "current": {},
+                "done": state.tasks.list().iter().filter(|task| task.status == "done").count(),
+                "failed": state.tasks.list().iter().filter(|task| task.status == "failed").count(),
+                "lag": 0,
+                "pending": state.tasks.list().iter().filter(|task| task.status != "done").count(),
+                "pid": std::process::id(),
+            }]
+        })
+    } else {
+        serde_json::json!(
+            service
+                .get("extra")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+        )
+    };
+    ok_with_message(
+        "Get service details",
+        serde_json::json!({
+            "service_name": name,
+            "status": status,
+            "message": message,
+        }),
+    )
+}
+
 pub async fn ping() -> Response {
     Json(serde_json::json!({ "code": 0, "message": "pong" })).into_response()
 }
@@ -197,6 +510,10 @@ pub async fn get_user_details(
             })
         })
         .collect();
+    // Upstream `AdminService.UserDetail`: the console renders `create_date` /
+    // `update_date` / `language` / `is_anonymous` / `is_superuser` / `is_active`
+    // (as `'0'`/`'1'`) next to the account row, and RayRAG keeps its own
+    // `status` string so the user table can share the payload.
     ok(serde_json::json!({
         "id": user.id,
         "username": user.email,
@@ -204,7 +521,17 @@ pub async fn get_user_details(
         "nickname": user.nickname,
         "role": user.role,
         "status": if active { "active" } else { "inactive" },
+        "is_active": if active { "1" } else { "0" },
+        "is_superuser": user.role == "admin",
+        "is_anonymous": "0",
+        "is_authenticated": "1",
+        "language": "en",
+        "timezone": user.timezone,
+        "avatar": if user.avatar.is_empty() { serde_json::Value::Null } else { serde_json::json!(user.avatar) },
         "created_at": user.created_at,
+        "create_date": format_ms(user.created_at),
+        "update_date": format_ms(user.created_at),
+        "last_login_time": "",
         "api_key_count": key_count,
         "datasets": datasets,
         "agents": [],

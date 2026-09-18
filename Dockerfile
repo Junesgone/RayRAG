@@ -31,6 +31,10 @@ ARG RAYRAG_FEATURES=postgres-backend
 ARG ZVEC_RUST_VERSION=0.7.1
 ARG ZVEC_RELEASE_BASE=https://xget.xi-xu.me/gh/zvec-ai/zvec-rust/releases/download
 ARG ZVEC_RELEASE_FALLBACK_BASE=https://github.com/zvec-ai/zvec-rust/releases/download
+# Bounded zvec download: a stalled mirror used to hang the build forever
+# because the fetch had no connect/overall timeout. Both attempts are capped and
+# fall back to the other mirror; raise it for very slow links.
+ARG ZVEC_DOWNLOAD_TIMEOUT=900
 ARG TARGETARCH
 # Supplied by docker compose from `git rev-parse --short HEAD`; the build
 # context has no .git, so build.rs cannot discover it on its own.
@@ -55,9 +59,14 @@ RUN set -eux; \
         primary_url="${ZVEC_RELEASE_FALLBACK_BASE}/${asset}"; \
         fallback_url="${ZVEC_RELEASE_BASE}/${asset}"; \
       fi; \
-      if ! curl -fsSL --retry 5 --retry-delay 2 "$primary_url" -o /tmp/zvec.tar.gz; then \
-        echo "Primary zvec mirror failed; retrying the configured fallback" >&2; \
-        curl -fsSL --retry 5 --retry-delay 2 "$fallback_url" -o /tmp/zvec.tar.gz; \
+      if ! curl -fsSL --connect-timeout 20 --max-time "${ZVEC_DOWNLOAD_TIMEOUT}" \
+           --retry 3 --retry-delay 2 --retry-all-errors \
+           "$primary_url" -o /tmp/zvec.tar.gz; then \
+        echo "Primary zvec mirror failed within ${ZVEC_DOWNLOAD_TIMEOUT}s; trying the configured fallback" >&2; \
+        rm -f /tmp/zvec.tar.gz; \
+        curl -fsSL --connect-timeout 20 --max-time "${ZVEC_DOWNLOAD_TIMEOUT}" \
+          --retry 3 --retry-delay 2 --retry-all-errors \
+          "$fallback_url" -o /tmp/zvec.tar.gz; \
       fi; \
       tar xzf /tmp/zvec.tar.gz -C /opt/zvec/lib; \
       rm /tmp/zvec.tar.gz; \

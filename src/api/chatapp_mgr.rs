@@ -436,7 +436,11 @@ pub async fn chatbot_completions(
     let kb_ids2 = kb_ids.clone();
     tokio::spawn(async move {
         use axum::response::sse::Event;
-        let anon_auth = crate::server::AuthContext { user_id: String::new(), is_admin: false };
+        let anon_auth = crate::server::AuthContext {
+            user_id: String::new(),
+            is_admin: false,
+            token: String::new(),
+        };
         let on_chunk: std::sync::Arc<dyn Fn(&str) + Send + Sync> = {
             let tx = tx.clone();
             std::sync::Arc::new(move |chunk: &str| {
