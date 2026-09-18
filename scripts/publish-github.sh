@@ -37,6 +37,10 @@ EXCLUDES=(
     "docs/ragflow-file-manifest.json"
     "docs/ragflow-ui-inventory.md"
     "docs/ragflow-ui-ref"
+    # The coverage gate validates the internal parity ledger against a pinned
+    # RAGFlow checkout; neither the ledger nor the reference tree ships, so the
+    # binary is internal engineering tooling.
+    "src/bin/ragflow-coverage.rs"
     # Deployment scaffolding kept out of the published tree.
     "helm"
     "web/agents.json"
@@ -103,6 +107,14 @@ text = re.sub(
 # written for end users and never point at internal assets, so they need no
 # dedicated rewriting here -- the generic `.md` rules below are the backstop
 # that rewrites any reference that slips through.
+if path.endswith("Cargo.toml"):
+    # The coverage gate is excluded from the snapshot, so its explicit [[bin]]
+    # stanza must go too or cargo refuses to resolve the manifest.
+    text = re.sub(
+        r'\n\[\[bin\]\]\nname = "ragflow-coverage"\npath = "src/bin/ragflow-coverage\.rs"\n',
+        "\n",
+        text,
+    )
 if path.endswith("CHANGELOG.md"):
     text = re.sub(r"\*\*CDP 探针\*\* `scripts/ui-traversal/[^`]+`：", "**浏览器端验证**：", text)
     text = re.sub(
