@@ -385,6 +385,294 @@ fn delete_owned_message_pair(
     }
 }
 
+#[derive(Deserialize)]
+pub struct SearchAskRequest {
+    pub question: String,
+    #[serde(default)]
+    pub stream: bool,
+}
+
+/// POST /api/v1/searches/{search_id}/completions — upstream
+/// `api.searchCompletion(searchId)` consumed by `pages/next-search/hooks.ts`
+/// (`useSendMessageWithSse`): the AI-summary answer of a search app. The
+/// retrieval scope and generation configuration come from the app
+/// (`kb_ids` / `chat_id` / `llm_setting`, the upstream defaults), and the answer
+/// streams as the same `chat.completion.chunk` events the chat page already
+/// parses, followed by a `chat.completion.references` event carrying the
+/// citations.
+pub async fn search_complete(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(search_id): Path<String>,
+    Json(body): Json<SearchAskRequest>,
+) -> axum::response::Response {
+    let Some(app) = state
+        .search_apps
+        .as_ref()
+        .and_then(|store| store.get(&search_id))
+    else {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Search app not found" })),
+        )
+            .into_response();
+    };
+    let question = body.question.trim().to_string();
+    if question.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "question is required" })),
+        )
+            .into_response();
+    }
+    if !app.kb_ids.is_empty() && !all_kbs_accessible(&state, &app.kb_ids, &auth) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": 400,
+                "message": "One or more knowledge bases are not accessible"
+            })),
+        )
+            .into_response();
+    }
+    // Upstream merges `search_config.llm_setting` (minus the nested `parameter`
+    // payload) into the generation parameters, defaulting the temperature to
+    // 0.9 exactly like the related-question path.
+    let mut generation = crate::generation_params::GenerationParamsPatch {
+        temperature: Some(0.9),
+        ..Default::default()
+    };
+    if let Some(settings) = app.llm_setting.as_object() {
+        let mut cleaned = settings.clone();
+        cleaned.remove("parameter");
+        if !cleaned.is_empty()
+            && let Ok(mut patch) = crate::generation_params::GenerationParamsPatch::from_request(
+                &serde_json::Value::Object(cleaned),
+            )
+        {
+            if patch.temperature.is_none() {
+                patch.temperature = Some(0.9);
+            }
+            generation = patch;
+        }
+    }
+    // `chat_id` is the app's chat assistant; only a model selector can be fed
+    // to the generator directly, otherwise the tenant default chat model applies.
+    let chat_model = app.chat_id.contains('@').then(|| app.chat_id.clone());
+    let kb_ids = app.kb_ids.clone();
+    let state2 = state.clone();
+    let auth2 = auth.clone();
+    if !body.stream {
+        let generated = generate_chat_answer(
+            &state2,
+            &auth2,
+            ChatGenerationRequest {
+                question: &question,
+                kb_ids: &kb_ids,
+                chat_model: chat_model.as_deref(),
+                embedding_model: None,
+                history: &[],
+                generation,
+            },
+            None,
+        )
+        .await;
+        return match generated {
+            Ok(generated) => Json(serde_json::json!({
+                "code": 0,
+                "data": {
+                    "answer": generated.answer,
+                    "reference": references_payload(&generated.references),
+                }
+            }))
+            .into_response(),
+            Err(error) => (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "code": 400, "message": error.to_string() })),
+            )
+                .into_response(),
+        };
+    }
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use std::convert::Infallible;
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
+    tokio::spawn(async move {
+        let id = format!("searchcmpl-{}", uuid::Uuid::new_v4());
+        let id2 = id.clone();
+        let on_chunk: Arc<dyn Fn(&str) + Send + Sync> = {
+            let tx = tx.clone();
+            Arc::new(move |chunk: &str| {
+                let event = serde_json::json!({
+                    "id": id2.clone(),
+                    "object": "chat.completion.chunk",
+                    "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": null}],
+                });
+                let _ = tx.blocking_send(Ok(Event::default().data(event.to_string())));
+            })
+        };
+        let generated = generate_chat_answer(
+            &state2,
+            &auth2,
+            ChatGenerationRequest {
+                question: &question,
+                kb_ids: &kb_ids,
+                chat_model: chat_model.as_deref(),
+                embedding_model: None,
+                history: &[],
+                generation,
+            },
+            Some(on_chunk),
+        )
+        .await;
+        match generated {
+            Ok(generated) => {
+                let references = references_payload(&generated.references);
+                let _ = tx
+                    .send(Ok(Event::default().data(
+                        serde_json::json!({
+                            "object": "chat.completion.references",
+                            "references": references,
+                        })
+                        .to_string(),
+                    )))
+                    .await;
+                let _ = tx
+                    .send(Ok(Event::default().data(
+                        serde_json::json!({
+                            "code": 0,
+                            "data": {
+                                "answer": generated.answer,
+                                "reference": references_payload(&generated.references),
+                            }
+                        })
+                        .to_string(),
+                    )))
+                    .await;
+            }
+            Err(error) => {
+                let _ = tx
+                    .send(Ok(Event::default().data(
+                        serde_json::json!({ "code": 500, "message": error.to_string() })
+                            .to_string(),
+                    )))
+                    .await;
+            }
+        }
+        let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
+    });
+    Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// Upstream `chat.completion.references` payload shared by the chat and search
+/// streams.
+pub(crate) fn references_payload(references: &[crate::llm::ChunkReference]) -> serde_json::Value {
+    serde_json::json!({
+        "chunks": references
+            .iter()
+            .map(|reference| serde_json::json!({
+                "id": reference.id,
+                "kb_id": reference.kb_id,
+                "content": reference.content,
+                "similarity": reference.similarity,
+                "vector_similarity": reference.vector_similarity,
+                "term_similarity": reference.term_similarity,
+            }))
+            .collect::<Vec<_>>(),
+        "total": references.len(),
+    })
+}
+
+#[derive(Deserialize)]
+pub struct MindMapRequest {
+    pub question: String,
+}
+
+/// POST /api/v1/chat/mindmap — upstream `api.chatsMindmap` consumed by
+/// `pages/next-search/mindmap-sheet.tsx` and the chat header: the query mind map
+/// generated by the chat model as a `{name, children}` tree.
+pub async fn chat_mindmap(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<MindMapRequest>,
+) -> axum::response::Response {
+    let question = body.question.trim().to_string();
+    if question.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "question is required" })),
+        )
+            .into_response();
+    }
+    // Upstream uses the tenant chat model for the mind map; the same resolution
+    // chain as the related-question endpoint applies (default chat model,
+    // falling back to the process-wide client).
+    let selector = state.tenant_models.default_chat_model(&auth.user_id);
+    let tenant_llm = match state.tenant_models.resolve(
+        &state.providers,
+        &auth.user_id,
+        crate::api::tenant_models::ModelCapability::Chat,
+        selector.as_deref(),
+    ) {
+        Ok(model) => model.map(|model| model.llm_client()),
+        Err(error) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "code": 400, "message": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let Some(llm) = tenant_llm.as_ref().or(state.llm.as_deref()) else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "code": 503, "message": "Chat model is not configured" })),
+        )
+            .into_response();
+    };
+    let prompt = format!(
+        "You are a knowledge-mapping assistant. Break the user's question into a concise mind map.\n\
+         Return ONLY minified JSON of the shape {{\"name\":\"<short root label>\",\"children\":[{{\"name\":\"<branch>\",\"children\":[{{\"name\":\"<leaf>\"}}]}}]}}.\n\
+         Use at most 4 branches and 3 leaves per branch, no prose, no code fences.\n\
+         Question: {question}"
+    );
+    let messages = [crate::llm::ChatMessage::new("user", prompt)];
+    match llm
+        .chat_completion_with_generation(
+            &messages,
+            crate::generation_params::GenerationParamsPatch {
+                temperature: Some(0.2),
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        Ok(completion) => {
+            let text = completion.content;
+            let json = extract_json_object(&text).unwrap_or_else(|| {
+                serde_json::json!({
+                    "name": question,
+                    "children": [{"name": text.trim()}],
+                })
+            });
+            Json(serde_json::json!({ "code": 0, "data": json })).into_response()
+        }
+        Err(error) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// First `{...}` block inside a model answer, parsed as JSON.
+fn extract_json_object(text: &str) -> Option<serde_json::Value> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    serde_json::from_str(&text[start..=end]).ok()
+}
+
 /// POST /api/v1/chats/{id}/completions — RAG chat completion
 pub async fn chat_complete(
     State(state): State<Arc<AppState>>,

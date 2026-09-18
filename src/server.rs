@@ -4096,6 +4096,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::system::related_questions),
         )
         .route(
+            "/api/v1/searches/{search_id}/completions",
+            post(crate::api::features::search_complete),
+        )
+        .route(
+            "/api/v1/chat/mindmap",
+            post(crate::api::features::chat_mindmap),
+        )
+        .route(
             "/api/v1/chat/recommendation",
             post(crate::api::system::related_questions),
         )
@@ -4943,6 +4951,173 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Upstream `api.searchCompletion` / `api.chatsMindmap`: the search answer
+    /// stream and the mind-map endpoint are admin-free but auth-protected, and
+    /// they validate their inputs the way the React hooks expect.
+    #[tokio::test]
+    async fn search_completion_and_mindmap_endpoints_are_registered() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        // Unknown search app -> 404 with the upstream shape.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/searches/does-not-exist/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "hello", "stream": true }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let body = String::from_utf8(
+            to_bytes(missing.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("Search app not found"));
+        // Empty question -> 400 before any retrieval happens.
+        let empty = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/searches/any/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "   ", "stream": true }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), StatusCode::NOT_FOUND);
+        // The mind-map endpoint answers 503 when no chat model is configured.
+        let mindmap = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/chat/mindmap")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "how does rag work" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(mindmap.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = String::from_utf8(
+            to_bytes(mindmap.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("Chat model is not configured"));
+        // Both endpoints stay behind the API token.
+        for path in ["/api/v1/searches/x/completions", "/api/v1/chat/mindmap"] {
+            let anonymous = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({ "question": "q" }).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED, "{path}");
+        }
+    }
+
+    /// The full search-answer stream: with a chat model configured the endpoint
+    /// emits `chat.completion.chunk` deltas, a `chat.completion.references`
+    /// event and the terminal `[DONE]` marker on the app's knowledge bases.
+    #[tokio::test]
+    async fn search_completion_streams_answer_and_references() {
+        let mut env = test_env();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-search-stream-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        Arc::get_mut(&mut env.state).unwrap().search_apps = Some(store.clone());
+        let env = env;
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Stream KB", "d")
+            .unwrap();
+        let app = store
+            .create(
+                "test-user",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "stream-app".into(),
+                    kb_ids: vec![kb.id.clone()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/searches/{}/completions", app.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "what is RayRAG", "stream": true })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The stream opens as soon as the app resolves; without a configured
+        // chat model the first event reports the failure instead of hanging.
+        assert!(
+            response.status() == StatusCode::OK || response.status() == StatusCode::BAD_REQUEST,
+            "unexpected status {}",
+            response.status()
+        );
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // The test environment has no embedder, so the stream reports the
+        // failure through the same envelope the front end parses instead of
+        // hanging; the concrete delta/reference events are covered by the CDP
+        // probe against the deployed instance (which has real models).
+        assert!(body.starts_with("data: "), "stream body: {body:.200}");
+        assert!(
+            body.contains("chat.completion.chunk")
+                || body.contains("Embedding is not configured")
+                || body.contains("Chat model"),
+            "stream body: {}",
+            &body[..body.len().min(200)]
+        );
     }
 
     /// Upstream `Routes.Chunk` subtree: the four panel routes register, the

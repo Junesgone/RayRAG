@@ -2,7 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6b）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6c）
+
+### Added
+
+- **`/search` 的 AI 总结流与思维导图**（上游 `next-search/search-view.tsx` + `mindmap-sheet.tsx` 残留收口）：
+  新增 `POST /api/v1/searches/{search_id}/completions`（按应用 `kb_ids`/`chat_id`/`llm_setting` 生成，
+  以 `chat.completion.chunk` 增量 + `chat.completion.references` + `[DONE]` 的 SSE 输出，与聊天页同一套解析）
+  与 `POST /api/v1/chat/mindmap`（LLM 生成 `{name,children}` 树）。
+  前端：问候语输入行（`search.searchGreeting` 占位、lucide `X` 清空、分隔线、圆形提交按钮，
+  流式期间切换为停止控件并可中断）、`AI summary` 区块（24px 标题、流式骨架屏、边框内滚动
+  208px 的 markdown 答案 + 引用 chip + 分隔线）、`Total: N` 结果条与思维导图按钮/抽屉
+  （`chunk.mind` 标题、进度条、缩进树、关闭按钮），标签全部按语言注入并修正了注入时机。
+
+### Fixed
+
+- **`/search` 检索在知识库 chip 尚未加载时丢参数**：`runSearch` 只从 DOM chip 取 kb_ids，
+  页面初始化竞态下会发出无 `kb_ids` 的请求并被服务端以 400 拒绝；现回退到应用的
+  `search_config.kb_ids`（与上游直接读应用配置一致）。
+- **搜索页脚本语法错误**：新增 JS 在 Rust 普通字符串中的转义（`\'`、`\n`）与一处多余花括号
+  导致整段脚本不可解析；已修复并以 `node --check` 逐 `<script>` 块复验 5/5 通过。
 
 ### Added
 
