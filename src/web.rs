@@ -2412,10 +2412,13 @@ const SEARCH_PAGE_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
 /// the hook after the shared body to shadow it.
 const FORM_LOCAL_SAVE_MODEL_DEFAULT: &str = "async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;renderDefaultModelTrigger(field)}";
 
-pub async fn search_page(
-    State(state): State<Arc<AppState>>,
-    req: axum::http::Request<axum::body::Body>,
-) -> impl IntoResponse {
+/// Shared markup for `/search` and the public `/search/share` embed: both
+/// upstream routes render the same next-search experience, only the app
+/// resolution (own app vs `?tenantId=`) and the owner row differ.
+fn search_page_markup(
+    state: &Arc<AppState>,
+    req: &axum::http::Request<axum::body::Body>,
+) -> (String, bool) {
     let zh = detect_lang(req.headers());
     let chunks = state.engine.read().unwrap().len();
     let mut b = String::new();
@@ -2525,7 +2528,78 @@ pub async fn search_page(
     b.push_str("</script>");
     // Document preview modal
     b.push_str("<div class='modal-overlay' id='docPreview' onclick='if(event.target===this)closePreview()'><div class='modal' style='max-width:700px;max-height:80vh;overflow-y:auto'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='docPreviewTitle' style='flex:1;margin:0'>Document</h2><button class='btn btn-ghost' onclick='closePreview()'>×</button></div><div id='docPreviewContent' style='font-size:14px;line-height:1.8;color:var(--t2);white-space:pre-wrap'></div></div></div>");
+    (b, zh)
+}
+
+pub async fn search_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let (b, zh) = search_page_markup(&state, &req);
     Html(layout(t("Search", zh), &b, zh))
+}
+
+/// Upstream `Routes.SearchShare = /search/share` (`pages/next-search/share`):
+/// a public, layout-less embed of the search experience. The app id arrives as
+/// `?tenantId=` (upstream naming) or RayRAG's own `?sapp=`; the owner row
+/// (avatar + app name) renders unless `visible_avatar=1`, matching
+/// `useGetSharedSearchParams().visibleAvatar`.
+pub async fn search_share_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let query = req.uri().query().unwrap_or_default().to_string();
+    let mut sapp: Option<String> = None;
+    let mut visible_avatar = true;
+    for pair in query.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            match key {
+                "tenantId" | "sapp" => sapp = Some(value.to_string()),
+                "visible_avatar" => visible_avatar = value != "1",
+                _ => {}
+            }
+        }
+    }
+    let uri = match &sapp {
+        Some(id) => format!("/search?sapp={id}"),
+        None => "/search".to_string(),
+    };
+    let mut builder = axum::http::Request::builder().uri(uri);
+    if let Some(headers) = builder.headers_mut() {
+        headers.extend(req.headers().clone());
+    }
+    let shared = builder
+        .body(axum::body::Body::empty())
+        .expect("share request rebuilds cleanly");
+    let (mut b, zh) = search_page_markup(&state, &shared);
+    let app = sapp
+        .as_ref()
+        .and_then(|id| state.search_apps.as_ref().and_then(|store| store.get(id)));
+    if visible_avatar && let Some(app) = &app {
+        let initial = app
+            .name
+            .chars()
+            .next()
+            .unwrap_or('S')
+            .to_uppercase()
+            .to_string();
+        let mut row = String::new();
+        row.push_str("<div class='search-share-owner' data-testid='search-share-owner'><span class='search-share-avatar' aria-hidden='true'>");
+        row.push_str(&html_escape(&initial));
+        row.push_str("</span><span class='search-share-name'>");
+        row.push_str(&html_escape(&app.name));
+        row.push_str("</span></div>");
+        row.push_str(&b);
+        b = row;
+    }
+    let title = app.as_ref().map(|app| app.name.clone()).unwrap_or_else(|| {
+        if zh {
+            "检索应用".to_string()
+        } else {
+            "Search app".to_string()
+        }
+    });
+    Html(layout(&title, &b, zh))
 }
 
 pub async fn agent_detail_page(
@@ -3702,12 +3776,9 @@ function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(r
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
 
-pub async fn document_page(
-    State(_state): State<Arc<AppState>>,
-    axum::extract::Path((kb_id, doc_id)): axum::extract::Path<(String, String)>,
-    req: axum::http::Request<axum::body::Body>,
-) -> impl IntoResponse {
-    let zh = detect_lang(req.headers());
+/// Shared body of the document viewer, used by both `/documents/{kb}/{doc}`
+/// and upstream's standalone `Routes.Document = /document/:id`.
+fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     let mut b = String::new();
     b.push_str("<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap'><a class='btn btn-o' href='/dataset/");
     b.push_str(&kb_id);
@@ -3742,7 +3813,42 @@ pub async fn document_page(
     b.push_str("';var docId='");
     b.push_str(&doc_id);
     b.push_str("';function chunkPage(d){window.cPage+=d;loadChunks()};function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';window.cPage=0;window.cPageSize=20;var pageData=chunks;function renderPage(){var h='';var start=window.cPage*window.cPageSize;var end=Math.min(start+window.cPageSize,pageData.length);pageData.slice(start,end).forEach(function(c,i){h+=\"<div class='ri'><span class='rs'>#\"+(start+i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div><button class='btn btn-o btn-sm' style='margin-top:6px' onclick=\"editChunk('\"+c.id+'\"','\"+(c.content||'').substring(0,2000).replace(/\'/g,'')+'\"')\">Edit</button></div>\"});var pn='<div style=margin-top:12px>';if(window.cPage>0)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';pn+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(pageData.length/window.cPageSize))+' ('+pageData.length+' chunks) </span>';if(end<pageData.length)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';pn+='</div>';h+=pn;document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};var editingChunk='';function editChunk(cid,content){editingChunk=cid;document.getElementById('chunkContent').value=content;document.getElementById('chunkModal').classList.add('show')};function saveChunk(){var content=document.getElementById('chunkContent').value;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks/'+editingChunk,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(r){return r.json()}).then(function(d){document.getElementById('chunkModal').classList.remove('show');if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};function exportChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(function(d){var data=d.data||{};var chunks=data.chunks||[];var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(chunks,null,2));a.download='doc_'+docId+'_chunks.json';a.click()})};loadChunks()</script>");
-    Html(layout("Document", &b, zh))
+    b
+}
+
+pub async fn document_page(
+    State(_state): State<Arc<AppState>>,
+    axum::extract::Path((kb_id, doc_id)): axum::extract::Path<(String, String)>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    Html(layout(
+        "Document",
+        &document_view_markup(&kb_id, &doc_id, zh),
+        zh,
+    ))
+}
+
+/// Upstream `Routes.Document = /document/:id` (standalone document viewer, no
+/// layout). The knowledge base is resolved from the document record, so the
+/// page renders at the upstream path instead of redirecting.
+pub async fn document_viewer_page(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(doc_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    let zh = detect_lang(req.headers());
+    match state.docs.get(&doc_id) {
+        Some(doc) => Html(layout(
+            "Document",
+            &document_view_markup(&doc.kb_id, &doc_id, zh),
+            zh,
+        ))
+        .into_response(),
+        // Unknown document: render the shared 404 page with a real 404 status
+        // (the fallback service does the same for unrouted paths).
+        None => (axum::http::StatusCode::NOT_FOUND, not_found_page(req).await).into_response(),
+    }
 }
 
 pub async fn skills_page(

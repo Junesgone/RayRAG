@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5w）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5x）
 
 ### Added
 
@@ -25,6 +25,14 @@ All notable changes to RayRAG are documented in this file.
 - **同名异译 i18n 键分离**：上游 `setting.selectModelPlaceholder`（en `Select model` /
   zh `请选择模型`）与 `memories.selectModel`（en `Select model` / zh `选择模型`）英文同文、
   中文异译，扁平 `t()` 表改用上游 i18n 路径作为名字空间键区分。
+
+### Added
+
+- **上游路由表对齐（`routes.tsx` 第一批）**：新增 `/login-next`（上游 `/login` 与 `/login-next` 同页双入口）、
+  上游规范的单数详情路径 `/agent/:id` 与 `/search/:id`（保留 RayRAG 既有 `/agents/{id}`、`/searches/{id}` 兼容别名）、
+  上游独立文档查看器 `/document/:id`（按文档记录反查知识库渲染，未知 id 返回真实 404）、
+  以及公开嵌入页 `/search/share`（`?tenantId=` 解析检索应用、`visible_avatar` 控制应用头像行，
+  与 `/search` 共用 `search_page_markup`）。
 
 ### Fixed
 

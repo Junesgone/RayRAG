@@ -3270,6 +3270,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api-docs", get(crate::web::api_docs))
         .route("/status", get(crate::web::status_page))
         .route("/chat", get(crate::web::chat_page))
+        // Upstream `routes.tsx`: `/login` and `/login-next` are two entry points
+        // for the same page, and the canonical agent/search/detail paths are
+        // singular (`/agent/:id`, `/search/:id`, `/document/:id`).
+        .route("/login-next", get(crate::web::login_page))
+        .route("/agent/{agent_id}", get(crate::web::agent_detail_page))
+        .route(
+            "/search/{search_id}",
+            get(crate::web::search_app_detail_page),
+        )
+        .route("/search/share", get(crate::web::search_share_page))
+        .route("/document/{doc_id}", get(crate::web::document_viewer_page))
         // RAGFlow 0.26.4 route parity: /chats (chat apps) and /searches (search apps).
         .route("/chats", get(crate::web::chat_apps_page))
         .route("/chats/share", get(crate::web::chat_share_page))
@@ -4634,6 +4645,103 @@ mod tests {
                 "class='user-setting-nav-item active' href='/user-setting{key}' data-setting-key='{key}'"
             )));
         }
+    }
+
+    /// Upstream `routes.tsx` parity for the paths that map onto existing
+    /// renderers: `/login-next` (second entry point for the login page),
+    /// `/agent/:id` and `/search/:id` (canonical singular detail paths) and
+    /// `/document/:id` (standalone document viewer). `/search/share` is the
+    /// public embed resolved from `?tenantId=`.
+    #[tokio::test]
+    async fn upstream_singular_detail_and_share_routes_are_registered() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        // Public: both login entry points and the share embed.
+        for path in ["/login", "/login-next"] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+        }
+        let share = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/search/share")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(share.status(), StatusCode::OK);
+        let share_body = String::from_utf8(
+            to_bytes(share.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // Same next-search surface as `/search`, plus the embed owner slot.
+        assert!(share_body.contains("id='searchHome'"));
+        assert!(
+            share_body.contains("data-testid='search-share-owner'")
+                || share_body.contains("id='searchView'")
+        );
+
+        // Authenticated canonical detail paths render the same handlers as the
+        // compatibility aliases still served by RayRAG. Both are exercised with
+        // an unknown id, which must reach the handler (not the 404 fallback).
+        for (path, marker) in [
+            ("/agent/demo-agent", "id='agentTitle'"),
+            ("/search/demo-search", "Search app not found"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::COOKIE, "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(
+                body.contains(marker),
+                "route {path} did not reach its handler"
+            );
+            assert!(
+                !body.contains("404 · RayRAG"),
+                "route {path} fell through to the 404 page"
+            );
+        }
+
+        // `/document/:id` resolves the dataset from the document record and
+        // 404s for an unknown id instead of panicking.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/document/does-not-exist")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
