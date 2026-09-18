@@ -4,18 +4,23 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本里程碑：**v0.3.3bo**（2026-08-14，见 MAINTENANCE.md）
-- 最近完整测试基线：**1347 passed / 0 failed / 27 ignored**（v0.3.3bh；
-  27 ignored 为需显式 GPU 模型端点/凭据/公网/MinIO/PDF 路径的 live 测试）。当前工作树另有
-  未完成的 datasource/connectors 改动造成三个编译错误；在不修改这些用户文件的隔离
-  clone 中，本批用户设置壳层定向测试为 route/shell **2/2**、Bearer/cookie
-  鉴权 **1/1**，隔离 binary build 通过；真实 Chrome/CDP 以 13 组用户动作点击头像入口、
-  七个侧栏路由、历史返回/前进、主题开关、桌面/移动宽度和登出，最终 0 Runtime
-  exception、0 console error、0 失败请求。主树全量测试仍记为环境阻断，不把隔离
-  定向与浏览器结果冒充完整新基线。
-- 覆盖矩阵（RAGFlow v0.26.4 固定快照，4441 文件，`docs/ragflow-v0.26.4-coverage.md`）：
-  full **553** / aligned **145** / replaced **101** / N/A **61** / partial **18** /
-  reference **3563** / unmapped **0**
+- 版本：**v0.3.4**，对齐切片 **v0.3.5v**（每次切片推进一个 RAGFlow 文件的逐行对齐，
+  见 `CHANGELOG.md` 与 `运维记录.md`）。
+- 测试基线：`cargo test --locked --features postgres-backend,zvec-backend --lib`
+  **1473 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
+  凭据、公网或 MinIO 的 live 测试。
+- 覆盖台账（RAGFlow v0.26.4 固定快照 `cb93883f`，4441 个文件，
+  `docs/ragflow-v0.26.4-coverage.md`）：full **566** / aligned **275** /
+  replaced **101** / N/A **61** / partial **41** / reference **3397** /
+  unmapped **0**；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
+  可复核（`--write` 刷新 Summary）。
+- 运行形态：纯 Linux（直接运行 `target/release/rayrag`）与纯 Docker
+  （`docker compose up -d`）均为一等支持；向量后端 zvec，元数据 PostgreSQL 18.4，
+  不使用 MySQL。
+
+## 许可证
+
+Apache License 2.0，见 `LICENSE`；对标来源与第三方资产说明见 `NOTICE`。
 
 ## 架构
 
