@@ -25,6 +25,11 @@ fn t(k: &str, zh: bool) -> &str {
         "Dashboard" => "仪表盘",
         "Knowledge Bases" => "知识库",
         "Search" => "搜索",
+        // Upstream `components/ui/multi-select.tsx` internals: the
+        // `CommandEmpty` copy and the select-all row.
+        "No data found." => "没有找到数据。",
+        "Searching..." => "搜索中",
+        "Select all" => "全选",
         "Chat" => "对话",
         "Chat apps" => "对话应用",
         "Create chat" => "创建对话应用",
@@ -5133,7 +5138,7 @@ function showProviderInstanceModal(card){var special=card.dataset.specialModal||
 function closeProviderInstanceModal(){closeProviderCustomModel();document.getElementById('providerInstanceModal').classList.remove('show');resetProviderModelPicker();providerInstanceCard=null}
 document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;var custom=document.getElementById('providerCustomModelModal');if(custom&&custom.classList.contains('show')){closeProviderCustomModel();return}if(document.getElementById('bedrockModal').classList.contains('show')){closeBedrockModal();return}if(document.getElementById('somarkModal').classList.contains('show')){closeSoMarkModal();return}var inst=document.getElementById('providerInstanceModal');if(inst&&inst.classList.contains('show')){closeProviderInstanceModal()}})
 function normalizeProviderModel(model){return {name:String(model.name||''),model_types:Array.isArray(model.model_types)?model.model_types.slice():[],max_tokens:Number(model.max_tokens)||0,features:Array.isArray(model.features)?model.features.slice():[]}}
-function providerModelInfo(model){var types=model.model_types.slice();if(document.getElementById('piVision').checked&&types.indexOf('chat')>=0&&types.indexOf('image2text')<0)types.push('image2text');return {model_name:model.name,model_type:types,max_tokens:model.max_tokens,extra:{is_tools:model.features.indexOf('is_tools')>=0}}}
+function providerModelInfo(model){var types=model.model_types.slice();if(document.getElementById('piVision').checked&&types.indexOf('chat')>=0&&types.indexOf('image2text')<0)types.push('image2text');var entry={model_name:model.name,model_type:types,max_tokens:model.max_tokens};if(model.features.indexOf('is_tools')>=0)entry.extra={is_tools:true};return entry}
 function providerInstancePayload(){if(providerSpecialConfig)return providerSpecialPayload();var selected=piModels.filter(function(model){return piSelectedModels.has(model.name)}).map(providerModelInfo);var payload={instance_name:document.getElementById('piName').value.trim(),api_key:document.getElementById('piKey').value,base_url:document.getElementById('piBase').value.trim(),region:providerRegionForBaseUrl(document.getElementById('piBase').value.trim()),group_id:document.getElementById('piGroup').value.trim()||null,model_info:selected};var order=document.getElementById('piProviderOrder');if(order&&order.value.trim())payload.provider_order=order.value.trim();return payload}
 function modelTypeDisplayName(type){var map=PI_PICKER_LABELS.modelTypes||{};return map[type]||type}
 function piApplyPickerLabels(){var trigger=document.getElementById('piListModelsText');if(trigger)trigger.textContent=PI_PICKER_LABELS.listModels;var add=document.getElementById('piModelAddText');if(add)add.textContent=PI_PICKER_LABELS.addCustomModel;var icon=document.getElementById('piModelAddIcon');if(icon)icon.innerHTML=PI_PLUS_SVG;var search=document.getElementById('piModelSearch');if(search)search.placeholder=PI_PICKER_LABELS.listModelsSearchPlaceholder;var cancel=document.getElementById('pcmCancel');if(cancel)cancel.textContent=PI_PICKER_LABELS.cancel;var submit=document.getElementById('pcmSubmit');if(submit)submit.textContent=PI_PICKER_LABELS.confirm;var nameInput=document.getElementById('pcmName');if(nameInput)nameInput.placeholder=PI_PICKER_LABELS.modelName;var maxTokens=document.getElementById('pcmMaxTokens');if(maxTokens)maxTokens.placeholder=PI_PICKER_LABELS.modelMaxTokens;piMsApplyLabels('pcmTypes');var featuresLabel=document.getElementById('pcmFeaturesLabel');if(featuresLabel)featuresLabel.textContent=PI_PICKER_LABELS.modelFeatures;var toolLabel=document.getElementById('pcmToolsLabel');if(toolLabel)toolLabel.textContent=PI_PICKER_LABELS.modelFeatureToolCall}
@@ -5154,7 +5159,7 @@ var PI_XCIRCLE_SVG="<svg width='14' height='14' viewBox='0 0 24 24' fill='none' 
 // every custom-model dialog (add, edit provider model, edit instance model).
 // Each instance registers a prefix; every element id is `<prefix><Suffix>`.
 var PI_MULTISELECTS={};
-function piMsRegister(prefix,options,selection){PI_MULTISELECTS[prefix]={options:options,selection:(selection||[]).filter(function(value){return options.some(function(option){return option[0]===value})})};piMsRender(prefix)}
+function piMsRegister(prefix,options,selection,showSelectAll){PI_MULTISELECTS[prefix]={options:options,selection:(selection||[]).filter(function(value){return options.some(function(option){return option[0]===value})}),showSelectAll:showSelectAll!==false};piMsRender(prefix)}
 function piMs(prefix){return PI_MULTISELECTS[prefix]}
 function piMsSelection(prefix){var state=piMs(prefix);return state?state.selection.slice():[]}
 function piMsSetSelection(prefix,values){var state=piMs(prefix);if(!state)return;state.selection=(values||[]).filter(function(value){return state.options.some(function(option){return option[0]===value})});piMsRender(prefix)}
@@ -5165,13 +5170,20 @@ function piMsToggleOpen(prefix,event){if(event)event.stopPropagation();var pop=p
 function piMsClose(prefix){var pop=piMsElement(prefix,'Popover');if(pop)pop.hidden=true;var trigger=piMsElement(prefix,'Trigger');if(trigger)trigger.setAttribute('aria-expanded','false')}
 function piMsClear(prefix,event){if(event){event.preventDefault();event.stopPropagation()}var state=piMs(prefix);if(!state)return;state.selection=[];piMsRender(prefix)}
 function piMsToggleValue(prefix,value){var state=piMs(prefix);if(!state)return;var index=state.selection.indexOf(value);if(index>=0)state.selection.splice(index,1);else state.selection.push(value);piMsRender(prefix)}
-function piMsRender(prefix){var state=piMs(prefix);if(!state)return;var host=piMsElement(prefix,'Options');if(!host)return;var search=piMsElement(prefix,'Search');var query=search?(search.value||'').trim().toLowerCase():'';host.replaceChildren();state.options.filter(function(option){return !query||option[1].toLowerCase().indexOf(query)>=0||option[0].indexOf(query)>=0}).forEach(function(option){var row=document.createElement('div');row.className='pi-multiselect-option';row.setAttribute('role','option');row.dataset.value=option[0];var selected=state.selection.indexOf(option[0])>=0;row.setAttribute('aria-selected',selected?'true':'false');var box=document.createElement('span');box.className='pi-multiselect-check'+(selected?' on':'');box.innerHTML=selected?PI_CHECK_SVG:'';var label=document.createElement('span');label.className='pi-multiselect-option-label';label.textContent=option[1];row.appendChild(box);row.appendChild(label);row.onclick=function(event){event.stopPropagation();piMsToggleValue(prefix,option[0])};host.appendChild(row)});if(!host.childElementCount){var empty=document.createElement('p');empty.className='pi-multiselect-empty';empty.textContent=PI_PICKER_LABELS.noMatchingResults;host.appendChild(empty)}var values=piMsElement(prefix,'Values');values.replaceChildren();if(!state.selection.length){var placeholder=document.createElement('span');placeholder.className='pi-multiselect-placeholder';placeholder.id=prefix+'Placeholder';placeholder.textContent=PI_PICKER_LABELS.selectPlaceholder;values.appendChild(placeholder)}else{state.selection.forEach(function(value){var badge=document.createElement('span');badge.className='pi-multiselect-badge';var text=document.createElement('span');text.className='pi-multiselect-badge-label';text.textContent=piMsLabel(value);var remove=document.createElement('span');remove.className='pi-multiselect-badge-remove';remove.setAttribute('role','button');remove.setAttribute('aria-label','Remove '+piMsLabel(value));remove.innerHTML=PI_XCIRCLE_SVG;remove.onclick=function(event){event.preventDefault();event.stopPropagation();piMsToggleValue(prefix,value)};badge.appendChild(text);badge.appendChild(remove);values.appendChild(badge)})}var clear=piMsElement(prefix,'Clear');if(clear)clear.hidden=!state.selection.length;var trigger=piMsElement(prefix,'Trigger');if(trigger)trigger.classList.toggle('has-value',state.selection.length>0)}
+// Upstream `MultiSelect` renders through cmdk, whose default filter scores
+// every item with `command-score` and re-sorts the list by score. This is
+// that algorithm (cmdk 1.1.1) transcribed: exact-prefix runs score 1, a
+// delimiter boundary 0.8, a space 0.9, anything else 0.17, repeated
+// boundaries decay by 0.999 per step and a case mismatch costs 0.9999.
+function piMsScore(label,query){var SCORE_CONTINUE_MATCH=1,SCORE_SPACE_WORD_JUMP=0.9,SCORE_NON_SPACE_WORD_JUMP=0.8,SCORE_CHARACTER_JUMP=0.17,SCORE_TRANSPOSITION=0.1,PENALTY_SKIPPED=0.999,PENALTY_CASE_MISMATCH=0.9999,SCORE_GAP_LEADING=0.999,SCORE_GAP_TRAILING=0.99;var SPECIAL_QUERY_CHARS=/[\\\/_+.#"@\[\(\{&]/,ALL_SPECIAL_QUERY_CHARS=/[\\\/_+.#"@\[\(\{&]/g,SPACE_CHARS=/[\s-]/,ALL_SPACE_CHARS=/[\s-]/g,caseSensitive=label,caseInsensitive=label.toLowerCase(),abbreviatedCaseSensitive=caseSensitive.replace(ALL_SPACE_CHARS,' '),abbreviatedCaseInsensitive=caseInsensitive.replace(ALL_SPACE_CHARS,' '),queryLower=query.toLowerCase();var memo={};function recursiveMatch(string,query,stringIndex,queryIndex){if(queryIndex===query.length)return stringIndex===string.length?SCORE_CONTINUE_MATCH:SCORE_GAP_TRAILING;var memoKey=queryIndex+','+stringIndex;if(memo[memoKey]!==undefined)return memo[memoKey];var queryChar=query.charAt(queryIndex),foundIndex=string.indexOf(queryChar,stringIndex),totalScore=0;while(foundIndex>=0){var score=recursiveMatch(string,query,foundIndex+1,queryIndex+1);if(foundIndex===stringIndex)score*=SCORE_CONTINUE_MATCH;else if(SPECIAL_QUERY_CHARS.test(string.charAt(foundIndex-1))){score*=SCORE_NON_SPACE_WORD_JUMP;var specialMatches=string.slice(stringIndex,foundIndex-1).match(ALL_SPECIAL_QUERY_CHARS);if(specialMatches&&stringIndex>0)score*=Math.pow(SCORE_GAP_LEADING,specialMatches.length)}else if(SPACE_CHARS.test(string.charAt(foundIndex-1))){score*=SCORE_SPACE_WORD_JUMP;var spaceMatches=string.slice(stringIndex,foundIndex-1).match(ALL_SPACE_CHARS);if(spaceMatches&&stringIndex>0)score*=Math.pow(SCORE_GAP_LEADING,spaceMatches.length)}else{score*=SCORE_CHARACTER_JUMP;if(stringIndex>0)score*=Math.pow(SCORE_GAP_LEADING,foundIndex-stringIndex)}if(string.charAt(foundIndex)!==query.charAt(queryIndex))score*=PENALTY_CASE_MISMATCH;if(score<SCORE_TRANSPOSITION&&(string.charAt(foundIndex-1)===query.charAt(queryIndex+1)||(query.charAt(queryIndex+1)===query.charAt(queryIndex)&&string.charAt(foundIndex-1)!==query.charAt(queryIndex)))){var transposedScore=recursiveMatch(string,query,foundIndex+1,queryIndex+2);if(transposedScore*SCORE_TRANSPOSITION>score)score=transposedScore*SCORE_TRANSPOSITION}if(score>totalScore)totalScore=score;foundIndex=string.indexOf(queryChar,foundIndex+1)}memo[memoKey]=totalScore;return totalScore}return recursiveMatch(abbreviatedCaseSensitive,query,0,0)||recursiveMatch(abbreviatedCaseInsensitive,queryLower,0,0)}
+function piMsToggleAll(prefix){var state=piMs(prefix);if(!state)return;var all=state.options.map(function(option){return option[0]});var everySelected=all.length>0&&all.every(function(value){return state.selection.indexOf(value)>=0});state.selection=everySelected?[]:all.slice();piMsRender(prefix)}
+function piMsRender(prefix){var state=piMs(prefix);if(!state)return;var host=piMsElement(prefix,'Options');if(!host)return;var search=piMsElement(prefix,'Search');var query=search?(search.value||'').trim():'';host.replaceChildren();var visible=state.options.map(function(option){return {option:option,score:query?piMsScore(option[1],query):1}}).filter(function(entry){return !query||entry.score>0});if(query)visible.sort(function(left,right){return right.score-left.score});if(state.showSelectAll!==false&&state.options.length){var allSelected=state.options.every(function(option){return state.selection.indexOf(option[0])>=0});var allRow=document.createElement('div');allRow.className='pi-multiselect-option pi-multiselect-all';allRow.setAttribute('role','option');allRow.dataset.value='__all__';allRow.setAttribute('aria-selected',allSelected?'true':'false');var allBox=document.createElement('span');allBox.className='pi-multiselect-check'+(allSelected?' on':'');allBox.innerHTML=allSelected?PI_CHECK_SVG:'';var allLabel=document.createElement('span');allLabel.className='pi-multiselect-option-label';allLabel.textContent='('+PI_PICKER_LABELS.selectAll+')';allRow.appendChild(allBox);allRow.appendChild(allLabel);allRow.onclick=function(event){event.stopPropagation();piMsToggleAll(prefix)};host.appendChild(allRow)}visible.forEach(function(entry){var option=entry.option;var row=document.createElement('div');row.className='pi-multiselect-option';row.setAttribute('role','option');row.dataset.value=option[0];var selected=state.selection.indexOf(option[0])>=0;row.setAttribute('aria-selected',selected?'true':'false');var box=document.createElement('span');box.className='pi-multiselect-check'+(selected?' on':'');box.innerHTML=selected?PI_CHECK_SVG:'';var label=document.createElement('span');label.className='pi-multiselect-option-label';label.textContent=option[1];row.appendChild(box);row.appendChild(label);row.onclick=function(event){event.stopPropagation();piMsToggleValue(prefix,option[0])};host.appendChild(row)});if(!host.childElementCount){var empty=document.createElement('p');empty.className='pi-multiselect-empty';empty.textContent=PI_PICKER_LABELS.noDataFound;host.appendChild(empty)}var values=piMsElement(prefix,'Values');values.replaceChildren();if(!state.selection.length){var placeholder=document.createElement('span');placeholder.className='pi-multiselect-placeholder';placeholder.id=prefix+'Placeholder';placeholder.textContent=PI_PICKER_LABELS.selectPlaceholder;values.appendChild(placeholder)}else{state.selection.forEach(function(value){var badge=document.createElement('span');badge.className='pi-multiselect-badge';var text=document.createElement('span');text.className='pi-multiselect-badge-label';text.textContent=piMsLabel(value);var remove=document.createElement('span');remove.className='pi-multiselect-badge-remove';remove.setAttribute('role','button');remove.setAttribute('aria-label','Remove '+piMsLabel(value));remove.innerHTML=PI_XCIRCLE_SVG;remove.onclick=function(event){event.preventDefault();event.stopPropagation();piMsToggleValue(prefix,value)};badge.appendChild(text);badge.appendChild(remove);values.appendChild(badge)})}var clear=piMsElement(prefix,'Clear');if(clear)clear.hidden=!state.selection.length;var trigger=piMsElement(prefix,'Trigger');if(trigger)trigger.classList.toggle('has-value',state.selection.length>0)}
 function piMsApplyLabels(prefix){var state=piMs(prefix);if(!state)return;var label=piMsElement(prefix,'Label');if(label)label.textContent=PI_PICKER_LABELS.modelType;var search=piMsElement(prefix,'Search');if(search)search.placeholder=PI_PICKER_LABELS.search+'...';var clearAll=piMsElement(prefix,'ClearAll');if(clearAll)clearAll.textContent=PI_PICKER_LABELS.clear;var close=piMsElement(prefix,'Close');if(close)close.textContent=PI_PICKER_LABELS.closeLabel;piMsRender(prefix)}
 document.addEventListener('click',function(event){Object.keys(PI_MULTISELECTS).forEach(function(prefix){if(!piMsOpen(prefix))return;var root=piMsElement(prefix,'');if(root&&root.contains(event.target))return;piMsClose(prefix)})});
 document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;Object.keys(PI_MULTISELECTS).forEach(function(prefix){if(piMsOpen(prefix))piMsClose(prefix)})});
 function showProviderCustomModel(mode,modelName){var modal=document.getElementById('providerCustomModelModal');var editing=mode==='edit';modal.dataset.mode=editing?'edit':'add';modal.dataset.model=editing?modelName:'';var model=editing?piModels.filter(function(item){return item.name===modelName})[0]:null;var title=document.getElementById('providerCustomModelTitle');if(title)title.textContent=editing?PI_PICKER_LABELS.editCustomModelTitle:PI_PICKER_LABELS.addCustomModelTitle;var nameInput=document.getElementById('pcmName');nameInput.value=model?model.name:'';nameInput.disabled=editing;nameInput.placeholder=PI_PICKER_LABELS.modelName;var maxTokens=document.getElementById('pcmMaxTokens');maxTokens.value=String(model&&model.max_tokens!=null?model.max_tokens:0);maxTokens.placeholder=PI_PICKER_LABELS.modelMaxTokens;document.getElementById('pcmTools').checked=!!(model&&(model.features||[]).indexOf('is_tools')>=0);piMsSetSelection('pcmTypes',model&&Array.isArray(model.model_types)?model.model_types:[]);piMsClose('pcmTypes');document.getElementById('pcmError').textContent='';modal.classList.add('show')}
 function closeProviderCustomModel(){var modal=document.getElementById('providerCustomModelModal');modal.classList.remove('show');modal.dataset.mode='add';modal.dataset.model='';var error=document.getElementById('pcmError');if(error)error.textContent='';var nameInput=document.getElementById('pcmName');if(nameInput){nameInput.disabled=false;nameInput.value=''}var maxTokens=document.getElementById('pcmMaxTokens');if(maxTokens)maxTokens.value='0';var tools=document.getElementById('pcmTools');if(tools)tools.checked=false;piMsSetSelection('pcmTypes',[]);piMsClose('pcmTypes')}
-function addProviderCustomModel(){var modal=document.getElementById('providerCustomModelModal');var editing=modal.dataset.mode==='edit';var original=modal.dataset.model||'';var nameInput=document.getElementById('pcmName');var name=editing?original:nameInput.value.trim();var types=PI_MODEL_TYPE_OPTIONS.map(function(option){return option[0]}).filter(function(value){return piMsSelection('pcmTypes').indexOf(value)>=0});var maxTokens=Number(document.getElementById('pcmMaxTokens').value);var error=document.getElementById('pcmError');if(!editing&&!name){error.textContent=PI_PICKER_LABELS.modelNameRequired;return}if(!editing&&piModels.some(function(model){return model.name===name})){error.textContent=PI_PICKER_LABELS.modelNameDuplicate;return}if(!types.length){error.textContent=PI_PICKER_LABELS.modelTypeRequired;return}if(!Number.isFinite(maxTokens)||maxTokens<0){error.textContent=PI_PICKER_LABELS.modelMaxTokensMin;return}var features=document.getElementById('pcmTools').checked?['is_tools']:[];var updated={name:name,model_types:types,max_tokens:maxTokens,features:features,custom:true};if(editing){piModels=piModels.map(function(model){return model.name===original?updated:model});if(piSelectedModels.has(original)&&!piSelectedModels.has(name)){piSelectedModels.delete(original)}}else if(!piModels.some(function(model){return model.name===name})){piModels.push(updated);piSelectedModels.add(name)}piModelsLoaded=true;renderProviderModelList();closeProviderCustomModel()}
+function addProviderCustomModel(){var modal=document.getElementById('providerCustomModelModal');var editing=modal.dataset.mode==='edit';var original=modal.dataset.model||'';var nameInput=document.getElementById('pcmName');var name=editing?original:nameInput.value.trim();var types=PI_MODEL_TYPE_OPTIONS.map(function(option){return option[0]}).filter(function(value){return piMsSelection('pcmTypes').indexOf(value)>=0});var maxTokens=Number(document.getElementById('pcmMaxTokens').value);var error=document.getElementById('pcmError');if(!editing&&!name){error.textContent=PI_PICKER_LABELS.modelName+' is required';return}if(!editing&&piModels.some(function(model){return model.name===name})){error.textContent=PI_PICKER_LABELS.modelNameDuplicate;return}if(!Number.isFinite(maxTokens)||maxTokens<0){error.textContent=PI_PICKER_LABELS.modelMaxTokensMin;return}var features=document.getElementById('pcmTools').checked?['is_tools']:[];var updated={name:name,model_types:types,max_tokens:maxTokens,features:features,custom:true};if(editing){piModels=piModels.map(function(model){return model.name===original?updated:model});if(piSelectedModels.has(original)&&!piSelectedModels.has(name)){piSelectedModels.delete(original)}}else if(!piModels.some(function(model){return model.name===name})){piModels.push(updated);piSelectedModels.add(name)}piModelsLoaded=true;renderProviderModelList();closeProviderCustomModel()}
 async function providerInstanceApi(path,payload){var response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var data=await response.json().catch(function(){return {}});if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));return data}
 async function verifyProviderInstance(){if(!providerInstanceValidate())return;var button=document.getElementById('piVerify');button.disabled=true;providerInstanceSetStatus('Verifying…',false);try{var provider=providerInstanceCard.dataset.provider;var payload=providerSpecialConfig?providerSpecialVerifyPayload():providerInstancePayload();await providerInstanceApi('/api/v1/providers/'+encodeURIComponent(provider)+'/connection',{api_key:payload.api_key,base_url:payload.base_url,region:payload.region,model_info:payload.model_info});providerInstanceSetStatus('Verification succeeded',false)}catch(error){providerInstanceSetStatus(error.message,true)}finally{button.disabled=false}}
 async function saveProviderInstance(){if(!providerInstanceValidate())return;var button=document.getElementById('piOk');button.disabled=true;providerInstanceSetStatus('Saving…',false);try{var provider=providerInstanceCard.dataset.provider;await providerInstanceApi('/api/v1/providers/'+encodeURIComponent(provider)+'/instances',providerInstancePayload());closeProviderInstanceModal();await Promise.all([loadAddedModels(),loadModelOptions()])}catch(error){providerInstanceSetStatus(error.message,true)}finally{button.disabled=false}}
@@ -5321,8 +5333,13 @@ document.getElementById('apModels').addEventListener('input',function(){apSearch
         "listModelsEmpty": t("No models available", zh),
         "listModelsSearchPlaceholder": t("Search models…", zh),
         // Upstream `setting.noMatchingResults` is the literal "None" and has no
-        // zh entry, so the empty-search row stays "None" in both languages.
+        // zh entry; it belongs to the ToggleList (`use-list-models-options`).
         "noMatchingResults": "None",
+        // `MultiSelect`'s own `CommandEmpty` (`common.noDataFound`) and the
+        // `common.searching` state used while a remote search runs.
+        "noDataFound": t("No data found.", zh),
+        "searching": t("Searching...", zh),
+        "selectAll": t("Select all", zh),
         "addCustomModel": t("Add custom model", zh),
         "addCustomModelTitle": t("Add custom model", zh),
         "editCustomModelTitle": t("Edit model", zh),
@@ -8227,7 +8244,76 @@ connection: close
         assert_eq!(provider_api_key_url("Unknown"), None);
     }
 
+    /// Upstream `components/ui/multi-select.tsx` + `add-custom-model-dialog.tsx`:
+    /// the popover is a cmdk `Command`, so the model-type picker carries the
+    /// `(Select all)` row (`common.selectAll`), scores options with
+    /// `command-score` and re-sorts them, shows `common.noDataFound` when the
+    /// search matches nothing, and the dialog validates like `DynamicForm`
+    /// (`"<label> is required"`, `model_types` optional, `extra` omitted when
+    /// no feature is selected).
     #[tokio::test]
+    async fn custom_model_multiselect_matches_upstream_command_behaviour() {
+        let (_root, state) = test_state();
+        let en = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let en_body = body_of(providers_page(axum::extract::State(state.clone()), en).await).await;
+        for marker in [
+            "function piMsScore(label,query)",
+            "SCORE_CONTINUE_MATCH=1",
+            "SCORE_TRANSPOSITION=0.1",
+            "PENALTY_CASE_MISMATCH=0.9999",
+            "pi-multiselect-option pi-multiselect-all",
+            "piMsToggleAll(prefix)",
+            "visible.sort(function(left,right){return right.score-left.score})",
+            "empty.textContent=PI_PICKER_LABELS.noDataFound",
+            "error.textContent=PI_PICKER_LABELS.modelName+' is required'",
+            "if(model.features.indexOf('is_tools')>=0)entry.extra={is_tools:true}",
+        ] {
+            assert!(
+                en_body.contains(marker),
+                "multi-select marker missing: {marker}"
+            );
+        }
+        // The optional `model_types` field must not be blocked any more.
+        assert!(
+            !en_body.contains("error.textContent=PI_PICKER_LABELS.modelTypeRequired;return}"),
+            "the multi-select must stay optional like upstream's zod schema"
+        );
+        // English payload keeps the upstream `common.*` copy.
+        for marker in [
+            "\"noDataFound\":\"No data found.\"",
+            "\"selectAll\":\"Select all\"",
+            "\"searching\":\"Searching...\"",
+        ] {
+            assert!(
+                en_body.contains(marker),
+                "en picker label missing: {marker}"
+            );
+        }
+        let zh = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh).await).await;
+        for marker in [
+            "\"noDataFound\":\"没有找到数据。\"",
+            "\"selectAll\":\"全选\"",
+            "\"searching\":\"搜索中\"",
+            // `setting.modelFeatureToolCall` has no zh entry upstream, so the
+            // feature switch keeps the English label.
+            "\"modelFeatureToolCall\":\"Tool call\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh picker label missing: {marker}"
+            );
+        }
+    }
+
     /// Upstream `components/ui/toggle-list.tsx` + `use-list-models-options.tsx`:
     /// the "List models" picker is a ToggleList — inline panel, search row only
     /// when there are more than 10 options, "All models" sentinel row, per-row
@@ -8678,7 +8764,9 @@ connection: close
             "toggleProviderModelPicker",
             "loadProviderModels",
             "providerModelInfo",
-            "extra:{is_tools:",
+            // Upstream sends `extra` only when a feature is selected
+            // (`extra: item.features ? {is_tools} : undefined`).
+            "if(model.features.indexOf('is_tools')>=0)entry.extra={is_tools:true}",
             "addProviderCustomModel",
         ] {
             assert!(

@@ -2,6 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.4] — 2026-09-19（对标批次 v0.3.7c）
+
+### Added
+
+- **模型类型多选（`MultiSelect`）补齐 cmdk 行为**：`(Select all)` 全选行（`common.selectAll`）、
+  搜索时按 cmdk 1.1.1 的 `command-score` 打分并重新排序、空结果提示改为上游 `common.noDataFound`
+  （"No data found." / 没有找到数据。，中文另有 `common.searching` 文案备用）。
+
+### Fixed
+
+- **自定义模型对话框校验对齐 `DynamicForm`**：必填提示改为上游拼接的 `"{label} is required"`
+  （英文 "Model name is required"，中文 "模型名称 is required"）；`model_types` 恢复为可选
+  （上游 zod schema 中多选字段 `optional()`，`modelTypeRequired` 只用于 switch-group）；
+  未勾选特性时不再发送 `extra`（对齐 `extra: item.features ? {is_tools} : undefined`）。
+
 ## [0.3.4] — 2026-09-19（对标批次 v0.3.7b）
 
 ### Fixed
