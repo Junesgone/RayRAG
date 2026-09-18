@@ -3479,6 +3479,9 @@ mod stats_tests {
             embedding_model: None,
             messages,
             duration_ms,
+            dsl: None,
+            errors: None,
+            version_title: None,
             created_at,
             updated_at: created_at,
         }
@@ -7388,6 +7391,16 @@ async fn agent_complete_inner(
             Err(error) => return agent_server_error(error),
         }
     };
+    // RAGFlow stamps the canvas version title when the session is created
+    // (`create_agent_session` → `UserCanvasVersionService.get_latest_version_title`)
+    // so the agent log's Version column is stable for the life of the session.
+    if conversation.version_title.is_none()
+        && let Some(title) = state.canvas_versions.latest_title(&agent.id, false)
+    {
+        let _ = state
+            .conversations
+            .set_agent_version_title(&conversation.id, &title);
+    }
     let prompt = agent.prompt_template;
     let dsl_fingerprint = match crate::agent_checkpoint::agent_dsl_fingerprint(&agent.dsl) {
         Ok(fingerprint) => fingerprint,
@@ -7518,6 +7531,14 @@ async fn agent_complete_inner(
                 if let Some(emitter) = event_emitter.as_ref() {
                     emitter.error(&error.to_string());
                 }
+                // RAGFlow persists the failure on the session
+                // (`conv.errors = canvas.error`) so the log table can render a
+                // red status dot for the run.
+                let _ = state.conversations.record_agent_run(
+                    &conversation.id,
+                    &agent.dsl,
+                    Some(&error.to_string()),
+                );
                 return agent_bad_request(error);
             }
         }
@@ -7604,6 +7625,11 @@ async fn agent_complete_inner(
                 return agent_server_error(error);
             }
         };
+        // A paused run is a successful step: refresh the DSL snapshot and
+        // clear any earlier failure so the log row shows a green dot.
+        let _ = state
+            .conversations
+            .record_agent_run(&conversation.id, &agent.dsl, None);
         if let Some(emitter) = event_emitter.as_ref() {
             emitter.waiting_for_user(
                 &component_id,
@@ -7635,7 +7661,7 @@ async fn agent_complete_inner(
         .into_response();
     }
 
-    let (completion, workflow_path, workflow_trace, workflow_references) =
+    let (completion, workflow_path, workflow_trace, workflow_references, run_errors) =
         if let Some(crate::agent::WorkflowRunOutcome::Completed(result)) = workflow_outcome {
             (
                 crate::llm::ChatCompletion {
@@ -7645,6 +7671,7 @@ async fn agent_complete_inner(
                 Some(result.path),
                 Some(result.trace),
                 result.references,
+                None,
             )
         } else if let Some(llm) = llm {
             let mut messages = vec![crate::llm::ChatMessage::new("system", prompt)];
@@ -7654,7 +7681,7 @@ async fn agent_complete_inner(
                 .chat_completion_with_generation(&messages, body.generation)
                 .await
             {
-                Ok(completion) => (completion, None, None, Vec::new()),
+                Ok(completion) => (completion, None, None, Vec::new(), None),
                 Err(error) => (
                     crate::llm::ChatCompletion {
                         content: format!("Error: {error}"),
@@ -7663,6 +7690,7 @@ async fn agent_complete_inner(
                     None,
                     None,
                     Vec::new(),
+                    Some(error.to_string()),
                 ),
             }
         } else {
@@ -7674,6 +7702,7 @@ async fn agent_complete_inner(
                 None,
                 None,
                 Vec::new(),
+                Some("LLM not configured".to_string()),
             )
         };
     let exchange = crate::llm::ConversationExchange {
@@ -7723,6 +7752,12 @@ async fn agent_complete_inner(
     {
         return agent_server_error(error);
     }
+    // `Completion.save` writes the canvas snapshot and the run's error state
+    // onto the session row, which is what the agent log reads back.
+    let _ =
+        state
+            .conversations
+            .record_agent_run(&conversation.id, &agent.dsl, run_errors.as_deref());
 
     if let Some(emitter) = event_emitter.as_ref() {
         emitter.completed(

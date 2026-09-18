@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.4] — 2026-09-19（对标批次 v0.3.7a）
+
+### Added
+
+- **智能体日志页 `/agent-log-page/:id`**（上游 `pages/agents/agent-log-page.tsx` 417 行、
+  `agent-log-detail-modal.tsx` 151 行、`hooks/use-export-agent-log.ts` 86 行）：
+  面包屑（Agent › 画布标题 › Log）、工具栏（Export、`ID/Title` 关键字框、`Latest date` 区间、
+  Search/Reset）、八列可排序表格（ID / User ID / Title / State 圆点 / Number / Latest date /
+  Create date / Version）、RAGFlow 分页（10/20/50/100）、click-through 详情弹层（CJK 15 字截断标题、
+  逐条消息与引用块）与带 BOM 的 CSV 导出（`agent-logs-{canvasId}-{date}.csv`）。
+- **会话列表 API**：`GET /api/v1/agents/{id}/sessions`、`/sessions/{session_id}`，以及浏览器侧
+  `api.ts::fetchAgentLogs` 使用的 `GET /v1/canvas/{id}/sessions` 别名（同一处理函数）。查询语义对齐
+  `API4ConversationService.get_list`（keywords/日期区间/orderby+desc/分页上限 100/`dsl=false`/
+  `exp_user_id`），行结构对齐 `_normalize_agent_session`。
+- **会话运行元数据**：`Conversation` 新增 `dsl`/`errors`/`version_title`；智能体运行后写入画布快照、
+  版本标题与错误状态，日志页的 Version 列与红/绿状态点取自真实运行结果。
+- `/agent/{id}` 编辑器页新增 Log 入口（对应上游编辑器下拉菜单的 `flow.log`）。
+
+### Note
+
+- 上游 v0.26.4 的日志页自身请求了已随 `sdk` blueprint 迁移而消失的 `/v1/canvas/{id}/sessions`，
+  即官方页面在该版本 404；RayRAG 同时提供新旧两种拼写，页面可用且 REST 面保持一致。
+
 ## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6d）
 
 ### Changed

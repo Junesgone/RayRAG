@@ -2693,6 +2693,10 @@ pub async fn agent_detail_page(
     b.push_str(t("Launch", zh));
     b.push_str("</button><button class='btn btn-o' data-testid='agent-management' onclick='openVersions()'>⚙ ");
     b.push_str(t("Management", zh));
+    b.push_str("</button><button class='btn btn-o' data-testid='agent-log-link' onclick=\"location.href='/agent-log-page/");
+    b.push_str(&agent_id);
+    b.push_str("'\">📋 ");
+    b.push_str(t("Log", zh));
     b.push_str("</button><span id='autosaveSt' style='color:var(--tm);font-size:12px;margin-left:auto'>Autosaved —</span>");
     b.push_str("</button><button class='btn btn-o' onclick='exportAgentJson()'>⬇ ");
     b.push_str(t("Export JSON", zh));
@@ -2909,6 +2913,158 @@ pub async fn agents_page(
         page_script: String::new(),
     };
     Html(render_app_list_page(&spec, zh))
+}
+
+/// Labels for the agent log page. Upstream reads the table headers and toolbar
+/// text from the `flow.*` namespace; `flow.success` / `flow.failed` /
+/// `flow.noDataToExport` have no Chinese entries in RAGFlow 0.26.4, so both
+/// locales keep the English wording exactly like the shipped app.
+const AGENT_LOG_LABELS: [(&str, &str, &str); 17] = [
+    ("flow.agent", "Agent", "智能体"),
+    ("flow.log", "Log", "日志"),
+    ("flow.export", "Export", "导出"),
+    ("flow.id", "ID", "ID"),
+    ("flow.userId", "User ID", "用户 ID"),
+    ("flow.logTitle", "Title", "标题"),
+    ("flow.state", "State", "状态"),
+    ("flow.number", "Number", "轮数"),
+    ("flow.latestDate", "Latest date", "最新日期"),
+    ("flow.createDate", "Create date", "创建日期"),
+    ("flow.version.version", "Version", "版本"),
+    ("flow.success", "Success", "Success"),
+    ("flow.failed", "Failed", "Failed"),
+    (
+        "flow.noDataToExport",
+        "No data to export",
+        "No data to export",
+    ),
+    ("common.search", "Search", "搜索"),
+    ("common.reset", "Reset", "重置"),
+    ("common.noData", "No data available", "暂无数据"),
+];
+
+fn agent_log_label(zh: bool, key: &str) -> String {
+    AGENT_LOG_LABELS
+        .iter()
+        .find(|(name, _, _)| *name == key)
+        .map(|(_, en, cn)| if zh { *cn } else { *en })
+        .unwrap_or(key)
+        .to_string()
+}
+
+/// Upstream `pages/agents/agent-log-page.tsx` (417 lines) with
+/// `agent-log-detail-modal.tsx` (151) and `hooks/use-export-agent-log.ts` (86):
+/// the PageHeader breadcrumb (Agent › canvas title › Log), the filter toolbar
+/// (Export, `ID/Title` keyword box, `Latest date` range picker, Search, Reset),
+/// the sortable eight-column table with its status dot, RAGFlow pagination, the
+/// CSV export and the click-through detail modal that renders each message with
+/// its reference chunks.
+pub async fn agent_log_page(
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let label = |key: &str| agent_log_label(zh, key);
+    let page_label = if zh { "条/页" } else { "/ Page" };
+    let total_label = if zh { "总共" } else { "Total" };
+    let mut b = String::new();
+    b.push_str(&format!(
+        r#"<div class='agent-log-page' data-agent-id='{agent_id}'>
+<header class='agent-log-header'>
+<nav class='chunk-breadcrumb agent-log-breadcrumb' aria-label='Breadcrumb'><a class='chunk-breadcrumb-link' href='/agents' data-testid='agent-log-breadcrumb-agents'>{agent_label}</a><span class='chunk-breadcrumb-sep' aria-hidden='true'>/</span><a class='chunk-breadcrumb-link' id='agentLogBreadcrumbTitle' href='/agent/{agent_id}' data-testid='agent-log-breadcrumb-agent'>{agent_id}</a><span class='chunk-breadcrumb-sep' aria-hidden='true'>/</span><span class='chunk-breadcrumb-page'>{log_label}</span></nav>
+</header>
+<div class='agent-log-body'>
+<div class='agent-log-titlebar'><h1 class='agent-log-title'>{log_label}</h1>
+<div class='agent-log-toolbar'>
+<button class='btn btn-p' type='button' id='agentLogExport' data-testid='agent-log-export' onclick='agentLogExport()'>{export_label}</button>
+<div class='agent-log-field'><span class='agent-log-field-label'>{id_label}/{title_label}</span><input id='agentLogKeywords' class='agent-log-search' data-testid='agent-log-keywords' autocomplete='off' aria-label='{id_label}/{title_label}' onkeydown='if(event.key===&quot;Enter&quot;){{event.preventDefault();agentLogSearchClick()}}'></div>
+<div class='agent-log-field'><span class='agent-log-field-label'>{latest_label}</span><span class='agent-log-range'><input type='date' id='agentLogFrom' data-testid='agent-log-from' aria-label='{latest_label} start'><span class='agent-log-range-sep' aria-hidden='true'>~</span><input type='date' id='agentLogTo' data-testid='agent-log-to' aria-label='{latest_label} end'></span></div>
+<button class='btn btn-p' type='button' data-testid='agent-log-search' onclick='agentLogSearchClick()'>{search_label}</button>
+<button class='btn btn-o' type='button' data-testid='agent-log-reset' onclick='agentLogReset()'>{reset_label}</button>
+</div></div>
+<div class='agent-log-table-wrap'>
+<table class='agent-log-table' data-testid='agent-log-table'>
+<thead><tr>
+<th data-col='id'>{id_label}</th>
+<th data-col='user_id'>{user_label}</th>
+<th data-col='title'>{title_label}</th>
+<th data-col='state'>{state_label}</th>
+<th data-col='round'>{number_label}</th>
+<th data-col='update_date' class='agent-log-sortable' data-testid='agent-log-sort-update_date' onclick='agentLogSort(&quot;update_date&quot;)'>{latest_label}<span class='agent-log-sort-mark' id='agentLogSortUpdate'></span></th>
+<th data-col='create_date' class='agent-log-sortable' data-testid='agent-log-sort-create_date' onclick='agentLogSort(&quot;create_date&quot;)'>{create_label}<span class='agent-log-sort-mark' id='agentLogSortCreate'></span></th>
+<th data-col='version'>{version_label}</th>
+</tr></thead>
+<tbody id='agentLogRows'></tbody>
+</table>
+</div>
+<footer class='agent-log-pagination' id='agentLogPagination' data-testid='agent-log-pagination'></footer>
+</div>
+<div class='modal-overlay' id='agentLogModal' data-testid='agent-log-modal'><div class='modal agent-log-modal' role='dialog' aria-modal='true' aria-labelledby='agentLogModalTitle'><div class='agent-log-modal-head'><h2 id='agentLogModalTitle'></h2><button class='agent-log-modal-close' type='button' aria-label='{close_label}' data-testid='agent-log-modal-close' onclick='agentLogCloseModal()'>✕</button></div><div class='agent-log-modal-body' id='agentLogModalBody'></div></div></div>
+</div>"#,
+        agent_id = html_escape(&agent_id),
+        agent_label = label("flow.agent"),
+        log_label = label("flow.log"),
+        export_label = label("flow.export"),
+        id_label = label("flow.id"),
+        title_label = label("flow.logTitle"),
+        user_label = label("flow.userId"),
+        state_label = label("flow.state"),
+        number_label = label("flow.number"),
+        latest_label = label("flow.latestDate"),
+        create_label = label("flow.createDate"),
+        version_label = label("flow.version.version"),
+        search_label = label("common.search"),
+        reset_label = label("common.reset"),
+        close_label = t("Close", zh),
+    ));
+    b.push_str(&agent_log_script(
+        zh,
+        &agent_id,
+        &label("flow.log"),
+        &label("common.noData"),
+        &label("flow.success"),
+        &label("flow.failed"),
+        &label("flow.noDataToExport"),
+        page_label,
+        total_label,
+    ));
+    Html(layout("Log", &b, zh))
+}
+
+/// Browser half of the agent log page: loads
+/// `GET /api/v1/canvas/{id}/sessions` with the current filter state, renders
+/// the table, the pagination, the detail modal and the CSV file.
+#[allow(clippy::too_many_arguments)]
+fn agent_log_script(
+    zh: bool,
+    agent_id: &str,
+    title: &str,
+    empty_label: &str,
+    success_label: &str,
+    failed_label: &str,
+    no_export_label: &str,
+    page_label: &str,
+    total_label: &str,
+) -> String {
+    let labels = serde_json::json!({
+        "title": title,
+        "empty": empty_label,
+        "success": success_label,
+        "failed": failed_label,
+        "noExport": no_export_label,
+        "page": page_label,
+        "total": total_label,
+        "loading": t("Loading", zh),
+        "reference": t("Reference", zh),
+        "user": t("User", zh),
+        "assistant": t("Assistant", zh),
+        "cancel": t("Cancel", zh),
+    });
+    format!(
+        r#"<script>window.AGENT_LOG={labels};var AGENT_LOG_ID='{agent_id}';var agentLogState={{page:1,pageSize:10,total:0,keywords:'',orderby:'create_time',desc:false,rows:[],loading:false,exporting:false}};function agentLogEscape(value){{return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}}function agentLogDay(date,isEnd){{var pad=function(n){{return (n<10?'0':'')+n}};return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+' '+(isEnd?'23:59:59':'00:00:00')}}function agentLogInitialRange(){{var now=new Date();var from=document.getElementById('agentLogFrom');var to=document.getElementById('agentLogTo');if(from)from.value=agentLogDay(now,false).slice(0,10);if(to)to.value=agentLogDay(now,true).slice(0,10)}}function agentLogQueryString(page,pageSize){{var params=['page='+page,'page_size='+pageSize,'orderby='+encodeURIComponent(agentLogState.orderby),'desc='+(agentLogState.desc?'true':'false')];var keywords=agentLogState.keywords.trim();if(keywords)params.push('keywords='+encodeURIComponent(keywords));var from=document.getElementById('agentLogFrom');var to=document.getElementById('agentLogTo');if(from&&from.value)params.push('from_date='+encodeURIComponent(agentLogDay(new Date(from.value+'T00:00:00'),false)));if(to&&to.value)params.push('to_date='+encodeURIComponent(agentLogDay(new Date(to.value+'T00:00:00'),true)));return params.join('&')}}function agentLogSortMark(){{var up=document.getElementById('agentLogSortUpdate');var create=document.getElementById('agentLogSortCreate');if(up)up.textContent=agentLogState.orderby==='update_date'?(agentLogState.desc?'↓':'↑'):'';if(create)create.textContent=agentLogState.orderby==='create_date'?(agentLogState.desc?'↓':'↑'):''}}function agentLogRender(){{var body=document.getElementById('agentLogRows');if(!body)return;if(agentLogState.loading){{body.innerHTML="<tr><td colspan='8' class='agent-log-loading'><span class='team-spinner' aria-hidden='true'></span><span class='agent-log-loading-label'>"+agentLogEscape(window.AGENT_LOG.loading)+"</span></td></tr>";return}}if(!agentLogState.rows.length){{body.innerHTML="<tr><td colspan='8' class='agent-log-empty' data-testid='agent-log-empty'>"+agentLogEscape(window.AGENT_LOG.empty)+"</td></tr>";return}}body.innerHTML=agentLogState.rows.map(function(row,index){{var title=row.message&&row.message.length?row.message[0].content:'';var dot="<span class='agent-log-dot "+(row.errors?'agent-log-dot-fail':'agent-log-dot-ok')+"' data-testid='agent-log-state' role='img' aria-label='"+(row.errors?agentLogEscape(window.AGENT_LOG.failed):agentLogEscape(window.AGENT_LOG.success))+"'></span>";return "<tr data-testid='agent-log-row' data-index='"+index+"' onclick='agentLogShowDetail("+index+")'><td class='agent-log-id'>"+agentLogEscape(row.id)+"</td><td>"+agentLogEscape(row.user_id||'')+"</td><td class='agent-log-title-cell'>"+agentLogEscape(title)+"</td><td>"+dot+"</td><td>"+agentLogEscape(row.round==null?'':String(row.round))+"</td><td>"+agentLogEscape(row.update_date||'')+"</td><td>"+agentLogEscape(row.create_date||'')+"</td><td>"+agentLogEscape(row.version_title||'')+"</td></tr>"}}).join('');agentLogSortMark()}}function agentLogRenderPagination(){{var host=document.getElementById('agentLogPagination');if(!host)return;var pages=Math.max(1,Math.ceil(agentLogState.total/agentLogState.pageSize));var options=[10,20,50,100].map(function(size){{return "<option value='"+size+"'"+(size===agentLogState.pageSize?' selected':'')+">"+size+' '+agentLogEscape(window.AGENT_LOG.page)+"</option>"}}).join('');host.innerHTML="<span class='agent-log-total'>"+agentLogEscape(window.AGENT_LOG.total)+' '+agentLogState.total+"</span><span class='agent-log-pager'><button type='button' class='btn btn-o btn-sm' data-testid='agent-log-prev' "+(agentLogState.page<=1?'disabled':'')+" onclick='agentLogGoto(agentLogState.page-1)'>‹</button><span class='agent-log-page-now'>"+agentLogState.page+' / '+pages+"</span><button type='button' class='btn btn-o btn-sm' data-testid='agent-log-next' "+(agentLogState.page>=pages?'disabled':'')+" onclick='agentLogGoto(agentLogState.page+1)'>›</button></span><select class='agent-log-page-size' aria-label='Page size' data-testid='agent-log-page-size' onchange='agentLogPageSizeChange(this.value)'>"+options+"</select>"}}function agentLogGoto(page){{if(page<1)return;agentLogState.page=page;agentLogLoad()}}function agentLogPageSizeChange(value){{agentLogState.pageSize=parseInt(value,10)||10;agentLogState.page=1;agentLogLoad()}}function agentLogSearchClick(){{var input=document.getElementById('agentLogKeywords');agentLogState.keywords=input?input.value:'';agentLogState.page=1;agentLogLoad()}}function agentLogReset(){{agentLogState.keywords='';agentLogState.orderby='create_time';agentLogState.desc=false;agentLogState.page=1;var input=document.getElementById('agentLogKeywords');if(input)input.value='';agentLogInitialRange();agentLogLoad()}}function agentLogSort(field){{if(agentLogState.orderby===field)agentLogState.desc=!agentLogState.desc;else{{agentLogState.orderby=field;agentLogState.desc=false}}agentLogLoad()}}function agentLogLoad(){{var url='/api/v1/canvas/'+encodeURIComponent(AGENT_LOG_ID)+'/sessions?'+agentLogQueryString(agentLogState.page,agentLogState.pageSize);agentLogState.loading=true;agentLogRender();return fetch(url).then(function(response){{return response.json()}}).then(function(data){{agentLogState.loading=false;if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));agentLogState.rows=data.data||[];agentLogState.total=data.total||0;agentLogRender();agentLogRenderPagination()}}).catch(function(error){{agentLogState.loading=false;agentLogState.rows=[];agentLogRender();agentLogRenderPagination();var body=document.getElementById('agentLogRows');if(body)body.innerHTML="<tr><td colspan='8' class='agent-log-empty'>"+agentLogEscape(error.message)+"</td></tr>"}})}}function agentLogReference(reference){{if(!reference||!reference.length)return '';return "<div class='agent-log-refs'>"+reference.map(function(chunk,index){{var name=chunk.document_name||chunk.document_id||'';var score=chunk.similarity==null?'':Number(chunk.similarity).toFixed(4);return "<div class='agent-log-ref' data-testid='agent-log-reference'><span class='agent-log-ref-index'>"+(index+1)+"</span><span class='agent-log-ref-body'><span class='agent-log-ref-doc'>"+agentLogEscape(name)+"</span>"+(score?"<span class='agent-log-ref-score'>"+agentLogEscape(score)+"</span>":"")+"<span class='agent-log-ref-content'>"+agentLogEscape(chunk.content||'')+"</span></span></div>"}}).join('')+"</div>"}}function agentLogShortTitle(messages){{var content=messages&&messages.length?String(messages[0].content||''):'';var chinese=(content.match(/[\u4e00-\u9fa5]/g)||[]).length;if(chinese>0)return content.length>15?content.substring(0,15)+'...':content;return content.length>30?content.substring(0,30)+'...':content}}function agentLogShowDetail(index){{var row=agentLogState.rows[index];if(!row||!row.round)return;var messages=row.message||[];document.getElementById('agentLogModalTitle').textContent=agentLogShortTitle(messages);var body=document.getElementById('agentLogModalBody');body.innerHTML=messages.map(function(message){{var role=message.role==='user'?window.AGENT_LOG.user:window.AGENT_LOG.assistant;return "<article class='agent-log-message' data-testid='agent-log-message' data-role='"+agentLogEscape(message.role)+"'><header class='agent-log-message-head'><span class='agent-log-message-role'>"+agentLogEscape(role)+"</span><span class='agent-log-message-time'>"+agentLogEscape(message.created_at?new Date(message.created_at).toLocaleString():'')+"</span></header><div class='agent-log-message-body'>"+agentLogEscape(message.content||'')+"</div>"+agentLogReference(message.reference)+"</article>"}}).join('');document.getElementById('agentLogModal').classList.add('show')}}function agentLogCloseModal(){{document.getElementById('agentLogModal').classList.remove('show')}}function agentLogCsvCell(value){{return '"'+String(value==null?'':value).replace(/"/g,'""')+'"'}}function agentLogExport(){{if(agentLogState.exporting)return;agentLogState.exporting=true;var button=document.getElementById('agentLogExport');if(button)button.disabled=true;var url='/api/v1/canvas/'+encodeURIComponent(AGENT_LOG_ID)+'/sessions?'+agentLogQueryString(agentLogState.page,agentLogState.pageSize);fetch(url).then(function(response){{return response.json()}}).then(function(data){{agentLogState.exporting=false;if(button)button.disabled=false;if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));var rows=data.data||[];if(!rows.length){{window.alert(window.AGENT_LOG.noExport);return}}var head=document.querySelectorAll('.agent-log-table thead th');var labels=Array.prototype.map.call(head,function(cell){{return cell.textContent.replace(/[↑↓]/g,'').trim()}});var lines=[labels.map(agentLogCsvCell).join(',')];rows.forEach(function(row){{var title=row.message&&row.message.length?row.message[0].content:'';lines.push([row.id,row.user_id,title,row.errors?window.AGENT_LOG.failed:window.AGENT_LOG.success,row.round,row.update_date,row.create_date,row.version_title].map(agentLogCsvCell).join(','))}});var blob=new Blob(['\ufeff'+lines.join('\n')],{{type:'text/csv;charset=utf-8;'}});var link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='agent-logs-'+AGENT_LOG_ID+'-'+new Date().toISOString().split('T')[0]+'.csv';link.click();URL.revokeObjectURL(link.href)}}).catch(function(error){{agentLogState.exporting=false;if(button)button.disabled=false;window.alert(error.message)}})}}function agentLogBreadcrumb(){{fetch('/api/v1/agents/'+encodeURIComponent(AGENT_LOG_ID)).then(function(response){{return response.json()}}).then(function(data){{var agent=data.data||{{}};var node=document.getElementById('agentLogBreadcrumbTitle');if(node&&agent.name)node.textContent=agent.name}}).catch(function(){{}})}}document.addEventListener('click',function(event){{var modal=document.getElementById('agentLogModal');if(!modal||!modal.classList.contains('show'))return;if(event.target===modal)agentLogCloseModal()}});agentLogInitialRange();agentLogRenderPagination();agentLogBreadcrumb();agentLogLoad();</script>"#,
+        labels = labels,
+        agent_id = agent_id.replace('\'', ""),
+    )
 }
 
 pub async fn datasources_page(

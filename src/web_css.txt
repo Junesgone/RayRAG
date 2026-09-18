@@ -151,3 +151,54 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .team-loading{text-align:center;padding:24px}
 .team-spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--bd);border-right-color:transparent;border-radius:50%;animation:team-spin 1s linear infinite}
 @keyframes team-spin{to{transform:rotate(360deg)}}
+/* Upstream `pages/agents/agent-log-page.tsx` + `agent-log-detail-modal.tsx`: the breadcrumb header, the filter toolbar (`flow.export`, the `ID/Title` search box, the `flow.latestDate` range picker and the Search/Reset pair), the eight-column table with its status dot and the message/reference modal. */
+.agent-log-page{display:flex;flex-direction:column;gap:12px}
+.agent-log-body{padding:16px}
+.agent-log-titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.agent-log-title{margin:0;font-size:24px;font-weight:700}
+.agent-log-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.agent-log-field{display:flex;align-items:center;gap:8px;color:var(--t2);font-size:13px}
+.agent-log-field-label{white-space:nowrap;color:var(--t2)}
+.agent-log-search{width:8rem;min-width:6rem}
+.agent-log-range{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc)}
+.agent-log-range input{border:0;background:transparent;color:var(--t);font:inherit;font-size:13px}
+.agent-log-range-sep{color:var(--tm)}
+.agent-log-table-wrap{overflow:auto;border:1px solid var(--bd);border-radius:var(--rs)}
+.agent-log-table{width:100%;border-collapse:collapse;font-size:13px}
+.agent-log-table th,.agent-log-table td{padding:10px 12px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:middle}
+.agent-log-table thead th{position:sticky;top:0;z-index:2;background:var(--bgc);color:var(--t2);font-weight:500;white-space:nowrap}
+.agent-log-sortable{cursor:pointer}
+.agent-log-sortable:hover{background:var(--bgch)}
+.agent-log-sort-mark{display:inline-block;min-width:10px;margin-left:4px;color:var(--p)}
+.agent-log-table tbody tr{cursor:pointer}
+.agent-log-table tbody tr:hover{background:var(--bgch)}
+.agent-log-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.agent-log-title-cell{max-width:32rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-log-dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+.agent-log-dot-ok{background:#22c55e}
+.agent-log-dot-fail{background:#ef4444}
+.agent-log-empty,.agent-log-loading{padding:24px;color:var(--tm);text-align:center;font-size:13px}
+.agent-log-pagination{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+.agent-log-total{color:var(--t2);font-size:13px}
+.agent-log-pager{display:inline-flex;align-items:center;gap:8px}
+.agent-log-page-now{color:var(--t2);font-size:13px}
+.agent-log-page-size{padding:6px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}
+.agent-log-modal{max-width:900px}
+.agent-log-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.agent-log-modal-head h2{margin:0;font-size:16px;font-weight:600}
+.agent-log-modal-close{border:0;background:transparent;color:var(--t2);font-size:16px;cursor:pointer}
+.agent-log-modal-close:hover{color:var(--t)}
+.agent-log-modal-body{display:flex;flex-direction:column;gap:16px;max-height:70vh;overflow:auto}
+.agent-log-message{border:1px solid var(--bd);border-radius:var(--rs);padding:12px}
+.agent-log-message-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.agent-log-message-role{color:var(--p);font-size:12px;font-weight:600;text-transform:capitalize}
+.agent-log-message-time{color:var(--tm);font-size:12px}
+.agent-log-message-body{color:var(--t);font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.agent-log-refs{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.agent-log-ref{display:flex;gap:8px;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg)}
+.agent-log-ref-index{flex:0 0 18px;color:var(--p);font-size:12px;font-weight:600}
+.agent-log-ref-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.agent-log-ref-doc{color:var(--t2);font-size:12px;font-weight:500}
+.agent-log-ref-score{color:var(--tm);font-size:11px}
+.agent-log-ref-content{color:var(--t2);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.agent-log-loading-label{margin-left:8px}

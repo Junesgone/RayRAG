@@ -240,6 +240,20 @@ pub struct Conversation {
     /// Cumulative generation time for completed assistant rounds.
     #[serde(default)]
     pub duration_ms: u64,
+    /// Canvas DSL snapshot: captured when an agent session is created and
+    /// refreshed after every agent run (RAGFlow `API4Conversation.dsl`,
+    /// written by `conv.dsl = str(canvas)` in `Completion.save`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsl: Option<serde_json::Value>,
+    /// Error raised by the latest agent run (RAGFlow
+    /// `API4Conversation.errors` / `conv.errors = canvas.error`). `None` means
+    /// the last run finished cleanly, which is the log page's green status dot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub errors: Option<String>,
+    /// Canvas version title captured at session creation (RAGFlow
+    /// `API4Conversation.version_title`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_title: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -395,10 +409,10 @@ impl LlmClient {
                         && let Some(delta) = value
                             .pointer("/choices/0/delta/content")
                             .and_then(|content| content.as_str())
-                        {
-                            full.push_str(delta);
-                            on_chunk(delta);
-                        }
+                    {
+                        full.push_str(delta);
+                        on_chunk(delta);
+                    }
                 }
             }
         }
@@ -661,8 +675,7 @@ fn build_chat_request_body(
     // models (DeepSeek-R1 style) honor the switch too.
     if model.to_ascii_lowercase().contains("qwen3") {
         body["extra_body"] = serde_json::json!({"enable_thinking": generation.reasoning});
-        body["chat_template_kwargs"] =
-            serde_json::json!({"enable_thinking": generation.reasoning});
+        body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": generation.reasoning});
     } else if generation.reasoning {
         body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": true});
     }
@@ -710,9 +723,9 @@ fn parse_openai_tool_chat_completion(json: &serde_json::Value) -> Result<ToolCha
             .and_then(serde_json::Value::as_str)
             .or_else(|| message.get("reasoning").and_then(serde_json::Value::as_str))
             .filter(|value| !value.is_empty())
-        {
-            content = format!("<think>{reasoning}</think>") + &content;
-        }
+    {
+        content = format!("<think>{reasoning}</think>") + &content;
+    }
     let tool_calls = message
         .get("tool_calls")
         .filter(|value| !value.is_null())
@@ -930,6 +943,9 @@ impl ConvStore {
             embedding_model,
             messages: vec![],
             duration_ms: 0,
+            dsl: None,
+            errors: None,
+            version_title: None,
             created_at: now,
             updated_at: now,
         };
@@ -944,6 +960,55 @@ impl ConvStore {
         self.mutate(|convs| {
             if let Some(c) = convs.get_mut(id) {
                 c.app_id = Some(app_id.to_string());
+            }
+            Ok(())
+        })
+    }
+
+    /// Agent sessions belonging to one canvas, in id order. The agent log list
+    /// (`GET /api/v1/canvas/{id}/sessions`) sorts and paginates them itself,
+    /// mirroring `API4ConversationService.get_list` filtering on `dialog_id`.
+    pub fn list_agent_sessions(&self, canvas_id: &str) -> Vec<Conversation> {
+        let mut sessions: Vec<Conversation> = self
+            .conversations
+            .read()
+            .unwrap()
+            .values()
+            .filter(|conversation| {
+                conversation.source == "agent"
+                    && conversation.canvas_id.as_deref() == Some(canvas_id)
+            })
+            .cloned()
+            .collect();
+        sessions.sort_by(|left, right| left.id.cmp(&right.id));
+        sessions
+    }
+
+    /// Record one agent run's DSL snapshot and error state (RAGFlow
+    /// `Completion.save`: `conv.dsl = str(canvas)` and
+    /// `conv.errors = canvas.error`). `errors` replaces the previous value, so
+    /// a clean run clears an earlier failure.
+    pub fn record_agent_run(
+        &self,
+        id: &str,
+        dsl: &serde_json::Value,
+        errors: Option<&str>,
+    ) -> Result<()> {
+        self.mutate(|conversations| {
+            if let Some(conversation) = conversations.get_mut(id) {
+                conversation.dsl = Some(dsl.clone());
+                conversation.errors = errors.map(|error| error.to_string());
+            }
+            Ok(())
+        })
+    }
+
+    /// Capture the canvas version title at session creation (RAGFlow
+    /// `API4ConversationService.get_latest_version_title`).
+    pub fn set_agent_version_title(&self, id: &str, title: &str) -> Result<()> {
+        self.mutate(|conversations| {
+            if let Some(conversation) = conversations.get_mut(id) {
+                conversation.version_title = Some(title.to_string());
             }
             Ok(())
         })
@@ -972,6 +1037,9 @@ impl ConvStore {
             embedding_model: None,
             messages: Vec::new(),
             duration_ms: 0,
+            dsl: None,
+            errors: None,
+            version_title: None,
             created_at: now,
             updated_at: now,
         };

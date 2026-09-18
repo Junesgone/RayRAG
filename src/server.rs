@@ -3345,6 +3345,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/files", get(crate::web::files_page))
         .route("/agents", get(crate::web::agents_page))
         .route("/agents/{agent_id}", get(crate::web::agent_detail_page))
+        // Upstream `Routes.AgentLog = /agent-log-page/:agentId`
+        // (`pages/agents/agent-log-page.tsx`).
+        .route(
+            "/agent-log-page/{agent_id}",
+            get(crate::web::agent_log_page),
+        )
         .route("/memories", get(crate::web::memories_page_v2))
         .route(
             "/memory/memory-message/{memory_id}",
@@ -3883,6 +3889,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/agents/{id}/versions/{version_id}",
             get(crate::api::features::get_agent_version),
+        )
+        // Agent-log surface (`restful_apis/agent_api.py::list_agent_sessions`
+        // and `get_agent_session`) plus the `webAPI` spelling the ported log
+        // page uses: upstream `api.ts::fetchAgentLogs` resolves to
+        // `/v1/canvas/{canvas_id}/sessions` because `webAPI = /v1`.
+        .route(
+            "/api/v1/agents/{id}/sessions",
+            get(crate::api::agent_log::list_agent_sessions),
+        )
+        .route(
+            "/api/v1/agents/{id}/sessions/{session_id}",
+            get(crate::api::agent_log::get_agent_session),
+        )
+        .route(
+            "/api/v1/canvas/{canvas_id}/sessions",
+            get(crate::api::agent_log::list_canvas_sessions),
+        )
+        .route(
+            "/v1/canvas/{canvas_id}/sessions",
+            get(crate::api::agent_log::list_canvas_sessions),
         )
         .route(
             "/api/v1/compilation_template_groups",
@@ -6910,6 +6936,386 @@ mod tests {
         let versions = env.state.canvas_versions.list(agent_id);
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].dsl, *dsl);
+    }
+
+    /// Upstream `agent_api.py::list_agent_sessions` +
+    /// `API4ConversationService.get_list`: both route spellings answer the
+    /// `{code, message, data, total}` envelope of `_agent_session_list_result`,
+    /// the row carries the `_normalize_agent_session` shape (`agent_id` from
+    /// `dialog_id`, folded per-message references, RAGFlow datetimes), and the
+    /// filters (`keywords`, `desc`, `orderby`, `dsl`, `page_size`) behave the
+    /// way the ported log page drives them.
+    #[tokio::test]
+    async fn agent_log_sessions_match_upstream_envelope_filters_and_detail() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Log Parity Agent",
+                            "dsl": {"components": {
+                                "message": {
+                                    "obj": {
+                                        "component_name": "Message",
+                                        "params": {"content": ["done"]}
+                                    },
+                                    "upstream": ["begin"],
+                                    "downstream": []
+                                },
+                                "begin": {
+                                    "obj": {"component_name": "Begin", "params": {}},
+                                    "upstream": [],
+                                    "downstream": ["message"]
+                                }
+                            }}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let record = |question: &str, answer: &str| crate::llm::ConversationExchange {
+            question: question.to_string(),
+            answer: answer.to_string(),
+            citations: Vec::new(),
+            references: vec![crate::llm::ChunkReference {
+                id: "chunk-1".into(),
+                kb_id: "kb-1".into(),
+                content: "retrieved passage".into(),
+                similarity: Some(0.75),
+                vector_similarity: Some(0.8),
+                term_similarity: Some(0.2),
+            }],
+            settings: None,
+            duration_ms: 1200,
+            usage: None,
+        };
+        let first = env
+            .state
+            .conversations
+            .create_agent_for(
+                "test-user",
+                "test-user",
+                &agent_id,
+                "first question",
+                vec![],
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .append_exchange_with_settings(&first.id, "test-user", record("first question", "one"))
+            .unwrap();
+        let dsl = serde_json::json!({"components": {"begin": {}}});
+        env.state
+            .conversations
+            .record_agent_run(&first.id, &dsl, Some("node failed"))
+            .unwrap();
+        let second = env
+            .state
+            .conversations
+            .create_agent_for(
+                "test-user",
+                "test-user",
+                &agent_id,
+                "second question",
+                vec![],
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .append_exchange_with_settings(
+                &second.id,
+                "test-user",
+                record("second question", "two"),
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .set_agent_version_title(&second.id, "Release 1")
+            .unwrap();
+        // A chat session on the same canvas must not leak into the log table.
+        let other = env
+            .state
+            .conversations
+            .create_for("test-user", "not an agent session")
+            .unwrap();
+
+        let unauthorized = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let missing_agent = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/canvas/does-not-exist/sessions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_agent.status(), StatusCode::NOT_FOUND);
+
+        let listing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/canvas/{agent_id}/sessions?orderby=create_time&desc=false"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listing.status(), StatusCode::OK);
+        let listing = response_json(listing).await;
+        assert_eq!(listing["code"], 0);
+        assert_eq!(listing["message"], "success");
+        assert_eq!(listing["total"], 2);
+        let rows = listing["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], first.id);
+        assert_eq!(rows[1]["id"], second.id);
+        assert_eq!(rows[0]["agent_id"], agent_id);
+        assert_eq!(rows[0]["user_id"], "test-user");
+        assert_eq!(rows[0]["exp_user_id"], "test-user");
+        assert_eq!(rows[0]["round"], 1);
+        assert_eq!(rows[0]["errors"], "node failed");
+        assert_eq!(rows[1]["errors"], serde_json::Value::Null);
+        assert_eq!(rows[1]["version_title"], "Release 1");
+        assert_eq!(rows[0]["message"][0]["content"], "first question");
+        assert_eq!(rows[0]["message"][0]["role"], "user");
+        assert_eq!(
+            rows[0]["message"][1]["reference"][0]["content"],
+            "retrieved passage"
+        );
+        assert_eq!(rows[0]["message"][1]["reference"][0]["dataset_id"], "kb-1");
+        assert_eq!(rows[0]["dsl"]["components"]["begin"], serde_json::json!({}));
+        assert_eq!(rows[0]["create_date"].as_str().unwrap().len(), 19);
+        assert!(!rows.iter().any(|row| row["id"] == other.id));
+
+        // `dsl=false` drops the snapshot, exactly like `include_dsl`.
+        let without_dsl = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions?dsl=false"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let without_dsl = response_json(without_dsl).await;
+        assert!(without_dsl["data"][0].get("dsl").is_none());
+
+        // Keywords match the serialized message, newest first by default.
+        let keyword = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/canvas/{agent_id}/sessions?keywords=SECOND"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let keyword = response_json(keyword).await;
+        assert_eq!(keyword["total"], 1);
+        assert_eq!(keyword["data"][0]["id"], second.id);
+
+        let empty = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/canvas/{agent_id}/sessions?keywords=nothing"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let empty = response_json(empty).await;
+        assert_eq!(empty["total"], 0);
+        assert_eq!(empty["data"], serde_json::json!([]));
+
+        // `validate_rest_api_page_size` rejects anything above 100.
+        let oversize = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions?page_size=101"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oversize.status(), StatusCode::BAD_REQUEST);
+        let oversize = response_json(oversize).await;
+        assert_eq!(
+            oversize["message"],
+            "page_size must be less than or equal to 100"
+        );
+
+        // The REST spelling, the detail route and its 404 message.
+        let rest = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/sessions?page=1&page_size=1"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let rest = response_json(rest).await;
+        assert_eq!(rest["total"], 2);
+        assert_eq!(rest["data"].as_array().unwrap().len(), 1);
+
+        let detail = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions/{}", first.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail = response_json(detail).await;
+        assert_eq!(detail["data"]["id"], first.id);
+        assert_eq!(detail["data"]["round"], 1);
+
+        let unknown = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions/nope"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(unknown).await["message"],
+            "Session not found!"
+        );
+    }
+
+    /// Upstream `Routes.AgentLog = /agent-log-page/:id`: the SSR shell carries
+    /// the breadcrumb, the toolbar (`flow.export`, the `ID/Title` keyword box,
+    /// the `flow.latestDate` range, Search/Reset), the eight-column table, the
+    /// pagination footer and the detail modal, in both locales.
+    #[tokio::test]
+    async fn agent_log_page_matches_upstream_layout() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (lang, expectations) in [
+            (
+                "en",
+                vec![
+                    "agent-log-breadcrumb",
+                    "agent-log-breadcrumb-agents",
+                    ">Log<",
+                    "agent-log-export",
+                    "ID/Title",
+                    "Latest date",
+                    "agent-log-search",
+                    "agent-log-reset",
+                    "agent-log-table",
+                    "agent-log-pagination",
+                    "agent-log-modal",
+                    "agentLogLoad()",
+                ],
+            ),
+            (
+                "zh",
+                vec![
+                    "agent-log-breadcrumb",
+                    "智能体",
+                    ">日志<",
+                    "导出",
+                    "ID/标题",
+                    "最新日期",
+                    "搜索",
+                    "重置",
+                    "agent-log-table",
+                ],
+            ),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/agent-log-page/canvas-1")
+                        .header(
+                            header::COOKIE,
+                            if lang == "zh" {
+                                "lang=zh-CN"
+                            } else {
+                                "lang=en"
+                            },
+                        )
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "lang {lang}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            for expected in expectations {
+                assert!(body.contains(expected), "lang {lang} missing {expected}");
+            }
+            // The English shell keeps the untranslated `flow.*` fallbacks that
+            // RAGFlow's zh locale also falls back to.
+            if lang == "zh" {
+                assert!(body.contains("No data to export"));
+                assert!(body.contains("Success"));
+            }
+        }
     }
 
     #[tokio::test]
