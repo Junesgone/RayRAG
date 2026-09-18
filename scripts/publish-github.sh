@@ -233,6 +233,9 @@ cd "$PUB_DIR"
 rm -rf "$PUB_DIR/.git"
 git init -q -b main
 git add -A
+# `.gitignore` ignores Cargo.lock for the development tree; the published
+# snapshot documents `--locked` builds, so it must travel with the sources.
+git add -f Cargo.lock
 git -c user.name="RayRAG Publisher" -c user.email="rayrag@example.invalid" \
     commit -q -m "$(git -C "$ROOT" log -1 --pretty=%s)"
 echo "    published history: $(git rev-list --count HEAD) commit(s)"
