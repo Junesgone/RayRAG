@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.4] — 2026-09-19（对标批次 v0.3.7b）
+
+### Fixed
+
+- **模型供应商卡片的标签顺序**（上游 `un-add-model.tsx` 用 `sortModelTypes`/`orderMap` 排序，而非后端返回的字母序）：
+  14 张卡片的标签顺序与上游逐字对齐（如 OpenAI `LLM Embedding TTS ASR`、StepFun `LLM TTS ASR VLM`、
+  Tongyi-Qianwen `LLM Embedding Rerank TTS ASR VLM OCR`）。
+- **文档链接范围**：卡片右上角的 `↗` 只对上游 `constants/llm.ts::APIMapUrl` 的 47 个厂商渲染
+  （Ollama/VLLM/LM-Studio/LocalAI/Xinference/New API 上游没有该链接，RayRAG 之前多渲染了 6 个）。
+- **默认模型行标签**（`system-setting.tsx`）：`Embedding`→`Embedding Model`（zh 嵌入模型）、
+  `Rerank`→`Rerank model`（zh Rerank模型），并按语言本地化。
+
 ## [0.3.4] — 2026-09-19（对标批次 v0.3.7a）
 
 ### Added

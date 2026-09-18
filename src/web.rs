@@ -1205,6 +1205,8 @@ const DATASET_CREATE_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField 
     field_id: "embedding_model",
     dom_id: "dsCreateEmbd",
     label: "Embedding model",
+
+    label_zh: "Embedding model",
     update_type: "embd_id",
     response_type: "embedding",
     accepted_types: &["embedding"],
@@ -1383,6 +1385,8 @@ const CONFIG_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "embd_id",
     dom_id: "embdSel",
     label: "",
+
+    label_zh: "",
     update_type: "embd_id",
     response_type: "embedding",
     accepted_types: &["embedding"],
@@ -1397,6 +1401,8 @@ const SKILL_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "embd_id",
     dom_id: "skillEmbd",
     label: "",
+
+    label_zh: "",
     update_type: "embd_id",
     response_type: "embedding",
     accepted_types: &["embedding"],
@@ -1411,6 +1417,8 @@ const MEMORY_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "embd_id",
     dom_id: "cfgEmbd",
     label: "",
+
+    label_zh: "",
     update_type: "embd_id",
     response_type: "embedding",
     accepted_types: &["embedding"],
@@ -1425,6 +1433,8 @@ const MEMORY_LLM_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "llm_id",
     dom_id: "cfgLlm",
     label: "",
+
+    label_zh: "",
     update_type: "llm_id",
     response_type: "chat",
     accepted_types: &["chat"],
@@ -1442,6 +1452,8 @@ const TEST_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "reranking_id",
     dom_id: "testRerankingSel",
     label: "",
+
+    label_zh: "",
     update_type: "reranking_id",
     response_type: "rerank",
     accepted_types: &["rerank"],
@@ -2413,6 +2425,8 @@ const SEARCH_PAGE_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "rerank_id",
     dom_id: "searchRerankSel",
     label: "Model",
+
+    label_zh: "Model",
     update_type: "rerank_id",
     response_type: "rerank",
     accepted_types: &["rerank"],
@@ -3571,6 +3585,8 @@ const MEMORY_LIST_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "embd_id",
     dom_id: "memListEmbd",
     label: "Embedding model",
+
+    label_zh: "Embedding model",
     update_type: "embd_id",
     response_type: "embedding",
     accepted_types: &["embedding"],
@@ -3583,6 +3599,8 @@ const MEMORY_LIST_LLM_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "llm_id",
     dom_id: "memListLlm",
     label: "LLM",
+
+    label_zh: "LLM",
     update_type: "llm_id",
     response_type: "chat",
     accepted_types: &["chat"],
@@ -4381,7 +4399,11 @@ searchSkills();
 struct DefaultModelField {
     field_id: &'static str,
     dom_id: &'static str,
+    /// Upstream `setting.*Model` label (`system-setting.tsx` `ModelFieldItem`).
     label: &'static str,
+    /// Same label from `locales/zh.ts`; `LLM`/`VLM`/`ASR`/`TTS` stay English
+    /// there, `embeddingModel`/`rerankModel` are translated.
+    label_zh: &'static str,
     update_type: &'static str,
     response_type: &'static str,
     accepted_types: &'static [&'static str],
@@ -4395,6 +4417,8 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         field_id: "llm_id",
         dom_id: "dmLlm",
         label: "LLM",
+
+        label_zh: "LLM",
         update_type: "chat",
         response_type: "chat",
         accepted_types: &["chat", "image2text"],
@@ -4405,7 +4429,9 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
     DefaultModelField {
         field_id: "embd_id",
         dom_id: "dmEmbedding",
-        label: "Embedding",
+        label: "Embedding Model",
+
+        label_zh: "嵌入模型",
         update_type: "embedding",
         response_type: "embedding",
         accepted_types: &["embedding"],
@@ -4417,6 +4443,8 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         field_id: "img2txt_id",
         dom_id: "dmVlm",
         label: "VLM",
+
+        label_zh: "VLM",
         update_type: "vision",
         response_type: "image2text",
         accepted_types: &["image2text"],
@@ -4428,6 +4456,8 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         field_id: "asr_id",
         dom_id: "dmAsr",
         label: "ASR",
+
+        label_zh: "ASR",
         update_type: "asr",
         response_type: "speech2text",
         accepted_types: &["speech2text"],
@@ -4438,7 +4468,9 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
     DefaultModelField {
         field_id: "rerank_id",
         dom_id: "dmRerank",
-        label: "Rerank",
+        label: "Rerank model",
+
+        label_zh: "Rerank模型",
         update_type: "rerank",
         response_type: "rerank",
         accepted_types: &["rerank"],
@@ -4450,6 +4482,8 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         field_id: "tts_id",
         dom_id: "dmTts",
         label: "TTS",
+
+        label_zh: "TTS",
         update_type: "tts",
         response_type: "tts",
         accepted_types: &["tts"],
@@ -4533,13 +4567,12 @@ fn provider_api_key_optional(provider_name: &str) -> bool {
 }
 
 fn provider_api_key_url(provider_name: &str) -> Option<&'static str> {
+    // Upstream `constants/llm.ts::APIMapUrl` verbatim (47 entries); the card
+    // renders the `ArrowUpRight` link only when this map has the factory, so
+    // self-hosted engines (Ollama / VLLM / LM-Studio / LocalAI / Xinference /
+    // New API) deliberately return `None` here. Their documentation lives in
+    // the provider catalog notes instead.
     match provider_name {
-        "Ollama" => Some("https://github.com/ollama/ollama"),
-        "VLLM" => Some("https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html"),
-        "LM-Studio" => Some("https://lmstudio.ai/docs/developer/openai-compat"),
-        "LocalAI" => Some("https://localai.io/features/openai-functions/"),
-        "Xinference" => Some("https://inference.readthedocs.io/"),
-        "New API" => Some("https://docs.newapi.pro/"),
         "OpenAI" => Some("https://platform.openai.com/api-keys"),
         "Anthropic" => Some("https://console.anthropic.com/settings/keys"),
         "Gemini" => Some("https://aistudio.google.com/app/apikey"),
@@ -4552,7 +4585,7 @@ fn provider_api_key_url(provider_name: &str) -> Option<&'static str> {
         "Mistral" => Some("https://console.mistral.ai/api-keys/"),
         "Cohere" => Some("https://dashboard.cohere.com/api-keys"),
         "BaiduYiyan" => Some("https://console.bce.baidu.com/qianfan/ais/console/apiKey"),
-        "Meituan" => Some("https://longcat.chat/platform/api_keys"),
+        "Meituan" | "LongCat" => Some("https://longcat.chat/platform/api_keys"),
         "Bedrock" => {
             Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-2#/users")
         }
@@ -4704,11 +4737,12 @@ fn push_default_model_selector(b: &mut String, field: &DefaultModelField, zh: bo
     b.push_str("Label' for='");
     b.push_str(field.dom_id);
     b.push_str("'>");
-    if !field.label.is_empty() {
+    let label = if zh { field.label_zh } else { field.label };
+    if !label.is_empty() {
         if field.required {
             b.push_str("<span style='color:var(--d)'>*</span>");
         }
-        b.push_str(field.label);
+        b.push_str(label);
     }
     if !field.tooltip.is_empty() {
         // Upstream `system-setting.tsx` renders the tooltip text through `t()`
@@ -4942,7 +4976,13 @@ pub async fn providers_page(
                         })
                         .unwrap_or_default()
                 });
-            let kinds: Vec<&str> = available.model_types.iter().map(String::as_str).collect();
+            // Upstream renders the card tags through `sortModelTypes`
+            // (`orderMap`: chat 1, embedding 2, rerank 3, tts 4, asr/speech2text
+            // 5, image2text/vision 6, ocr 7), not in the backend's sorted-set
+            // order, so the pill order is sorted here with the shared table.
+            let mut kinds: Vec<String> = available.model_types.clone();
+            crate::providers::sort_model_types(&mut kinds);
+            let kinds: Vec<&str> = kinds.iter().map(String::as_str).collect();
             let uses_picker = provider_uses_model_picker(name);
             let shows_base = provider_shows_base_url(name);
             let key_optional = provider_api_key_optional(name);
@@ -6380,6 +6420,8 @@ const SEARCH_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "rerank_id",
     dom_id: "saRerankSel",
     label: "Model",
+
+    label_zh: "Model",
     update_type: "rerank_id",
     response_type: "rerank",
     accepted_types: &["rerank"],
@@ -6882,6 +6924,26 @@ mod kb_ui_tests {
                 6,
                 "{lang}: placeholder must be selectModelPlaceholder"
             );
+            // Upstream row labels come from `setting.*Model`: `LLM` /
+            // `Embedding Model` / `VLM` / `ASR` / `Rerank model` / `TTS`, with
+            // `zh.ts` translating only the embedding and rerank entries.
+            for label in if lang == "zh" {
+                ["LLM", "嵌入模型", "VLM", "ASR", "Rerank模型", "TTS"]
+            } else {
+                [
+                    "LLM",
+                    "Embedding Model",
+                    "VLM",
+                    "ASR",
+                    "Rerank model",
+                    "TTS",
+                ]
+            } {
+                assert!(
+                    section.contains(&format!("{label} <span class='tip-icon'")),
+                    "{lang}: upstream row label missing: {label}"
+                );
+            }
             assert!(
                 body.contains(&format!(
                     "\"placeholder\":\"{}\"",
@@ -8103,6 +8165,66 @@ connection: close
         let zh_body = body_of(providers_page(axum::extract::State(state), zh_req).await).await;
         assert!(zh_body.contains(">All<span id='providerCountAll'></span></button>"));
         assert!(zh_body.contains(">添加</button>"), "zh Add label missing");
+    }
+
+    /// Upstream `un-add-model.tsx` renders the provider tags through
+    /// `sortModelTypes` (`orderMap`) and derives the `ArrowUpRight` doc link
+    /// from `constants/llm.ts::APIMapUrl`. The catalog order, the provider
+    /// count and the per-type chip counts were machine-diffed against the
+    /// pinned `conf/llm_factories.json` (63 providers, rank desc then name,
+    /// counts chat 37 / embedding 25 / rerank 10 / tts 8 / speech2text 11 /
+    /// image2text 17 / ocr 4); this test locks the two remaining details.
+    #[tokio::test]
+    async fn available_cards_sort_tags_and_link_only_upstream_apimap_urls() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        // `orderMap`: tts (4) before speech2text/asr (5), ocr (7) last.
+        for marker in [
+            "data-provider='OpenAI' data-name='openai' data-k='chat embedding tts speech2text'",
+            "data-provider='StepFun' data-name='stepfun' data-k='chat tts speech2text image2text'",
+            "data-provider='Tongyi-Qianwen' data-name='tongyi-qianwen' data-k='chat embedding rerank tts speech2text image2text ocr'",
+        ] {
+            assert!(body.contains(marker), "card tag order mismatch: {marker}");
+        }
+        // The doc link only exists for the 47 upstream `APIMapUrl` factories.
+        assert!(
+            body.contains("OpenAI API key page"),
+            "OpenAI doc link missing"
+        );
+        assert!(body.contains("https://platform.openai.com/api-keys"));
+        assert!(
+            body.contains("https://longcat.chat/platform/api_keys"),
+            "LongCat link"
+        );
+        for engine in [
+            "Ollama",
+            "VLLM",
+            "LM-Studio",
+            "LocalAI",
+            "Xinference",
+            "New API",
+        ] {
+            assert_eq!(
+                provider_api_key_url(engine),
+                None,
+                "{engine} has no upstream APIMapUrl entry and must not render a card link"
+            );
+        }
+        assert_eq!(
+            provider_api_key_url("OpenAI"),
+            Some("https://platform.openai.com/api-keys")
+        );
+        assert_eq!(
+            provider_api_key_url("Meituan"),
+            provider_api_key_url("LongCat"),
+            "upstream maps both Meituan and LongCat to the same console"
+        );
+        assert_eq!(provider_api_key_url("Unknown"), None);
     }
 
     #[tokio::test]
