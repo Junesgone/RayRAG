@@ -170,8 +170,11 @@ done < <(find "$WORK" -type f \( -name '*.md' -o -name '*.rs' -o -name '*.json' 
     -o -name '*.html' -o -name '*.txt' -o -name 'Dockerfile' -o -name '*.example' \) -print0)
 
 echo "==> scanning the snapshot for leftovers"
-# `Junesgone/RayRAG` is the public repository itself, so it is the one
-# allowed spelling; every other occurrence of a personal identifier fails.
+# Two classes of leftovers fail the push: any personal identifier other than
+# the canonical `Junesgone/RayRAG` slug, and any pointer to an internal asset
+# (the ops log, the parity ledgers, the UI-traversal scripts) that the snapshot
+# does not ship -- the latter almost always means machine-specific or
+# engineering-only context leaked into product material.
 guard_hits=""
 while IFS= read -r file; do
     if grep -nIE 'junesgone|Nicpet|fnOS|rayrag-smoke-admin|Junesgone@|root@[A-Za-z0-9._-]+:[0-9]+' "$file" \
@@ -185,6 +188,16 @@ if [ -n "$guard_hits" ]; then
     printf '%s' "$guard_hits" >&2
     exit 1
 fi
+
+while IFS= read -r file; do
+    if grep -nIE '运维记录|MAINTENANCE\.md|ragflow-v0\.26\.4-coverage|ragflow-file-list|ragflow-ui-inventory|ui-traversal' "$file" \
+        | grep -q .; then
+        echo "ERROR: internal-asset reference remains in the snapshot: $file" >&2
+        grep -nIE '运维记录|MAINTENANCE\.md|ragflow-v0\.26\.4-coverage|ragflow-file-list|ragflow-ui-inventory|ui-traversal' "$file" >&2
+        exit 1
+    fi
+done < <(grep -rIln -E '运维记录|MAINTENANCE\.md|ragflow-v0\.26\.4-coverage|ragflow-file-list|ragflow-ui-inventory|ui-traversal' "$WORK" \
+    | grep -vE '/(LICENSE|NOTICE)$' | grep -v '^$')
 if find "$WORK" -type f -size +20M | grep -q .; then
     echo "ERROR: large binary artifacts remain in the snapshot:" >&2
     find "$WORK" -type f -size +20M >&2

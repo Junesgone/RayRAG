@@ -20,10 +20,10 @@ pub use search::SearchEngine;
 /// Build identity reported by the startup banner and the version APIs.
 ///
 /// `VERSION` is the crate version (`Cargo.toml`), `PARITY_SLICE` the RAGFlow
-/// parity slice currently landed (kept in step with
-/// `docs/ragflow-v0.26.4-coverage.md` and `运维记录.md`), and the remaining
-/// fields come from `build.rs` so a running process can be traced back to the
-/// revision it was built from.
+/// parity slice currently landed (kept in step with the per-file parity ledger
+/// and the operations log, both of which live in the internal engineering
+/// repository), and the remaining fields come from `build.rs` so a running
+/// process can be traced back to the revision it was built from.
 pub mod build_info {
     /// Crate version from `Cargo.toml`.
     pub const VERSION: &str = env!("CARGO_PKG_VERSION");
