@@ -24,10 +24,21 @@ DRY_RUN="${1:-}"
 
 # Files and directories that never ship.
 EXCLUDES=(
+    # Large model weights and development-only material.
     "models"
-    "scripts/publish-github.sh"
-    "scripts/ui-traversal"
+    "scripts"
     "docs/ui-traversal"
+    # Internal operations ledger and parity ledger (engineering assets, not
+    # product material).
+    "运维记录.md"
+    "MAINTENANCE.md"
+    "docs/ragflow-v0.26.4-coverage.md"
+    "docs/ragflow-file-list.txt"
+    "docs/ragflow-file-manifest.json"
+    "docs/ragflow-ui-inventory.md"
+    "docs/ragflow-ui-ref"
+    # Deployment scaffolding kept out of the published tree.
+    "helm"
     "web/agents.json"
     "web/canvas_versions.json"
     "web/chat_channels.json"
@@ -82,6 +93,52 @@ text = re.sub(
     text,
     flags=re.S,
 )
+# The published tree carries no operations or parity ledger, so the documents
+# that referenced them are rewritten deterministically.
+if path.endswith("README.md"):
+    text = text.replace("见 `CHANGELOG.md` 与 `运维记录.md`）。", "见 `CHANGELOG.md`）。")
+    text = text.replace(
+        "- 覆盖台账（RAGFlow v0.26.4 固定快照 `cb93883f`，4441 个文件，\n"
+        "  `docs/ragflow-v0.26.4-coverage.md`）：",
+        "- 对标进度（RAGFlow v0.26.4 固定快照，4441 个文件）：",
+    )
+    text = re.sub(
+        r"- 对标进度（RAGFlow v0\.26\.4 固定快照，4441 个文件）：.*?可复核（`--write` 刷新 Summary）。",
+        "- 对标进度（RAGFlow v0.26.4 固定快照，4441 个文件）：full **566** / aligned **275** /\n"
+        "  replaced **101** / N/A **61** / partial **41** / reference **3397** / unmapped **0**。\n"
+        "  逐文件台账与复核门禁属内部工程资产，不随本仓库发布。",
+        text,
+        flags=re.S,
+    )
+    text = text.replace(
+        "完整逐文件清单见 `docs/ragflow-v0.26.4-coverage.md`。该矩阵固定对标 RAGFlow",
+        "该矩阵固定对标 RAGFlow",
+    )
+    text = re.sub(
+        r"矩阵当前库存（[^）]*）：.*?摘要表与清单逐行一致。",
+        "矩阵当前库存见「项目状态」一节。",
+        text,
+        flags=re.S,
+    )
+    text = re.sub(
+        r"`aligned/partial/replaced/reference/unmapped` 状态。当前仓库保留\n"
+        r"固定提交的 4441 文件快照；纯 Rust coverage 门禁会直接读取固定 Git tree，校验 commit、\n"
+        r"路径、blob、字节、文本行数、状态库存和摘要：\n\n```bash\n.*?```\n",
+        "`aligned/partial/replaced/reference/unmapped` 状态；纯 Rust 门禁直接读取固定 Git tree，\n"
+        "校验 commit、路径、blob、字节、文本行数与摘要（台账与门禁保留在内部工程仓）。\n",
+        text,
+        flags=re.S,
+    )
+if path.endswith("CHANGELOG.md"):
+    text = re.sub(r"\*\*CDP 探针\*\* `scripts/ui-traversal/[^`]+`：", "**浏览器端验证**：", text)
+    text = re.sub(
+        r"- \*\*`scripts/publish-github\.sh`\*\*：.*?守卫扫描。",
+        "- **净化发布流程**：当前提交导出为净化快照（剔除开发脚本、抓取产物、模型权重与运行时状态，"
+        "并对机器标识脱敏）后推送 GitHub；脚本保留在内部工程仓。",
+        text,
+        flags=re.S,
+    )
+
 if text != original:
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
@@ -99,6 +156,11 @@ cp -f Cargo.lock "$WORK/Cargo.lock"
 for path in "${EXCLUDES[@]}"; do
     rm -rf "$WORK/$path"
 done
+# `scripts/docker-build.sh` stamps the git revision into the image, so the
+# documented Docker workflow needs it even though the rest of scripts/ is
+# development tooling.
+mkdir -p "$WORK/scripts"
+cp -f scripts/docker-build.sh "$WORK/scripts/docker-build.sh"
 # Development scratch scripts (bisect/patch helpers, the local SSH proxy).
 find "$WORK/scripts" -maxdepth 1 -name '_*.py' -delete
 rm -f "$WORK/scripts/ssh-websocket-proxy.py"
@@ -166,10 +228,14 @@ fi
 gh auth setup-git >/dev/null 2>&1 || true
 if ! gh repo view "$REPO" >/dev/null 2>&1; then
     echo "==> creating $REPO"
-    gh repo create "$REPO" --private \
+    gh repo create "$REPO" --public \
         --description "RayRAG — Rust implementation tracking RAGFlow v0.26.4 parity (zvec + PostgreSQL)" \
         >/dev/null
 fi
 echo "==> pushing to $REPO"
 git push -q origin main
+# The published repository is public; flip an existing private repo over.
+if [ "$(gh repo view "$REPO" --json visibility -q .visibility 2>/dev/null)" != "PUBLIC" ]; then
+    gh repo edit "$REPO" --visibility public --accept-visibility-change-consequences >/dev/null
+fi
 echo "==> published $(git rev-parse --short HEAD) to https://github.com/$REPO"
