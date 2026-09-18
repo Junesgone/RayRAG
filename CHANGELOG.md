@@ -2,7 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6c）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6d）
+
+### Changed
+
+- **检索请求改为上游形状（`search_id` 驱动）**：`/api/v1/retrieval` 支持 `search_id` —— 由应用记录
+  提供 `kb_ids`/`top_k`/`similarity_threshold`/`vector_similarity_weight`/`rerank_id`/`doc_ids`，
+  调用方显式给出的字段优先；同时接受上游单数 `kb_id` 与 `size` 别名。`/search` 页面改为发送
+  `{question, highlight, page, size, search_id, kb_id, doc_ids}`，侧栏控件仅在用户实际修改后才覆盖
+  对应参数（`window.__SEARCH_TOUCHED`）。
+
+### Fixed
+
+- **`BM25+Vector` 关闭时被强制 `vector_similarity_weight=0`**：该行为是 RayRAG 自造，导致未命中关键词的
+  提问检索不到任何结果（上一轮 CDP 需手动打开开关才能复现结果）。现在权重由应用配置或用户显式修改决定，
+  与上游 `SimilaritySliderFormField` 一致；探针在不触碰侧栏的情况下即可拿到真实结果。
 
 ### Added
 

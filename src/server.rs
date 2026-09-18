@@ -2626,26 +2626,52 @@ async fn retrieval(
     Json(b): Json<serde_json::Value>,
 ) -> Response {
     let q = b.get("question").and_then(|v| v.as_str()).unwrap_or("");
-    let top_k = b.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    // Upstream `/search` posts `search_id` (+ `kb_id`) and lets the server read
+    // the app's `search_config`; the settings sidebar only overrides the fields
+    // the user actually touched. Every override below therefore falls back to
+    // the application record before the shared defaults.
+    let search_app = b
+        .get("search_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .and_then(|id| state.search_apps.as_ref().and_then(|store| store.get(id)));
+    let top_k = b
+        .get("top_k")
+        .and_then(|v| v.as_u64())
+        .map(|value| value as usize)
+        .or_else(|| search_app.as_ref().map(|app| app.top_k as usize))
+        .unwrap_or(10);
     let page = b.get("page").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
     let rerank_id = b
         .get("rerank_id")
         .and_then(|value| value.as_str())
         .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let rerank = b.get("rerank").and_then(|v| v.as_bool()).unwrap_or(false) || rerank_id.is_some();
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            search_app
+                .as_ref()
+                .map(|app| app.rerank_id.trim())
+                .filter(|value| !value.is_empty())
+        });
+    let rerank = b.get("rerank").and_then(|v| v.as_bool()).unwrap_or(false)
+        || rerank_id.is_some()
+        || search_app.as_ref().map(|app| app.rerank).unwrap_or(false);
     let vector_weight = b
         .get("vector_similarity_weight")
         .and_then(|value| value.as_f64())
+        .or_else(|| search_app.as_ref().map(|app| app.vector_similarity_weight))
         .unwrap_or(0.3)
         .clamp(0.0, 1.0) as f32;
     let threshold = b
         .get("similarity_threshold")
         .and_then(|value| value.as_f64())
+        .or_else(|| search_app.as_ref().map(|app| app.similarity_threshold))
         .unwrap_or(0.2)
         .clamp(0.0, 1.0) as f32;
+    // Upstream sends the singular `kb_id`; RayRAG's own clients use `kb_ids`.
     let kb_ids: Vec<String> = b
         .get("kb_ids")
+        .or_else(|| b.get("kb_id"))
         .and_then(|value| value.as_array())
         .map(|values| {
             values
@@ -2653,16 +2679,24 @@ async fn retrieval(
                 .filter_map(|value| value.as_str().map(str::to_string))
                 .collect::<Vec<_>>()
         })
+        .filter(|values| !values.is_empty())
+        .or_else(|| search_app.as_ref().map(|app| app.kb_ids.clone()))
         .unwrap_or_default();
-    let doc_ids: Option<Vec<String>> =
-        b.get("doc_ids")
-            .and_then(|value| value.as_array())
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-            });
+    let doc_ids: Option<Vec<String>> = b
+        .get("doc_ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .or_else(|| {
+            search_app
+                .as_ref()
+                .map(|app| app.doc_ids.clone())
+                .filter(|ids| !ids.is_empty())
+        });
     let filtered_doc_ids = match crate::api::document_metadata::resolve_metadata_doc_ids(
         &state,
         &kb_ids,
@@ -4951,6 +4985,138 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Upstream `next-search/hooks.ts` posts `{kb_id, question, search_id, page,
+    /// size}`; the retrieval endpoint resolves the app's `search_config` for
+    /// every field the caller leaves out.
+    #[tokio::test]
+    async fn retrieval_resolves_search_app_config() {
+        let mut env = test_env();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-retrieval-app-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        Arc::get_mut(&mut env.state).unwrap().search_apps = Some(store.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Retrieval KB", "d")
+            .unwrap();
+        let app = store
+            .create(
+                "test-user",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "retrieval-app".into(),
+                    kb_ids: vec![kb.id.clone()],
+                    top_k: 10,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        // Only `search_id` + the question: the knowledge base, the weights and
+        // the page size all come from the application record.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "what is rayrag",
+                            "search_id": app.id,
+                            "size": 10,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // The test environment has no embedder, so the app config resolves and
+        // the request reaches the retrieval stage, which reports the missing
+        // embedding model instead of "kb_id is required".
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+        assert!(
+            !body.contains("At least one accessible kb_id is required"),
+            "the app config must supply the knowledge base: {body}"
+        );
+        // A request without `kb_ids` and without a resolvable app is still
+        // rejected, exactly like before.
+        let bare = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "what is rayrag" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bare.status(), StatusCode::BAD_REQUEST);
+        let body = String::from_utf8(
+            to_bytes(bare.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("At least one accessible kb_id is required"));
+        // The singular upstream `kb_id` field is accepted as well.
+        let singular = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "what is rayrag",
+                            "kb_id": [kb.id.clone()],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Same embedder-less environment: the singular `kb_id` must be accepted
+        // (no "kb_id is required" error) even though retrieval cannot run.
+        let status = singular.status();
+        let body = String::from_utf8(
+            to_bytes(singular.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+        assert!(
+            !body.contains("At least one accessible kb_id is required"),
+            "the singular kb_id alias must be accepted: {body}"
+        );
     }
 
     /// Upstream `api.searchCompletion` / `api.chatsMindmap`: the search answer
