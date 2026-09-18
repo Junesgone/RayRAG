@@ -63,6 +63,11 @@ original = text
 text = text.replace("/home/junesgone", "$HOME")
 text = text.replace("junesgone", "user").replace("Junesgone", "User")
 text = text.replace("Nicpet", "dev-host")
+text = text.replace("fnOS Chrome 149", "Chrome").replace("fnOS Chrome", "Chrome")
+text = text.replace("fnOS", "自托管主机")
+# `<user>@<host>:<port>` SSH references and LAN endpoints.
+text = re.sub(r"root@[A-Za-z0-9._-]+:[0-9]+", "root@<host>:<port>", text)
+text = re.sub(r"http://192\.168\.[0-9]+\.[0-9]+:18888", "http://<searxng-host>:18888", text)
 text = text.replace("rayrag-smoke-admin", "<redacted>")
 text = re.sub(r"[A-Za-z0-9._%+-]*Junesgone[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+", "user@example.com", text)
 # The environment baseline section of the ops log describes one private host.
@@ -107,7 +112,8 @@ done < <(find "$WORK" -type f \( -name '*.md' -o -name '*.rs' -o -name '*.json' 
     -o -name '*.html' -o -name '*.txt' -o -name 'Dockerfile' -o -name '*.example' \) -print0)
 
 echo "==> scanning the snapshot for leftovers"
-if grep -rIl -E 'junesgone|Nicpet|rayrag-smoke-admin|Junesgone@' "$WORK" 2>/dev/null | grep -v '^$'; then
+if grep -rIln -E 'junesgone|Nicpet|fnOS|rayrag-smoke-admin|Junesgone@|root@[A-Za-z0-9._-]+:[0-9]+' "$WORK" \
+    | grep -vE '/(LICENSE|NOTICE)$' | grep -v '^$'; then
     echo "ERROR: personal identifiers remain in the snapshot" >&2
     exit 1
 fi
