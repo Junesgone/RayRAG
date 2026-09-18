@@ -68,6 +68,8 @@ text = text.replace("fnOS", "自托管主机")
 # `<user>@<host>:<port>` SSH references and LAN endpoints.
 text = re.sub(r"root@[A-Za-z0-9._-]+:[0-9]+", "root@<host>:<port>", text)
 text = re.sub(r"http://192\.168\.[0-9]+\.[0-9]+:18888", "http://<searxng-host>:18888", text)
+# The author's LAN host (used as the local model/OCR endpoint in the ops log).
+text = text.replace("192.168.3.6", "<host-lan-ip>")
 text = text.replace("rayrag-smoke-admin", "<redacted>")
 text = re.sub(r"[A-Za-z0-9._%+-]*Junesgone[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+", "user@example.com", text)
 # The environment baseline section of the ops log describes one private host.
@@ -162,6 +164,12 @@ if ! git remote get-url origin >/dev/null 2>&1; then
     git remote add origin "https://github.com/$REPO.git"
 fi
 gh auth setup-git >/dev/null 2>&1 || true
+if ! gh repo view "$REPO" >/dev/null 2>&1; then
+    echo "==> creating $REPO"
+    gh repo create "$REPO" --private \
+        --description "RayRAG — Rust implementation tracking RAGFlow v0.26.4 parity (zvec + PostgreSQL)" \
+        >/dev/null
+fi
 echo "==> pushing to $REPO"
 git push -q origin main
 echo "==> published $(git rev-parse --short HEAD) to https://github.com/$REPO"
