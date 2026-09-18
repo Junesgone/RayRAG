@@ -4,6 +4,12 @@ All notable changes to RayRAG are documented in this file.
 
 ## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5v）
 
+### Added
+
+- **Apache-2.0 `LICENSE` 与 `NOTICE`**：注明对标来源 RAGFlow v0.26.4 与第三方资产许可。
+- **`scripts/publish-github.sh`**：把当前提交导出为净化快照（剔除探针脚本、UI 抓取、`node_modules`、
+  模型权重、运行时状态）并做确定性脱敏后推送到 GitHub，推送前有守卫扫描。
+
 ### Changed
 
 - **相关搜索端到端对齐上游 next-search**：检索应用配置补齐 `search_config` 全字段（doc_ids/chat_id/llm_setting/
