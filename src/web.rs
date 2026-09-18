@@ -30,6 +30,8 @@ fn t(k: &str, zh: bool) -> &str {
         "No data found." => "没有找到数据。",
         "Searching..." => "搜索中",
         "Select all" => "全选",
+        // Upstream `common.deleteModalTitle`.
+        "Are you sure you want to delete?" => "确定删除吗?",
         "Chat" => "对话",
         "Chat apps" => "对话应用",
         "Create chat" => "创建对话应用",
@@ -5241,7 +5243,7 @@ document.getElementById('apModels').addEventListener('input',function(){apSearch
 </script>"##,
     );
     b.push_str(
-        r#"<div class='modal-overlay' id='deleteModelInstanceModal' data-testid='delete-model-instance-dialog' onclick='if(event.target===this)closeDeleteModelInstance()'><div class='modal' style='max-width:460px' role='alertdialog' aria-modal='true' aria-labelledby='deleteModelInstanceTitle'><h2 id='deleteModelInstanceTitle'>Confirm</h2><p id='deleteModelInstanceText' style='margin-top:12px;color:var(--t2)'></p><p id='deleteModelInstanceStatus' class='added-model-dialog-status'></p><div class='added-model-dialog-actions'><button class='btn btn-o' type='button' onclick='closeDeleteModelInstance()'>Cancel</button><button class='btn btn-d' id='deleteModelInstanceOk' type='button' onclick='confirmDeleteModelInstance()'>Confirm</button></div></div></div>
+        r#"<div class='modal-overlay' id='deleteModelInstanceModal' data-testid='confirm-delete-dialog' onclick='if(event.target===this)closeDeleteModelInstance()'><div class='modal confirm-delete-dialog' role='alertdialog' aria-modal='true' aria-labelledby='deleteModelInstanceTitle'><div class='confirm-delete-head'><h2 id='deleteModelInstanceTitle'></h2><button class='confirm-delete-close' type='button' aria-label='Close' data-testid='confirm-delete-dialog-close-btn' onclick='closeDeleteModelInstance()'></button></div><p id='deleteModelInstanceText' class='confirm-delete-body'></p><p id='deleteModelInstanceStatus' class='added-model-dialog-status'></p><div class='added-model-dialog-actions'><button class='btn btn-o' type='button' id='deleteModelInstanceCancel' data-testid='confirm-delete-dialog-cancel-btn' onclick='closeDeleteModelInstance()'></button><button class='btn btn-d' id='deleteModelInstanceOk' type='button' data-testid='confirm-delete-dialog-confirm-btn' onclick='confirmDeleteModelInstance()'></button></div></div></div>
 <div class='modal-overlay' id='editInstanceModelModal' data-testid='edit-instance-model-dialog' onclick='if(event.target===this)closeEditInstanceModel()'><div class='modal provider-custom-model-modal' role='dialog' aria-modal='true' aria-labelledby='editInstanceModelTitle'><h2 id='editInstanceModelTitle'>Edit model</h2><label class='provider-instance-field'>Name<input id='editInstanceModelName' disabled></label><div class='provider-instance-field' id='eimTypesField'><span id='eimTypesLabel'>Model type</span><div class='pi-multiselect' id='eimTypes'><button type='button' class='pi-multiselect-trigger' id='eimTypesTrigger' data-testid='eim-types-trigger' aria-haspopup='listbox' aria-expanded='false' onclick='piMsToggleOpen(&quot;eimTypes&quot;,event)'><span class='pi-multiselect-values' id='eimTypesValues'><span class='pi-multiselect-placeholder' id='eimTypesPlaceholder'>Select value</span></span><span class='pi-multiselect-controls'><span class='pi-multiselect-clear' id='eimTypesClear' role='button' tabindex='0' aria-label='Clear' hidden onclick='piMsClear(&quot;eimTypes&quot;,event)'></span><span class='pi-multiselect-chevron' aria-hidden='true'>⌄</span></span></button><div class='pi-multiselect-popover' id='eimTypesPopover' hidden role='listbox' aria-multiselectable='true' aria-label='Model type'><div class='pi-multiselect-search'><span aria-hidden='true'>⌕</span><input id='eimTypesSearch' type='search' placeholder='Search...' aria-label='Search model types' oninput='piMsRender(&quot;eimTypes&quot;)'></div><div class='pi-multiselect-options' id='eimTypesOptions'></div><div class='pi-multiselect-footer'><button type='button' class='pi-multiselect-action' id='eimTypesClearAll' onclick='piMsClear(&quot;eimTypes&quot;)'>Clear</button><span class='pi-multiselect-sep' aria-hidden='true'></span><button type='button' class='pi-multiselect-action' id='eimTypesClose' onclick='piMsClose(&quot;eimTypes&quot;)'>Close</button></div></div></div></div><label class='provider-instance-field'>Max tokens<input id='editInstanceModelMaxTokens' type='number' disabled></label><p id='editInstanceModelStatus' class='provider-instance-error'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' id='editInstanceModelCancel' onclick='closeEditInstanceModel()'>Cancel</button><button class='btn btn-p' id='editInstanceModelOk' type='button' onclick='saveEditInstanceModel()'>Confirm</button></div></div></div><script>const ADDED_PROVIDER_DIRECTORY="#,
     );
     let added_provider_directory: Vec<_> = providers
@@ -5332,6 +5334,14 @@ document.getElementById('apModels').addEventListener('input',function(){apSearch
         // `setting.editCustomModelTitle` ("Edit model"/"编辑模型").
         "editModel": t("Edit model", zh),
         "hideModels": t("Hide models", zh),
+        // Upstream `ConfirmDeleteDialog`: `common.deleteModalTitle` ("Are you
+        // sure you want to delete?" / 确定删除吗?), the footer `common.cancel` /
+        // `common.delete`, and the instance name rendered in the content slot
+        // (upstream's own call site passes no `content`, RayRAG keeps the name
+        // so the operator can confirm which instance is removed).
+        "deleteModalTitle": t("Are you sure you want to delete?", zh),
+        "deleteLabel": t("Delete", zh),
+        "cancel": t("Cancel", zh),
     });
     // Upstream `components/ui/toggle-list.tsx` + `use-list-models-options.tsx`
     // + `use-custom-model-fields.tsx` copy (setting.* i18n keys).
@@ -5406,7 +5416,7 @@ function modelTypeBadge(type){return addedNode('span','badge added-model-type',t
 async function loadAddedInstanceModels(providerName,instanceName,content){content.replaceChildren(addedNode('p','added-model-loading','Loading…'));var models=await addedApi(addedUrl(providerName,instanceName));content.replaceChildren();content.dataset.loaded='true';var types=[];(models||[]).forEach(function(model){(model.model_type||[]).forEach(function(type){if(types.indexOf(type)<0)types.push(type)})});if(types.length){var summary=addedNode('div','added-model-type-summary');types.forEach(function(type){summary.appendChild(modelTypeBadge(MODEL_TYPE_LABELS[type]||type))});content.appendChild(summary)}var list=addedNode('ul','added-model-rows');(models||[]).forEach(function(model){list.appendChild(renderAddedModel(providerName,instanceName,model,content))});if(!models||!models.length)list.appendChild(addedNode('li','added-model-empty','No models.'));content.appendChild(list)}
 function renderAddedModel(providerName,instanceName,model,content){var row=addedNode('li','added-model-row');var details=addedNode('div','added-model-details');details.appendChild(addedNode('span','added-model-name',model.name));(model.model_type||[]).slice(0,3).forEach(function(type){details.appendChild(modelTypeBadge(type))});if((model.model_type||[]).length>3){var more=modelTypeBadge('...');more.title=model.model_type.slice(3).join('\\n');details.appendChild(more)}var edit=addedNode('button','btn btn-o btn-sm added-model-edit');edit.type='button';edit.innerHTML=PI_PENCIL_SVG;edit.setAttribute('aria-label',ADDED_LABELS.editModel);edit.title=ADDED_LABELS.editModel;edit.addEventListener('click',function(event){event.stopPropagation();openEditInstanceModel(providerName,instanceName,model,content)});details.appendChild(edit);row.appendChild(details);var toggle=document.createElement('input');toggle.type='checkbox';toggle.className='added-model-switch';toggle.setAttribute('role','switch');toggle.setAttribute('aria-label','Set '+model.name+' active');toggle.checked=model.status==='active';toggle.setAttribute('aria-checked',String(toggle.checked));toggle.addEventListener('change',function(){updateAddedModelStatus(toggle,providerName,instanceName,model.name)});row.appendChild(toggle);return row}
 async function updateAddedModelStatus(toggle,providerName,instanceName,modelName){var checked=toggle.checked;toggle.disabled=true;try{await addedApi(addedUrl(providerName,instanceName,modelName),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:checked?'active':'inactive'})});toggle.setAttribute('aria-checked',String(checked));await loadModelOptions()}catch(error){toggle.checked=!checked;toggle.setAttribute('aria-checked',String(toggle.checked));alert(error.message)}finally{toggle.disabled=false}}
-function openDeleteModelInstance(providerName,instanceName){var modal=document.getElementById('deleteModelInstanceModal');modal.dataset.provider=providerName;modal.dataset.instance=instanceName;document.getElementById('deleteModelInstanceText').textContent='Are you sure you want to delete the instance "'+instanceName+'"?';document.getElementById('deleteModelInstanceStatus').textContent='';modal.classList.add('show')}
+function openDeleteModelInstance(providerName,instanceName){var modal=document.getElementById('deleteModelInstanceModal');modal.dataset.provider=providerName;modal.dataset.instance=instanceName;document.getElementById('deleteModelInstanceTitle').textContent=ADDED_LABELS.deleteModalTitle;document.getElementById('deleteModelInstanceText').textContent=instanceName;var cancel=document.getElementById('deleteModelInstanceCancel');if(cancel)cancel.textContent=ADDED_LABELS.cancel;var ok=document.getElementById('deleteModelInstanceOk');if(ok)ok.textContent=ADDED_LABELS.deleteLabel;var close=document.querySelector('#deleteModelInstanceModal .confirm-delete-close');if(close)close.innerHTML=PI_X_SVG;document.getElementById('deleteModelInstanceStatus').textContent='';modal.classList.add('show')}
 function closeDeleteModelInstance(){document.getElementById('deleteModelInstanceModal').classList.remove('show')}
 async function confirmDeleteModelInstance(){var modal=document.getElementById('deleteModelInstanceModal');var button=document.getElementById('deleteModelInstanceOk');var status=document.getElementById('deleteModelInstanceStatus');button.disabled=true;status.textContent='Deleting…';try{await addedApi(addedUrl(modal.dataset.provider),{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[modal.dataset.instance]})});closeDeleteModelInstance();await Promise.all([loadAddedModels(),loadModelOptions()])}catch(error){status.textContent='Error: '+error.message}finally{button.disabled=false}}
 function openEditInstanceModel(providerName,instanceName,model,content){var modal=document.getElementById('editInstanceModelModal');modal.dataset.provider=providerName;modal.dataset.instance=instanceName;modal.dataset.model=model.name;modal.dataset.contentId=content.id;document.getElementById('editInstanceModelName').value=model.name;document.getElementById('editInstanceModelMaxTokens').value=model.max_tokens||0;piMsSetSelection('eimTypes',model.model_type||[]);piMsClose('eimTypes');document.getElementById('editInstanceModelStatus').textContent='';modal.classList.add('show')}
@@ -8252,6 +8262,63 @@ connection: close
         assert_eq!(provider_api_key_url("Unknown"), None);
     }
 
+    /// Upstream `used-model.tsx` + `components/confirm-delete-dialog.tsx`:
+    /// the added-model rows are `LlmIcon` glyphs (no RayRAG letter tile) inside
+    /// the upstream `bg-bg-card` list, and the delete affordance opens the
+    /// AlertDialog shell — `common.deleteModalTitle` title, lucide `X` close,
+    /// `common.cancel` / `common.delete` footer with the upstream test ids.
+    #[tokio::test]
+    async fn added_models_use_upstream_icons_and_confirm_delete_dialog() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        for marker in [
+            "data-testid='confirm-delete-dialog'",
+            "class='modal confirm-delete-dialog'",
+            "class='confirm-delete-head'",
+            "data-testid='confirm-delete-dialog-close-btn'",
+            "data-testid='confirm-delete-dialog-cancel-btn'",
+            "data-testid='confirm-delete-dialog-confirm-btn'",
+            "document.getElementById('deleteModelInstanceTitle').textContent=ADDED_LABELS.deleteModalTitle",
+            "ok.textContent=ADDED_LABELS.deleteLabel",
+            "close.innerHTML=PI_X_SVG",
+            "\"deleteModalTitle\":\"Are you sure you want to delete?\"",
+            "\"deleteLabel\":\"Delete\"",
+        ] {
+            assert!(
+                body.contains(marker),
+                "delete dialog marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            // `LlmIcon` renders the bare glyph: no background tile, no radius.
+            ".available-provider-icon{display:flex;align-items:center;justify-content:center;width:32px;height:32px;color:var(--t)}",
+            ".added-model-provider-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--t2)}",
+            // Upstream `bg-bg-card` list with `border-b-[0.5px]` rows.
+            ".added-model-rows{list-style:none;margin:0;padding:0;border-radius:var(--r);background:var(--bgc);max-height:384px;overflow:auto}",
+            ".added-model-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-bottom:.5px solid var(--bd);transition:background .15s}",
+            ".confirm-delete-close svg{width:16px;height:16px}",
+        ] {
+            assert!(css.contains(rule), "css rule missing: {rule}");
+        }
+        // The provider icons must not keep RayRAG's letter tile (other catalog
+        // cards legitimately use that style, so the check is scoped).
+        for class in [".available-provider-icon{", ".added-model-provider-icon{"] {
+            let start = css.find(class).expect("icon rule");
+            let end = css[start..].find('}').expect("rule end") + start;
+            let rule = &css[start..end];
+            assert!(
+                !rule.contains("background:var(--nab)") && !rule.contains("border-radius"),
+                "letter tile still painted on {class}: {rule}"
+            );
+        }
+    }
+
     /// Upstream `components/ui/multi-select.tsx` + `add-custom-model-dialog.tsx`:
     /// the popover is a cmdk `Command`, so the model-type picker carries the
     /// `(Select all)` row (`common.selectAll`), scores options with
@@ -8924,7 +8991,10 @@ connection: close
             "piApplyPickerLabels",
             "showProviderCustomModel('edit',model.name)",
             "modelTypeDisplayName",
-            "delete-model-instance-dialog",
+            // The delete affordance now renders the upstream
+            // `ConfirmDeleteDialog` shell (see
+            // `added_models_use_upstream_icons_and_confirm_delete_dialog`).
+            "data-testid='confirm-delete-dialog'",
             "edit-instance-model-dialog",
             "role','switch'",
             // Upstream `used-model.tsx` labels the pencil with

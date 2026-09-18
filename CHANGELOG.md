@@ -2,6 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.0] — 2026-09-19（对标批次 v0.3.7d）
+
+### Changed
+
+- **版本号进入 0.4.0**：`Cargo.toml version = 0.4.0`，对标切片常量同步为 `v0.3.7d`；
+  自此每次公开发布都会带上新的版本号与 GitHub Release 记录。
+
+### Fixed
+
+- **模型供应商图标回归上游 `LlmIcon` 画法**：去掉 RayRAG 自加的字母色块（`background:var(--nab)` + 圆角），
+  统一 32px 品牌字形、颜色继承上下文（Available 卡片 `text-text-primary`，Added 行 `text-text-secondary`），
+  与上游 `un-add-model.tsx`/`used-model.tsx` 的 `<LlmIcon width={32}>` 一致。
+- **已添加模型列表几何**：列表容器底色改回上游 `bg-bg-card`，行分隔线 `.5px`（上游 `border-b-[0.5px]`）。
+- **实例删除确认弹层对齐 `ConfirmDeleteDialog`**：标题 `common.deleteModalTitle`、右上角 lucide `X` 关闭、
+  底部 `common.cancel` / `common.delete`，容器与按钮带上游 testid
+  （`confirm-delete-dialog` / `-cancel-btn` / `-confirm-btn`）。
+
 ## [0.3.4] — 2026-09-19（对标批次 v0.3.7c）
 
 ### Added
