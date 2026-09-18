@@ -47,6 +47,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # Container-local wall clock; RAGFlow's compose exposes the same knob as
+      # TIMEZONE. Date filters and log timestamps use it.
+      TZ: ${RAYRAG_TIMEZONE:-Asia/Shanghai}
       RAYRAG_POSTGRES_URL: postgresql://${RAYRAG_POSTGRES_USER:-rayrag}:${RAYRAG_POSTGRES_PASSWORD}@postgres:5432/${RAYRAG_POSTGRES_DATABASE:-rayrag}
       RAYRAG_POSTGRES_REQUIRED_VERSION: "18.4"
       RAYRAG_POSTGRES_NAMESPACE: ${RAYRAG_POSTGRES_NAMESPACE:-default}

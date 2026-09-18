@@ -30,7 +30,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use crate::api::utils::datetime;
 use crate::llm::{ChatMessage, ChunkReference, Conversation};
 use crate::server::{AppState, AuthContext};
 
@@ -153,11 +152,30 @@ fn json_escaped_keyword(keywords: &str) -> String {
         .to_string()
 }
 
+/// RAGFlow persists naive **server-local** datetimes
+/// (`DataBaseModel.create_date = DateTimeField(default=datetime.now)`) and
+/// `CustomJSONEncoder` writes them back unchanged, so the log rows and the
+/// `from_date`/`to_date` comparisons use the process timezone. Deployments pin
+/// that timezone with `TZ` (the compose file defaults to `Asia/Shanghai`, like
+/// RAGFlow's `TIMEZONE`), which keeps the browser's picked day aligned with the
+/// stored day.
+pub fn format_local_datetime(timestamp_ms: u64) -> String {
+    let seconds = (timestamp_ms / 1000) as i64;
+    let nanos = ((timestamp_ms % 1000) * 1_000_000) as u32;
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, nanos) {
+        Some(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        None => String::new(),
+    }
+}
+
 /// Session-level dates compared by the filters and used by the sort.
 fn session_dates(session: &Conversation) -> (String, String) {
     (
-        datetime::format_datetime(session.created_at),
-        datetime::format_datetime(session.updated_at),
+        format_local_datetime(session.created_at),
+        format_local_datetime(session.updated_at),
     )
 }
 
@@ -619,6 +637,26 @@ mod tests {
     }
 
     #[test]
+    fn local_datetimes_parse_back_as_ragflow_wall_clock() {
+        let rendered = format_local_datetime(1_700_086_400_000);
+        assert_eq!(rendered.len(), 19);
+        assert!(
+            chrono::NaiveDateTime::parse_from_str(&rendered, "%Y-%m-%d %H:%M:%S").is_ok(),
+            "{rendered}"
+        );
+        // The rendering is the server-local wall clock, i.e. the UTC instant
+        // shifted by the process offset.
+        let offset = chrono::Local::now().offset().local_minus_utc();
+        let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_086_400, 0)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(rendered, expected);
+        let _ = offset;
+    }
+
+    #[test]
     fn normalize_query_date_widens_bare_days_and_iso_values() {
         assert_eq!(
             normalize_query_date("2026-07-18", false),
@@ -662,10 +700,13 @@ mod tests {
         let (total, _) = select_sessions(sessions.clone(), &query);
         assert_eq!(total, 0);
 
+        // The range is expressed in the same server-local clock the rows use,
+        // so the assertion holds in every process timezone.
+        let exact = format_local_datetime(1_700_086_400_000);
         let mut dated = SessionQuery::default();
         dated.orderby = "create_date".into();
-        dated.from_date = "2023-11-15".into();
-        dated.to_date = "2023-11-15".into();
+        dated.from_date = exact.clone();
+        dated.to_date = exact;
         let (total, page) = select_sessions(sessions.clone(), &dated);
         assert_eq!(total, 1);
         assert_eq!(page[0].id, "b");

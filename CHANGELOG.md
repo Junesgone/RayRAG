@@ -20,6 +20,10 @@ All notable changes to RayRAG are documented in this file.
   版本标题与错误状态，日志页的 Version 列与红/绿状态点取自真实运行结果。
 - `/agent/{id}` 编辑器页新增 Log 入口（对应上游编辑器下拉菜单的 `flow.log`）。
 
+### Fixed
+
+- **容器时区与浏览器不一致导致日期筛选为空**：新增 `RAYRAG_TIMEZONE`（`docker-compose.yml` 注入容器 `TZ`，默认 `Asia/Shanghai`，与 RAGFlow 的 `TIMEZONE` 同一语义），日志行时间与日期区间比较改用服务端本地时钟（对齐上游 `DataBaseModel` 的 `datetime.now` 本地时间与 `CustomJSONEncoder`）。
+
 ### Note
 
 - 上游 v0.26.4 的日志页自身请求了已随 `sdk` blueprint 迁移而消失的 `/v1/canvas/{id}/sessions`，
