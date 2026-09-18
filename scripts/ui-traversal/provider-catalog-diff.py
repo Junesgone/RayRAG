@@ -66,10 +66,8 @@ SYSTEM_SETTING_LABELS = {
 
 def expected_providers(factories):
     def model_types(factory):
-        if not factory.get("llm"):
-            return []
         types = set()
-        for llm in factory["llm"]:
+        for llm in factory.get("llm", []):
             raw = llm.get("model_type")
             if isinstance(raw, list):
                 types.update(raw)
