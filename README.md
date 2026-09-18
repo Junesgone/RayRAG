@@ -317,7 +317,7 @@ For the native zvec vector backend add `--features postgres-backend,zvec-backend
 | `Knowledge Base` | create KBs, upload/parse documents, inspect and edit chunks, knowledge graph, retrieval test, logs |
 | `Chat` | create assistants, streaming answers, citations, conversation management |
 | `Search` | multi-KB retrieval, reranking, related-question suggestions |
-| `Agent` | visual canvas: retrieval, web search, code execution, branches, loops |
+| `Agent` | visual canvas: retrieval, web search, code execution, branches, loops — each agent keeps a run log you can search, sort and export as CSV |
 | `Files` | one place for every uploaded file |
 | `Skills` | skill index configuration and search |
 | `Memories` | long-term memory (write and recall) |
