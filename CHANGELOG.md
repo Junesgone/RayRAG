@@ -2,7 +2,30 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6a）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6b）
+
+### Added
+
+- **`/chunk` 切片工作台子树**：新增上游 `Routes.Chunk` 的四个路由——`/chunk`（仅头部外壳）、
+  `/chunk/parsed/chunks`、`/chunk/chunk/{doc}`、`/chunk/result/{doc}`。头部按上游
+  `pages/chunk/index.tsx` 复刻：面包屑（`Agent` 链接到知识库 + 当前文档名）、`Segmented`
+  三选项（`Parsed results` / `Chunk result` / `Result view`，活动态与 `data-section` 对齐）、
+  ghost 省略号菜单（Refresh/Copy）与带 lucide `Save` 图标的 Save；面板按上游
+  `chunk-toolbar.tsx`（30px 粗体标题、ghost `Copy` 图标按钮、outline `Export`）与
+  `chunk-card.tsx`（`ParsedPageCard` 页面标签+正文；`ChunkCard` 含 lucide `Annoyed`、
+  `Switch` + `Active` 文案、四行截断正文）渲染。
+- **数据为真实切片**：数据集/文档由 `?knowledgeId=`（上游 `QueryStringMap.KnowledgeId`）解析，
+  切片来自 `/api/v1/datasets/{id}/documents/{did}/chunks`；`Active` 开关经 `Save` 以
+  `PATCH …/chunks/{chunk_id}`（`{available}`）持久化，Copy 复制到剪贴板、Export 下载 JSON，
+  文档仍在解析时状态行给出提示。
+- **台账更正**：上游该子树实为**静态原型**（面包屑 `Agent`/`xxx`、Save 无处理函数、两个面板
+  都是 `new Array(10).fill(<同一段示例文本>)`），故 8 个文件由 `reference` 纠正为 `replaced`
+  并逐行记录“路由对齐 + 真实数据替代”的取舍（replaced 101→109）。
+
+### Fixed
+
+- **`/chunk` 面板在文档未解析完成时无反馈**：现在状态行显示“文档仍在解析中，请稍后刷新”，
+  避免空面板被误认为功能缺失。
 
 ### Changed
 

@@ -5150,6 +5150,288 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Upstream `pages/chunk/index.tsx` sections. The React page exposes the three
+/// panel routes through a `Segmented` control whose values are
+/// `Routes.ParsedResult` (`/chunk/parsed`), `Routes.ChunkResult` (`/chunk/chunk`)
+/// and `Routes.ResultView` (`/chunk/result`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChunkSection {
+    Parsed,
+    Chunk,
+    Result,
+}
+
+impl ChunkSection {
+    /// Route prefix used by the segmented control (upstream compares
+    /// `location.pathname.split('/').slice(0, 3).join('/')`).
+    fn key(self) -> &'static str {
+        match self {
+            Self::Parsed => "/chunk/parsed",
+            Self::Chunk => "/chunk/chunk",
+            Self::Result => "/chunk/result",
+        }
+    }
+
+    /// Upstream `options` labels in `pages/chunk/index.tsx`.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Parsed => "Parsed results",
+            Self::Chunk => "Chunk result",
+            Self::Result => "Result view",
+        }
+    }
+
+    /// Concrete path for the control, keeping the document id when present.
+    fn href(self, doc_id: &str, query: &str) -> String {
+        let base = match self {
+            Self::Parsed => "/chunk/parsed/chunks".to_string(),
+            Self::Chunk => format!("/chunk/chunk/{doc_id}"),
+            Self::Result => format!("/chunk/result/{doc_id}"),
+        };
+        if query.is_empty() {
+            base
+        } else {
+            format!("{base}?{query}")
+        }
+    }
+}
+
+const CHUNK_SECTIONS: [ChunkSection; 3] = [
+    ChunkSection::Parsed,
+    ChunkSection::Chunk,
+    ChunkSection::Result,
+];
+
+/// Upstream `pages/chunk/index.tsx` header: breadcrumb, the `Segmented`
+/// control over the three panel routes and the ghost ellipsis / Save pair.
+/// Upstream renders literal `Agent` / `xxx` placeholders in the breadcrumb;
+/// RayRAG keeps the `Agent` link (pointing at the dataset from
+/// `?knowledgeId=`) but shows the resolved document name instead of `xxx`.
+fn chunk_workbench_header(active: ChunkSection, doc_id: &str, query: &str, zh: bool) -> String {
+    let mut segments = String::new();
+    for section in CHUNK_SECTIONS {
+        segments.push_str("<a role='tab' class='chunk-segment");
+        if section == active {
+            segments.push_str(" active");
+        }
+        segments.push_str("' data-section='");
+        segments.push_str(section.key());
+        segments.push_str("' aria-selected='");
+        segments.push_str(if section == active { "true" } else { "false" });
+        segments.push_str("' href='");
+        segments.push_str(&html_escape(&section.href(doc_id, query)));
+        segments.push_str("'>");
+        segments.push_str(section.label());
+        segments.push_str("</a>");
+    }
+    let dataset_href = if query.is_empty() {
+        "/datasets".to_string()
+    } else {
+        format!("/datasets?{query}")
+    };
+    let current = if doc_id.is_empty() {
+        active.label().to_string()
+    } else {
+        doc_id.to_string()
+    };
+    format!(
+        r#"<header class='chunk-header' data-testid='chunk-header'><nav class='chunk-breadcrumb' aria-label='Breadcrumb'><a class='chunk-breadcrumb-link' href='{dataset_href}'>Agent</a><span class='chunk-breadcrumb-sep' aria-hidden='true'>/</span><span class='chunk-breadcrumb-page' id='chunkBreadcrumbPage'>{current}</span></nav><div class='chunk-segmented' role='tablist' aria-label='Chunk views'>{segments}</div><div class='chunk-header-actions'><button class='btn btn-o chunk-icon-btn' type='button' aria-label='{more_label}' data-testid='chunk-more' onclick='chunkToggleMenu(event)'>{more_icon}</button><button class='btn btn-p btn-sm chunk-save' type='button' data-testid='chunk-save' onclick='chunkSaveAll()'>{save_icon}<span>{save_label}</span></button><div class='chunk-menu' id='chunkMenu' role='menu' hidden><button type='button' role='menuitem' onclick='chunkCloseMenu();chunkReload()'>{reload_label}</button><button type='button' role='menuitem' onclick='chunkCloseMenu();chunkCopyAll()'>{copy_label}</button></div></div></header>"#,
+        more_label = t("More", zh),
+        more_icon = CHUNK_ELLIPSIS_SVG,
+        save_icon = CHUNK_SAVE_SVG,
+        save_label = t("Save", zh),
+        reload_label = t("Refresh", zh),
+        copy_label = t("Copy", zh),
+    )
+}
+
+/// Upstream `pages/chunk/chunk-toolbar.tsx`: a 3xl heading plus the ghost copy
+/// icon button and the outline `Export` button.
+fn chunk_toolbar(title: &str, panel: &str, zh: bool) -> String {
+    format!(
+        r#"<div class='chunk-toolbar'><span class='chunk-toolbar-title'>{title}</span><div class='chunk-toolbar-actions'><button class='btn btn-o chunk-icon-btn' type='button' aria-label='{copy_label}' data-testid='chunk-copy-{panel}' onclick='chunkCopyPanel(&quot;{panel}&quot;)'>{copy_icon}</button><button class='btn btn-o btn-sm' type='button' data-testid='chunk-export-{panel}' onclick='chunkExportPanel(&quot;{panel}&quot;)'>{export_label}</button></div></div>"#,
+        copy_label = t("Copy", zh),
+        copy_icon = CHUNK_COPY_SVG,
+        export_label = t("Export", zh),
+    )
+}
+
+/// Shared browser script for the three panels: it resolves the dataset and
+/// document from `?knowledgeId=` / the route, loads the real chunks and renders
+/// the upstream card shapes. Upstream ships hard-coded demo cards here (ten
+/// copies of one sample text, `xxx` placeholders and a no-op Save), so the
+/// cards keep the upstream markup while the data is real.
+const CHUNK_WORKBENCH_JS: &str = r#"function chunkQuery(){var params=new URLSearchParams(location.search);return params.get('knowledgeId')||params.get('kb')||''}
+function chunkSection(){var parts=location.pathname.split('/').slice(0,3).join('/');return parts||'/chunk/parsed'}
+function chunkPanelCards(panel){var host=document.getElementById(panel==='parsed'?'chunkParsedList':'chunkChunkedList');return host?Array.from(host.querySelectorAll('.chunk-card')):[]}
+function chunkEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function chunkStatus(text,error){var node=document.getElementById('chunkStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
+async function chunkResolveDocument(){if(CHUNK_STATE.docId)return CHUNK_STATE.docId;if(!CHUNK_STATE.kbId)return '';var response=await fetch('/api/v1/datasets/'+encodeURIComponent(CHUNK_STATE.kbId)+'/documents');var data=await response.json();var docs=(data&&data.data)||[];if(docs.length&&docs[0].id){CHUNK_STATE.docId=docs[0].id;var name=document.getElementById('chunkBreadcrumbPage');if(name&&docs[0].name)name.textContent=docs[0].name}return CHUNK_STATE.docId}
+function chunkPageCard(page,content){var card=document.createElement('article');card.className='chunk-card chunk-card-page';card.dataset.testid='chunk-parsed-card';var label=document.createElement('p');label.className='chunk-card-page-label';label.textContent=page;var body=document.createElement('div');body.className='chunk-card-content';body.textContent=content;card.appendChild(label);card.appendChild(body);return card}
+function chunkChunkCard(chunk){var card=document.createElement('article');card.className='chunk-card';card.dataset.testid='chunk-result-card';card.dataset.id=chunk.id;var head=document.createElement('div');head.className='chunk-card-head';var icon=document.createElement('span');icon.className='chunk-card-icon';icon.innerHTML=CHUNK_ANNOYED_SVG;head.appendChild(icon);var actions=document.createElement('div');actions.className='chunk-card-actions';var toggle=document.createElement('input');toggle.type='checkbox';toggle.className='chunk-card-switch';toggle.setAttribute('role','switch');toggle.checked=chunk.available!==false;toggle.setAttribute('aria-checked',String(toggle.checked));toggle.setAttribute('aria-label','Active');toggle.addEventListener('change',function(){chunkToggleAvailable(chunk,toggle)});var active=document.createElement('span');active.className='chunk-card-active';active.textContent=CHUNK_LABELS.active;actions.appendChild(toggle);actions.appendChild(active);head.appendChild(actions);card.appendChild(head);var body=document.createElement('div');body.className='chunk-card-content chunk-card-clamp';body.textContent=chunk.content||'';card.appendChild(body);return card}
+function chunkRender(){var status=document.getElementById('chunkStatus');var list=document.getElementById('chunkParsedList');if(!CHUNK_STATE.kbId){if(status)status.textContent=CHUNK_LABELS.noDataset;return}var docId=CHUNK_STATE.docId;if(!docId){if(status)status.textContent=CHUNK_LABELS.noDocument;return}fetch('/api/v1/datasets/'+encodeURIComponent(CHUNK_STATE.kbId)+'/documents/'+encodeURIComponent(docId)+'/chunks').then(function(response){return response.json()}).then(function(data){var chunks=((data&&data.data)||{}).chunks||[];var doc=(data&&data.data&&data.data.doc)||{};if(!chunks.length&&doc.run&&doc.run!=='DONE'){if(status)status.textContent=CHUNK_LABELS.parsing}CHUNK_STATE.chunks=chunks.map(function(chunk){return {id:chunk.id,content:chunk.content||'',position:chunk.position||0,token_count:chunk.token_count||0,available:chunk.available!==false}});if(list){list.replaceChildren();CHUNK_STATE.chunks.forEach(function(chunk){list.appendChild(chunkPageCard(CHUNK_LABELS.page+' '+(chunk.position||1),chunk.content))})}var chunked=document.getElementById('chunkChunkedList');if(chunked){chunked.replaceChildren();CHUNK_STATE.chunks.forEach(function(chunk){chunked.appendChild(chunkChunkCard(chunk))})}if(status)status.textContent=CHUNK_STATE.chunks.length+' '+CHUNK_LABELS.chunks}).catch(function(error){if(status)status.textContent=error.message})}
+function chunkReload(){chunkStatus(CHUNK_LABELS.loading,false);chunkResolveDocument().then(function(){chunkRender()})}
+function chunkToggleAvailable(chunk,toggle){chunk.available=toggle.checked;toggle.setAttribute('aria-checked',String(toggle.checked));CHUNK_STATE.dirty[chunk.id]=true;chunkStatus(CHUNK_LABELS.unsaved,false)}
+function chunkCopyText(text){if(navigator.clipboard&&navigator.clipboard.writeText)return navigator.clipboard.writeText(text);var area=document.createElement('textarea');area.value=text;document.body.appendChild(area);area.select();document.execCommand('copy');area.remove();return Promise.resolve()}
+function chunkPanelText(panel){return CHUNK_STATE.chunks.map(function(chunk){return chunk.content}).join('\n\n')}
+function chunkCopyPanel(panel){chunkCopyText(chunkPanelText(panel)).then(function(){chunkStatus(CHUNK_LABELS.copied,false)}).catch(function(error){chunkStatus(error.message,true)})}
+function chunkCopyAll(){chunkCopyPanel('parsed')}
+function chunkExportPanel(panel){if(!CHUNK_STATE.chunks.length){chunkStatus(CHUNK_LABELS.nothing,true);return}var blob=new Blob([JSON.stringify(CHUNK_STATE.chunks,null,2)],{type:'application/json'});var link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='chunks-'+(CHUNK_STATE.docId||'document')+'.json';link.click();chunkStatus(CHUNK_LABELS.exported,false)}
+async function chunkSaveAll(){var ids=Object.keys(CHUNK_STATE.dirty);if(!ids.length){chunkStatus(CHUNK_LABELS.noChanges,false);return}if(!CHUNK_STATE.kbId||!CHUNK_STATE.docId){chunkStatus(CHUNK_LABELS.noDataset,true);return}chunkStatus(CHUNK_LABELS.saving,false);var base='/api/v1/datasets/'+encodeURIComponent(CHUNK_STATE.kbId)+'/documents/'+encodeURIComponent(CHUNK_STATE.docId)+'/chunks';try{for(var i=0;i<ids.length;i++){var chunk=CHUNK_STATE.chunks.filter(function(item){return item.id===ids[i]})[0];if(!chunk)continue;var response=await fetch(base+'/'+encodeURIComponent(chunk.id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({available:chunk.available})});var data=await response.json().catch(function(){return {}});if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status))}CHUNK_STATE.dirty={};chunkStatus(CHUNK_LABELS.saved,false)}catch(error){chunkStatus(error.message,true)}}
+function chunkToggleMenu(event){if(event)event.stopPropagation();var menu=document.getElementById('chunkMenu');if(!menu)return;menu.hidden=!menu.hidden}
+function chunkCloseMenu(){var menu=document.getElementById('chunkMenu');if(menu)menu.hidden=true}
+document.addEventListener('click',function(event){var menu=document.getElementById('chunkMenu');if(!menu||menu.hidden)return;if(menu.contains(event.target))return;if(event.target.closest&&event.target.closest('[data-testid=chunk-more]'))return;chunkCloseMenu()});
+chunkReload();
+"#;
+
+/// Upstream `Routes.Chunk = /chunk`: the header-only shell (the three panels
+/// live on the nested routes).
+pub async fn chunk_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    chunk_workbench_page(state, req, None, ChunkSection::Parsed, Vec::new()).await
+}
+
+/// Upstream `/chunk/parsed/chunks` (`pages/chunk/parsed-result`): the
+/// `ParsedResultPanel` alone.
+pub async fn chunk_parsed_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    chunk_workbench_page(
+        state,
+        req,
+        None,
+        ChunkSection::Parsed,
+        vec!["parsed".to_string()],
+    )
+    .await
+}
+
+/// Upstream `/chunk/chunk/:id` (`pages/chunk/chunk-result`): the parsed panel
+/// beside the chunked panel.
+pub async fn chunk_chunk_page(
+    State(state): State<Arc<AppState>>,
+    Path(doc_id): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    chunk_workbench_page(
+        state,
+        req,
+        Some(doc_id),
+        ChunkSection::Chunk,
+        vec!["parsed".to_string(), "chunked".to_string()],
+    )
+    .await
+}
+
+/// Upstream `/chunk/result/:id` (`pages/chunk/result-view`): the chunk detail
+/// column beside the chunked panel.
+pub async fn chunk_result_page(
+    State(state): State<Arc<AppState>>,
+    Path(doc_id): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    chunk_workbench_page(
+        state,
+        req,
+        Some(doc_id),
+        ChunkSection::Result,
+        vec!["detail".to_string(), "chunked".to_string()],
+    )
+    .await
+}
+
+async fn chunk_workbench_page(
+    _state: Arc<AppState>,
+    req: axum::http::Request<axum::body::Body>,
+    doc_id: Option<String>,
+    active: ChunkSection,
+    panels: Vec<String>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    let query = req.uri().query().unwrap_or_default().to_string();
+    let doc_id = doc_id.unwrap_or_default();
+    let mut b = String::with_capacity(8192);
+    b.push_str("<section class='chunk-workbench' data-testid='chunk-workbench'>");
+    b.push_str(&chunk_workbench_header(active, &doc_id, &query, zh));
+    b.push_str(
+        "<div class='chunk-status-line'><span id='chunkStatus' aria-live='polite'></span></div>",
+    );
+    b.push_str("<div class='chunk-panels'>");
+    for panel in &panels {
+        match panel.as_str() {
+            "parsed" => {
+                b.push_str("<section class='chunk-panel'>");
+                // Upstream literal `Parsed  results` (two spaces).
+                b.push_str(&chunk_toolbar("Parsed  results", "parsed", zh));
+                b.push_str("<div class='chunk-panel-body' id='chunkParsedList'></div></section>");
+            }
+            "chunked" => {
+                b.push_str("<section class='chunk-panel'>");
+                // Upstream literal `Chunked  results` (two spaces).
+                b.push_str(&chunk_toolbar("Chunked  results", "chunked", zh));
+                b.push_str("<div class='chunk-panel-body' id='chunkChunkedList'></div></section>");
+            }
+            _ => {
+                b.push_str("<section class='chunk-panel'><div class='chunk-panel-body' id='chunkDetailList'></div></section>");
+            }
+        }
+    }
+    b.push_str("</div><script>var CHUNK_STATE=");
+    let kb_id = query
+        .split('&')
+        .find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == "knowledgeId" || key == "kb").then(|| value.to_string())
+        })
+        .unwrap_or_default();
+    b.push_str(&json_script_value(&serde_json::json!({
+        "kbId": kb_id,
+        "docId": doc_id,
+        "chunks": [],
+        "dirty": {},
+    })));
+    b.push_str(";var CHUNK_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "active": "Active",
+        "page": t("Page", zh),
+        "chunks": if zh { "个切片" } else { "chunks" },
+        "loading": t("Loading...", zh),
+        "noDataset": if zh { "缺少 knowledgeId 参数：请从知识库页面进入。" } else { "Missing knowledgeId: open this view from a knowledge base." },
+        "noDocument": if zh { "该知识库还没有文档。" } else { "This knowledge base has no documents yet." },
+        "unsaved": if zh { "有未保存的修改" } else { "Unsaved changes" },
+        "saving": t("Saving…", zh),
+        "saved": t("Saved", zh),
+        "noChanges": if zh { "没有需要保存的修改" } else { "Nothing to save" },
+        "copied": if zh { "已复制到剪贴板" } else { "Copied to clipboard" },
+        "exported": if zh { "已导出 JSON" } else { "Exported JSON" },
+        "nothing": if zh { "没有可导出的内容" } else { "Nothing to export" },
+        "parsing": if zh { "文档仍在解析中，请稍后刷新。" } else { "The document is still parsing; refresh in a moment." },
+    })));
+    b.push_str(";var CHUNK_ANNOYED_SVG=\"");
+    b.push_str(CHUNK_ANNOYED_SVG);
+    b.push_str("\";");
+    b.push_str(CHUNK_WORKBENCH_JS);
+    b.push_str("</script></section>");
+    Html(layout(
+        if zh {
+            "切片工作台"
+        } else {
+            "Chunk workbench"
+        },
+        &b,
+        zh,
+    ))
+    .into_response()
+}
+
+const CHUNK_ANNOYED_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='12' cy='12' r='10'/><path d='M8 15h8'/><path d='M8 9h2'/><path d='M14 9h2'/></svg>";
+const CHUNK_COPY_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='14' height='14' x='8' y='8' rx='2' ry='2'/><path d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/></svg>";
+const CHUNK_SAVE_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z'/><path d='M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7'/><path d='M7 3v4a1 1 0 0 0 1 1h7'/></svg>";
+const CHUNK_ELLIPSIS_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='12' r='1'/><circle cx='12' cy='5' r='1'/><circle cx='12' cy='19' r='1'/></svg>";
+
 pub async fn not_found_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let mut b = String::new();

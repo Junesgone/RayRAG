@@ -3291,6 +3291,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/search/share", get(crate::web::search_share_page))
         .route("/document/{doc_id}", get(crate::web::document_viewer_page))
+        // Upstream `Routes.Chunk` subtree (`pages/chunk/**`): the standalone
+        // chunk workbench with its three panel routes.
+        .route("/chunk", get(crate::web::chunk_page))
+        .route("/chunk/parsed/chunks", get(crate::web::chunk_parsed_page))
+        .route("/chunk/chunk/{doc_id}", get(crate::web::chunk_chunk_page))
+        .route("/chunk/result/{doc_id}", get(crate::web::chunk_result_page))
         // RAGFlow 0.26.4 route parity: /chats (chat apps) and /searches (search apps).
         .route("/chats", get(crate::web::chat_apps_page))
         .route("/chats/share", get(crate::web::chat_share_page))
@@ -4937,6 +4943,95 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Upstream `Routes.Chunk` subtree: the four panel routes register, the
+    /// header carries the segmented control with the three upstream labels and
+    /// the panels render against the real chunk API.
+    #[tokio::test]
+    async fn chunk_workbench_routes_match_upstream_subtree() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (path, section) in [
+            ("/chunk", "/chunk/parsed"),
+            ("/chunk/parsed/chunks", "/chunk/parsed"),
+            ("/chunk/chunk/doc-1", "/chunk/chunk"),
+            ("/chunk/result/doc-1", "/chunk/result"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(body.contains("data-testid='chunk-workbench'"), "{path}");
+            assert!(
+                body.contains(&format!("data-section='{section}'")),
+                "{path}: active section"
+            );
+            assert!(
+                body.contains(&format!(
+                    "class='chunk-segment active' data-section='{section}'"
+                )),
+                "{path}: active segment"
+            );
+            for label in ["Parsed results", "Chunk result", "Result view"] {
+                assert!(body.contains(label), "{path}: segment {label}");
+            }
+            assert!(body.contains("data-testid='chunk-save'"), "{path}: save");
+            assert!(body.contains("data-testid='chunk-more'"), "{path}: menu");
+            assert!(
+                body.contains("/api/v1/datasets/"),
+                "{path}: chunk API wiring"
+            );
+        }
+        // The three panels carry the upstream toolbars and list hosts.
+        let chunked = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/chunk/chunk/doc-1?knowledgeId=kb-1")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(chunked.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        for marker in [
+            "Parsed  results",
+            "Chunked  results",
+            "id='chunkParsedList'",
+            "id='chunkChunkedList'",
+            "data-testid='chunk-copy-parsed'",
+            "data-testid='chunk-export-chunked'",
+            "CHUNK_ANNOYED_SVG",
+            "chunkSaveAll()",
+            "CHUNK_STATE=",
+            "kb-1",
+            "\"kbId\"",
+        ] {
+            assert!(body.contains(marker), "chunk marker missing: {marker}");
+        }
     }
 
     /// Upstream `routes.tsx` parity for the paths that map onto existing
