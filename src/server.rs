@@ -3900,7 +3900,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/agents/{id}/sessions/{session_id}",
-            get(crate::api::agent_log::get_agent_session),
+            get(crate::api::agent_log::get_agent_session)
+                .delete(crate::api::agent_log::delete_agent_session),
         )
         .route(
             "/api/v1/canvas/{canvas_id}/sessions",
@@ -7223,6 +7224,7 @@ mod tests {
         assert_eq!(detail["data"]["round"], 1);
 
         let unknown = router
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri(format!("/api/v1/agents/{agent_id}/sessions/nope"))
@@ -7237,6 +7239,39 @@ mod tests {
             response_json(unknown).await["message"],
             "Session not found!"
         );
+
+        // `delete_agent_session_item`: the row leaves the log and the total
+        // drops, so callers (and UI probes) can clean up after themselves.
+        let removed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions/{}", second.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(removed).await["data"],
+            serde_json::json!(true)
+        );
+        let after = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let after = response_json(after).await;
+        assert_eq!(after["total"], 1);
+        assert_eq!(after["data"][0]["id"], first.id);
     }
 
     /// Upstream `Routes.AgentLog = /agent-log-page/:id`: the SSR shell carries

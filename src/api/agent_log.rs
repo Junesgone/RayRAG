@@ -532,6 +532,54 @@ pub async fn get_agent_session(
     }
 }
 
+/// `DELETE /api/v1/agents/{agent_id}/sessions/{session_id}` —
+/// `delete_agent_session_item`: the session must exist, belong to the canvas
+/// and be owned by the caller.
+pub async fn delete_agent_session(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path((agent_id, session_id)): Path<(String, String)>,
+) -> Response {
+    if state
+        .agents
+        .get_accessible(
+            &agent_id,
+            &auth.user_id,
+            auth.is_admin,
+            |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+        )
+        .is_none()
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Agent not found" })),
+        )
+            .into_response();
+    }
+    let exists = state
+        .conversations
+        .get(&session_id)
+        .is_some_and(|session| session.canvas_id.as_deref() == Some(agent_id.as_str()));
+    if !exists {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": 404,
+                "message": "Session not found!",
+            })),
+        )
+            .into_response();
+    }
+    match state.conversations.delete_for(&session_id, &auth.user_id) {
+        Ok(deleted) => Json(serde_json::json!({ "code": 0, "data": deleted })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// Chunk identity resolver backed by the live index: reference chunks only
 /// store the chunk id, so the document id/name and dataset id are read back
 /// from the indexed chunk and its document record.

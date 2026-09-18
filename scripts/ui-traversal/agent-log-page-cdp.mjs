@@ -266,11 +266,33 @@ try {
   if (results.seeded && results.seeded.ok) {
     const cleanup = await page
       .evaluate(async (agentId) => {
+        // `DELETE /agents/{id}` leaves the session rows behind (exactly like
+        // upstream's `UserCanvasService.delete_by_id`), so the probe removes
+        // its own sessions first through `delete_agent_session_item`.
+        const sessions = await fetch(
+          `/api/v1/canvas/${agentId}/sessions?page_size=100`,
+        )
+          .then((response) => response.json())
+          .catch(() => ({ data: [] }));
+        const removed = [];
+        for (const row of sessions.data || []) {
+          const response = await fetch(
+            `/api/v1/agents/${agentId}/sessions/${row.id}`,
+            { method: "DELETE" },
+          );
+          const data = await response.json().catch(() => ({}));
+          removed.push({ id: row.id, ok: response.ok && data.code === 0 });
+        }
         const response = await fetch(`/api/v1/agents/${agentId}`, {
           method: "DELETE",
         });
         const data = await response.json().catch(() => ({}));
-        return { ok: response.ok && data.code === 0, message: data.message || null };
+        return {
+          ok: response.ok && data.code === 0,
+          agentRemoved: response.ok && data.code === 0,
+          sessionsRemoved: removed,
+          message: data.message || null,
+        };
       }, results.seeded.agentId)
       .catch((error) => ({ ok: false, message: String(error) }));
     results.cleanup = cleanup;

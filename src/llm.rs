@@ -1439,7 +1439,8 @@ impl ConvStore {
     pub fn delete_for(&self, id: &str, owner_id: &str) -> Result<bool> {
         self.mutate_if_changed(|convs| {
             let removed = convs.get(id).is_some_and(|conversation| {
-                conversation.owner_id == owner_id && conversation.source == "chat"
+                conversation.owner_id == owner_id
+                    && matches!(conversation.source.as_str(), "chat" | "agent")
             });
             if removed {
                 convs.remove(id);
