@@ -142,7 +142,8 @@ if path.endswith("CHANGELOG.md"):
 if path.endswith(".md"):
     # Documents must not point at engineering assets that stay internal.
     for pattern, replacement in (
-        (r"`scripts/ui-traversal/[^`]+`", "浏览器端验证脚本"),
+        (r"`scripts/ui-traversal/[^`]*`", "浏览器端验证脚本"),
+        (r"`scripts/ui-traversal/`", "浏览器端验证脚本"),
         (r"`scripts/publish-github\.sh`", "内部发布脚本"),
         (r"`scripts/[A-Za-z0-9_.-]+\.(sh|py)`", "内部辅助脚本"),
         (r"`docs/ui-traversal/[^`]+`", "内部 UI 抓取产物"),
