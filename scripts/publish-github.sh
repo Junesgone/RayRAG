@@ -139,6 +139,23 @@ if path.endswith("CHANGELOG.md"):
         flags=re.S,
     )
 
+if path.endswith(".md"):
+    # Documents must not point at engineering assets that stay internal.
+    for pattern, replacement in (
+        (r"`scripts/ui-traversal/[^`]+`", "浏览器端验证脚本"),
+        (r"`scripts/publish-github\.sh`", "内部发布脚本"),
+        (r"`scripts/[A-Za-z0-9_.-]+\.(sh|py)`", "内部辅助脚本"),
+        (r"`docs/ui-traversal/[^`]+`", "内部 UI 抓取产物"),
+        (r"`docs/ragflow-v0\.26\.4-coverage\.md`", "内部对标台账"),
+        (r"`docs/ragflow-file-(list\.txt|manifest\.json)`", "内部文件清单"),
+        (r"`docs/ragflow-ui-inventory\.md`", "内部界面盘点"),
+        (r"`docs/ragflow-ui-ref/[^`]+`", "内部界面盘点"),
+        (r"`MAINTENANCE\.md`", "内部运维台账"),
+        (r"`运维记录\.md`", "内部运维台账"),
+        (r"`helm/`", "Kubernetes 部署脚手架"),
+    ):
+        text = re.sub(pattern, replacement, text)
+
 if text != original:
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
