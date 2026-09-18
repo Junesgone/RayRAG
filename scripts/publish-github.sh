@@ -71,6 +71,12 @@ except (UnicodeDecodeError, FileNotFoundError):
     sys.exit(0)
 
 original = text
+# The published repository slug is public by definition and appears in the
+# clone instructions; shield it before the personal-name rewrite so the
+# quickstart keeps working, then restore it below.
+SLUG = "Junesgone/RayRAG"
+SHIELD = "\x00repo-slug\x00"
+text = text.replace(SLUG, SHIELD)
 text = text.replace("/home/junesgone", "$HOME")
 text = text.replace("junesgone", "user").replace("Junesgone", "User")
 text = text.replace("Nicpet", "dev-host")
@@ -125,6 +131,8 @@ if path.endswith(".md"):
     ):
         text = re.sub(pattern, replacement, text)
 
+text = text.replace(SHIELD, SLUG)
+
 if text != original:
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
@@ -162,9 +170,19 @@ done < <(find "$WORK" -type f \( -name '*.md' -o -name '*.rs' -o -name '*.json' 
     -o -name '*.html' -o -name '*.txt' -o -name 'Dockerfile' -o -name '*.example' \) -print0)
 
 echo "==> scanning the snapshot for leftovers"
-if grep -rIln -E 'junesgone|Nicpet|fnOS|rayrag-smoke-admin|Junesgone@|root@[A-Za-z0-9._-]+:[0-9]+' "$WORK" \
-    | grep -vE '/(LICENSE|NOTICE)$' | grep -v '^$'; then
-    echo "ERROR: personal identifiers remain in the snapshot" >&2
+# `Junesgone/RayRAG` is the public repository itself, so it is the one
+# allowed spelling; every other occurrence of a personal identifier fails.
+guard_hits=""
+while IFS= read -r file; do
+    if grep -nIE 'junesgone|Nicpet|fnOS|rayrag-smoke-admin|Junesgone@|root@[A-Za-z0-9._-]+:[0-9]+' "$file" \
+        | grep -vE 'github\.com/Junesgone/RayRAG|Junesgone/RayRAG' | grep -q .; then
+        guard_hits="${guard_hits}${file}"$'\n'
+    fi
+done < <(grep -rIln -E 'junesgone|Nicpet|fnOS|rayrag-smoke-admin|Junesgone@|root@[A-Za-z0-9._-]+:[0-9]+' "$WORK" \
+    | grep -vE '/(LICENSE|NOTICE)$' | grep -v '^$')
+if [ -n "$guard_hits" ]; then
+    echo "ERROR: personal identifiers remain in the snapshot:" >&2
+    printf '%s' "$guard_hits" >&2
     exit 1
 fi
 if find "$WORK" -type f -size +20M | grep -q .; then
