@@ -25,6 +25,7 @@ DRY_RUN="${1:-}"
 # Files and directories that never ship.
 EXCLUDES=(
     "models"
+    "scripts/publish-github.sh"
     "scripts/ui-traversal"
     "docs/ui-traversal"
     "web/agents.json"
