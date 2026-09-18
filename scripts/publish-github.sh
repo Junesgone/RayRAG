@@ -228,13 +228,14 @@ rsync -a --delete \
     "$WORK"/ "$PUB_DIR"/
 
 cd "$PUB_DIR"
+# The published repository carries a single snapshot commit: earlier snapshots
+# may have contained material that must not stay reachable through history.
+rm -rf "$PUB_DIR/.git"
+git init -q -b main
 git add -A
-if git diff --cached --quiet; then
-    echo "==> nothing to publish"
-else
-    git -c user.name="RayRAG Publisher" -c user.email="rayrag@example.invalid" \
-        commit -q -m "$(git -C "$ROOT" log -1 --pretty=%s)"
-fi
+git -c user.name="RayRAG Publisher" -c user.email="rayrag@example.invalid" \
+    commit -q -m "$(git -C "$ROOT" log -1 --pretty=%s)"
+echo "    published history: $(git rev-list --count HEAD) commit(s)"
 
 if [ "$PROXY" != "off" ]; then
     export http_proxy="$PROXY" https_proxy="$PROXY" all_proxy="$PROXY"
@@ -251,7 +252,7 @@ if ! gh repo view "$REPO" >/dev/null 2>&1; then
         >/dev/null
 fi
 echo "==> pushing to $REPO"
-git push -q origin main
+git push -q --force origin main
 # The published repository is public; flip an existing private repo over.
 if [ "$(gh repo view "$REPO" --json visibility -q .visibility 2>/dev/null)" != "PUBLIC" ]; then
     gh repo edit "$REPO" --visibility public --accept-visibility-change-consequences >/dev/null
