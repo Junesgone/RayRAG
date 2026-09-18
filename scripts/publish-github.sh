@@ -93,42 +93,10 @@ text = re.sub(
     text,
     flags=re.S,
 )
-# The published tree carries no operations or parity ledger, so the documents
-# that referenced them are rewritten deterministically.
-if path.endswith("README.md"):
-    text = text.replace("见 `CHANGELOG.md` 与 `运维记录.md`）。", "见 `CHANGELOG.md`）。")
-    text = text.replace(
-        "- 覆盖台账（RAGFlow v0.26.4 固定快照 `cb93883f`，4441 个文件，\n"
-        "  `docs/ragflow-v0.26.4-coverage.md`）：",
-        "- 对标进度（RAGFlow v0.26.4 固定快照，4441 个文件）：",
-    )
-    text = re.sub(
-        r"- 对标进度（RAGFlow v0\.26\.4 固定快照，4441 个文件）：.*?可复核（`--write` 刷新 Summary）。",
-        "- 对标进度（RAGFlow v0.26.4 固定快照，4441 个文件）：full **566** / aligned **275** /\n"
-        "  replaced **101** / N/A **61** / partial **41** / reference **3397** / unmapped **0**。\n"
-        "  逐文件台账与复核门禁属内部工程资产，不随本仓库发布。",
-        text,
-        flags=re.S,
-    )
-    text = text.replace(
-        "完整逐文件清单见 `docs/ragflow-v0.26.4-coverage.md`。该矩阵固定对标 RAGFlow",
-        "该矩阵固定对标 RAGFlow",
-    )
-    text = re.sub(
-        r"矩阵当前库存（[^）]*）：.*?摘要表与清单逐行一致。",
-        "矩阵当前库存见「项目状态」一节。",
-        text,
-        flags=re.S,
-    )
-    text = re.sub(
-        r"`aligned/partial/replaced/reference/unmapped` 状态。当前仓库保留\n"
-        r"固定提交的 4441 文件快照；纯 Rust coverage 门禁会直接读取固定 Git tree，校验 commit、\n"
-        r"路径、blob、字节、文本行数、状态库存和摘要：\n\n```bash\n.*?```\n",
-        "`aligned/partial/replaced/reference/unmapped` 状态；纯 Rust 门禁直接读取固定 Git tree，\n"
-        "校验 commit、路径、blob、字节、文本行数与摘要（台账与门禁保留在内部工程仓）。\n",
-        text,
-        flags=re.S,
-    )
+# The published tree carries no operations or parity ledger. The READMEs are
+# written for end users and never point at internal assets, so they need no
+# dedicated rewriting here -- the generic `.md` rules below are the backstop
+# that rewrites any reference that slips through.
 if path.endswith("CHANGELOG.md"):
     text = re.sub(r"\*\*CDP 探针\*\* `scripts/ui-traversal/[^`]+`：", "**浏览器端验证**：", text)
     text = re.sub(

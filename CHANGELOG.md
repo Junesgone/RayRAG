@@ -2,6 +2,36 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5w）
+
+### Added
+
+- **`install.sh` 一键部署脚本**：面向第一次使用的用户，检查 Docker/Compose、幂等生成 `.env`
+  （随机 24 位 PostgreSQL 与管理员密码，重复执行不覆盖既有配置）、支持
+  `--port/--no-build/--cn-mirror/--global-mirror/--dry-run/--help`、统一
+  `RAYRAG_CMD_TIMEOUT`（默认且上限 2 小时）、校验 compose 配置、构建并启动、等待健康检查、
+  打印局域网访问地址与登录账号；输出跟随系统语言（zh*/en）。
+- **双语 README**：英文默认 `README.md` + 中文 `README.zh-CN.md`，面向零基础用户
+  （五分钟部署、首次使用六步、65 家 provider 与本地模型对照表、12 条 FAQ、升级/备份/卸载、
+  纯 Linux 安装）；原技术长文档迁至 `docs/advanced.md`。
+
+### Changed
+
+- **`/user-setting/model` 的 Set default models 段落逐行对齐上游 `system-setting.tsx`**：
+  `article > header`（24px/500 标题 + 14px 说明）、`px-7 py-6 gap-6 max-h-[70vh] overflow-y-auto`
+  边框滚动容器、六行 `flex gap-3`（label `w-1/4` / control `w-3/4`，仅 LLM 行带 `*`）；
+  placeholder 改为上游 `setting.selectModelPlaceholder`；六个 tooltip 走 `t()` 并补 zh.ts 逐字译文；
+  触发图标改为 lucide `CircleQuestionMark`（12px 描边圆 + 问号，保留悬停弹窗）。
+- **同名异译 i18n 键分离**：上游 `setting.selectModelPlaceholder`（en `Select model` /
+  zh `请选择模型`）与 `memories.selectModel`（en `Select model` / zh `选择模型`）英文同文、
+  中文异译，扁平 `t()` 表改用上游 i18n 路径作为名字空间键区分。
+
+### Fixed
+
+- **一条从未执行的测试**：`available_models_pills_and_local_provider_fields_match_upstream`
+  缺少 `#[tokio::test]` 属性，长期被当作死代码；补属性后首次真实执行并通过。
+- **`t()` 死分支**：删除被 `"混合搜索"` 永久遮蔽的 `"Hybrid" => "混合检索"`。
+
 ## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5v）
 
 ### Added

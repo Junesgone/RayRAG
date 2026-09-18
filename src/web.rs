@@ -10,7 +10,16 @@ use std::sync::Arc;
 
 fn t(k: &str, zh: bool) -> &str {
     if !zh {
-        return k;
+        // Namespaced upstream keys carry their i18n path instead of the English
+        // text when two upstream namespaces share the same English string but
+        // diverge in Chinese (e.g. `setting.selectModelPlaceholder` =
+        // "Select model"/"请选择模型" vs `memories.selectModel` =
+        // "Select model"/"选择模型"). The English side resolves back to the
+        // upstream en.ts text.
+        return match k {
+            "setting.selectModelPlaceholder" => "Select model",
+            other => other,
+        };
     }
     match k {
         "Dashboard" => "仪表盘",
@@ -85,7 +94,6 @@ fn t(k: &str, zh: bool) -> &str {
         "Click to create your first search app" => "点击创建你的第一个检索应用",
         "Search app not found" => "检索应用不存在",
         "Test search" => "测试检索",
-        "Hybrid" => "混合检索",
         "Rerank" => "重排序",
         // Upstream has exactly two i18n topK labels: `knowledgeDetails.topK`
         // = `Top-K` (zh `Top-K`, components/rerank.tsx — KB testing, chat app
@@ -103,6 +111,29 @@ fn t(k: &str, zh: bool) -> &str {
         "Model providers" => "模型提供商",
         "Set default models" => "设置默认模型",
         "Please complete these settings before beginning" => "开始前请完成这些设置",
+        // Upstream `locales/{en,zh}.ts::setting` —— SystemSetting 六个字段的
+        // tooltip 与共享 placeholder（`setting.selectModelPlaceholder`）。键即
+        // en.ts 逐字原文；同名不同义的 `memories.selectModel`（zh「选择模型」）
+        // 走上面的名字空间键，`t()` 未命中时原样回退，其它页面的私有文案不受影响。
+        "setting.selectModelPlaceholder" => "请选择模型",
+        "The default LLM for each newly created dataset." => {
+            "所有新创建的知识库都会使用默认的聊天模型。"
+        }
+        "The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model." => {
+            "所有新创建的知识库使用的默认嵌入模型。如未显示可选模型，请检查你是否在使用 RAGFlow slim 版(不含嵌入模型)；或根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。"
+        }
+        "The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model." => {
+            "所有新创建的知识库都将使用默认的 img2txt 模型。 它可以描述图片或视频。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。"
+        }
+        "The default ASR model for each newly created dataset. Use this model to translate voices to corresponding text." => {
+            "所有新创建的知识库都将使用默认的 ASR 模型。 使用此模型将语音翻译为相应的文本。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。"
+        }
+        "The default rerank model for reranking chunks. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model." => {
+            "默认的 reranking 模型。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。"
+        }
+        "The default text-to-speech model. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model." => {
+            "默认的tts模型会被用于在对话过程中请求语音生成时使用。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。"
+        }
         "Admin" => "管理",
         "Status" => "状态",
         "Login" => "登录",
@@ -371,6 +402,9 @@ fn page_head(title: &str, zh: bool) -> String {
     h.push_str(CSS);
     h.push_str(".tip{display:inline-block;width:15px;height:15px;line-height:15px;border-radius:50%;background:var(--tm);color:var(--bg,#fff);font-size:11px;text-align:center;cursor:help;position:relative;vertical-align:middle}
 .tip:hover::after{content:attr(data-tip);position:absolute;left:22px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
+.tip-icon{display:inline-flex;align-items:center;justify-content:center;position:relative;margin-left:4px;color:var(--tm);vertical-align:middle}
+.tip-icon>svg{display:block;width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tip-icon:hover::after{content:attr(data-tip);position:absolute;left:18px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
 .lang-chip{border:1px solid var(--bd);border-radius:14px;padding:2px 10px;font-size:12px;background:transparent;color:var(--t);cursor:pointer}
 .lang-chip.on{background:var(--p);color:#fff;border-color:var(--p)}
 \n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style><script>(function(){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'&&location.pathname!='/login'){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})()</script></head><body>");
@@ -3837,7 +3871,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["chat", "image2text"],
         required: true,
         tooltip: "The default LLM for each newly created dataset.",
-        placeholder: "Please select",
+        placeholder: "setting.selectModelPlaceholder",
     },
     DefaultModelField {
         field_id: "embd_id",
@@ -3848,7 +3882,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["embedding"],
         required: false,
         tooltip: "The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
-        placeholder: "Please select",
+        placeholder: "setting.selectModelPlaceholder",
     },
     DefaultModelField {
         field_id: "img2txt_id",
@@ -3859,7 +3893,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["image2text"],
         required: false,
         tooltip: "The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
-        placeholder: "Please select",
+        placeholder: "setting.selectModelPlaceholder",
     },
     DefaultModelField {
         field_id: "asr_id",
@@ -3870,7 +3904,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["speech2text"],
         required: false,
         tooltip: "The default ASR model for each newly created dataset. Use this model to translate voices to corresponding text.",
-        placeholder: "Please select",
+        placeholder: "setting.selectModelPlaceholder",
     },
     DefaultModelField {
         field_id: "rerank_id",
@@ -3881,7 +3915,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["rerank"],
         required: false,
         tooltip: "The default rerank model for reranking chunks. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
-        placeholder: "Please select",
+        placeholder: "setting.selectModelPlaceholder",
     },
     DefaultModelField {
         field_id: "tts_id",
@@ -3892,7 +3926,7 @@ const DEFAULT_MODEL_FIELDS: [DefaultModelField; 6] = [
         accepted_types: &["tts"],
         required: false,
         tooltip: "The default text-to-speech model. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
-        placeholder: "Please select",
+        placeholder: "setting.selectModelPlaceholder",
     },
 ];
 
@@ -4148,11 +4182,16 @@ fn push_default_model_selector(b: &mut String, field: &DefaultModelField, zh: bo
         b.push_str(field.label);
     }
     if !field.tooltip.is_empty() {
-        b.push_str(" <span class='tip' tabindex='0' aria-label='");
-        b.push_str(&html_escape(field.tooltip));
+        // Upstream `system-setting.tsx` renders the tooltip text through `t()`
+        // and triggers it with a lucide `CircleQuestionMark` (size 12,
+        // `ml-1 text-text-secondary`). `t()` falls back to the key verbatim,
+        // so fields owned by other upstream files keep their own wording.
+        let tooltip = html_escape(t(field.tooltip, zh));
+        b.push_str(" <span class='tip-icon' tabindex='0' role='img' aria-label='");
+        b.push_str(&tooltip);
         b.push_str("' data-tip='");
-        b.push_str(&html_escape(field.tooltip));
-        b.push_str("'>?</span>");
+        b.push_str(&tooltip);
+        b.push_str("'><svg viewBox='0 0 24 24' aria-hidden='true' focusable='false'><circle cx='12' cy='12' r='10'/><path d='M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'/><path d='M12 17h.01'/></svg></span>");
     }
     b.push_str("</label><div class='default-model-control'><button id='");
     b.push_str(field.dom_id);
@@ -4274,17 +4313,18 @@ pub async fn providers_page(
         ));
     }
     let mut b = String::new();
-    b.push_str("<div class='card'><h2>");
+    // Upstream `system-setting.tsx`: `article > header.py-5 (h2 + p.mt-1)` and a
+    // bordered, internally scrollable `div.px-7.py-6.space-y-6.max-h-[70vh]`
+    // holding the six `flex gap-3` rows (label 1/4 + control 3/4).
+    b.push_str("<article class='card system-model-settings' data-testid='system-model-settings'><header class='system-model-header'><h2>");
     b.push_str(t("Set default models", zh));
-    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>");
+    b.push_str("</h2><p class='system-model-description'>");
     b.push_str(t("Please complete these settings before beginning", zh));
-    b.push_str("</p><div class='provider-default-grid'>");
+    b.push_str("</p></header><div class='provider-default-grid'>");
     for field in DEFAULT_MODEL_FIELDS {
         push_default_model_selector(&mut b, &field, zh);
     }
-    b.push_str(
-        "</div><p id='dmMsg' style='font-size:12px;color:var(--tm);margin-top:8px'></p></div>",
-    );
+    b.push_str("</div><p id='dmMsg' class='system-model-message'></p></article>");
     b.push_str("<section class='added-models-section' data-testid='added-models-section'><h2>Added models</h2><div id='addedModelList' class='added-model-list'><p class='added-model-loading'>Loading…</p></div></section>");
     {
         let summary = crate::api::tenant_models::plan_available_providers(
@@ -4445,7 +4485,9 @@ pub async fn providers_page(
                     "responseType": field.response_type,
                     "acceptedTypes": field.accepted_types,
                     "required": field.required,
-                    "placeholder": field.placeholder,
+                    // The tree trigger renders `field.placeholder` client-side,
+                    // so the payload carries the resolved text.
+                    "placeholder": t(field.placeholder, zh),
                 })
             })
             .collect(),
@@ -5898,6 +5940,181 @@ mod kb_ui_tests {
         assert!(!html.contains("innerHTML"));
     }
 
+    /// Upstream `setting-model/components/system-setting.tsx` verbatim: the
+    /// `article > header.py-5` composition, the six `flex gap-3` rows with a
+    /// 1/4 label column and a 3/4 `ModelTreeSelect` column, the shared
+    /// `selectModelPlaceholder` and the six `setting.*Tip` tooltips rendered
+    /// through `t()` behind a lucide `CircleQuestionMark` trigger.
+    #[tokio::test]
+    async fn system_model_settings_matches_upstream_system_setting() {
+        let (_root, state) = test_state();
+        let en = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let en_body = body_of(providers_page(axum::extract::State(state.clone()), en).await).await;
+        let zh = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh).await).await;
+
+        for (lang, body) in [("en", &en_body), ("zh", &zh_body)] {
+            assert!(
+                body.contains(
+                    "<article class='card system-model-settings' \
+                     data-testid='system-model-settings'><header class='system-model-header'>"
+                ),
+                "{lang}: upstream article/header composition missing"
+            );
+            assert!(
+                body.contains("</p></header><div class='provider-default-grid'>"),
+                "{lang}: rows container is not the bordered scroll box"
+            );
+            assert!(
+                body.contains("<p id='dmMsg' class='system-model-message'></p></article>"),
+                "{lang}: section must close as an <article>"
+            );
+            assert_eq!(
+                body.matches("class='provider-default-field'").count(),
+                6,
+                "{lang}: six default-model rows expected"
+            );
+            // Upstream label column is `w-1/4`, control column `w-3/4`; the
+            // required marker stays on the LLM row only.
+            assert_eq!(
+                body.matches("flex:0 0 25%").count(),
+                1,
+                "{lang}: label column must be the 1/4 track"
+            );
+            assert_eq!(
+                body.matches("aria-required='true'").count(),
+                1,
+                "{lang}: only llm_id is required"
+            );
+            // lucide `CircleQuestionMark` trigger, not the legacy `?` badge.
+            assert_eq!(
+                body.matches("class='tip-icon'").count(),
+                6,
+                "{lang}: six tooltip triggers expected"
+            );
+            assert_eq!(
+                body.matches("<circle cx='12' cy='12' r='10'/>").count(),
+                6,
+                "{lang}: CircleQuestionMark glyph missing"
+            );
+            assert!(
+                !body.contains("class='tip' tabindex='0'"),
+                "{lang}: legacy question-mark tooltip still rendered on the rows"
+            );
+            // Upstream `setting.selectModelPlaceholder`. The `setting` and
+            // `memories` namespaces share the English text but diverge in
+            // Chinese, so the field carries the namespaced key.
+            assert_eq!(
+                body.matches(&format!(
+                    "<span class='default-model-placeholder'>{}</span>",
+                    if lang == "zh" {
+                        "请选择模型"
+                    } else {
+                        "Select model"
+                    }
+                ))
+                .count(),
+                6,
+                "{lang}: placeholder must be selectModelPlaceholder"
+            );
+            assert!(
+                body.contains(&format!(
+                    "\"placeholder\":\"{}\"",
+                    if lang == "zh" {
+                        "请选择模型"
+                    } else {
+                        "Select model"
+                    }
+                )),
+                "{lang}: MODEL_FIELDS payload must carry the resolved placeholder"
+            );
+            assert!(
+                !body.contains(">Please select</span>"),
+                "{lang}: stale `Please select` placeholder"
+            );
+        }
+
+        // en.ts / zh.ts verbatim, keyed by the en string that `t()` receives.
+        for (key, zh_value) in [
+            (
+                "The default LLM for each newly created dataset.",
+                "所有新创建的知识库都会使用默认的聊天模型。",
+            ),
+            (
+                "The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "所有新创建的知识库使用的默认嵌入模型。如未显示可选模型，请检查你是否在使用 RAGFlow slim 版(不含嵌入模型)；或根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "所有新创建的知识库都将使用默认的 img2txt 模型。 它可以描述图片或视频。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default ASR model for each newly created dataset. Use this model to translate voices to corresponding text.",
+                "所有新创建的知识库都将使用默认的 ASR 模型。 使用此模型将语音翻译为相应的文本。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default rerank model for reranking chunks. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "默认的 reranking 模型。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default text-to-speech model. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "默认的tts模型会被用于在对话过程中请求语音生成时使用。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+        ] {
+            assert_eq!(t(key, true), zh_value, "zh.ts drift for {key:.32}");
+            assert_eq!(t(key, false), key, "en.ts must keep the key verbatim");
+            assert!(
+                en_body.contains(&format!("data-tip='{key}'")),
+                "en page lost the upstream tip {key:.32}"
+            );
+            assert!(
+                zh_body.contains(&format!("data-tip='{zh_value}'")),
+                "zh page lost the upstream tip {zh_value:.16}"
+            );
+        }
+        assert_eq!(t("setting.selectModelPlaceholder", true), "请选择模型");
+        assert_eq!(t("setting.selectModelPlaceholder", false), "Select model");
+        // `memories.selectModel` shares the English text but not the Chinese.
+        assert_eq!(t("Select model", true), "选择模型");
+        // The rows must carry all six tips from `DEFAULT_MODEL_FIELDS`.
+        for field in DEFAULT_MODEL_FIELDS {
+            assert!(
+                !field.tooltip.is_empty() && t(field.tooltip, true) != field.tooltip,
+                "field {} tip is not translated",
+                field.field_id
+            );
+            assert_eq!(field.placeholder, "setting.selectModelPlaceholder");
+        }
+
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".provider-default-grid{display:flex;flex-direction:column;gap:24px;padding:24px 28px;max-height:70vh;overflow-y:auto;border:1px solid var(--bd)",
+            ".provider-default-field{display:flex;gap:12px;align-items:flex-start}",
+            ".provider-default-field>label{display:block;flex:0 0 25%;width:25%",
+            ".provider-default-field>.default-model-control{flex:1 1 75%;min-width:0}",
+            ".system-model-header h2{font-size:24px;font-weight:500",
+            ".system-model-description{margin-top:4px;color:var(--t2);font-size:14px}",
+        ] {
+            assert!(css.contains(rule), "css rule missing: {rule}");
+        }
+        let head = page_head("x", false);
+        for rule in [
+            ".tip-icon{display:inline-flex",
+            ".tip-icon>svg{display:block;width:12px;height:12px",
+            ".tip-icon:hover::after{content:attr(data-tip)",
+        ] {
+            assert!(head.contains(rule), "tooltip css missing: {rule}");
+        }
+    }
+
     #[test]
     fn default_model_fields_keep_upstream_order_and_wire_types() {
         assert_eq!(
@@ -6918,6 +7135,7 @@ connection: close
     /// non-picker local factories render the explicit LocalLlmConfigs field set
     /// (model_type subset, model_name, max_tokens=8192, is_tools, vision) while
     /// the picker factories rely on the model list instead.
+    #[tokio::test]
     async fn available_models_pills_and_local_provider_fields_match_upstream() {
         let (_root, state) = test_state();
         let req = axum::http::Request::builder()
@@ -7239,9 +7457,11 @@ connection: close
     #[tokio::test]
     async fn providers_page_wires_default_models_and_available_provider_clicks() {
         let (_root, state) = test_state();
+        // The page language comes from the `lang` cookie, so this test pins the
+        // English surface explicitly instead of relying on a default.
         let req = axum::http::Request::builder()
             .uri("/user-setting/model")
-            .header("accept-language", "en")
+            .header("cookie", "lang=en")
             .body(axum::body::Body::empty())
             .unwrap();
         let body = body_of(providers_page(axum::extract::State(state), req).await).await;

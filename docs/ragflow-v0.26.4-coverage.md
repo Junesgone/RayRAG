@@ -365,6 +365,21 @@
 > dataset Configuration 5 字段 + 后端白名单 7 键、chunk method Resume/Tag、
 > providers 类型筛选 + Add 弹窗、agent 类型选择、New Chat 知识库多选、
 > Memory 弹窗、chat 侧栏知识库列表。
+>
+> v0.3.5w（2026-09-18）逐行复核 `setting-model/components/system-setting.tsx`（159 行）。
+> `/user-setting/model` 的 Set default models 段落改为上游组合：`article.card > header`
+> （h2 = `setting.systemModelSettings` 24px/500、p = `setting.systemModelDescription`
+> 14px text-secondary）＋ `div.px-7.py-6.space-y-6.max-h-[70vh].overflow-y-auto` 边框滚动容器
+> ＋ 六行 `flex gap-3`（label `w-1/4`、control `w-3/4`，只有 llm_id 带 `*`）。
+> placeholder 由自造 `Please select` 改为上游 `setting.selectModelPlaceholder`；六个
+> tooltip 改走 `t()` 并补 zh.ts 逐字译文（此前 zh 页面显示英文原文），触发图标由填充式
+> `?` 徽章改为 lucide `CircleQuestionMark`（12px 描边圆＋问号，CSS `::after` 悬停弹窗保留）。
+> 注意上游 `setting.selectModelPlaceholder`（en `Select model` / zh `请选择模型`）与
+> `memories.selectModel`（en `Select model` / zh `选择模型`）英文同文而异译，扁平 `t()` 表
+> 无法共存，故改用上游 i18n 路径作为名字空间键并在 en 侧回译。顺带修复同表死分支
+> `"Hybrid" => "混合检索"`（被 `混合搜索` 遮蔽）与一条**从未执行的 async 测试**
+> （`available_models_pills_and_local_provider_fields_match_upstream` 缺 `#[tokio::test]`，
+> 复活后通过）。逐像素 React/Radix 组合（Popover 动画、Tooltip 延迟与 portal 定位）仍为 partial。
 
 > v0.3.3aa（2026-08-12）逐行审计 `api/apps/restful_apis/memory_api.py` 与
 > `memory/services/messages.py`：Rust Memory 查询兼容 Quart multi-value 参数、单值
@@ -4794,7 +4809,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/user-setting/setting-api/index.module.less` | 7 | 96 | `772530dd955df02d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-api/index.tsx` | 7 | 189 | `d772a22d7ae2883d` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/setting-model/components/llm-header.tsx` | 34 | 1215 | `0c90cf6b74f59e94` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/user-setting/setting-model/components/system-setting.tsx` | 159 | 4271 | `99f130ef3e4ea599` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs` | Rust `/user-setting/model` keeps the upstream three-section composition (`SystemSetting` rows for llm_id/embd_id/img2txt_id/asr_id/rerank_id/tts_id through the shared default-model tree, `UsedModel`, `AvailableModels`) and, as of v0.3.5c, no longer renders the extra ranty page heading nor the RayRAG-only Reranker/RAG Chat Test cards (moved to `/admin`); the type filter chips and per-row tooltips are approximations of the upstream markup|
+| `web/src/pages/user-setting/setting-model/components/system-setting.tsx` | 159 | 4271 | `99f130ef3e4ea599` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs` | Rust `/user-setting/model` keeps the upstream three-section composition (`SystemSetting` rows for llm_id/embd_id/img2txt_id/asr_id/rerank_id/tts_id through the shared default-model tree, `UsedModel`, `AvailableModels`) and, as of v0.3.5c, no longer renders the extra ranty page heading nor the RayRAG-only Reranker/RAG Chat Test cards (moved to `/admin`); v0.3.5w: the section now follows `system-setting.tsx` verbatim -- `article.card > header` (h2 `systemModelSettings` 24px/500 + p `systemModelDescription`), the bordered `px-7 py-6 gap-6 max-h-[70vh] overflow-y-auto` rows container, six `flex gap-3` rows with a `w-1/4` label column and a `w-3/4` control column, `selectModelPlaceholder` on the trigger (namespaced key because `memories.selectModel` shares the English text), the six `setting.*Tip` strings rendered through `t()` with their zh.ts translations, and a lucide `CircleQuestionMark` trigger with its hover popover; the type filter chips remain an approximation and the exact React/Radix composition (Popover animation, Tooltip delay and portal placement) is still partial|
 | `web/src/pages/user-setting/setting-model/components/un-add-model.tsx` | 216 | 7068 | `1039c7c97f5c2ce6` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs; src/providers.rs` | Rust Available models matches the upstream layout (heading without a count suffix, type filter chips over the provider catalog, provider cards with a plain `Add` button and the `setting.showMoreModels`/`hideModels` toggle); chip counts render as `All 63` instead of upstream's `All62` concatenation and the provider icons are RayRAG letter tiles|
 | `web/src/pages/user-setting/setting-model/components/used-model.tsx` | 401 | 11934 | `0e02a87b529873a1` | partial | `src/web.rs; src/web_css.txt; src/server.rs; src/api/tenant_models.rs; src/model_meta.rs` | Rust Added models lists provider instances with `View models`/`Delete` actions and the API-Key/Base-Url fields of the upstream card; v0.3.5j: the per-instance toggle now uses the injected localized `ADDED_LABELS` (`setting.showMoreModels`="View models"/展示更多模型, `setting.hideModels`="Hide models"/隐藏模型), the instance model-type summary chips follow upstream `mapModelKey` through the shared `crate::providers` table (`MODEL_TYPE_LABELS`, e.g. image2text→VLM, speech2text→ASR, chat→LLM) and the row switch uses the upstream Switch styling; the collapse animation and the shared edit dialog remain approximations|
 | `web/src/pages/user-setting/setting-model/constant.ts` | 39 | 677 | `1e2141911a0533a2` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
