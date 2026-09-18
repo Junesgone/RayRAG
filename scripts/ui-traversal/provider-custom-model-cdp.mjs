@@ -133,9 +133,9 @@ try {
     expanded: document
       .getElementById("pcmTypesTrigger")
       .getAttribute("aria-expanded"),
-    options: Array.from(document.querySelectorAll(".pi-multiselect-option")).map(
-      (row) => row.textContent.trim(),
-    ),
+    options: Array.from(
+      document.querySelectorAll("#pcmTypesOptions .pi-multiselect-option"),
+    ).map((row) => row.textContent.trim()),
     searchPlaceholder: document.getElementById("pcmTypesSearch").placeholder,
     footer: [
       document.getElementById("pcmTypesClearAll").textContent,
@@ -146,11 +146,11 @@ try {
 
   // 4. Select two types, rewrite the search to filter, then clear.
   await page
-    .locator(".pi-multiselect-option", { hasText: "Chat" })
+    .locator("#pcmTypesOptions .pi-multiselect-option", { hasText: "Chat" })
     .first()
     .click();
   await page
-    .locator(".pi-multiselect-option", { hasText: "Embedding" })
+    .locator("#pcmTypesOptions .pi-multiselect-option", { hasText: "Embedding" })
     .first()
     .click();
   await page.waitForTimeout(300);
@@ -164,9 +164,9 @@ try {
   await page.fill("#pcmTypesSearch", "rer");
   await page.waitForTimeout(300);
   results.filtered = await page.evaluate(() => ({
-    options: Array.from(document.querySelectorAll(".pi-multiselect-option")).map(
-      (row) => row.textContent.trim(),
-    ),
+    options: Array.from(
+      document.querySelectorAll("#pcmTypesOptions .pi-multiselect-option"),
+    ).map((row) => row.textContent.trim()),
   }));
   await page.fill("#pcmTypesSearch", "");
   await page.waitForTimeout(200);
@@ -198,7 +198,7 @@ try {
   await page.click("[data-testid='pcm-types-trigger']");
   await page.waitForTimeout(300);
   await page
-    .locator(".pi-multiselect-option", { hasText: "Chat" })
+    .locator("#pcmTypesOptions .pi-multiselect-option", { hasText: "Chat" })
     .first()
     .click();
   await page.click("#pcmTypesClose");
@@ -237,7 +237,7 @@ try {
   await page.click("[data-testid='pcm-types-trigger']");
   await page.waitForTimeout(250);
   await page
-    .locator(".pi-multiselect-option", { hasText: "Chat" })
+    .locator("#pcmTypesOptions .pi-multiselect-option", { hasText: "Chat" })
     .first()
     .click();
   await page.click("#pcmTypesClose");
@@ -268,9 +268,162 @@ try {
   await page.click("#pcmCancel");
   await page.waitForTimeout(300);
 
-  // 8. Close the provider modal without saving (no server write happens).
+  // 7a. Make sure one provider instance exists so the added-models section is
+  //     populated. The instance is created through the same API the provider
+  //     modal posts to (the isolated probe host has no Ollama to verify
+  //     against), then removed again through the row trash button so nothing is
+  //     left behind.
   await page.click("#providerInstanceModal button:has-text('Cancel')");
   await page.waitForTimeout(400);
+  const created = await page.evaluate(async () => {
+    const response = await fetch("/api/v1/providers/Ollama/instances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instance_name: "cdp-probe-instance",
+        api_key: "",
+        base_url: "http://127.0.0.1:11434",
+        region: "default",
+        group_id: null,
+        model_info: [
+          {
+            model_name: "cdp-probe-llama",
+            model_type: ["chat"],
+            max_tokens: 4096,
+            extra: { is_tools: true },
+          },
+        ],
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok && data.code === 0, message: data.message || null };
+  });
+  results.instanceCreated = created;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("[data-testid='added-model-card']", {
+    timeout: 15000,
+  });
+  results.instanceRows = await page.evaluate(() => ({
+    groups: document.querySelectorAll("[data-testid='added-model-card']").length,
+    names: Array.from(document.querySelectorAll(".added-model-instance-name")).map(
+      (node) => node.textContent,
+    ),
+  }));
+
+  // 7b. Instance model editor (`used-model.tsx`): expand an instance of the
+  //     added provider, then open the row pencil and check the shared
+  //     MultiSelect with the name / max-tokens fields disabled.
+  const instanceProbe = await page.evaluate(async () => {
+    const group = document.querySelector("[data-testid='added-model-card']");
+    if (!group) return { skipped: "no added provider" };
+    const toggle = group.querySelector(".added-model-toggle");
+    if (!toggle) return { skipped: "no instance toggle" };
+    toggle.click();
+    return { provider: group.dataset.provider, text: toggle.textContent.trim() };
+  });
+  results.instanceToggle = instanceProbe;
+  await page.waitForTimeout(2500);
+  results.instanceToggleOpen = await page.evaluate(() => {
+    const toggle = document.querySelector(".added-model-toggle");
+    const first = document.querySelector(".added-model-row");
+    return {
+      text: toggle ? toggle.textContent.trim() : null,
+      expanded: toggle ? toggle.getAttribute("aria-expanded") : null,
+      hasChevron: !!(toggle && toggle.querySelector(".added-model-toggle-icon svg")),
+      rows: document.querySelectorAll(".added-model-row").length,
+      chips: first
+        ? Array.from(first.querySelectorAll(".added-model-type")).map(
+            (chip) => chip.textContent,
+          )
+        : null,
+      editSvg: !!(first && first.querySelector(".added-model-edit svg")),
+      editAria: first
+        ? first.querySelector(".added-model-edit").getAttribute("aria-label")
+        : null,
+      deleteSvg: !!(document.querySelector(".added-model-delete svg")),
+    };
+  });
+  const editor = await page.evaluate(() => {
+    const row = document.querySelector(".added-model-row");
+    const pencil = row ? row.querySelector(".added-model-edit") : null;
+    if (!pencil) return { skipped: "no model row" };
+    pencil.click();
+    return { opened: true };
+  });
+  results.instanceEditorOpen = editor;
+  if (!editor.skipped) {
+    await page.waitForTimeout(600);
+    results.instanceEditor = await page.evaluate(() => ({
+      title: document.getElementById("editInstanceModelTitle").textContent,
+      nameDisabled: document.getElementById("editInstanceModelName").disabled,
+      maxTokensDisabled: document.getElementById("editInstanceModelMaxTokens").disabled,
+      confirm: document.getElementById("editInstanceModelOk").textContent,
+      cancel: document.getElementById("editInstanceModelCancel").textContent,
+      badges: Array.from(document.querySelectorAll("#eimTypesValues .pi-multiselect-badge")).map(
+        (badge) => badge.textContent.trim(),
+      ),
+    }));
+    // Real click on the shared combobox: the option list uses the same order.
+    await page.click("[data-testid='eim-types-trigger']");
+    await page.waitForTimeout(400);
+    results.instanceEditorOptions = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("#eimTypesOptions .pi-multiselect-option")).map(
+        (row) => row.textContent.trim(),
+      ),
+    );
+    await page.click("#eimTypesClose");
+    await page.waitForTimeout(200);
+    await page.click("#editInstanceModelCancel");
+    await page.waitForTimeout(300);
+    results.instanceEditorClosed = await page.evaluate(
+      () =>
+        !document
+          .getElementById("editInstanceModelModal")
+          .classList.contains("show"),
+    );
+  }
+
+  // 7c. Delete the probe instance through the row trash button.
+  if (created.ok) {
+    const opened = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll(".added-model-instance"));
+      const row = rows.find(
+        (node) =>
+          (node.querySelector(".added-model-instance-name") || {}).textContent ===
+          "cdp-probe-instance",
+      );
+      if (!row) return false;
+      row.querySelector(".added-model-delete").click();
+      return true;
+    });
+    results.deleteDialogOpened = opened;
+    if (opened) {
+      await page.waitForTimeout(400);
+      await page.click("#deleteModelInstanceOk");
+      // Wait for the row to disappear instead of sampling once: the delete
+      // round-trip reloads the instance list asynchronously.
+      await page
+        .waitForFunction(
+          () =>
+            !Array.from(
+              document.querySelectorAll(".added-model-instance-name"),
+            ).some((node) => node.textContent === "cdp-probe-instance"),
+          null,
+          { timeout: 15000 },
+        )
+        .catch(() => {});
+      results.instanceDeleted = await page.evaluate(() => ({
+        remaining: Array.from(
+          document.querySelectorAll(".added-model-instance-name"),
+        ).map((node) => node.textContent),
+        stillThere: Array.from(
+          document.querySelectorAll(".added-model-instance-name"),
+        ).some((node) => node.textContent === "cdp-probe-instance"),
+      }));
+    }
+  }
+
+  // 8. The provider modal stays closed: nothing was persisted.
   results.providerModalClosed = !(await page
     .locator("#providerInstanceModal")
     .evaluate((node) => node.classList.contains("show")));

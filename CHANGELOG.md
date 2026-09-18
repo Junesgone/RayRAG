@@ -2,7 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5z）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.6a）
+
+### Changed
+
+- **Added models 实例行与实例模型编辑对齐上游 `used-model.tsx`**：实例折叠按钮在
+  `View models`/`Hide models` 文案切换时同步替换 lucide `ChevronsDown`/`ChevronsUp`（16px）图标；
+  删除按钮由 emoji 改为 lucide `Trash2`（16px）图标按钮；模型行铅笔改为 lucide `Pencil`（12px）
+  并使用按语言注入的 `Edit model` 可访问名。
+- **`MultiSelect` 组件化复用**：把 v0.3.5z 的 Model type 组合控件抽成可注册前缀的共享实现
+  （`piMsRegister/piMsToggleOpen/piMsRender/...`），Add custom model 弹层与**实例模型编辑弹层**
+  共用同一控件与同一份上游选项顺序；实例编辑弹层的 Name / Max tokens 置为禁用（仅类型可改），
+  标题 `Edit model`、底部 `Cancel`/`Confirm` 与上游 `AddCustomModelDialog` 一致。
+
+### Fixed
+
+- **模型供应商页脚本语法错误**：重构时 `toggleAddedInstance` 丢失 `async` 关键字，导致该页
+  整段脚本解析失败、供应商弹层无法打开。已修复并用 node --check 逐 `<script>` 块复验（7/7 通过）。
 
 ### Changed
 
