@@ -1138,6 +1138,8 @@ pub struct RelatedQuestionsRequest {
     pub question: String,
     #[serde(default)]
     pub search_id: Option<String>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 fn parse_related_questions(answer: &str) -> Vec<String> {
@@ -1167,10 +1169,54 @@ pub async fn related_questions(
         )
             .into_response();
     }
-    // search_id is accepted for wire compatibility. RayRAG does not yet expose
-    // RAGFlow SearchApp configuration, so model selection remains tenant-scoped.
-    let _search_id = body.search_id.as_deref();
-    let default_selector = state.tenant_models.default_chat_model(&auth.user_id);
+    // Upstream resolves the search app's own `chat_id` instance first and only
+    // then falls back to the tenant default chat model; `llm_setting` overrides
+    // the generation parameters (default temperature 0.9).
+    let search_app = body
+        .search_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .and_then(|id| state.search_apps.as_ref().and_then(|store| store.get(id)));
+    let mut generation = crate::generation_params::GenerationParamsPatch {
+        temperature: Some(0.9),
+        ..Default::default()
+    };
+    let mut instance_selector: Option<String> = None;
+    if let Some(app) = search_app.as_ref() {
+        if !app.chat_id.trim().is_empty() {
+            instance_selector = Some(app.chat_id.clone());
+        }
+        if let Some(settings) = app.llm_setting.as_object() {
+            // Upstream drops `parameter` (it is a nested provider payload) and
+            // merges the remaining keys into the generation config.
+            let mut cleaned = settings.clone();
+            cleaned.remove("parameter");
+            if !cleaned.is_empty() {
+                match crate::generation_params::GenerationParamsPatch::from_request(
+                    &serde_json::Value::Object(cleaned),
+                ) {
+                    Ok(mut patch) => {
+                        // Upstream default applies whenever the app does not
+                        // pin its own temperature.
+                        patch.temperature = patch.temperature.or(Some(0.9));
+                        generation = patch;
+                    }
+                    Err(error) => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "code": 400,
+                                "message": format!("invalid llm_setting: {error}"),
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+    }
+    let default_selector =
+        instance_selector.or_else(|| state.tenant_models.default_chat_model(&auth.user_id));
     let tenant_llm = match state.tenant_models.resolve(
         &state.providers,
         &auth.user_id,
@@ -1200,10 +1246,6 @@ pub async fn related_questions(
             format!("\nKeywords: {question}\nRelated search terms:\n    "),
         ),
     ];
-    let generation = crate::generation_params::GenerationParamsPatch {
-        temperature: Some(0.9),
-        ..Default::default()
-    };
     match llm
         .chat_completion_with_generation(&messages, generation)
         .await

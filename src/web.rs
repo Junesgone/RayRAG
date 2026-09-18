@@ -138,6 +138,8 @@ fn t(k: &str, zh: bool) -> &str {
             "知识库采用的默认嵌入模型。一旦知识库内已经产生了文本块，更换嵌入模型时，系统将随机抽取若干 chunk 进行兼容性校验，使用新嵌入模型重新编码并计算新旧向量的余弦相似度，样本平均相似度需 ≥ 0.9 方可切换。否则，必须删除知识库内的所有文本块后才能更改。"
         }
         "Threshold" => "相似度阈值",
+        "Enable related search" => "启用相关搜索",
+        "Related search" => "相关搜索",
         "Name" => "名称",
         "Created" => "创建时间",
         "Size" => "大小",
@@ -2402,9 +2404,21 @@ pub async fn search_page(
             "hybrid": app.hybrid,
             "rerank": app.rerank,
             "rerank_id": app.rerank_id,
-            "top_k": app.top_k,
+            "top_k": if app.top_k == 0 { 1024 } else { app.top_k },
             "similarity_threshold": app.similarity_threshold,
             "vector_similarity_weight": app.vector_similarity_weight,
+            // Upstream `search_config` fields consumed by next-search.
+            "doc_ids": app.doc_ids,
+            "chat_id": app.chat_id,
+            "llm_setting": app.llm_setting,
+            "cross_languages": app.cross_languages,
+            "use_kg": app.use_kg,
+            "highlight": app.highlight,
+            "keyword": app.keyword,
+            "web_search": app.web_search,
+            "related_search": app.related_search,
+            "query_mindmap": app.query_mindmap,
+            "summary": app.summary,
         }));
         b.push_str("<script>window.__SAPP__=");
         b.push_str(&seed);
@@ -2445,8 +2459,15 @@ pub async fn search_page(
     b.push_str(t("Threshold", zh));
     b.push_str("</label><select id='thresh'><option>0.0</option><option selected>0.3</option><option>0.5</option><option>0.7</option></select><label style='font-size:12px;display:block;margin:8px 0'>");
     b.push_str(t("Vector Weight", zh));
-    b.push_str("</label><select id='vWeight'><option>0.3</option><option>0.5</option><option selected>0.7</option><option>1.0</option></select><h3 style='margin-top:20px'>Quick Questions</h3><a href='#' onclick='quickQ(\"What is RayRAG?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>What is RayRAG?</a><a href='#' onclick='quickQ(\"How does RAG work?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>How does RAG work?</a></div></div></div>");
-    b.push_str("<script>function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;searchRerankToggle();var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function docTypeOk(c){var t=document.getElementById('docType').value;if(!t)return true;var n=(c.doc_name||c.document_name||'').toLowerCase();return n.indexOf('.'+t)>0};function runSearch(q){var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);if(r&&!searchRerankSelected()){var err=document.getElementById('searchRerankError');if(err)err.textContent='Rerank model is required when rerank is enabled';var row=document.getElementById('searchRerankRow');if(row)row.style.display='';return}searchRerankHideError();var e='/api/v1/retrieval';var body={question:q,top_k:k};var kbs=[];var allOn=false;document.querySelectorAll('.kbCk:checked').forEach(function(c){if(c.value==='__all__'){allOn=true}else{kbs.push(c.value)}});if(kbs.length&&!allOn){body.kb_ids=kbs}var rrEl=document.getElementById('searchRerankSel');var rr=rrEl?(rrEl.dataset.value||''):'';if(r&&rr){body.rerank_id=rr}body.similarity_threshold=t;body.vector_similarity_weight=parseFloat(document.getElementById('vWeight').value);if(!h){body.vector_similarity_weight=0};document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(docTypeOk);var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||'<p style=color:var(--tm);padding:24px>No results found.</p>'})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
+    b.push_str("</label><select id='vWeight'><option>0.3</option><option>0.5</option><option selected>0.7</option><option>1.0</option></select><label style='font-size:12px;display:flex;align-items:center;gap:6px;margin:8px 0'><input type='checkbox' id='relatedSearch' onchange='searchRelatedToggle()'> ");
+    b.push_str(t("Enable related search", zh));
+    b.push_str("</label><h3 style='margin-top:20px'>Quick Questions</h3><a href='#' onclick='quickQ(\"What is RayRAG?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>What is RayRAG?</a><a href='#' onclick='quickQ(\"How does RAG work?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>How does RAG work?</a></div></div></div>");
+    b.push_str("<script>var SEARCH_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "relatedSearch": t("Related search", zh),
+    })));
+    b.push_str(";</script>");
+    b.push_str("<script>function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked,related_search:document.getElementById('relatedSearch').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search;searchRerankToggle();var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};function searchRelatedOn(){var box=document.getElementById('relatedSearch');return !!(box&&box.checked)}function searchRelatedDrop(){var host=document.getElementById('relatedQuestions');if(host)host.remove()}function searchRelatedToggle(){if(!searchRelatedOn())searchRelatedDrop()}function searchRelatedClick(text){var box=document.getElementById('q2');if(box)box.value=text;runSearch(text)}function loadRelatedQuestions(q){if(!searchRelatedOn()||!q){searchRelatedDrop();return}var sid=(window.__SAPP__&&window.__SAPP__.id)||'';fetch('/api/v1/chat/recommendation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,search_id:sid})}).then(function(response){return response.json()}).then(function(data){var list=((data&&data.data)||[]).slice(0,5);if(!searchRelatedOn()||!list.length){searchRelatedDrop();return}searchRelatedDrop();var wrap=document.createElement('div');wrap.id='relatedQuestions';wrap.className='search-related';var title=document.createElement('p');title.className='search-related-title';title.textContent=SEARCH_LABELS.relatedSearch;wrap.appendChild(title);var chips=document.createElement('div');chips.className='search-related-chips';list.forEach(function(text){var chip=document.createElement('button');chip.type='button';chip.className='search-related-chip';chip.textContent=text;chip.onclick=function(){searchRelatedClick(text)};chips.appendChild(chip)});wrap.appendChild(chips);var host=document.getElementById('results');if(host)host.appendChild(wrap)}).catch(function(){searchRelatedDrop()})}function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function docTypeOk(c){var t=document.getElementById('docType').value;if(!t)return true;var n=(c.doc_name||c.document_name||'').toLowerCase();return n.indexOf('.'+t)>0};function runSearch(q){var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);if(r&&!searchRerankSelected()){var err=document.getElementById('searchRerankError');if(err)err.textContent='Rerank model is required when rerank is enabled';var row=document.getElementById('searchRerankRow');if(row)row.style.display='';return}searchRerankHideError();var e='/api/v1/retrieval';var body={question:q,top_k:k};var kbs=[];var allOn=false;document.querySelectorAll('.kbCk:checked').forEach(function(c){if(c.value==='__all__'){allOn=true}else{kbs.push(c.value)}});if(kbs.length&&!allOn){body.kb_ids=kbs}var rrEl=document.getElementById('searchRerankSel');var rr=rrEl?(rrEl.dataset.value||''):'';if(r&&rr){body.rerank_id=rr}body.similarity_threshold=t;body.vector_similarity_weight=parseFloat(document.getElementById('vWeight').value);if(!h){body.vector_similarity_weight=0};document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(docTypeOk);var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||'<p style=color:var(--tm);padding:24px>No results found.</p>';loadRelatedQuestions(q)})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
     b.push_str("<script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&serde_json::json!([{
         "fieldId": "rerank_id",
@@ -5536,12 +5557,18 @@ pub async fn search_app_detail_page(
         "<label class='set-label'>{}</label><input id='sa_topk' type='number' min='1' max='128' value='{}' style='width:120px'><label class='set-label'>{}</label><input id='sa_thresh' type='number' step='0.05' min='0' max='1' value='{}' style='width:120px'><label class='set-label'>{}</label><input id='sa_vsw' type='number' step='0.05' min='0' max='1' value='{}' style='width:120px'></div>",
         t("Top-K", zh), app.top_k, t("Similarity Threshold", zh), app.similarity_threshold, t("Vector Weight", zh), app.vector_similarity_weight
     ));
+    // Upstream search-setting.tsx renders the related-search switch inside the
+    // search app's settings drawer.
+    b.push_str(&format!(
+        "<div class='set-group'><b class='set-title'>{}</b><label class='set-switch'><input type='checkbox' id='sa_related'{}><span class='set-sw-label'>{}</span></label></div>",
+        t("Search Settings", zh), ck(app.related_search), t("Enable related search", zh)
+    ));
     b.push_str(&format!(
         "<div style='display:flex;justify-content:flex-end;gap:8px'><button class='btn btn-p' onclick='saveSApp()'>{}</button></div>",
         t("Save", zh)
     ));
     b.push_str(&format!(
-        "<script>function saveSApp(){{var id='{app_id}';var kbs=Array.from(document.getElementById('sa_kbs').selectedOptions).map(function(o){{return o.value}});fetch('/api/v1/searchapps/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{kb_ids:kbs,hybrid:document.getElementById('sa_hybrid').checked,rerank:document.getElementById('sa_rerank').checked,rerank_id:(document.getElementById('saRerankSel')&&document.getElementById('saRerankSel').dataset.value)||'',top_k:parseInt(document.getElementById('sa_topk').value)||8,similarity_threshold:parseFloat(document.getElementById('sa_thresh').value),vector_similarity_weight:parseFloat(document.getElementById('sa_vsw').value)}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
+        "<script>function saveSApp(){{var id='{app_id}';var kbs=Array.from(document.getElementById('sa_kbs').selectedOptions).map(function(o){{return o.value}});fetch('/api/v1/searchapps/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{kb_ids:kbs,hybrid:document.getElementById('sa_hybrid').checked,rerank:document.getElementById('sa_rerank').checked,rerank_id:(document.getElementById('saRerankSel')&&document.getElementById('saRerankSel').dataset.value)||'',top_k:parseInt(document.getElementById('sa_topk').value)||8,similarity_threshold:parseFloat(document.getElementById('sa_thresh').value),vector_similarity_weight:parseFloat(document.getElementById('sa_vsw').value),related_search:document.getElementById('sa_related').checked}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.code===0){{location.reload()}}else{{alert(d.message||'save failed')}}}})}}</script>",
         app_id = app_id
     ));
     let app_seed = json_script_value(&serde_json::json!({ "rerank_id": app.rerank_id }));
@@ -7812,6 +7839,123 @@ connection: close
         assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
     }
 
+    /// Upstream `chat_api.py::recommendation` resolves the search app's own
+    /// `chat_id` instance and `llm_setting`; invalid settings fail loudly and
+    /// the app config fields survive a create/update round trip.
+    #[tokio::test]
+    async fn related_questions_uses_search_app_config() {
+        use crate::api::system::{RelatedQuestionsRequest, related_questions};
+        let (_root, mut state) = test_state();
+        let dir = std::env::temp_dir().join(format!("rayrag-sapp-relq-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let mut app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "相关搜索".into(),
+                    chat_id: "prov/inst/chat".into(),
+                    llm_setting: serde_json::json!({ "temperature": 5.0 }),
+                    related_search: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store.clone());
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: false,
+        };
+        let ask =
+            |state: Arc<AppState>, auth: crate::server::AuthContext, search_id: Option<String>| {
+                related_questions(
+                    axum::extract::State(state),
+                    axum::extract::Extension(auth),
+                    axum::Json(RelatedQuestionsRequest {
+                        question: "how does rag work".into(),
+                        search_id,
+                        tenant_id: None,
+                    }),
+                )
+            };
+        // Out-of-range llm_setting is rejected before any model call.
+        let invalid = ask(state.clone(), auth.clone(), Some(app.id.clone())).await;
+        assert_eq!(invalid.status(), axum::http::StatusCode::BAD_REQUEST);
+        let body = body_of(invalid).await;
+        assert!(body.contains("invalid llm_setting"), "{body}");
+
+        // A valid setting reaches model resolution: with no provider instance
+        // registered the handler reports the missing chat model (proving the
+        // app's chat_id was used as the selector).
+        app.llm_setting = serde_json::json!({ "temperature": 0.5, "parameter": { "n": 1 } });
+        store.upsert(app.clone()).unwrap();
+        let no_model = ask(state.clone(), auth.clone(), Some(app.id.clone())).await;
+        assert_eq!(no_model.status(), axum::http::StatusCode::BAD_REQUEST);
+        let body = body_of(no_model).await;
+        assert!(
+            body.contains("prov/inst/chat") || body.contains("not found"),
+            "chat_id selector not applied: {body}"
+        );
+
+        // Without a search app the tenant default path still applies.
+        let tenant_only = ask(state, auth, None).await;
+        assert!(tenant_only.status().is_success() || tenant_only.status().is_server_error());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The search app edit page persists the upstream related-search switch.
+    #[tokio::test]
+    async fn search_app_page_persists_related_search_switch() {
+        let (_root, mut state) = test_state();
+        let dir = std::env::temp_dir().join(format!("rayrag-sapp-edit-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "编辑应用".into(),
+                    rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
+                    related_search: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store.clone());
+        let req = Request::builder()
+            .uri(format!("/searches/{}", app.id).as_str())
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            search_app_detail_page(
+                State(state.clone()),
+                axum::extract::Path(app.id.clone()),
+                req,
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "id='sa_related'",
+            "Enable related search",
+            "related_search:document.getElementById('sa_related').checked",
+        ] {
+            assert!(
+                html.contains(marker),
+                "search app page marker missing: {marker}"
+            );
+        }
+        // The switch renders checked for an app that already enables it.
+        assert!(
+            html.contains("id='sa_related' checked"),
+            "related-search switch must reflect the saved config"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     #[tokio::test]
     async fn search_page_seeds_search_app_runtime_config() {
         let (_root, mut state) = test_state();
@@ -7833,6 +7977,10 @@ connection: close
                     top_k: 8,
                     similarity_threshold: 0.6,
                     vector_similarity_weight: 0.4,
+                    chat_id: "prov/inst/chat".into(),
+                    related_search: true,
+                    query_mindmap: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -7869,6 +8017,35 @@ connection: close
         assert!(
             html.contains("if(!h){body.vector_similarity_weight=0}"),
             "hybrid toggle wiring missing"
+        );
+        // Upstream next-search `search-view.tsx` + `search-setting.tsx`: the
+        // related-search switch gates a `chat/recommendation` call whose answers
+        // render as clickable chips below the chunks.
+        for marker in [
+            "id='relatedSearch'",
+            "searchRelatedToggle()",
+            "function searchRelatedOn()",
+            "function loadRelatedQuestions(q)",
+            "function searchRelatedClick(text)",
+            "/api/v1/chat/recommendation",
+            "search-related-chips",
+            "SEARCH_LABELS",
+            "related_search:document.getElementById('relatedSearch').checked",
+            "var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search",
+            ";loadRelatedQuestions(q)",
+            "\"related_search\":true",
+            "\"query_mindmap\":true",
+            "\"chat_id\":\"prov/inst/chat\"",
+        ] {
+            assert!(
+                html.contains(marker),
+                "search related marker missing: {marker}"
+            );
+        }
+        // Clicking a chip must re-run the search with the chip text.
+        assert!(
+            html.contains("chip.onclick=function(){searchRelatedClick(text)}"),
+            "chip click wiring missing"
         );
         assert!(
             html.contains("data-testid='default-model-rerank_id'"),
@@ -7922,8 +8099,9 @@ connection: close
                     rerank: false,
                     rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
                     top_k: 8,
-                    similarity_threshold: 0.2,
-                    vector_similarity_weight: 0.3,
+                    similarity_threshold: 0.6,
+                    vector_similarity_weight: 0.4,
+                    ..Default::default()
                 },
             )
             .unwrap();

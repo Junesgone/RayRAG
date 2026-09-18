@@ -26,12 +26,47 @@ pub struct SearchAppRecord {
     pub rerank: bool,
     #[serde(default)]
     pub rerank_id: String,
-    #[serde(default)]
+    #[serde(default = "default_top_k")]
     pub top_k: u32,
     #[serde(default = "default_similarity_threshold")]
     pub similarity_threshold: f64,
     #[serde(default = "default_vector_similarity_weight")]
     pub vector_similarity_weight: f64,
+    /// Upstream `search_config.doc_ids` — an explicit document allow-list.
+    #[serde(default)]
+    pub doc_ids: Vec<String>,
+    /// Upstream `search_config.chat_id` — the tenant model instance used by the
+    /// related-search / AI-summary chat calls.
+    #[serde(default)]
+    pub chat_id: String,
+    /// Upstream `search_config.llm_setting` — generation overrides for those calls.
+    #[serde(default)]
+    pub llm_setting: serde_json::Value,
+    /// Upstream `search_config.chat_settingcross_languages` (sic).
+    #[serde(default)]
+    pub cross_languages: Vec<String>,
+    /// Upstream `search_config.use_kg`.
+    #[serde(default)]
+    pub use_kg: bool,
+    /// Upstream `search_config.highlight` — render server-side `<em>` highlights.
+    #[serde(default)]
+    pub highlight: bool,
+    /// Upstream `search_config.keyword` — keyword-only retrieval.
+    #[serde(default)]
+    pub keyword: bool,
+    /// Upstream `search_config.web_search`.
+    #[serde(default)]
+    pub web_search: bool,
+    /// Upstream `search_config.related_search` — fetch `chat/recommendation`
+    /// questions after each search.
+    #[serde(default)]
+    pub related_search: bool,
+    /// Upstream `search_config.query_mindmap`.
+    #[serde(default)]
+    pub query_mindmap: bool,
+    /// Upstream `search_config.summary` — stream an AI summary answer.
+    #[serde(default)]
+    pub summary: bool,
     #[serde(default)]
     pub created_at: String,
 }
@@ -47,12 +82,67 @@ pub struct SearchAppCreate {
     pub rerank: bool,
     #[serde(default)]
     pub rerank_id: String,
-    #[serde(default)]
+    #[serde(default = "default_top_k")]
     pub top_k: u32,
     #[serde(default = "default_similarity_threshold")]
     pub similarity_threshold: f64,
     #[serde(default = "default_vector_similarity_weight")]
     pub vector_similarity_weight: f64,
+    #[serde(default)]
+    pub doc_ids: Vec<String>,
+    #[serde(default)]
+    pub chat_id: String,
+    #[serde(default)]
+    pub llm_setting: serde_json::Value,
+    #[serde(default)]
+    pub cross_languages: Vec<String>,
+    #[serde(default)]
+    pub use_kg: bool,
+    #[serde(default)]
+    pub highlight: bool,
+    #[serde(default)]
+    pub keyword: bool,
+    #[serde(default)]
+    pub web_search: bool,
+    #[serde(default)]
+    pub related_search: bool,
+    #[serde(default)]
+    pub query_mindmap: bool,
+    #[serde(default)]
+    pub summary: bool,
+}
+
+impl Default for SearchAppCreate {
+    /// Upstream `Search.search_config` defaults, so a partially specified
+    /// create request still lands on the documented configuration.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            kb_ids: Vec::new(),
+            hybrid: false,
+            rerank: false,
+            rerank_id: String::new(),
+            top_k: default_top_k(),
+            similarity_threshold: default_similarity_threshold(),
+            vector_similarity_weight: default_vector_similarity_weight(),
+            doc_ids: Vec::new(),
+            chat_id: String::new(),
+            llm_setting: serde_json::Value::Null,
+            cross_languages: Vec::new(),
+            use_kg: false,
+            highlight: false,
+            keyword: false,
+            web_search: false,
+            related_search: false,
+            query_mindmap: false,
+            summary: false,
+        }
+    }
+}
+
+fn default_top_k() -> u32 {
+    // Upstream `Search.search_config.top_k` default.
+    1024
 }
 
 fn default_similarity_threshold() -> f64 {
@@ -131,6 +221,17 @@ impl SearchAppStore {
             top_k: req.top_k,
             similarity_threshold: req.similarity_threshold,
             vector_similarity_weight: req.vector_similarity_weight,
+            doc_ids: req.doc_ids,
+            chat_id: req.chat_id,
+            llm_setting: req.llm_setting,
+            cross_languages: req.cross_languages,
+            use_kg: req.use_kg,
+            highlight: req.highlight,
+            keyword: req.keyword,
+            web_search: req.web_search,
+            related_search: req.related_search,
+            query_mindmap: req.query_mindmap,
+            summary: req.summary,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
         self.apps
@@ -230,6 +331,28 @@ pub struct UpdateSearchAppRequest {
     pub vector_similarity_weight: Option<f64>,
     #[serde(default)]
     pub top_k: Option<u32>,
+    #[serde(default)]
+    pub doc_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub chat_id: Option<String>,
+    #[serde(default)]
+    pub llm_setting: Option<serde_json::Value>,
+    #[serde(default)]
+    pub cross_languages: Option<Vec<String>>,
+    #[serde(default)]
+    pub use_kg: Option<bool>,
+    #[serde(default)]
+    pub highlight: Option<bool>,
+    #[serde(default)]
+    pub keyword: Option<bool>,
+    #[serde(default)]
+    pub web_search: Option<bool>,
+    #[serde(default)]
+    pub related_search: Option<bool>,
+    #[serde(default)]
+    pub query_mindmap: Option<bool>,
+    #[serde(default)]
+    pub summary: Option<bool>,
 }
 
 /// PUT /api/v1/searchapps/{id} — partial update (rename + settings).
@@ -320,6 +443,48 @@ pub async fn update_search_app(
         next.vector_similarity_weight = vector_similarity_weight.clamp(0.0, 1.0);
         changed = true;
     }
+    if let Some(doc_ids) = body.doc_ids
+        && doc_ids != next.doc_ids
+    {
+        next.doc_ids = doc_ids;
+        changed = true;
+    }
+    if let Some(chat_id) = body.chat_id {
+        let chat_id = chat_id.trim().to_string();
+        if chat_id != next.chat_id {
+            next.chat_id = chat_id;
+            changed = true;
+        }
+    }
+    if let Some(llm_setting) = body.llm_setting
+        && llm_setting != next.llm_setting
+    {
+        next.llm_setting = llm_setting;
+        changed = true;
+    }
+    if let Some(cross_languages) = body.cross_languages
+        && cross_languages != next.cross_languages
+    {
+        next.cross_languages = cross_languages;
+        changed = true;
+    }
+    // Upstream `search_config` boolean switches.
+    for (incoming, current) in [
+        (body.use_kg, &mut next.use_kg),
+        (body.highlight, &mut next.highlight),
+        (body.keyword, &mut next.keyword),
+        (body.web_search, &mut next.web_search),
+        (body.related_search, &mut next.related_search),
+        (body.query_mindmap, &mut next.query_mindmap),
+        (body.summary, &mut next.summary),
+    ] {
+        if let Some(value) = incoming
+            && value != *current
+        {
+            *current = value;
+            changed = true;
+        }
+    }
     if changed {
         store
             .upsert(next)
@@ -369,6 +534,7 @@ mod tests {
                     top_k: 8,
                     similarity_threshold: 0.2,
                     vector_similarity_weight: 0.3,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -377,6 +543,58 @@ mod tests {
         assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
         assert_eq!(got.similarity_threshold, 0.2);
         assert_eq!(got.vector_similarity_weight, 0.3);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn search_config_switch_fields_round_trip() {
+        let dir = std::env::temp_dir().join(format!("rayrag-searchapp-{}", uuid::Uuid::new_v4()));
+        let store = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let rec = store
+            .create(
+                "u1",
+                SearchAppCreate {
+                    name: "related".into(),
+                    kb_ids: vec!["kb1".into()],
+                    hybrid: false,
+                    rerank: false,
+                    rerank_id: String::new(),
+                    top_k: 1024,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
+                    doc_ids: vec!["doc1".into()],
+                    chat_id: "prov/inst/chat".into(),
+                    llm_setting: serde_json::json!({ "temperature": 0.5 }),
+                    cross_languages: vec!["English".into()],
+                    use_kg: true,
+                    highlight: true,
+                    keyword: true,
+                    web_search: false,
+                    related_search: true,
+                    query_mindmap: true,
+                    summary: true,
+                },
+            )
+            .unwrap();
+        assert!(rec.related_search && rec.query_mindmap && rec.summary);
+        assert_eq!(rec.chat_id, "prov/inst/chat");
+        assert_eq!(rec.doc_ids, vec!["doc1".to_string()]);
+        assert_eq!(rec.llm_setting["temperature"], 0.5);
+        // Reload from disk so the JSON round-trip is covered, not just memory.
+        let reloaded = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let got = reloaded.get(&rec.id).expect("persisted app");
+        assert!(got.related_search && got.use_kg && got.highlight && got.keyword);
+        assert_eq!(got.cross_languages, vec!["English".to_string()]);
+        // Legacy records without the new keys deserialize with upstream defaults.
+        let legacy: SearchAppRecord = serde_json::from_value(serde_json::json!({
+            "id": "old",
+            "name": "legacy",
+            "created_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("legacy record");
+        assert_eq!(legacy.top_k, 1024);
+        assert!(!legacy.related_search);
+        assert_eq!(legacy.llm_setting, serde_json::Value::Null);
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -396,6 +614,7 @@ mod tests {
                     top_k: 8,
                     similarity_threshold: 0.2,
                     vector_similarity_weight: 0.3,
+                    ..Default::default()
                 },
             )
             .unwrap();

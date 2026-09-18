@@ -2,9 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [0.3.4] — 2026-09-16（对标批次 v0.3.4e–v0.3.5u）
+## [0.3.4] — 2026-09-18（对标批次 v0.3.4e–v0.3.5v）
 
 ### Changed
+
+- **相关搜索端到端对齐上游 next-search**：检索应用配置补齐 `search_config` 全字段（doc_ids/chat_id/llm_setting/
+  cross_languages/use_kg/highlight/keyword/web_search/related_search/query_mindmap/summary，`top_k` 默认 1024）；
+  `/search` 设置栏与 `/searches/{id}` 编辑页新增 `Enable related search` 开关；检索结果下方按上游渲染
+  `Related search` 标题与最多 5 个 chip，点击即以该问题重跑检索。
+- `POST /api/v1/chat/recommendation`：命中 `search_id` 时使用该应用的 `chat_id` 实例与 `llm_setting`（剔除
+  `parameter`，默认 temperature 0.9），非法设置返回 400。
+- **CDP 探针** `scripts/ui-traversal/search-related-cdp.mjs`：开关置位、chip 数量与文本、请求体、点击重跑、
+  关闭后不再请求、编辑页保存后 GET 复核、探针应用清理。
 
 - **Joined teams 表逐列对齐上游 `tenant-table.tsx`**：四列 Name（头像+昵称）/ Update date（三态排序按钮，↕/↑/↓）/
   Email / Action；`invite` 行渲染链接式 Agree/Refuse，`normal` 且非本人租户渲染纯图标 ghost Quit，owner 行留空；

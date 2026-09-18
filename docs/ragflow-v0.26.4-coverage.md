@@ -17,10 +17,10 @@
 |---|---:|---:|
 | aligned | 275 | 60462 |
 | full | 566 | 267453 |
-| partial | 40 | 11029 |
+| partial | 41 | 11376 |
 | replaced | 101 | 38058 |
 | N/A | 61 | 10262 |
-| reference | 3398 | 880254 |
+| reference | 3397 | 879907 |
 | unmapped | 0 | 0 |
 
 > v0.3.3l–o（2026-08-07）新增 aligned：searchapps CRUD（searchapp_mgr.rs）、
@@ -166,6 +166,16 @@
 > 覆盖建/测/存、Search、Edit 改名、Export、批量 Delete、JSON Import，0 error。
 > 12 个 UI 文件由 reference 纠正为 partial，mcp_api.py 由空洞 aligned 更新为真实实现；
 > SSE 传输工具抓取、分页组件与逐像素 React 组合仍为 partial。
+>
+> v0.3.5v（2026-09-18）相关搜索切片：上游 `api/apps/restful_apis/chat_api.py::recommendation`
+> 先按 `search_id` 取 SearchApp 的 `chat_id` 实例、再回退租户默认 CHAT 模型，并把
+> `search_config.llm_setting`（剔除 `parameter`）并入生成参数（默认 temperature 0.9）；
+> SearchApp 配置补齐上游 `search_config` 全字段（doc_ids/chat_id/llm_setting/
+> cross_languages/use_kg/highlight/keyword/web_search/related_search/query_mindmap/
+> summary，`top_k` 默认 1024，旧记录反序列化仍取上游默认）。前端 `/search` 设置栏出现
+> `search.enableRelatedSearch` 开关，结果下方按 `search-view.tsx` 渲染
+> `search.relatedSearch` 标题 + 最多 5 个 chip（`chat/recommendation`，点击重跑检索）；
+> 检索应用编辑页（`/searches/{id}`）同步该开关并可保存。fnOS Chrome/CDP 真点验证。
 >
 > v0.3.5u（2026-09-15）逐行复核 `setting-team/tenant-table.tsx` 167 行。Rust Joined teams
 > 表补齐上游四列：Name（头像 + 昵称）、Update date（三态 asc/desc/none 排序按钮与
@@ -690,7 +700,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `api/apps/restful_apis/_generation_params.py` | 38 | 1330 | `e5fa79c2bf9d084d` | aligned | `src/generation_params.rs; src/llm.rs; src/api/features.rs; src/api/openai_proxy.rs` | Five fixed non-null generation overrides, RAGFlow dialog defaults, typed ranges, unknown-field ignore semantics and forwarding through chat, agent and OpenAI completion entries |
 | `api/apps/restful_apis/agent_api.py` | 2526 | 95210 | `98e92f1c13163205` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/bot_api.py` | 589 | 25498 | `f2ee95ab21df6e51` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
-| `api/apps/restful_apis/chat_api.py` | 1323 | 54247 | `d9a613f380afb7b3` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
+| `api/apps/restful_apis/chat_api.py` | 1323 | 54247 | `d9a613f380afb7b3` | aligned | `src/server.rs; src/api/system.rs; src/api/searchapp_mgr.rs` | audited: REST endpoints in src/server.rs; `POST /api/v1/chat/recommendation` (and the `/sessions/related_questions`, `/searchbots/related_questions` aliases) resolves the search app's `chat_id` instance, merges `llm_setting` minus `parameter` over the 0.9 temperature default, runs the `related_question` prompt with the `\nKeywords: {question}\nRelated search terms:\n    ` user turn, and strips the `N. ` list prefixes (v0.3.5v) |
 | `api/apps/restful_apis/chat_channel_api.py` | 150 | 6177 | `0ba9cc5f994a7ba5` | aligned | `src/server.rs; src/api/chat_channel_mgr.rs` | Tenant-scoped GET/POST /api/v1/chat-channels and GET/PATCH/DELETE /{id} implemented over an atomic JSON store with {name, channel, config.credential.*, chat_id}; CDP-verified create/list/edit/delete (v0.3.3bw) |
 | `api/apps/restful_apis/chunk_api.py` | 1110 | 48716 | `b91519db0c9dd741` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/restful_apis/compilation_template_api.py` | 72 | 2970 | `8895bb102cc7f023` | aligned | `src/api/compilation_templates.rs; src/api/fixtures/; src/server.rs` | Authenticated read-only builtin palette and wiki presets; builtins use the personal tenant by default or a membership-checked shared tenant and inject only its explicit default chat selector |
@@ -756,7 +766,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `api/common/exceptions.py` | 43 | 1377 | `508fb552701b33dc` | full | `src/api/common.rs` | ApiError envelope + team permission + base64 ported |
 | `api/constants.py` | 29 | 942 | `72661f47612f0890` | full | `src/common.rs` | api constants + validation ported |
 | `api/db/__init__.py` | 92 | 2736 | `2468d59473076386` | aligned | `src/api/db.rs; src/api/utils.rs; src/api/joint_services.rs; src/api/common.rs; src/api/features.rs; src/agent_templates.rs; src/web.rs` | All 92 fixed-version lines audited: UserTenantRole/TenantPermission, integer SerializedType, seven FileType values, four InputType values, Agent/DataFlow CanvasCategory wire values, seven valid pipeline task types, five lowercase progress-freeze values and both reserved folder names are typed in Rust; persisted legacy agent/ingestion aliases migrate to agent_canvas/dataflow_canvas, invalid values fail closed, and blank/import/copy/fixed ingestion-template UI paths preserve the canonical category |
-| `api/db/db_models.py` | 1847 | 89303 | `74dc5e5c0b13647a` | replaced | `src/auth.rs; src/kb.rs; src/stores.rs; src/api/` | Typed Rust stores plus PostgreSQL snapshot mirror replace Peewee/MySQL models |
+| `api/db/db_models.py` | 1847 | 89303 | `74dc5e5c0b13647a` | replaced | `src/auth.rs; src/kb.rs; src/stores.rs; src/api/` | Typed Rust stores plus PostgreSQL snapshot mirror replace Peewee/MySQL models | v0.3.5v: `Search.search_config` defaults (doc_ids/use_kg/top_k 1024/summary/chat_id/llm_setting/highlight/keyword/web_search/related_search/query_mindmap) are mirrored by `src/api/searchapp_mgr.rs` and round-trip through the REST handlers. |
 | `api/db/db_utils.py` | 122 | 3947 | `98e44f8d53cf9ff1` | replaced | `src/persistence.rs` | Atomic local state and PostgreSQL 18.4 mirror |
 | `api/db/init_data.py` | 183 | 7244 | `c755565a394759e5` | full | `src/api/joint_services.rs` | seed plans ported (settings/llm factory cleanup) |
 | `api/db/init_data/compilation_templates/empty.yaml` | 17 | 275 | `4be03bac6b37af44` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` | Fixed v0.26.4 builtin and wiki preset data compiled into the Rust binary with startup validation |
@@ -4704,7 +4714,7 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/next-search/document-preview-modal/index.tsx` | 70 | 2139 | `93645337c96e5cf5` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/embed-app-modal.tsx` | 151 | 4807 | `aa2741f4ac0ce3ec` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/expandable-content.tsx` | 108 | 3090 | `310cd058757517e3` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/next-search/hooks.ts` | 622 | 15144 | `33c86716a94bcc47` | partial | `src/web.rs` | Rust `/search` page consumes the search app runtime: `/search?sapp={id}` seeds kb chips/select, the rerank model-tree picker (`SEARCH_PAGE_RERANK_SELECTOR_FIELD`, revealed by the rerank switch, seeded from `__SAPP__.rerank_id`), rerank/hybrid switches, an injected Top-K option; `runSearch` sends the app config (kb_ids/top_k/rerank_id/similarity_threshold/vector_similarity_weight) to `/api/v1/retrieval`, and the picker stays form-local (no `PATCH /api/v1/models/default`, matching the upstream react-hook-form drawer — CDP probe asserts 0 default PATCHes); mindmap/related-search/highlight flows remain simplified |
+| `web/src/pages/next-search/hooks.ts` | 622 | 15144 | `33c86716a94bcc47` | partial | `src/web.rs; src/api/system.rs; src/api/searchapp_mgr.rs` | Rust `/search` page consumes the search app runtime: `/search?sapp={id}` seeds kb chips/select, the rerank model-tree picker (`SEARCH_PAGE_RERANK_SELECTOR_FIELD`, revealed by the rerank switch, seeded from `__SAPP__.rerank_id`), rerank/hybrid switches, an injected Top-K option; `runSearch` sends the app config (kb_ids/top_k/rerank_id/similarity_threshold/vector_similarity_weight) to `/api/v1/retrieval`, and the picker stays form-local (no `PATCH /api/v1/models/default`, matching the upstream react-hook-form drawer — CDP probe asserts 0 default PATCHes); v0.3.5v: the related-search flow landed — the `related_search` switch seeds from `search_config` (and from the app on `/searches/{id}`), `runSearch` issues `POST /api/v1/chat/recommendation` with `{question, search_id}`, up to five answers render as chips and a chip click re-runs the search with its text (CDP probe `search-related-cdp.mjs`); the handler resolves the app's `chat_id` instance + `llm_setting`; mindmap/highlight/AI-summary flows remain simplified |
 | `web/src/pages/next-search/index.less` | 116 | 1756 | `dcdf21d4c8a46243` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/index.tsx` | 83 | 2578 | `2d00e5eac08d218c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/markdown-content/index.tsx` | 293 | 9201 | `7858fc6edf3fe899` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
@@ -4713,8 +4723,8 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/pages/next-search/retrieval-documents/index.less` | 11 | 189 | `64e7806fd85ed2e8` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/retrieval-documents/index.tsx` | 254 | 8677 | `ba0e8604edf4e258` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/search-home.tsx` | 91 | 3368 | `7ef6e9ed97498b73` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/next-search/search-setting.tsx` | 610 | 21539 | `982b0bba17c39a2f` | partial | `src/web.rs; src/api/searchapp_mgr.rs` | Rust search-app detail settings (`/searches/{id}`) carry the upstream rerank section (use_rerank switch reveals the shared rerank ModelTreeSelect, SEARCH_RERANK_SELECTOR_FIELD) and the similarity slider pair (similarity_threshold/vector_similarity_weight persisted on the app, seeded into the `/search?sapp=` runtime and sent to `/api/v1/retrieval`); kb multi-select and the remaining search_config fields stay simplified |
-| `web/src/pages/next-search/search-view.tsx` | 347 | 13209 | `3325fadaaa2b0c0c` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
+| `web/src/pages/next-search/search-setting.tsx` | 610 | 21539 | `982b0bba17c39a2f` | partial | `src/web.rs; src/web_css.txt; src/api/searchapp_mgr.rs` | Rust search-app detail settings (`/searches/{id}`) carry the upstream rerank section (use_rerank switch reveals the shared rerank ModelTreeSelect, SEARCH_RERANK_SELECTOR_FIELD) and the similarity slider pair (similarity_threshold/vector_similarity_weight persisted on the app, seeded into the `/search?sapp=` runtime and sent to `/api/v1/retrieval`); kb multi-select stays simplified; v0.3.5v: the `related_search` Switch (`search.enableRelatedSearch`) is rendered both in the app settings page and in the `/search` settings sidebar, persists through `PUT /api/v1/searchapps/{id}`, and the app's full upstream `search_config` (doc_ids/chat_id/llm_setting/cross_languages/use_kg/highlight/keyword/web_search/related_search/query_mindmap/summary, `top_k` default 1024) round-trips through create/update/GET |
+| `web/src/pages/next-search/search-view.tsx` | 347 | 13209 | `3325fadaaa2b0c0c` | partial | `src/web.rs; src/web_css.txt` | Rust `/search` renders the retrieval list plus the upstream related-search block: divider + `search.relatedSearch` heading (`text-xl` equivalent 16px) and transparent chip buttons carrying the recommendation text, appended below the chunks and removed when the switch is off or the list is empty (v0.3.5v). Residual: the answer/markdown stream, query mindmap sheet and the empty-state illustration remain approximated |
 | `web/src/pages/next-search/searching.tsx` | 33 | 837 | `98264e5aac7e933e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-search/share/index.tsx` | 68 | 2206 | `8e25dd32ce6aec95` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/next-searches/hooks.ts` | 377 | 9817 | `8f6855dc923c6d56` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |

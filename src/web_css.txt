@@ -136,6 +136,11 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 /* Joined teams table (upstream `tenant-table.tsx`): avatar + name column, the
    tri-state update-date sort header, link-style invite actions and the icon-only
    quit button, plus loading/no-data rows. */
+.search-related{margin-top:18px;border-top:1px solid var(--bd);padding-top:14px}
+.search-related-title{margin:0 0 8px;font-size:16px;color:var(--t)}
+.search-related-chips{display:flex;flex-wrap:wrap;gap:8px}
+.search-related-chip{border:1px solid var(--bd);background:var(--card);color:var(--tm);font:inherit;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;text-align:left}
+.search-related-chip:hover{color:var(--t);border-color:var(--p)}
 .team-table th .team-sort{padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
 .team-table th .team-sort:hover{color:var(--t)}
 .team-name-cell{display:flex;align-items:center;gap:6px}
