@@ -173,9 +173,37 @@ try {
   );
   await page.waitForTimeout(150);
   results.picked = await readBadges();
+  // Close the popover before submitting: it is anchored above the dialog
+  // footer. Clicking the trigger toggles it shut; Escape would dismiss the
+  // whole dialog (upstream's Dialog listens for it).
+  await page.click("[data-testid='pcm-types-trigger']");
+  await page.waitForFunction(
+    () => document.getElementById("pcmTypesPopover").hidden,
+    null,
+    { timeout: 10000 },
+  );
   await page.click("#pcmSubmit");
   await page.waitForTimeout(200);
   results.requiredMessage = await page.textContent("#pcmError");
+  // Filling the name submits the dialog and appends the model to the picker's
+  // local catalog (upstream only persists it when the instance is saved).
+  await page.fill("#pcmName", `cdp-probe-model-${Date.now()}`);
+  await page.click("#pcmSubmit");
+  await page.waitForTimeout(400);
+  results.addedRow = await page.evaluate(() => {
+    const rows = Array.from(
+      document.querySelectorAll("#piModelList .provider-model-row"),
+    );
+    const row = rows[rows.length - 1];
+    return row
+      ? {
+          label: row.textContent.replace(/\s+/g, " ").trim().slice(0, 80),
+          chips: Array.from(row.querySelectorAll(".provider-model-chip")).map(
+            (chip) => chip.textContent,
+          ),
+        }
+      : null;
+  });
   await page.screenshot({ path: `${shots}/provider-multiselect-required-20260821.png` });
 
   // 6. Chinese dialog: `全选` row and `没有找到数据。` empty copy.
@@ -189,12 +217,23 @@ try {
   await openDialog();
   results.zh = {
     allRow: await page.textContent("#pcmTypesOptions .pi-multiselect-all"),
-    labels: await page.evaluate(() => ({
-      name: document.querySelector("#providerCustomModelModal label span").textContent,
-      placeholder: document.getElementById("pcmTypesPlaceholder").textContent,
-      maxTokens: document.querySelectorAll("#providerCustomModelModal label span")[2]
-        .textContent,
-    })),
+    labels: await page.evaluate(() => {
+      const labelOf = (selector) => {
+        const node = document.querySelector(selector);
+        return node ? node.textContent.trim() : null;
+      };
+      return {
+        title: labelOf("#providerCustomModelTitle"),
+        // The name field's caption is a bare text node inside its label.
+        name: (document.querySelector("#providerCustomModelModal label") || {})
+          .textContent,
+        type: labelOf("#pcmTypesLabel"),
+        maxTokens: labelOf("#pcmMaxTokensLabel"),
+        features: labelOf("#pcmFeaturesLabel"),
+        toolCall: labelOf("#pcmToolsLabel"),
+        placeholder: labelOf("#pcmTypesPlaceholder"),
+      };
+    }),
   };
   await page.fill("#pcmTypesSearch", "zzzz");
   await page.waitForTimeout(200);
