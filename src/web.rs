@@ -1229,6 +1229,53 @@ pub async fn dataset_tab_page(
 /// card grid with a per-card Rename/Delete dropdown, the `RAGFlowPagination`
 /// footer and the dashed `empty.datasetTitle` card that opens the create
 /// dialog). The legacy `/kbs` page stays available as the older surface.
+/// Upstream `web/src/constants/common.ts::LanguageTranslationMap`: the dataset
+/// configuration form builds the Language field's options from
+/// `Object.keys(LanguageTranslationMap)` (`dataset-setting/general-form.tsx`),
+/// not from `LanguageList`. The label is therefore the raw key -- the field
+/// carries the *document* language, not a UI language -- and the near-duplicate
+/// keys (`Indonesian`/`Indonesia`, `Portuguese BR`/`pt-br`/`pt-BR`) all stay in
+/// the list, in insertion order.
+const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
+    "English",
+    "Chinese",
+    "Traditional Chinese",
+    "Russian",
+    "Indonesian",
+    "Indonesia",
+    "Spanish",
+    "Vietnamese",
+    "Japanese",
+    "Korean",
+    "Portuguese BR",
+    "pt-br",
+    "pt-BR",
+    "German",
+    "French",
+    "Italian",
+    "Tamil",
+    "Telugu",
+    "Kannada",
+    "Thai",
+    "Greek",
+    "Hindi",
+    "Ukrainian",
+    "Bulgarian",
+    "Arabic",
+    "Turkish",
+    "Dutch",
+];
+
+/// Upstream `SelectWithSearch` trigger chevron: lucide `ChevronDown` at 16px.
+const SELECT_CHEVRON_DOWN_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m6 9 6 6 6-6'/></svg>";
+
+/// Upstream `SelectWithSearch` selected-row affordance: lucide `Check` at 16px
+/// (`ml-auto`, so it trails the option label).
+const SELECT_CHECK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 6 9 17l-5-5'/></svg>";
+
+/// Upstream `CommandInput` magnifier: lucide `Search` at 16px.
+const SELECT_SEARCH_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>";
+
 const DATASET_CREATE_EMBD_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     field_id: "embedding_model",
     dom_id: "dsCreateEmbd",
@@ -1997,7 +2044,44 @@ pub async fn dataset_page(
     b.push_str("</td><td><input id='cfgName' style='max-width:280px'></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Language", zh));
-    b.push_str("</td><td><select id='cfgLang' data-testid='ds-settings-basic-language-select' style='max-width:280px'><option value='English' selected>English</option><option value='Chinese'>简体中文</option><option value='Traditional Chinese'>繁體中文</option><option value='Russian'>Русский</option><option value='Indonesian'>Bahasa Indonesia</option><option value='Spanish'>Español</option><option value='Vietnamese'>Tiếng việt</option><option value='Japanese'>日本語</option><option value='Portuguese BR'>Português BR</option><option value='German'>Deutsch</option><option value='French'>Français</option><option value='Italian'>Italiano</option><option value='Bulgarian'>Български</option><option value='Arabic'>العربية</option><option value='Turkish'>Türkçe</option><option value='Dutch'>Nederlands</option></select></td></tr>");
+    // Upstream `components/originui/select-with-search.tsx` backs the general
+    // form's Language field: a `role=combobox` button over a cmdk popover. The
+    // search row appears because the option count is above five, and
+    // `CommandEmpty` (`common.noDataFound`) owns the no-match state.
+    b.push_str("</td><td><div class='sws' id='cfgLangField'><button type='button' id='cfgLang' role='combobox' aria-expanded='false' aria-controls='cfgLangPop' data-testid='ds-settings-basic-language-select' class='sws-trigger' data-value='English' data-placeholder='");
+    b.push_str(t("Select value", zh));
+    b.push_str("' onclick='cfgLangToggle(event)'><span class='sws-label' id='cfgLangLabel'>English</span><span class='sws-chevron'>");
+    b.push_str(SELECT_CHEVRON_DOWN_SVG);
+    b.push_str("</span></button><div class='sws-pop' id='cfgLangPop' hidden><div class='sws-search'><span class='sws-search-icon'>");
+    b.push_str(SELECT_SEARCH_SVG);
+    b.push_str("</span><input id='cfgLangSearch' type='text' autocomplete='off' spellcheck='false' placeholder='");
+    b.push_str(t("Search", zh));
+    b.push_str("...' oninput='cfgLangRender()'></div><div class='sws-list' id='cfgLangList' role='listbox' aria-label='");
+    b.push_str(t("Language", zh));
+    b.push_str("'><p class='sws-empty' id='cfgLangEmpty' hidden>");
+    b.push_str(t("No data found.", zh));
+    b.push_str("</p>");
+    for language in DATASET_LANGUAGE_OPTIONS {
+        let selected = language == "English";
+        b.push_str("<div class='sws-option");
+        if selected {
+            b.push_str(" selected");
+        }
+        b.push_str("' role='option' tabindex='-1' data-testid='combobox-option' data-value='");
+        b.push_str(language);
+        b.push_str("' aria-selected='");
+        b.push_str(if selected { "true" } else { "false" });
+        b.push_str("' onclick='cfgLangPick(this.dataset.value)'><span class='sws-option-label'>");
+        b.push_str(language);
+        b.push_str("</span>");
+        if selected {
+            b.push_str("<span class='sws-check'>");
+            b.push_str(SELECT_CHECK_SVG);
+            b.push_str("</span>");
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</div></div></div></td></tr>");
     // Avatar row: the `<tr><td>Avatar</td>` header was missing, so the file
     // picker fell into the Language row as an orphan cell.
     b.push_str("<tr><td>");
@@ -2286,8 +2370,23 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
     b.push_str("function updateOverview(docs){var done=0,run=0,fail=0,other=0;docs.forEach(function(x){if(x.run==='DONE')done++;else if(x.run==='RUNNING'||x.run==='UNSTARTED')run++;else if(x.run==='FAILED')fail++;else other++});var total=docs.length||1;function set(id,bar,v){var e=document.getElementById(id);if(e)e.textContent=v;var b=document.getElementById(bar);if(b)b.style.width=Math.round(v/total*100)+'%'};set('ovDone','ovDoneBar',done);set('ovRun','ovRunBar',run);set('ovFail','ovFailBar',fail);var act=document.getElementById('actList');if(act){var h='';docs.slice(0,10).forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td>'+badge(x.run)+'</td><td>'+(x.chunk_count||0)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(x.updated_at)+'</td></tr>'});act.innerHTML=h||'<tr><td colspan=4 style=color:var(--tm);text-align:center>暂无活动</td></tr>'}};");
     b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId)body.rerank_id=rerankingId;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
-    b.push_str("function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'me';if(typeof cfgPermissionSet==='function')cfgPermissionSet(pm.value,true);var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('chunkMethod').value=pc.chunk_method;var cs=parseInt(pc.chunk_size,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}if(pc.overlap){var ov=document.getElementById('overlap');for(var k=0;k<ov.options.length;k++){if(ov.options[k].value===pc.overlap){ov.selectedIndex=k;break}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
-    b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:(document.getElementById('cfgPerm').value==='team'?'team':'me'),embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:document.getElementById('cfgLang').value,pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
+    // Upstream `SelectWithSearch`: `showSearch` is true past five options, the
+    // filter keeps any option whose value contains the query (cmdk's `filterFn`
+    // scores 1 and cmdk hides a 0), picking closes the popover, and an outside
+    // click or Escape closes it without changing the value.
+    b.push_str(r#"var CFG_LANG_OPTIONS=["English","Chinese","Traditional Chinese","Russian","Indonesian","Indonesia","Spanish","Vietnamese","Japanese","Korean","Portuguese BR","pt-br","pt-BR","German","French","Italian","Tamil","Telugu","Kannada","Thai","Greek","Hindi","Ukrainian","Bulgarian","Arabic","Turkish","Dutch"];
+var CFG_LANG_CHECK_SVG="<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 6 9 17l-5-5'/></svg>";
+function cfgLangValue(){var trigger=document.getElementById('cfgLang');var value=trigger&&trigger.dataset.value?trigger.dataset.value:'';return value||'English'}
+function cfgLangClose(){var pop=document.getElementById('cfgLangPop');if(pop)pop.hidden=true;var trigger=document.getElementById('cfgLang');if(trigger)trigger.setAttribute('aria-expanded','false')}
+function cfgLangRender(){var trigger=document.getElementById('cfgLang');var value=trigger&&trigger.dataset.value?trigger.dataset.value:'English';var label=document.getElementById('cfgLangLabel');if(label)label.textContent=value;var list=document.getElementById('cfgLangList');if(!list)return;var search=document.getElementById('cfgLangSearch');var query=search?(search.value||'').trim().toLowerCase():'';Array.prototype.slice.call(list.querySelectorAll('.sws-option')).forEach(function(node){node.remove()});var matches=CFG_LANG_OPTIONS.filter(function(option){return !query||option.toLowerCase().indexOf(query)>=0});var empty=document.getElementById('cfgLangEmpty');if(empty)empty.hidden=matches.length>0;matches.forEach(function(option){var row=document.createElement('div');row.className='sws-option'+(option===value?' selected':'');row.setAttribute('role','option');row.setAttribute('tabindex','-1');row.setAttribute('data-testid','combobox-option');row.setAttribute('aria-selected',option===value?'true':'false');row.dataset.value=option;var text=document.createElement('span');text.className='sws-option-label';text.textContent=option;row.appendChild(text);if(option===value){var check=document.createElement('span');check.className='sws-check';check.innerHTML=CFG_LANG_CHECK_SVG;row.appendChild(check)}row.onclick=function(){cfgLangPick(option)};list.appendChild(row)})}
+function cfgLangToggle(event){if(event)event.stopPropagation();var pop=document.getElementById('cfgLangPop');var trigger=document.getElementById('cfgLang');if(!pop||!trigger)return;var open=pop.hidden;pop.hidden=!open;trigger.setAttribute('aria-expanded',open?'true':'false');if(open){var search=document.getElementById('cfgLangSearch');if(search)search.value='';cfgLangRender();if(search)search.focus()}}
+function cfgLangPick(value){var trigger=document.getElementById('cfgLang');if(trigger)trigger.dataset.value=value;cfgLangRender();cfgLangClose()}
+function cfgLangSet(value){var trigger=document.getElementById('cfgLang');if(trigger)trigger.dataset.value=value||'English';cfgLangRender()}
+document.addEventListener('click',function(event){var pop=document.getElementById('cfgLangPop');if(!pop||pop.hidden)return;var field=document.getElementById('cfgLangField');if(field&&field.contains(event.target))return;cfgLangClose()});
+document.addEventListener('keydown',function(event){if(event.key==='Escape')cfgLangClose()});
+"#);
+    b.push_str("function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';cfgLangSet(kb.language||'English');var pm=document.getElementById('cfgPerm');if(pm)pm.value=(kb.permission==='team')?'team':'me';if(typeof cfgPermissionSet==='function')cfgPermissionSet(pm.value,true);var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=JSON.parse(kb.parser_config||'{}')}catch(e){}if(pc.chunk_method)document.getElementById('chunkMethod').value=pc.chunk_method;var cs=parseInt(pc.chunk_size,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}if(pc.overlap){var ov=document.getElementById('overlap');for(var k=0;k<ov.options.length;k++){if(ov.options[k].value===pc.overlap){ov.selectedIndex=k;break}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;if(kb.tag_sets)document.getElementById('cfgTagSets').value=kb.tag_sets;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;document.getElementById('cfgRerank').checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').textContent=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').textContent=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
+    b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:(document.getElementById('cfgPerm').value==='team'?'team':'me'),embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:cfgLangValue(),pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
     b.push_str("function toggleLang(btn){btn.classList.toggle('on');var sel=[];document.querySelectorAll('.lang-chip.on').forEach(function(x){sel.push(x.dataset.lang)});var h=document.getElementById('cfgLangs');if(h)h.value=sel.join(',');}
 function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};");
     b.push_str("function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
@@ -8482,72 +8581,162 @@ connection: close
         }
     }
 
-    /// Upstream `constants/common.ts::LanguageList` + `LanguageMap`: the dataset
-    /// configuration language field offers exactly these 16 values, in this
-    /// order, labelled with the map's display names (the list is `options` for
-    /// the shared `SelectWithSearch`, not a free-form input).
+    /// Upstream `dataset-setting/general-form.tsx` builds the Language field's
+    /// options from `Object.keys(LanguageTranslationMap)` -- not from
+    /// `LanguageList` -- and renders them through `SelectWithSearch`: a
+    /// `role=combobox` trigger over a cmdk popover whose search row appears past
+    /// five options, with `CommandEmpty` (`common.noDataFound`) owning the
+    /// no-match state.
     #[tokio::test]
-    async fn dataset_language_options_match_upstream_language_list() {
+    async fn dataset_language_options_match_upstream_language_translation_map() {
         let (_root, state) = test_state();
         let kb = state.kbs.create_for("u1", "Lang KB", "d").unwrap();
         let body = body_of(
-            dataset_tab_page(
-                State(state),
-                Path((kb.id.clone(), "configuration".to_string())),
-                Request::builder().uri("/x").body(Body::empty()).unwrap(),
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id.clone()),
+                Request::builder()
+                    .uri("/dataset/configuration/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
             )
             .await,
         )
         .await;
-        let start = body.find("id='cfgLang'").expect("language select");
-        let end = body[start..].find("</select>").expect("select end") + start;
-        let select = &body[start..end];
+        assert!(
+            !body.contains("<select id='cfgLang'"),
+            "the language field is a SelectWithSearch combobox, not a native select"
+        );
+        let trigger_at = body
+            .find("data-testid='ds-settings-basic-language-select'")
+            .expect("language combobox");
+        let trigger_start = body[..trigger_at].rfind("<button").expect("trigger start");
+        let trigger_end = body[trigger_at..].find("</button>").expect("trigger end") + trigger_at;
+        let trigger = &body[trigger_start..trigger_end];
+        for attribute in [
+            "id='cfgLang'",
+            "type='button'",
+            "role='combobox'",
+            "aria-expanded='false'",
+            "aria-controls='cfgLangPop'",
+            "data-value='English'",
+        ] {
+            assert!(
+                trigger.contains(attribute),
+                "combobox trigger missing {attribute}"
+            );
+        }
+        let list_at = body.find("id='cfgLangList'").expect("option list");
+        let list_end = body[list_at..].find("</td></tr>").expect("row end") + list_at;
+        let list = &body[list_at..list_end];
+        // `LanguageTranslationMap` in insertion order: the near-duplicate keys
+        // (`Indonesian`/`Indonesia`, `Portuguese BR`/`pt-br`/`pt-BR`) are part
+        // of the map and therefore of the option list.
         let expected = [
             "English",
             "Chinese",
             "Traditional Chinese",
             "Russian",
             "Indonesian",
+            "Indonesia",
             "Spanish",
             "Vietnamese",
             "Japanese",
+            "Korean",
             "Portuguese BR",
+            "pt-br",
+            "pt-BR",
             "German",
             "French",
             "Italian",
+            "Tamil",
+            "Telugu",
+            "Kannada",
+            "Thai",
+            "Greek",
+            "Hindi",
+            "Ukrainian",
             "Bulgarian",
             "Arabic",
             "Turkish",
             "Dutch",
         ];
         let mut seen = Vec::new();
-        for chunk in select.split("<option value='").skip(1) {
+        for chunk in list.split("data-value='").skip(1) {
             let value = chunk.split('\'').next().unwrap_or_default();
             seen.push(value.to_string());
         }
-        assert_eq!(seen, expected, "language values drifted from LanguageList");
-        for label in [
-            "简体中文",
-            "繁體中文",
-            "Русский",
-            "Bahasa Indonesia",
-            "Español",
-            "Tiếng việt",
-            "日本語",
-            "Português BR",
-            "Deutsch",
-            "Français",
-            "Italiano",
-            "Български",
-            "العربية",
-            "Türkçe",
-            "Nederlands",
-        ] {
-            assert!(select.contains(label), "language label missing: {label}");
-        }
+        assert_eq!(
+            seen, expected,
+            "language values drifted from LanguageTranslationMap"
+        );
+        assert_eq!(
+            list.matches("data-testid='combobox-option'").count(),
+            expected.len(),
+            "every language row is a cmdk command item"
+        );
+        assert_eq!(
+            list.matches("sws-option selected").count(),
+            1,
+            "exactly the current value is marked selected"
+        );
+        assert_eq!(
+            list.matches("sws-check").count(),
+            1,
+            "only the selected row renders the trailing CheckIcon"
+        );
         assert!(
-            !select.contains("한국어"),
-            "Korean is not part of upstream's LanguageList"
+            list.contains("aria-selected='true'") && list.contains("aria-selected='false'"),
+            "option rows expose the cmdk aria-selected state"
+        );
+        let popover_at = body.find("id='cfgLangPop'").expect("command popover");
+        let popover_end = body[popover_at..].find("</td></tr>").expect("row end") + popover_at;
+        let popover = &body[popover_at..popover_end];
+        assert!(
+            popover.contains("id='cfgLangSearch'") && popover.contains("placeholder='Search...'"),
+            "more than five options means the command input is rendered"
+        );
+        assert!(
+            popover.contains("id='cfgLangEmpty'") && popover.contains("No data found."),
+            "CommandEmpty carries common.noDataFound"
+        );
+        // The runtime re-render must mirror the same source list.
+        let script_at = body.find("var CFG_LANG_OPTIONS=[").expect("option array");
+        let script_end = body[script_at..].find("];").expect("array end") + script_at;
+        let mut scripted = Vec::new();
+        for chunk in body[script_at..script_end].split('"').skip(1).step_by(2) {
+            scripted.push(chunk.to_string());
+        }
+        assert_eq!(
+            scripted, expected,
+            "the client list drifted from the server list"
+        );
+        assert!(
+            body.contains("language:cfgLangValue(),"),
+            "both dataset PUT bodies carry the field value"
+        );
+        assert!(
+            body.contains("cfgLangSet(kb.language||'English')"),
+            "loadConfig restores the saved document language"
+        );
+        // `t('common.search') + '...'` and `common.noDataFound` are localised.
+        let zh = body_of(
+            dataset_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/configuration/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            zh.contains("placeholder='搜索...'") && zh.contains("没有找到数据。"),
+            "the search placeholder and empty state follow the UI language"
         );
     }
 
@@ -10285,7 +10474,15 @@ connection: close
             name_at < lang_at && lang_at < avatar_at && avatar_at < desc_at && desc_at < perm_at,
             "basic fields must follow the upstream order name → language → avatar → description → permission"
         );
-        for language in ["English", "简体中文", "繁體中文", "日本語", "Nederlands"] {
+        for language in [
+            "English",
+            "Chinese",
+            "Traditional Chinese",
+            "Japanese",
+            "Korean",
+            "Dutch",
+            "pt-BR",
+        ] {
             assert!(
                 html.contains(language),
                 "language option {language} missing"

@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.12] — 2026-09-20（对标批次 v0.3.7p）
+
+### Fixed
+
+- **数据集语言字段改为上游 `SelectWithSearch` 组件**：上一轮误把该字段对齐到 `constants/common.ts::LanguageList`，
+  但上游 `dataset-setting/general-form.tsx` 实际取的是 `Object.keys(LanguageTranslationMap)`——共 27 项，
+  **包含 Korean**，并且 `Indonesian/Indonesia`、`Portuguese BR/pt-br/pt-BR` 这类近重复键都在其中，
+  选项文案就是键本身（该字段是“文档语言”而不是界面语言）。本轮把原生 `<select>` 换成上游的
+  `role=combobox` 触发器 + cmdk 浮层：选项超过 5 个因此渲染搜索行（`搜索...` / `Search...`），
+  选中项右侧显示 `Check` 图标，无匹配时显示 `CommandEmpty`（`common.noDataFound`：没有找到数据。/ No data found.），
+  点击空白或 Escape 关闭且不改值。
+- **语言值现在真的会保存与回填**：`PUT /api/v1/datasets/{id}` 的请求体补上 `language`，
+  `loadConfig` 用 `kb.language` 回填（缺省 `English`），此前该字段只是装饰性控件。
+
 ## [0.4.11] — 2026-09-20（对标批次 v0.3.7o）
 
 ### Fixed
