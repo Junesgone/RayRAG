@@ -4412,6 +4412,11 @@ pub async fn admin_services_page(
     b.push_str("<div class='modal-overlay' id='adminServiceDialog' data-testid='admin-service-detail-dialog' onclick=\"if(event.target===this)adminCloseServiceDialog()\"><div class='modal admin-service-dialog'><h2 id='adminServiceDialogTitle'></h2><div class='admin-service-body' id='adminServiceDetail'></div><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='admin-service-detail-close' onclick='adminCloseServiceDialog()'>");
     b.push_str(t("Close", zh));
     b.push_str("</button></div></div></div>");
+    b.push_str("<script>var ADMIN_CLIPBOARD_SVG=\"");
+    b.push_str(ADMIN_CLIPBOARD_SVG);
+    b.push_str("\";var ADMIN_SETTINGS2_SVG=\"");
+    b.push_str(ADMIN_SETTINGS2_SVG);
+    b.push_str("\";</script>");
     b.push_str(
         r#"<script>var ADMIN_SERVICES=[];function adminServiceStatusBadge(status){var badge=document.createElement('span');badge.className='badge '+(status==='alive'?'bs':(status==='disabled'?'bw':'bd'));badge.textContent=status||'timeout';return badge}// Upstream `service-status.tsx`: the table filters by service type *and* a global search
 // term (`header.search`), then paginates in the card footer via `RAGFlowPagination`
