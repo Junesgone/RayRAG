@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.2] — 2026-09-19（对标批次 v0.3.7f）
+
+### Fixed
+
+- **`/user-setting/model` 页面布局对齐上游**：改为上游 `setting-model/index.tsx` 的两栏卡片——
+  外框 `.5px` 边框 + 圆角，左栏 3/5（设置默认模型 + 已添加模型，间距 16px、左右 20px 内边距、右侧 `.5px` 分隔线），
+  右栏 2/5（可用模型列表），两栏各自滚动；卡片内加入上游的单个 `<Spotlight />` 背景光晕
+  （opacity .8、coverage 60%、中心 50%/190%、深色白/浅色 rgb(194,221,243)）。
+
 ## [0.4.1] — 2026-09-19（对标批次 v0.3.7e）
 
 ### Fixed

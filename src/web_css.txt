@@ -218,3 +218,10 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .provider-model-spinner[hidden]{display:none!important}
 .provider-model-search-clear{display:inline-flex;align-items:center;color:var(--t2)}
 .provider-model-search-clear:hover{color:var(--t)}
+/* Upstream `pages/user-setting/setting-model/index.tsx`: a bordered rounded card split 3/5 (Set default models + Added models) and 2/5 (Available models), with the single `<Spotlight />` gradient (opacity .8, coverage 60%, centre 50%/190%, white in dark mode / rgb(194,221,243) in light) behind the content. */
+.model-providers-layout{position:relative;display:flex;width:100%;border:.5px solid var(--bd);border-radius:var(--r);overflow:hidden}
+.model-providers-spotlight{--sx:50%;--sy:190%;--so:.5;--sc:60%;--srgb:255,255,255;opacity:.8;border-radius:var(--r)}
+body.light .model-providers-spotlight{--srgb:194,221,243}
+.model-providers-column{display:flex;flex-direction:column;min-width:0;overflow:auto}
+.model-providers-left{width:60%;gap:16px;padding:0 20px;border-right:.5px solid var(--bd)}
+.model-providers-right{width:40%}

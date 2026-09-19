@@ -4886,6 +4886,10 @@ pub async fn providers_page(
     // Upstream `system-setting.tsx`: `article > header.py-5 (h2 + p.mt-1)` and a
     // bordered, internally scrollable `div.px-7.py-6.space-y-6.max-h-[70vh]`
     // holding the six `flex gap-3` rows (label 1/4 + control 3/4).
+    // Upstream `setting-model/index.tsx`: a bordered rounded card split into a
+    // 3/5 column (SystemSetting + Added models) and a 2/5 column (Available
+    // models), with the single `<Spotlight />` gradient behind the content.
+    b.push_str("<div class='model-providers-layout' data-testid='model-providers-page'><div class='spotlight model-providers-spotlight' aria-hidden='true'></div><section class='model-providers-column model-providers-left'>");
     b.push_str("<article class='card system-model-settings' data-testid='system-model-settings'><header class='system-model-header'><h2>");
     b.push_str(t("Set default models", zh));
     b.push_str("</h2><p class='system-model-description'>");
@@ -4900,6 +4904,7 @@ pub async fn providers_page(
         let summary = crate::api::tenant_models::plan_available_providers(
             crate::api::tenant_models::factory_llm_entries(),
         );
+        b.push_str("</section><section class='model-providers-column model-providers-right'>");
         b.push_str("<section class='card' id='availableModels' data-testid='available-models-section'><h2>Available models</h2><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All<span id='providerCountAll'></span></button>");
         // Upstream `un-add-model.tsx` orders the tag pills with `orderMap` and
         // labels them with `mapModelKey[tag] || tag`. Both now come from the
@@ -5429,6 +5434,8 @@ async function saveEditInstanceModel(){var modal=document.getElementById('editIn
 document.addEventListener('keydown',function(event){if(event.key==='Escape'){closeProviderInstanceModal();closeDeleteModelInstance();closeEditInstanceModel()}});piMsRegister('pcmTypes',PI_MODEL_TYPE_OPTIONS,[]);piMsRegister('eimTypes',PI_MODEL_TYPE_OPTIONS,[]);pcmApplyLabels();piMsApplyLabels('pcmTypes');piMsApplyLabels('eimTypes');var eimTitle=document.getElementById('editInstanceModelTitle');if(eimTitle)eimTitle.textContent=PI_PICKER_LABELS.editCustomModelTitle;var eimCancel=document.getElementById('editInstanceModelCancel');if(eimCancel)eimCancel.textContent=PI_PICKER_LABELS.cancel;var eimConfirm=document.getElementById('editInstanceModelOk');if(eimConfirm)eimConfirm.textContent=PI_PICKER_LABELS.confirm;loadAddedModels();
 </script>"#,
     );
+    // close the two-column shell (upstream keeps the modals inside the card)
+    b.push_str("</section></div>");
     let page = if in_user_settings {
         user_setting_layout(t("Model providers", zh), &b, UserSettingSection::Model, zh)
     } else {
@@ -8269,6 +8276,56 @@ connection: close
             "upstream maps both Meituan and LongCat to the same console"
         );
         assert_eq!(provider_api_key_url("Unknown"), None);
+    }
+
+    /// Upstream `setting-model/index.tsx`: the page is a bordered rounded card
+    /// split into a 3/5 column (Set default models + Added models) and a 2/5
+    /// column (Available models), with the single `<Spotlight />` behind them.
+    #[tokio::test]
+    async fn providers_page_uses_the_upstream_two_column_layout() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        for marker in [
+            "<div class='model-providers-layout' data-testid='model-providers-page'>",
+            "<div class='spotlight model-providers-spotlight' aria-hidden='true'></div>",
+            "<section class='model-providers-column model-providers-left'>",
+            "</section><section class='model-providers-column model-providers-right'>",
+        ] {
+            assert!(body.contains(marker), "layout marker missing: {marker}");
+        }
+        // SystemSetting + Added models live in the left column, Available models
+        // in the right one, and the shell closes before the page layout is built.
+        // Compare the markup forms: the class names also appear in the inlined
+        // stylesheet at the top of the page.
+        let left = body
+            .find("<section class='model-providers-column model-providers-left'>")
+            .unwrap();
+        let system = body.find("data-testid='system-model-settings'").unwrap();
+        let added = body.find("data-testid='added-models-section'").unwrap();
+        let right = body
+            .find("<section class='model-providers-column model-providers-right'>")
+            .unwrap();
+        let available = body.find("data-testid='available-models-section'").unwrap();
+        assert!(left < system && system < added && added < right && right < available);
+        assert!(
+            body.trim_end().ends_with("</section></div></html>")
+                || body.contains("</section></div>")
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".model-providers-layout{position:relative;display:flex;width:100%;border:.5px solid var(--bd);border-radius:var(--r);overflow:hidden}",
+            ".model-providers-left{width:60%;gap:16px;padding:0 20px;border-right:.5px solid var(--bd)}",
+            ".model-providers-right{width:40%}",
+            ".model-providers-spotlight{--sx:50%;--sy:190%;--so:.5;--sc:60%;--srgb:255,255,255;opacity:.8;border-radius:var(--r)}",
+            "body.light .model-providers-spotlight{--srgb:194,221,243}",
+        ] {
+            assert!(css.contains(rule), "layout css missing: {rule}");
+        }
     }
 
     /// Upstream `used-model.tsx` + `components/confirm-delete-dialog.tsx`:
