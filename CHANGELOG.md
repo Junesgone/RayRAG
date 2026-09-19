@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.13] — 2026-09-20（对标批次 v0.3.7q）
+
+### Fixed
+
+- **权限字段改用与语言字段同一个上游 `SelectWithSearch`**：上游 `dataset-setting/permission-form-field.tsx`
+  与 `general-form.tsx` 用的是同一个组件，而 RayRAG 之前是另一套 `input-select` 实现。现在两处共用一个
+  组件（新增 `SWS_JS` 脚本常量 + `push_select_with_search` / `push_permission_field` 渲染函数），
+  触发器的 `data-testid='ds-settings-basic-permissions-select'`、`role=combobox` 与选中态 Check 图标一致；
+  因为只有 2 个选项（`PermissionRole` 的 `me`/`team`），按上游 `showSearch` 规则**不渲染搜索行**。
+- **权限提示文案取自正确的命名空间**：改为上游 `knowledgeConfiguration.permissionsTip`
+  （"If it is set to 'Team', all your team members will be able to manage the dataset." /
+  "如果把知识库权限设为“团队”，则所有团队成员都可以操作该知识库。"），并补上 `knowledgeConfiguration.me`
+  的中文「只有我」；此前用的是另一命名空间（agent 设置）里的旧句。
+- **修掉旧版 `/kbs/{id}` 页面的权限控件**：该页仍渲染旧的 `input-select` 标记，但其脚本里
+  `openPermPicker` 早已不存在（点击即 `ReferenceError`）。现在该页也注入共享组件并注册实例。
+
 ## [0.4.12] — 2026-09-20（对标批次 v0.3.7p）
 
 ### Fixed
