@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.5] — 2026-09-19（对标批次 v0.3.7i）
+
+### Changed
+
+- **后台「额外信息」弹层改为上游 `JsonView` 风格的树形渲染**：不再把 JSON 直接 `JSON.stringify` 成一段文本，
+  而是递归渲染键/值树——对象与数组带 `{n}`/`[n]` 折叠按钮（`aria-expanded` 可切），字符串/数字/布尔/null
+  分别着色，等宽字体、逐层缩进，与 RAGFlow 后台详情弹层的 `JsonView` 展示一致。
+
 ## [0.4.4] — 2026-09-19（对标批次 v0.3.7h）
 
 ### Added

@@ -235,3 +235,16 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .admin-pager{display:inline-flex;align-items:center;gap:8px}
 .admin-pager-now{color:var(--t2);font-size:13px}
 .admin-pager-size{padding:6px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}
+/* Upstream `pages/admin/service-status.tsx` renders the service payload through `JsonView`: a collapsible typed tree inside the dialog's scroll area. */
+.json-tree-node{display:block}
+.json-tree-toggle{padding:0 4px;border:0;border-radius:4px;background:transparent;color:var(--t2);font:inherit;font-size:12px;cursor:pointer}
+.json-tree-toggle:hover{background:var(--bgc);color:var(--t)}
+.json-tree-list{margin:2px 0 2px 16px;padding:0;list-style:none}
+.json-tree-list[hidden]{display:none!important}
+.json-tree-item{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6}
+.json-tree-key{color:var(--p)}
+.json-tree-value{color:var(--t)}
+.json-tree-string{color:#22c55e}
+.json-tree-number{color:#f59e0b}
+.json-tree-boolean{color:#60a5fa}
+.json-tree-null{color:var(--tm)}
