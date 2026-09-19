@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.19] — 2026-09-20（对标批次 v0.3.7w）
+
+### Added
+
+- **默认模型选择树支持 Radix 键盘操作**：上游 `components/tree-select.tsx` 基于 Radix `Tree`，
+  除已有的 ↑/↓（循环）、Home/End、首字母跳转、Enter 选中、Escape 关闭外，本轮补齐
+  **→**（折叠的分支→展开；已展开→进入第一个子项）、**←**（已展开的分支→折叠；否则→跳到父项），
+  以及**带 1 秒缓冲区的循环 typeahead**（连续输入累积匹配，同一字母可继续跳到下一个匹配项）。
+- **行内 roving tabindex 与 `aria-level`**：树里始终只有一个可 Tab 到达的行（其余 `tabindex=-1`），
+  焦点移动时同步更新，因此整棵树是一个 Tab 站点（与 Radix 的树一致），每行还带上 `aria-level`。
+
 ## [0.4.18] — 2026-09-20（对标批次 v0.3.7v）
 
 ### Added
