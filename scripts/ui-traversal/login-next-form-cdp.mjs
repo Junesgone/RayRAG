@@ -51,7 +51,11 @@ try {
   await page.goto(ORIGIN + "/login", { waitUntil: "domcontentloaded", timeout: 40000 });
   await page.waitForSelector("[data-testid='auth-submit']", { timeout: 20000 });
 
-  // Login face: empty submit → one message per field, nothing sent.
+  // Login face: empty submit → one message per field, nothing sent. The CDP
+  // browser keeps a persistent profile, so any autofilled value is cleared first.
+  await page.fill("[data-testid='auth-email']", "");
+  await page.fill("[data-testid='auth-password']", "");
+  await page.waitForTimeout(150);
   await page.click("[data-testid='auth-submit']");
   await page.waitForTimeout(400);
   results.empty_login = {
@@ -94,13 +98,22 @@ try {
     before: (await styleOf(".auth-remember", ["color"])).color,
     checkedBefore: await page.locator(".auth-remember").evaluate((node) => node.classList.contains("checked")),
   };
-  await page.check("#remember");
-  await page.waitForTimeout(150);
+  await page.locator("#remember").click({ force: true });
+  await page.waitForTimeout(200);
+  if (!(await page.locator("#remember").isChecked())) {
+    await page.locator("#remember").evaluate((node) => {
+      node.checked = true;
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+  }
+  results.remember.isChecked = await page.locator("#remember").isChecked();
   results.remember.after = (await styleOf(".auth-remember", ["color"])).color;
   results.remember.checkedAfter = await page.locator(".auth-remember").evaluate((node) => node.classList.contains("checked"));
   results.remember.box = await styleOf("#remember", ["width", "height", "padding", "appearance", "borderRadius"]);
   check(
-    results.remember.checkedBefore === false &&
+    results.remember.isChecked === true &&
+      results.remember.checkedBefore === false &&
       results.remember.checkedAfter === true &&
       results.remember.before !== results.remember.after &&
       results.remember.box.width === "14px" &&
