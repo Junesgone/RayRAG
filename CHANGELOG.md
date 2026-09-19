@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.30] — 2026-09-21（对标批次 v0.3.8h）
+
+### Changed
+
+- **「添加自定义模型」对话框改为逐字段报错**（上游 `add-custom-model-dialog.tsx` +
+  `use-custom-model-fields.tsx` + `components/dynamic-form.tsx`）：上游字段由 `DynamicForm` 生成，
+  每个字段下方渲染一条 `FormMessage`，字段 schema 为
+  `name` required（`${label} is required` = `setting.modelNameRequired` "Model name is required"）、
+  `name` 的 `customValidate` 重名检查（`setting.modelNameDuplicate` "Model name already exists"）、
+  `max_tokens` 的 `z.coerce.number().min(0, setting.modelMaxTokensMinMessage)`
+  （"Max tokens must be at least 0"）。RayRAG 之前把第一个错误写进对话框级的 `#pcmError`，
+  看不出是哪个字段错了；现在改为 `#pcmNameError` / `#pcmMaxTokensError` 两个字段级槽位
+  （`data-testid` = `pcm-name-error` / `pcm-max-tokens-error`），输入时实时更新、
+  打开对话框时清空、校验不通过时不提交，`#pcmError` 保留给其它对话框级问题。
+- **台账更正**：该行原残留里的 `Loader2` 提交 spinner 属上游 `viewMode` 的即时持久化路径——
+  RayRAG 的自定义模型新增是纯本地目录更新、本版本没有该持久化调用，spinner 无可见状态，
+  按既有做法**撤回该残留**并在台账写明依据。
+
 ## [0.4.29] — 2026-09-21（对标批次 v0.3.8g）
 
 ### Added

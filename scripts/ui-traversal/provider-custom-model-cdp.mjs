@@ -193,7 +193,16 @@ try {
     () => document.getElementById("pcmTypesPopover").hidden,
   );
 
-  // 5. Validation: max-tokens below the upstream minimum, then a clean submit.
+  // 5. Validation renders per field, like DynamicForm's `FormMessage`: an empty
+  //    name first, then a max-tokens value below the upstream minimum.
+  await page.fill("#pcmName", "");
+  await page.click("#pcmSubmit");
+  await page.waitForTimeout(400);
+  results.emptyName = await page.evaluate(() => ({
+    field: document.getElementById("pcmNameError").textContent,
+    dialogLevel: document.getElementById("pcmError").textContent,
+    visible: getComputedStyle(document.getElementById("pcmNameError")).display !== "none",
+  }));
   await page.fill("#pcmName", PROBE_MODEL);
   await page.click("[data-testid='pcm-types-trigger']");
   await page.waitForTimeout(300);
@@ -205,9 +214,11 @@ try {
   await page.fill("#pcmMaxTokens", "-1");
   await page.click("#pcmSubmit");
   await page.waitForTimeout(400);
-  results.maxTokensError = await page
-    .locator("#pcmError")
-    .textContent();
+  results.maxTokensError = await page.evaluate(() => ({
+    field: document.getElementById("pcmMaxTokensError").textContent,
+    nameField: document.getElementById("pcmNameError").textContent,
+    dialogLevel: document.getElementById("pcmError").textContent,
+  }));
   await page.fill("#pcmMaxTokens", "64");
   await page.click("#pcmSubmit");
   await page.waitForTimeout(600);
@@ -243,7 +254,10 @@ try {
   await page.click("#pcmTypesClose");
   await page.click("#pcmSubmit");
   await page.waitForTimeout(400);
-  results.duplicateError = await page.locator("#pcmError").textContent();
+  results.duplicateError = await page.evaluate(() => ({
+    field: document.getElementById("pcmNameError").textContent,
+    dialogLevel: document.getElementById("pcmError").textContent,
+  }));
   await page.click("#pcmCancel");
   await page.waitForTimeout(300);
 
@@ -432,6 +446,29 @@ try {
     const data = await response.json();
     return Array.isArray(data.data) ? data.data.length : -1;
   });
+  // 9. Every schema failure must render under its own field, never on the shared
+  //    dialog-level line (the residual this round closed).
+  const expect = (ok, label, detail) => {
+    if (!ok) results.errors.push(`${label}${detail ? ` (${detail})` : ""}`);
+  };
+  expect(
+    (results.emptyName?.field || "").trim() === "Model name is required",
+    "empty_name_field",
+    results.emptyName?.field,
+  );
+  expect((results.emptyName?.dialogLevel || "").trim() === "", "empty_name_dialog_level");
+  expect(
+    (results.maxTokensError?.field || "").trim() === "Max tokens must be at least 0",
+    "max_tokens_field",
+    results.maxTokensError?.field,
+  );
+  expect((results.maxTokensError?.nameField || "").trim() === "", "max_tokens_name_slot");
+  expect(
+    (results.duplicateError?.field || "").trim() === "Model name already exists",
+    "duplicate_name_field",
+    results.duplicateError?.field,
+  );
+  expect(results.added?.inList === true, "added_model_listed");
 } catch (error) {
   results.errors.push(String(error && error.stack ? error.stack : error));
   await page.screenshot({ path: `${shots}/provider-custom-model-error-20260919.png` });
