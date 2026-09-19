@@ -52,6 +52,18 @@ const measure = (lang) =>
             zIndex: getComputedStyle(spot).zIndex,
           }
         : null,
+      availablePanel: (() => {
+        const panel = document.querySelector("[data-testid='available-models-section']");
+        const title = panel ? panel.querySelector("h3, h2") : null;
+        return panel
+          ? {
+              tag: panel.tagName,
+              titleTag: title ? title.tagName : null,
+              titleSize: title ? getComputedStyle(title).fontSize : null,
+              titleWeight: title ? getComputedStyle(title).fontWeight : null,
+            }
+          : null;
+      })(),
       order: ["system-model-settings", "added-models-section", "available-models-section"].map((id) =>
         Array.from(document.querySelectorAll(`[data-testid='${id}']`)).length
           ? document
