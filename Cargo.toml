@@ -1,0 +1,128 @@
+[package]
+name = "rayrag"
+version = "0.4.23"
+edition = "2024"
+description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
+authors = ["Boss"]
+license = "Apache-2.0"
+build = "build.rs"
+
+[features]
+# zvec is RayRAG's vector database, so it is part of the default build along
+# with the PostgreSQL metadata mirror: `cargo build --release --locked` produces
+# the shipped configuration. Point ZVEC_LIB_DIR at the directory holding
+# libzvec_c_api.so when it is not installed system-wide.
+# A JSON-index-only build stays available for environments without the native
+# library: `cargo build --release --locked --no-default-features --features postgres-backend`.
+default = ["postgres-backend", "zvec-backend"]
+zvec-backend = ["dep:zvec-rust"]
+postgres-backend = ["dep:postgres"]
+
+[dependencies]
+flate2 = "1"
+# Real zvec vector database bindings. The backend is opt-in so the default
+# build never downloads or links a native library. Set ZVEC_LIB_DIR when
+# building with --features zvec-backend.
+#
+# v0.7.1 is tracked by its release tag because the crate is not yet published
+# to crates.io at that patch level (0.7.0 is the newest published version);
+# the tag pins the exact source that the v0.7.1 prebuilt libzvec_c_api.so ships
+# with (Dockerfile ARG ZVEC_RUST_VERSION=0.7.1).
+zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.7.1", optional = true }
+
+# Optional synchronous PostgreSQL mirror used by the existing synchronous
+# atomic persistence boundary. PostgreSQL 18.4 is the deployment baseline.
+postgres = { version = "0.19", optional = true, features = ["with-serde_json-1"] }
+
+# Document parsing
+lopdf = "0.34"           # PDF parsing
+indexmap = "2"           # named destinations (mirror lopdf's own dep)
+docx-rs = "0.4"          # DOCX parsing  
+pulp = "0.20"            # HTML/Markdown parsing
+csv = "1.3"              # CSV parsing
+zip = "2.2"              # XLSX zip container
+quick-xml = "0.36"       # Structured OOXML/SVG parsing
+scraper = "=0.20.0"      # Pure-Rust Google Scholar HTML DOM parsing
+
+# Text processing
+unicode-segmentation = "1"  # Unicode-aware tokenization
+regex = "1"                 # Pattern matching
+minijinja = { version = "=2.21.0", features = ["fuel"] } # Sandboxed RAGFlow StringTransform templates
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+time = { version = "=0.3.53", features = ["formatting"] }
+
+# Web server (static file serving + API)
+axum = { version = "0.8", features = ["multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+http-body-util = "0.1"
+
+# JSON handling
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+prometheus = "=0.14.0"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+async-trait = "0.1"
+
+# Pure Rust ML (Candle) — local embedding (no HTTP/Python)
+# Note: git deps may be slow in China. Run `bash scripts/mirror.sh` first
+# to configure GitHub proxy, or set GIT_PROXY env var.
+candle-core = { git = "https://github.com/huggingface/candle", branch = "main" }
+candle-nn = { git = "https://github.com/huggingface/candle", branch = "main" }
+candle-transformers = { git = "https://github.com/huggingface/candle", branch = "main" }
+hf-hub = { version = "0.4", features = ["tokio"] }
+# tokenizers: no "http" feature — prevents auto-download of tokenizer data at build/run time.
+# Model files are only downloaded when user explicitly triggers candle download from UI.
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+
+# HTTP client (for rare fallback cases)
+reqwest = { version = "0.12", features = ["json", "stream", "multipart", "cookies", "gzip"] }
+futures-util = "0.3"
+tokio-stream = "0.1"
+encoding_rs = "0.8" # GBK decoding for Tencent Finance quotes
+
+# Image processing (optional, for OCR)
+image = "0.25"
+
+# File utilities
+mime_guess = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["clock"] }
+
+# Auth (user system)
+argon2 = "0.5"
+rsa = { version = "0.9.8", features = ["pem"] }
+sha2 = "0.10" # legacy password migration only
+hmac = "0.12"
+hex = "0.4"
+url = "2"
+sha1 = "0.10" # RAGFlow hash_str2int-compatible Tavily chunk/reference IDs
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+rand = "0.9"
+base64 = "0.22"
+md-5 = "0.11.0"
+lettre = { version = "0.11.23", features = ["smtp-transport", "rustls-tls", "builder"] }
+tempfile = "3.27.0"
+
+# RAGFlow common-layer parity (all crates already present in the local cargo
+# cache — no network needed):
+aes = "0.8"                                      # common/crypto_utils.py AES-CBC
+pbkdf2 = { version = "0.12", features = ["hmac"] } # PBKDF2-HMAC-SHA256 key derivation
+unicode-normalization = "0.1"                    # common/text_utils.py NFKC
+
+[[bin]]
+name = "rayrag"
+path = "src/main.rs"
+
