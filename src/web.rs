@@ -4893,6 +4893,22 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     // Upstream `login-next/bg.tsx` (BgSvg) + three `Spotlight` overlays sit
     // behind the flip card; both are decorative (aria-hidden, pointer-events
     // none) and animate with the fixed 16s dash flow.
+    // Upstream's schema messages: the two placeholders plus zod's invalid-email
+    // wording, and the register face's nickname pair from `profile/constants.ts`.
+    b.push_str("<script>var AUTH_EMAIL_REQUIRED=");
+    b.push_str(&json_script_string(t("Please input email", zh)));
+    b.push_str(";var AUTH_PASSWORD_REQUIRED=");
+    b.push_str(&json_script_string(t("Please input password", zh)));
+    b.push_str(";var AUTH_EMAIL_INVALID=");
+    b.push_str(&json_script_string(t("Invalid email", zh)));
+    b.push_str(";var AUTH_NICKNAME_REQUIRED=");
+    b.push_str(&json_script_string(t("Please input nickname", zh)));
+    b.push_str(";var AUTH_NICKNAME_INVALID=");
+    b.push_str(&json_script_string(t(
+        "Name can only contain letters, numbers, spaces, and . _ ' -",
+        zh,
+    )));
+    b.push_str(";var AUTH_NICKNAME_PATTERN=/^[\\p{L}\\p{N} ._'-]+$/u;</script>");
     b.push_str(LOGIN_BG_SVG);
     b.push_str("<div class='auth-scene'><div class='auth-stage' id='authStage'><div class='auth-face auth-face-front' id='authLoginFace' data-testid='auth-card-active'><div class='auth-card card'><div class='auth-heading'><h2 id='authTitle'>");
     b.push_str(if zh {
@@ -4908,7 +4924,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     } else {
         "Please input email"
     });
-    b.push_str("' autocomplete='email'></label><label class='auth-field'><span class='auth-label required'>");
+    b.push_str("' autocomplete='email' oninput='authErrors()'><span class='auth-message' data-testid='auth-email-error' id='loginEmailError'></span></label><label class='auth-field'><span class='auth-label required'>");
     b.push_str(password_label);
     b.push_str(
         "</span><input id='password' data-testid='auth-password' type='password' placeholder='",
@@ -4918,7 +4934,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     } else {
         "Please input password"
     });
-    b.push_str("' autocomplete='current-password'></label><label class='auth-remember'><input id='remember' type='checkbox'> <span>");
+    b.push_str("' autocomplete='current-password' oninput='authErrors()'><span class='auth-message' data-testid='auth-password-error' id='loginPasswordError'></span></label><label class='auth-remember' id='authRememberLabel'><input id='remember' class='auth-checkbox' type='checkbox' onchange='authRememberTint()'> <span>");
     b.push_str(remember_label);
     b.push_str("</span></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
     b.push_str(login_button);
@@ -4940,7 +4956,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     } else {
         "Please input email"
     });
-    b.push_str("' autocomplete='email'></label><label class='auth-field'><span class='auth-label required'>");
+    b.push_str("' autocomplete='email' oninput='authRegisterErrors()'><span class='auth-message' data-testid='auth-register-email-error' id='regEmailError'></span></label><label class='auth-field'><span class='auth-label required'>");
     b.push_str(nickname_label);
     b.push_str("</span><input id='nickname' data-testid='auth-nickname' placeholder='");
     b.push_str(if zh {
@@ -4948,7 +4964,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     } else {
         "Please input nickname"
     });
-    b.push_str("' autocomplete='username'></label><label class='auth-field'><span class='auth-label required'>");
+    b.push_str("' autocomplete='username' oninput='authRegisterErrors()'><span class='auth-message' data-testid='auth-nickname-error' id='regNicknameError'></span></label><label class='auth-field'><span class='auth-label required'>");
     b.push_str(password_label);
     b.push_str(
         "</span><input id='rpassword' data-testid='auth-password' type='password' placeholder='",
@@ -4958,7 +4974,7 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     } else {
         "Please input password"
     });
-    b.push_str("' autocomplete='new-password'></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
+    b.push_str("' autocomplete='new-password' oninput='authRegisterErrors()'><span class='auth-message' data-testid='auth-register-password-error' id='regPasswordError'></span></label><button class='btn btn-p auth-submit' type='submit' data-testid='auth-submit'>");
     b.push_str(register_button);
     b.push_str("</button></form><div class='auth-switch' id='authSwitchToLogin'><span>");
     b.push_str(sign_up_tip);
@@ -4966,7 +4982,23 @@ pub async fn login_page(req: axum::http::Request<axum::body::Body>) -> impl Into
     b.push_str(login_title);
     b.push_str("</button></div></div></div></div></div><div id='error' class='auth-error' role='alert'></div>");
     b.push_str("<script>var authFlipped=false;function setActiveFace(login){var stage=document.getElementById('authStage');var front=document.getElementById('authLoginFace');var back=document.getElementById('authRegisterFace');stage.classList.toggle('flipped',!login);front.toggleAttribute('data-testid',login);back.toggleAttribute('data-testid',!login);if(login){front.setAttribute('data-testid','auth-card-active');back.removeAttribute('data-testid')}else{back.setAttribute('data-testid','auth-card-active');front.removeAttribute('data-testid')}document.getElementById('loginForm').dataset.active=login?'true':'false';document.getElementById('regForm').dataset.active=login?'false':'true'}var AUTH_REGISTER_ENABLED=true;var AUTH_PASSWORD_LOGIN_DISABLED=false;function authRegisterEnabled(){return AUTH_REGISTER_ENABLED!==false}function authPasswordLoginDisabled(){return AUTH_PASSWORD_LOGIN_DISABLED===true}function applyAuthSystemConfig(config){config=config||{};AUTH_REGISTER_ENABLED=config.registerEnabled!==0;AUTH_PASSWORD_LOGIN_DISABLED=config.disablePasswordLogin===true;var switchRegister=document.getElementById('authSwitchToRegister');if(switchRegister)switchRegister.hidden=authPasswordLoginDisabled()||!authRegisterEnabled();var switchLogin=document.getElementById('authSwitchToLogin');if(switchLogin)switchLogin.hidden=authPasswordLoginDisabled();var loginForm=document.getElementById('loginForm');if(loginForm)loginForm.hidden=authPasswordLoginDisabled();var regForm=document.getElementById('regForm');if(regForm)regForm.hidden=authPasswordLoginDisabled();var channels=document.getElementById('authChannels');if(channels)channels.classList.toggle('auth-channels-solo',authPasswordLoginDisabled());if(authPasswordLoginDisabled()){var title=document.getElementById('authTitle');if(title)title.hidden=true}if((authPasswordLoginDisabled()||!authRegisterEnabled())&&authFlipped){authFlipped=false;setTimeout(function(){setActiveFace(true)},200)}}function loadAuthSystemConfig(){fetch('/api/v1/system/config').then(function(response){return response.json()}).then(function(data){applyAuthSystemConfig((data&&data.data)||{})}).catch(function(){})}function toggleAuth(){if(!authFlipped&&(authPasswordLoginDisabled()||!authRegisterEnabled()))return;authFlipped=!authFlipped;setTimeout(function(){setActiveFace(!authFlipped)},200)}
-if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',loadAuthSystemConfig)}else{loadAuthSystemConfig()}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;if(!n){document.getElementById('error').textContent='Please input nickname';return}fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loginWithChannel(channel){if(!channel)return;location.href='/api/v1/auth/login/'+encodeURIComponent(channel)}
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',loadAuthSystemConfig)}else{loadAuthSystemConfig()}function setTok(t,remember){localStorage.setItem('rayrag_token',t);document.cookie='rayrag_token='+t+';path=/;max-age=86400';if(remember){localStorage.setItem('rayrag_email',document.getElementById('email').value.trim())}else{localStorage.removeItem('rayrag_email')}}// Upstream `login-next/index.tsx` runs zod over both faces:
+// `email: z.string().email().min(1,{message: login.emailPlaceholder})`,
+// `password: z.string().min(1,{message: login.passwordPlaceholder})` and, on the
+// register face, a required nickname (`NICKNAME_PATTERN` =
+// register face, a required nickname (letters, numbers, spaces and . _ ' -)
+// `setting.usernameInvalidCharacters`.
+function authValidEmail(value){var email=String(value||'').trim();if(!email)return false;return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)}
+function authEmailError(value){var email=String(value||'').trim();if(!email)return AUTH_EMAIL_REQUIRED;return authValidEmail(email)?'':AUTH_EMAIL_INVALID}
+function authPasswordError(value){return String(value||'')?'':AUTH_PASSWORD_REQUIRED}
+function authNicknameError(value){var nickname=String(value||'').trim();if(!nickname)return AUTH_NICKNAME_REQUIRED;return AUTH_NICKNAME_PATTERN.test(nickname)?'':AUTH_NICKNAME_INVALID}
+function authSetMessage(id,message){var node=document.getElementById(id);if(node)node.textContent=message}
+function authErrors(){var emailError=authEmailError(document.getElementById('email').value);var passwordError=authPasswordError(document.getElementById('password').value);authSetMessage('loginEmailError',emailError);authSetMessage('loginPasswordError',passwordError);return !emailError&&!passwordError}
+function authRegisterErrors(){var nicknameError=authNicknameError(document.getElementById('nickname').value);var emailError=authEmailError(document.getElementById('remail').value);var passwordError=authPasswordError(document.getElementById('rpassword').value);authSetMessage('regNicknameError',nicknameError);authSetMessage('regEmailError',emailError);authSetMessage('regPasswordError',passwordError);return !nicknameError&&!emailError&&!passwordError}
+// Upstream tints the remember-me label with the checkbox state
+// (`text-text-disabled` / `text-text-primary`).
+function authRememberTint(){var label=document.getElementById('authRememberLabel');if(!label)return;label.classList.toggle('checked',document.getElementById('remember').checked)}
+function login(){var e=document.getElementById('email').value;var p=document.getElementById('password').value;var r=document.getElementById('remember').checked;document.getElementById('error').textContent='';if(!authErrors())return;fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,remember:r})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){setTok(d.data.access_token,r);location.href='/'}else{document.getElementById('error').textContent=d.message}}).catch(function(error){document.getElementById('error').textContent=error.message})}function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;document.getElementById('error').textContent='';if(!authRegisterErrors())return;fetch('/api/v1/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){return fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}).then(function(r2){return r2.json()}).then(function(l){if(l.code===0){setTok(l.data.access_token,false);location.href='/'}else{document.getElementById('error').textContent=l.message}})}document.getElementById('error').textContent=d.message})}function loginWithChannel(channel){if(!channel)return;location.href='/api/v1/auth/login/'+encodeURIComponent(channel)}
 function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type=\\'button\\' class=\\'btn btn-o auth-channel auth-channel-btn\\' data-channel=\\'\"+(item.channel||'')+\"\\'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('');Array.prototype.forEach.call(host.querySelectorAll('.auth-channel-btn'),function(button){button.addEventListener('click',function(){loginWithChannel(button.dataset.channel)})})}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
@@ -9409,6 +9441,78 @@ connection: close
         ] {
             assert!(css.contains(rule), "admin form css missing: {rule}");
         }
+    }
+
+    /// Upstream `pages/login-next/index.tsx` resolves both faces through one zod
+    /// schema — `email: z.string().email().min(1,{message: emailPlaceholder})`,
+    /// `password: z.string().min(1,{message: passwordPlaceholder})` and a required
+    /// nickname on the register face (`NICKNAME_PATTERN`, message
+    /// `setting.usernameInvalidCharacters`) — and renders a `FormMessage` under
+    /// every field, with the remember-me label tinted by its checkbox. The card is
+    /// `max-w-[540px] rounded-2xl pt-14 pl-10 pr-10 pb-2 border shadow-xl`, the
+    /// submit is the `metallic-gradient` button with a 2px teal underline at
+    /// `my-8`, and the two switch rows sit at `mt-10`.
+    #[tokio::test]
+    async fn login_page_validates_per_field_like_the_upstream_schema() {
+        let body = body_of(login_page(english_request("/login")).await).await;
+        assert_inline_scripts_balance(&body, "/login");
+        for marker in [
+            // One slot per field on both faces.
+            "data-testid='auth-email-error' id='loginEmailError'",
+            "data-testid='auth-password-error' id='loginPasswordError'",
+            "data-testid='auth-register-email-error' id='regEmailError'",
+            "data-testid='auth-nickname-error' id='regNicknameError'",
+            "data-testid='auth-register-password-error' id='regPasswordError'",
+            // Schema copy, injected per locale.
+            "var AUTH_EMAIL_REQUIRED=",
+            "var AUTH_PASSWORD_REQUIRED=",
+            "var AUTH_EMAIL_INVALID=",
+            "var AUTH_NICKNAME_REQUIRED=",
+            "var AUTH_NICKNAME_INVALID=",
+            "var AUTH_NICKNAME_PATTERN=/^[\\p{L}\\p{N} ._'-]+$/u;",
+            // Resolvers mirror the schema and gate both submits.
+            "function authValidEmail(value){var email=String(value||'').trim();if(!email)return false;",
+            "function authEmailError(value){var email=String(value||'').trim();if(!email)return AUTH_EMAIL_REQUIRED;",
+            "function authPasswordError(value){return String(value||'')?'':AUTH_PASSWORD_REQUIRED}",
+            "function authNicknameError(value){var nickname=String(value||'').trim();if(!nickname)return AUTH_NICKNAME_REQUIRED;",
+            "function authErrors(){",
+            "function authRegisterErrors(){",
+            "document.getElementById('error').textContent='';if(!authErrors())return;",
+            "if(!authRegisterErrors())return;",
+            // Remember-me tint + the labelled inputs.
+            "<label class='auth-remember' id='authRememberLabel'><input id='remember' class='auth-checkbox' type='checkbox' onchange='authRememberTint()'>",
+            "function authRememberTint(){var label=document.getElementById('authRememberLabel');if(label)return;",
+            "label.classList.toggle('checked',document.getElementById('remember').checked)",
+        ] {
+            if marker
+                == "function authRememberTint(){var label=document.getElementById('authRememberLabel');if(label)return;"
+            {
+                continue;
+            }
+            assert!(
+                body.contains(marker),
+                "auth schema marker missing: {marker}"
+            );
+        }
+        assert!(body.contains(
+            "function authRememberTint(){var label=document.getElementById('authRememberLabel');if(!label)return;label.classList.toggle('checked',document.getElementById('remember').checked)}"
+        ));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            "--t:#f6f6f7;--metallic:#46464a;",
+            "--metallic:#fafafa;",
+            ".auth-stage .auth-card{width:100%;max-width:540px;margin:0 auto;padding:56px 40px 8px;border-radius:10px;border:1px solid var(--bd);box-shadow:var(--shl);backdrop-filter:blur(4px)}",
+            ".auth-heading{margin-bottom:32px;text-align:center}.auth-stage .auth-card .auth-heading h2{font-size:20px;font-weight:600}",
+            ".auth-form{display:flex;flex-direction:column;gap:32px}",
+            ".auth-message{margin-top:8px;color:var(--d);font-size:14px;font-weight:500}.auth-message:empty{display:none}",
+            ".auth-remember.checked{color:var(--t)}",
+            ".auth-switch{margin-top:40px;text-align:right;font-size:14px;color:var(--tm)}",
+            ".auth-channels{display:flex;flex-direction:column;gap:0;margin-top:12px;border:1px solid var(--bd)}",
+        ] {
+            assert!(css.contains(rule), "auth css missing: {rule}");
+        }
+        assert!(css.contains(".auth-form .auth-submit{width:100%;margin:32px 0;height:40px;padding:0 16px;font-size:14px;background:linear-gradient(104deg,var(--t) 30%,var(--metallic) 50%,var(--t) 70%);color:var(--bg);border:0;border-bottom:2px solid #00BEB4;border-radius:var(--rs)}"));
+        assert!(!css.contains(".auth-card{max-width:400px;margin:100px auto}"));
     }
 
     /// Upstream `pages/admin/login.tsx`: three `Spotlight` layers over the `BgSvg`

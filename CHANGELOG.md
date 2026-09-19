@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.29] — 2026-09-21（对标批次 v0.3.8g）
+
+### Added
+
+- **用户登录/注册页按上游 `pages/login-next/index.tsx` 的 zod 模式做逐字段校验**：
+  - 登录面：邮箱为空 → `login.emailPlaceholder`（"Please input email"），非空非法 → "Invalid email"；
+    密码为空 → `login.passwordPlaceholder`（"Please input password"）。
+  - 注册面：昵称必填 → "Please input nickname"，不满足 `NICKNAME_PATTERN`
+    （字母/数字/空格与 `. _ ' -`）→ `setting.usernameInvalidCharacters`
+    （"Name can only contain letters, numbers, spaces, and . _ ' -"）；邮箱与密码同登录面规则。
+    **台账注记**：上游把该必填文案写成 `message: 'nicknamePlaceholder'`（漏了 `t()`，界面会直接显示键名），
+    RayRAG 按用户可读的占位文案显示，属有意偏离，已记录。
+  - 两个面各字段一条 `FormMessage`（`auth-email-error` / `auth-password-error` /
+    `auth-register-email-error` / `auth-nickname-error` / `auth-register-password-error`），
+    校验不通过时不发 `POST /api/v1/auth/login` 或 `POST /api/v1/user/register`；
+    接口失败仍在 `#error` 显示（上游无此提示，属既有增强）。
+- **记住我**按上游 `disablePasswordLogin` 之外的规则着色：勾选时标签由 `--tm` 变 `--t`，
+  复选框改为上游 `Checkbox` 尺寸（14px、2px 圆角、`appearance:none`、勾选画对勾）。
+- **版式**：卡片 `max-w-[540px] rounded-2xl(10px) pt-14 pl-10 pr-10 pb-2 border shadow-xl`、
+  标题 `text-xl font-semibold mb-8`、表单 `gap-8`、提交按钮改为上游
+  `bg-metallic-gradient`（新增 `--metallic` 暗/亮主题变量）＋ `border-b-2 #00BEB4` ＋ `my-8`、
+  切换行 `mt-10`、渠道容器 `mt-3 border`；移除与上游矛盾的旧 `.auth-card{max-width:400px}` 规则。
+
 ## [0.4.28] — 2026-09-21（对标批次 v0.3.8f）
 
 ### Added
