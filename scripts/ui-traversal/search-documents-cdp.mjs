@@ -60,7 +60,12 @@ try {
   if (!login.ok) throw new Error("login failed: " + JSON.stringify(login.body));
 
   await page.goto(`${ORIGIN}/search`, { waitUntil: "domcontentloaded", timeout: 40000 });
-  await page.waitForSelector("#searchDocsField", { timeout: 20000 });
+  // The sidebar lives in the results view, which the greeting form opens.
+  await page.waitForSelector("#query", { timeout: 20000 });
+  await page.fill("#query", "probe documents selection");
+  await page.locator("#query").press("Enter");
+  await page.waitForSelector("#searchView", { state: "visible", timeout: 20000 });
+  await page.waitForSelector("[data-testid='search-documents-trigger']", { timeout: 20000 });
   await page.waitForFunction(
     () => !document.getElementById("searchDocsField").hidden,
     null,
@@ -115,10 +120,15 @@ try {
   check(true, "close_action_closes_the_popover");
 
   // The selection travels to the retrieval call.
-  await page.fill("#q2", "probe documents selection");
+  const bodiesBefore = retrievalBodies.length;
   await page.locator("#q2").press("Enter");
-  await page.waitForFunction(() => window.__probeSearched !== undefined || true, null, { timeout: 1000 });
-  await page.waitForTimeout(1500);
+  await page
+    .waitForFunction(() => true, null, { timeout: 500 })
+    .catch(() => {});
+  for (let attempt = 0; attempt < 20 && retrievalBodies.length <= bodiesBefore; attempt += 1) {
+    await page.waitForTimeout(250);
+  }
+  check(retrievalBodies.length > bodiesBefore, "second_retrieval_request_observed");
   const body = retrievalBodies[retrievalBodies.length - 1];
   check(Boolean(body), "retrieval_request_observed");
   check(
