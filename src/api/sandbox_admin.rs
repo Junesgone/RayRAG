@@ -753,7 +753,7 @@ pub async fn set_config(
     let Some(fields) = sandbox_provider_schema(&provider_type) else {
         return error(
             StatusCode::BAD_REQUEST,
-            &format!("Unknown provider: {provider_type}"),
+            &format!("Unknown provider type: {provider_type}"),
         );
     };
     let submitted = body
@@ -766,42 +766,36 @@ pub async fn set_config(
         .and_then(Value::as_bool)
         .unwrap_or(true);
 
-    // Validate against the schema; unknown keys are rejected so a typo cannot
-    // silently become part of the stored provider configuration.
-    let mut merged = stored_config(&state, &provider_type);
+    // Upstream `SandboxMgr.set_config`: unknown keys are stored as submitted,
+    // the schema drives the required/type/range checks and the wording of every
+    // rejection, and the provider's own `validate_config` runs last.
+    let stored = stored_config(&state, &provider_type);
+    let mut merged = Map::new();
     for (key, value) in &submitted {
         let Some(field) = fields.iter().find(|field| field.name == key) else {
-            return error(
-                StatusCode::BAD_REQUEST,
-                &format!("Unknown configuration field for {provider_type}: {key}"),
-            );
+            // Not part of the schema (e.g. legacy keys such as the seeded
+            // `max_retries`): upstream keeps them verbatim.
+            merged.insert(key.clone(), value.clone());
+            continue;
         };
-        let text = value.as_str().map(str::trim).unwrap_or_default();
-        // The console echoes secrets back as `<redacted>`; keep the stored one.
-        if field.secret && (value.as_str() == Some("<redacted>") || text.is_empty()) {
-            if value.as_str() == Some("<redacted>") {
-                continue;
+        if field.secret
+            && (value.as_str() == Some(REDACTED)
+                || value.as_str().map(str::trim).unwrap_or_default().is_empty())
+        {
+            if let Some(existing) = stored.get(key) {
+                merged.insert(key.clone(), existing.clone());
             }
-            if field.required {
-                continue;
-            }
+            continue;
         }
         match field.field_type {
             "integer" => {
-                // A JSON number has no string form, so only an explicit null or
-                // an empty string clears the value.
-                if value.is_null() || (value.is_string() && text.is_empty()) {
-                    merged.remove(key);
-                    continue;
-                }
                 let parsed = value
                     .as_i64()
-                    .or_else(|| text.parse::<i64>().ok())
-                    .ok_or_else(|| format!("{key} must be an integer"));
+                    .ok_or_else(|| format!("Field '{key}' must be an integer"));
                 let Ok(parsed) = parsed else {
                     return error(
                         StatusCode::BAD_REQUEST,
-                        &format!("{key} must be an integer"),
+                        &format!("Field '{key}' must be an integer"),
                     );
                 };
                 if let Some(min) = field.min
@@ -809,7 +803,7 @@ pub async fn set_config(
                 {
                     return error(
                         StatusCode::BAD_REQUEST,
-                        &format!("{key} must be greater than or equal to {min}"),
+                        &format!("Field '{key}' must be >= {min}"),
                     );
                 }
                 if let Some(max) = field.max
@@ -817,66 +811,65 @@ pub async fn set_config(
                 {
                     return error(
                         StatusCode::BAD_REQUEST,
-                        &format!("{key} must be less than or equal to {max}"),
+                        &format!("Field '{key}' must be <= {max}"),
                     );
                 }
                 merged.insert(key.clone(), Value::from(parsed));
             }
             "boolean" => {
-                let parsed = value
-                    .as_bool()
-                    .or_else(|| match text {
-                        "true" => Some(true),
-                        "false" => Some(false),
-                        _ => None,
-                    })
-                    .ok_or_else(|| format!("{key} must be a boolean"));
-                let Ok(parsed) = parsed else {
-                    return error(StatusCode::BAD_REQUEST, &format!("{key} must be a boolean"));
-                };
-                merged.insert(key.clone(), Value::from(parsed));
-            }
-            _ => {
-                if field.required && text.is_empty() && !merged.contains_key(key) {
-                    return error(StatusCode::BAD_REQUEST, &format!("{key} is required"));
-                }
-                if !field.options.is_empty() && !text.is_empty() && !field.options.contains(&text) {
+                if !value.is_boolean() {
                     return error(
                         StatusCode::BAD_REQUEST,
-                        &format!("{key} must be one of: {}", field.options.join(", ")),
+                        &format!("Field '{key}' must be a boolean"),
                     );
                 }
-                merged.insert(
-                    key.clone(),
-                    Value::from(value.as_str().unwrap_or_default().trim()),
-                );
+                merged.insert(key.clone(), value.clone());
+            }
+            _ => {
+                if !value.is_string() {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        &format!("Field '{key}' must be a string"),
+                    );
+                }
+                merged.insert(key.clone(), value.clone());
             }
         }
     }
-    // Fields the console leaves untouched keep their schema default, so a
-    // required field with a default (SSH port 22) is never reported missing.
     for field in &fields {
-        if field.readonly || merged.contains_key(field.name) {
+        if field.readonly || !field.required {
             continue;
         }
-        if let Some(default) = &field.default {
-            merged.insert(field.name.to_string(), default.clone());
-        }
-    }
-    for field in &fields {
-        if field.required
-            && !field.readonly
-            && merged
-                .get(field.name)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .unwrap_or_default()
-                .is_empty()
-            && merged.get(field.name).and_then(Value::as_i64).is_none()
-        {
+        let missing = match merged.get(field.name) {
+            None => true,
+            Some(Value::String(text)) => text.trim().is_empty(),
+            Some(Value::Null) => true,
+            Some(_) => false,
+        };
+        if missing {
             return error(
                 StatusCode::BAD_REQUEST,
-                &format!("{} is required", field.name),
+                &format!("Required field '{}' is missing", field.name),
+            );
+        }
+    }
+    // Provider-specific `validate_config`: the option sets the schemas declare
+    // are the only provider-side constraint this build enforces.
+    for field in &fields {
+        if field.options.is_empty() {
+            continue;
+        }
+        let Some(Value::String(value)) = merged.get(field.name) else {
+            continue;
+        };
+        if !value.trim().is_empty() && !field.options.contains(&value.trim()) {
+            return error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "Provider validation failed: Field '{}' must be one of: {}",
+                    field.name,
+                    field.options.join(", ")
+                ),
             );
         }
     }

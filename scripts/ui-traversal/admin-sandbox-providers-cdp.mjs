@@ -177,6 +177,11 @@ try {
     "exit_code_and_execution_time_rendered",
   );
   await page.locator("#sbTestModal .ds-dialog-footer button").click();
+  await page.waitForFunction(
+    () => !document.getElementById("sbTestModal").classList.contains("show"),
+    null,
+    { timeout: 10000 },
+  );
 
   // Saving re-submits the already active provider, so nothing changes on disk.
   await page.locator("[data-testid='admin-sandbox-provider-self_managed']").click();

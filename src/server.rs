@@ -9243,27 +9243,33 @@ mod tests {
         assert_eq!(config["data"]["config"]["timeout"], 30);
         assert!(config["data"]["config"]["endpoint"].is_string());
 
-        // Validation: unknown field, out-of-range integer, bad boolean, bad option.
+        // Validation follows upstream `SandboxMgr.set_config`: required fields
+        // must be present, integers are type- and range-checked, and the
+        // rejection wording matches upstream.
         for (body, expected) in [
             (
-                serde_json::json!({"provider_type": "ssh", "config": {"nope": "1"}}),
-                "Unknown configuration field for ssh: nope",
-            ),
-            (
-                serde_json::json!({"provider_type": "ssh", "config": {"port": 70000}}),
-                "port must be less than or equal to 65535",
-            ),
-            (
-                serde_json::json!({"provider_type": "self_managed", "config": {"timeout": 1}}),
-                "timeout must be greater than or equal to 5",
-            ),
-            (
-                serde_json::json!({"provider_type": "aliyun_codeinterpreter", "config": {"region": "mars"}}),
-                "region must be one of: cn-hangzhou, cn-beijing, cn-shanghai, cn-shenzhen, cn-guangzhou",
-            ),
-            (
                 serde_json::json!({"provider_type": "ssh", "config": {"host": "h"}}),
-                "username is required",
+                "Required field 'port' is missing",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h", "port": 70000, "username": "u"}}),
+                "Field 'port' must be <= 65535",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h", "port": 22, "username": 5}}),
+                "Field 'username' must be a string",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h", "port": "22", "username": "u"}}),
+                "Field 'port' must be an integer",
+            ),
+            (
+                serde_json::json!({"provider_type": "self_managed", "config": {"endpoint": "http://x", "timeout": 1}}),
+                "Field 'timeout' must be >= 5",
+            ),
+            (
+                serde_json::json!({"provider_type": "aliyun_codeinterpreter", "config": {"access_key_id": "a", "access_key_secret": "b", "account_id": "c", "region": "mars"}}),
+                "Provider validation failed: Field 'region' must be one of: cn-hangzhou, cn-beijing, cn-shanghai, cn-shenzhen, cn-guangzhou",
             ),
         ] {
             let response = call(
@@ -9276,6 +9282,19 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{expected}");
             assert_eq!(response_json(response).await["message"], expected);
         }
+        // An unknown top-level provider is rejected with upstream's wording.
+        let unknown_save = call(
+            "POST",
+            "/api/v1/admin/sandbox/config".into(),
+            Some(serde_json::json!({"provider_type": "nope", "config": {}})),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(unknown_save.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(unknown_save).await["message"],
+            "Unknown provider type: nope"
+        );
 
         // A valid save persists and activates the provider.
         let saved = call(
@@ -9324,6 +9343,9 @@ mod tests {
             reloaded["data"]["config"]["password"], "<redacted>",
             "the admin view never echoes a secret"
         );
+        // Keys outside the schema round-trip untouched (upstream stores the
+        // submitted object verbatim), so the seeded legacy defaults survive.
+        assert_eq!(reloaded["data"]["config"]["port"], 2222);
 
         // Resubmitting the redacted value keeps the stored secret.
         let resent = call(
@@ -9331,7 +9353,13 @@ mod tests {
             "/api/v1/admin/sandbox/config".into(),
             Some(serde_json::json!({
                 "provider_type": "ssh",
-                "config": {"host": "10.0.0.9", "password": "<redacted>"}
+                "config": {
+                    "host": "10.0.0.9",
+                    "port": 2222,
+                    "username": "ragflow",
+                    "password": "<redacted>",
+                    "timeout": 45
+                }
             })),
             token.clone(),
         )
