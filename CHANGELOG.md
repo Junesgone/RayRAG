@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.23] — 2026-09-20（对标批次 v0.3.8a）
+
+### Added
+
+- **检索结果渲染文档元数据（上游 `search-view.tsx` 的 metadata 芯片）**：上游在每条检索结果下渲染
+  `document_metadata` 的芯片行（`flex flex-wrap gap-2 mt-2`，每个芯片 `text-xs border rounded px-2 py-1`，
+  键为次要色、值为主色），值格式化规则是「数组 join(', ') / null 空 / 对象 JSON / 其余 String」。
+  RayRAG 的 `/search` 结果行与数据集「Retrieval testing」结果行现在都按同一形状渲染
+  （`data-testid='chunk-metadata'`、`chunk-metadata-chip`），并同时请求 `include_metadata: true`，
+  让检索接口返回该字段；聊天参考面板用的
+  `markdown-content/index.tsx` 版式（`space-y-1 border rounded p-2`）也实现为 `metadataSection()` 备用。
+- 元数据缺失或为空对象时**不渲染任何空壳**（与上游 `Object.keys(...).length > 0` 判断一致），键与值都做 HTML 转义。
+
 ## [0.4.22] — 2026-09-20（对标批次 v0.3.7z）
 
 ### Added

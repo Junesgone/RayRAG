@@ -1547,6 +1547,18 @@ const SEARCH_EMPTY_BRI_SVG: &str = r##"<svg width="84" height="104" viewBox="0 0
 </defs>
 </svg>"##;
 
+/// Upstream `next-search/search-view.tsx::formatMetadataValue` and the metadata
+/// rendering it feeds: the chip row under a retrieval row (`flex flex-wrap gap-2
+/// mt-2`, each chip `text-xs border border-border-default rounded px-2 py-1` with
+/// a muted key and a primary value) and the reference-panel variant from
+/// `components/markdown-content/index.tsx` (`space-y-1 border rounded p-2`).
+const SEARCH_METADATA_JS: &str = r#"<script>
+function formatMetadataValue(value){if(Array.isArray(value))return value.join(', ');if(value===null||value===undefined)return '';if(typeof value==='object')return JSON.stringify(value);return String(value)}
+function escapeHtmlText(text){return String(text==null?'':text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(new RegExp(String.fromCharCode(34),'g'),'&quot;')}
+function metadataChips(metadata){if(!metadata||typeof metadata!=='object')return '';var keys=Object.keys(metadata);if(!keys.length)return '';return "<div class='chunk-metadata' data-testid='chunk-metadata'>"+keys.map(function(key){return "<span class='chunk-metadata-chip'><span class='chunk-metadata-key'>"+escapeHtmlText(key)+":</span> <span class='chunk-metadata-value'>"+escapeHtmlText(formatMetadataValue(metadata[key]))+"</span></span>"}).join('')+"</div>"}
+function metadataSection(metadata){if(!metadata||typeof metadata!=='object')return '';var keys=Object.keys(metadata);if(!keys.length)return '';return "<section class='chunk-metadata-section' data-testid='chunk-metadata-section'>"+keys.map(function(key){return "<div class='chunk-metadata-line'><span class='chunk-metadata-key'>"+escapeHtmlText(key)+":</span> <span class='chunk-metadata-value'>"+escapeHtmlText(formatMetadataValue(metadata[key]))+"</span></div>"}).join('')+"</section>"}
+</script>"#;
+
 /// lucide `Files` at 16px — the `RetrievalDocuments` trigger icon.
 const SEARCH_FILES_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 7h-3a2 2 0 0 1-2-2V2'/><path d='M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z'/><path d='M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8'/></svg>";
 
@@ -2708,7 +2720,7 @@ function testMetaSemiAddRow(){testMetaLoadKeys().then(function(keys){var host=do
 function testMetaPayload(){var trigger=document.getElementById('testMeta');var method=trigger&&trigger.dataset.value?trigger.dataset.value:'disabled';if(method==='disabled')return null;if(method==='manual'){var rows=[];Array.prototype.forEach.call(document.querySelectorAll('#testMetaRows .test-meta-row'),function(row){var key=(row.querySelector('.test-meta-key')||{}).value||'';var op=(row.querySelector('.test-meta-op')||{}).value||'';var value=(row.querySelector('.test-meta-value')||{}).value||'';if(key.trim())rows.push({key:key.trim(),op:op,value:value})});var logic=document.getElementById('testMetaLogic');return {method:'manual',logic:(logic&&logic.value)||'and',manual:rows}}var semi=[];Array.prototype.forEach.call(document.querySelectorAll('#testMetaSemiRows .test-meta-row'),function(row){var key=(row.querySelector('.test-meta-key')||{}).value||'';var op=(row.querySelector('.test-meta-op')||{}).value||'';if(key) semi.push({key:key,op:op})});return {method:'semi_auto',semi_auto:semi}}
 (function testMetaWatch(){var trigger=document.getElementById('testMeta');if(!trigger||!window.MutationObserver)return;var sync=function(){testMetaChange(trigger.dataset.value||'disabled')};new MutationObserver(sync).observe(trigger,{attributes:true,attributeFilter:['data-value']});sync()})();
 (function testRerankTopKWatch(){var trigger=document.getElementById('testRerankingSel');if(!trigger||!window.MutationObserver)return;var sync=function(){var row=document.getElementById('testTopKRow');var selected=!!(trigger.dataset.value||'');if(row)row.hidden=!selected};new MutationObserver(sync).observe(trigger,{attributes:true,attributeFilter:['data-value']});sync()})();
-function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var sizeSel=document.getElementById('testK');var size=parseInt((sizeSel&&sizeSel.dataset.value)||'10',10)||10;var k=size;var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,size:size,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId){body.rerank_id=rerankingId;var topK=document.getElementById('testTopK');var topKValue=topK?parseInt(topK.value,10):NaN;if(!isNaN(topKValue)&&topKValue>0)body.top_k=topKValue}var metaFilter=testMetaPayload();if(metaFilter)body.meta_data_filter=metaFilter;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var sizeSel=document.getElementById('testK');var size=parseInt((sizeSel&&sizeSel.dataset.value)||'10',10)||10;var k=size;var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,size:size,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true,include_metadata:true};if(rerankingId){body.rerank_id=rerankingId;var topK=document.getElementById('testTopK');var topKValue=topK?parseInt(topK.value,10):NaN;if(!isNaN(topKValue)&&topKValue>0)body.top_k=topKValue}var metaFilter=testMetaPayload();if(metaFilter)body.meta_data_filter=metaFilter;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div>'+metadataChips(c.document_metadata)+'<div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     // Upstream `SelectWithSearch`: `showSearch` is true past five options, the
     // filter keeps any option whose value contains the query (cmdk's `filterFn`
@@ -2733,6 +2745,7 @@ function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value
     // Model options are rendered by the shared default-model tree (the field is a
     // popover trigger, not a <select>), so no legacy <option> injection here.
     b.push_str("loadDocs();loadConfig();dsTagLoad();showTab(0);</script>");
+    b.push_str(SEARCH_METADATA_JS);
     Html(layout(&name, &b, zh))
 }
 
@@ -3082,7 +3095,7 @@ function searchRelatedOn(){var box=document.getElementById('relatedSearch');retu
 // Upstream `next-search/hooks.ts` posts `{kb_id, highlight, question, doc_ids,
 // page, size, search_id}` and lets the server read the app's `search_config`;
 // the sidebar only sends the fields the user actually changed.
-var body={question:q,highlight:true,page:window.sPage||1,size:10};
+var body={question:q,highlight:true,page:window.sPage||1,size:10,include_metadata:true};
 var app=window.__SAPP__;
 if(app&&app.id)body.search_id=app.id;
 var kbs=[];var allOn=false;document.querySelectorAll('.kbCk:checked').forEach(function(c){if(c.value==='__all__'){allOn=true}else{kbs.push(c.value)}});
@@ -3099,7 +3112,7 @@ if(!app&&!window.__SEARCH_TOUCHED){body.similarity_threshold=parseFloat(document
 var rrEl=document.getElementById('searchRerankSel');var rr=rrEl?(rrEl.dataset.value||''):'';
 if(r&&rr){body.rerank_id=rr}
 if(kbIds&&kbIds.length&&!allOn)body.kb_id=kbIds;
-document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(function(chunk){return chunk!=null});var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||SEARCH_EMPTY_MARKUP;var total=document.getElementById('searchTotal');if(total)total.textContent=SEARCH_LABELS.total+': '+items.length;searchAskSetStreaming(false);loadRelatedQuestions(q);searchSummaryStart(q)})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
+document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(function(chunk){return chunk!=null});var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div>'+metadataChips(c.document_metadata)+'<div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||SEARCH_EMPTY_MARKUP;var total=document.getElementById('searchTotal');if(total)total.textContent=SEARCH_LABELS.total+': '+items.length;searchAskSetStreaming(false);loadRelatedQuestions(q);searchSummaryStart(q)})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
     b.push_str("<script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&serde_json::json!([{
         "fieldId": "rerank_id",
@@ -3138,7 +3151,8 @@ pub async fn search_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
-    let (b, zh) = search_page_markup(&state, &req);
+    let (mut b, zh) = search_page_markup(&state, &req);
+    b.push_str(SEARCH_METADATA_JS);
     Html(layout(t("Search", zh), &b, zh))
 }
 
@@ -9115,6 +9129,65 @@ connection: close
     /// pair, the `MetadataFilter` block (method picker + manual condition rows +
     /// semi-automatic key rows) and the footer question textarea with the Run
     /// button that stays disabled until the question is non-empty.
+    /// Upstream `next-search/search-view.tsx`: a retrieval row renders the
+    /// `document_metadata` chips (`formatMetadataValue` + the bordered chip row)
+    /// and the reference panel uses the `markdown-content` variant, so both
+    /// retrieval surfaces ask the API for the metadata they render.
+    #[tokio::test]
+    async fn retrieval_rows_render_the_upstream_metadata_chips() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Metadata KB", "d").unwrap();
+        let search = body_of(
+            search_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let testing = body_of(
+            dataset_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/retrieval/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for html in [&search, &testing] {
+            for marker in [
+                "function formatMetadataValue(value)",
+                "if(Array.isArray(value))return value.join(', ')",
+                "if(typeof value==='object')return JSON.stringify(value)",
+                "function metadataChips(metadata)",
+                "function metadataSection(metadata)",
+                "chunk-metadata-chip",
+                "chunk-metadata-section",
+                "metadataChips(c.document_metadata)",
+                "include_metadata:true",
+            ] {
+                assert!(html.contains(marker), "metadata marker missing: {marker}");
+            }
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".chunk-metadata{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}",
+            ".chunk-metadata-chip{padding:4px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;line-height:1.4}",
+            ".chunk-metadata-key{color:var(--t2)}",
+            ".chunk-metadata-section{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--bd);border-radius:4px}",
+        ] {
+            assert!(css.contains(rule), "metadata css missing: {rule}");
+        }
+    }
+
     #[tokio::test]
     async fn retrieval_testing_form_matches_the_upstream_composition() {
         let (_root, state) = test_state();

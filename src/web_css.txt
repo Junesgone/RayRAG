@@ -435,3 +435,10 @@ tr:hover .admin-row-actions,tr:focus-within .admin-row-actions{opacity:1}
 .test-meta-value{flex:2;min-width:0}
 .test-meta-remove{flex:0 0 auto;padding:2px 8px;border:0;border-radius:4px;background:transparent;color:var(--tm);cursor:pointer}
 .test-meta-remove:hover{background:var(--bgch);color:var(--t)}
+/* Upstream `next-search/search-view.tsx` metadata chips (`flex flex-wrap gap-2 mt-2`, chip `text-xs border border-border-default rounded px-2 py-1`) and the reference-panel variant from `components/markdown-content/index.tsx` (`space-y-1 border border-border-default rounded p-2`). */
+.chunk-metadata{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chunk-metadata-chip{padding:4px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;line-height:1.4}
+.chunk-metadata-key{color:var(--t2)}
+.chunk-metadata-value{color:var(--t)}
+.chunk-metadata-section{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--bd);border-radius:4px}
+.chunk-metadata-line{font-size:12px}
