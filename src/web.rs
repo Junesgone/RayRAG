@@ -4010,10 +4010,22 @@ pub async fn admin_services_page(
         return Redirect::temporary("/admin").into_response();
     }
     let mut b = String::with_capacity(8192);
-    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Service status</h2></div><div class='admin-toolbar'><label class='admin-filter'><span>Service type</span><select id='adminServiceType' data-testid='admin-service-type-filter' onchange='adminRenderServices()'><option value=''>All</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetServiceFilter()'>Reset</button></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-services-table'><thead><tr><th>ID</th><th>Name</th><th>Service type</th><th>Host</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead><tbody id='adminServiceRows'><tr><td colspan='7' class='admin-empty'>Loading…</td></tr></tbody></table></div></div>");
+    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Service status</h2></div><div class='admin-toolbar'><label class='admin-filter'><span>Service type</span><select id='adminServiceType' data-testid='admin-service-type-filter' onchange='adminRenderServices()'><option value=''>All</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetServiceFilter()'>Reset</button><input id='adminServiceSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search services' oninput='adminServicePage=1;adminRenderServices()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-services-table'><thead><tr><th>ID</th><th>Name</th><th>Service type</th><th>Host</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead><tbody id='adminServiceRows'><tr><td colspan='7' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminServicePager' data-testid='admin-services-pagination'></footer></div>");
     b.push_str("<div class='modal-overlay' id='adminServiceDialog' onclick=\"if(event.target===this)adminCloseServiceDialog()\"><div class='modal admin-service-modal'><h2>Service details</h2><p class='admin-dialog-sub' id='adminServiceName'></p><h3 class='admin-dialog-section'>Extra info</h3><pre class='admin-code' id='adminServiceDetail'></pre><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick='adminCloseServiceDialog()'>Close</button></div></div></div>");
     b.push_str(
-        r#"<script>var ADMIN_SERVICES=[];function adminServiceStatusBadge(status){var badge=document.createElement('span');badge.className='badge '+(status==='alive'?'bs':(status==='disabled'?'bw':'bd'));badge.textContent=status||'timeout';return badge}function adminRenderServices(){var filter=document.getElementById('adminServiceType').value;var rows=document.getElementById('adminServiceRows');var list=ADMIN_SERVICES.filter(function(service){return !filter||service.service_type===filter});rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(service){var row=document.createElement('tr');row.dataset.testid='admin-service-row';[service.id,service.name,service.service_type,service.host,service.port].forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value==null?'':String(value);if(index===2)cell.className='co';row.appendChild(cell)});var statusCell=document.createElement('td');statusCell.appendChild(adminServiceStatusBadge(service.status));row.appendChild(statusCell);var actionCell=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent='Show details';button.onclick=function(){adminShowService(service.id)};actionCell.appendChild(button);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetServiceFilter(){document.getElementById('adminServiceType').value='';adminRenderServices()}function adminFillServiceTypes(){var select=document.getElementById('adminServiceType');(ADMIN_SERVICES||[]).forEach(function(service){var type=String(service.service_type||'');if(!type||Array.prototype.some.call(select.options,function(option){return option.value===type}))return;var option=document.createElement('option');option.value=type;option.textContent=type;select.appendChild(option)})}function adminLoadServices(){fetch('/api/v1/admin/services').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load services');ADMIN_SERVICES=data.data||[];adminFillServiceTypes();adminRenderServices()}).catch(function(error){var rows=document.getElementById('adminServiceRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}function adminShowService(id){fetch('/api/v1/admin/services/'+id).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load details');var detail=data.data||{};document.getElementById('adminServiceName').textContent=detail.service_name||'';document.getElementById('adminServiceDetail').textContent=JSON.stringify(detail.message,null,2);document.getElementById('adminServiceDialog').classList.add('show')}).catch(function(error){alert(error.message)})}function adminCloseServiceDialog(){document.getElementById('adminServiceDialog').classList.remove('show')}adminLoadServices()</script>"#,
+        r#"<script>var ADMIN_SERVICES=[];function adminServiceStatusBadge(status){var badge=document.createElement('span');badge.className='badge '+(status==='alive'?'bs':(status==='disabled'?'bw':'bd'));badge.textContent=status||'timeout';return badge}// Upstream `service-status.tsx`: the table filters by service type *and* a global search
+// term (`header.search`), then paginates in the card footer via `RAGFlowPagination`
+// (total + page size 10/20/50/100); column sorting stays disabled (`enableSorting: false`).
+var adminServicePage=1;var adminServicePageSize=10;
+function adminServiceFiltered(){var filter=document.getElementById('adminServiceType').value;var search=(document.getElementById('adminServiceSearch').value||'').trim().toLowerCase();return ADMIN_SERVICES.filter(function(service){if(filter&&service.service_type!==filter)return false;if(!search)return true;return ['id','name','service_type','host','port'].some(function(key){return String(service[key]==null?'':service[key]).toLowerCase().indexOf(search)>=0})})}
+function adminRenderServicePager(total){var host=document.getElementById('adminServicePager');if(!host)return;var pages=Math.max(1,Math.ceil(total/adminServicePageSize));if(adminServicePage>pages)adminServicePage=pages;var sizes=[10,20,50,100].map(function(size){return "<option value='"+size+"'"+(size===adminServicePageSize?' selected':'')+">"+size+' / Page'+"</option>"}).join('');host.innerHTML="<span class='admin-pager-total'>Total "+total+"</span>"
++"<span class='admin-pager'><button type='button' class='btn btn-o btn-sm' data-testid='admin-services-prev' "+(adminServicePage<=1?'disabled':'')+" onclick='adminServiceGoto(adminServicePage-1)'>‹</button>"
++"<span class='admin-pager-now'>"+adminServicePage+' / '+pages+"</span>"
++"<button type='button' class='btn btn-o btn-sm' data-testid='admin-services-next' "+(adminServicePage>=pages?'disabled':'')+" onclick='adminServiceGoto(adminServicePage+1)'>›</button></span>"
++"<select class='admin-pager-size' aria-label='Page size' data-testid='admin-services-page-size' onchange='adminServicePageSizeChange(this.value)'>"+sizes+'</select>'}
+function adminServiceGoto(page){if(page<1)return;adminServicePage=page;adminRenderServices()}
+function adminServicePageSizeChange(value){adminServicePageSize=parseInt(value,10)||10;adminServicePage=1;adminRenderServices()}
+function adminRenderServices(){var rows=document.getElementById('adminServiceRows');var matched=adminServiceFiltered();adminRenderServicePager(matched.length);var start=(adminServicePage-1)*adminServicePageSize;var list=matched.slice(start,start+adminServicePageSize);rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(service){var row=document.createElement('tr');row.dataset.testid='admin-service-row';[service.id,service.name,service.service_type,service.host,service.port].forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value==null?'':String(value);if(index===2)cell.className='co';row.appendChild(cell)});var statusCell=document.createElement('td');statusCell.appendChild(adminServiceStatusBadge(service.status));row.appendChild(statusCell);var actionCell=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent='Show details';button.onclick=function(){adminShowService(service.id)};actionCell.appendChild(button);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetServiceFilter(){document.getElementById('adminServiceType').value='';var search=document.getElementById('adminServiceSearch');if(search)search.value='';adminServicePage=1;adminRenderServices()}function adminFillServiceTypes(){var select=document.getElementById('adminServiceType');(ADMIN_SERVICES||[]).forEach(function(service){var type=String(service.service_type||'');if(!type||Array.prototype.some.call(select.options,function(option){return option.value===type}))return;var option=document.createElement('option');option.value=type;option.textContent=type;select.appendChild(option)})}function adminLoadServices(){fetch('/api/v1/admin/services').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load services');ADMIN_SERVICES=data.data||[];adminFillServiceTypes();adminRenderServices()}).catch(function(error){var rows=document.getElementById('adminServiceRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}function adminShowService(id){fetch('/api/v1/admin/services/'+id).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load details');var detail=data.data||{};document.getElementById('adminServiceName').textContent=detail.service_name||'';document.getElementById('adminServiceDetail').textContent=JSON.stringify(detail.message,null,2);document.getElementById('adminServiceDialog').classList.add('show')}).catch(function(error){alert(error.message)})}function adminCloseServiceDialog(){document.getElementById('adminServiceDialog').classList.remove('show')}adminLoadServices()</script>"#,
     );
     Html(layout_plain(
         "Service status",
@@ -8276,6 +8288,63 @@ connection: close
             "upstream maps both Meituan and LongCat to the same console"
         );
         assert_eq!(provider_api_key_url("Unknown"), None);
+    }
+
+    /// Upstream `pages/admin/service-status.tsx`: the services table filters by
+    /// service type *and* a global search term (`header.search`) and paginates
+    /// in the card footer through `RAGFlowPagination` (total + page size
+    /// 10/20/50/100). Sorting stays disabled upstream (`enableSorting: false`),
+    /// as does polling (`useQuery` without `refetchInterval`).
+    #[tokio::test]
+    async fn admin_services_table_filters_searches_and_paginates() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("services@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_services_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/services")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "id='adminServiceSearch'",
+            "data-testid='admin-services-pagination'",
+            "data-testid='admin-services-page-size'",
+            "function adminServiceFiltered()",
+            "function adminRenderServicePager(total)",
+            "adminRenderServicePager(matched.length)",
+            "['id','name','service_type','host','port'].some(",
+            "adminServicePageSizeChange(this.value)",
+            "aria-label='Search services'",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin services marker missing: {marker}"
+            );
+        }
+        // The old single-select-only renderer must be gone.
+        assert!(
+            !body.contains("var list=ADMIN_SERVICES.filter(function(service){return !filter||service.service_type===filter});rows.textContent='';if(!list.length)"),
+            "the unsearched, unpaginated renderer is still present"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-service-search{width:14rem}",
+            ".admin-service-pager{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}",
+            ".admin-pager-size{padding:6px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}",
+        ] {
+            assert!(css.contains(rule), "admin pager css missing: {rule}");
+        }
     }
 
     /// Upstream `setting-model/index.tsx`: the page is a bordered rounded card

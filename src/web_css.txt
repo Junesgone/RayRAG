@@ -228,3 +228,10 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 /* Upstream `components/un-add-model.tsx`: the panel is an `<aside class="text-text-primary h-full flex flex-col">` whose `<h3 className="text-text-primary text-base">` heading is 16px/400 with the search box and tag pills stacked under it. */
 .available-models-panel{display:flex;flex-direction:column;height:100%}
 .available-models-panel .available-models-title{margin:0 0 12px;font-size:16px;font-weight:400;color:var(--t)}
+/* Upstream `pages/admin/service-status.tsx`: the toolbar carries a global search input and the card footer a `RAGFlowPagination` (total + page size 10/20/50/100). */
+.admin-service-search{width:14rem}
+.admin-service-pager{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
+.admin-pager-total{color:var(--t2);font-size:13px}
+.admin-pager{display:inline-flex;align-items:center;gap:8px}
+.admin-pager-now{color:var(--t2);font-size:13px}
+.admin-pager-size{padding:6px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}

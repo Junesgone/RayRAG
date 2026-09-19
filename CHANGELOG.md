@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.4] — 2026-09-19（对标批次 v0.3.7h）
+
+### Added
+
+- **管理后台「服务状态」表格补齐上游工具栏与页脚**：新增全局搜索框（上游 `header.search`，按 ID/名称/类型/主机/端口过滤）
+  与卡片页脚的 `RAGFlowPagination` 等价控件（`Total N` + 页码 + 每页 10/20/50/100），`Reset` 同时清空类型筛选与搜索词。
+
+### Note
+
+- **审计结论（撤回两条非特性）**：上游 `service-status.tsx` 里 `enableSorting: false` 全局禁用列排序、
+  `useQuery` 未设置 `refetchInterval`（即没有自动轮询）；台账中“tanstack 列排序 / 自动刷新轮询”两项残留据此撤回，
+  真正的缺口只有分页与全局搜索（本版已补）。
+
 ## [0.4.3] — 2026-09-19（对标批次 v0.3.7g）
 
 ### Fixed
