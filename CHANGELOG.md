@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.6] — 2026-09-19（对标批次 v0.3.7j）
+
+### Added
+
+- **后台「用户管理」表格补齐上游能力**：新增全局搜索框（按邮箱/用户名/昵称/角色/状态过滤）、
+  可排序列头（Email / Nickname / Role / Status，点击切换升/降序并显示 ↑↓）与页脚分页
+  （`Total N` + 页码 + 每页 10/20/50/100）；`Reset` 同时清空角色/状态筛选、搜索词与排序状态。
+  与 `service-status.tsx` 不同，`users.tsx` 上游并未禁用排序，故本页保留排序。
+
 ## [0.4.5] — 2026-09-19（对标批次 v0.3.7i）
 
 ### Changed

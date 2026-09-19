@@ -248,3 +248,7 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .json-tree-number{color:#f59e0b}
 .json-tree-boolean{color:#60a5fa}
 .json-tree-null{color:var(--tm)}
+/* Upstream `pages/admin/users.tsx`: sortable headers (no `enableSorting: false` here) with a global search box and the same footer pagination as the service table. */
+.admin-sortable{cursor:pointer}
+.admin-sortable:hover{background:var(--bgch)}
+.admin-sort-mark{display:inline-block;min-width:10px;margin-left:4px;color:var(--p)}
