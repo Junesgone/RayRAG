@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.10] — 2026-09-20（对标批次 v0.3.7n）
+
+### Fixed
+
+- **头像裁剪弹层按钮本地化**：共享外壳里的 `Cancel` / `OK` 改由 `t()` 注入（新增 zh 词条 `确定`），
+  中文界面不再出现英文按钮，与上游 `common.cancel` / `common.ok` 一致。
+
 ## [0.4.9] — 2026-09-19（对标批次 v0.3.7m）
 
 ### Fixed
