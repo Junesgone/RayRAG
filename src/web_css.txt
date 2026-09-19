@@ -254,3 +254,8 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .admin-sort-mark{display:inline-block;min-width:10px;margin-left:4px;color:var(--p)}
 /* Upstream `pages/admin/users.tsx`: the status cell is a bordered select for other accounts (the signed-in admin keeps a badge). */
 .admin-status-select{padding:4px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}
+/* Upstream `components/avatar-upload.tsx`: the crop modal shows the image with an 80%-of-the-smaller-side selection the user drags before OK renders 64x64. */
+.avatar-crop-modal{max-width:520px}
+.avatar-crop-stage{position:relative;width:100%;height:320px;overflow:hidden;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bg)}
+.avatar-crop-image{display:block;user-select:none;-webkit-user-drag:none}
+.avatar-crop-box{position:absolute;border:2px solid var(--p);box-shadow:0 0 0 9999px rgba(0,0,0,.45);cursor:move}

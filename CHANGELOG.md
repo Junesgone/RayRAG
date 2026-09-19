@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.8] — 2026-09-19（对标批次 v0.3.7l）
+
+### Added
+
+- **头像裁剪弹层支持拖拽选择（对齐上游 `components/avatar-upload.tsx`）**：打开裁剪弹层时按图片较短边的
+  80% 生成初始选区并居中，鼠标按住选区即可拖动（越界自动夹紧到图片范围），OK 时把该区域绘制成 64×64 PNG。
+  此前是「居中固定方形裁剪」的近似实现。
+
+### Note
+
+- 发布说明自此以**英文为默认**（GitHub Release 记录同样）。
+
 ## [0.4.7] — 2026-09-19（对标批次 v0.3.7k）
 
 ### Changed
