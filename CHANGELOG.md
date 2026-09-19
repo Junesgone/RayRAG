@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.25] — 2026-09-21（对标批次 v0.3.8c）
+
+### Added
+
+- **管理后台用户表补齐上游最后两列**（`pages/admin/users.tsx`）：
+  - `admin.userType` 列不再是静态文本，而是上游的**普通/超级管理员切换**：登录管理员自己那一行显示
+    `Badge variant="secondary"` 的 **Superuser** 徽章（`data-testid='admin-user-type-badge'`），
+    其余行是 `Normal` / `Superuser` 选择器（`data-testid='admin-user-type-select'`），
+    选中 Superuser 走 `PUT /api/v1/admin/users/{u}/admin`、选回 Normal 走同一路径的 `DELETE`
+    （对应上游 `grantSuperuser` / `revokeSuperuser`），操作后自动重载列表。
+  - 操作列改为上游**悬停才显现**的图标三件套（`ClipboardList` → 账号详情页、`UserLock` → 修改密码、
+    危险色 `Trash2` → 删除），后两个在**自己那一行不出现**（上游 `{!isMe && …}`）；
+    文本按钮 "Change password" / "Delete" 移除。
+  - 删除确认框按上游结构重排：标题 `admin.deleteUser`、描述 `admin.deleteUserConfirmation`
+    （"Are you sure you want to delete this user?"）、账号单独放在
+    `rounded-lg mt-6 p-4 border-0.5` 的边框盒里，确认按钮保持危险色。
+  - 新增 lucide `UserLock` / `Trash2` 图标常量与 `.admin-row-icon-danger`
+    （`color:var(--d)` + `hover:bg-state-error/10`）。
+
 ## [0.4.24] — 2026-09-20（对标批次 v0.3.8b）
 
 ### Added

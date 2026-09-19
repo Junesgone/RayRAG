@@ -1462,6 +1462,12 @@ const OAUTH_LANDING_JS: &str = r#";
 /// action icon.
 const ADMIN_CLIPBOARD_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='8' height='4' x='8' y='2' rx='1' ry='1'/><path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/><path d='M12 11h4'/><path d='M12 16h4'/><path d='M8 11h.01'/><path d='M8 16h.01'/></svg>";
 
+/// lucide `UserLock` at 16px — the upstream user table's "change password" action.
+const ADMIN_USER_LOCK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='10' cy='7' r='4'/><path d='M10 15H6a4 4 0 0 0-4 4v2'/><rect width='8' height='5' x='14' y='17' rx='1'/><path d='M20 17v-2a2 2 0 0 0-4 0v2'/></svg>";
+
+/// lucide `Trash2` at 16px — the upstream user table's danger delete action.
+const ADMIN_TRASH_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3 6h18'/><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6'/><path d='M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/><path d='M10 11v6'/><path d='M14 11v6'/></svg>";
+
 /// lucide `Settings2` at 16px — the upstream service table's "extra information"
 /// action icon.
 const ADMIN_SETTINGS2_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 7h-9'/><path d='M14 17H5'/><circle cx='17' cy='17' r='3'/><circle cx='7' cy='7' r='3'/></svg>";
@@ -4629,11 +4635,17 @@ pub async fn admin_users_page(
             .map(|email| json_script_string(&email))
             .unwrap_or_else(|| "\"\"".to_string()),
     );
-    b.push_str(";</script>");
+    b.push_str(";var ADMIN_CLIPBOARD_SVG=\"");
+    b.push_str(ADMIN_CLIPBOARD_SVG);
+    b.push_str("\";var ADMIN_USER_LOCK_SVG=\"");
+    b.push_str(ADMIN_USER_LOCK_SVG);
+    b.push_str("\";var ADMIN_TRASH_SVG=\"");
+    b.push_str(ADMIN_TRASH_SVG);
+    b.push_str("\";</script>");
     b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>User management</h2><button class='btn btn-p' type='button' data-testid='admin-new-user' onclick='adminOpenCreateUser()'>New user</button></div><div class='admin-toolbar'><label class='admin-filter'><span>Role</span><select id='adminUserRole' onchange='adminRenderUsers()'><option value=''>All</option><option value='admin'>Superuser</option><option value='normal'>Normal</option></select></label><label class='admin-filter'><span>Status</span><select id='adminUserStatus' onchange='adminRenderUsers()'><option value=''>All</option><option value='active'>Active</option><option value='inactive'>Inactive</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetUserFilters()'>Reset</button><input id='adminUserSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search users' oninput='adminUserPage=1;adminRenderUsers()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-users-table'><thead><tr><th data-sort='email' class='admin-sortable' data-testid='admin-users-sort-email' onclick='adminUserSort(&quot;email&quot;)'>Email<span class='admin-sort-mark' id='adminUserSortEmail'></span></th><th data-sort='nickname' class='admin-sortable' data-testid='admin-users-sort-nickname' onclick='adminUserSort(&quot;nickname&quot;)'>Nickname<span class='admin-sort-mark' id='adminUserSortNickname'></span></th><th data-sort='role' class='admin-sortable' data-testid='admin-users-sort-role' onclick='adminUserSort(&quot;role&quot;)'>Role<span class='admin-sort-mark' id='adminUserSortRole'></span></th><th data-sort='status' class='admin-sortable' data-testid='admin-users-sort-status' onclick='adminUserSort(&quot;status&quot;)'>Status<span class='admin-sort-mark' id='adminUserSortStatus'></span></th><th>User type</th><th>Actions</th></tr></thead><tbody id='adminUserRows'><tr><td colspan='6' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminUserPager' data-testid='admin-users-pagination'></footer></div>");
     b.push_str("<div class='modal-overlay' id='adminCreateUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Create new user</h2><label class='admin-field'><span>Email</span><input id='adminNewUserEmail' type='email' autocomplete='username' placeholder='Email' data-testid='admin-create-user-email' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-email-error' id='adminNewUserEmailError'></span></label><label class='admin-field'><span>Password</span><input id='adminNewUserPassword' type='password' autocomplete='new-password' placeholder='Password' data-testid='admin-create-user-password' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-password-error' id='adminNewUserPasswordError'></span></label><label class='admin-field'><span>Confirm password</span><input id='adminNewUserConfirm' type='password' autocomplete='new-password' placeholder='Confirm password' data-testid='admin-create-user-confirm' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-confirm-error' id='adminNewUserConfirmError'></span></label><label class='admin-field'><span>Role</span><select id='adminNewUserRole'><option value='normal'>Normal</option><option value='admin'>Superuser</option></select></label><p class='admin-dialog-error' id='adminCreateUserError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminCreateUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' data-testid='admin-create-user-submit' onclick='adminCreateUser()'>Confirm</button></div></div></div>");
     b.push_str("<div class='modal-overlay' id='adminPasswordDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Change password</h2><label class='admin-field'><span>Email</span><input id='adminPasswordEmail' readonly data-testid='admin-password-email'></label><label class='admin-field'><span>New password</span><input id='adminNewPassword' type='password' autocomplete='new-password' placeholder='New password' data-testid='admin-new-password' oninput='adminPasswordErrors()'><span class='admin-field-error' data-testid='admin-new-password-error' id='adminNewPasswordError'></span></label><label class='admin-field'><span>Confirm new password</span><input id='adminNewPasswordConfirm' type='password' autocomplete='new-password' placeholder='Confirm new password' data-testid='admin-new-password-confirm' oninput='adminPasswordErrors()'><span class='admin-field-error' data-testid='admin-new-password-confirm-error' id='adminNewPasswordConfirmError'></span></label><p class='admin-dialog-error' id='adminPasswordError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminPasswordDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' onclick='adminSubmitPassword()'>Change password</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='adminDeleteUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Delete user</h2><p class='admin-dialog-sub' id='adminDeleteTarget'></p><p class='admin-dialog-sub'>This action cannot be undone.</p><p class='admin-dialog-error' id='adminDeleteError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminDeleteUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminDeleteUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Delete user</h2><p class='admin-dialog-sub'>Are you sure you want to delete this user?</p><p class='admin-user-target' id='adminDeleteTarget'></p><p class='admin-dialog-error' id='adminDeleteError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminDeleteUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button></div></div></div>");
     b.push_str(
         r#"<script>var ADMIN_USERS=[];var ADMIN_PASSWORD_TARGET='';var ADMIN_DELETE_TARGET='';function adminEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}// Upstream `admin/users.tsx`: global search (`header.search`), sortable columns
 // (no `enableSorting: false` here) and a `RAGFlowPagination` footer.
@@ -4646,13 +4658,15 @@ function adminUserGoto(page){if(page<1)return;adminUserPage=page;adminRenderUser
 function adminUserPageSizeChange(value){adminUserPageSize=parseInt(value,10)||10;adminUserPage=1;adminRenderUsers()}
 function adminRenderUsers(){var role=document.getElementById('adminUserRole').value;var status=document.getElementById('adminUserStatus').value;var searchInput=document.getElementById('adminUserSearch');var search=searchInput?(searchInput.value||'').trim().toLowerCase():'';var rows=document.getElementById('adminUserRows');var list=ADMIN_USERS.filter(function(user){if(role&&String(user.role)!==role)return false;if(status&&String(user.status)!==status)return false;if(!search)return true;return ['email','username','nickname','role','status'].some(function(key){return String(user[key]==null?'':user[key]).toLowerCase().indexOf(search)>=0})});if(adminUserSortKey){list=list.slice().sort(function(left,right){var a=adminUserSortField(left,adminUserSortKey);var b=adminUserSortField(right,adminUserSortKey);var cmp=a<b?-1:a>b?1:0;return adminUserSortDesc?-cmp:cmp})}adminRenderUserPager(list.length);adminUserSortMarks();var start=(adminUserPage-1)*adminUserPageSize;list=list.slice(start,start+adminUserPageSize);rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=6;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(user){var row=document.createElement('tr');row.dataset.testid='admin-user-row';var emailCell=document.createElement('td');var link=document.createElement('a');link.className='admin-link';link.href='/admin/users/'+encodeURIComponent(user.username||user.email||'');link.textContent=user.email||user.username||'';emailCell.appendChild(link);row.appendChild(emailCell);var nicknameCell=document.createElement('td');nicknameCell.textContent=user.nickname||'';row.appendChild(nicknameCell);var roleCell=document.createElement('td');var roleBadge=document.createElement('span');roleBadge.className='badge '+(String(user.role)==='admin'?'bs':'bw');roleBadge.textContent=user.role||'normal';roleCell.appendChild(roleBadge);row.appendChild(roleCell);// Upstream `admin/users.tsx`: the signed-in admin's own row shows an Active/Inactive
 // badge, every other row an active/inactive `Select` that saves immediately.
-var statusCell=document.createElement('td');var isMe=String(user.email||user.username||'')===String(ADMIN_ME||'');var active=String(user.status)==='active';if(isMe){var statusBadge=document.createElement('span');statusBadge.className='badge '+(active?'bs':'bw');statusBadge.dataset.testid='admin-user-status-badge';statusBadge.textContent=active?'Active':'Inactive';statusCell.appendChild(statusBadge)}else{var statusSelect=document.createElement('select');statusSelect.className='admin-status-select';statusSelect.dataset.testid='admin-user-status-select';statusSelect.setAttribute('aria-label','Status for '+(user.email||user.username||''));[['1','Active'],['0','Inactive']].forEach(function(pair){var option=document.createElement('option');option.value=pair[0];option.textContent=pair[1];option.selected=(pair[0]==='1')===active;statusSelect.appendChild(option)});statusSelect.onchange=(function(target,row){return function(){adminToggleUser(row,target.value==='1'?'on':'off')}})(statusSelect,user);statusCell.appendChild(statusSelect)}row.appendChild(statusCell);var typeCell=document.createElement('td');typeCell.textContent=String(user.role)==='admin'?'Superuser':'Normal';row.appendChild(typeCell);var actionCell=document.createElement('td');actionCell.className='admin-actions-cell';var password=document.createElement('button');password.type='button';password.className='btn btn-o btn-sm';password.textContent='Change password';password.onclick=function(){adminOpenPassword(user)};actionCell.appendChild(password);var remove=document.createElement('button');remove.type='button';remove.className='btn btn-d btn-sm';remove.textContent='Delete';remove.onclick=function(){adminOpenDelete(user)};actionCell.appendChild(remove);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetUserFilters(){document.getElementById('adminUserRole').value='';document.getElementById('adminUserStatus').value='';var search=document.getElementById('adminUserSearch');if(search)search.value='';adminUserSortKey='';adminUserSortDesc=false;adminUserPage=1;adminRenderUsers()}function adminLoadUsers(){fetch('/api/v1/admin/users').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load users');ADMIN_USERS=data.data||[];adminRenderUsers()}).catch(function(error){var rows=document.getElementById('adminUserRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=6;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}function adminOpenCreateUser(){document.getElementById('adminNewUserEmail').value='';document.getElementById('adminNewUserPassword').value='';document.getElementById('adminNewUserConfirm').value='';document.getElementById('adminNewUserRole').value='normal';document.getElementById('adminCreateUserError').textContent='';['adminNewUserEmailError','adminNewUserPasswordError','adminNewUserConfirmError'].forEach(function(id){document.getElementById(id).textContent=''});document.getElementById('adminCreateUserDialog').classList.add('show')}// Upstream `admin/forms/user-form.tsx::useCreateUserForm` zod schema: a valid
+var statusCell=document.createElement('td');var isMe=String(user.email||user.username||'')===String(ADMIN_ME||'');var active=String(user.status)==='active';if(isMe){var statusBadge=document.createElement('span');statusBadge.className='badge '+(active?'bs':'bw');statusBadge.dataset.testid='admin-user-status-badge';statusBadge.textContent=active?'Active':'Inactive';statusCell.appendChild(statusBadge)}else{var statusSelect=document.createElement('select');statusSelect.className='admin-status-select';statusSelect.dataset.testid='admin-user-status-select';statusSelect.setAttribute('aria-label','Status for '+(user.email||user.username||''));[['1','Active'],['0','Inactive']].forEach(function(pair){var option=document.createElement('option');option.value=pair[0];option.textContent=pair[1];option.selected=(pair[0]==='1')===active;statusSelect.appendChild(option)});statusSelect.onchange=(function(target,row){return function(){adminToggleUser(row,target.value==='1'?'on':'off')}})(statusSelect,user);statusCell.appendChild(statusSelect)}row.appendChild(statusCell);var typeCell=document.createElement('td');var superuser=user.is_superuser===true||String(user.role)==='admin';if(isMe){var typeBadge=document.createElement('span');typeBadge.className='badge';typeBadge.dataset.testid='admin-user-type-badge';typeBadge.textContent='Superuser';typeCell.appendChild(typeBadge)}else{var typeSelect=document.createElement('select');typeSelect.className='admin-status-select';typeSelect.dataset.testid='admin-user-type-select';typeSelect.setAttribute('aria-label','User type for '+(user.email||user.username||''));[['normal','Normal'],['superuser','Superuser']].forEach(function(pair){var option=document.createElement('option');option.value=pair[0];option.textContent=pair[1];option.selected=(pair[0]==='superuser')===superuser;typeSelect.appendChild(option)});typeSelect.onchange=(function(target,row){return function(){adminSetSuperuser(row,target.value==='superuser'?'grant':'revoke')}})(typeSelect,user);typeCell.appendChild(typeSelect)}row.appendChild(typeCell);var actionCell=document.createElement('td');actionCell.className='admin-actions-cell';var actions=document.createElement('div');actions.className='admin-row-actions';var detail=document.createElement('button');detail.type='button';detail.className='admin-row-icon';detail.title='Account details';detail.setAttribute('aria-label','Account details for '+(user.email||user.username||''));detail.setAttribute('data-testid','admin-user-action-detail');detail.innerHTML=ADMIN_CLIPBOARD_SVG;detail.onclick=function(){location.href='/admin/users/'+encodeURIComponent(user.email||user.username||'')};actions.appendChild(detail);if(!isMe){var password=document.createElement('button');password.type='button';password.className='admin-row-icon';password.title='Change password';password.setAttribute('aria-label','Change password for '+(user.email||user.username||''));password.setAttribute('data-testid','admin-user-action-password');password.innerHTML=ADMIN_USER_LOCK_SVG;password.onclick=function(){adminOpenPassword(user)};actions.appendChild(password);var remove=document.createElement('button');remove.type='button';remove.className='admin-row-icon admin-row-icon-danger';remove.title='Delete user';remove.setAttribute('aria-label','Delete user '+(user.email||user.username||''));remove.setAttribute('data-testid','admin-user-action-delete');remove.innerHTML=ADMIN_TRASH_SVG;remove.onclick=function(){adminOpenDelete(user)};actions.appendChild(remove)}actionCell.appendChild(actions);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetUserFilters(){document.getElementById('adminUserRole').value='';document.getElementById('adminUserStatus').value='';var search=document.getElementById('adminUserSearch');if(search)search.value='';adminUserSortKey='';adminUserSortDesc=false;adminUserPage=1;adminRenderUsers()}function adminLoadUsers(){fetch('/api/v1/admin/users').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load users');ADMIN_USERS=data.data||[];adminRenderUsers()}).catch(function(error){var rows=document.getElementById('adminUserRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=6;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}function adminOpenCreateUser(){document.getElementById('adminNewUserEmail').value='';document.getElementById('adminNewUserPassword').value='';document.getElementById('adminNewUserConfirm').value='';document.getElementById('adminNewUserRole').value='normal';document.getElementById('adminCreateUserError').textContent='';['adminNewUserEmailError','adminNewUserPasswordError','adminNewUserConfirmError'].forEach(function(id){document.getElementById(id).textContent=''});document.getElementById('adminCreateUserDialog').classList.add('show')}// Upstream `admin/forms/user-form.tsx::useCreateUserForm` zod schema: a valid
 // e-mail (`admin.invalidEmail`), a password of at least six characters
 // (`admin.passwordMinLength`) and a confirmation that is present
 // (`admin.confirmPasswordRequired`) and equal (`admin.confirmPasswordDoNotMatch`).
 function adminValidEmail(value){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value||''))}
 function adminCreateUserErrors(){var email=(document.getElementById('adminNewUserEmail').value||'').trim();var password=document.getElementById('adminNewUserPassword').value||'';var confirm=document.getElementById('adminNewUserConfirm').value||'';var emailError=adminValidEmail(email)?'':'Please input a valid email address!';var passwordError=password.length>=6?'':'Password must be more than 8 characters.';var confirmError=!confirm?'Please confirm your password!':(password===confirm?'':'The password that you entered do not match!');document.getElementById('adminNewUserEmailError').textContent=emailError;document.getElementById('adminNewUserPasswordError').textContent=passwordError;document.getElementById('adminNewUserConfirmError').textContent=confirmError;return !emailError&&!passwordError&&!confirmError}
-function adminCreateUser(){var email=document.getElementById('adminNewUserEmail').value.trim();var password=document.getElementById('adminNewUserPassword').value;var role=document.getElementById('adminNewUserRole').value;var error=document.getElementById('adminCreateUserError');error.textContent='';if(!adminCreateUserErrors())return;fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:email,password:password,role:role})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create failed');document.getElementById('adminCreateUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){error.textContent=failure.message})}function adminToggleUser(user,status){fetch('/api/v1/admin/users/'+encodeURIComponent(user.username||user.email)+'/activate',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activate_status:status==='on'})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadUsers()}).catch(function(failure){alert(failure.message)})}function adminOpenPassword(user){ADMIN_PASSWORD_TARGET=user.username||user.email;var email=document.getElementById('adminPasswordEmail');if(email)email.value=ADMIN_PASSWORD_TARGET;document.getElementById('adminNewPassword').value='';document.getElementById('adminNewPasswordConfirm').value='';document.getElementById('adminPasswordError').textContent='';document.getElementById('adminNewPasswordError').textContent='';document.getElementById('adminNewPasswordConfirmError').textContent='';document.getElementById('adminPasswordDialog').classList.add('show')}
+function adminCreateUser(){var email=document.getElementById('adminNewUserEmail').value.trim();var password=document.getElementById('adminNewUserPassword').value;var role=document.getElementById('adminNewUserRole').value;var error=document.getElementById('adminCreateUserError');error.textContent='';if(!adminCreateUserErrors())return;fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:email,password:password,role:role})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create failed');document.getElementById('adminCreateUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){error.textContent=failure.message})}function adminToggleUser(user,status){fetch('/api/v1/admin/users/'+encodeURIComponent(user.username||user.email)+'/activate',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activate_status:status==='on'})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadUsers()}).catch(function(failure){alert(failure.message)})}// Upstream `setSuperuserMutation`: `grantSuperuser(email)` is a `PUT` and
+// `revokeSuperuser(email)` a `DELETE` on the same endpoint, then the list reloads.
+function adminSetSuperuser(user,type){var target=encodeURIComponent(user.email||user.username||'');fetch('/api/v1/admin/users/'+target+'/admin',{method:type==='grant'?'PUT':'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadUsers()}).catch(function(failure){alert(failure.message)})}function adminOpenPassword(user){ADMIN_PASSWORD_TARGET=user.username||user.email;var email=document.getElementById('adminPasswordEmail');if(email)email.value=ADMIN_PASSWORD_TARGET;document.getElementById('adminNewPassword').value='';document.getElementById('adminNewPasswordConfirm').value='';document.getElementById('adminPasswordError').textContent='';document.getElementById('adminNewPasswordError').textContent='';document.getElementById('adminNewPasswordConfirmError').textContent='';document.getElementById('adminPasswordDialog').classList.add('show')}
 // Upstream `admin/forms/change-password-form.tsx::useChangePasswordForm`: both
 // the new password and its confirmation need at least eight characters
 // (`admin.passwordMinLength` / `admin.confirmPasswordRequired`) and have to match
@@ -9362,6 +9376,122 @@ connection: close
             ".admin-field input[readonly]{background:var(--bgc);color:var(--t2);cursor:default}",
         ] {
             assert!(css.contains(rule), "admin form css missing: {rule}");
+        }
+    }
+
+    /// Upstream `pages/admin/users.tsx` closes with two cells RayRAG was still
+    /// approximating: the `admin.userType` column is a normal/superuser `Select`
+    /// (`grantSuperuser` = `PUT …/admin`, `revokeSuperuser` = `DELETE …/admin`)
+    /// that collapses to a secondary `admin.superuser` badge on the signed-in
+    /// administrator's own row, and the actions cell carries the hover-revealed
+    /// lucide trio — `ClipboardList` for the account page plus, on every other
+    /// row, `UserLock` (change password) and the danger `Trash2` (delete).
+    #[tokio::test]
+    async fn admin_users_table_matches_the_upstream_superuser_and_action_cells() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("cells@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_users_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/users")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&body, "/admin/users");
+        for marker in [
+            // `User type` column: badge on self, select on everybody else.
+            "<th>User type</th>",
+            "var superuser=user.is_superuser===true||String(user.role)==='admin';",
+            "'admin-user-type-badge'",
+            "typeBadge.className='badge';typeBadge.dataset.testid='admin-user-type-badge'",
+            "typeBadge.textContent='Superuser'",
+            "'admin-user-type-select'",
+            "[['normal','Normal'],['superuser','Superuser']]",
+            "option.selected=(pair[0]==='superuser')===superuser;",
+            "adminSetSuperuser(row,target.value==='superuser'?'grant':'revoke')",
+            // The mutation mirrors `setSuperuserMutation` exactly.
+            "function adminSetSuperuser(user,type){var target=encodeURIComponent(user.email||user.username||'');fetch('/api/v1/admin/users/'+target+'/admin',{method:type==='grant'?'PUT':'DELETE'})",
+            // Actions cell: hover-revealed icons, the destructive pair only off-self.
+            "actions.className='admin-row-actions'",
+            "'admin-user-action-detail'",
+            "detail.innerHTML=ADMIN_CLIPBOARD_SVG",
+            "location.href='/admin/users/'+encodeURIComponent(user.email||user.username||'')",
+            "if(!isMe){var password=document.createElement('button');password.type='button';password.className='admin-row-icon';",
+            "'admin-user-action-password'",
+            "password.innerHTML=ADMIN_USER_LOCK_SVG",
+            "'admin-user-action-delete'",
+            "remove.className='admin-row-icon admin-row-icon-danger'",
+            "remove.innerHTML=ADMIN_TRASH_SVG",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin users cell marker missing: {marker}"
+            );
+        }
+        // The detail icon comes first and the three actions live in one group.
+        let group = body
+            .split("actions.className='admin-row-actions'")
+            .nth(1)
+            .expect("action group");
+        let detail = group
+            .find("'admin-user-action-detail'")
+            .expect("detail icon");
+        let guard = group.find("if(!isMe){").expect("self guard");
+        let password = group
+            .find("'admin-user-action-password'")
+            .expect("password icon");
+        let remove = group
+            .find("'admin-user-action-delete'")
+            .expect("delete icon");
+        assert!(
+            detail < guard && guard < password && password < remove,
+            "action order must be detail → !isMe guard → password → delete"
+        );
+        // The two new lucide glyphs carry the upstream paths — inlined into the
+        // page as the JS variables the row builder uses.
+        for marker in [
+            "var ADMIN_USER_LOCK_SVG=\"<svg",
+            "var ADMIN_TRASH_SVG=\"<svg",
+            "<circle cx='10' cy='7' r='4'/>",
+            "<path d='M20 17v-2a2 2 0 0 0-4 0v2'/>",
+            "<path d='M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/>",
+            "<path d='M3 6h18'/>",
+        ] {
+            assert!(body.contains(marker), "user table icon missing: {marker}");
+        }
+        assert!(ADMIN_USER_LOCK_SVG.contains("<rect width='8' height='5' x='14' y='17' rx='1'/>"));
+        assert!(ADMIN_TRASH_SVG.contains("<path d='M14 11v6'/>"));
+        // The delete modal keeps the upstream shape too: `admin.deleteUser` as the
+        // title, `admin.deleteUserConfirmation` as the description, the account in
+        // a bordered box and a destructive confirm button.
+        for marker in [
+            "<h2>Delete user</h2><p class='admin-dialog-sub'>Are you sure you want to delete this user?</p><p class='admin-user-target' id='adminDeleteTarget'></p>",
+            "<button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button>",
+        ] {
+            assert!(
+                body.contains(marker),
+                "delete modal marker missing: {marker}"
+            );
+        }
+        assert!(include_str!("web_css.txt").contains(
+            ".admin-user-target{margin-top:24px;padding:16px;border:0.5px solid var(--bd);border-radius:8px}"
+        ));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-row-icon-danger{color:var(--d)}",
+            ".admin-row-icon-danger:hover{background:color-mix(in srgb,var(--d) 10%,transparent);color:var(--d)}",
+        ] {
+            assert!(css.contains(rule), "user table css missing: {rule}");
         }
     }
 
