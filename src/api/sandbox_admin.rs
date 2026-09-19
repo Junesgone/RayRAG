@@ -968,6 +968,17 @@ fn test_payload(
     })
 }
 
+/// The local provider executes the source through its own wrapper, which calls
+/// `main()`; a bare interpreter needs the entry point spelled out.
+fn local_probe_source() -> String {
+    format!(
+        "{SANDBOX_TEST_CODE}
+if __name__ == \"__main__\":
+    main()
+"
+    )
+}
+
 /// Runs the probe with the configured interpreter, bounded by the configured
 /// timeout, and reports the same fields upstream's `ExecutionResult` carries.
 async fn run_local_probe(config: &Map<String, Value>) -> Result<Value, String> {
@@ -985,7 +996,7 @@ async fn run_local_probe(config: &Map<String, Value>) -> Result<Value, String> {
     let mut command = tokio::process::Command::new(python_bin);
     command
         .arg("-c")
-        .arg(SANDBOX_TEST_CODE)
+        .arg(local_probe_source())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());

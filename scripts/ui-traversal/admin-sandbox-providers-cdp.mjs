@@ -95,6 +95,7 @@ try {
     null,
     { timeout: 20000 },
   );
+  await page.waitForSelector("[data-field='host']", { timeout: 20000 });
   for (const field of ["host", "username", "port", "work_dir", "python_bin", "node_bin"]) {
     check(
       (await page.locator(`[data-field='${field}']`).count()) === 1,
@@ -115,7 +116,10 @@ try {
     authText.includes("Password") && authText.includes("Private Key"),
     "auth_tabs_present",
   );
-  check((await text(".sb-group:nth-of-type(1)")).includes("Runtime Settings"), "runtime_group");
+  check(
+    (await text("#sbFields .sb-group:first-child")).includes("Runtime Settings"),
+    "runtime_group",
+  );
   await page.locator("[data-testid='admin-sandbox-auth-private_key']").click();
   await page.waitForSelector("[data-field='private_key']", { timeout: 10000 });
   check(

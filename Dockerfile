@@ -82,7 +82,7 @@ ARG DEBIAN_MIRROR=
 ARG DEBIAN_SECURITY_MIRROR=
 COPY docker/mirror-setup.sh /usr/local/bin/rayrag-mirror-setup
 RUN chmod 0755 /usr/local/bin/rayrag-mirror-setup \
- && rayrag-mirror-setup "${RAYRAG_MIRROR_PROFILE}" "${DEBIAN_MIRROR}" "${DEBIAN_SECURITY_MIRROR}" base curl libssl3 zlib1g
+ && rayrag-mirror-setup "${RAYRAG_MIRROR_PROFILE}" "${DEBIAN_MIRROR}" "${DEBIAN_SECURITY_MIRROR}" base curl libssl3 zlib1g python3 nodejs
 
 WORKDIR /app
 COPY --from=builder /src/target/release/rayrag /usr/local/bin/rayrag

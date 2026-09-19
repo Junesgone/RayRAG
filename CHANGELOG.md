@@ -19,6 +19,9 @@ All notable changes to RayRAG are documented in this file.
   `GET /healthz` + `POST /run`，返回与上游相同的 `{success,message,details:{exit_code,execution_time,stdout,stderr}}`
   与 `Test PASSED | Exit code: 0 | Execution time: …` 文案；ssh 只做 TCP 可达性检查并如实说明本构建不执行远程
   SSH 代码；e2b / aliyun 明确报「本构建未实现该提供方执行」。**不做假成功**。
+- **运行镜像内置 python3 与 nodejs**：Code 组件在本机沙箱执行用户代码需要解释器，此前运行镜像（Debian bookworm slim）只有 `curl/libssl3/zlib1g`，
+  任何 Python/JavaScript 执行都会以 `No such file or directory` 失败（本机沙箱与 local 提供方的连接测试都会如实报这个错）。现在运行阶段安装
+  `python3` 与 `nodejs`（镜像 183MB → 310MB），本机沙箱与 local 提供方开箱可用；也可以在提供方配置里把 `python_bin`/`node_bin` 指向别的解释器。
 - **`/admin/sandbox-settings` 页面结构对齐上游**：标题与描述、`Provider selection` 单选卡片网格（图标/名称/
   描述/标签）、`{name} configuration` 卡片（Test connection + Save 配置按钮）、按 schema 生成的字段
   （必填星号、说明、数值上下界、布尔开关、`multiline` 文本域、`secret` 密码框、只读项进
