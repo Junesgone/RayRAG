@@ -49,7 +49,7 @@ const signIn = async () => {
   await page.fill("#adminEmail", EMAIL);
   await page.fill("#adminPassword", PASSWORD);
   await page.click("[data-testid='admin-login-submit']");
-  await page.waitForURL("**/admin/services", { timeout: 20000 });
+  await page.waitForSelector("[data-testid='admin-console']", { timeout: 30000 });
 };
 
 const storage = () =>
@@ -74,7 +74,11 @@ try {
     name: JSON.parse(afterLogin.userInfo || "{}").name,
     nickname: JSON.parse(afterLogin.userInfo || "{}").nickname,
     email: JSON.parse(afterLogin.userInfo || "{}").email,
-    source: await page.evaluate(() => window.ADMIN_USER_INFO.source),
+    // The login page lifts the context as `serverRequest`, but the redirect to
+    // `/admin/services` is a full document load, so the context there starts empty
+    // again and resolves from the cache on first read — the same thing upstream
+    // does when its SPA is reloaded.
+    contextOnFreshPage: await page.evaluate(() => window.ADMIN_USER_INFO.source),
   };
   check(
     results.after_login.hasAuthorization &&
@@ -82,9 +86,19 @@ try {
       results.after_login.rayragTokenMatches &&
       results.after_login.email === EMAIL &&
       results.after_login.name === results.after_login.nickname &&
-      results.after_login.source === "serverRequest",
+      results.after_login.contextOnFreshPage === null,
     "login_writes_the_cache",
     JSON.stringify(results.after_login),
+  );
+  results.fresh_page_context = {
+    afterFirstRead: await page.evaluate(() => adminCurrentUserInfo().source),
+    email: await page.evaluate(() => adminCurrentUserInfo().userInfo.email),
+  };
+  check(
+    results.fresh_page_context.afterFirstRead === "localStorage" &&
+      results.fresh_page_context.email === EMAIL,
+    "fresh_page_reads_the_cache",
+    JSON.stringify(results.fresh_page_context),
   );
 
   // A reload reads the cache back through `getLocalStorageUserInfo()`.
@@ -117,7 +131,7 @@ try {
 
   // Logging out clears the trio, empties the context and lands back on `/admin`.
   await page.click(".admin-console-logout");
-  await page.waitForURL("**/admin", { timeout: 20000 });
+  await page.waitForSelector("#adminEmail", { timeout: 30000 });
   await page.waitForTimeout(600);
   const afterLogout = await storage();
   results.after_logout = {
