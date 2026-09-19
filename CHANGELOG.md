@@ -2,6 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.31] — 2026-09-21（对标批次 v0.3.8i）
+
+### Changed
+
+- **检索页思维导图进度按上游 `usePendingMindMap` 的语义实现**（`next-search/hooks.ts` +
+  `components/ui/progress.tsx` + `mindmap-sheet.tsx`）：上游的百分比是**合成斜坡**——1 秒一次的
+  `setInterval` 把计数器 +1，`count > 40` 时自清定时器，条上显示
+  `Number(((count / 43) * 100).toFixed(0))`，因此每秒走约 2%、最终停在 **98%**（永远到不了 100）；
+  `Progress` 组件本身是 `h-1 min-w-10 rounded-full bg-bg-accent` 的轨道，
+  指示条用 `transform: translateX(-(100 - value)%)` 平移。
+  RayRAG 之前是一条固定 40% 宽、靠 CSS `@keyframes` 无限循环的假动画（与真实进度无关，
+  也不随请求结束而停在某处），本轮改为与上游逐字一致的 `mindProgressStart/Stop/Render`
+  与 `mindProgressPercent()`，并在打开工作表时启动、请求成功/失败/关闭工作表时停止。
+  轨道与指示条样式对齐上游（4px 高、`min-width:40px`、`border-radius:9999px`、
+  `background:rgba(76,164,231,.05)`、`transition:transform .2s`），
+  根元素带 `role='progressbar'` 与 `aria-valuemin/max/now`（Radix `Progress` 的输出形态）。
+- **台账更正**：该行原残留写作「mindmap 百分比进度是 CSS 动画而非真实多步进度」。逐行读完上游后确认
+  **上游本身也没有真实进度**（`usePendingMindMap` 就是定时器合成值），故残留的“真实多步进度”表述撤回，
+  改为记录「已按上游合成斜坡逐字实现」这一事实。
+
 ## [0.4.30] — 2026-09-21（对标批次 v0.3.8h）
 
 ### Changed

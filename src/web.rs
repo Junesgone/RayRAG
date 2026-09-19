@@ -3082,9 +3082,17 @@ function searchSkeleton(){var box=document.createElement('div');box.className='s
 function searchRenderAnswer(answer,references){var body=document.getElementById('aiSummaryBody');if(!body)return;body.replaceChildren();var text=document.createElement('div');text.className='search-ai-answer';text.innerHTML=searchMarkdown(answer);body.appendChild(text);var list=(references&&references.chunks)||[];if(list.length){var refs=document.createElement('div');refs.className='search-ai-refs';list.slice(0,5).forEach(function(chunk,index){var chip=document.createElement('button');chip.type='button';chip.className='search-ai-ref';chip.textContent='['+(index+1)+'] '+(chunk.docnm_kwd||chunk.kb_id||chunk.id||'');chip.onclick=function(){previewDoc(chunk.docnm_kwd||'Document',chunk.content||'')};refs.appendChild(chip)});body.appendChild(refs)}}
 function searchMarkdown(text){var html=String(text==null?'':text);html=html.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');html=html.replace(/^###\\s?(.*)$/gm,'<h4>$1</h4>').replace(/^##\\s?(.*)$/gm,'<h3>$1</h3>').replace(/^#\\s?(.*)$/gm,'<h3>$1</h3>');html=html.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');html=html.replace(/^[-*]\\s+(.*)$/gm,'<li>$1</li>');html=html.replace(/(<li>[\\s\\S]*?<\\/li>)/g,'<ul>$1</ul>');html=html.replace(/\\[([^\\]]+)\\]\\((https?:[^)]+)\\)/g,'<a href=\\'$2\\' target=\\'_blank\\' rel=\\'noreferrer\\'>$1</a>');return html.replace(/\\n{2,}/g,'</p><p>').replace(/\\n/g,'<br>').replace(/^/,'<p>').replace(/$/,'</p>')}
 function searchSummaryStart(question){var box=document.getElementById('aiSummaryBlock');if(!box)return;if(!searchSummaryOn()||!question){box.hidden=true;return}box.hidden=false;var body=document.getElementById('aiSummaryBody');if(!body)return;body.replaceChildren(searchSkeleton());var app=window.__SAPP__;if(!app||!app.id){body.replaceChildren();return}var controller=new AbortController();SEARCH_STREAM=controller;searchAskSetStreaming(true);fetch('/api/v1/searches/'+encodeURIComponent(app.id)+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:question,stream:true}),signal:controller.signal}).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);var reader=response.body.getReader();var decoder=new TextDecoder();var buffer='';var answer='';var references={chunks:[]};function pump(){return reader.read().then(function(chunk){if(chunk.done){SEARCH_STREAM=null;searchAskSetStreaming(false);if(!answer)answer=SEARCH_LABELS.answerFailed;searchRenderAnswer(answer,references);return}buffer+=decoder.decode(chunk.value,{stream:true});var lines=buffer.split('\\n');buffer=lines.pop();lines.forEach(function(line){if(line.indexOf('data:')!==0)return;var data=line.slice(5).trim();if(!data||data==='[DONE]')return;var event=null;try{event=JSON.parse(data)}catch(error){return}if(event.object==='chat.completion.references'){references=event.references||references;return}if(event.code&&event.code!==0){answer=event.message||answer;return}var delta=event.choices&&event.choices[0]&&event.choices[0].delta&&event.choices[0].delta.content;if(delta){if(answer===''){var host=document.getElementById('aiSummaryBody');if(host)host.replaceChildren()}answer+=delta;var live=document.getElementById('aiSummaryBody');if(live){var node=live.querySelector('.search-ai-answer');if(!node){node=document.createElement('div');node.className='search-ai-answer';live.replaceChildren(node)}node.innerHTML=searchMarkdown(answer)}}});return pump()})}return pump()}).catch(function(error){SEARCH_STREAM=null;searchAskSetStreaming(false);var body2=document.getElementById('aiSummaryBody');if(body2&&error&&error.name!=='AbortError'){body2.replaceChildren();var note=document.createElement('p');note.className='search-ai-status';note.textContent=error.message;body2.appendChild(note)}})}
-function searchMindmapOpen(){var app=window.__SAPP__;var sheet=document.getElementById('mindSheet');if(!sheet||!app||!app.id)return;sheet.hidden=false;var tree=document.getElementById('mindTree');if(tree)tree.replaceChildren();var progress=document.getElementById('mindProgress');if(progress)progress.hidden=false;if(SEARCH_MIND){try{SEARCH_MIND.abort()}catch(error){}}SEARCH_MIND=new AbortController();fetch('/api/v1/chat/mindmap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:lastQuery||(document.getElementById('q2')||{}).value||''}),signal:SEARCH_MIND.signal}).then(function(response){return response.json()}).then(function(data){if(progress)progress.hidden=true;if(data.code!==0)throw new Error(data.message||'Mind map failed');searchRenderMind(data.data)}).catch(function(error){if(progress)progress.hidden=true;var host=document.getElementById('mindTree');if(host&&error&&error.name!=='AbortError'){host.textContent=error.message}})}
+// Upstream `next-search/hooks.ts::usePendingMindMap`: a one-second interval increments a
+// counter, clears itself once the counter passes 40, and the bar shows
+// `Number(((count / 43) * 100).toFixed(0))` — a synthetic ramp that tops out at 98%.
+var MIND_PROGRESS_TIMER=null;var MIND_PROGRESS_COUNT=0;
+function mindProgressPercent(count){return Number(((count/43)*100).toFixed(0))}
+function mindProgressRender(){var box=document.getElementById('mindProgress');if(!box)return;var percent=mindProgressPercent(MIND_PROGRESS_COUNT);box.setAttribute('aria-valuenow',String(percent));var bar=document.getElementById('mindProgressBar');if(bar)bar.style.transform='translateX(-'+(100-percent)+'%)'}
+function mindProgressStop(){if(MIND_PROGRESS_TIMER){clearInterval(MIND_PROGRESS_TIMER);MIND_PROGRESS_TIMER=null}}
+function mindProgressStart(){mindProgressStop();MIND_PROGRESS_COUNT=0;mindProgressRender();MIND_PROGRESS_TIMER=setInterval(function(){if(MIND_PROGRESS_COUNT>40){mindProgressStop()}MIND_PROGRESS_COUNT+=1;mindProgressRender()},1000)}
+function searchMindmapOpen(){var app=window.__SAPP__;var sheet=document.getElementById('mindSheet');if(!sheet||!app||!app.id)return;sheet.hidden=false;var tree=document.getElementById('mindTree');if(tree)tree.replaceChildren();var progress=document.getElementById('mindProgress');if(progress)progress.hidden=false;mindProgressStart();if(SEARCH_MIND){try{SEARCH_MIND.abort()}catch(error){}}SEARCH_MIND=new AbortController();fetch('/api/v1/chat/mindmap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:lastQuery||(document.getElementById('q2')||{}).value||''}),signal:SEARCH_MIND.signal}).then(function(response){return response.json()}).then(function(data){mindProgressStop();if(progress)progress.hidden=true;if(data.code!==0)throw new Error(data.message||'Mind map failed');searchRenderMind(data.data)}).catch(function(error){mindProgressStop();if(progress)progress.hidden=true;var host=document.getElementById('mindTree');if(host&&error&&error.name!=='AbortError'){host.textContent=error.message}})}
 function searchRenderMind(node){var host=document.getElementById('mindTree');if(!host)return;host.replaceChildren();function build(item){var li=document.createElement('li');var label=document.createElement('span');label.textContent=(item&&(item.name||item.title))||'';li.appendChild(label);var children=(item&&item.children)||[];if(children.length){var ul=document.createElement('ul');children.forEach(function(child){ul.appendChild(build(child))});li.appendChild(ul)}return li}var root=document.createElement('ul');root.className='mind-root';root.appendChild(build(node||{}));host.appendChild(root)}
-function searchMindmapClose(){var sheet=document.getElementById('mindSheet');if(sheet)sheet.hidden=true;if(SEARCH_MIND){try{SEARCH_MIND.abort()}catch(error){}SEARCH_MIND=null}}
+function searchMindmapClose(){var sheet=document.getElementById('mindSheet');if(sheet)sheet.hidden=true;mindProgressStop();if(SEARCH_MIND){try{SEARCH_MIND.abort()}catch(error){}SEARCH_MIND=null}}
 var SEARCH_DOCS={items:[],selected:[],open:false,loading:false};
 function searchDocsToggle(event){if(event)event.stopPropagation();var pop=document.getElementById('searchDocsPop');var trigger=document.getElementById('searchDocsTrigger');if(!pop||!trigger)return;var open=pop.hidden;pop.hidden=!open;trigger.setAttribute('aria-expanded',open?'true':'false');SEARCH_DOCS.open=open;if(open){searchDocsLoad();var input=document.getElementById('searchDocsQuery');if(input){input.value='';input.focus()}}}
 function searchDocsClose(){var pop=document.getElementById('searchDocsPop');if(pop)pop.hidden=true;var trigger=document.getElementById('searchDocsTrigger');if(trigger)trigger.setAttribute('aria-expanded','false');SEARCH_DOCS.open=false}
@@ -3149,7 +3157,7 @@ function searchRerankHideError(){var err=document.getElementById('searchRerankEr
     b.push_str("loadSearchPageModelCatalog().then(function(){var s=window.__SAPP__;if(s&&s.rerank_id)seedModelTrigger('rerank_id',s.rerank_id);searchRerankToggle();});searchDocsSync();searchDocsLoad();");
     b.push_str("</script>");
     // Document preview modal
-    b.push_str("<div class='mind-sheet' id='mindSheet' data-testid='mindmap-sheet' hidden role='dialog' aria-modal='false' aria-labelledby='mindSheetTitle'><div class='mind-sheet-head'><span class='mind-sheet-title' id='mindSheetTitle'>__MIND_LABEL__</span><button type='button' class='mind-sheet-close' data-testid='mindmap-close' aria-label='__CLOSE__' onclick='searchMindmapClose()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></button></div><div class='mind-sheet-body'><div class='mind-progress' id='mindProgress' hidden><span class='mind-progress-bar'></span></div><div class='mind-tree' id='mindTree'></div></div></div><div class='modal-overlay' id='docPreview' onclick='if(event.target===this)closePreview()'><div class='modal' style='max-width:700px;max-height:80vh;overflow-y:auto'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='docPreviewTitle' style='flex:1;margin:0'>Document</h2><button class='btn btn-ghost' onclick='closePreview()'>×</button></div><div id='docPreviewContent' style='font-size:14px;line-height:1.8;color:var(--t2);white-space:pre-wrap'></div></div></div>");
+    b.push_str("<div class='mind-sheet' id='mindSheet' data-testid='mindmap-sheet' hidden role='dialog' aria-modal='false' aria-labelledby='mindSheetTitle'><div class='mind-sheet-head'><span class='mind-sheet-title' id='mindSheetTitle'>__MIND_LABEL__</span><button type='button' class='mind-sheet-close' data-testid='mindmap-close' aria-label='__CLOSE__' onclick='searchMindmapClose()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></button></div><div class='mind-sheet-body'><div class='mind-progress' id='mindProgress' role='progressbar' aria-valuemin='0' aria-valuemax='100' aria-valuenow='0' hidden><span class='mind-progress-bar' id='mindProgressBar'></span></div><div class='mind-tree' id='mindTree'></div></div></div><div class='modal-overlay' id='docPreview' onclick='if(event.target===this)closePreview()'><div class='modal' style='max-width:700px;max-height:80vh;overflow-y:auto'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='docPreviewTitle' style='flex:1;margin:0'>Document</h2><button class='btn btn-ghost' onclick='closePreview()'>×</button></div><div id='docPreviewContent' style='font-size:14px;line-height:1.8;color:var(--t2);white-space:pre-wrap'></div></div></div>");
     (b, zh)
 }
 
@@ -9446,6 +9454,61 @@ connection: close
         ] {
             assert!(css.contains(rule), "admin form css missing: {rule}");
         }
+    }
+
+    /// Upstream `next-search/hooks.ts::usePendingMindMap` is a *synthetic* ramp: a
+    /// one-second interval bumps a counter, clears itself once the counter passes
+    /// 40, and the sheet's `Progress` shows `Number(((count / 43) * 100).toFixed(0))`
+    /// — so the bar walks 2% a second and settles at 98%, never 100. `Progress`
+    /// itself is `h-1 min-w-10 rounded-full bg-bg-accent` with the indicator moved
+    /// by `translateX(-(100 - value)%)`. RayRAG animated a fixed 40% strip with CSS
+    /// keyframes instead.
+    #[tokio::test]
+    async fn search_mindmap_progress_follows_the_upstream_pending_hook() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Mind KB", "d").unwrap();
+        let body = body_of(
+            search_page(
+                State(state),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let _ = kb;
+        assert_inline_scripts_balance(&body, "/search");
+        for marker in [
+            // Radix `Progress` shape: track + `translateX` indicator with aria values.
+            "<div class='mind-progress' id='mindProgress' role='progressbar' aria-valuemin='0' aria-valuemax='100' aria-valuenow='0' hidden><span class='mind-progress-bar' id='mindProgressBar'></span></div>",
+            "var MIND_PROGRESS_TIMER=null;var MIND_PROGRESS_COUNT=0;",
+            "function mindProgressPercent(count){return Number(((count/43)*100).toFixed(0))}",
+            "bar.style.transform='translateX(-'+(100-percent)+'%)'",
+            "MIND_PROGRESS_TIMER=setInterval(function(){if(MIND_PROGRESS_COUNT>40){mindProgressStop()}MIND_PROGRESS_COUNT+=1;mindProgressRender()},1000)",
+            // Started when the sheet opens, stopped on every terminal branch.
+            "if(progress)progress.hidden=false;mindProgressStart();",
+            ".then(function(data){mindProgressStop();if(progress)progress.hidden=true;",
+            ".catch(function(error){mindProgressStop();if(progress)progress.hidden=true;",
+            "if(sheet)sheet.hidden=true;mindProgressStop();",
+        ] {
+            assert!(
+                body.contains(marker),
+                "mind progress marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".mind-progress{position:relative;width:100%;min-width:40px;height:4px;margin-bottom:12px;border-radius:9999px;background:rgba(76,164,231,.05);overflow:hidden}",
+            ".mind-progress-bar{display:block;width:100%;height:100%;flex:1;background:var(--p);transition:transform .2s;transform:translateX(-100%)}",
+        ] {
+            assert!(css.contains(rule), "mind progress css missing: {rule}");
+        }
+        // The keyframe animation it replaced is gone.
+        assert!(!css.contains("@keyframes mindProgress"));
+        assert!(!css.contains("animation:mindProgress"));
     }
 
     /// Upstream `add-custom-model-dialog.tsx` builds its fields through
