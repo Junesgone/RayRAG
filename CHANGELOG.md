@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.1] — 2026-09-19（对标批次 v0.3.7e）
+
+### Fixed
+
+- **模型列表选择器对齐上游 `ToggleList`**：触发器图标改为 lucide `ChevronsDown`（16px），展开时
+  以 200ms 过渡旋转 180°（`transition: transform .2s`），不再是无动效的 `⌄` 文本；
+  搜索行的放大镜改为 lucide `Search`、清除按钮改为 lucide `X`，并在模型列表加载期间显示
+  `Loader2` 同款旋转指示器（加载中隐藏清除按钮，加载完成且有输入时才显示），与上游
+  `searchLoading && <Loader2 className="size-4 shrink-0 animate-spin" />` 的互斥关系一致。
+
+### Note
+
+- **审计结论**：上游 `used-model.tsx` 的 viewMode 编辑实例入口（设置齿轮 + `handleSettingsClick`）在
+  v0.26.4 中是注释掉的，`onEditInstance` 只被转递、从未被调用，因此“viewMode 立即持久化路径”在
+  当前 UI 中不可达；RayRAG 的“新增实例”弹层即为行为等价实现。
+
 ## [0.4.0] — 2026-09-19（对标批次 v0.3.7d）
 
 ### Changed

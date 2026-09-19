@@ -210,3 +210,11 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
 .confirm-delete-close:hover{background:var(--bgc);color:var(--t)}
 .confirm-delete-close svg{width:16px;height:16px}
 .confirm-delete-body{margin:20px 0 10px;color:var(--t);font-size:16px;overflow-wrap:anywhere}
+/* Upstream `components/ui/toggle-list.tsx`: the trigger chevron rotates 180deg over 200ms, the search row shows a lucide `Loader2` spinner while loading and its clear button (`X`) while a query is typed. */
+.provider-model-chevron{display:inline-flex;align-items:center;transform:rotate(0deg);transition:transform .2s}
+.provider-model-trigger.open .provider-model-chevron{transform:rotate(180deg)}
+.provider-model-search-icon{display:inline-flex;align-items:center;color:var(--t2)}
+.provider-model-spinner{display:inline-block;width:16px;height:16px;flex:0 0 16px;border:2px solid var(--bd);border-right-color:transparent;border-radius:50%;animation:team-spin 1s linear infinite}
+.provider-model-spinner[hidden]{display:none!important}
+.provider-model-search-clear{display:inline-flex;align-items:center;color:var(--t2)}
+.provider-model-search-clear:hover{color:var(--t)}
