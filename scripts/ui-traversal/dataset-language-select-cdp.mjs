@@ -220,10 +220,20 @@ try {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [id] }),
       });
-      const data = await res.json();
-      return data.code;
+      const text = await res.text();
+      if (!text) return res.ok ? 0 : -1;
+      try {
+        return JSON.parse(text).code;
+      } catch {
+        return res.ok ? 0 : -1;
+      }
     }, probeId);
-    check(cleaned === 0, "throwaway_dataset_deleted");
+    const stillThere = await page.evaluate(async (id) => {
+      const res = await fetch(`/api/v1/datasets/${id}`);
+      const data = await res.json().catch(() => ({}));
+      return Boolean(data && data.data && data.data.id);
+    }, probeId);
+    check(cleaned === 0 && !stillThere, "throwaway_dataset_deleted");
   }
   await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/dataset-language-select.png" });
 } catch (error) {

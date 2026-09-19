@@ -15,6 +15,11 @@ All notable changes to RayRAG are documented in this file.
   点击空白或 Escape 关闭且不改值。
 - **语言值现在真的会保存与回填**：`PUT /api/v1/datasets/{id}` 的请求体补上 `language`，
   `loadConfig` 用 `kb.language` 回填，此前该字段只是装饰性控件。
+- **补齐上游的集合删除接口**：上游 `web/src/utils/api.ts::rmKb` 是 `DELETE /api/v1/datasets` +
+  `{ids:[...]}`（`ids` 为 `null` 时需配合 `delete_all`，空数组不删任何东西，返回 `success_count`），
+  RayRAG 此前只有 `DELETE /api/v1/datasets/{id}`。本轮新增该集合路由（含跨租户 id 的
+  `lacks permission for datasets` 报错与 `delete_all`），并把首页卡片、知识库列表卡片、详情页删除弹层
+  三处调用改到该路由；单条路由保留兼容。
 - **后端补上 `Knowledgebase.language` 顶层列**：上游 `db_models.py` 里 `language` 是
   `knowledgebase` 表的列（`CharField(max_length=32)`，默认按进程 locale 取 `Chinese`/`English`），
   不在 `parser_config` 里。RayRAG 的 `KnowledgeBase` 结构体新增该字段（`#[serde(default)]` 保证旧记录照常加载），

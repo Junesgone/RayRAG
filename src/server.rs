@@ -872,6 +872,24 @@ async fn update_dataset(
     }
 }
 
+/// Removes one dataset and everything hanging off it (documents, graph assets).
+/// Shared by `DELETE /api/v1/datasets/{id}` and the upstream collection route.
+fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result<bool> {
+    for doc in state.docs.list(dataset_id) {
+        delete_document_data(state, &doc)?;
+    }
+    // 清理该数据集的图谱资产
+    let mut snapshot = state.graphs.snapshot();
+    snapshot.kb_graphs.remove(dataset_id);
+    snapshot
+        .checkpoints
+        .retain(|_, checkpoint| checkpoint.kb_id != dataset_id);
+    if let Err(error) = state.graphs.replace_snapshot(snapshot) {
+        tracing::warn!(%error, "Failed to persist graph cleanup");
+    }
+    state.kbs.delete(dataset_id)
+}
+
 async fn delete_dataset(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -880,21 +898,7 @@ async fn delete_dataset(
     if !kb_manageable(&state, &dataset_id, &auth) {
         return api_error(StatusCode::NOT_FOUND, "Knowledge base not found");
     }
-    for doc in state.docs.list(&dataset_id) {
-        if let Err(error) = delete_document_data(&state, &doc) {
-            return api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
-        }
-    }
-    // 清理该数据集的图谱资产
-    let mut snapshot = state.graphs.snapshot();
-    snapshot.kb_graphs.remove(&dataset_id);
-    snapshot
-        .checkpoints
-        .retain(|_, checkpoint| checkpoint.kb_id != dataset_id);
-    if let Err(error) = state.graphs.replace_snapshot(snapshot) {
-        tracing::warn!(%error, "Failed to persist graph cleanup");
-    }
-    match state.kbs.delete(&dataset_id) {
+    match delete_dataset_data(&state, &dataset_id) {
         Ok(true) => Json(ApiResponse {
             code: 0,
             message: "Deleted".into(),
@@ -904,6 +908,84 @@ async fn delete_dataset(
         Ok(false) => api_error(StatusCode::NOT_FOUND, "Knowledge base not found"),
         Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
+}
+
+/// Upstream `api/apps/restful_apis/dataset_api.py::delete` +
+/// `dataset_api_service.delete_datasets`: `DELETE /api/v1/datasets` takes
+/// `{"ids": [...] | null}` plus `delete_all`. A missing/empty `ids` deletes
+/// nothing unless `delete_all` is set, unknown ids belong to the "lacks
+/// permission" error, and the payload reports `{"success_count": n}`.
+async fn delete_datasets(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let delete_all = body
+        .get("delete_all")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let requested: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str())
+                .map(|id| id.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let ids = if requested.is_empty() {
+        if !delete_all {
+            return Json(ApiResponse {
+                code: 0,
+                message: "Success".into(),
+                data: Some(serde_json::json!({"success_count": 0})),
+            })
+            .into_response();
+        }
+        state
+            .kbs
+            .list_accessible(&auth.user_id, auth.is_admin, |tenant_id, user_id| {
+                state.tenants.is_member(tenant_id, user_id)
+            })
+            .into_iter()
+            .map(|kb| kb.id)
+            .collect::<Vec<_>>()
+    } else {
+        requested
+    };
+    let mut missing = Vec::new();
+    for id in &ids {
+        if !kb_manageable(&state, id, &auth) {
+            missing.push(id.clone());
+        }
+    }
+    if !missing.is_empty() {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "User '{}' lacks permission for datasets: '{}'",
+                auth.user_id,
+                missing.join(", ")
+            ),
+        );
+    }
+    let mut success_count = 0;
+    for id in &ids {
+        match delete_dataset_data(&state, id) {
+            Ok(true) => success_count += 1,
+            Ok(false) => {}
+            Err(error) => {
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+            }
+        }
+    }
+    Json(ApiResponse {
+        code: 0,
+        message: "Success".into(),
+        data: Some(serde_json::json!({"success_count": success_count})),
+    })
+    .into_response()
 }
 
 // ── Upload and document processing ─────────────────────────────
@@ -3434,7 +3516,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/user/info", get(user_info))
         .route("/api/v1/components", get(component_catalog))
-        .route("/api/v1/datasets", get(list_datasets).post(create_dataset))
+        .route(
+            "/api/v1/datasets",
+            get(list_datasets)
+                .post(create_dataset)
+                .delete(delete_datasets),
+        )
         .route(
             "/api/v1/datasets/{id}",
             get(get_dataset).put(update_dataset).delete(delete_dataset),
@@ -9021,6 +9108,69 @@ mod tests {
         assert_eq!(forbidden.status(), StatusCode::OK);
         let forbidden_json = response_json(forbidden).await;
         assert_eq!(forbidden_json["code"], 404);
+    }
+
+    /// Upstream `DELETE /api/v1/datasets`: `ids` null/empty deletes nothing unless
+    /// `delete_all` is set, foreign ids fail the whole request, and the payload
+    /// reports `success_count`.
+    #[tokio::test]
+    async fn collection_delete_follows_the_upstream_contract() {
+        let env = test_env();
+        let first = env.state.kbs.create_for("test-user", "First", "").unwrap();
+        let second = env.state.kbs.create_for("test-user", "Second", "").unwrap();
+        let other = env
+            .state
+            .kbs
+            .create_for("other-user", "Foreign", "")
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let delete = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method("DELETE")
+                            .uri("/api/v1/datasets")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let empty = delete(serde_json::json!({"ids": []})).await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        assert_eq!(response_json(empty).await["data"]["success_count"], 0);
+        assert!(
+            env.state.kbs.get(&first.id).is_some(),
+            "nothing was deleted"
+        );
+
+        let foreign = delete(serde_json::json!({"ids": [other.id.clone()]})).await;
+        assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            env.state.kbs.get(&other.id).is_some(),
+            "a foreign id protects the whole request"
+        );
+
+        let removed = delete(serde_json::json!({"ids": [first.id.clone()]})).await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(response_json(removed).await["data"]["success_count"], 1);
+        assert!(env.state.kbs.get(&first.id).is_none());
+
+        let all = delete(serde_json::json!({"ids": null, "delete_all": true})).await;
+        assert_eq!(all.status(), StatusCode::OK, "delete_all wipes the tenant");
+        assert_eq!(response_json(all).await["data"]["success_count"], 1);
+        assert!(env.state.kbs.get(&second.id).is_none());
+        assert!(
+            env.state.kbs.get(&other.id).is_some(),
+            "another tenant keeps its datasets"
+        );
     }
 
     /// Upstream `Knowledgebase.language` is a top-level column with the process

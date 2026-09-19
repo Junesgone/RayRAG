@@ -23,6 +23,8 @@
 | reference | 3377 | 875788 |
 | unmapped | 0 | 0 |
 
+> v0.3.7p / RayRAG 0.4.12（2026-08-20）`api/apps/restful_apis/dataset_api.py` + `dataset_api_service.py` 的集合删除：`DELETE /api/v1/datasets`（`{ids}`/`delete_all`、`success_count`、跨租户 `lacks permission`）落地，前端 `web/src/utils/api.ts::rmKb` 的三处调用同步切到该契约。
+>
 > v0.3.7p / RayRAG 0.4.12（2026-08-20）`api/db/db_models.py` 的 `Knowledgebase.language` 顶层列落地（默认按 locale、`max_length=32`、可从 `POST`/`PUT` 读写，旧记录 serde 默认兼容），前端语言字段的值由此真正持久化。
 >
 > v0.3.7p / RayRAG 0.4.12（2026-08-20）`dataset-setting/general-form.tsx` 语言字段：上轮取错常量（`LanguageList` 只服务 `LanguageMap` 文案），本轮按 `Object.keys(LanguageTranslationMap)` 的 27 项重排并换上游 `SelectWithSearch`（搜索行 + `combobox-option` + Check + `CommandEmpty`），同时补上 `language` 的保存与回填。
