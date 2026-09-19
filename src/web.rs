@@ -4498,7 +4498,7 @@ fn admin_console_shell(active: AdminConsoleSection, body: &str, zh: bool) -> Str
         nav.push_str("</span></a></li>");
     }
     format!(
-        r#"<main class='admin-console' data-testid='admin-console' data-section='{active_key}'><aside class='admin-console-aside'><div class='admin-console-brand'><img class='admin-console-logo' src='/logo.svg' alt=''><span class='admin-console-title'>RAGFlow</span></div><nav><ul class='admin-console-nav'>{nav}</ul></nav><div class='admin-console-footer'><div class='admin-console-footer-row'><span class='admin-console-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_state}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='admin-console-logout' onclick='adminConsoleLogout()'>{logout_label}</button></div></aside><section class='admin-console-main'>{body}</section></main><script>function adminConsoleTheme(){{document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){{node.setAttribute('aria-checked',light?'false':'true')}})}}function adminConsoleLogout(){{fetch('/api/v1/admin/logout').then(function(){{adminConsoleForget()}}).catch(function(){{adminConsoleForget()}})}}function adminConsoleForget(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/admin'}}</script>"#,
+        r#"<main class='admin-console' data-testid='admin-console' data-section='{active_key}'><aside class='admin-console-aside'><div class='admin-console-brand'><img class='admin-console-logo' src='/logo.svg' alt=''><span class='admin-console-title'>RAGFlow</span></div><nav><ul class='admin-console-nav'>{nav}</ul></nav><div class='admin-console-footer'><div class='admin-console-footer-row'><span class='admin-console-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_state}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='admin-console-logout' onclick='adminConsoleLogout()'>{logout_label}</button></div></aside><section class='admin-console-main'>{body}</section></main><script>function adminConsoleTheme(){{document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){{node.setAttribute('aria-checked',light?'false':'true')}})}}function adminConsoleLogout(){{fetch('/api/v1/admin/logout').then(function(){{adminConsoleForget()}}).catch(function(){{adminConsoleForget()}})}}function adminConsoleForget(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';adminConsoleForgetIdentity();adminSetUserInfo(null,null);location.href='/admin'}}</script>"#,
         active_key = active.key(),
         version = crate::build_info::version_line(),
         theme_label = if zh { "主题" } else { "Theme" },
@@ -4506,6 +4506,17 @@ fn admin_console_shell(active: AdminConsoleSection, body: &str, zh: bool) -> Str
         logout_label = t("Log out", zh),
     )
 }
+
+/// Upstream `layouts/root-layout.tsx` keeps the signed-in console identity in a
+/// context whose `source` records where it came from: the `userInfo` localStorage
+/// cache (`authorizationUtil.getUserInfoObject()` reading what
+/// `layouts/../login.tsx` wrote as `{...loginData, name: nickname}`) or the login
+/// response itself (`source: 'serverRequest'`). `layouts/authorized-layout.tsx`
+/// then asks for both an `Authorization` entry and a cached identity, and
+/// `pages/admin/users.tsx` compares each row against `userInfo?.email`. Emitting
+/// the same three keys (`Authorization` / `token` / `userInfo`) keeps a console
+/// session recognisable across reloads exactly like upstream.
+const ADMIN_CONSOLE_IDENTITY_JS: &str = r#"<script>var ADMIN_USER_INFO={userInfo:null,source:null};function adminSetUserInfo(userInfo,source){ADMIN_USER_INFO={userInfo:userInfo||null,source:userInfo?source:null}}function adminCurrentUserInfo(){if(ADMIN_USER_INFO.source)return ADMIN_USER_INFO;try{var raw=localStorage.getItem('userInfo');if(raw){var cached=JSON.parse(raw);if(cached&&typeof cached==='object'){adminSetUserInfo(cached,'localStorage');return ADMIN_USER_INFO}}}catch(error){}return ADMIN_USER_INFO}function adminConsoleIdentityEmail(){var info=adminCurrentUserInfo().userInfo;return info&&info.email?String(info.email):''}function adminConsoleRememberIdentity(authorization,token,userInfo){localStorage.setItem('Authorization',authorization);localStorage.setItem('token',token);localStorage.setItem('userInfo',JSON.stringify(userInfo))}function adminConsoleForgetIdentity(){localStorage.removeItem('Authorization');localStorage.removeItem('token');localStorage.removeItem('userInfo')}</script>"#;
 
 /// Upstream `Routes.Admin` = `pages/admin/login.tsx`: the console entry point.
 /// A signed-in administrator is bounced to `/admin/services` exactly like the
@@ -4520,6 +4531,7 @@ pub async fn admin_page(
     }
     let mut b = String::with_capacity(8192);
     b.push_str(LOGIN_BG_SVG);
+    b.push_str(ADMIN_CONSOLE_IDENTITY_JS);
     b.push_str("<div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt=''><span class='admin-login-brand-name'>RAGFlow</span></div>");
     b.push_str("<h1 class='admin-login-title'>Admin console</h1>");
     b.push_str("<div class='admin-login-wrap'><div class='admin-login-card card'><label class='admin-login-field'><span class='admin-login-label required'>");
@@ -4539,7 +4551,7 @@ pub async fn admin_page(
     b.push_str("</button><p class='admin-login-error' id='adminLoginError' data-testid='admin-login-error' role='alert'></p></div><div class='admin-login-theme'>");
     b.push_str(&theme_switch_markup(zh));
     b.push_str(
-        "</div></div><script>function adminConsoleLogin(){var email=document.getElementById('adminEmail').value.trim();var password=document.getElementById('adminPassword').value;var remember=document.getElementById('adminRemember').checked;var error=document.getElementById('adminLoginError');var button=document.getElementById('adminLoginButton');error.textContent='';if(!email||!password){error.textContent='Please input email and password';return}button.disabled=true;fetch('/api/v1/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password})}).then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){button.disabled=false;if(!result.ok||result.data.code!==0){error.textContent=result.data.message||'Login failed';return}var token=(result.data.data||{}).access_token;if(!token){error.textContent='Login failed';return}localStorage.setItem('rayrag_token',token);document.cookie='rayrag_token='+token+';path=/;max-age='+(remember?86400:3600);location.href='/admin/services'}).catch(function(failure){button.disabled=false;error.textContent=failure.message})}document.getElementById('adminPassword').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});function adminConsoleTheme(){document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){node.setAttribute('aria-checked',light?'false':'true')})}document.getElementById('adminEmail').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});</script>",
+        "</div></div><script>function adminConsoleLogin(){var email=document.getElementById('adminEmail').value.trim();var password=document.getElementById('adminPassword').value;var remember=document.getElementById('adminRemember').checked;var error=document.getElementById('adminLoginError');var button=document.getElementById('adminLoginButton');error.textContent='';if(!email||!password){error.textContent='Please input email and password';return}button.disabled=true;fetch('/api/v1/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password})}).then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){button.disabled=false;if(!result.ok||result.data.code!==0){error.textContent=result.data.message||'Login failed';return}var token=(result.data.data||{}).access_token;if(!token){error.textContent='Login failed';return}var loginData=result.data.data||{};localStorage.setItem('rayrag_token',token);document.cookie='rayrag_token='+token+';path=/;max-age='+(remember?86400:3600);adminConsoleRememberIdentity('Bearer '+token,token,Object.assign({},loginData,{name:loginData.nickname}));adminSetUserInfo(loginData,'serverRequest');location.href='/admin/services'}).catch(function(failure){button.disabled=false;error.textContent=failure.message})}document.getElementById('adminPassword').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});function adminConsoleTheme(){document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){node.setAttribute('aria-checked',light?'false':'true')})}document.getElementById('adminEmail').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});</script>",
     );
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh)).into_response()
 }
@@ -4629,13 +4641,19 @@ pub async fn admin_users_page(
     let mut b = String::with_capacity(8192);
     // Upstream renders an Active/Inactive badge instead of a status control on the
     // signed-in administrator's own row, so the page inlines the current email.
-    b.push_str("<script>var ADMIN_ME=");
+    // `pages/admin/users.tsx` marks the signed-in administrator's own row through
+    // `userInfo?.email`; the request token stays the authority when the console
+    // identity cache is empty.
+    b.push_str(ADMIN_CONSOLE_IDENTITY_JS);
+    b.push_str("<script>var ADMIN_ME_SERVER=");
     b.push_str(
         &admin_request_email(&state, req.headers())
             .map(|email| json_script_string(&email))
             .unwrap_or_else(|| "\"\"".to_string()),
     );
-    b.push_str(";var ADMIN_CLIPBOARD_SVG=\"");
+    b.push_str(
+        ";var ADMIN_ME=adminConsoleIdentityEmail()||ADMIN_ME_SERVER;var ADMIN_CLIPBOARD_SVG=\"",
+    );
     b.push_str(ADMIN_CLIPBOARD_SVG);
     b.push_str("\";var ADMIN_USER_LOCK_SVG=\"");
     b.push_str(ADMIN_USER_LOCK_SVG);
@@ -9382,6 +9400,97 @@ connection: close
             ".admin-field input[readonly]{background:var(--bgc);color:var(--t2);cursor:default}",
         ] {
             assert!(css.contains(rule), "admin form css missing: {rule}");
+        }
+    }
+
+    /// Upstream `layouts/root-layout.tsx` publishes the signed-in console identity
+    /// through a context that also records *where* it came from, and
+    /// `layouts/../login.tsx` fills the `Authorization` / `token` / `userInfo`
+    /// localStorage trio before navigating; `layouts/navigation-layout.tsx` clears
+    /// it again on logout (`authorizationUtil.removeAll()` + `{userInfo: null,
+    /// source: null}`). `pages/admin/users.tsx` then reads `userInfo?.email` for the
+    /// own-row tests. The server keeps guarding the routes, so the cache only ever
+    /// has to stay recognisable across reloads.
+    #[tokio::test]
+    async fn admin_console_keeps_the_upstream_current_user_info_cache() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("identity@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let login = body_of(
+            admin_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let users = body_of(
+            admin_users_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/users")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for (page, html) in [("/admin", &login), ("/admin/users", &users)] {
+            assert_inline_scripts_balance(html, page);
+            for marker in [
+                // The context starts empty and reads the cache on demand.
+                "var ADMIN_USER_INFO={userInfo:null,source:null};",
+                "function adminSetUserInfo(userInfo,source){ADMIN_USER_INFO={userInfo:userInfo||null,source:userInfo?source:null}}",
+                "if(ADMIN_USER_INFO.source)return ADMIN_USER_INFO;",
+                "var cached=JSON.parse(raw);",
+                "adminSetUserInfo(cached,'localStorage');",
+                // The three keys `authorizationUtil` owns.
+                "function adminConsoleRememberIdentity(authorization,token,userInfo){localStorage.setItem('Authorization',authorization);localStorage.setItem('token',token);localStorage.setItem('userInfo',JSON.stringify(userInfo))}",
+                "function adminConsoleForgetIdentity(){localStorage.removeItem('Authorization');localStorage.removeItem('token');localStorage.removeItem('userInfo')}",
+            ] {
+                assert!(
+                    html.contains(marker),
+                    "{page} identity marker missing: {marker}"
+                );
+            }
+        }
+        // Login writes the trio with `name: nickname` and lifts the identity as a
+        // server response, logout clears both the cache and the context.
+        for marker in [
+            "var loginData=result.data.data||{};",
+            "adminConsoleRememberIdentity('Bearer '+token,token,Object.assign({},loginData,{name:loginData.nickname}));",
+            "adminSetUserInfo(loginData,'serverRequest');",
+            "location.href='/admin/services'",
+        ] {
+            assert!(
+                login.contains(marker),
+                "/admin login identity marker missing: {marker}"
+            );
+        }
+        // The own-row check prefers the cached identity exactly like upstream.
+        assert!(users.contains("var ADMIN_ME_SERVER="));
+        assert!(users.contains("var ADMIN_ME=adminConsoleIdentityEmail()||ADMIN_ME_SERVER;"));
+        assert!(users.contains(
+            "function adminConsoleIdentityEmail(){var info=adminCurrentUserInfo().userInfo;return info&&info.email?String(info.email):''}"
+        ));
+        let shell = admin_console_shell(AdminConsoleSection::Services, "", false);
+        for marker in [
+            "adminConsoleForgetIdentity();adminSetUserInfo(null,null);",
+            "function adminConsoleLogout(){fetch('/api/v1/admin/logout')",
+        ] {
+            assert!(
+                shell.contains(marker),
+                "console logout marker missing: {marker}"
+            );
         }
     }
 

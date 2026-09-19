@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.27] — 2026-09-21（对标批次 v0.3.8e）
+
+### Added
+
+- **管理后台补上上游的 `CurrentUserInfo` 缓存与 `source` 判别位**
+  （`pages/admin/layouts/root-layout.tsx` 的残留项）：
+  - 控制台登录成功后按上游 `authorizationUtil.setItems({Authorization, Token, userInfo})`
+    写入三个键：`Authorization` = `Bearer <token>`、`token` = `access_token`、
+    `userInfo` = `JSON.stringify({...登录返回的 data, name: data.nickname})`；
+    同时把上下文提升为 `{userInfo: data, source: 'serverRequest'}`（上游 `setCurrentUserInfo`）。
+  - 新增 `adminCurrentUserInfo()` / `adminSetUserInfo()` / `adminConsoleIdentityEmail()`：
+    有缓存时读 `localStorage.userInfo` 并标记 `source: 'localStorage'`（上游
+    `getLocalStorageUserInfo()`），否则回落到 `{userInfo: null, source: null}`。
+  - 退出登录按上游 `authorizationUtil.removeAll()` + `{userInfo: null, source: null}`
+    清空三个键与上下文（`adminConsoleForgetIdentity()`）。
+  - 用户表的「自己那一行」判断改为上游的 `userInfo?.email` 优先（`adminConsoleIdentityEmail()`），
+    请求令牌解析出的邮箱作为兜底。
+
 ## [0.4.26] — 2026-09-21（对标批次 v0.3.8d）
 
 ### Changed
