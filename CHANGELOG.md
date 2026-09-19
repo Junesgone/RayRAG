@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.17] — 2026-09-20（对标批次 v0.3.7u）
+
+### Added
+
+- **搜索空结果用上游插画**：上游 `components/empty/empty.tsx` 在 `EmptyType.SearchData` 时渲染
+  `assets/svg/empty/no-search-data-{dark,bri}.svg`（84×104，`iconWidth={80}`，配 `common.noResults` 文案）。
+  RayRAG 之前只有一行 "No results found." 文字；现在把两个主题变体都内联进页面，按现有 `body.light`
+  主题类切换（暗色 `no-search-data-dark`／亮色 `no-search-data-bri`），文案沿用 `common.noResults`。
+
 ## [0.4.16] — 2026-09-20（对标批次 v0.3.7t）
 
 ### Added

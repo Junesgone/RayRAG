@@ -382,3 +382,11 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .search-docs-action{flex:1;padding:6px 8px;border:0;border-radius:4px;background:transparent;color:var(--t);font:inherit;font-size:13px;cursor:pointer}
 .search-docs-action:hover{background:var(--bgch)}
 .search-docs-action[hidden],.search-docs-footer .search-docs-sep[hidden]{display:none!important}
+/* Upstream `components/empty/empty.tsx` with `EmptyType.SearchData` (`h-2/5 flex items-center justify-center`, 80px illustration, `text-sm text-text-secondary` copy). */
+.search-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:40%;padding:32px 16px;text-align:center}
+.search-empty-art{display:inline-flex;align-items:center;justify-content:center;width:80px}
+.search-empty-art svg{width:80px;height:auto}
+.search-empty-bri{display:none}
+body.light .search-empty-dark{display:none}
+body.light .search-empty-bri{display:inline-flex}
+.search-empty-text{margin:0;color:var(--t2);font-size:14px}
