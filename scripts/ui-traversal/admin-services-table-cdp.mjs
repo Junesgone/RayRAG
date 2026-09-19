@@ -30,16 +30,14 @@ const rows = () =>
       Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent.trim()),
     ),
   );
-const pager = () =>
-  page.evaluate(() => {
-    const host = document.getElementById("adminServicePager");
+const pager = (id = "adminServicePager") =>
+  page.evaluate((pagerId) => {
+    const host = document.getElementById(pagerId);
     return {
       text: host ? host.textContent.replace(/\s+/g, " ").trim() : null,
-      size: document.getElementById("adminServicePager")
-        ? document.querySelector(".admin-pager-size").value
-        : null,
+      size: host ? host.querySelector(".admin-pager-size").value : null,
     };
-  });
+  }, id);
 
 try {
   await ctx.addCookies([{ name: "lang", value: "en", domain: "127.0.0.1", path: "/" }]);
@@ -109,6 +107,37 @@ try {
     };
   });
   await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/admin-service-details-20260821.png" });
+
+  // `/admin/users`: global search + sortable headers + footer pagination.
+  await page.goto(`${ORIGIN}/admin/users`, { waitUntil: "domcontentloaded", timeout: 40000 });
+  await page.waitForSelector("[data-testid='admin-user-row']", { timeout: 20000 });
+  const userRows = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll("[data-testid='admin-user-row']")).map((row) =>
+        row.querySelector("td").textContent.trim(),
+      ),
+    );
+  results.usersInitial = { rows: (await userRows()).length, pager: await pager("adminUserPager") };
+  await page.click("[data-testid='admin-users-sort-email']");
+  await page.waitForTimeout(250);
+  results.usersSorted = {
+    rows: await userRows(),
+    mark: await page.textContent("#adminUserSortEmail"),
+  };
+  await page.click("[data-testid='admin-users-sort-email']");
+  await page.waitForTimeout(250);
+  results.usersSortedDesc = { rows: await userRows(), mark: await page.textContent("#adminUserSortEmail") };
+  await page.fill("#adminUserSearch", "zzz-no-such-user");
+  await page.waitForTimeout(250);
+  results.usersSearched = { rows: (await userRows()).length, pager: await pager("adminUserPager") };
+  await page.click("button:has-text('Reset')");
+  await page.waitForTimeout(250);
+  results.usersReset = {
+    rows: (await userRows()).length,
+    search: await page.inputValue("#adminUserSearch"),
+    mark: await page.textContent("#adminUserSortEmail"),
+  };
+  await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/admin-users-20260821.png" });
 } catch (error) {
   results.errors.push(String(error && error.stack ? error.stack : error));
 } finally {
