@@ -4533,26 +4533,34 @@ pub async fn admin_page(
     let mut b = String::with_capacity(8192);
     b.push_str(LOGIN_BG_SVG);
     b.push_str(ADMIN_CONSOLE_IDENTITY_JS);
-    b.push_str("<div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt=''><span class='admin-login-brand-name'>RAGFlow</span></div>");
-    b.push_str("<h1 class='admin-login-title'>Admin console</h1>");
-    b.push_str("<div class='admin-login-wrap'><div class='admin-login-card card'><label class='admin-login-field'><span class='admin-login-label required'>");
+    // Upstream's schema messages are the field placeholders (`login.emailPlaceholder`
+    // and `login.passwordPlaceholder`).
+    b.push_str("<script>var ADMIN_LOGIN_EMAIL_REQUIRED=");
+    b.push_str(&json_script_string(t("Please input email", zh)));
+    b.push_str(";var ADMIN_LOGIN_PASSWORD_REQUIRED=");
+    b.push_str(&json_script_string(t("Please input password", zh)));
+    b.push_str(";</script>");
+    // Upstream stacks three `Spotlight` layers (`opcity` 0.4/0.3/0.3, colour
+    // `rgb(128, 255, 248)`, coverage 60/12/12) over the animated `BgSvg` bands.
+    b.push_str("<div class='auth-spotlight auth-spotlight-main' aria-hidden='true'></div><div class='auth-spotlight auth-spotlight-left' aria-hidden='true'></div><div class='auth-spotlight auth-spotlight-right' aria-hidden='true'></div>");
+    b.push_str("<div class='admin-login-head'><div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt='logo'><span class='admin-login-brand-name'>RAGFlow</span></div>");
+    b.push_str("<h1 class='admin-login-title'>Admin console</h1></div>");
+    b.push_str("<div class='admin-login-center'><div class='admin-login-column'><div class='admin-login-card card'><div class='admin-login-body'><form class='admin-login-form' id='adminLoginForm' onsubmit='event.preventDefault();adminConsoleLogin()'><div class='admin-login-item'><label class='admin-login-label required' for='adminEmail'>");
     b.push_str(t("Email", zh));
-    b.push_str("</span><input id='adminEmail' data-testid='admin-email' type='email' autocomplete='email' placeholder='");
+    b.push_str("</label><input id='adminEmail' class='admin-login-input' data-testid='admin-email' type='email' autocomplete='email' placeholder='");
     b.push_str(t("Please input email", zh));
-    b.push_str(
-        "'></label><label class='admin-login-field'><span class='admin-login-label required'>",
-    );
+    b.push_str("' oninput='adminConsoleErrors()'><p class='admin-login-message' data-testid='admin-email-error' id='adminEmailError'></p></div><div class='admin-login-item'><label class='admin-login-label required' for='adminPassword'>");
     b.push_str(t("Password", zh));
-    b.push_str("</span><input id='adminPassword' data-testid='admin-password' type='password' autocomplete='current-password' placeholder='");
+    b.push_str("</label><input id='adminPassword' class='admin-login-input' data-testid='admin-password' type='password' autocomplete='password' placeholder='");
     b.push_str(t("Please input password", zh));
-    b.push_str("'></label><label class='admin-login-remember'><input id='adminRemember' type='checkbox'><span>");
+    b.push_str("' oninput='adminConsoleErrors()'><p class='admin-login-message' data-testid='admin-password-error' id='adminPasswordError'></p></div><div class='admin-login-remember-row'><label class='admin-login-remember' id='adminRememberLabel'><input id='adminRemember' class='admin-login-checkbox' type='checkbox' onchange='adminConsoleRememberTint()'><span>");
     b.push_str(t("Remember me", zh));
-    b.push_str("</span></label><button class='btn btn-p admin-login-submit' id='adminLoginButton' data-testid='admin-login-submit' type='button' onclick='adminConsoleLogin()'>");
+    b.push_str("</span></label></div></form><p class='admin-login-error' id='adminLoginError' data-testid='admin-login-error' role='alert'></p></div><div class='admin-login-footer'><button class='btn btn-hl btn-block admin-login-submit' id='adminLoginButton' data-testid='admin-login-submit' type='submit' form='adminLoginForm'>");
     b.push_str(t("Sign in", zh));
-    b.push_str("</button><p class='admin-login-error' id='adminLoginError' data-testid='admin-login-error' role='alert'></p></div><div class='admin-login-theme'>");
+    b.push_str("</button></div></div><div class='admin-login-theme'>");
     b.push_str(&theme_switch_markup(zh));
     b.push_str(
-        "</div></div><script>function adminConsoleLogin(){var email=document.getElementById('adminEmail').value.trim();var password=document.getElementById('adminPassword').value;var remember=document.getElementById('adminRemember').checked;var error=document.getElementById('adminLoginError');var button=document.getElementById('adminLoginButton');error.textContent='';if(!email||!password){error.textContent='Please input email and password';return}button.disabled=true;fetch('/api/v1/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password})}).then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){button.disabled=false;if(!result.ok||result.data.code!==0){error.textContent=result.data.message||'Login failed';return}var token=(result.data.data||{}).access_token;if(!token){error.textContent='Login failed';return}var loginData=result.data.data||{};localStorage.setItem('rayrag_token',token);document.cookie='rayrag_token='+token+';path=/;max-age='+(remember?86400:3600);adminConsoleRememberIdentity('Bearer '+token,token,Object.assign({},loginData,{name:loginData.nickname}));adminSetUserInfo(loginData,'serverRequest');location.href='/admin/services'}).catch(function(failure){button.disabled=false;error.textContent=failure.message})}document.getElementById('adminPassword').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});function adminConsoleTheme(){document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){node.setAttribute('aria-checked',light?'false':'true')})}document.getElementById('adminEmail').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});</script>",
+        "</div></div></div><script>function adminConsoleEmailError(value){var email=String(value||'').trim();if(!email)return ADMIN_LOGIN_EMAIL_REQUIRED;return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)?'':'Invalid email'}function adminConsoleErrors(){var emailError=adminConsoleEmailError(document.getElementById('adminEmail').value);var passwordError=document.getElementById('adminPassword').value?'':ADMIN_LOGIN_PASSWORD_REQUIRED;document.getElementById('adminEmailError').textContent=emailError;document.getElementById('adminPasswordError').textContent=passwordError;return !emailError&&!passwordError}function adminConsoleRememberTint(){var label=document.getElementById('adminRememberLabel');if(!label)return;label.classList.toggle('checked',document.getElementById('adminRemember').checked)}function adminConsoleLogin(){var email=document.getElementById('adminEmail').value.trim();var password=document.getElementById('adminPassword').value;var remember=document.getElementById('adminRemember').checked;var error=document.getElementById('adminLoginError');var button=document.getElementById('adminLoginButton');error.textContent='';if(!adminConsoleErrors())return;button.disabled=true;button.classList.add('loading');fetch('/api/v1/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password})}).then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){button.disabled=false;button.classList.remove('loading');if(!result.ok||result.data.code!==0){error.textContent=result.data.message||'Login failed';return}var token=(result.data.data||{}).access_token;if(!token){error.textContent='Login failed';return}var loginData=result.data.data||{};localStorage.setItem('rayrag_token',token);document.cookie='rayrag_token='+token+';path=/;max-age='+(remember?86400:3600);adminConsoleRememberIdentity('Bearer '+token,token,Object.assign({},loginData,{name:loginData.nickname}));adminSetUserInfo(loginData,'serverRequest');location.href='/admin/services'}).catch(function(failure){button.disabled=false;button.classList.remove('loading');error.textContent=failure.message})}document.getElementById('adminPassword').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});function adminConsoleTheme(){document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){node.setAttribute('aria-checked',light?'false':'true')})}document.getElementById('adminEmail').addEventListener('keydown',function(event){if(event.key==='Enter')adminConsoleLogin()});adminConsoleRememberTint();</script>",
     );
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh)).into_response()
 }
@@ -9403,6 +9411,85 @@ connection: close
         }
     }
 
+    /// Upstream `pages/admin/login.tsx`: three `Spotlight` layers over the `BgSvg`
+    /// bands, an absolutely positioned head (brand `mt-12 ml-12`, title
+    /// `mt-[6.5rem] text-4xl font-medium mb-12`), the 540px column at `mt-72 mb-48`
+    /// with a card split into `CardContent px-10 pt-14 pb-10` and `CardFooter
+    /// px-10 pt-8 pb-14`, one `FormMessage` per field fed by the zod schema
+    /// (`.min(1, {message: emailPlaceholder})` / `.min(1, {message:
+    /// passwordPlaceholder})`), a remember-me checkbox that tints its label, and a
+    /// `variant="highlighted" size="lg" block loading` submit.
+    #[tokio::test]
+    async fn admin_console_login_matches_the_upstream_form() {
+        let (_root, state) = test_state();
+        let body = body_of(
+            admin_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&body, "/admin");
+        for marker in [
+            // Spotlight trio + head geometry.
+            "<div class='auth-spotlight auth-spotlight-main' aria-hidden='true'></div>",
+            "<div class='auth-spotlight auth-spotlight-left' aria-hidden='true'></div>",
+            "<div class='auth-spotlight auth-spotlight-right' aria-hidden='true'></div>",
+            "<div class='admin-login-head'><div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt='logo'>",
+            "<div class='admin-login-center'><div class='admin-login-column'><div class='admin-login-card card'><div class='admin-login-body'>",
+            // One message slot per field, fed by the schema.
+            "<form class='admin-login-form' id='adminLoginForm' onsubmit='event.preventDefault();adminConsoleLogin()'>",
+            "data-testid='admin-email-error' id='adminEmailError'",
+            "data-testid='admin-password-error' id='adminPasswordError'",
+            "var ADMIN_LOGIN_EMAIL_REQUIRED=",
+            "var ADMIN_LOGIN_PASSWORD_REQUIRED=",
+            "function adminConsoleErrors(){var emailError=adminConsoleEmailError(document.getElementById('adminEmail').value);",
+            "if(!email)return ADMIN_LOGIN_EMAIL_REQUIRED;",
+            r"return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?'':'Invalid email'",
+            "var passwordError=document.getElementById('adminPassword').value?'':ADMIN_LOGIN_PASSWORD_REQUIRED;",
+            "error.textContent='';if(!adminConsoleErrors())return;",
+            // Remember-me label tints with the checkbox state.
+            "<label class='admin-login-remember' id='adminRememberLabel'>",
+            "onchange='adminConsoleRememberTint()'",
+            "label.classList.toggle('checked',document.getElementById('adminRemember').checked)",
+            "adminConsoleRememberTint();</script>",
+            // Submit sits in the card footer with the loading spinner.
+            "<div class='admin-login-footer'><button class='btn btn-hl btn-block admin-login-submit' id='adminLoginButton' data-testid='admin-login-submit' type='submit' form='adminLoginForm'>",
+            "button.disabled=true;button.classList.add('loading');",
+            "button.disabled=false;button.classList.remove('loading');",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin login marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".auth-spotlight{position:absolute;inset:0;z-index:-1;opacity:.8;border-radius:8px;backdrop-filter:blur(30px);pointer-events:none}",
+            ".auth-spotlight-main{background:radial-gradient(circle at 50% 190%,rgba(128,255,248,.4) 0%,rgba(128,255,248,0) 60%)}",
+            ".auth-spotlight-left{background:radial-gradient(circle at 10% -10%,rgba(128,255,248,.3) 0%,rgba(128,255,248,0) 12%)}",
+            ".auth-spotlight-right{background:radial-gradient(circle at 90% -10%,rgba(128,255,248,.3) 0%,rgba(128,255,248,0) 12%)}",
+            ".admin-login-head{position:absolute;top:12px;left:0;width:100%}",
+            ".admin-login-title{margin:104px auto 48px;font-size:36px;font-weight:500;text-align:center}",
+            ".admin-login-column{width:100%;max-width:540px;margin:288px 0 192px}",
+            ".admin-login-body{padding:56px 40px 40px}",
+            ".admin-login-footer{padding:32px 40px 56px}",
+            ".admin-login-form{display:flex;flex-direction:column;gap:32px;color:var(--t)}",
+            ".admin-login-remember-row{margin-top:-12px}",
+            ".admin-login-remember.checked{color:var(--t)}",
+            ".admin-login-remember input.admin-login-checkbox{appearance:none;-webkit-appearance:none;width:14px;height:14px;flex:0 0 14px;margin:0;padding:0;border:1px solid var(--tm);border-radius:2px;background:transparent;position:static;cursor:pointer;transition:background-color .15s,border-color .15s}",
+            ".btn-hl{background:var(--t);color:var(--bg);border-bottom:4px solid var(--p);border-radius:8px;height:40px;padding:0 16px;gap:8px;font-size:14px;font-weight:500;justify-content:center}",
+            ".btn-block{display:flex;width:100%}",
+        ] {
+            assert!(css.contains(rule), "admin login css missing: {rule}");
+        }
+    }
+
     /// Upstream `layouts/root-layout.tsx` publishes the signed-in console identity
     /// through a context that also records *where* it came from, and
     /// `layouts/../login.tsx` fills the `Authorization` / `token` / `userInfo`
@@ -12691,8 +12778,16 @@ connection: close
         )
         .await;
         assert!(zh_login.contains(">Admin console</h1>"));
-        assert!(zh_login.contains(">邮箱</span>"));
-        assert!(zh_login.contains(">密码</span>"));
+        // `FormLabel required` renders a `<label>` (labelled for its input) with the
+        // required marker from the shared `.required::after` rule.
+        assert!(
+            zh_login.contains(
+                "<label class='admin-login-label required' for='adminEmail'>邮箱</label>"
+            )
+        );
+        assert!(zh_login.contains(
+            "<label class='admin-login-label required' for='adminPassword'>密码</label>"
+        ));
         assert!(zh_login.contains("placeholder='请输入邮箱地址'"));
         assert!(zh_login.contains(">记住我</span>"));
         assert!(zh_login.contains(">登录</button>"));

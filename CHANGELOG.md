@@ -2,6 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.28] — 2026-09-21（对标批次 v0.3.8f）
+
+### Added
+
+- **控制台登录页按上游 `pages/admin/login.tsx` 对齐**：
+  - 补上三层 **`Spotlight`** 辉光（`opcity` 0.4/0.3/0.3、颜色 `rgb(128,255,248)`、
+    coverage 60/12/12、`backdrop-filter: blur(30px)`、`z-index:-1`），叠在既有的 `BgSvg` 光带之上。
+  - 版式改为上游结构：头部绝对定位（品牌 `mt-12 ml-12`、标题 `mt-[6.5rem] text-4xl font-medium mb-12`）、
+    540px 列 `mt-72 mb-48`、卡片拆成 `CardContent px-10 pt-14 pb-10` 与 `CardFooter px-10 pt-8 pb-14`。
+  - **逐字段校验**（对应上游 `FormSchema`）：邮箱为空 → `login.emailPlaceholder`
+    （"Please input email"），非空但不是合法邮箱 → "Invalid email"；密码为空 → `login.passwordPlaceholder`
+    （"Please input password"）；每个字段一条 `FormMessage`（`admin-email-error` / `admin-password-error`），
+    校验不通过时不发登录请求；接口失败仍在对话框级 `admin-login-error` 显示（上游只 `console.log`，
+    RayRAG 保留可见提示）。
+  - **记住我**：复选框按上游 `Checkbox` 尺寸（14px、2px 圆角、`appearance:none`、选中画对勾），
+    标签文字随勾选状态在 `--t2` / `--t` 之间切换（上游 `field.value ? 'text-text-primary' : 'text-text-secondary'`）。
+  - **提交按钮**改为上游 `variant="highlighted" size="lg" block`：`background:var(--t)`、`color:var(--bg)`、
+    `border-bottom:4px solid var(--p)`、40px 高、8px 圆角、14px/500，并补上 `loading` 态的旋转指示。
+  - 表单元素从纯 `<label>` 改为 `<form>` + `<label for>` + `type=submit`（回车提交、浏览器原生校验语义）。
+
 ## [0.4.27] — 2026-09-21（对标批次 v0.3.8e）
 
 ### Added
