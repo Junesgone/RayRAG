@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.26] — 2026-09-21（对标批次 v0.3.8d）
+
+### Changed
+
+- **管理后台账号详情页的资产表回到上游版式**（`pages/admin/user-detail.tsx`）：上游两张表
+  （数据集 / 智能体）实际上**只有一列**——头像 + 名称，`<TableHeader>` 整段被注释掉，
+  其余列（status/chunk_num/doc_num/token_num/language/create_date/update_date/permission、
+  agent 的 permission/canvas_category）都停在注释里。RayRAG 之前渲染了「Name/Language」与
+  「Agent title/Canvas category」两列表头，本轮改为上游的单列无表头版式，
+  行内容为 `RAGFlowAvatar` + 名称。
+- **空态用上游 `TableEmpty`**：单行单格 `colSpan=1`、`h-24 text-center`、文案
+  `common.noResults`（"No results found" / 未查到结果），替换掉 RayRAG 自造的 "No dataset"/"No agent"。
+- **Tab 改为上游的边框胶囊样式**：`TabsList` 的 `p-0 mb-2 gap-4 justify-start`，触发器
+  `rounded-sm px-3 py-1.5 text-sm font-medium border-0.5 border-border-button`，
+  选中态填 `bg-bg-card` + `shadow-sm`；不再使用自创的下划线 tab。
+- **返回按钮**用上游的 `Button variant="outline"`（`h-10 px-3`）加 `LucideArrowLeft` 图标 +
+  `admin.back` 文案，替换原来的纯文本 "← Back" 链接。
+
 ## [0.4.25] — 2026-09-21（对标批次 v0.3.8c）
 
 ### Added
