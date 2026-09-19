@@ -16,8 +16,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 277 | 60784 |
-| full | 567 | 267542 |
-| partial | 51 | 15000 |
+| full | 569 | 267915 |
+| partial | 49 | 14627 |
 | replaced | 109 | 38315 |
 | N/A | 61 | 10262 |
 | reference | 3376 | 875615 |
@@ -26,6 +26,8 @@
 > v0.3.7p / RayRAG 0.4.12（2026-08-20）`api/apps/restful_apis/dataset_api.py` + `dataset_api_service.py` 的集合删除：`DELETE /api/v1/datasets`（`{ids}`/`delete_all`、`success_count`、跨租户 `lacks permission`）落地，前端 `web/src/utils/api.ts::rmKb` 的三处调用同步切到该契约。
 >
 > v0.3.7p / RayRAG 0.4.12（2026-08-20）`api/db/db_models.py` 的 `Knowledgebase.language` 顶层列落地（默认按 locale、`max_length=32`、可从 `POST`/`PUT` 读写，旧记录 serde 默认兼容），前端语言字段的值由此真正持久化。
+>
+> v0.3.8b / RayRAG 0.4.24（2026-08-20）`pages/admin/forms/user-form.tsx` + `change-password-form.tsx`：管理后台两个用户表单改为上游 `react-hook-form` 的逐字段 `FormMessage` 版式，zod 规则与文案（`admin.invalidEmail`、`admin.passwordMinLength`、`admin.confirmPasswordRequired`、`admin.confirmPasswordDoNotMatch`）逐条对齐，校验失败即阻止提交，修改密码对话框补只读邮箱行。
 >
 > v0.3.8a / RayRAG 0.4.23（2026-08-20）`next-search/search-view.tsx`：检索结果渲染 `document_metadata` 芯片（`formatMetadataValue` 规则 + 芯片行版式 + 参考面板版式），两处检索请求补 `include_metadata: true`。
 >
@@ -4166,11 +4168,11 @@ testing-form.tsx` 的 RerankFormFields 以共享默认模型树选择器落地 R
 | `web/src/main.tsx` | 16 | 487 | `8b59f5551bd01ea6` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/404.tsx` | 27 | 778 | `25d326a70cb7221e` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/admin/components/enterprise-feature.tsx` | 13 | 274 | `74ba15c791884219` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/admin/forms/change-password-form.tsx` | 150 | 3852 | `a0627c916dd16e2d` | partial | `src/web.rs; src/api/admin.rs` | v0.3.5y: the change-password dialog targets the selected account and `PUT /api/v1/admin/users/{username}/password` with `{new_password}`|
+| `web/src/pages/admin/forms/change-password-form.tsx` | 150 | 3852 | `a0627c916dd16e2d` | full | `src/web.rs; src/api/admin.rs` | v0.3.5y: the change-password dialog targets the selected account and `PUT /api/v1/admin/users/{username}/password` with `{new_password}`; v0.3.8b: the read-only e-mail row (`Input readOnly`) and the per-field `FormMessage` slots land with the zod rules (`min(8)` on both password fields → `admin.passwordMinLength`/`admin.confirmPasswordRequired`, equality refine → `admin.confirmPasswordDoNotMatch`), and a failing resolver blocks the request|
 | `web/src/pages/admin/forms/email-form.tsx` | 102 | 2360 | `e5fc2636a56c6113` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/admin/forms/import-excel-form.tsx` | 159 | 4325 | `64f136f87e6f8dbe` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/admin/forms/role-form.tsx` | 209 | 6280 | `53703cdc9bf2b47a` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/admin/forms/user-form.tsx` | 223 | 6240 | `505982d97ef5faa5` | partial | `src/web.rs; src/api/admin.rs` | v0.3.5y: the new-user dialog covers the upstream form fields it needs (email, password, role select with `admin.normalUser`/`admin.superuser`) and posts to `POST /api/v1/admin/users`. Residual: react-hook-form error placement and the zod resolver copy|
+| `web/src/pages/admin/forms/user-form.tsx` | 223 | 6240 | `505982d97ef5faa5` | full | `src/web.rs; src/api/admin.rs` | v0.3.5y: the new-user dialog covers the upstream form fields it needs (email, password, role select with `admin.normalUser`/`admin.superuser`) and posts to `POST /api/v1/admin/users`; v0.3.8b: react-hook-form error placement and the zod resolver copy land as per-field slots (`admin-create-user-{email,password,confirm}-error`) with the upstream messages — `admin.invalidEmail`, `min(6)` password, `confirmPassword` `min(1)` + equality refine|
 | `web/src/pages/admin/layouts/authorized-layout.tsx` | 13 | 492 | `357928a1d7cb4c78` | partial | `src/server.rs; src/web.rs` | v0.3.5y: every console page resolves the presented bearer/cookie token server-side and answers a 307 back to `/admin` when it is missing or belongs to a non-administrator, which is the upstream `AdminAuthorizedLayout` guard (`!authorization || !userInfo -> Navigate to Routes.Admin`) moved from the client to the server|
 | `web/src/pages/admin/layouts/navigation-layout.tsx` | 154 | 4585 | `af5d11402c4f8f71` | partial | `src/web.rs; src/web_css.txt` | v0.3.5y: the console renders the upstream full-screen `main` + 288 px `aside`: logo (`size-8 mr-5`) + `admin.title`, the three community links in source order (`admin.serviceStatus` / `admin.userManagement` / `admin.sandboxSettings`) with the lucide `ServerCrash`/`UserCog`/`Zap` path data at `size-[1em]`, `px-4 py-3 rounded-lg` with the `bg-bg-card text-text-primary` active state (plus `aria-current`), the `admin.version` line with the ThemeSwitch, and the `header.logout` button bound to `GET /api/v1/admin/logout`. The enterprise-only whitelist/roles/monitoring entries stay unregistered exactly like the upstream `IS_ENTERPRISE` guard|
 | `web/src/pages/admin/layouts/root-layout.tsx` | 55 | 1343 | `86a5352859641e33` | partial | `src/web.rs; src/api/admin.rs` | v0.3.5y: the console shell plays the role of the React context provider -- each page is rendered inside the navigation layout, and the authenticated identity comes from the request token rather than a localStorage-cached user object. Residual: the localStorage `CurrentUserInfo` cache and its `source` discriminator are not ported|

@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.24] — 2026-09-20（对标批次 v0.3.8b）
+
+### Added
+
+- **管理后台用户表单按上游 `react-hook-form` 逐字段校验**（`pages/admin/forms/user-form.tsx`、
+  `pages/admin/forms/change-password-form.tsx`）：上游每个字段后面都挂一个 `FormMessage`，
+  由 zod resolver 决定文案；RayRAG 之前只有一行对话框级错误提示，现在改为**每字段一条**
+  （`data-testid='admin-create-user-email-error'` / `-password-error` / `-confirm-error`、
+  `admin-new-password-error` / `admin-new-password-confirm-error`），空消息时该槽位直接折叠
+  （对应 `FormMessage` 无 message 时返回 null）。
+  - 新建用户：`email` 必须是合法邮箱（`admin.invalidEmail` = “Please input a valid email address!”）、
+    `password` 至少 6 位（`admin.passwordMinLength`，上游文案仍写作 “more than 8 characters.”）、
+    新增 **Confirm password** 字段（`min(1)` → “Please confirm your password!”，
+    且 `.refine` 相等 → “The password that you entered do not match!”）。
+  - 修改密码：新增只读**邮箱行**（上游 `Input readOnly`，RayRAG 为 `adminPasswordEmail`）、
+    `newPassword` 与 `confirmPassword` 均要求至少 8 位并用同一条不匹配文案，
+    提交前校验不通过则不发请求。
+  - 两个对话框在打开时清空字段值**和**消息槽，避免新表单一开始就是红的。
+
 ## [0.4.23] — 2026-09-20（对标批次 v0.3.8a）
 
 ### Added
