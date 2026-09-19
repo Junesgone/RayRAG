@@ -1425,7 +1425,7 @@ const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
 /// callback redirects to consumes `?auth=` (store the returned session, drop the
 /// parameter and stay) and `?error=` (show the provider's message, then bounce to
 /// `/login` after a second with a clean URL).
-const OAUTH_LANDING_JS: &str = r#"
+const OAUTH_LANDING_JS: &str = r#";
 (function oauthLanding(){
   var params=new URLSearchParams(location.search);
   var error=params.get('error');
