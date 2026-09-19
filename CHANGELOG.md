@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.9] — 2026-09-19（对标批次 v0.3.7m）
+
+### Fixed
+
+- **`/user-setting/profile` 的头像裁剪改为拖拽弹层**：上一轮发现该页并未引入共享脚本块，
+  本轮把裁剪交互抽成模块常量 `AVATAR_CROP_JS`（`<script>` 整块）并在 `user_setting_layout` 外壳中统一注入，
+  profile 上传路径切换为 `openAvatarCropModal(...)`，与数据集页共用同一套「80% 初始选区 + 拖拽夹紧 + 64×64 输出」行为。
+
 ## [0.4.8] — 2026-09-19（对标批次 v0.3.7l）
 
 ### Added
