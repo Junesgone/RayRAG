@@ -252,3 +252,5 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .admin-sortable{cursor:pointer}
 .admin-sortable:hover{background:var(--bgch)}
 .admin-sort-mark{display:inline-block;min-width:10px;margin-left:4px;color:var(--p)}
+/* Upstream `pages/admin/users.tsx`: the status cell is a bordered select for other accounts (the signed-in admin keeps a badge). */
+.admin-status-select{padding:4px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}

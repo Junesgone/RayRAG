@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.7] — 2026-09-19（对标批次 v0.3.7k）
+
+### Changed
+
+- **后台用户表格的状态单元格对齐上游**：非本人行改为「Active / Inactive」下拉框（改动即保存），
+  当前登录管理员自己的那一行改为 Active/Inactive 徽章（上游对本人行不提供状态控件）；
+  原先动作列里的 Enable/Disable 按钮随之移除（上游动作列只有改密/删除等操作）。
+
+### Note
+
+- **审计结论（撤回一条非特性）**：`admin/users.tsx` 里没有 Excel 导入弹层（全文件无 xlsx/import 相关实现），
+  台账中该残留项据此撤回；「行内角色编辑」的角色下拉由 `IS_ENTERPRISE` 控制（开源版不加载 roleList、
+  更新接口也是企业版），按企业专属处理、不计入开源对标缺口。
+
 ## [0.4.6] — 2026-09-19（对标批次 v0.3.7j）
 
 ### Added
