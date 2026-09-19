@@ -95,9 +95,14 @@ try {
   check(back && back.title === first.title, "arrow_up_returns", JSON.stringify(back));
   await page.keyboard.press("End");
   const last = await focused();
-  check(last && last.title !== first.title, "end_moves_to_last_visible_row");
+  check(last && last.title !== first.title, "end_moves_to_last_visible_row", JSON.stringify(last));
   await page.keyboard.press("Home");
-  check((await focused()).title === first.title, "home_returns_to_first_row");
+  const home = await focused();
+  check(
+    home && home.title === first.title,
+    "home_returns_to_first_row",
+    `${JSON.stringify(home)} vs ${JSON.stringify(first)}`,
+  );
 
   // Branches start expanded, so collapse one first and then re-expand it with
   // the arrow keys (Radix: Left collapses / returns to the parent, Right expands
@@ -164,7 +169,7 @@ try {
   check(
     matched && matched.title.toLowerCase().startsWith(prefix),
     "typeahead_jumps_to_a_match",
-    JSON.stringify(matched),
+    `${JSON.stringify(matched)} for "${prefix}"`,
   );
   const letters = await page.evaluate(() => {
     const row = document.querySelector(".default-model-tree button.default-model-node .default-model-node-title");
