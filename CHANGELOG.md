@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.3] — 2026-09-19（对标批次 v0.3.7g）
+
+### Fixed
+
+- **「可用模型」面板元素语义与标题字号对齐上游**：`un-add-model.tsx` 的根节点是
+  `<aside className="text-text-primary h-full flex flex-col">`、标题是 16px 的 `<h3>`；
+  RayRAG 之前用 `<section>` + 默认字号 `<h2>`，现改为 `aside` + `.available-models-title`（16px/400），
+  同时保留 `id='availableModels'`、`data-testid='available-models-section'` 与新增 `aria-label`。
+
 ## [0.4.2] — 2026-09-19（对标批次 v0.3.7f）
 
 ### Fixed

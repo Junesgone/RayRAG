@@ -225,3 +225,6 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .model-providers-column{display:flex;flex-direction:column;min-width:0;overflow:auto}
 .model-providers-left{width:60%;gap:16px;padding:0 20px;border-right:.5px solid var(--bd)}
 .model-providers-right{width:40%}
+/* Upstream `components/un-add-model.tsx`: the panel is an `<aside class="text-text-primary h-full flex flex-col">` whose `<h3 className="text-text-primary text-base">` heading is 16px/400 with the search box and tag pills stacked under it. */
+.available-models-panel{display:flex;flex-direction:column;height:100%}
+.available-models-title{margin:0 0 12px;font-size:16px;font-weight:400;color:var(--t)}

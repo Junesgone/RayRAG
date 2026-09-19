@@ -4905,7 +4905,7 @@ pub async fn providers_page(
             crate::api::tenant_models::factory_llm_entries(),
         );
         b.push_str("</section><section class='model-providers-column model-providers-right'>");
-        b.push_str("<section class='card' id='availableModels' data-testid='available-models-section'><h2>Available models</h2><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All<span id='providerCountAll'></span></button>");
+        b.push_str("<aside class='card available-models-panel' id='availableModels' data-testid='available-models-section' aria-label='Available models'><h3 class='available-models-title'>Available models</h3><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All<span id='providerCountAll'></span></button>");
         // Upstream `un-add-model.tsx` orders the tag pills with `orderMap` and
         // labels them with `mapModelKey[tag] || tag`. Both now come from the
         // shared `crate::providers` table rather than a second literal copy.
@@ -5042,7 +5042,7 @@ pub async fn providers_page(
             b.push_str(&available.model_count.to_string());
             b.push_str(" models</p></article>");
         }
-        b.push_str("</div><p class='available-provider-empty' id='availableProviderEmpty'>No model providers found.</p></section>");
+        b.push_str("</div><p class='available-provider-empty' id='availableProviderEmpty'>No model providers found.</p></aside>");
     }
     b.push_str(&rows);
     b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
@@ -8295,6 +8295,9 @@ connection: close
             "<div class='spotlight model-providers-spotlight' aria-hidden='true'></div>",
             "<section class='model-providers-column model-providers-left'>",
             "</section><section class='model-providers-column model-providers-right'>",
+            // Upstream's Available panel is an `<aside>` with a 16px `<h3>`.
+            "<aside class='card available-models-panel' id='availableModels' data-testid='available-models-section' aria-label='Available models'><h3 class='available-models-title'>",
+            "No model providers found.</p></aside>",
         ] {
             assert!(body.contains(marker), "layout marker missing: {marker}");
         }

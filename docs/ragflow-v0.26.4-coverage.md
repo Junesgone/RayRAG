@@ -23,6 +23,8 @@
 | reference | 3377 | 875788 |
 | unmapped | 0 | 0 |
 
+> v0.3.7g / RayRAG 0.4.3（2026-08-21）`un-add-model.tsx` 元素语义收口：可用模型面板由 `<section>`+`<h2>` 改为上游的 `<aside class='… h-full flex flex-col'>` 与 16px `<h3>`（新增 `.available-models-panel`/`.available-models-title` 与 `aria-label`），保留原有 id 与 testid。
+>
 > v0.3.7f / RayRAG 0.4.2（2026-08-21）以 `pages/user-setting/setting-model/index.tsx`（409 行）为轴收口页面级布局：外框改为上游 `.5px` 边框 + 圆角卡片，内部拆成 3/5 左栏（设置默认模型 + 已添加模型）与 2/5 右栏（可用模型列表），两栏独立滚动，并加入上游 `components/spotlight.tsx` 的单个光晕（默认 `opcity .5`/`coverage 60`/中心 50%/190%，深色白、浅色 rgb(194,221,243)）；同轮记录该行 viewMode 残留已由前一轮的可达性审计结项（上游为注释死代码）。
 >
 > v0.3.7e / RayRAG 0.4.1（2026-08-21）以 `components/ui/toggle-list.tsx`（343 行）与 `addable-toggle-list.tsx`（162 行）为轴：触发器改用 lucide `ChevronsDown` 并在展开时 200ms 旋转 180°，搜索行补齐 lucide `Search`、加载期 `Loader2` 旋转指示器（加载中隐藏清除按钮）与 lucide `X` 清除图标；面板本身无展开动画（上游也没有），分页按钮上游未使用。同轮完成可达性审计：`used-model.tsx` 的 viewMode 编辑实例入口（齿轮 + `handleSettingsClick`）在上游是注释代码、`onEditInstance` 从未被调用，相关“立即持久化”残留项按 N/A-in-UI 结项。
