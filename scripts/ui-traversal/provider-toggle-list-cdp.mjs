@@ -109,8 +109,10 @@ try {
     null,
     { timeout: 10000 },
   );
-  results.opened = await readTrigger();
   results.searchWhileLoading = await readSearchRow();
+  // The rotation is a 200ms transition, so read it after it settles.
+  await page.waitForTimeout(350);
+  results.opened = await readTrigger();
   await page.screenshot({ path: `${shots}/provider-toggle-open-20260821.png` });
   // Wait for the model list to settle (spinner disappears).
   await page.waitForFunction(
@@ -120,12 +122,45 @@ try {
   );
   results.searchAfterLoad = await readSearchRow();
 
-  // Typing a query swaps in the clear button, exactly like upstream.
-  await page.fill("#piModelSearch", "qwen");
+  // The search row only exists once the list exceeds 10 options upstream, so
+  // seed a catalogue and re-render through the same code path, then type for
+  // real and watch the clear button appear.
+  await page.evaluate(() => {
+    window.piModels = Array.from({ length: 12 }, (_, index) => ({
+      name: `probe-model-${index}`,
+      model_type: ["chat"],
+      max_tokens: 8192,
+      custom: true,
+    }));
+    window.piModelsLoaded = true;
+    window.piModelsLoading = false;
+    window.renderProviderModelList();
+  });
+  await page.waitForFunction(
+    () => !document.getElementById("piModelSearchRow").hidden,
+    null,
+    { timeout: 10000 },
+  );
+  results.searchRowVisible = await page.evaluate(
+    () => !document.getElementById("piModelSearchRow").hidden,
+  );
+  await page.fill("#piModelSearch", "probe-model-1");
   await page.waitForTimeout(250);
   results.searchWithQuery = await readSearchRow();
+  // A forced loading state hides the clear button and shows the spinner.
+  await page.evaluate(() => {
+    window.piModelsLoading = true;
+    window.renderProviderModelList();
+  });
+  await page.waitForTimeout(150);
+  results.searchLoadingForced = await readSearchRow();
   await page.fill("#piModelSearch", "");
-  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    window.piModelsLoading = false;
+    window.renderProviderModelList();
+  });
+  await page.waitForTimeout(150);
+  results.searchSettled = await readSearchRow();
 
   // Clicking the trigger again closes the panel and un-rotates the chevron.
   await page.click("#piListModels");
