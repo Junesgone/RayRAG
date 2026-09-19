@@ -6,7 +6,7 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 - 版本：**v0.3.4**，对齐切片 **v0.3.5v**（每次切片推进一个 RAGFlow 文件的逐行对齐，
   见 `CHANGELOG.md` 与 `运维记录.md`）。
-- 测试基线：`cargo test --locked --features postgres-backend,zvec-backend --lib`
+- 测试基线：`cargo test --locked --lib`（`postgres-backend` 与 `zvec-backend` 已是默认 feature，无需显式指定）
   **1473 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
   凭据、公网或 MinIO 的 live 测试。
 - 覆盖台账（RAGFlow v0.26.4 固定快照 `cb93883f`，4441 个文件，
@@ -682,7 +682,7 @@ Python/Go 两份目标 parser、`rag/nlp/__init__.py` 和四-provider wrapper �
 
 ## zvec Rust 后端
 
-默认使用可移植的 JSON 索引。启用 `zvec-ai/zvec-rust` 原生后端时，需要提供
+默认使用 `zvec-ai/zvec-rust` 原生向量后端（`zvec-backend` 是默认 feature）。构建时需要提供
 `libzvec_c_api` 并显式开启 feature。当前锁定 **v0.7.1**：crate 走 git tag
 `v0.7.1`（该 patch 版本尚未发布到 crates.io），native 库取同名 release 预编译包，
 `ZVEC_LIB_DIR` 指向其解压目录（内含 `libzvec_c_api.so`、`TARGET` 与
@@ -696,7 +696,7 @@ cargo run --bin rayrag --features zvec-backend -- parse document.pdf \
   --embed --mode openai --api-key "$EMBED_API_KEY" --collection knowledge-base
 ```
 
-不设置 `RAYRAG_VECTOR_BACKEND` 时继续使用 JSON，便于无原生库环境运行和回滚。
+不设置 `RAYRAG_VECTOR_BACKEND` 时：编译进了 `zvec-backend`（默认构建）就用 zvec，没有该 feature 的构建才回退 JSON，便于无原生库环境运行。
 
 服务端启用 zvec 后，HTTP 文档解析、文档删除、手工 chunk CRUD 和反馈权重更新会
 在同一提交边界内同步 JSON 混合检索索引与 zvec。zvec 按知识库创建独立 collection，
@@ -712,7 +712,7 @@ PostgreSQL 保存 RayRAG JSON 状态快照，zvec 仍负责向量索引。该模
 cp .env.example .env
 # 设置 RAYRAG_POSTGRES_PASSWORD
 docker compose --env-file .env up -d postgres
-cargo run --bin rayrag --features postgres-backend -- serve
+cargo run --bin rayrag --features postgres-backend,zvec-backend -- serve
 ```
 
 服务启动会执行 `SELECT VERSION()`；设置
@@ -731,7 +731,7 @@ export RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec
 export ZVEC_LIB_DIR=/path/to/zvec/build/lib
 export RAYRAG_ADMIN_EMAIL=admin@rayrag.local
 export RAYRAG_ADMIN_PASSWORD='replace-with-a-strong-admin-password'
-cargo build --release --locked --features postgres-backend,zvec-backend
+cargo build --release --locked   # postgres-backend + zvec-backend 都是默认 feature
 ./target/release/rayrag serve --port 9380
 ```
 

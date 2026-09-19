@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.4.20"
+version = "0.4.21"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]
@@ -8,7 +8,13 @@ license = "Apache-2.0"
 build = "build.rs"
 
 [features]
-default = []
+# zvec is RayRAG's vector database, so it is part of the default build along
+# with the PostgreSQL metadata mirror: `cargo build --release --locked` produces
+# the shipped configuration. Point ZVEC_LIB_DIR at the directory holding
+# libzvec_c_api.so when it is not installed system-wide.
+# A JSON-index-only build stays available for environments without the native
+# library: `cargo build --release --locked --no-default-features --features postgres-backend`.
+default = ["postgres-backend", "zvec-backend"]
 zvec-backend = ["dep:zvec-rust"]
 postgres-backend = ["dep:postgres"]
 

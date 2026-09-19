@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.21] — 2026-09-20（对标批次 v0.3.7y）
+
+### Changed
+
+- **zvec 成为默认配置（三个入口统一）**：`zvec-backend` 与 `postgres-backend` 一起进入 Cargo 默认 feature，
+  因此纯 Linux 的 `cargo build --release --locked` 就是发行配置（原生 zvec + PostgreSQL 元数据），
+  Dockerfile 的 `RAYRAG_FEATURES` 默认值也从 `postgres-backend` 改为 `postgres-backend,zvec-backend`
+  （compose、`.env.example`、`install.sh` 早就默认 zvec）。README（中英）与 `docs/advanced.md` 的纯 Linux
+  步骤改为先导出 `ZVEC_LIB_DIR` 再 `cargo build --release --locked`，并说明无原生库环境可用
+  `--no-default-features --features postgres-backend` 退回 JSON 索引。
+- **运行期默认后端改为「编译进来就用 zvec」**：此前 `RAYRAG_VECTOR_BACKEND` 不设时一律走 JSON，即使
+  二进制带了原生后端。现在默认值由编译期决定（`default_vector_backend()`：有 `zvec-backend` 用 `zvec`，
+  否则 `json`），显式设置仍然优先。新增单测覆盖两条分支。
+- **构建时把 zvec 库目录写进 runpath**：`build.rs` 在 `ZVEC_LIB_DIR` 指向含 `libzvec_c_api.so` 的目录时
+  注入 `-Wl,-rpath`（依赖 crate 的 `rustc-link-arg` 不会传到本包二进制，此前运行必须手动
+  `LD_LIBRARY_PATH`），纯 Linux 与测试因此可直接运行。全量 `cargo test --locked --lib` 现在默认即带
+  zvec，1512 passed（比无 feature 时多 7 项原生后端用例）。
+
 ## [0.4.20] — 2026-09-20（对标批次 v0.3.7x）
 
 ### Added

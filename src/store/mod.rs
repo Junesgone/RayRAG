@@ -20,6 +20,17 @@ use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
 
 const VECTOR_BACKEND_ENV: &str = "RAYRAG_VECTOR_BACKEND";
+
+/// zvec is RayRAG's vector backend, so it is the default as soon as the native
+/// library is compiled in; a build without `zvec-backend` keeps using the
+/// portable JSON index (which is also how you roll back).
+pub fn default_vector_backend() -> &'static str {
+    if cfg!(feature = "zvec-backend") {
+        "zvec"
+    } else {
+        "json"
+    }
+}
 #[cfg(feature = "zvec-backend")]
 const ZVEC_ROOT_ENV: &str = "RAYRAG_ZVEC_DIR";
 
@@ -73,7 +84,7 @@ impl OnlineVectorMirror {
 
     fn from_env_subdirectory(_subdirectory: &str) -> Result<Self> {
         let backend = std::env::var(VECTOR_BACKEND_ENV)
-            .unwrap_or_else(|_| "json".into())
+            .unwrap_or_else(|_| default_vector_backend().to_string())
             .trim()
             .to_ascii_lowercase();
         match backend.as_str() {
@@ -441,7 +452,9 @@ fn validate_dimensions(kb_id: &str, chunks: &[IndexedChunk], dimension: usize) -
 
 impl ZvecStore {
     /// Create a store. The selected backend is controlled by
-    /// `RAYRAG_VECTOR_BACKEND=json|zvec` and defaults to `json`.
+    /// `RAYRAG_VECTOR_BACKEND=json|zvec` and defaults to zvec whenever the
+    /// `zvec-backend` feature is compiled in (the shipped build), falling back
+    /// to the portable JSON index only when the native library is absent.
     pub fn new(collection: &str, dimension: usize) -> Result<Self> {
         Self::open(collection, dimension, None)
     }
@@ -460,7 +473,7 @@ impl ZvecStore {
         }
 
         let backend = std::env::var(VECTOR_BACKEND_ENV)
-            .unwrap_or_else(|_| "json".into())
+            .unwrap_or_else(|_| default_vector_backend().to_string())
             .trim()
             .to_ascii_lowercase();
         match backend.as_str() {
@@ -1009,6 +1022,26 @@ mod tests {
     }
 
     #[test]
+    /// The compiled-in default decides the backend when the environment does
+    /// not: the shipped build (with `zvec-backend`) uses the native collection,
+    /// a build without it keeps the portable JSON index.
+    #[test]
+    fn default_backend_follows_the_compiled_features() {
+        let expected = if cfg!(feature = "zvec-backend") {
+            "zvec"
+        } else {
+            "json"
+        };
+        assert_eq!(default_vector_backend(), expected);
+        // An explicit environment value always wins over the default.
+        if cfg!(feature = "zvec-backend") {
+            unsafe { std::env::set_var("RAYRAG_VECTOR_BACKEND", "json") };
+            let store = ZvecStore::new("default-backend-probe", 4).unwrap();
+            assert_eq!(store.backend_name(), "json");
+            unsafe { std::env::remove_var("RAYRAG_VECTOR_BACKEND") };
+        }
+    }
+
     fn json_backend_is_immediately_searchable_after_insert() {
         let root = std::env::temp_dir().join(format!("rayrag-vector-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();

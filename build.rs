@@ -9,6 +9,30 @@
 
 use std::process::Command;
 
+/// zvec is a default feature, so the produced binaries should find
+/// `libzvec_c_api.so` without every caller exporting `LD_LIBRARY_PATH`: the
+/// resolved library directory is baked into the runpath. `zvec-sys` sets the
+/// same flag for its own artifacts, but a dependency's link arguments do not
+/// reach RayRAG's binaries.
+fn zvec_runpath() {
+    if std::env::var_os("CARGO_FEATURE_ZVEC_BACKEND").is_none() {
+        return;
+    }
+    println!("cargo:rerun-if-env-changed=ZVEC_LIB_DIR");
+    let Some(dir) = std::env::var_os("ZVEC_LIB_DIR") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(&dir);
+    if !path.join("libzvec_c_api.so").exists() {
+        println!(
+            "cargo:warning=ZVEC_LIB_DIR={} has no libzvec_c_api.so; the runpath was not added",
+            path.display()
+        );
+        return;
+    }
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
+}
+
 fn git(args: &[&str]) -> Option<String> {
     let output = Command::new("git").args(args).output().ok()?;
     if !output.status.success() {
@@ -20,6 +44,7 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    zvec_runpath();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=RAYRAG_BUILD_GIT_REV");
     println!("cargo:rerun-if-env-changed=RAYRAG_BUILD_TIME");

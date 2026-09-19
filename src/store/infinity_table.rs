@@ -9,15 +9,14 @@
 //! RayRAG keeps the same lifecycle as a per-table dimension registry, while
 //! the JSON engine and the zvec mirror remain the executable storage.
 
-use crate::settings::{
-    INFINITY_CHUNK_DATA_FIELD, INFINITY_CHUNK_DATA_TYPE, INFINITY_CHUNK_DATA_DEFAULT,
-    INFINITY_CHUNK_PYTHON_VECTOR_INDEX, INFINITY_CHUNK_VECTOR_FIELD_PREFIX,
-    INFINITY_CHUNK_VECTOR_FIELD_SUFFIX, INFINITY_CHUNK_VECTOR_INDEX_ENCODING,
-    INFINITY_CHUNK_VECTOR_INDEX_EF_CONSTRUCTION, INFINITY_CHUNK_VECTOR_INDEX_M,
-    INFINITY_CHUNK_VECTOR_INDEX_METRIC, infinity_chunk_vector_field,
-    infinity_chunk_vector_index,
-};
 use crate::Result;
+use crate::settings::{
+    INFINITY_CHUNK_DATA_DEFAULT, INFINITY_CHUNK_DATA_FIELD, INFINITY_CHUNK_DATA_TYPE,
+    INFINITY_CHUNK_PYTHON_VECTOR_INDEX, INFINITY_CHUNK_VECTOR_FIELD_PREFIX,
+    INFINITY_CHUNK_VECTOR_FIELD_SUFFIX, INFINITY_CHUNK_VECTOR_INDEX_EF_CONSTRUCTION,
+    INFINITY_CHUNK_VECTOR_INDEX_ENCODING, INFINITY_CHUNK_VECTOR_INDEX_M,
+    INFINITY_CHUNK_VECTOR_INDEX_METRIC, infinity_chunk_vector_field, infinity_chunk_vector_index,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -113,7 +112,8 @@ impl VectorDimensionRegistry {
                 index_created: false,
             };
         }
-        self.columns.insert(dimension, HnswVectorIndex::standard(dimension));
+        self.columns
+            .insert(dimension, HnswVectorIndex::standard(dimension));
         DimensionChange {
             column_created: true,
             index_created: true,
@@ -168,7 +168,10 @@ pub fn parse_vector_field(field: &str) -> Option<usize> {
 /// connector's TABLE-parser signal (`isinstance(documents[0]["chunk_data"],
 /// dict)`).
 pub fn detect_table_parser(record: &Map<String, Value>) -> bool {
-    matches!(record.get(INFINITY_CHUNK_DATA_FIELD), Some(Value::Object(_)))
+    matches!(
+        record.get(INFINITY_CHUNK_DATA_FIELD),
+        Some(Value::Object(_))
+    )
 }
 
 /// Table-creation plan for one vector dimension, mirroring `create_idx`'s
@@ -196,7 +199,10 @@ impl TableCreatePlan {
         let mut columns = Vec::new();
         if self.chunk_data {
             let mut chunk_data = Map::new();
-            chunk_data.insert("type".into(), Value::String(INFINITY_CHUNK_DATA_TYPE.into()));
+            chunk_data.insert(
+                "type".into(),
+                Value::String(INFINITY_CHUNK_DATA_TYPE.into()),
+            );
             chunk_data.insert(
                 "default".into(),
                 Value::String(INFINITY_CHUNK_DATA_DEFAULT.into()),
@@ -206,10 +212,7 @@ impl TableCreatePlan {
         let mut vector = Map::new();
         vector.insert(
             "type".into(),
-            Value::String(format!(
-                "vector,{},float",
-                self.vector_index.dimension
-            )),
+            Value::String(format!("vector,{},float", self.vector_index.dimension)),
         );
         columns.push((self.vector_index.column_name(), vector));
         columns
@@ -284,11 +287,10 @@ mod tests {
         .into_iter()
         .collect();
         assert!(detect_table_parser(&with_table));
-        let without: Map<String, Value> = [
-            (INFINITY_CHUNK_DATA_FIELD.into(), Value::String("{}".into())),
-        ]
-        .into_iter()
-        .collect();
+        let without: Map<String, Value> =
+            [(INFINITY_CHUNK_DATA_FIELD.into(), Value::String("{}".into()))]
+                .into_iter()
+                .collect();
         assert!(!detect_table_parser(&without));
         let absent: Map<String, Value> = Map::new();
         assert!(!detect_table_parser(&absent));
@@ -374,12 +376,9 @@ mod tests {
             registry.ensure_column(3);
             registry
         };
-        let mut record: Map<String, Value> = [(
-            "q_2_vec".into(),
-            serde_json::json!([1.0, 0.5]),
-        )]
-        .into_iter()
-        .collect();
+        let mut record: Map<String, Value> = [("q_2_vec".into(), serde_json::json!([1.0, 0.5]))]
+            .into_iter()
+            .collect();
         assert_eq!(plan_embedding_fill(&mut record, &registry), 1);
         assert_eq!(record["q_2_vec"], serde_json::json!([1.0, 0.5]));
         assert_eq!(record["q_3_vec"], serde_json::json!([0.0, 0.0, 0.0]));
@@ -388,10 +387,8 @@ mod tests {
 
     #[test]
     fn registry_persists_across_restarts_and_missing_files_are_fresh() {
-        let root = std::env::temp_dir().join(format!(
-            "rayrag-infinity-table-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rayrag-infinity-table-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("dimensions.json");
         let mut registry = VectorDimensionRegistry::new();

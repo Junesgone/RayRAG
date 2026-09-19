@@ -279,8 +279,10 @@ docker compose down -v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
-# 2) 编译（只编译 PostgreSQL 后端，不链接 zvec native library）
-cargo build --release --locked --features postgres-backend
+# 2) 编译（PostgreSQL 元数据 + zvec 原生向量后端，两者都是默认 feature）
+#    ZVEC_LIB_DIR 指向含 libzvec_c_api.so 与 TARGET 的目录
+export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.7.1"
+cargo build --release --locked
 
 # 3) 配置
 export RAYRAG_POSTGRES_URL=postgresql://rayrag:你的密码@127.0.0.1:5432/rayrag
@@ -291,9 +293,11 @@ export RAYRAG_ADMIN_PASSWORD='至少12位的密码'
 ./target/release/rayrag serve --port 9380
 ```
 
-想启用 zvec 原生向量后端，加 `--features postgres-backend,zvec-backend`，
-并设置 `RAYRAG_VECTOR_BACKEND=zvec`、`RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec`、
-`ZVEC_LIB_DIR=/zvec/构建产物/lib`。
+`postgres-backend` 与 `zvec-backend` 都是默认 feature，所以上面的命令就是发行配置，二进制**默认用 zvec**：
+用 `RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec` 指定向量数据目录（默认 `./zvec-data`）。构建时解析到的
+`ZVEC_LIB_DIR` 会写进二进制的 runpath，运行时不需要再设 `LD_LIBRARY_PATH`。若环境里没有原生库，可用
+`cargo build --release --locked --no-default-features --features postgres-backend` 退回可移植的 JSON 索引
+（并把 `RAYRAG_VECTOR_BACKEND=json`）。
 
 > 详细参数、systemd 写法与私有化部署注意事项见 [`docs/advanced.md`](docs/advanced.md)。
 

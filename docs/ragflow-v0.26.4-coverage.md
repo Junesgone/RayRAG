@@ -27,6 +27,8 @@
 >
 > v0.3.7p / RayRAG 0.4.12（2026-08-20）`api/db/db_models.py` 的 `Knowledgebase.language` 顶层列落地（默认按 locale、`max_length=32`、可从 `POST`/`PUT` 读写，旧记录 serde 默认兼容），前端语言字段的值由此真正持久化。
 >
+> v0.3.7y / RayRAG 0.4.21（2026-08-20）工程配置：`zvec-backend` 与 `postgres-backend` 成为 Cargo 默认 feature，Dockerfile `RAYRAG_FEATURES` 默认含 zvec，运行期后端默认按编译期决定，`build.rs` 注入 zvec runpath（纯 Linux / Docker / 测试三处统一默认使用 zvec）。
+>
 > v0.3.7x / RayRAG 0.4.20（2026-08-20）`hooks/auth-hooks.ts::useOAuthCallback`：落地页消费 `?auth=`/`?error=`（写入会话并清参数；错误提示后回 `/login`），`login-next/index.tsx` 行的「OAuth 回调缺失」残留随之关闭。
 >
 > v0.3.7w / RayRAG 0.4.19（2026-08-20）`components/tree-select.tsx` + `components/model-tree-select.tsx`：共享默认模型树补齐 Radix 键盘语义（→/←、1 秒缓冲 typeahead、roving tabindex、`aria-level`）。

@@ -289,8 +289,10 @@ You need three things: **Rust 1.97+**, a **PostgreSQL 18.4** and the **zvec shar
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
-# 2) build (PostgreSQL backend only, no native zvec linkage)
-cargo build --release --locked --features postgres-backend
+# 2) build (PostgreSQL metadata + the native zvec vector backend — both default)
+#    ZVEC_LIB_DIR points at the folder holding libzvec_c_api.so and TARGET
+export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.7.1"
+cargo build --release --locked
 
 # 3) configure
 export RAYRAG_POSTGRES_URL=postgresql://rayrag:YOUR-PASSWORD@127.0.0.1:5432/rayrag
@@ -301,9 +303,12 @@ export RAYRAG_ADMIN_PASSWORD='at-least-12-characters'
 ./target/release/rayrag serve --port 9380
 ```
 
-For the native zvec vector backend add `--features postgres-backend,zvec-backend` and set
-`RAYRAG_VECTOR_BACKEND=zvec`, `RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec` and
-`ZVEC_LIB_DIR=/path/to/zvec/build/lib`.
+`postgres-backend` and `zvec-backend` are the crate's default features, so the command above already
+builds the shipped configuration and the binaries use **zvec** unless asked otherwise: point it at a
+data directory with `RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec` (default `./zvec-data`). The resolved
+`ZVEC_LIB_DIR` is baked into the binary's runpath, so no `LD_LIBRARY_PATH` is needed to run it. For an
+environment without the native library, `cargo build --release --locked --no-default-features
+--features postgres-backend` keeps the portable JSON index (`RAYRAG_VECTOR_BACKEND=json`).
 
 > Full environment reference, systemd units and private-deployment notes:
 > [`docs/advanced.md`](docs/advanced.md).

@@ -16,12 +16,12 @@
 //! - generic aggregation: `get_aggregation`
 //!   (`common/doc_store/infinity_conn_base.py`).
 
+use crate::Result;
 use crate::doc_store::{DocRow, FilterCondition, OrderByExpr};
 use crate::settings::{
     INFINITY_CHUNK_FIELDS, InfinityChunkAnalyzer, InfinityChunkFieldSchema,
     infinity_chunk_fulltext_index, infinity_chunk_secondary_index,
 };
-use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -56,10 +56,7 @@ pub fn analyzer_for_alias(alias: &str) -> Option<&'static str> {
     None
 }
 
-fn analyzer_for_position(
-    field: &InfinityChunkFieldSchema,
-    is_last: bool,
-) -> Option<&'static str> {
+fn analyzer_for_position(field: &InfinityChunkFieldSchema, is_last: bool) -> Option<&'static str> {
     match field.analyzer {
         InfinityChunkAnalyzer::None => None,
         InfinityChunkAnalyzer::Single(analyzer) => Some(analyzer),
@@ -74,7 +71,9 @@ fn analyzer_for_position(
 }
 
 fn single_analyzer(name: &str) -> Option<&'static str> {
-    let field = INFINITY_CHUNK_FIELDS.iter().find(|field| field.name == name)?;
+    let field = INFINITY_CHUNK_FIELDS
+        .iter()
+        .find(|field| field.name == name)?;
     match field.analyzer {
         InfinityChunkAnalyzer::Single(analyzer) => Some(analyzer),
         _ => None,
@@ -107,7 +106,10 @@ pub fn fulltext_matching_field(field: &str) -> String {
     if field == "tag_kwd"
         && let Some(analyzer) = single_analyzer("tag_kwd")
     {
-        return format!("tag_kwd@{}", infinity_chunk_fulltext_index("tag_kwd", analyzer));
+        return format!(
+            "tag_kwd@{}",
+            infinity_chunk_fulltext_index("tag_kwd", analyzer)
+        );
     }
     field.to_owned()
 }
@@ -228,7 +230,9 @@ fn escape_sql_string(value: &str) -> String {
 /// always truthy for varchar/integer/float types, so the quoted branch runs:
 /// falsy defaults collapse to `''`.
 fn column_default_repr(column: &str) -> Option<String> {
-    let field = INFINITY_CHUNK_FIELDS.iter().find(|field| field.name == column)?;
+    let field = INFINITY_CHUNK_FIELDS
+        .iter()
+        .find(|field| field.name == column)?;
     let default = match field.default {
         crate::settings::InfinityChunkDefault::Text(text) => text,
         crate::settings::InfinityChunkDefault::Integer(value) if value != 0 => {
@@ -454,7 +458,11 @@ pub fn tag_aggregation(rows: &[DocRow], field_name: &str) -> Vec<(String, usize)
                 } else {
                     text.split(',').collect()
                 };
-                for tag in tags.into_iter().map(str::trim).filter(|tag| !tag.is_empty()) {
+                for tag in tags
+                    .into_iter()
+                    .map(str::trim)
+                    .filter(|tag| !tag.is_empty())
+                {
                     count(tag.to_owned(), &mut counts);
                 }
             }
@@ -494,8 +502,20 @@ pub fn tag_aggregation(rows: &[DocRow], field_name: &str) -> Vec<(String, usize)
 const METADATA_KEY_PATTERN: &str = r"^[a-zA-Z_][a-zA-Z0-9_]*$";
 
 const SUPPORTED_OPERATORS: &[&str] = &[
-    "=", "≠", ">", "<", "≥", "≤", "in", "not in", "contains", "not contains", "start with",
-    "end with", "empty", "not empty",
+    "=",
+    "≠",
+    ">",
+    "<",
+    "≥",
+    "≤",
+    "in",
+    "not in",
+    "contains",
+    "not contains",
+    "start with",
+    "end with",
+    "empty",
+    "not empty",
 ];
 
 /// One user document-metadata filter clause (`{"op", "key", "value"}`).
@@ -667,7 +687,9 @@ fn csv_or_list(value: &Value, filter: &MetadataFilter) -> Result<Vec<Value>> {
 }
 
 fn escape_like_wildcards(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn validate_key(key: &str, filter: &MetadataFilter) -> Result<()> {
@@ -676,9 +698,7 @@ fn validate_key(key: &str, filter: &MetadataFilter) -> Result<()> {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !valid {
         anyhow::bail!("invalid key format (must be identifier-like): {filter:?}");
     }
@@ -703,7 +723,10 @@ pub fn translate_metadata_filter(filter: &MetadataFilter) -> Result<String> {
                     "JSON_CONTAINS(meta_fields, '$.{key}', '\"{}\"')",
                     escape_sql_string(text)
                 ),
-                _ => format!("JSON_CONTAINS(meta_fields, '$.{key}', {})", coerced.render()),
+                _ => format!(
+                    "JSON_CONTAINS(meta_fields, '$.{key}', {})",
+                    coerced.render()
+                ),
             }
         }
         "≠" => {
@@ -761,7 +784,10 @@ pub fn translate_metadata_filter(filter: &MetadataFilter) -> Result<String> {
                         escape_sql_string(text)
                     )
                 }
-                _ => format!("JSON_CONTAINS(meta_fields, '$.{key}', {})", coerced.render()),
+                _ => format!(
+                    "JSON_CONTAINS(meta_fields, '$.{key}', {})",
+                    coerced.render()
+                ),
             }
         }
         "not contains" => {
@@ -785,7 +811,11 @@ pub fn translate_metadata_filter(filter: &MetadataFilter) -> Result<String> {
                 escape_sql_string(&escape_like_wildcards(&text))
             )
         }
-        _ => anyhow::bail!("no handler for operator: {:?}, filter: {:?}", filter.op, filter),
+        _ => anyhow::bail!(
+            "no handler for operator: {:?}, filter: {:?}",
+            filter.op,
+            filter
+        ),
     };
     Ok(rendered)
 }
@@ -816,11 +846,7 @@ fn partition_members(
     Ok((string_parts, number_parts))
 }
 
-fn wrap_conditions(
-    string_parts: Vec<String>,
-    number_parts: Vec<String>,
-    joiner: &str,
-) -> String {
+fn wrap_conditions(string_parts: Vec<String>, number_parts: Vec<String>, joiner: &str) -> String {
     let mut conditions = Vec::new();
     if !string_parts.is_empty() {
         conditions.push(format!("({})", string_parts.join(joiner)));
@@ -853,10 +879,9 @@ pub fn build_infinity_filter(filters: &[MetadataFilter], logic: &str) -> Result<
 /// Port of `is_pushdown_supported`: every clause carries a supported operator
 /// and a non-empty string key.
 pub fn is_pushdown_supported(filters: &[MetadataFilter]) -> bool {
-    filters.iter().all(|filter| {
-        SUPPORTED_OPERATORS.contains(&filter.op.as_str())
-            && !filter.key.is_empty()
-    })
+    filters
+        .iter()
+        .all(|filter| SUPPORTED_OPERATORS.contains(&filter.op.as_str()) && !filter.key.is_empty())
 }
 
 #[cfg(test)]
@@ -959,7 +984,12 @@ mod tests {
                 "important_kwd".into(),
                 "question_tks".into(),
             ]),
-            vec!["docnm", "important_keywords", "questions", "important_kwd_empty_count"]
+            vec![
+                "docnm",
+                "important_keywords",
+                "questions",
+                "important_kwd_empty_count"
+            ]
         );
         // Without important_kwd the companion column is not added.
         assert_eq!(
@@ -974,8 +1004,16 @@ mod tests {
         assert_eq!(fulltext.len(), 45);
         assert!(fulltext.iter().any(|index| index == "ft_docnm_rag_coarse"));
         assert!(fulltext.iter().any(|index| index == "ft_docnm_rag_fine"));
-        assert!(fulltext.iter().any(|index| index == "ft_tag_kwd_whitespace__"));
-        assert!(fulltext.iter().any(|index| index == "ft_tag_feas_rankfeatures"));
+        assert!(
+            fulltext
+                .iter()
+                .any(|index| index == "ft_tag_kwd_whitespace__")
+        );
+        assert!(
+            fulltext
+                .iter()
+                .any(|index| index == "ft_tag_feas_rankfeatures")
+        );
         assert_eq!(
             secondary_indexes(),
             vec!["sec_kb_id".to_owned(), "sec_available_int".to_owned()]
@@ -1056,10 +1094,7 @@ mod tests {
 
     #[test]
     fn empty_condition_renders_tautology() {
-        assert_eq!(
-            equivalent_condition_to_str(&condition(&[])).unwrap(),
-            "1=1"
-        );
+        assert_eq!(equivalent_condition_to_str(&condition(&[])).unwrap(), "1=1");
     }
 
     #[test]
@@ -1072,17 +1107,11 @@ mod tests {
         };
         let mut rows = vec![row("b", 2), row("a", 1), row("c", 3)];
         sort_rows(&mut rows, &OrderByExpr::default().asc("rank_int"));
-        let ids: Vec<&str> = rows
-            .iter()
-            .map(|row| row["id"].as_str().unwrap())
-            .collect();
+        let ids: Vec<&str> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
         assert_eq!(ids, vec!["a", "b", "c"]);
 
         sort_rows(&mut rows, &OrderByExpr::default().desc("rank_int"));
-        let ids: Vec<&str> = rows
-            .iter()
-            .map(|row| row["id"].as_str().unwrap())
-            .collect();
+        let ids: Vec<&str> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
         assert_eq!(ids, vec!["c", "b", "a"]);
     }
 
