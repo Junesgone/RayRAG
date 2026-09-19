@@ -1,0 +1,22 @@
+{
+  "f5e94d51-1fb2-4c39-9f73-71bbe5945cbe": {
+    "id": "f5e94d51-1fb2-4c39-9f73-71bbe5945cbe",
+    "name": "gl2",
+    "type": "gitlab",
+    "url": "https://gitlab.com",
+    "token": "t",
+    "target": "1",
+    "include_issues": false,
+    "include_merge_requests": false,
+    "max_items": 3,
+    "created_at": "2026-08-04T23:28:31.752155656+00:00",
+    "connected": false,
+    "sync_deleted_files": false,
+    "prune_freq": null,
+    "refresh_freq": null,
+    "timeout_secs": null,
+    "status": "running",
+    "extra": {},
+    "sync_logs": []
+  }
+}
