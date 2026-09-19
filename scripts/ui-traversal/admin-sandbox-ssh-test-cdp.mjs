@@ -18,6 +18,8 @@ const ORIGIN = process.env.RAYRAG_CDP_ORIGIN || "http://127.0.0.1:9390";
 const PASSWORD = process.env.RAYRAG_LOGIN_PASSWORD;
 const KEY_PATH = process.env.RAYRAG_SSH_PROBE_KEY || "/tmp/rr-sshd/client";
 const SSH_PORT = Number(process.env.RAYRAG_SSH_PROBE_PORT || 2323);
+// Inside the container the probe sshd is reached through the docker bridge.
+const SSH_HOST = process.env.RAYRAG_SSH_PROBE_HOST || "127.0.0.1";
 const SSH_USER = process.env.RAYRAG_SSH_PROBE_USER;
 if (!PASSWORD || !SSH_USER) {
   console.error("RAYRAG_LOGIN_PASSWORD and RAYRAG_SSH_PROBE_USER are required");
@@ -128,7 +130,7 @@ try {
   const fill = async (field, value) => {
     await page.locator(`#sbFields #${field}`).first().fill(String(value));
   };
-  await fill("host", "127.0.0.1");
+  await fill("host", SSH_HOST);
   await fill("port", SSH_PORT);
   await fill("username", SSH_USER);
   await fill("private_key", PRIVATE_KEY);
@@ -145,7 +147,13 @@ try {
   // Real click on Test: this must run python on the remote host.
   await page.click("[data-testid='admin-sandbox-test']");
   await page.waitForSelector("[data-testid='admin-sandbox-test-modal']", { timeout: 45000 });
-  await page.waitForTimeout(1200);
+  // The first SSH connection can take a while (key exchange, interpreter start), so
+  // the result is polled instead of assumed.
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const text = await page.locator("[data-testid='admin-sandbox-test-modal']").innerText();
+    if (!/Testing/i.test(text)) break;
+    await page.waitForTimeout(1000);
+  }
   results.testModal = await page.locator("[data-testid='admin-sandbox-test-modal']").innerText();
   check(
     /PASSED/i.test(results.testModal),
@@ -168,7 +176,7 @@ try {
     body: JSON.stringify({
       provider_type: "ssh",
       config: {
-        host: "127.0.0.1",
+        host: SSH_HOST,
         port: SSH_PORT,
         username: SSH_USER,
         private_key: PRIVATE_KEY,
@@ -195,7 +203,7 @@ try {
     method: "POST",
     body: JSON.stringify({
       provider_type: "ssh",
-      config: { host: "127.0.0.1", port: SSH_PORT, username: SSH_USER },
+      config: { host: SSH_HOST, port: SSH_PORT, username: SSH_USER },
     }),
   });
   // Schema errors come back in the envelope itself (`{code, message}`), while a
