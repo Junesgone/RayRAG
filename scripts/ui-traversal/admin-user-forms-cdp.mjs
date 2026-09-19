@@ -53,10 +53,17 @@ page.on("request", (request) => {
 try {
   await ctx.addCookies([{ name: "lang", value: "en", domain: "127.0.0.1", path: "/" }]);
   await page.goto(ORIGIN + "/admin", { waitUntil: "domcontentloaded", timeout: 40000 });
-  await page.fill("#adminEmail", "admin@rayrag.local");
-  await page.fill("#adminPassword", PASSWORD);
-  await page.click("[data-testid='admin-login-submit']");
-  await page.waitForURL("**/admin/services", { timeout: 20000 });
+  // The browser context is shared between probe runs, so an earlier run may have
+  // left a valid console session behind and `/admin` lands on the table directly.
+  if (await page.locator("#adminEmail").count()) {
+    await page.fill("#adminEmail", "admin@rayrag.local");
+    await page.fill("#adminPassword", PASSWORD);
+    await page.click("[data-testid='admin-login-submit']");
+    await page.waitForURL("**/admin/services", { timeout: 20000 });
+  } else {
+    await page.goto(ORIGIN + "/admin/services", { waitUntil: "domcontentloaded", timeout: 40000 });
+    await page.waitForURL("**/admin/services", { timeout: 20000 });
+  }
 
   // --- Create-user form ---------------------------------------------------
   await page.click("a[href='/admin/users']");
@@ -88,7 +95,7 @@ try {
   check(
     JSON.stringify(results.create_fields.labels) ===
       JSON.stringify(["Email", "Password", "Confirm password", "Role"]),
-    "create_fields",
+    "create_field_labels",
     JSON.stringify(results.create_fields.labels),
   );
   // A fresh form never starts out red: the message slots collapse (`FormMessage`
@@ -208,18 +215,21 @@ try {
         .getAttribute("placeholder"),
     },
   };
+  const passwordEmail = results.password_fields.email;
+  const passwordReadonly = results.password_fields.emailReadonly;
   check(
     JSON.stringify(results.password_fields.labels) ===
       JSON.stringify(["Email", "New password", "Confirm new password"]),
-    "password_fields",
+    "password_field_labels",
     JSON.stringify(results.password_fields.labels),
   );
   check(
-    results.password_fields.email !== "" &&
-      targetRowText.includes(results.password_fields.email) &&
-      results.password_fields.emailReadonly !== null,
+    typeof passwordEmail === "string" &&
+      passwordEmail !== "" &&
+      targetRowText.includes(passwordEmail) &&
+      passwordReadonly !== null,
     "password_readonly_email",
-    `${results.password_fields.email} vs row ${targetRowText}`,
+    `${passwordEmail} (readonly=${passwordReadonly}) vs row ${targetRowText}`,
   );
   for (const slot of ["new-password", "new-password-confirm"]) {
     const shown = await page
