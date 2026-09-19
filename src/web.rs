@@ -32,6 +32,16 @@ fn t(k: &str, zh: bool) -> &str {
         // Upstream `components/ui/multi-select.tsx` internals: the
         // `CommandEmpty` copy and the select-all row.
         "No data found." => "没有找到数据。",
+        // Upstream `common.pleaseInput` / `chat.meta.auto`.
+        "Please input" => "请输入",
+        "Automatic" => "自动",
+        "Meta data" => "元数据",
+        "Disabled" => "禁用",
+        "Manual" => "手动",
+        "Semi-automatic" => "半自动",
+        "Conditions" => "条件",
+        "Add condition" => "添加条件",
+        "Filterable items" => "可选过滤项",
         // Upstream `knowledgeConfiguration.permissionsTip`.
         "If it is set to 'Team', all your team members will be able to manage the dataset." => {
             "如果把知识库权限设为“团队”，则所有团队成员都可以操作该知识库。"
@@ -2277,11 +2287,33 @@ pub async fn dataset_page(
     b.push_str(t("Setting", zh));
     b.push_str("</h3><label style='font-size:12px'>");
     b.push_str(t("Question", zh));
-    b.push_str("</label><input id='testQ' placeholder='");
+    b.push_str(
+        "</label><textarea id='testQ' rows='3' data-testid='testing-question' placeholder='",
+    );
     b.push_str(t("Input your question here!", zh));
-    b.push_str("'><label style='font-size:12px;margin-top:8px;display:block'>");
-    b.push_str(t("Top-K", zh));
-    b.push_str("</label><select id='testK'><option>5</option><option selected>10</option><option>20</option></select><label style='font-size:12px;margin-top:8px;display:block'>");
+    b.push_str("' oninput=\"testRunState()\"></textarea><label style='font-size:12px;margin-top:8px;display:block'>");
+    // Upstream `TopSelectFormItem` (`knowledgeConfiguration.top`): a
+    // `SelectWithSearch` over `common.top` — "Top 10/20/50/100" — bound to `size`.
+    b.push_str(t("Top", zh));
+    b.push_str("</label>");
+    let size_options: Vec<(String, String)> = [10, 20, 50, 100]
+        .iter()
+        .map(|value| (value.to_string(), format!("{} {}", t("Top", zh), value)))
+        .collect();
+    push_select_with_search(
+        &mut b,
+        "testK",
+        &size_options
+            .iter()
+            .map(|(value, label)| (value.as_str(), label.as_str()))
+            .collect::<Vec<_>>(),
+        "10",
+        "test-size-select",
+        t("Top", zh),
+        None,
+        t("No data found.", zh),
+    );
+    b.push_str("<label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Similarity Threshold", zh));
     b.push_str(": <span id='testTV' class='co'>0.2</span></label><input type='range' id='testT' min='0' max='1' step='0.05' value='0.2' style='width:100%' oninput='document.getElementById(\\\"testTV\\\").textContent=this.value'><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Vector Weight", zh));
@@ -2293,6 +2325,21 @@ pub async fn dataset_page(
     b.push_str(&html_escape(if zh { RERANK_TIP_ZH } else { RERANK_TIP_EN }));
     b.push_str("'>?</span></label>");
     push_default_model_selector(&mut b, &TEST_RERANK_SELECTOR_FIELD, zh);
+    // Upstream `RerankFormFields` only renders the `top_k` slider once a rerank
+    // model is selected (`SliderInputFormField`, min 1, max 2048, `topKTip`).
+    b.push_str("<div id='testTopKRow' hidden style='margin-top:8px'><label style='font-size:12px;display:block'>");
+    b.push_str(t("Top-K", zh));
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    b.push_str(&html_escape(t(
+        "Used together with the Rerank model, this setting defines the number of text chunks to be sent to the specified reranking model.",
+        zh,
+    )));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(t(
+        "Used together with the Rerank model, this setting defines the number of text chunks to be sent to the specified reranking model.",
+        zh,
+    )));
+    b.push_str("'>?</span>: <span class='co' id='testTopKV'>1024</span></label><div style='display:flex;align-items:center;gap:8px'><input type='range' id='testTopK' min='1' max='2048' value='1024' style='flex:1' oninput=\"document.getElementById('testTopKV').textContent=this.value;document.getElementById('testTopKNum').value=this.value\" data-testid='testing-rerank-top-k'><input type='number' id='testTopKNum' min='1' max='2048' value='1024' style='width:88px' oninput=\"document.getElementById('testTopK').value=this.value;document.getElementById('testTopKV').textContent=this.value\"></div></div>");
     // Upstream `testing-form.tsx` also carries UseKnowledgeGraphFormField and
     // CrossLanguageFormField before the submit button.
     b.push_str("<label class='set-switch' style='font-size:12px;margin-top:10px;display:flex'><input type='checkbox' id='testUseKg'> <span>");
@@ -2300,8 +2347,48 @@ pub async fn dataset_page(
     b.push_str("</span></label><label style='font-size:12px;margin-top:8px;display:block'>");
     b.push_str(t("Cross-language search", zh));
     b.push_str("</label><select id='testCrossLangs' multiple size='4' style='width:100%'><option value='English'>English</option><option value='Chinese'>Chinese</option><option value='Japanese'>Japanese</option><option value='Korean'>Korean</option><option value='French'>French</option><option value='German'>German</option><option value='Spanish'>Spanish</option><option value='Russian'>Russian</option></select>");
+    // Upstream `MetadataFilter` (`chat.metadata` + `chat.metadataTip`): the
+    // `SelectWithSearch` over `DatasetMetadata`, then the manual condition rows
+    // or the semi-automatic key/operator rows, both rendered only when that
+    // method is picked and at least one dataset is in the form.
+    b.push_str("<label style='font-size:12px;margin-top:8px;display:block'>");
+    b.push_str(t("Meta data", zh));
+    b.push_str(" <span class='tip' tabindex='0' aria-label='");
+    let metadata_tip = t(
+        "Metadata filtering is the process of using metadata attributes (such as tags, categories, or access permissions) to refine and control the retrieval of relevant information within a system.",
+        zh,
+    );
+    b.push_str(&html_escape(metadata_tip));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(metadata_tip));
+    b.push_str("'>?</span></label>");
+    let metadata_options = [
+        ("disabled", t("Disabled", zh)),
+        ("auto", t("Automatic", zh)),
+        ("manual", t("Manual", zh)),
+        ("semi_auto", t("Semi-automatic", zh)),
+    ];
+    push_select_with_search(
+        &mut b,
+        "testMeta",
+        &metadata_options,
+        "disabled",
+        "test-metadata-select",
+        t("Meta data", zh),
+        None,
+        t("No data found.", zh),
+    );
+    b.push_str("<div id='testMetaManual' hidden style='margin-top:8px'><label style='font-size:12px;display:block'>");
+    b.push_str(t("Conditions", zh));
+    b.push_str("</label><div style='display:flex;align-items:center;gap:8px'><select id='testMetaLogic' style='max-width:120px'><option value='and'>AND</option><option value='or'>OR</option></select><button type='button' class='btn btn-o' data-testid='testing-metadata-add' onclick='testMetaAddRow()'>");
+    b.push_str(t("Add condition", zh));
+    b.push_str("</button></div><div id='testMetaRows' data-testid='testing-metadata-rows'></div></div><div id='testMetaSemi' hidden style='margin-top:8px'><div style='display:flex;align-items:center;justify-content:space-between;gap:8px'><label style='font-size:12px'>");
+    b.push_str(t("Filterable items", zh));
+    b.push_str("</label><button type='button' class='btn btn-o' data-testid='testing-metadata-semi-add' onclick='testMetaSemiAddRow()'>");
+    b.push_str(t("Add", zh));
+    b.push_str("</button></div><div id='testMetaSemiRows' data-testid='testing-metadata-semi-rows'></div></div>");
     b.push_str(
-        "<button class='btn btn-p' style='margin-top:12px;width:100%' onclick='testSearch()'>",
+        "<button class='btn btn-p' style='margin-top:12px;width:100%' id='testRun' data-testid='testing-run' disabled onclick='testSearch()'>",
     );
     b.push_str(t("Run", zh));
     b.push_str("</button></div><div><h3>");
@@ -2553,6 +2640,11 @@ pub async fn dataset_page(
     ]);
     b.push_str("<script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&embd_fields_payload));
+    b.push_str(";var SEARCH_TEST_PLEASE_INPUT=");
+    b.push_str(&json_script_string(t("Please input", zh)));
+    b.push_str(";var SEARCH_TEST_AUTO=");
+    b.push_str(&json_script_string(t("Automatic", zh)));
+    b.push_str(";");
     b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
     b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;var typeMap={embd_id:'embedding'};var persistType=typeMap[type];if(!persistType){renderDefaultModelTrigger(field);return}state.pending=true;fetch('/api/v1/models/default',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_type:persistType,model_provider:parsed.model_provider,model_instance:parsed.model_instance,model_name:parsed.model_name})}).then(function(response){return response.json()}).then(function(data){state.pending=false;if(data&&data.code===0){renderDefaultModelTrigger(field)}else{trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)}}).catch(function(){state.pending=false;trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)})}async function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}loadKbModelCatalog();var avatarDataUrl='';
@@ -2601,7 +2693,22 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function clearAll(){if(!confirm('Delete ALL documents in this dataset?'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];if(!docs.length){loadDocs();return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()})}next()})};");
     b.push_str("function updateOverview(docs){var done=0,run=0,fail=0,other=0;docs.forEach(function(x){if(x.run==='DONE')done++;else if(x.run==='RUNNING'||x.run==='UNSTARTED')run++;else if(x.run==='FAILED')fail++;else other++});var total=docs.length||1;function set(id,bar,v){var e=document.getElementById(id);if(e)e.textContent=v;var b=document.getElementById(bar);if(b)b.style.width=Math.round(v/total*100)+'%'};set('ovDone','ovDoneBar',done);set('ovRun','ovRunBar',run);set('ovFail','ovFailBar',fail);var act=document.getElementById('actList');if(act){var h='';docs.slice(0,10).forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td>'+badge(x.run)+'</td><td>'+(x.chunk_count||0)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(x.updated_at)+'</td></tr>'});act.innerHTML=h||'<tr><td colspan=4 style=color:var(--tm);text-align:center>暂无活动</td></tr>'}};");
-    b.push_str("function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('testK').value,10);var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId)body.rerank_id=rerankingId;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
+    b.push_str("// Upstream `TestingForm` helpers: the operator set (`SwitchOperatorOptions`),
+// the request body the form watches, the conditional rerank `top_k`, the manual
+// condition rows and the semi-automatic key rows.
+var SEARCH_TEST_LABELS={pleaseInput:SEARCH_TEST_PLEASE_INPUT,auto:SEARCH_TEST_AUTO};
+var TEST_OPERATORS=['=','≠','>','≥','<','≤','contains','not contains','start with','end with','empty','not empty','in','not in'];
+var TEST_META_KEYS=[];
+function testRunState(){var run=document.getElementById('testRun');var q=document.getElementById('testQ');if(run)run.disabled=!String(q&&q.value||'').trim()}
+function testOperatorSelect(value,onchange){var select=document.createElement('select');select.className='test-meta-op';TEST_OPERATORS.forEach(function(op){var option=document.createElement('option');option.value=op;option.textContent=op;option.selected=op===value;select.appendChild(option)});select.onchange=function(){if(onchange)onchange(select.value)};return select}
+function testMetaChange(value){var manual=document.getElementById('testMetaManual');var semi=document.getElementById('testMetaSemi');if(manual)manual.hidden=value!=='manual';if(semi)semi.hidden=value!=='semi_auto';if(value==='semi_auto')testMetaLoadKeys()}
+function testMetaLoadKeys(){if(!kbId)return Promise.resolve([]);return fetch('/api/v1/datasets/metadata/flattened?kb_id='+encodeURIComponent(kbId)).then(function(response){return response.json()}).then(function(data){var rows=(data&&data.data)||[];TEST_META_KEYS=rows.map(function(row){return row.key||row.name||''}).filter(Boolean);return TEST_META_KEYS}).catch(function(){return TEST_META_KEYS})}
+function testMetaAddRow(){var host=document.getElementById('testMetaRows');if(!host)return;var row=document.createElement('div');row.className='test-meta-row';row.setAttribute('data-testid','testing-metadata-row');var key=document.createElement('input');key.className='test-meta-key';key.placeholder=SEARCH_TEST_LABELS.pleaseInput;var op=testOperatorSelect('=',null);var value=document.createElement('input');value.className='test-meta-value';value.placeholder=SEARCH_TEST_LABELS.pleaseInput;var remove=document.createElement('button');remove.type='button';remove.className='test-meta-remove';remove.setAttribute('aria-label','Remove');remove.textContent='✕';remove.onclick=function(){row.remove()};row.appendChild(key);row.appendChild(op);row.appendChild(value);row.appendChild(remove);host.appendChild(row)}
+function testMetaSemiAddRow(){testMetaLoadKeys().then(function(keys){var host=document.getElementById('testMetaSemiRows');if(!host)return;var row=document.createElement('div');row.className='test-meta-row';row.setAttribute('data-testid','testing-metadata-semi-row');var options=keys.length?keys.map(function(key){return [key,key]}).concat([['auto',SEARCH_TEST_LABELS.auto]]):[['auto',SEARCH_TEST_LABELS.auto]];var picker=document.createElement('select');picker.className='test-meta-key';options.forEach(function(pair){var option=document.createElement('option');option.value=pair[0];option.textContent=pair[1];picker.appendChild(option)});var op=testOperatorSelect('',null);var remove=document.createElement('button');remove.type='button';remove.className='test-meta-remove';remove.setAttribute('aria-label','Remove');remove.textContent='✕';remove.onclick=function(){row.remove()};row.appendChild(picker);row.appendChild(op);row.appendChild(remove);host.appendChild(row)})}
+function testMetaPayload(){var trigger=document.getElementById('testMeta');var method=trigger&&trigger.dataset.value?trigger.dataset.value:'disabled';if(method==='disabled')return null;if(method==='manual'){var rows=[];Array.prototype.forEach.call(document.querySelectorAll('#testMetaRows .test-meta-row'),function(row){var key=(row.querySelector('.test-meta-key')||{}).value||'';var op=(row.querySelector('.test-meta-op')||{}).value||'';var value=(row.querySelector('.test-meta-value')||{}).value||'';if(key.trim())rows.push({key:key.trim(),op:op,value:value})});var logic=document.getElementById('testMetaLogic');return {method:'manual',logic:(logic&&logic.value)||'and',manual:rows}}var semi=[];Array.prototype.forEach.call(document.querySelectorAll('#testMetaSemiRows .test-meta-row'),function(row){var key=(row.querySelector('.test-meta-key')||{}).value||'';var op=(row.querySelector('.test-meta-op')||{}).value||'';if(key) semi.push({key:key,op:op})});return {method:'semi_auto',semi_auto:semi}}
+(function testMetaWatch(){var trigger=document.getElementById('testMeta');if(!trigger||!window.MutationObserver)return;var sync=function(){testMetaChange(trigger.dataset.value||'disabled')};new MutationObserver(sync).observe(trigger,{attributes:true,attributeFilter:['data-value']});sync()})();
+(function testRerankTopKWatch(){var trigger=document.getElementById('testRerankingSel');if(!trigger||!window.MutationObserver)return;var sync=function(){var row=document.getElementById('testTopKRow');var selected=!!(trigger.dataset.value||'');if(row)row.hidden=!selected};new MutationObserver(sync).observe(trigger,{attributes:true,attributeFilter:['data-value']});sync()})();
+function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert('请输入测试问题');return}var sizeSel=document.getElementById('testK');var size=parseInt((sizeSel&&sizeSel.dataset.value)||'10',10)||10;var k=size;var t=parseFloat(document.getElementById('testT').value);var w=parseFloat(document.getElementById('testW').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,size:size,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId){body.rerank_id=rerankingId;var topK=document.getElementById('testTopK');var topKValue=topK?parseInt(topK.value,10):NaN;if(!isNaN(topKValue)&&topKValue>0)body.top_k=topKValue}var metaFilter=testMetaPayload();if(metaFilter)body.meta_data_filter=metaFilter;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testResults').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>📄 '+(c.doc_name||'')+'</div></div>'});document.getElementById('testResults').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testResults').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     // Upstream `SelectWithSearch`: `showSearch` is true past five options, the
     // filter keeps any option whose value contains the query (cmdk's `filterFn`
@@ -9002,6 +9109,92 @@ connection: close
     /// in the card footer through `RAGFlowPagination` (total + page size
     /// 10/20/50/100). Sorting stays disabled upstream (`enableSorting: false`),
     /// as does polling (`useQuery` without `refetchInterval`).
+    /// Upstream `pages/dataset/testing/testing-form.tsx`: the retrieval-testing
+    /// panel renders the `TopSelectFormItem` size picker, the conditional rerank
+    /// `top_k` slider, the `UseKnowledgeGraphFormField` / `CrossLanguageFormField`
+    /// pair, the `MetadataFilter` block (method picker + manual condition rows +
+    /// semi-automatic key rows) and the footer question textarea with the Run
+    /// button that stays disabled until the question is non-empty.
+    #[tokio::test]
+    async fn retrieval_testing_form_matches_the_upstream_composition() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Testing KB", "d").unwrap();
+        let html = body_of(
+            dataset_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/retrieval/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='testing-question'",
+            "data-testid='testing-run'",
+            "id='testRun'",
+            "data-testid='test-size-select'",
+            "id='testTopKRow'",
+            "data-testid='testing-rerank-top-k'",
+            "id='testTopKNum'",
+            "id='testMetaManual'",
+            "id='testMetaSemi'",
+            "data-testid='test-metadata-select'",
+            "data-testid='testing-metadata-add'",
+            "data-testid='testing-metadata-semi-add'",
+            "var TEST_OPERATORS=['=','≠','>','≥','<','≤','contains','not contains','start with','end with','empty','not empty','in','not in']",
+            "function testMetaChange(value)",
+            "function testMetaPayload()",
+            "function testMetaLoadKeys()",
+            "function testRunState()",
+            "function testOperatorSelect(value,onchange)",
+            "top_k:k,size:size",
+            "body.top_k=topKValue",
+            "body.meta_data_filter=metaFilter",
+            "datasets/metadata/flattened",
+            "Meta data",
+            "Conditions",
+            "Filterable items",
+            "test-meta-row",
+            "test-meta-op",
+        ] {
+            assert!(
+                html.contains(marker),
+                "testing form marker missing: {marker}"
+            );
+        }
+        assert!(
+            html.contains("disabled onclick='testSearch()'"),
+            "the Run button starts disabled, like the upstream ButtonLoading"
+        );
+        // zh copy for the new blocks.
+        let zh_state = test_state();
+        let zh_kb = zh_state
+            .1
+            .kbs
+            .create_for("u1", "Testing KB zh", "d")
+            .unwrap();
+        let zh = body_of(
+            dataset_page(
+                State(zh_state.1),
+                Path(zh_kb.id),
+                Request::builder()
+                    .uri("/dataset/retrieval/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in ["元数据", "条件", "可选过滤项", "添加条件", "半自动"] {
+            assert!(zh.contains(marker), "zh testing copy missing: {marker}");
+        }
+    }
+
     /// Upstream `hooks/auth-hooks.ts::useOAuthCallback`: the shared page shell
     /// consumes `?auth=` (store the session, drop the parameter) and `?error=`
     /// (show the provider message in a toast, then bounce to `/login`).

@@ -428,3 +428,10 @@ tr:hover .admin-row-actions,tr:focus-within .admin-row-actions{opacity:1}
 /* Upstream `hooks/auth-hooks.ts::useOAuthCallback` surfaces the provider error through a toast before bouncing to `/login`. */
 .oauth-toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:2000;max-width:min(560px,90vw);padding:12px 18px;border:1px solid rgba(220,80,80,.5);border-radius:var(--r);background:var(--bgm);box-shadow:var(--shl);color:var(--d);font-size:13px;word-break:break-word}
 .oauth-toast[hidden]{display:none!important}
+/* Upstream `components/metadata-filter/metadata-filter-conditions.tsx`: condition rows with a key input, the operator select and the value input, plus the add/remove affordances. */
+.test-meta-row{display:flex;align-items:center;gap:6px;margin-top:6px}
+.test-meta-key{flex:2;min-width:0}
+.test-meta-op{flex:0 0 116px}
+.test-meta-value{flex:2;min-width:0}
+.test-meta-remove{flex:0 0 auto;padding:2px 8px;border:0;border-radius:4px;background:transparent;color:var(--tm);cursor:pointer}
+.test-meta-remove:hover{background:var(--bgch);color:var(--t)}

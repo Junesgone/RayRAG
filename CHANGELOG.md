@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.22] — 2026-09-20（对标批次 v0.3.7z）
+
+### Added
+
+- **检索测试表单补齐上游 `TestingForm` 的其余字段**（`pages/dataset/testing/testing-form.tsx`）：
+  - 问题输入改为上游的 **textarea**，底部 Run 按钮按上游 `ButtonLoading` 的语义**未填问题即禁用**（`data-testid='testing-run'`）。
+  - `TopSelectFormItem`：`knowledgeConfiguration.top` 标签 + `common.top` 选项（Top 10/20/50/100）的
+    `SelectWithSearch`（复用共享组件，`data-testid='test-size-select'`），作为请求的 `size`。
+  - `RerankFormFields` 的**条件 top-K 滑块**：选中 rerank 模型后才出现（`knowledgeDetails.topK` + `topKTip`，
+    1–2048 的滑块与数字输入同步），选中时请求体带 `top_k`。
+  - `MetadataFilter`：`chat.metadata` + `chat.metadataTip` 的方法选择器（Disabled / Automatic / Manual / Semi-automatic）；
+    选 Manual 显示 `chat.conditions` 条件行（键输入 + `SwitchOperatorOptions` 的 14 个操作符 + 值输入 + AND/OR 逻辑 + 添加/删除），
+    选 Semi-automatic 显示 `chat.metadataKeys`（可选过滤项，键选项来自 `GET /api/v1/datasets/metadata/flattened`）+ 操作符行；
+    运行时按选择拼装并发送 `meta_data_filter`。
+  - **已知后端限制**：上游 semi-auto 需要 LLM 生成过滤键，RayRAG 的检索接口目前只接受 `manual`（返回明确错误），台账已记录。
+
 ## [0.4.21] — 2026-09-20（对标批次 v0.3.7y）
 
 ### Changed
