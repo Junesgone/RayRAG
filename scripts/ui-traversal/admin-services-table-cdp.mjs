@@ -75,6 +75,40 @@ try {
   await page.waitForTimeout(250);
   results.pageSize = { rows: (await rows()).length, pager: await pager() };
   await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/admin-services-20260821.png" });
+  // Extra-info dialog: the payload renders as a JsonView-style typed tree.
+  await page.click("button:has-text('Show details')");
+  await page.waitForSelector(".json-tree-list", { timeout: 10000 });
+  results.details = await page.evaluate(() => {
+    const dialog = document.getElementById("adminServiceDialog");
+    const toggles = Array.from(dialog.querySelectorAll(".json-tree-toggle"));
+    return {
+      title: document.getElementById("adminServiceName").textContent,
+      nodeCount: dialog.querySelectorAll(".json-tree-node").length,
+      firstToggle: toggles.length ? toggles[0].textContent : null,
+      keys: Array.from(dialog.querySelectorAll(".json-tree-key"))
+        .slice(0, 4)
+        .map((node) => node.textContent),
+      valueClasses: Array.from(
+        new Set(
+          Array.from(dialog.querySelectorAll(".json-tree-value")).map((node) =>
+            Array.from(node.classList).find((name) => name.startsWith("json-tree-") && name !== "json-tree-value"),
+          ),
+        ),
+      ),
+      rawJsonLeaked: dialog.textContent.includes('{"'),
+    };
+  });
+  // A toggle collapses its child list for real.
+  await page.click(".json-tree-toggle");
+  await page.waitForTimeout(150);
+  results.collapsed = await page.evaluate(() => {
+    const toggle = document.querySelector(".json-tree-toggle");
+    return {
+      expanded: toggle.getAttribute("aria-expanded"),
+      listHidden: toggle.parentElement.querySelector(".json-tree-list").hidden,
+    };
+  });
+  await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/admin-service-details-20260821.png" });
 } catch (error) {
   results.errors.push(String(error && error.stack ? error.stack : error));
 } finally {
