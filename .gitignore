@@ -1,0 +1,15 @@
+/target/
+Cargo.lock
+.idea/
+*.swp
+*.swo
+.DS_Store
+models/*.safetensors
+.env
+data/
+!src/data/
+!src/data/providers/
+!src/data/providers/llm_factories.json
+zvec-data/
+*.index.json
+logs/
