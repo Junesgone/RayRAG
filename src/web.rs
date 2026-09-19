@@ -9490,6 +9490,15 @@ connection: close
         for rule in [
             ".admin-row-icon-danger{color:var(--d)}",
             ".admin-row-icon-danger:hover{background:color-mix(in srgb,var(--d) 10%,transparent);color:var(--d)}",
+            // `components/ui/table.tsx` grain: `h-14 px-4` heads with `pl-6`/`pr-6`
+            // edges, `px-4 py-3` cells, `border-b-0.5` rows that hover to `bg-card`
+            // — and no uppercase transform, which the global `th` rule would impose.
+            ".admin-table th,.admin-table td{padding:12px 16px;text-align:left;font-weight:400;vertical-align:middle}",
+            ".admin-table th{height:56px;padding-top:0;padding-bottom:0;border-bottom:0.5px solid var(--bd);background:var(--bgc);color:var(--t2);text-transform:none;letter-spacing:normal;position:sticky;top:0;z-index:10}",
+            ".admin-table th:first-child,.admin-table td:first-child{padding-left:24px}",
+            ".admin-table th:last-child,.admin-table td:last-child{padding-right:24px}",
+            ".admin-table tbody tr{border-bottom:0.5px solid var(--bd);transition:background-color .15s}",
+            ".admin-table tbody tr:hover{background:var(--bgc)}",
         ] {
             assert!(css.contains(rule), "user table css missing: {rule}");
         }

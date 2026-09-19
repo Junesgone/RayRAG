@@ -20,6 +20,9 @@ All notable changes to RayRAG are documented in this file.
     `rounded-lg mt-6 p-4 border-0.5` 的边框盒里，确认按钮保持危险色。
   - 新增 lucide `UserLock` / `Trash2` 图标常量与 `.admin-row-icon-danger`
     （`color:var(--d)` + `hover:bg-state-error/10`）。
+  - 管理后台表格版式回到上游 `components/ui/table.tsx` 的粒度：表头 `h-14 px-4`（首列 `pl-6`、
+    末列 `pr-6`）、字重 normal、**取消全局 `th` 的大写与字距**，单元格 `px-4 py-3`、
+    行分隔 `border-b-0.5`、行悬停 `bg-card`（三个管理后台表格共用同一套上游原子组件）。
 
 ## [0.4.24] — 2026-09-20（对标批次 v0.3.8b）
 

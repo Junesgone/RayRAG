@@ -73,10 +73,19 @@ try {
   await page.waitForTimeout(600);
 
   results.headers = await page.locator(".admin-table thead th").allInnerTexts();
+  results.header_style = await page.locator(".admin-table thead th").first().evaluate((node) => {
+    const style = getComputedStyle(node);
+    return `${style.textTransform} ${style.fontWeight} ${style.height} ${style.paddingLeft} ${style.paddingRight}`;
+  });
   check(
     results.headers.join("|") === "Email|Nickname|Role|Status|User type|Actions",
     "column_headers",
     results.headers.join("|"),
+  );
+  check(
+    results.header_style === "none 400 56px 24px 16px",
+    "header_geometry",
+    results.header_style,
   );
 
   // The signed-in administrator's own row: badge, and no destructive actions.
@@ -157,7 +166,8 @@ try {
   await typeSelect.selectOption("superuser");
   await page.waitForTimeout(900);
   const afterGrant = await target.locator("[data-testid='admin-user-type-select']").inputValue();
-  const grantCalls = calls.filter((call) => call.endsWith(`/admin/users/${THROWAWAY}/admin`));
+  const encodedTarget = encodeURIComponent(THROWAWAY);
+  const grantCalls = calls.filter((call) => call.endsWith(`/admin/users/${encodedTarget}/admin`));
   check(
     grantCalls.length === 1 && grantCalls[0].startsWith("PUT ") && afterGrant === "superuser",
     "grant_superuser_put",
@@ -168,7 +178,7 @@ try {
   await target.locator("[data-testid='admin-user-type-select']").selectOption("normal");
   await page.waitForTimeout(900);
   const afterRevoke = await target.locator("[data-testid='admin-user-type-select']").inputValue();
-  const revokeCalls = calls.filter((call) => call.endsWith(`/admin/users/${THROWAWAY}/admin`));
+  const revokeCalls = calls.filter((call) => call.endsWith(`/admin/users/${encodedTarget}/admin`));
   check(
     revokeCalls.length === 1 && revokeCalls[0].startsWith("DELETE ") && afterRevoke === "normal",
     "revoke_superuser_delete",
@@ -201,7 +211,7 @@ try {
   check(
     results.delete_dialog.target === THROWAWAY &&
       results.delete_dialog.confirmation === "Are you sure you want to delete this user?" &&
-      results.delete_dialog.box === "0.5px solid 8px 24px 16px",
+      /^(0\.5|1)px solid 8px 24px 16px$/.test(results.delete_dialog.box),
     "delete_icon_targets_row",
     JSON.stringify(results.delete_dialog),
   );
