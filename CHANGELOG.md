@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.11] — 2026-09-20（对标批次 v0.3.7o）
+
+### Fixed
+
+- **数据集配置的语言选项与上游 `LanguageList` 逐项一致**：删除了 RayRAG 自行添加的 `Korean / 한국어`
+  （上游 `constants/common.ts::LanguageList` 只有 16 项，且没有韩语），顺序与显示名（`LanguageMap`：
+  简体中文 / Русский / Bahasa Indonesia /Tiếng việt / 日本語 / Português BR / Deutsch / Français /
+  Italiano / Български /العربية / Türkçe / Nederlands）保持上游原样，新增回归测试锁定值与顺序。
+
 ## [0.4.10] — 2026-09-20（对标批次 v0.3.7n）
 
 ### Fixed

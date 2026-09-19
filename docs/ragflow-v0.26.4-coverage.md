@@ -23,6 +23,8 @@
 | reference | 3377 | 875788 |
 | unmapped | 0 | 0 |
 
+> v0.3.7o / RayRAG 0.4.11（2026-08-20）`dataset-setting/configuration/common-item.tsx` 语言字段：按上游 `constants/common.ts::LanguageList`（16 项）+ `LanguageMap` 显示名逐项核对，删除 RayRAG 多出的 `Korean/한국어`，值/顺序/标签全部对齐并加回归测试；可搜索控件（上游 `SelectWithSearch`）仍是残留。
+>
 > v0.3.7k / RayRAG 0.4.7（2026-08-21）`admin/users.tsx` 状态列复刻（本人徽章 / 他人下拉即存），并撤回「Excel 导入弹层」（上游无此实现）与「行内角色编辑」（企业版专属）。
 >
 > v0.3.7j / RayRAG 0.4.6（2026-08-21）`admin/users.tsx`（812 行）复核：补上全局搜索、可排序列头（上游本页未禁用排序）与页脚分页，`Reset` 一并清空搜索与排序；残留收敛为 Excel 导入弹层与行内角色编辑。

@@ -1997,7 +1997,7 @@ pub async fn dataset_page(
     b.push_str("</td><td><input id='cfgName' style='max-width:280px'></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Language", zh));
-    b.push_str("</td><td><select id='cfgLang' data-testid='ds-settings-basic-language-select' style='max-width:280px'><option value='English' selected>English</option><option value='Chinese'>简体中文</option><option value='Traditional Chinese'>繁體中文</option><option value='Russian'>Русский</option><option value='Indonesian'>Bahasa Indonesia</option><option value='Spanish'>Español</option><option value='Vietnamese'>Tiếng việt</option><option value='Japanese'>日本語</option><option value='Portuguese BR'>Português BR</option><option value='German'>Deutsch</option><option value='French'>Français</option><option value='Italian'>Italiano</option><option value='Bulgarian'>Български</option><option value='Arabic'>العربية</option><option value='Turkish'>Türkçe</option><option value='Korean'>한국어</option><option value='Dutch'>Nederlands</option></select></td></tr>");
+    b.push_str("</td><td><select id='cfgLang' data-testid='ds-settings-basic-language-select' style='max-width:280px'><option value='English' selected>English</option><option value='Chinese'>简体中文</option><option value='Traditional Chinese'>繁體中文</option><option value='Russian'>Русский</option><option value='Indonesian'>Bahasa Indonesia</option><option value='Spanish'>Español</option><option value='Vietnamese'>Tiếng việt</option><option value='Japanese'>日本語</option><option value='Portuguese BR'>Português BR</option><option value='German'>Deutsch</option><option value='French'>Français</option><option value='Italian'>Italiano</option><option value='Bulgarian'>Български</option><option value='Arabic'>العربية</option><option value='Turkish'>Türkçe</option><option value='Dutch'>Nederlands</option></select></td></tr>");
     // Avatar row: the `<tr><td>Avatar</td>` header was missing, so the file
     // picker fell into the Language row as an orphan cell.
     b.push_str("<tr><td>");
@@ -8482,6 +8482,75 @@ connection: close
         }
     }
 
+    /// Upstream `constants/common.ts::LanguageList` + `LanguageMap`: the dataset
+    /// configuration language field offers exactly these 16 values, in this
+    /// order, labelled with the map's display names (the list is `options` for
+    /// the shared `SelectWithSearch`, not a free-form input).
+    #[tokio::test]
+    async fn dataset_language_options_match_upstream_language_list() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Lang KB", "d").unwrap();
+        let body = body_of(
+            dataset_tab_page(
+                State(state),
+                Path((kb.id.clone(), "configuration".to_string())),
+                Request::builder().uri("/x").body(Body::empty()).unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let start = body.find("id='cfgLang'").expect("language select");
+        let end = body[start..].find("</select>").expect("select end") + start;
+        let select = &body[start..end];
+        let expected = [
+            "English",
+            "Chinese",
+            "Traditional Chinese",
+            "Russian",
+            "Indonesian",
+            "Spanish",
+            "Vietnamese",
+            "Japanese",
+            "Portuguese BR",
+            "German",
+            "French",
+            "Italian",
+            "Bulgarian",
+            "Arabic",
+            "Turkish",
+            "Dutch",
+        ];
+        let mut seen = Vec::new();
+        for chunk in select.split("<option value='").skip(1) {
+            let value = chunk.split('\'').next().unwrap_or_default();
+            seen.push(value.to_string());
+        }
+        assert_eq!(seen, expected, "language values drifted from LanguageList");
+        for label in [
+            "简体中文",
+            "繁體中文",
+            "Русский",
+            "Bahasa Indonesia",
+            "Español",
+            "Tiếng việt",
+            "日本語",
+            "Português BR",
+            "Deutsch",
+            "Français",
+            "Italiano",
+            "Български",
+            "العربية",
+            "Türkçe",
+            "Nederlands",
+        ] {
+            assert!(select.contains(label), "language label missing: {label}");
+        }
+        assert!(
+            !select.contains("한국어"),
+            "Korean is not part of upstream's LanguageList"
+        );
+    }
+
     /// Upstream `setting-model/index.tsx`: the page is a bordered rounded card
     /// split into a 3/5 column (Set default models + Added models) and a 2/5
     /// column (Available models), with the single `<Spotlight />` behind them.
@@ -10216,14 +10285,7 @@ connection: close
             name_at < lang_at && lang_at < avatar_at && avatar_at < desc_at && desc_at < perm_at,
             "basic fields must follow the upstream order name → language → avatar → description → permission"
         );
-        for language in [
-            "English",
-            "简体中文",
-            "繁體中文",
-            "日本語",
-            "한국어",
-            "Nederlands",
-        ] {
+        for language in ["English", "简体中文", "繁體中文", "日本語", "Nederlands"] {
             assert!(
                 html.contains(language),
                 "language option {language} missing"
