@@ -255,7 +255,8 @@ pub async fn get_chat_channel_runtime(
                 "session_id": null,
                 "last_snapshot_at": null
             }
-        })).into_response(),
+        }))
+        .into_response(),
         Some(_) => channel_error("Runtime snapshot is only available for WhatsApp."),
         None => channel_error(&format!("Can't find this chat channel! ({id})")),
     }

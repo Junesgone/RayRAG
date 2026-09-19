@@ -24,6 +24,7 @@ pub mod mcp_mgr;
 pub mod oauth_web;
 pub mod openai_proxy;
 pub mod runtime_config;
+pub mod sandbox_admin;
 pub mod search;
 pub mod searchapp_mgr;
 pub mod skill_index;

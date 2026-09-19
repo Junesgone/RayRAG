@@ -2,6 +2,30 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.14] — 2026-09-20（对标批次 v0.3.7r）
+
+### Added
+
+- **补齐上游的沙箱提供方管理接口与页面**：上游 `admin/server/routes.py` 的
+  `/api/v1/admin/sandbox/{providers,providers/{id}/schema,config,test}` 五个动作此前未实现（RayRAG 只有本机沙箱与
+  executor-manager 远程执行）。本轮按 `admin/server/services.py::SandboxMgr` 与 `agent/sandbox/providers/*.py`
+  逐字段落地：5 个提供方注册表（local / self_managed / ssh / aliyun_codeinterpreter / e2b，含名称、描述、
+  标签）与各自的配置 schema（字段名、标签、说明、默认值、最小/最大值、`secret`、`multiline`、只读部署项，
+  共 local 8 / ssh 14 / self_managed 9 / aliyun 6 / e2b 3 项）。配置持久化到系统设置
+  `sandbox.provider_type` 与 `sandbox.<provider>`（执行器读的就是这里），密钥沿用 `<redacted>` 哨兵：读接口不回显，
+  原样回传即保留原值。
+- **连接测试是真的跑代码**：`POST /sandbox/test` 使用上游同一段探针代码（打印 `2 + 2`、`json.dumps`、
+  `math.sqrt` 后输出 `TEST_PASSED`），local 走配置的 Python 解释器、self_managed 走 executor-manager 的
+  `GET /healthz` + `POST /run`，返回与上游相同的 `{success,message,details:{exit_code,execution_time,stdout,stderr}}`
+  与 `Test PASSED | Exit code: 0 | Execution time: …` 文案；ssh 只做 TCP 可达性检查并如实说明本构建不执行远程
+  SSH 代码；e2b / aliyun 明确报「本构建未实现该提供方执行」。**不做假成功**。
+- **`/admin/sandbox-settings` 页面结构对齐上游**：标题与描述、`Provider selection` 单选卡片网格（图标/名称/
+  描述/标签）、`{name} configuration` 卡片（Test connection + Save 配置按钮）、按 schema 生成的字段
+  （必填星号、说明、数值上下界、布尔开关、`multiline` 文本域、`secret` 密码框、只读项进
+  `Deployment Defaults` 折叠区；SSH 额外有 `Runtime Settings`／`Authentication`（Password / Private Key 切换）／
+  `Execution` 分组）以及 `Connection test result` 弹层（成功/失败摘要、退出码、耗时、stdout/stderr）。
+  RayRAG 原有的持久变量表保留为独立卡片。
+
 ## [0.4.13] — 2026-09-20（对标批次 v0.3.7q）
 
 ### Fixed

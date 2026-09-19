@@ -116,7 +116,7 @@ impl SandboxClient {
         Self::with_timeout(base_url, timeout_secs)
     }
 
-    fn with_timeout(base_url: &str, timeout_secs: u64) -> Self {
+    pub fn with_timeout(base_url: &str, timeout_secs: u64) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
@@ -456,11 +456,14 @@ pub fn process_result(result: &SandboxResult) -> Map<String, Value> {
     let has_artifacts = !result.artifacts.is_empty();
     let stdout_blank = result.stdout.trim().is_empty();
     if let Some(stderr) = &result.stderr
-        && !stderr.trim().is_empty() && !has_artifacts && stdout_blank {
-            outputs.insert("_ERROR".into(), Value::String(stderr.clone()));
-            outputs.insert("content".into(), Value::String(String::new()));
-            return outputs;
-        }
+        && !stderr.trim().is_empty()
+        && !has_artifacts
+        && stdout_blank
+    {
+        outputs.insert("_ERROR".into(), Value::String(stderr.clone()));
+        outputs.insert("content".into(), Value::String(String::new()));
+        return outputs;
+    }
 
     // 业务输出选择 + canonical 渲染
     let base_content = match &resolved {

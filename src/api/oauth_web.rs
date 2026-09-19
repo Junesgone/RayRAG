@@ -144,7 +144,13 @@ fn oauth_popup(
 }
 
 fn box_popup(flow_id: &str, success: bool, message: &str) -> Response {
-    oauth_popup(flow_id, success, message, "ragflow-box-oauth", "Box Authorization")
+    oauth_popup(
+        flow_id,
+        success,
+        message,
+        "ragflow-box-oauth",
+        "Box Authorization",
+    )
 }
 
 /// POST /api/v1/connectors/box/oauth/web/start
@@ -338,14 +344,16 @@ pub async fn google_oauth_start(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let source = params.get("type").cloned().unwrap_or_default();
     if source != "google-drive" && source != "gmail" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid Google OAuth type.".into(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "Invalid Google OAuth type.".into()));
     }
     let credentials = match &body.credentials {
         serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
-            .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid credentials JSON.".to_string()))?,
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "Invalid credentials JSON.".to_string(),
+                )
+            })?,
         other => other.clone(),
     };
     if credentials
@@ -402,7 +410,12 @@ pub async fn google_oauth_start(
     };
     google_registry()
         .write()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "flow lock poisoned".into()))?
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "flow lock poisoned".into(),
+            )
+        })?
         .flows
         .insert(flow_id.clone(), flow);
     Ok(Json(serde_json::json!({

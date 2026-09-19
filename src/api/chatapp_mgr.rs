@@ -7,9 +7,9 @@
 
 use anyhow::Result;
 use axum::Json;
-use axum::response::IntoResponse;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
@@ -280,15 +280,17 @@ pub async fn update_chat_app(
         }
     }
     if let Some(kb_ids) = body.kb_ids
-        && kb_ids != app.kb_ids {
-            app.kb_ids = kb_ids;
-            changed = true;
-        }
+        && kb_ids != app.kb_ids
+    {
+        app.kb_ids = kb_ids;
+        changed = true;
+    }
     if let Some(llm_id) = body.llm_id
-        && llm_id != app.llm_id {
-            app.llm_id = llm_id;
-            changed = true;
-        }
+        && llm_id != app.llm_id
+    {
+        app.llm_id = llm_id;
+        changed = true;
+    }
     if let Some(llm_setting) = body.llm_setting {
         app.llm_setting = Some(llm_setting);
         changed = true;
@@ -298,15 +300,17 @@ pub async fn update_chat_app(
         changed = true;
     }
     if let Some(rerank_id) = body.rerank_id
-        && rerank_id != app.rerank_id {
-            app.rerank_id = rerank_id;
-            changed = true;
-        }
+        && rerank_id != app.rerank_id
+    {
+        app.rerank_id = rerank_id;
+        changed = true;
+    }
     if let Some(top_k) = body.top_k
-        && Some(top_k) != app.top_k {
-            app.top_k = Some(top_k);
-            changed = true;
-        }
+        && Some(top_k) != app.top_k
+    {
+        app.top_k = Some(top_k);
+        changed = true;
+    }
     if changed {
         store
             .insert(app)
@@ -344,11 +348,10 @@ pub async fn chatbot_info(
         .chat_apps
         .as_ref()
         .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "chat apps disabled".into()))?;
-    let app = store
-        .get(&chat_id)
-        .ok_or(
-            (StatusCode::NOT_FOUND, "Authentication error: no access to this chatbot!".into()),
-        )?;
+    let app = store.get(&chat_id).ok_or((
+        StatusCode::NOT_FOUND,
+        "Authentication error: no access to this chatbot!".into(),
+    ))?;
     let prologue = app
         .prompt_config
         .as_ref()
@@ -384,11 +387,13 @@ pub async fn chatbot_completions(
     use tokio_stream::wrappers::ReceiverStream;
     let store = match state.chat_apps.as_ref() {
         Some(s) => s,
-        None => return (
-            StatusCode::NOT_IMPLEMENTED,
-            Json(serde_json::json!({ "code": 501, "message": "chat apps disabled" })),
-        )
-            .into_response(),
+        None => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({ "code": 501, "message": "chat apps disabled" })),
+            )
+                .into_response();
+        }
     };
     let app = match store.get(&chat_id) {
         Some(a) => a,
@@ -494,8 +499,7 @@ pub async fn chatbot_completions(
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         });
         let _ = tx.blocking_send(Ok(Event::default().data(done.to_string())));
-        let _ = tx
-            .blocking_send(Ok(Event::default().data("[DONE]")));
+        let _ = tx.blocking_send(Ok(Event::default().data("[DONE]")));
     });
 
     Sse::new(ReceiverStream::new(rx))

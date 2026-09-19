@@ -1412,6 +1412,16 @@ const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
     "Dutch",
 ];
 
+/// lucide `Link` at 16px — the Test connection button icon.
+const SELECT_LINK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/><path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/></svg>";
+
+/// lucide `Save` at 16px — the Save configuration button icon.
+const SELECT_SAVE_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z'/><path d='M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7'/><path d='M7 3v4a1 1 0 0 0 1 1h7'/></svg>";
+
+/// Upstream `sandbox-settings.tsx::PROVIDER_ICONS` (lucide Monitor / Server /
+/// Terminal / Cloud / Zap, with Server as the fallback).
+const SB_PROVIDER_ICONS_JS: &str = r#"var SB_PROVIDER_ICONS={local:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='20' height='14' x='2' y='3' rx='2'/><line x1='8' x2='16' y1='21' y2='21'/><line x1='12' x2='12' y1='17' y2='21'/></svg>",self_managed:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='20' height='8' x='2' y='2' rx='2' ry='2'/><rect width='20' height='8' x='2' y='14' rx='2' ry='2'/><line x1='6' x2='6.01' y1='6' y2='6'/><line x1='6' x2='6.01' y1='18' y2='18'/></svg>",ssh:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><polyline points='4 17 10 11 4 5'/><line x1='12' x2='20' y1='19' y2='19'/></svg>",aliyun_codeinterpreter:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z'/></svg>",e2b:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z'/></svg>",default:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='20' height='8' x='2' y='2' rx='2' ry='2'/><rect width='20' height='8' x='2' y='14' rx='2' ry='2'/><line x1='6' x2='6.01' y1='6' y2='6'/><line x1='6' x2='6.01' y1='18' y2='18'/></svg>"};"#;
+
 /// Upstream `SelectWithSearch` trigger chevron: lucide `ChevronDown` at 16px.
 const SELECT_CHEVRON_DOWN_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m6 9 6 6 6-6'/></svg>";
 
@@ -4358,12 +4368,13 @@ pub async fn admin_user_detail_page(
     .into_response()
 }
 
-/// Upstream `admin/sandbox-settings.tsx` at `/admin/sandbox-settings`. The
-/// upstream page configures a remote code-execution sandbox provider
-/// (`/admin/sandbox/providers|config|test`, an enterprise-oriented feature);
-/// RayRAG executes code in its own local sandbox, so this page hosts the
-/// durable sandbox/system variables that the executor reads — the same
-/// administrator surface, with the provider dialogs still open in the ledger.
+/// Upstream `admin/sandbox-settings.tsx` at `/admin/sandbox-settings`: the
+/// provider-selection radio grid (`/api/v1/admin/sandbox/providers`), the
+/// schema-driven configuration card with Test connection + Save
+/// (`/providers/{id}/schema`, `/config`, `/test`) and the connection-test modal.
+/// RayRAG's durable system-variable table (the executor reads
+/// `sandbox.self_managed` from those settings) stays below the upstream surface
+/// as a separate card.
 pub async fn admin_sandbox_settings_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -4372,10 +4383,92 @@ pub async fn admin_sandbox_settings_page(
     if !request_admin(&state, req.headers()) {
         return Redirect::temporary("/admin").into_response();
     }
-    let mut b = String::with_capacity(8192);
-    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Sandbox settings</h2></div><p class='admin-panel-description'>Configure your code execution sandbox provider. The sandbox is used by the Code component in agents.</p><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-sandbox-table'><thead><tr><th>Name</th><th>Type</th><th>Value</th><th>Actions</th></tr></thead><tbody id='adminSandboxRows'><tr><td colspan='4' class='admin-empty'>Loading administrator settings…</td></tr></tbody></table></div><p class='admin-panel-message' id='adminSandboxMessage'></p></div>");
+    let mut b = String::with_capacity(16384);
+    b.push_str("<section class='sb-page' data-testid='admin-sandbox-page'><header class='sb-head'><h1 class='sb-title'>");
+    b.push_str(t("Sandbox settings", zh));
+    b.push_str("</h1><p class='sb-description'>");
+    b.push_str(t(
+        "Configure your code execution sandbox provider. The sandbox is used by the Code component in agents.",
+        zh,
+    ));
+    b.push_str("</p></header>");
+    // Provider selection (upstream `providerSelection` card).
+    b.push_str("<section class='sb-card'><header class='sb-card-head'><h2 class='sb-card-title'>");
+    b.push_str(t("Provider selection", zh));
+    b.push_str("</h2><p class='sb-description'>");
+    b.push_str(t("Choose a sandbox provider for code execution", zh));
+    b.push_str("</p></header><div class='sb-grid' id='sbProviders' role='radiogroup' aria-label='");
+    b.push_str(t("Provider selection", zh));
     b.push_str(
-        r#"<script>function adminSandboxCell(row,text,className){var cell=document.createElement('td');cell.textContent=text==null?'':String(text);if(className)cell.className=className;row.appendChild(cell);return cell}function adminLoadSandbox(){var rows=document.getElementById('adminSandboxRows');var message=document.getElementById('adminSandboxMessage');fetch('/api/v1/system/variables').then(function(response){return response.json().then(function(data){return {ok:response.ok,data:data}})}).then(function(result){if(!result.ok||result.data.code!==0)throw new Error(result.data.message||'Administrator access required');var list=result.data.data||[];rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=4;cell.className='admin-empty';cell.textContent='No variables';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(variable){var row=document.createElement('tr');adminSandboxCell(row,variable.name,'co');var typeCell=adminSandboxCell(row,'');var badge=document.createElement('span');badge.className='badge bw';badge.textContent=variable.data_type;typeCell.appendChild(badge);var valueCell=adminSandboxCell(row,'');var input=document.createElement('input');input.type=variable.name==='mail.password'?'password':'text';input.value=variable.value;input.className='admin-value-input';valueCell.appendChild(input);var actionCell=adminSandboxCell(row,'');var button=document.createElement('button');button.type='button';button.className='btn btn-p btn-sm';button.textContent='Save';button.onclick=function(){adminSaveSandbox(variable.name,input,button)};actionCell.appendChild(button);rows.appendChild(row)})}).catch(function(error){rows.textContent='';var row=document.createElement('tr');var cell=adminSandboxCell(row,error.message);cell.colSpan=4;cell.className='admin-empty';row.appendChild(cell);rows.appendChild(row);message.textContent='Sign in with an administrator account to manage sandbox settings.'})}function adminSaveSandbox(name,input,button){var message=document.getElementById('adminSandboxMessage');message.textContent='Saving…';button.disabled=true;fetch('/api/v1/system/variables',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({var_name:name,var_value:input.value})}).then(function(response){return response.json()}).then(function(data){button.disabled=false;if(data.code!==0)throw new Error(data.message||'Save failed');message.textContent=name+' saved';adminLoadSandbox()}).catch(function(error){button.disabled=false;message.textContent='Error: '+error.message})}adminLoadSandbox()</script>"#,
+        "' data-testid='admin-sandbox-providers'><p class='admin-empty' id='sbProvidersEmpty'>",
+    );
+    b.push_str(t("Loading...", zh));
+    b.push_str("</p></div></section>");
+    // Configuration card (upstream `namedProviderConfiguration`).
+    b.push_str("<section class='sb-card' id='sbConfigCard' hidden><header class='sb-card-head sb-config-head'><div class='sb-config-title'><h3 class='sb-config-name' id='sbConfigTitle'></h3><p class='sb-description' id='sbConfigDescription'></p></div><div class='sb-config-actions'><button type='button' class='btn btn-o sb-test' data-testid='admin-sandbox-test' onclick='sbTestConnection()'><span class='sb-btn-icon' aria-hidden='true'>");
+    b.push_str(SELECT_LINK_SVG);
+    b.push_str("</span><span id='sbTestLabel'>");
+    b.push_str(t("Test connection", zh));
+    b.push_str("</span></button><button type='button' class='btn btn-p sb-save' data-testid='admin-sandbox-save' onclick='sbSaveConfig()'><span class='sb-btn-icon' aria-hidden='true'>");
+    b.push_str(SELECT_SAVE_SVG);
+    b.push_str("</span><span id='sbSaveLabel'>");
+    b.push_str(t("Save config", zh));
+    b.push_str(
+        "</span></button></div></header><div class='sb-fields' id='sbFields'></div><p class='sb-status' id='sbStatus' aria-live='polite'></p></section>",
+    );
+    // Variables card (RayRAG addition, documented in the ledger).
+    b.push_str("<section class='sb-card'><header class='sb-card-head'><h2 class='sb-card-title'>");
+    b.push_str(t("Durable variables", zh));
+    b.push_str("</h2><p class='sb-description'>");
+    b.push_str(t(
+        "Durable runtime variables. The code executor reads the sandbox entries from here.",
+        zh,
+    ));
+    b.push_str("</p></header><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-sandbox-table'><thead><tr><th>");
+    b.push_str(t("Name", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Type", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Value", zh));
+    b.push_str("</th><th></th></tr></thead><tbody id='adminSandboxRows'></tbody></table></div><p class='admin-panel-message' id='adminSandboxMessage'></p></section>");
+    // Connection-test modal (upstream `testConnectionResultModal`).
+    b.push_str("<div class='modal-overlay' id='sbTestModal' data-testid='admin-sandbox-test-modal' onclick=\"if(event.target===this)sbCloseTestModal()\"><div class='modal sb-modal' role='dialog' aria-modal='true' aria-labelledby='sbTestTitle'><h2 id='sbTestTitle'>");
+    b.push_str(t("Connection test result", zh));
+    b.push_str("</h2><p class='sb-description' id='sbTestSummary'></p><div class='sb-test-body' id='sbTestBody'></div><div class='ds-dialog-footer'><button type='button' class='btn btn-o' onclick='sbCloseTestModal()'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div></section>");
+    b.push_str("<script>");
+    b.push_str(SB_PROVIDER_ICONS_JS);
+    b.push_str(
+        r#"var SB_LABELS={testing:"Testing...",testConnection:"Test connection"};
+var SB_STATE={providers:[],provider:'',schema:{},values:{},mode:'password',busy:false};
+function sbText(key,fallback){return (SB_LABELS[key]==null?fallback:SB_LABELS[key])}
+function sbApi(path,options){return fetch(path,options||{}).then(function(response){return response.text().then(function(text){var data={};try{data=text?JSON.parse(text):{}}catch(e){data={}}if(!response.ok||data.code!==0){var error=new Error(data.message||('HTTP '+response.status));error.payload=data;throw error}return data.data})})}
+function sbFieldRequired(name,schema){if(SB_STATE.provider==='ssh'&&name==='port')return true;return !!schema.required}
+function sbFieldPriority(name,schema){var order=['host','username','port','password','private_key','passphrase','work_dir','python_bin','node_bin'];var index=order.indexOf(name);if(index>=0)return index;if(schema.required)return 100;return 200}
+function sbSortFields(entries){return entries.slice().sort(function(left,right){var diff=sbFieldPriority(left[0],left[1])-sbFieldPriority(right[0],right[1]);if(diff!==0)return diff;if(!!left[1].required!==!!right[1].required)return left[1].required?-1:1;return left[0]<right[0]?-1:(left[0]>right[0]?1:0)})}
+function sbRenderProviders(){var host=document.getElementById('sbProviders');if(!host)return;host.replaceChildren();SB_STATE.providers.forEach(function(provider){var card=document.createElement('label');card.className='sb-provider'+(provider.id===SB_STATE.provider?' selected':'');card.setAttribute('tabindex','0');card.setAttribute('data-testid','admin-sandbox-provider-'+provider.id);card.dataset.id=provider.id;var radio=document.createElement('input');radio.type='radio';radio.name='sbProvider';radio.value=provider.id;radio.checked=provider.id===SB_STATE.provider;radio.setAttribute('aria-checked',provider.id===SB_STATE.provider?'true':'false');radio.onchange=function(){sbSelectProvider(provider.id)};card.appendChild(radio);var icon=document.createElement('span');icon.className='sb-provider-icon';icon.setAttribute('aria-hidden','true');icon.innerHTML=SB_PROVIDER_ICONS[provider.id]||SB_PROVIDER_ICONS.default;card.appendChild(icon);var body=document.createElement('span');body.className='sb-provider-body';var name=document.createElement('span');name.className='sb-provider-name';name.textContent=provider.name;body.appendChild(name);var description=document.createElement('span');description.className='sb-provider-description';description.textContent=provider.description;body.appendChild(description);var tags=document.createElement('span');tags.className='sb-provider-tags';(provider.tags||[]).forEach(function(tag){var chip=document.createElement('span');chip.className='sb-provider-tag';chip.textContent=tag;tags.appendChild(chip)});body.appendChild(tags);card.appendChild(body);host.appendChild(card)})}
+function sbFieldControl(name,schema,value){var control;if(schema.type==='boolean'){control=document.createElement('input');control.type='checkbox';control.checked=value===true||value==='true';control.onchange=function(){sbSetValue(name,control.checked)};control.className='sb-switch'}else if(schema.type==='integer'){control=document.createElement('input');control.type='number';if(schema.min!=null)control.min=schema.min;if(schema.max!=null)control.max=schema.max;control.value=value==null?'':value;control.oninput=function(){sbSetValue(name,control.value===''?'':parseInt(control.value,10))}}else if(schema.multiline){control=document.createElement('textarea');control.rows=4;control.placeholder=schema.placeholder||'';control.value=value==null?'':value;control.oninput=function(){sbSetValue(name,control.value)}}else{control=document.createElement('input');control.type=schema.secret?'password':'text';control.placeholder=schema.placeholder||'';control.value=value==null?'':value;control.oninput=function(){sbSetValue(name,control.value)}}control.id=name;control.setAttribute('data-field',name);control.disabled=!!schema.readonly;return control}
+function sbFieldBlock(name,schema){var wrap=document.createElement('div');wrap.className='sb-field';var label=document.createElement('label');label.className='sb-field-label';label.setAttribute('for',name);if(sbFieldRequired(name,schema)){var star=document.createElement('span');star.className='sb-required';star.textContent='*';label.appendChild(star)}label.appendChild(document.createTextNode(schema.label||name.replace(/_/g,' ')));wrap.appendChild(label);wrap.appendChild(sbFieldControl(name,schema,SB_STATE.values[name]));if(schema.description){var help=document.createElement('p');help.className='sb-field-help';help.textContent=schema.description;wrap.appendChild(help)}if(schema.type==='integer'&&(schema.min!=null||schema.max!=null)){var bounds=document.createElement('p');bounds.className='sb-field-bounds';var parts=[];if(schema.min!=null)parts.push('Minimum: '+schema.min);if(schema.max!=null)parts.push('Maximum: '+schema.max);bounds.textContent=parts.join(' • ');wrap.appendChild(bounds)}return wrap}
+function sbGroup(title,description){var box=document.createElement('section');box.className='sb-group';if(title){var head=document.createElement('header');head.className='sb-group-head';var heading=document.createElement('h4');heading.className='sb-group-title';heading.textContent=title;head.appendChild(heading);if(description){var note=document.createElement('p');note.className='sb-description';note.textContent=description;head.appendChild(note)}box.appendChild(head)}return box}
+function sbRenderFields(){var host=document.getElementById('sbFields');if(!host)return;host.replaceChildren();var entries=Object.keys(SB_STATE.schema).map(function(name){return [name,SB_STATE.schema[name]]});var runtime=sbSortFields(entries.filter(function(entry){return entry[1].scope!=='deployment'}));var deployment=sbSortFields(entries.filter(function(entry){return entry[1].scope==='deployment'}));if(SB_STATE.provider==='ssh'){var identity=new Set(['host','username','port']);var password=new Set(['password']);var privateKey=new Set(['private_key','passphrase']);var execution=new Set(['work_dir','python_bin','node_bin']);var shared=new Set([].concat(Array.from(identity),Array.from(password),Array.from(privateKey),Array.from(execution)));var runtimeBox=sbGroup('Runtime Settings','');var identityFields=runtime.filter(function(entry){return identity.has(entry[0])});identityFields.forEach(function(entry){runtimeBox.appendChild(sbFieldBlock(entry[0],entry[1]))});var passwordFields=runtime.filter(function(entry){return password.has(entry[0])});var keyFields=runtime.filter(function(entry){return privateKey.has(entry[0])});if(passwordFields.length||keyFields.length){var auth=sbGroup('Authentication','Choose one authentication method for the SSH connection.');auth.classList.add('sb-auth');var tabs=document.createElement('div');tabs.className='sb-tabs';tabs.setAttribute('role','tablist');[['password',passwordFields],['private_key',keyFields]].forEach(function(pair){var button=document.createElement('button');button.type='button';button.className='sb-tab'+(SB_STATE.mode===pair[0]?' active':'');button.setAttribute('role','tab');button.setAttribute('aria-selected',SB_STATE.mode===pair[0]?'true':'false');button.setAttribute('data-testid','admin-sandbox-auth-'+pair[0]);button.textContent=pair[0]==='password'?'Password':'Private Key';button.onclick=function(){sbAuthMode(pair[0])};tabs.appendChild(button)});auth.appendChild(tabs);var panel=document.createElement('div');panel.className='sb-tab-panel';var shown=SB_STATE.mode==='password'?passwordFields:keyFields;shown.forEach(function(entry){panel.appendChild(sbFieldBlock(entry[0],entry[1]));if(entry[0]==='passphrase'){var note=document.createElement('p');note.className='sb-field-help';note.textContent='Only required when the private key itself is encrypted.';panel.appendChild(note)}});auth.appendChild(panel);runtimeBox.appendChild(auth)}var executionFields=runtime.filter(function(entry){return execution.has(entry[0])});if(executionFields.length){var execBox=sbGroup('Execution','Configure the remote workspace and language runtimes used on the SSH host.');executionFields.forEach(function(entry){execBox.appendChild(sbFieldBlock(entry[0],entry[1]))});runtimeBox.appendChild(execBox)}runtime.filter(function(entry){return !shared.has(entry[0])}).forEach(function(entry){runtimeBox.appendChild(sbFieldBlock(entry[0],entry[1]))});host.appendChild(runtimeBox)}else if(runtime.length){var box=sbGroup('Runtime Settings','');runtime.forEach(function(entry){box.appendChild(sbFieldBlock(entry[0],entry[1]))});host.appendChild(box)}if(deployment.length){var details=document.createElement('details');details.className='sb-deployment';details.setAttribute('data-testid','admin-sandbox-deployment');var summary=document.createElement('summary');summary.className='sb-deployment-head';var wrap=document.createElement('span');var heading=document.createElement('span');heading.className='sb-group-title';heading.textContent='Deployment Defaults';wrap.appendChild(heading);var note=document.createElement('span');note.className='sb-description';note.textContent='Read-only values loaded from the current environment for the default executor-manager deployment.';wrap.appendChild(note);summary.appendChild(wrap);details.appendChild(summary);var body=document.createElement('div');body.className='sb-deployment-body';deployment.forEach(function(entry){body.appendChild(sbFieldBlock(entry[0],entry[1]))});details.appendChild(body);host.appendChild(details)}}
+function sbSetValue(name,value){SB_STATE.values[name]=value}
+function sbAuthMode(mode){SB_STATE.mode=mode;if(mode==='password'){SB_STATE.values.private_key='';SB_STATE.values.passphrase=''}else{SB_STATE.values.password=''}sbRenderFields()}
+function sbConfigLabels(){var provider=SB_STATE.providers.filter(function(entry){return entry.id===SB_STATE.provider})[0];var name=provider?provider.name:SB_STATE.provider;var title=document.getElementById('sbConfigTitle');if(title)title.textContent=name+' configuration';var description=document.getElementById('sbConfigDescription');if(description)description.textContent='Configure the connection settings for '+name+'.'}
+function sbLoadSchema(){sbConfigLabels();return sbApi('/api/v1/admin/sandbox/providers/'+encodeURIComponent(SB_STATE.provider)+'/schema').then(function(schema){SB_STATE.schema=schema||{};Object.keys(SB_STATE.schema).forEach(function(name){var field=SB_STATE.schema[name];if(field.readonly)return;if(SB_STATE.values[name]===undefined&&field.default!==undefined)SB_STATE.values[name]=field.default});sbRenderFields();var card=document.getElementById('sbConfigCard');if(card)card.hidden=false})}
+function sbSelectProvider(id){SB_STATE.provider=id;SB_STATE.mode='password';SB_STATE.schema={};SB_STATE.values={};sbRenderProviders();sbConfigLabels();sbLoadConfig()}
+function sbLoadConfig(){return sbApi('/api/v1/admin/sandbox/config').then(function(config){if(config&&config.provider_type===SB_STATE.provider){var values=config.config||{};SB_STATE.values=values;if(SB_STATE.provider==='ssh'&&String(values.private_key||'').trim())SB_STATE.mode='private_key'}return sbLoadSchema()})}
+function sbPayload(){var values={};Object.keys(SB_STATE.values).forEach(function(key){values[key]=SB_STATE.values[key]});if(SB_STATE.provider==='ssh'){if(SB_STATE.mode==='password'){values.private_key='';values.passphrase=''}else{values.password=''}}return values}
+function sbSetBusy(busy,label){SB_STATE.busy=busy;var test=document.getElementById('admin-sandbox-test');var save=document.getElementById('admin-sandbox-save');if(test)test.disabled=busy;if(save)save.disabled=busy;var testLabel=document.getElementById('sbTestLabel');if(testLabel)testLabel.textContent=busy?(label||SB_LABELS.testing):SB_LABELS.testConnection}
+function sbStatus(text,error){var status=document.getElementById('sbStatus');if(!status)return;status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}
+function sbSaveConfig(){if(SB_STATE.busy||!SB_STATE.provider)return;sbSetBusy(true,'Saving...');sbStatus('');sbApi('/api/v1/admin/sandbox/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider_type:SB_STATE.provider,config:sbPayload(),set_active:true})}).then(function(){sbSetBusy(false);sbStatus('Sandbox configuration updated successfully',false);return sbLoadConfig()}).catch(function(error){sbSetBusy(false);sbStatus(error.message,true)})}
+function sbOpenTestModal(){var modal=document.getElementById('sbTestModal');if(modal)modal.classList.add('show');var summary=document.getElementById('sbTestSummary');if(summary)summary.textContent=SB_LABELS.testing;var body=document.getElementById('sbTestBody');if(body)body.innerHTML='<div class="sb-test-wait"><span class="sb-spinner" aria-hidden="true"></span></div>'}
+function sbCloseTestModal(){var modal=document.getElementById('sbTestModal');if(modal)modal.classList.remove('show')}
+function sbRenderTestResult(result){var summary=document.getElementById('sbTestSummary');var body=document.getElementById('sbTestBody');if(!body)return;if(summary)summary.textContent=result.success?'Successfully connected to sandbox provider':'Failed to connect to sandbox provider';body.replaceChildren();var box=document.createElement('div');box.className='sb-test-message '+(result.success?'ok':'fail');box.setAttribute('data-testid','admin-sandbox-test-message');box.textContent=result.message||'';body.appendChild(box);var details=result.details;if(details){var grid=document.createElement('div');grid.className='sb-test-grid';[['Exit code',details.exit_code],['Execution time',(Number(details.execution_time)||0).toFixed(2)+'s']].forEach(function(pair){var cell=document.createElement('div');cell.className='sb-test-cell';cell.textContent=pair[0]+': '+pair[1];grid.appendChild(cell)});body.appendChild(grid);if(details.stdout){var out=document.createElement('pre');out.className='sb-test-pre';out.setAttribute('data-testid','admin-sandbox-test-stdout');out.textContent=details.stdout;body.appendChild(out)}if(details.stderr){var err=document.createElement('pre');err.className='sb-test-pre sb-test-err';err.setAttribute('data-testid','admin-sandbox-test-stderr');err.textContent=details.stderr;body.appendChild(err)}}}
+function sbTestConnection(){if(SB_STATE.busy||!SB_STATE.provider)return;sbSetBusy(true);sbOpenTestModal();sbApi('/api/v1/admin/sandbox/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider_type:SB_STATE.provider,config:sbPayload()})}).then(function(result){sbSetBusy(false);sbRenderTestResult(result)}).catch(function(error){sbSetBusy(false);sbRenderTestResult({success:false,message:error.message})})}
+function adminSandboxCell(row,text,className){var cell=document.createElement('td');cell.textContent=text==null?'':String(text);if(className)cell.className=className;row.appendChild(cell);return cell}
+function adminLoadSandbox(){var rows=document.getElementById('adminSandboxRows');var message=document.getElementById('adminSandboxMessage');fetch('/api/v1/system/variables').then(function(response){return response.json()}).then(function(data){rows.replaceChildren();(data.data||[]).forEach(function(setting){var row=document.createElement('tr');adminSandboxCell(row,setting.name,'admin-code');adminSandboxCell(row,setting.data_type);var valueCell=document.createElement('td');var input=document.createElement('input');input.className='admin-value-input';input.value=setting.value==null?'':setting.value;input.setAttribute('data-setting',setting.name);valueCell.appendChild(input);row.appendChild(valueCell);var actionCell=document.createElement('td');var save=document.createElement('button');save.type='button';save.className='btn btn-o';save.textContent='Save';save.onclick=function(){save.disabled=true;fetch('/api/v1/system/variables',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({var_name:setting.name,var_value:input.value})}).then(function(response){return response.json()}).then(function(result){if(result.code!==0)throw new Error(result.message||'Save failed');if(message)message.textContent='Saved '+setting.name}).catch(function(error){if(message)message.textContent=error.message}).finally(function(){save.disabled=false})};actionCell.appendChild(save);row.appendChild(actionCell);rows.appendChild(row)})}).catch(function(error){if(message)message.textContent=error.message})}
+sbRenderProviders();sbLoadConfig();adminLoadSandbox();</script>"#,
     );
     Html(layout_plain(
         "Sandbox settings",
@@ -11097,7 +11190,7 @@ connection: close
     }
 
     #[tokio::test]
-    async fn admin_sandbox_settings_hosts_the_variable_editor() {
+    async fn admin_sandbox_settings_hosts_the_upstream_provider_surface() {
         let (_root, state) = test_state();
         let req = || {
             Request::builder()
@@ -11118,8 +11211,49 @@ connection: close
                 .unwrap()
         };
         let html = body_of(admin_sandbox_settings_page(State(state.clone()), auth()).await).await;
+        // Upstream `sandbox-settings.tsx`: the provider grid, the schema-driven
+        // configuration card with its Test/Save pair, the read-only Deployment
+        // Defaults disclosure and the connection-test modal.
+        for marker in [
+            "data-testid='admin-sandbox-page'",
+            "data-testid='admin-sandbox-providers'",
+            "data-testid='admin-sandbox-test'",
+            "data-testid='admin-sandbox-save'",
+            "data-testid='admin-sandbox-test-modal'",
+            "Provider selection",
+            "Choose a sandbox provider for code execution",
+            "Test connection",
+            "Connection test result",
+            "Runtime Settings",
+            "Deployment Defaults",
+            "Only required when the private key itself is encrypted.",
+            "/api/v1/admin/sandbox/providers/",
+            "/api/v1/admin/sandbox/config",
+            "/api/v1/admin/sandbox/test",
+            "sbTestConnection()",
+            "sbSaveConfig()",
+            "admin-sandbox-provider-",
+        ] {
+            assert!(
+                html.contains(marker),
+                "sandbox page marker missing: {marker}"
+            );
+        }
+        // Every provider id ships an icon (upstream PROVIDER_ICONS).
+        for icon in [
+            "local:",
+            "self_managed:",
+            "ssh:",
+            "aliyun_codeinterpreter:",
+            "e2b:",
+            "default:",
+        ] {
+            assert!(html.contains(icon), "provider icon table missing {icon}");
+        }
+        // The variables editor stays, but the provider values are fetched at
+        // runtime rather than baked into the page.
         assert!(html.contains("/api/v1/system/variables"));
-        assert!(html.contains("Loading administrator settings"));
+        assert!(html.contains("data-testid='admin-sandbox-table'"));
         assert!(!html.contains("sandbox.self_managed"));
         assert!(!html.contains("http://sandbox-executor-manager:9385"));
         // Unauthenticated visitors are bounced back to the console login.

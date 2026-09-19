@@ -281,45 +281,50 @@ pub async fn weighted_search(
     // and merge extra-language results (deduped by chunk id). Translation
     // failure degrades gracefully to the original-language result set.
     if !body.cross_languages.is_empty()
-        && let Some(llm) = state.llm.clone() {
-            let langs = body.cross_languages.join(", ");
-            let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-            vars.insert("query", &body.question);
-            vars.insert("languages", langs.as_str());
-            let sys = crate::prompts::PromptLibrary::cross_languages_sys()
-                .render(&std::collections::HashMap::new());
-            let user = crate::prompts::PromptLibrary::cross_languages_user().render(&vars);
-            let translated = match llm
-                .chat_completion(&[
-                    crate::llm::ChatMessage::new("system", &sys),
-                    crate::llm::ChatMessage::new("user", &user),
-                ])
-                .await
-            {
-                Ok(completion) => completion.content,
-                Err(error) => {
-                    tracing::warn!(%error, "cross_languages translation failed; original results returned");
-                    String::new()
-                }
-            };
-            let mut seen: std::collections::HashSet<String> = results
-                .iter()
-                .map(|result| result.chunk.id.clone())
-                .collect();
-            for translation in translated
-                .split("###")
-                .map(str::trim)
-                .filter(|text| !text.is_empty() && *text != body.question)
-            {
-                let embedding = match kb_embedder_for(&state, kb_ids) {
-                    Ok(embedder) => match embedder.embed(&[translation]).await {
-                        Ok(mut embeddings) => embeddings.pop(),
-                        Err(_) => None,
-                    },
+        && let Some(llm) = state.llm.clone()
+    {
+        let langs = body.cross_languages.join(", ");
+        let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        vars.insert("query", &body.question);
+        vars.insert("languages", langs.as_str());
+        let sys = crate::prompts::PromptLibrary::cross_languages_sys()
+            .render(&std::collections::HashMap::new());
+        let user = crate::prompts::PromptLibrary::cross_languages_user().render(&vars);
+        let translated = match llm
+            .chat_completion(&[
+                crate::llm::ChatMessage::new("system", &sys),
+                crate::llm::ChatMessage::new("user", &user),
+            ])
+            .await
+        {
+            Ok(completion) => completion.content,
+            Err(error) => {
+                tracing::warn!(%error, "cross_languages translation failed; original results returned");
+                String::new()
+            }
+        };
+        let mut seen: std::collections::HashSet<String> = results
+            .iter()
+            .map(|result| result.chunk.id.clone())
+            .collect();
+        for translation in translated
+            .split("###")
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && *text != body.question)
+        {
+            let embedding = match kb_embedder_for(&state, kb_ids) {
+                Ok(embedder) => match embedder.embed(&[translation]).await {
+                    Ok(mut embeddings) => embeddings.pop(),
                     Err(_) => None,
-                };
-                let extra = state.engine.read().unwrap().hybrid_search_kbs(
-                    crate::search::HybridSearchQuery {
+                },
+                Err(_) => None,
+            };
+            let extra =
+                state
+                    .engine
+                    .read()
+                    .unwrap()
+                    .hybrid_search_kbs(crate::search::HybridSearchQuery {
                         query: translation,
                         query_embedding: embedding.as_deref(),
                         top_k: usize::MAX,
@@ -327,15 +332,14 @@ pub async fn weighted_search(
                         vector_weight,
                         doc_ids: filtered_doc_ids.as_deref(),
                         rank_feature: body.rank_feature.as_ref(),
-                    },
-                );
-                for candidate in extra.into_iter().filter(|c| c.score >= post_threshold) {
-                    if seen.insert(candidate.chunk.id.clone()) {
-                        results.push(candidate);
-                    }
+                    });
+            for candidate in extra.into_iter().filter(|c| c.score >= post_threshold) {
+                if seen.insert(candidate.chunk.id.clone()) {
+                    results.push(candidate);
                 }
             }
         }
+    }
 
     let begin = global_offset % window;
 

@@ -1986,11 +1986,7 @@ pub fn mcp_server_get_servers(
         .iter()
         .filter(|s| s.tenant_id == tenant_id)
         .filter(|s| id_list.is_none_or(|ids| ids.iter().any(|id| id == &s.id)))
-        .filter(|s| {
-            keywords.is_none_or(|kw| {
-                s.name.to_lowercase().contains(&kw.to_lowercase())
-            })
-        })
+        .filter(|s| keywords.is_none_or(|kw| s.name.to_lowercase().contains(&kw.to_lowercase())))
         .cloned()
         .collect();
     rows.sort_by(|a, b| {

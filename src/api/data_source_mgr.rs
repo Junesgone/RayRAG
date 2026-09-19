@@ -736,7 +736,7 @@ pub async fn get_data_source_logs(
             return Err((
                 StatusCode::BAD_REQUEST,
                 "page_size must be less than or equal to 100".into(),
-            ))
+            ));
         }
         size => size,
     };
@@ -753,7 +753,9 @@ pub async fn get_data_source_logs(
             .cloned()
             .collect()
     };
-    Ok(Json(serde_json::json!({ "code": 0, "data": { "total": total, "logs": logs } })))
+    Ok(Json(
+        serde_json::json!({ "code": 0, "data": { "total": total, "logs": logs } }),
+    ))
 }
 
 pub async fn delete_data_source(
@@ -830,8 +832,7 @@ async fn perform_sync(
         Ok(batch) => batch,
         Err(error) => {
             let _ = store.set_status(id, "fail");
-            let kb_name = kb_id
-                .and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
+            let kb_name = kb_id.and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
             let _ = store.append_sync_log(
                 id,
                 &record,
@@ -918,8 +919,7 @@ async fn perform_sync(
             })
         })
         .collect();
-    let kb_name = kb_id
-        .and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
+    let kb_name = kb_id.and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
     let _ = store.append_sync_log(
         id,
         &record,

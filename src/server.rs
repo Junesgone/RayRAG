@@ -3657,6 +3657,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .put(crate::api::system_settings::set_variable),
         )
         .route("/api/v1/admin/configs", get(crate::api::admin::get_config))
+        // Upstream `admin/server/routes.py`: sandbox provider registry, per
+        // provider schema, active configuration and the connection probe.
+        .route(
+            "/api/v1/admin/sandbox/providers",
+            get(crate::api::sandbox_admin::list_providers),
+        )
+        .route(
+            "/api/v1/admin/sandbox/providers/{provider_id}/schema",
+            get(crate::api::sandbox_admin::provider_schema),
+        )
+        .route(
+            "/api/v1/admin/sandbox/config",
+            get(crate::api::sandbox_admin::get_config).post(crate::api::sandbox_admin::set_config),
+        )
+        .route(
+            "/api/v1/admin/sandbox/test",
+            post(crate::api::sandbox_admin::test_connection),
+        )
         .route(
             "/api/v1/admin/variables/{var_name}",
             get(crate::api::system_settings::show_variable),
@@ -9108,6 +9126,272 @@ mod tests {
         assert_eq!(forbidden.status(), StatusCode::OK);
         let forbidden_json = response_json(forbidden).await;
         assert_eq!(forbidden_json["code"], 404);
+    }
+
+    /// Upstream `admin/server/routes.py` sandbox endpoints: the provider registry,
+    /// the per-provider schemas, the durable configuration (with schema defaults)
+    /// and the connection probe — including the validation that keeps a typo or an
+    /// out-of-range number out of the stored provider configuration.
+    #[tokio::test]
+    async fn sandbox_admin_endpoints_match_the_upstream_contract() {
+        let env = test_env();
+        let admin = env
+            .state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = env.state.users.issue_token_for(&admin.id).unwrap();
+        let router = build_router(env.state.clone());
+        let call =
+            |method: &'static str, path: String, body: Option<serde_json::Value>, token: String| {
+                let router = router.clone();
+                async move {
+                    let mut request = Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                    let body = match body {
+                        Some(value) => {
+                            request = request.header(header::CONTENT_TYPE, "application/json");
+                            Body::from(value.to_string())
+                        }
+                        None => Body::empty(),
+                    };
+                    router.oneshot(request.body(body).unwrap()).await.unwrap()
+                }
+            };
+
+        // Non-admins are refused (the fixture's own user is an administrator).
+        let plain = env
+            .state
+            .users
+            .create_user("plain@example.com", "secret-passphrase", "user")
+            .unwrap();
+        let plain_token = env.state.users.issue_token_for(&plain.id).unwrap();
+        let forbidden = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers".into(),
+            None,
+            plain_token,
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        let providers = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        assert_eq!(providers.status(), StatusCode::OK);
+        let providers = response_json(providers).await;
+        let ids: Vec<&str> = providers["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "local",
+                "self_managed",
+                "ssh",
+                "aliyun_codeinterpreter",
+                "e2b"
+            ]
+        );
+        assert_eq!(providers["data"][1]["name"], "Self-Managed");
+        assert_eq!(providers["data"][1]["tags"][0], "self-hosted");
+
+        let schema = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers/ssh/schema".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        let schema = response_json(schema).await;
+        assert_eq!(schema["data"]["host"]["required"], true);
+        assert_eq!(schema["data"]["password"]["secret"], true);
+        assert_eq!(schema["data"]["private_key"]["multiline"], true);
+        let unknown = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers/nope/schema".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(unknown).await["message"],
+            "Unknown provider: nope"
+        );
+
+        // The seeded default provider is self_managed; its schema defaults are
+        // filled in even though only four keys are stored.
+        let config = call(
+            "GET",
+            "/api/v1/admin/sandbox/config".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        let config = response_json(config).await;
+        assert_eq!(config["data"]["provider_type"], "self_managed");
+        assert_eq!(config["data"]["config"]["timeout"], 30);
+        assert!(config["data"]["config"]["endpoint"].is_string());
+
+        // Validation: unknown field, out-of-range integer, bad boolean, bad option.
+        for (body, expected) in [
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"nope": "1"}}),
+                "Unknown configuration field for ssh: nope",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"port": 70000}}),
+                "port must be less than or equal to 65535",
+            ),
+            (
+                serde_json::json!({"provider_type": "self_managed", "config": {"timeout": 1}}),
+                "timeout must be greater than or equal to 5",
+            ),
+            (
+                serde_json::json!({"provider_type": "aliyun_codeinterpreter", "config": {"region": "mars"}}),
+                "region must be one of: cn-hangzhou, cn-beijing, cn-shanghai, cn-shenzhen, cn-guangzhou",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h"}}),
+                "username is required",
+            ),
+        ] {
+            let response = call(
+                "POST",
+                "/api/v1/admin/sandbox/config".into(),
+                Some(body),
+                token.clone(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{expected}");
+            assert_eq!(response_json(response).await["message"], expected);
+        }
+
+        // A valid save persists and activates the provider.
+        let saved = call(
+            "POST",
+            "/api/v1/admin/sandbox/config".into(),
+            Some(serde_json::json!({
+                "provider_type": "ssh",
+                "config": {
+                    "host": "10.0.0.9",
+                    "port": 2222,
+                    "username": "ragflow",
+                    "password": "s3cret",
+                    "timeout": 45
+                },
+                "set_active": true
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(
+            saved.status(),
+            StatusCode::OK,
+            "{}",
+            response_json(saved).await
+        );
+        let reloaded = call(
+            "GET",
+            "/api/v1/admin/sandbox/config".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        let reloaded = response_json(reloaded).await;
+        assert_eq!(reloaded["data"]["provider_type"], "ssh");
+        assert_eq!(reloaded["data"]["config"]["host"], "10.0.0.9");
+        assert_eq!(reloaded["data"]["config"]["port"], 2222);
+        assert_eq!(
+            env.state
+                .system_settings
+                .typed_value("sandbox.ssh")
+                .unwrap()["password"],
+            "s3cret",
+            "the stored value keeps the secret"
+        );
+        assert_eq!(
+            reloaded["data"]["config"]["password"], "<redacted>",
+            "the admin view never echoes a secret"
+        );
+
+        // Resubmitting the redacted value keeps the stored secret.
+        let resent = call(
+            "POST",
+            "/api/v1/admin/sandbox/config".into(),
+            Some(serde_json::json!({
+                "provider_type": "ssh",
+                "config": {"host": "10.0.0.9", "password": "<redacted>"}
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(resent.status(), StatusCode::OK);
+        assert_eq!(
+            env.state
+                .system_settings
+                .typed_value("sandbox.ssh")
+                .unwrap()["password"],
+            "s3cret"
+        );
+
+        // An unknown provider cannot be tested, and the SSH probe reports the
+        // reachability it can actually verify (nothing listens on port 1).
+        let bad_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({"provider_type": "nope", "config": {}})),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(bad_test.status(), StatusCode::BAD_REQUEST);
+        let ssh_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({
+                "provider_type": "ssh",
+                "config": {"host": "127.0.0.1", "port": 1, "username": "ragflow"}
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(ssh_test.status(), StatusCode::OK);
+        let ssh_test = response_json(ssh_test).await;
+        assert_eq!(ssh_test["data"]["success"], false);
+        assert!(
+            ssh_test["data"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Test FAILED"),
+            "{}",
+            ssh_test["data"]["message"]
+        );
+        // The e2b provider is registered but not executable in this build; the
+        // probe says so instead of reporting a fake success.
+        let e2b_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({"provider_type": "e2b", "config": {"api_key": "k"}})),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(e2b_test.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(e2b_test).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("not implemented in this build")
+        );
     }
 
     /// Upstream `DELETE /api/v1/datasets`: `ids` null/empty deletes nothing unless

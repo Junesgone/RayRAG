@@ -297,7 +297,11 @@ pub async fn create_folder(
         )
             .into_response();
     }
-    let parent = if body.parent_id.is_empty() { "root".to_string() } else { body.parent_id };
+    let parent = if body.parent_id.is_empty() {
+        "root".to_string()
+    } else {
+        body.parent_id
+    };
     let id = uuid::Uuid::new_v4().to_string();
     let record = FileRecord {
         id: id.clone(),
