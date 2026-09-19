@@ -150,12 +150,40 @@ try {
   );
   check(true, "agent_tab_switches");
   if (agents.rows.length) {
-    const rowCount = await page.locator("#adminUserAgentRows tr").count();
-    check(rowCount === agents.rows.length, "agent_rows_render", String(rowCount));
+    // The flow tab keeps its own pager state (upstream keeps one per table).
+    const agentRows = await page.locator("#adminUserAgentRows tr").count();
     check(
-      (await text("#adminUserAgentRows")).includes(agents.rows[0].title),
+      agentRows === Math.min(agents.rows.length, 10),
+      "agent_rows_render",
+      `${agentRows}/${agents.rows.length}`,
+    );
+    const firstAgentPage = await text("#adminUserAgentRows");
+    check(
+      firstAgentPage.includes(agents.rows[0].title),
       "agent_title_rendered",
     );
+    check(
+      (await text("#adminUserAgentPager .admin-pager-total")) === `Total ${agents.rows.length}`,
+      "agent_pager_total",
+    );
+    const agentPages = Math.max(1, Math.ceil(agents.rows.length / 10));
+    check(
+      (await text("#adminUserAgentPager .admin-pager-now")) === `1 / ${agentPages}`,
+      "agent_pager_first_page",
+    );
+    if (agentPages > 1) {
+      await page.locator("#adminUserAgentPager .admin-pager-step", { hasText: "Next" }).click();
+      await page.waitForFunction(
+        (expected) =>
+          document.querySelector("#adminUserAgentPager .admin-pager-now").textContent === expected,
+        `2 / ${agentPages}`,
+        { timeout: 10000 },
+      );
+      check(
+        (await page.locator("#adminUserAgentRows tr").count()) === agents.rows.length - 10,
+        "agent_pager_advances",
+      );
+    }
   } else {
     check(
       (await text("#adminUserAgentRows")) === "No agent",
