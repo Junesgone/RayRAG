@@ -110,6 +110,10 @@ try {
   // Confirm writes a 64x64 PNG into the avatar preview.
   await page.click("[data-testid='avatar-crop-confirm']");
   await page.waitForTimeout(300);
+  results.enButtons = await page.evaluate(() => ({
+    ok: document.getElementById("avatarCropOk").textContent.trim(),
+    cancel: document.getElementById("avatarCropCancel").textContent.trim(),
+  }));
   results.confirmed = await page.evaluate(() => {
     const preview = document.getElementById("profileAvatarPreview");
     const src = preview ? preview.src || preview.getAttribute("src") || "" : "";
@@ -119,6 +123,14 @@ try {
       previewLength: src.length,
     };
   });
+  // Chinese locale: the dialog footer localises too.
+  await ctx.addCookies([{ name: "lang", value: "zh-CN", domain: "127.0.0.1", path: "/" }]);
+  await page.goto(`${ORIGIN}/user-setting/profile`, { waitUntil: "domcontentloaded", timeout: 40000 });
+  await page.waitForSelector("#avatarCropModal", { state: "attached", timeout: 20000 });
+  results.zhButtons = await page.evaluate(() => ({
+    ok: document.getElementById("avatarCropOk").textContent.trim(),
+    cancel: document.getElementById("avatarCropCancel").textContent.trim(),
+  }));
 } catch (error) {
   results.errors.push(String(error && error.stack ? error.stack : error));
 } finally {
