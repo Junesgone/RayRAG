@@ -157,7 +157,33 @@ try {
     { timeout: 10000 },
   );
   check(true, "trigger_clear_resets_the_selection");
-  await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/search-documents.png" });
+  // Empty state: a query with no matches renders the upstream illustration and
+  // the `common.noResults` copy instead of the old plain paragraph.
+  await page.fill("#q2", "zzzz-probe-no-match-zzzz");
+  await page.locator("#q2").press("Enter");
+  await page.waitForSelector("[data-testid='search-empty']", { timeout: 30000 });
+  check(true, "empty_state_renders");
+  const emptyText = await text(".search-empty-text");
+  check(emptyText === "No results found", "empty_state_copy", emptyText);
+  const darkVisible = await page.locator(".search-empty-dark svg").isVisible();
+  const briVisible = await page.locator(".search-empty-bri svg").isVisible();
+  check(darkVisible && !briVisible, "dark_illustration_on_the_dark_theme");
+  const box = await page.locator("[data-testid='search-empty'] .search-empty-art svg").first().boundingBox();
+  check(Boolean(box) && Math.round(box.width) === 80, "illustration_width_is_80", String(box && box.width));
+  // The light theme swaps in the other variant.
+  await page.evaluate(() => {
+    document.body.classList.add("light");
+  });
+  await page.waitForTimeout(150);
+  check(
+    (await page.locator(".search-empty-bri svg").isVisible()) &&
+      !(await page.locator(".search-empty-dark svg").isVisible()),
+    "light_theme_swaps_the_illustration",
+  );
+  await page.evaluate(() => {
+    document.body.classList.remove("light");
+  });
+  await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/search-empty-state.png" });
 } catch (error) {
   results.errors.push("exception: " + String(error && error.message ? error.message : error));
 } finally {

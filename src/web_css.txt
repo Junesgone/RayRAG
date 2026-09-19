@@ -383,7 +383,8 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .search-docs-action:hover{background:var(--bgch)}
 .search-docs-action[hidden],.search-docs-footer .search-docs-sep[hidden]{display:none!important}
 /* Upstream `components/empty/empty.tsx` with `EmptyType.SearchData` (`h-2/5 flex items-center justify-center`, 80px illustration, `text-sm text-text-secondary` copy). */
-.search-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:40%;padding:32px 16px;text-align:center}
+/* Upstream wraps the illustration in `h-2/5 flex items-center justify-center`; the results column here has no fixed height, so 2/5 of a typical viewport is spelled out. */
+.search-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:min(40vh,320px);padding:32px 16px;text-align:center}
 .search-empty-art{display:inline-flex;align-items:center;justify-content:center;width:80px}
 .search-empty-art svg{width:80px;height:auto}
 .search-empty-bri{display:none}
