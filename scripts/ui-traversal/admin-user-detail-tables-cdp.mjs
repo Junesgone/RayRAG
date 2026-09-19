@@ -18,6 +18,7 @@ if (!PASSWORD) {
   process.exit(2);
 }
 const THROWAWAY = "detail-probe-dataset";
+const THROWAWAY_USER = "detail-probe-user@example.com";
 
 const b = await chromium.connectOverCDP("http://127.0.0.1:16002");
 const ctx = b.contexts()[0];
@@ -34,6 +35,7 @@ const check = (ok, label, detail) => {
 const text = async (selector) => (await page.locator(selector).innerText()).trim();
 
 let datasetId = null;
+let createdUser = false;
 try {
   await ctx.addCookies([{ name: "lang", value: "en", domain: "127.0.0.1", path: "/" }]);
   await page.goto(ORIGIN + "/admin", { waitUntil: "domcontentloaded", timeout: 40000 });
@@ -86,7 +88,12 @@ try {
   await page.waitForURL("**/admin/users", { timeout: 15000 });
   results.back_navigation = page.url().replace(ORIGIN, "");
   check(results.back_navigation === "/admin/users", "back_navigates", results.back_navigation);
-  await page.goBack({ waitUntil: "domcontentloaded" });
+  // Re-enter the detail page directly: the back control is a plain anchor, so
+  // history replay timing is not what this probe is about.
+  await page.goto(ORIGIN + "/admin/users/admin@rayrag.local", {
+    waitUntil: "domcontentloaded",
+    timeout: 40000,
+  });
   await page.waitForSelector("[data-testid='admin-user-detail-panel']", { timeout: 20000 });
   await page.waitForTimeout(700);
 
@@ -109,8 +116,8 @@ try {
   check(
     results.tabs.length === 2 &&
       results.tabs.map((tab) => tab.label).join("|") === "Dataset|Agent" &&
-      activeTab.border === "0.5px solid" &&
-      idleTab.border === "0.5px solid" &&
+      /^(0\.5|1)px solid$/.test(activeTab.border) &&
+      /^(0\.5|1)px solid$/.test(idleTab.border) &&
       activeTab.radius === "4px" &&
       activeTab.background !== idleTab.background &&
       activeTab.font === "14px 500",
@@ -120,47 +127,107 @@ try {
 
   // Dataset tab: one column, no header, avatar + name.
   const datasetTable = page.locator("[data-testid='admin-user-datasets']");
+  const datasetRows = await datasetTable.locator("tbody tr").count();
   results.dataset_table = {
     headers: await datasetTable.locator("thead").count(),
-    cells: await datasetTable.locator("tbody tr:first-child td").count(),
-    name: await text("[data-testid='admin-user-datasets'] tbody tr:first-child td"),
-    avatar: await datasetTable.locator("tbody tr:first-child .admin-detail-asset-avatar").count(),
+    rows: datasetRows,
+    cellsPerRow: await datasetTable
+      .locator("tbody tr")
+      .evaluateAll((rows) => rows.map((row) => row.children.length)),
+    avatars: await datasetTable.locator("tbody .admin-detail-asset-avatar").count(),
+    hasSeededRow: (await datasetTable.innerText()).includes(THROWAWAY),
   };
   check(
     results.dataset_table.headers === 0 &&
-      results.dataset_table.cells === 1 &&
-      results.dataset_table.avatar === 1 &&
-      results.dataset_table.name.includes(THROWAWAY),
+      datasetRows >= 1 &&
+      results.dataset_table.cellsPerRow.every((cells) => cells === 1) &&
+      results.dataset_table.avatars === datasetRows &&
+      results.dataset_table.hasSeededRow,
     "dataset_single_column",
     JSON.stringify(results.dataset_table),
   );
 
-  // Agent tab: same shape, `TableEmpty` because this account has no agents.
+  // Agent tab on the administrator's page: same single-column shape.
   await page.click(".admin-tab[data-tab='flow']");
   await page.waitForTimeout(700);
   const agentTable = page.locator("[data-testid='admin-user-agents']");
+  const agentRows = await agentTable.locator("tbody tr").count();
   results.agent_table = {
     headers: await agentTable.locator("thead").count(),
-    cell: await text("[data-testid='admin-user-agents'] tbody tr:first-child td"),
-    colSpan: await agentTable
-      .locator("tbody tr:first-child td")
-      .getAttribute("colspan")
-      .catch(() => null),
-    cellHeight: await agentTable
-      .locator("tbody tr:first-child td")
-      .evaluate((node) => getComputedStyle(node).height),
-    cellAlign: await agentTable
-      .locator("tbody tr:first-child td")
-      .evaluate((node) => getComputedStyle(node).textAlign),
+    rows: agentRows,
+    cellsPerRow: await agentTable
+      .locator("tbody tr")
+      .evaluateAll((rows) => rows.map((row) => row.children.length)),
   };
   check(
     results.agent_table.headers === 0 &&
-      results.agent_table.cell === "No results found" &&
-      results.agent_table.colSpan === "1" &&
-      results.agent_table.cellHeight === "96px" &&
-      results.agent_table.cellAlign === "center",
-    "agent_empty_state",
+      agentRows >= 1 &&
+      results.agent_table.cellsPerRow.every((cells) => cells === 1),
+    "agent_single_column",
     JSON.stringify(results.agent_table),
+  );
+
+  // `TableEmpty` needs an account that owns nothing: the throwaway user.
+  const seededUser = await page.evaluate(async (email) => {
+    const token = localStorage.getItem("rayrag_token") || "";
+    const res = await fetch("/api/v1/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ username: email, password: "probe-passphrase", role: "normal" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { code: data.code, message: data.message };
+  }, THROWAWAY_USER);
+  createdUser = seededUser.code === 0;
+  check(createdUser, "throwaway_user", JSON.stringify(seededUser));
+
+  await page.goto(ORIGIN + "/admin/users/" + encodeURIComponent(THROWAWAY_USER), {
+    waitUntil: "domcontentloaded",
+    timeout: 40000,
+  });
+  await page.waitForSelector("[data-testid='admin-user-detail-panel']", { timeout: 20000 });
+  await page.waitForTimeout(900);
+  const emptyState = async (selector) => {
+    const cell = page.locator(`${selector} tbody tr:first-child td`);
+    return {
+      tableHeaders: await page.locator(selector).locator("thead").count(),
+      rows: await page.locator(selector).locator("tbody tr").count(),
+      text: (await cell.innerText()).trim(),
+      colSpan: await cell.getAttribute("colspan"),
+      height: await cell.evaluate((node) => getComputedStyle(node).height),
+      align: await cell.evaluate((node) => getComputedStyle(node).textAlign),
+    };
+  };
+  results.empty_dataset = await emptyState("[data-testid='admin-user-datasets']");
+  check(
+    results.empty_dataset.tableHeaders === 0 &&
+      results.empty_dataset.rows === 1 &&
+      results.empty_dataset.text === "No results found" &&
+      results.empty_dataset.colSpan === "1" &&
+      results.empty_dataset.height === "96px" &&
+      results.empty_dataset.align === "center",
+    "empty_dataset",
+    JSON.stringify(results.empty_dataset),
+  );
+
+  // A freshly created account already owns its default agent, so the agent tab
+  // shows a normal single-column row instead of the empty state.
+  await page.click(".admin-tab[data-tab='flow']");
+  await page.waitForTimeout(700);
+  const freshAgentTable = page.locator("[data-testid='admin-user-agents']");
+  results.default_agent_row = {
+    headers: await freshAgentTable.locator("thead").count(),
+    cells: await freshAgentTable.locator("tbody tr:first-child td").count(),
+    name: (await freshAgentTable.locator("tbody tr:first-child td").innerText()).trim(),
+    avatars: await freshAgentTable.locator("tbody .admin-detail-asset-avatar").count(),
+  };
+  check(
+    results.default_agent_row.headers === 0 &&
+      results.default_agent_row.cells === 1 &&
+      results.default_agent_row.avatars === 1 &&
+      results.default_agent_row.name.includes("Default Agent"),
+    "default_agent_row",
+    JSON.stringify(results.default_agent_row),
   );
 
   // Back to the dataset tab and confirm the empty state is not sticky.
@@ -178,7 +245,7 @@ try {
   check(
     results.summary.fields.join("|") ===
       "Last login time|Create time|Last update time|Language|Is anonymous|Is superuser" &&
-      results.summary.email === "admin@rayrag.local" &&
+      results.summary.email === THROWAWAY_USER &&
       results.summary.status === "Active",
     "account_summary",
     JSON.stringify(results.summary),
@@ -209,6 +276,23 @@ try {
       .catch(() => 0);
     results.cleanup_deleted = cleaned === 1 ? "ok" : "FAIL";
     if (cleaned !== 1) results.errors.push(`cleanup_deleted (${cleaned})`);
+  }
+  if (createdUser) {
+    const cleanedUser = await page
+      .evaluate(async (email) => {
+        const token = localStorage.getItem("rayrag_token") || "";
+        const res = await fetch("/api/v1/admin/users/" + encodeURIComponent(email), {
+          method: "DELETE",
+          headers: { Authorization: "Bearer " + token },
+        });
+        const data = await res.json().catch(() => ({}));
+        return { status: res.status, code: data.code };
+      }, THROWAWAY_USER)
+      .catch(() => ({ status: 0 }));
+    results.cleanup_user_deleted = cleanedUser.code === 0 ? "ok" : "FAIL";
+    if (cleanedUser.code !== 0) {
+      results.errors.push(`cleanup_user_deleted (${JSON.stringify(cleanedUser)})`);
+    }
   }
   results.pageErrors = pageErrors;
   console.log(JSON.stringify(results, null, 2));

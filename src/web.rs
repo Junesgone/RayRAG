@@ -9452,7 +9452,7 @@ connection: close
             ".admin-tab{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border:0.5px solid var(--bd);border-radius:4px;background:transparent;color:var(--t2);font:inherit;font-size:14px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s}",
             ".admin-tab.active{background:var(--bgc);color:var(--t);box-shadow:var(--sh)}",
             ".admin-back{display:inline-flex;height:40px;align-items:center;gap:8px;padding:0 12px;text-decoration:none}",
-            ".admin-asset-empty{height:96px;color:var(--tm);text-align:center}",
+            ".admin-table td.admin-asset-empty{height:96px;color:var(--tm);text-align:center}",
         ] {
             assert!(css.contains(rule), "user detail css missing: {rule}");
         }
