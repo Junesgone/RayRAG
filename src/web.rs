@@ -442,7 +442,7 @@ fn page_head(title: &str, zh: bool) -> String {
 .tip-icon:hover::after{content:attr(data-tip);position:absolute;left:18px;top:-4px;width:280px;background:var(--card,#1e1e2e);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;color:var(--t);z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
 .lang-chip{border:1px solid var(--bd);border-radius:14px;padding:2px 10px;font-size:12px;background:transparent;color:var(--t);cursor:pointer}
 .lang-chip.on{background:var(--p);color:#fff;border-color:var(--p)}
-\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style><script>(function(){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'&&location.pathname!='/login'){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})()</script></head><body>");
+\n.settings-drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:var(--bgc);border-left:1px solid var(--bd);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s ease;z-index:120}\n.settings-drawer.open{transform:translateX(0)}\n.set-group{padding:8px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:12px}\n.set-title{display:block;font-size:14px;margin-bottom:8px;color:var(--p)}\n.set-label{display:block;font-size:12px;color:var(--tm);margin:8px 0 4px}\n.set-switch{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px}\n.set-sw-label{color:var(--t2)}\n</style><script>(function(){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};var url=typeof input==='string'?input:(input&&input.url)||'';if(url.indexOf('/api/v1/')===0){var token=localStorage.getItem('rayrag_token');if(token){var headers=new Headers(init.headers||{});if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+token);init.headers=headers}}return nativeFetch(input,init).then(function(response){if(response.status===401&&url!='/api/v1/auth/login'&&location.pathname!='/login'&&!window.__OAUTH_LANDING){localStorage.removeItem('rayrag_token');location.href='/login'}return response})}})()</script></head><body>");
     h
 }
 
@@ -1427,6 +1427,8 @@ const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
 /// `/login` after a second with a clean URL).
 const OAUTH_LANDING_JS: &str = r#";
 (function oauthLanding(){
+  var earlyParams=new URLSearchParams(location.search);
+  if(earlyParams.get('error')||earlyParams.get('auth'))window.__OAUTH_LANDING=true;
   var params=new URLSearchParams(location.search);
   var error=params.get('error');
   var auth=params.get('auth');
@@ -9020,6 +9022,8 @@ connection: close
         .await;
         for marker in [
             "function oauthLanding()",
+            "window.__OAUTH_LANDING=true",
+            "!window.__OAUTH_LANDING",
             "params.get('error')",
             "params.get('auth')",
             "history.replaceState(null,'',location.pathname+(query?'?'+query:''))",
