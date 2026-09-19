@@ -351,3 +351,34 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 .admin-pager-step{padding:5px 10px;border:1px solid var(--bd);border-radius:var(--rs);background:transparent;color:var(--t);font:inherit;font-size:12px;cursor:pointer}
 .admin-pager-step:disabled{opacity:.5;cursor:not-allowed}
 .admin-pager-now{color:var(--tm);font-size:12px}
+/* Upstream `next-search/retrieval-documents/index.tsx`: the `Files` trigger (`w-full p-1 rounded-md text-base border min-h-10 justify-between`), the X + separator + ChevronDown controls, and the command popover with checkbox rows and the Clear/Close footer. */
+.search-docs{position:relative;width:100%}
+.search-docs[hidden]{display:none!important}
+.search-docs-trigger{display:flex;width:100%;min-height:40px;align-items:center;justify-content:space-between;gap:8px;padding:4px;border:1px solid var(--bd);border-radius:6px;background:inherit;color:var(--t);font:inherit;font-size:14px;cursor:pointer;text-align:left}
+.search-docs-trigger:hover{background:var(--bgch)}
+.search-docs-main{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.search-docs-icon{display:inline-flex;align-items:center;color:var(--t2)}
+.search-docs-count{color:var(--t)}
+.search-docs-label{color:var(--t)}
+.search-docs-controls{display:inline-flex;align-items:center;gap:4px;color:var(--tm)}
+.search-docs-clear{display:inline-flex;align-items:center;margin:0 8px;cursor:pointer}
+.search-docs-clear:hover{color:var(--t)}
+.search-docs-sep{display:inline-block;width:1px;min-height:24px;background:var(--bd)}
+.search-docs-chevron{display:inline-flex;align-items:center;margin:0 8px}
+.search-docs-pop{position:absolute;top:calc(100% + 4px);left:0;z-index:1100;min-width:100%;width:max-content;max-width:420px;padding:12px;border:1px solid var(--bd);border-radius:8px;background:var(--bgm);box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.search-docs-pop[hidden]{display:none!important}
+.search-docs-search{padding-bottom:8px;border-bottom:1px solid var(--bd)}
+.search-docs-search input{width:100%;padding:6px 8px;border:0;background:transparent;color:var(--t);font:inherit;font-size:13px;outline:0}
+.search-docs-list{max-height:260px;margin-top:8px;overflow:auto}
+.search-docs-row{display:flex;align-items:center;gap:8px;padding:6px 4px;border-radius:4px;color:var(--t);font-size:13px;cursor:pointer}
+.search-docs-row:hover{background:var(--bgch)}
+.search-docs-check{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;border:1px solid var(--p);border-radius:4px;opacity:.5}
+.search-docs-check.on{background:var(--p);color:#fff;opacity:1}
+.search-docs-check:not(.on) svg{visibility:hidden}
+.search-docs-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.search-docs-empty{margin:8px 0 0;color:var(--tm);font-size:13px}
+.search-docs-empty[hidden]{display:none!important}
+.search-docs-footer{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)}
+.search-docs-action{flex:1;padding:6px 8px;border:0;border-radius:4px;background:transparent;color:var(--t);font:inherit;font-size:13px;cursor:pointer}
+.search-docs-action:hover{background:var(--bgch)}
+.search-docs-action[hidden],.search-docs-footer .search-docs-sep[hidden]{display:none!important}

@@ -18,6 +18,10 @@ fn t(k: &str, zh: bool) -> &str {
         // upstream en.ts text.
         return match k {
             "setting.selectModelPlaceholder" => "Select model",
+            // `knowledgeDetails.subbarFiles` is "Files"/"文件列表", while the
+            // navigation's `header.fileManager` is "文件"; the namespaced key
+            // keeps the two apart.
+            "knowledgeDetails.subbarFiles" => "Files",
             other => other,
         };
     }
@@ -120,6 +124,7 @@ fn t(k: &str, zh: bool) -> &str {
         "Agents" => "智能体",
         "Memories" => "记忆",
         "Files" => "文件",
+        "knowledgeDetails.subbarFiles" => "文件列表",
         "Settings" => "设置",
         "Model providers" => "模型提供商",
         // Upstream `locales/zh.ts` has no `admin:` block, so the console keeps
@@ -1411,6 +1416,15 @@ const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
     "Turkish",
     "Dutch",
 ];
+
+/// lucide `Files` at 16px — the `RetrievalDocuments` trigger icon.
+const SEARCH_FILES_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 7h-3a2 2 0 0 1-2-2V2'/><path d='M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z'/><path d='M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8'/></svg>";
+
+/// lucide `X` at 16px — the trigger's clear affordance.
+const SEARCH_X_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg>";
+
+/// lucide `Check` at 16px — the selected checkbox inside the popover rows.
+const SEARCH_CHECK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 6 9 17l-5-5'/></svg>";
 
 /// lucide `Link` at 16px — the Test connection button icon.
 const SELECT_LINK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/><path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/></svg>";
@@ -2749,8 +2763,31 @@ fn search_page_markup(
     b.push_str("</label><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='hybrid'> BM25+Vector</label><label style='font-size:12px'>");
     b.push_str(t("Knowledge Base", zh));
     b.push_str("</label><select id='kbSel' style='font-size:12px;max-width:200px' onchange='kbSelChange()'><option value='__all__'>All knowledge bases</option></select><label style='font-size:12px'>");
-    b.push_str(t("Document Type", zh));
-    b.push_str("</label><select id='docType' style='font-size:12px'><option value=''>All types</option><option value='pdf'>PDF</option><option value='doc'>DOC</option><option value='docx'>DOCX</option><option value='xls'>XLS</option><option value='xlsx'>XLSX</option><option value='ppt'>PPT</option><option value='pptx'>PPTX</option><option value='txt'>TXT</option><option value='md'>MD</option><option value='html'>HTML</option></select></div><div id='searchRerankRow' style='display:none;margin-top:8px'><p style='font-size:11px;color:var(--d);margin:0 0 4px'>* ");
+    // Upstream `next-search/retrieval-documents/index.tsx`: the trigger shows the
+    // `Files` icon, the selected/total counter and `knowledgeDetails.subbarFiles`,
+    // with an X that clears the selection and a ChevronDown; the popover holds a
+    // command input, the per-document checkbox rows and the Clear/Close footer.
+    b.push_str("<div class='search-docs' id='searchDocsField' hidden><button type='button' class='search-docs-trigger' id='searchDocsTrigger' data-testid='search-documents-trigger' aria-expanded='false' aria-controls='searchDocsPop' onclick='searchDocsToggle(event)'><span class='search-docs-main'><span class='search-docs-icon' aria-hidden='true'>");
+    b.push_str(SEARCH_FILES_SVG);
+    b.push_str("</span><span class='search-docs-count' id='searchDocsCount'>0/0</span><span class='search-docs-label'>");
+    b.push_str(t("knowledgeDetails.subbarFiles", zh));
+    b.push_str("</span></span><span class='search-docs-controls'><span class='search-docs-clear' id='searchDocsClear' role='button' tabindex='0' aria-label='");
+    b.push_str(t("Clear", zh));
+    b.push_str("' onclick='searchDocsClear(event)' onkeydown=\"if(event.key==='Enter'||event.key===' '){event.preventDefault();searchDocsClear(event)}\">");
+    b.push_str(SEARCH_X_SVG);
+    b.push_str("</span><span class='search-docs-sep' aria-hidden='true'></span><span class='search-docs-chevron' aria-hidden='true'>");
+    b.push_str(SELECT_CHEVRON_DOWN_SVG);
+    b.push_str("</span></span></button><div class='search-docs-pop' id='searchDocsPop' hidden><div class='search-docs-search'><input id='searchDocsQuery' type='text' autocomplete='off' placeholder='");
+    b.push_str(t("Search", zh));
+    b.push_str("' oninput='searchDocsRender()'></div><div class='search-docs-list' id='searchDocsList' role='listbox' aria-label='");
+    b.push_str(t("knowledgeDetails.subbarFiles", zh));
+    b.push_str("'></div><p class='search-docs-empty' id='searchDocsEmpty' hidden>");
+    b.push_str(t("No results found", zh));
+    b.push_str("</p><div class='search-docs-footer'><button type='button' class='search-docs-action' id='searchDocsClearAll' hidden onclick='searchDocsClear()'>");
+    b.push_str(t("Clear", zh));
+    b.push_str("</button><span class='search-docs-sep' id='searchDocsFooterSep' hidden aria-hidden='true'></span><button type='button' class='search-docs-action' onclick='searchDocsClose()'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div></div><div id='searchRerankRow' style='display:none;margin-top:8px'><p style='font-size:11px;color:var(--d);margin:0 0 4px'>* ");
     b.push_str(t("Rerank model is required when rerank is enabled", zh));
     b.push_str("</p><p id='searchRerankError' class='provider-instance-error'></p>");
     push_default_model_selector(&mut b, &SEARCH_PAGE_RERANK_SELECTOR_FIELD, zh);
@@ -2783,7 +2820,7 @@ fn search_page_markup(
         "total": t("Total", zh),
     })));
     b.push_str(";</script>");
-    b.push_str("<script>function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked,related_search:document.getElementById('relatedSearch').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search;searchRerankToggle();var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};var SEARCH_STREAM=null;var SEARCH_MIND=null;var SEARCH_SEARCH_ICON=\"<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>\";
+    b.push_str("<script>function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked,related_search:document.getElementById('relatedSearch').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){if(typeof searchDocsLoad==='function')searchDocsLoad();var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search;searchRerankToggle();var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};var SEARCH_STREAM=null;var SEARCH_MIND=null;var SEARCH_SEARCH_ICON=\"<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>\";
 function searchAskReset(){var input=document.getElementById('q2');if(input)input.value='';var box=document.getElementById('aiSummaryBlock');if(box)box.hidden=true;var body=document.getElementById('aiSummaryBody');if(body)body.replaceChildren()}
 function searchAskSetStreaming(streaming){var button=document.getElementById('searchAskSubmit');if(!button)return;button.classList.toggle('streaming',streaming);button.setAttribute('aria-busy',streaming?'true':'false');button.innerHTML=streaming?\"<span class='search-ask-stop' aria-hidden='true'></span>\":SEARCH_SEARCH_ICON}
 function searchAskAction(){if(SEARCH_STREAM){searchStopOutput();return}doSearch2()}
@@ -2796,7 +2833,18 @@ function searchSummaryStart(question){var box=document.getElementById('aiSummary
 function searchMindmapOpen(){var app=window.__SAPP__;var sheet=document.getElementById('mindSheet');if(!sheet||!app||!app.id)return;sheet.hidden=false;var tree=document.getElementById('mindTree');if(tree)tree.replaceChildren();var progress=document.getElementById('mindProgress');if(progress)progress.hidden=false;if(SEARCH_MIND){try{SEARCH_MIND.abort()}catch(error){}}SEARCH_MIND=new AbortController();fetch('/api/v1/chat/mindmap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:lastQuery||(document.getElementById('q2')||{}).value||''}),signal:SEARCH_MIND.signal}).then(function(response){return response.json()}).then(function(data){if(progress)progress.hidden=true;if(data.code!==0)throw new Error(data.message||'Mind map failed');searchRenderMind(data.data)}).catch(function(error){if(progress)progress.hidden=true;var host=document.getElementById('mindTree');if(host&&error&&error.name!=='AbortError'){host.textContent=error.message}})}
 function searchRenderMind(node){var host=document.getElementById('mindTree');if(!host)return;host.replaceChildren();function build(item){var li=document.createElement('li');var label=document.createElement('span');label.textContent=(item&&(item.name||item.title))||'';li.appendChild(label);var children=(item&&item.children)||[];if(children.length){var ul=document.createElement('ul');children.forEach(function(child){ul.appendChild(build(child))});li.appendChild(ul)}return li}var root=document.createElement('ul');root.className='mind-root';root.appendChild(build(node||{}));host.appendChild(root)}
 function searchMindmapClose(){var sheet=document.getElementById('mindSheet');if(sheet)sheet.hidden=true;if(SEARCH_MIND){try{SEARCH_MIND.abort()}catch(error){}SEARCH_MIND=null}}
-function searchRelatedOn(){var box=document.getElementById('relatedSearch');return !!(box&&box.checked)}function searchRelatedDrop(){var host=document.getElementById('relatedQuestions');if(host)host.remove()}function searchRelatedToggle(){if(!searchRelatedOn())searchRelatedDrop()}function searchRelatedClick(text){var box=document.getElementById('q2');if(box)box.value=text;runSearch(text)}function loadRelatedQuestions(q){if(!searchRelatedOn()||!q){searchRelatedDrop();return}var sid=(window.__SAPP__&&window.__SAPP__.id)||'';fetch('/api/v1/chat/recommendation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,search_id:sid})}).then(function(response){return response.json()}).then(function(data){var list=((data&&data.data)||[]).slice(0,5);if(!searchRelatedOn()||!list.length){searchRelatedDrop();return}searchRelatedDrop();var wrap=document.createElement('div');wrap.id='relatedQuestions';wrap.className='search-related';var title=document.createElement('p');title.className='search-related-title';title.textContent=SEARCH_LABELS.relatedSearch;wrap.appendChild(title);var chips=document.createElement('div');chips.className='search-related-chips';list.forEach(function(text){var chip=document.createElement('button');chip.type='button';chip.className='search-related-chip';chip.textContent=text;chip.onclick=function(){searchRelatedClick(text)};chips.appendChild(chip)});wrap.appendChild(chips);var host=document.getElementById('results');if(host)host.appendChild(wrap)}).catch(function(){searchRelatedDrop()})}function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function docTypeOk(c){var t=document.getElementById('docType').value;if(!t)return true;var n=(c.doc_name||c.document_name||'').toLowerCase();return n.indexOf('.'+t)>0};function runSearch(q){var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);if(r&&!searchRerankSelected()){var err=document.getElementById('searchRerankError');if(err)err.textContent='Rerank model is required when rerank is enabled';var row=document.getElementById('searchRerankRow');if(row)row.style.display='';return}searchRerankHideError();var e='/api/v1/retrieval';
+var SEARCH_DOCS={items:[],selected:[],open:false,loading:false};
+function searchDocsToggle(event){if(event)event.stopPropagation();var pop=document.getElementById('searchDocsPop');var trigger=document.getElementById('searchDocsTrigger');if(!pop||!trigger)return;var open=pop.hidden;pop.hidden=!open;trigger.setAttribute('aria-expanded',open?'true':'false');SEARCH_DOCS.open=open;if(open){searchDocsLoad();var input=document.getElementById('searchDocsQuery');if(input){input.value='';input.focus()}}}
+function searchDocsClose(){var pop=document.getElementById('searchDocsPop');if(pop)pop.hidden=true;var trigger=document.getElementById('searchDocsTrigger');if(trigger)trigger.setAttribute('aria-expanded','false');SEARCH_DOCS.open=false}
+function searchDocsClear(event){if(event){event.preventDefault();event.stopPropagation()}SEARCH_DOCS.selected=[];searchDocsRender();searchDocsSync()}
+function searchDocsSync(){var count=document.getElementById('searchDocsCount');if(count)count.textContent=SEARCH_DOCS.selected.length+'/'+SEARCH_DOCS.items.length;var clearAll=document.getElementById('searchDocsClearAll');var sep=document.getElementById('searchDocsFooterSep');var any=SEARCH_DOCS.selected.length>0;if(clearAll)clearAll.hidden=!any;if(sep)sep.hidden=!any;var field=document.getElementById('searchDocsField');if(field)field.hidden=SEARCH_DOCS.items.length===0}
+function searchDocsSelectedKbs(){var out=[];var all=false;document.querySelectorAll('.kbCk:checked').forEach(function(box){if(box.value==='__all__'){all=true}else if(box.value){out.push(box.value)}});var app=window.__SAPP__;if(!out.length&&!all&&app&&app.kb_ids)out=app.kb_ids.slice();if(all){out=[];document.querySelectorAll('.kbCk').forEach(function(box){if(box.value&&box.value!=='__all__')out.push(box.value)})}return out}
+function searchDocsLoad(){var kbs=searchDocsSelectedKbs();if(!kbs.length){SEARCH_DOCS.items=[];searchDocsRender();return}SEARCH_DOCS.loading=true;Promise.all(kbs.map(function(kb){return fetch('/api/v1/datasets/'+encodeURIComponent(kb)+'/documents').then(function(response){return response.json()}).then(function(data){return (data&&data.data)||[]}).catch(function(){return []})})).then(function(lists){var seen={};var items=[];lists.forEach(function(list){(list||[]).forEach(function(doc){var id=doc.id||doc.doc_id;if(!id||seen[id])return;seen[id]=true;items.push({id:id,name:doc.name||doc.doc_name||id})})});SEARCH_DOCS.items=items;SEARCH_DOCS.selected=SEARCH_DOCS.selected.filter(function(id){return !!seen[id]});SEARCH_DOCS.loading=false;searchDocsRender()})}
+function searchDocsToggleValue(id){var index=SEARCH_DOCS.selected.indexOf(id);if(index>=0)SEARCH_DOCS.selected.splice(index,1);else SEARCH_DOCS.selected.push(id);searchDocsRender();searchDocsSync()}
+function searchDocsRender(){var list=document.getElementById('searchDocsList');if(!list)return;var input=document.getElementById('searchDocsQuery');var query=input?(input.value||'').trim().toLowerCase():'';list.replaceChildren();var matches=SEARCH_DOCS.items.filter(function(item){return !query||String(item.name).toLowerCase().indexOf(query)>=0});matches.forEach(function(item){var row=document.createElement('div');row.className='search-docs-row';row.setAttribute('role','option');row.setAttribute('tabindex','0');row.setAttribute('data-testid','search-documents-option');row.setAttribute('aria-selected',SEARCH_DOCS.selected.indexOf(item.id)>=0?'true':'false');row.dataset.value=item.id;var box=document.createElement('span');box.className='search-docs-check'+(SEARCH_DOCS.selected.indexOf(item.id)>=0?' on':'');box.innerHTML=SEARCH_CHECK_SVG;row.appendChild(box);var label=document.createElement('span');label.className='search-docs-name';label.textContent=item.name;row.appendChild(label);row.onclick=function(){searchDocsToggleValue(item.id)};row.onkeydown=function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();searchDocsToggleValue(item.id)}};list.appendChild(row)});var empty=document.getElementById('searchDocsEmpty');if(empty)empty.hidden=matches.length>0;searchDocsSync()}
+document.addEventListener('click',function(event){if(!SEARCH_DOCS.open)return;var field=document.getElementById('searchDocsField');if(field&&field.contains(event.target))return;searchDocsClose()});
+document.addEventListener('keydown',function(event){if(event.key==='Escape')searchDocsClose()});
+function searchRelatedOn(){var box=document.getElementById('relatedSearch');return !!(box&&box.checked)}function searchRelatedDrop(){var host=document.getElementById('relatedQuestions');if(host)host.remove()}function searchRelatedToggle(){if(!searchRelatedOn())searchRelatedDrop()}function searchRelatedClick(text){var box=document.getElementById('q2');if(box)box.value=text;runSearch(text)}function loadRelatedQuestions(q){if(!searchRelatedOn()||!q){searchRelatedDrop();return}var sid=(window.__SAPP__&&window.__SAPP__.id)||'';fetch('/api/v1/chat/recommendation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,search_id:sid})}).then(function(response){return response.json()}).then(function(data){var list=((data&&data.data)||[]).slice(0,5);if(!searchRelatedOn()||!list.length){searchRelatedDrop();return}searchRelatedDrop();var wrap=document.createElement('div');wrap.id='relatedQuestions';wrap.className='search-related';var title=document.createElement('p');title.className='search-related-title';title.textContent=SEARCH_LABELS.relatedSearch;wrap.appendChild(title);var chips=document.createElement('div');chips.className='search-related-chips';list.forEach(function(text){var chip=document.createElement('button');chip.type='button';chip.className='search-related-chip';chip.textContent=text;chip.onclick=function(){searchRelatedClick(text)};chips.appendChild(chip)});wrap.appendChild(chips);var host=document.getElementById('results');if(host)host.appendChild(wrap)}).catch(function(){searchRelatedDrop()})}function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function runSearch(q){var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);if(r&&!searchRerankSelected()){var err=document.getElementById('searchRerankError');if(err)err.textContent='Rerank model is required when rerank is enabled';var row=document.getElementById('searchRerankRow');if(row)row.style.display='';return}searchRerankHideError();var e='/api/v1/retrieval';
 // Upstream `next-search/hooks.ts` posts `{kb_id, highlight, question, doc_ids,
 // page, size, search_id}` and lets the server read the app's `search_config`;
 // the sidebar only sends the fields the user actually changed.
@@ -2808,7 +2856,7 @@ var seeded=(app&&app.kb_ids)||[];
 if(!kbs.length&&!allOn&&seeded.length){kbs=seeded.slice()}
 if(kbs.length&&!allOn){body.kb_id=kbs}
 var kbIds=body.kb_id||seeded;
-if(window.__SAPP__&&window.__SAPP__.doc_ids&&window.__SAPP__.doc_ids.length)body.doc_ids=window.__SAPP__.doc_ids;
+if(SEARCH_DOCS.selected.length)body.doc_ids=SEARCH_DOCS.selected.slice();else if(window.__SAPP__&&window.__SAPP__.doc_ids&&window.__SAPP__.doc_ids.length)body.doc_ids=window.__SAPP__.doc_ids;
 if(!app){body.top_k=k}
 if(window.__SEARCH_TOUCHED&&window.__SEARCH_TOUCHED.topK)body.top_k=parseInt(document.getElementById('topK').value);
 if(window.__SEARCH_TOUCHED&&window.__SEARCH_TOUCHED.threshold)body.similarity_threshold=parseFloat(document.getElementById('thresh').value);
@@ -2817,7 +2865,7 @@ if(!app&&!window.__SEARCH_TOUCHED){body.similarity_threshold=parseFloat(document
 var rrEl=document.getElementById('searchRerankSel');var rr=rrEl?(rrEl.dataset.value||''):'';
 if(r&&rr){body.rerank_id=rr}
 if(kbIds&&kbIds.length&&!allOn)body.kb_id=kbIds;
-document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(docTypeOk);var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||'<p style=color:var(--tm);padding:24px>No results found.</p>';var total=document.getElementById('searchTotal');if(total)total.textContent=SEARCH_LABELS.total+': '+items.length;searchAskSetStreaming(false);loadRelatedQuestions(q);searchSummaryStart(q)})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
+document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(function(chunk){return chunk!=null});var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div><div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||'<p style=color:var(--tm);padding:24px>No results found.</p>';var total=document.getElementById('searchTotal');if(total)total.textContent=SEARCH_LABELS.total+': '+items.length;searchAskSetStreaming(false);loadRelatedQuestions(q);searchSummaryStart(q)})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
     b.push_str("<script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&serde_json::json!([{
         "fieldId": "rerank_id",
@@ -2845,7 +2893,7 @@ function searchMarkTouched(name){window.__SEARCH_TOUCHED=window.__SEARCH_TOUCHED
 function searchWireTouched(){var pairs=[['topK','topK'],['thresh','threshold'],['vWeight','weight']];pairs.forEach(function(pair){var node=document.getElementById(pair[0]);if(!node||node.dataset.touchedWired==='true')return;node.dataset.touchedWired='true';node.addEventListener('change',function(){searchMarkTouched(pair[1])})})}searchWireTouched();
 function searchRerankHideError(){var err=document.getElementById('searchRerankError');if(err)err.textContent=''}function searchRerankSelected(){var el=document.getElementById('searchRerankSel');return el?(el.dataset.value||''):''}");
     b.push_str("async function loadSearchPageModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)})}catch(error){}}");
-    b.push_str("loadSearchPageModelCatalog().then(function(){var s=window.__SAPP__;if(s&&s.rerank_id)seedModelTrigger('rerank_id',s.rerank_id);searchRerankToggle();});");
+    b.push_str("loadSearchPageModelCatalog().then(function(){var s=window.__SAPP__;if(s&&s.rerank_id)seedModelTrigger('rerank_id',s.rerank_id);searchRerankToggle();});searchDocsSync();searchDocsLoad();");
     b.push_str("</script>");
     // Document preview modal
     b.push_str("<div class='mind-sheet' id='mindSheet' data-testid='mindmap-sheet' hidden role='dialog' aria-modal='false' aria-labelledby='mindSheetTitle'><div class='mind-sheet-head'><span class='mind-sheet-title' id='mindSheetTitle'>__MIND_LABEL__</span><button type='button' class='mind-sheet-close' data-testid='mindmap-close' aria-label='__CLOSE__' onclick='searchMindmapClose()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></button></div><div class='mind-sheet-body'><div class='mind-progress' id='mindProgress' hidden><span class='mind-progress-bar'></span></div><div class='mind-tree' id='mindTree'></div></div></div><div class='modal-overlay' id='docPreview' onclick='if(event.target===this)closePreview()'><div class='modal' style='max-width:700px;max-height:80vh;overflow-y:auto'><div style='display:flex;align-items:center;margin-bottom:16px'><h2 id='docPreviewTitle' style='flex:1;margin:0'>Document</h2><button class='btn btn-ghost' onclick='closePreview()'>×</button></div><div id='docPreviewContent' style='font-size:14px;line-height:1.8;color:var(--t2);white-space:pre-wrap'></div></div></div>");
@@ -10231,6 +10279,78 @@ connection: close
     /// residuals closed in v0.3.6c: the greeting input row (clear X, separator,
     /// round submit/stop), the AI-summary block with its skeleton and divider,
     /// the `Total: N` bar with the mind-map button and the sheet itself.
+    /// Upstream `next-search/retrieval-documents/index.tsx`: the sidebar's file
+    /// control is the `Files` trigger (counter + X + separator + ChevronDown)
+    /// over a command popover with per-document checkbox rows and a Clear/Close
+    /// footer, and the selection travels to `/api/v1/retrieval` as `doc_ids`.
+    /// Upstream has no document-type filter, so RayRAG's old select is gone.
+    #[tokio::test]
+    async fn search_page_renders_the_upstream_documents_popover() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            search_page(
+                State(state),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='search-documents-trigger'",
+            "id='searchDocsField'",
+            "id='searchDocsCount'",
+            "id='searchDocsClear'",
+            "id='searchDocsPop'",
+            "id='searchDocsQuery'",
+            "id='searchDocsList'",
+            "id='searchDocsEmpty'",
+            "id='searchDocsClearAll'",
+            "searchDocsToggle(event)",
+            "searchDocsClear(event)",
+            "function searchDocsLoad(",
+            "function searchDocsRender(",
+            "data-testid','search-documents-option'",
+            "SEARCH_DOCS.selected.length",
+            "body.doc_ids=SEARCH_DOCS.selected.slice()",
+            "No results found",
+            ">Clear<",
+            ">Close<",
+            ">Files<",
+        ] {
+            assert!(
+                html.contains(marker),
+                "documents popover marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("id='docType'") && !html.contains("docTypeOk"),
+            "upstream has no document-type filter"
+        );
+        // zh copy for the trigger and the popover chrome.
+        let zh = body_of(
+            search_page(
+                State(test_state().1),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in ["文件列表", "未查到结果", ">清空<", ">关闭<"] {
+            assert!(
+                zh.contains(marker),
+                "zh documents popover copy missing: {marker}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn search_view_hosts_ai_summary_and_mindmap() {
         let (_root, state) = test_state();

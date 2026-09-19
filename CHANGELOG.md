@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.16] — 2026-09-20（对标批次 v0.3.7t）
+
+### Added
+
+- **搜索页的文件筛选改成上游的 `RetrievalDocuments` 浮层**：上游 `next-search/retrieval-documents/index.tsx` 里，
+  侧栏的「文件」控件是一个触发器（lucide `Files` 图标 + `已选/总数` + `knowledgeDetails.subbarFiles` 文案，
+  右侧 X 清空、竖分隔线、ChevronDown），点开是带搜索框的浮层，逐文档复选框（选中打勾），底部
+  `common.clear` / `common.close`；有文档时才渲染。RayRAG 之前只有一个「Document Type」下拉，现在按上游实现，
+  并把选中的 `doc_ids` 直接送进 `POST /api/v1/retrieval`（勾选即生效，与上游 `onTesting` 一致）。
+  上游没有文档类型过滤，因此该下拉一并移除（结果不再按扩展名二次过滤）。
+- 新增 `t()` 命名空间键 `knowledgeDetails.subbarFiles`：它的中文是「文件列表」，与导航 `header.fileManager`
+  的「文件」不同，按仓内既有约定用命名空间键区分。
+
 ## [0.4.15] — 2026-09-20（对标批次 v0.3.7s）
 
 ### Added
