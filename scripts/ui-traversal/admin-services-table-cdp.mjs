@@ -132,6 +132,19 @@ try {
   results.usersSearched = { rows: (await userRows()).length, pager: await pager("adminUserPager") };
   await page.click("button:has-text('Reset')");
   await page.waitForTimeout(250);
+  results.usersStatus = await page.evaluate(() => {
+    const self = document.querySelector("[data-testid='admin-user-status-badge']");
+    const select = document.querySelector("[data-testid='admin-user-status-select']");
+    return {
+      selfRowBadge: self ? self.textContent.trim() : null,
+      otherRowSelect: select
+        ? { value: select.value, options: Array.from(select.options).map((o) => o.value) }
+        : null,
+      legacyButtons: Array.from(document.querySelectorAll(".admin-actions-cell button")).map(
+        (node) => node.textContent.trim(),
+      ),
+    };
+  });
   results.usersReset = {
     rows: (await userRows()).length,
     search: await page.inputValue("#adminUserSearch"),
