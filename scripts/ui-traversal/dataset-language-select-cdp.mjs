@@ -171,7 +171,7 @@ try {
   );
 
   // The save payload carries the field.
-  const bodyHasLanguage = await page.evaluate(() => /language:cfgLangValue\(\)/.test(document.documentElement.innerHTML));
+  const bodyHasLanguage = await page.evaluate(() => /language:swsValue\('cfgLang'\)/.test(document.documentElement.innerHTML));
   check(bodyHasLanguage, "save_payload_reads_the_field");
 
   // Full round-trip on a throwaway dataset: pick a language, press the real Save
