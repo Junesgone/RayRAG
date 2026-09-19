@@ -651,13 +651,32 @@ async fn create_dataset(
         ),
         (None, None) => r#"{"chunk_token_num":2048,"overlapped_percent":0.05}"#.to_string(),
     };
-    match state.kbs.create_for_with_parser_config(
+    // Upstream `POST /api/v1/datasets` stores `language` as a top-level column
+    // (default `English`/`Chinese` from the process locale when omitted).
+    let language = body
+        .get("language")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim();
+    if !language.is_empty() && language.chars().count() > 32 {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "Language must not exceed 32 characters",
+        );
+    }
+    let stored_language = if language.is_empty() {
+        crate::kb::default_language()
+    } else {
+        language.to_string()
+    };
+    match state.kbs.create_for_with_parser_config_and_language(
         &auth.user_id,
         name,
         description,
         permission,
         &embd_id,
         &parser_config,
+        &stored_language,
     ) {
         Ok(kb) => (
             StatusCode::CREATED,
@@ -734,7 +753,6 @@ async fn update_dataset(
         "vector_similarity_weight",
         "rerank",
         "rerank_model",
-        "language",
         "pdf_parser",
         "page_index",
         "image_and_table_window",
@@ -767,12 +785,20 @@ async fn update_dataset(
     let requested_prompt_config = body
         .get("prompt_config")
         .and_then(|value| value.as_object());
+    // Upstream keeps `language` on the `knowledgebase` row rather than inside
+    // `parser_config`, and the dataset form sends it on every save.
+    let language = body
+        .get("language")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     if name.is_none()
         && description.is_none()
         && permission.is_none()
         && requested_embedding.is_none()
         && parser_config.is_none()
         && requested_prompt_config.is_none()
+        && language.is_none()
     {
         return api_error(
             StatusCode::BAD_REQUEST,
@@ -823,6 +849,11 @@ async fn update_dataset(
         merged.extend(incoming);
         serde_json::Value::Object(merged)
     });
+    if let Some(language) = language
+        && let Err(error) = state.kbs.set_language(&dataset_id, language)
+    {
+        return api_error(StatusCode::BAD_REQUEST, &error.to_string());
+    }
     match state.kbs.update_config(
         &dataset_id,
         permission,
@@ -8990,6 +9021,87 @@ mod tests {
         assert_eq!(forbidden.status(), StatusCode::OK);
         let forbidden_json = response_json(forbidden).await;
         assert_eq!(forbidden_json["code"], 404);
+    }
+
+    /// Upstream `Knowledgebase.language` is a top-level column with the process
+    /// locale as its default, and `PUT /api/v1/datasets/{id}` writes it there --
+    /// not into `parser_config`, which keeps only parse/retrieval settings.
+    #[tokio::test]
+    async fn dataset_language_is_a_top_level_column() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Language KB", "")
+            .unwrap();
+        let expected_default = if std::env::var("LANG")
+            .map(|lang| lang.contains("zh_CN"))
+            .unwrap_or(false)
+        {
+            "Chinese"
+        } else {
+            "English"
+        };
+        assert_eq!(kb.language, expected_default, "upstream column default");
+        let router = build_router(env.state.clone());
+        let put = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let id = kb.id.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method("PUT")
+                            .uri(format!("/api/v1/datasets/{id}"))
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let updated = put(serde_json::json!({"language": "Korean"})).await;
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated = response_json(updated).await;
+        assert_eq!(updated["data"]["language"], "Korean");
+        let parser_config: serde_json::Value =
+            serde_json::from_str(updated["data"]["parser_config"].as_str().unwrap_or("{}"))
+                .unwrap();
+        assert!(
+            parser_config.get("language").is_none(),
+            "language must not be duplicated into parser_config"
+        );
+        let reloaded = env.state.kbs.get(&kb.id).unwrap();
+        assert_eq!(reloaded.language, "Korean", "the column is persisted");
+
+        // A blank value carries no update at all.
+        let blank = put(serde_json::json!({"language": "   "})).await;
+        assert_eq!(blank.status(), StatusCode::BAD_REQUEST);
+        // `max_length=32`, like the upstream CharField.
+        let too_long = put(serde_json::json!({"language": "x".repeat(33)})).await;
+        assert_eq!(too_long.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            env.state.kbs.get(&kb.id).unwrap().language,
+            "Korean",
+            "rejected updates must not change the stored value"
+        );
+
+        let fetched = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let fetched = response_json(fetched).await;
+        assert_eq!(fetched["data"]["language"], "Korean");
     }
 
     #[tokio::test]

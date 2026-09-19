@@ -14,9 +14,14 @@ All notable changes to RayRAG are documented in this file.
   选中项右侧显示 `Check` 图标，无匹配时显示 `CommandEmpty`（`common.noDataFound`：没有找到数据。/ No data found.），
   点击空白或 Escape 关闭且不改值。
 - **语言值现在真的会保存与回填**：`PUT /api/v1/datasets/{id}` 的请求体补上 `language`，
-  `loadConfig` 用 `kb.language` 回填（缺省 `English`），此前该字段只是装饰性控件。
+  `loadConfig` 用 `kb.language` 回填，此前该字段只是装饰性控件。
+- **后端补上 `Knowledgebase.language` 顶层列**：上游 `db_models.py` 里 `language` 是
+  `knowledgebase` 表的列（`CharField(max_length=32)`，默认按进程 locale 取 `Chinese`/`English`），
+  不在 `parser_config` 里。RayRAG 的 `KnowledgeBase` 结构体新增该字段（`#[serde(default)]` 保证旧记录照常加载），
+  `POST/PUT /api/v1/datasets/{id}` 接受顶层 `language` 并写入该列，`parser_config` 不再夹带该键；
+  空值与超过 32 字符的值按上游约束拒绝。
 
-## [0.4.11] — 2026-09-20（对标批次 v0.3.7o）
+## [0.4.11] — 2026-09-20（对标批次 v0.3.7o，未单独发版，随 0.4.12 一起发布）
 
 ### Fixed
 

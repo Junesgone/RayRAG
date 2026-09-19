@@ -15,6 +15,12 @@ pub struct KnowledgeBase {
     pub id: String,
     /// Display name
     pub name: String,
+    /// RAGFlow `Knowledgebase.language` -- a *top-level* column, not a
+    /// `parser_config` key. Upstream defaults it to `Chinese` when `LANG`
+    /// mentions `zh_CN` and to `English` otherwise, and the dataset
+    /// configuration form's Language field reads and writes it.
+    #[serde(default = "default_language")]
+    pub language: String,
     /// Description
     pub description: String,
     /// Owning user/tenant. Empty only for legacy records created before ownership existed.
@@ -46,6 +52,28 @@ pub struct KnowledgeBase {
     pub created_at: u64,
     /// Last update timestamp (Unix ms)
     pub updated_at: u64,
+}
+
+/// Upstream `Knowledgebase.language` default: `Chinese` when the process locale
+/// mentions `zh_CN`, `English` otherwise.
+pub fn default_language() -> String {
+    match std::env::var("LANG") {
+        Ok(lang) if lang.contains("zh_CN") => "Chinese".to_string(),
+        _ => "English".to_string(),
+    }
+}
+
+/// Upstream `language = CharField(max_length=32)`: the stored value is the raw
+/// `LanguageTranslationMap` key, so only the length and emptiness are checked.
+pub fn validate_language(language: &str) -> Result<()> {
+    let language = language.trim();
+    if language.is_empty() {
+        anyhow::bail!("Language is required");
+    }
+    if language.chars().count() > 32 {
+        anyhow::bail!("Language must not exceed 32 characters");
+    }
+    Ok(())
 }
 
 /// Knowledge base store with file persistence.
@@ -427,7 +455,32 @@ impl KbStore {
         embd_id: &str,
         parser_config: &str,
     ) -> Result<KnowledgeBase> {
+        self.create_for_with_parser_config_and_language(
+            owner_id,
+            name,
+            description,
+            permission,
+            embd_id,
+            parser_config,
+            &default_language(),
+        )
+    }
+
+    /// Creation with an explicit `language` (upstream `POST /api/v1/datasets`
+    /// accepts the column, and the dataset form's Language field is stored here).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_for_with_parser_config_and_language(
+        &self,
+        owner_id: &str,
+        name: &str,
+        description: &str,
+        permission: &str,
+        embd_id: &str,
+        parser_config: &str,
+        language: &str,
+    ) -> Result<KnowledgeBase> {
         validate_permission(permission)?;
+        validate_language(language)?;
         let permission = normalize_permission(permission);
         validate_embedding_selector(embd_id)?;
         self.mutate(|kbs| {
@@ -441,6 +494,7 @@ impl KbStore {
             let kb = KnowledgeBase {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: name.to_string(),
+                language: language.trim().to_string(),
                 description: description.to_string(),
                 owner_id: owner_id.to_string(),
                 permission: normalize_permission(permission).to_string(),
@@ -456,6 +510,22 @@ impl KbStore {
             };
             kbs.insert(kb.id.clone(), kb.clone());
             Ok(kb)
+        })
+    }
+
+    /// Upstream `KnowledgebaseService.update_by_id(kb.id, {"language": ...})`.
+    pub fn set_language(&self, id: &str, language: &str) -> Result<Option<KnowledgeBase>> {
+        validate_language(language)?;
+        let language = language.trim().to_string();
+        self.mutate_if_changed(|kbs| {
+            let Some(kb) = kbs.get_mut(id) else {
+                return Ok((None, false));
+            };
+            if kb.language == language {
+                return Ok((Some(kb.clone()), false));
+            }
+            kb.language = language;
+            Ok((Some(kb.clone()), true))
         })
     }
 
@@ -665,6 +735,64 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod create_seed_tests {
     use super::*;
+
+    /// Upstream `Knowledgebase.language` is a top-level column defaulting to the
+    /// process locale, updated through `KnowledgebaseService.update_by_id`, and
+    /// bounded by `max_length=32`.
+    #[test]
+    fn language_column_defaults_updates_and_survives_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.create_for("owner-a", "lang-kb", "").unwrap();
+        assert_eq!(kb.language, default_language());
+        assert!(
+            store
+                .set_language(&kb.id, "  Japanese  ")
+                .unwrap()
+                .is_some(),
+            "the stored value is trimmed like every other identity field"
+        );
+        assert_eq!(store.get(&kb.id).unwrap().language, "Japanese");
+        assert!(store.set_language(&kb.id, "   ").is_err());
+        assert!(store.set_language(&kb.id, &"x".repeat(33)).is_err());
+        assert_eq!(
+            store.get(&kb.id).unwrap().language,
+            "Japanese",
+            "a rejected update leaves the column untouched"
+        );
+        let reloaded = KbStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(reloaded.get(&kb.id).unwrap().language, "Japanese");
+    }
+
+    /// Records written before the column existed must keep loading (upstream adds
+    /// the column with its default during migration).
+    #[test]
+    fn legacy_records_without_a_language_load_with_the_column_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "legacy-kb",
+                "name": "Legacy",
+                "description": "",
+                "owner_id": "owner-a",
+                "permission": "me",
+                "chunk_count": 0,
+                "doc_count": 0,
+                "embd_id": "default",
+                "parser_config": "{}",
+                "created_at": 1,
+                "updated_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.get("legacy-kb").expect("legacy record loads");
+        assert_eq!(kb.language, default_language());
+    }
 
     #[test]
     fn create_for_with_parser_config_seeds_custom_parser_config() {

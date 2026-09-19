@@ -141,7 +141,7 @@ try {
   await page.waitForTimeout(150);
   const korean = page.locator("#cfgLangList .sws-option", { hasText: "Korean" }).first();
   await korean.click();
-  await page.waitForSelector("#cfgLangPop[hidden]", { timeout: 10000 });
+  await page.waitForFunction(() => document.getElementById("cfgLangPop").hidden, null, { timeout: 10000 });
   check((await trigger.getAttribute("aria-expanded")) === "false", "popover_closes_after_pick");
   check(
     (await trigger.locator("#cfgLangLabel").innerText()).trim() === "Korean",
@@ -156,7 +156,7 @@ try {
   await trigger.click();
   await page.waitForSelector("#cfgLangPop:not([hidden])", { timeout: 10000 });
   await page.mouse.click(20, 400);
-  await page.waitForSelector("#cfgLangPop[hidden]", { timeout: 10000 });
+  await page.waitForFunction(() => document.getElementById("cfgLangPop").hidden, null, { timeout: 10000 });
   check(
     (await trigger.locator("#cfgLangLabel").innerText()).trim() === "Korean",
     "outside_click_keeps_value",
@@ -164,15 +164,67 @@ try {
   await trigger.click();
   await page.waitForSelector("#cfgLangPop:not([hidden])", { timeout: 10000 });
   await page.keyboard.press("Escape");
-  await page.waitForSelector("#cfgLangPop[hidden]", { timeout: 10000 });
+  await page.waitForFunction(() => document.getElementById("cfgLangPop").hidden, null, { timeout: 10000 });
   check(
     (await trigger.locator("#cfgLangLabel").innerText()).trim() === "Korean",
     "escape_keeps_value",
   );
 
-  // The save payload carries the field (observed, not sent).
+  // The save payload carries the field.
   const bodyHasLanguage = await page.evaluate(() => /language:cfgLangValue\(\)/.test(document.documentElement.innerHTML));
   check(bodyHasLanguage, "save_payload_reads_the_field");
+
+  // Full round-trip on a throwaway dataset: pick a language, press the real Save
+  // button, reload and confirm the stored value comes back. The dataset is
+  // deleted again at the end, so tenant state is left as it was.
+  const probeId = await page.evaluate(async () => {
+    const res = await fetch("/api/v1/datasets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "probe-language-" + Date.now() }),
+    });
+    const data = await res.json();
+    return data.data && data.data.id ? data.data.id : "";
+  });
+  check(Boolean(probeId), "throwaway_dataset_created");
+  if (probeId) {
+    await page.goto(`${ORIGIN}/dataset/configuration/${probeId}`, { waitUntil: "domcontentloaded", timeout: 40000 });
+    await page.waitForSelector("[data-testid='ds-settings-basic-language-select']", { timeout: 20000 });
+    await page.locator("[data-testid='ds-settings-basic-language-select']").click();
+    await page.waitForSelector("#cfgLangPop:not([hidden])", { timeout: 10000 });
+    await page.locator("#cfgLangSearch").fill("Dutch");
+    await page.waitForTimeout(150);
+    await page.locator("#cfgLangList .sws-option", { hasText: "Dutch" }).first().click();
+    await page.locator("[data-testid='ds-settings-basic-save-btn']").click();
+    await page.waitForFunction(
+      () => /已保存|Saved/.test((document.getElementById("cfgMsg") || {}).textContent || ""),
+      null,
+      { timeout: 20000 },
+    );
+    check(true, "save_request_succeeded");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 40000 });
+    await page.waitForSelector("[data-testid='ds-settings-basic-language-select']", { timeout: 20000 });
+    const reloaded = (
+      await page.locator("#cfgLangLabel").innerText()
+    ).trim();
+    check(reloaded === "Dutch", "stored_language_survives_a_reload", reloaded);
+    const stored = await page.evaluate(async (id) => {
+      const res = await fetch(`/api/v1/datasets/${id}`);
+      const data = await res.json();
+      return data.data ? data.data.language : null;
+    }, probeId);
+    check(stored === "Dutch", "api_returns_the_top_level_column", String(stored));
+    const cleaned = await page.evaluate(async (id) => {
+      const res = await fetch("/api/v1/datasets", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [id] }),
+      });
+      const data = await res.json();
+      return data.code;
+    }, probeId);
+    check(cleaned === 0, "throwaway_dataset_deleted");
+  }
   await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/dataset-language-select.png" });
 } catch (error) {
   results.errors.push("exception: " + String(error && error.message ? error.message : error));
