@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.20] — 2026-09-20（对标批次 v0.3.7x）
+
+### Added
+
+- **OAuth 回调落地处理对齐上游 `useOAuthCallback`**：上游回调成功后跳 `/?auth={user_id}`，失败跳
+  `/?error=…`，由 `hooks/auth-hooks.ts` 在落地页消费（`auth` 写入本地会话并清掉查询参数，`error` 先弹出提示、
+  1 秒后回到 `/login` 并清掉参数）。RayRAG 之前回调端已实现（state 校验、换 token、拉用户信息、注册/登录、
+  下发 cookie），但落地页不读这两个参数。现在共享外壳（无导航的 `layout_plain` 与带导航的 `layout`）
+  都注入同一段 `OAUTH_LANDING_JS`：`auth` 写入 `localStorage.rayrag_token` 并补一次 cookie、清参数后停留；
+  `error` 显示一个 `role='alert'` 的浮层提示（`data-testid='oauth-error-toast'`）并跳回 `/login`。
+
 ## [0.4.19] — 2026-09-20（对标批次 v0.3.7w）
 
 ### Added

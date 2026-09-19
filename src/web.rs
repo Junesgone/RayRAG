@@ -453,7 +453,9 @@ fn layout_plain(title: &str, body: &str, zh: bool) -> String {
     let mut h = page_head(title, zh);
     h.push_str("<div class='ct'>");
     h.push_str(body);
-    h.push_str("</div><script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark')}</script></body></html>");
+    h.push_str("</div><script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark')}");
+    h.push_str(OAUTH_LANDING_JS);
+    h.push_str("</script></body></html>");
     h
 }
 
@@ -556,7 +558,9 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str("<div class='ct'>");
     h.push_str(body);
     h.push_str("</div>");
-    h.push_str("<script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark');syncThemeSwitch()};function syncThemeSwitch(){var dark=!document.body.classList.contains('light');document.querySelectorAll('.theme-switch').forEach(function(node){node.setAttribute('aria-checked',dark?'true':'false');var sun=node.querySelector('.theme-sun');var moon=node.querySelector('.theme-moon');if(sun)sun.classList.toggle('on',!dark);if(moon)moon.classList.toggle('on',dark)})};syncThemeSwitch();function toggleLang(){var n=document.cookie.indexOf('lang=zh-CN')>=0?'en':'zh-CN';document.cookie='lang='+n+';path=/;max-age=31536000';location.reload()};function setLang(code){document.cookie='lang='+code+';path=/;max-age=31536000';location.reload()};function toggleHeaderMenu(id,event){if(event){event.stopPropagation()}var menu=document.getElementById(id);if(!menu)return;var open=menu.classList.contains('open');document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open');var trigger=item.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','false')});if(!open){menu.classList.add('open');var trigger=menu.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','true')}};document.addEventListener('click',function(){document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open');var trigger=item.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','false')})});document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open')})});(function(){var path=location.pathname;var map={'/':['/','/dashboard','/home'],'/datasets':['/datasets','/dataset','/kbs'],'/chats':['/chats','/chat'],'/searches':['/searches','/search'],'/agents':['/agents','/agent-list','/agent-templates'],'/memories':['/memories','/memory'],'/files':['/files']};Object.keys(map).forEach(function(key){var match=map[key].some(function(prefix){return path===prefix||path.indexOf(prefix+'/')===0});if(!match)return;var link=document.querySelector('.gnav a[data-nav=\"'+key+'\"]');if(link)link.setAttribute('aria-current','page')})})();(function(){if(location.pathname==='/login'||!localStorage.getItem('rayrag_token'))return;fetch('/api/v1/user/info').then(function(response){return response.json()}).then(function(result){var user=(result&&result.data)||{};var name=String(user.nickname||user.email||'U').trim()||'U';var avatar=document.getElementById('hdrAvatar');if(avatar)avatar.textContent=name.charAt(0).toUpperCase()}).catch(function(){})})()</script></body></html>");
+    h.push_str("<script>if(localStorage.getItem('theme')==='light')document.body.classList.add('light');function toggleTheme(){document.body.classList.toggle('light');var l=document.body.classList.contains('light');localStorage.setItem('theme',l?'light':'dark');syncThemeSwitch()};function syncThemeSwitch(){var dark=!document.body.classList.contains('light');document.querySelectorAll('.theme-switch').forEach(function(node){node.setAttribute('aria-checked',dark?'true':'false');var sun=node.querySelector('.theme-sun');var moon=node.querySelector('.theme-moon');if(sun)sun.classList.toggle('on',!dark);if(moon)moon.classList.toggle('on',dark)})};syncThemeSwitch();function toggleLang(){var n=document.cookie.indexOf('lang=zh-CN')>=0?'en':'zh-CN';document.cookie='lang='+n+';path=/;max-age=31536000';location.reload()};function setLang(code){document.cookie='lang='+code+';path=/;max-age=31536000';location.reload()};function toggleHeaderMenu(id,event){if(event){event.stopPropagation()}var menu=document.getElementById(id);if(!menu)return;var open=menu.classList.contains('open');document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open');var trigger=item.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','false')});if(!open){menu.classList.add('open');var trigger=menu.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','true')}};document.addEventListener('click',function(){document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open');var trigger=item.querySelector('button[aria-haspopup]');if(trigger)trigger.setAttribute('aria-expanded','false')})});document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;document.querySelectorAll('.menu.open').forEach(function(item){item.classList.remove('open')})});(function(){var path=location.pathname;var map={'/':['/','/dashboard','/home'],'/datasets':['/datasets','/dataset','/kbs'],'/chats':['/chats','/chat'],'/searches':['/searches','/search'],'/agents':['/agents','/agent-list','/agent-templates'],'/memories':['/memories','/memory'],'/files':['/files']};Object.keys(map).forEach(function(key){var match=map[key].some(function(prefix){return path===prefix||path.indexOf(prefix+'/')===0});if(!match)return;var link=document.querySelector('.gnav a[data-nav=\"'+key+'\"]');if(link)link.setAttribute('aria-current','page')})})();(function(){if(location.pathname==='/login'||!localStorage.getItem('rayrag_token'))return;fetch('/api/v1/user/info').then(function(response){return response.json()}).then(function(result){var user=(result&&result.data)||{};var name=String(user.nickname||user.email||'U').trim()||'U';var avatar=document.getElementById('hdrAvatar');if(avatar)avatar.textContent=name.charAt(0).toUpperCase()}).catch(function(){})})()");
+    h.push_str(OAUTH_LANDING_JS);
+    h.push_str("</script></body></html>");
     h
 }
 
@@ -1416,6 +1420,31 @@ const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
     "Turkish",
     "Dutch",
 ];
+
+/// Upstream `hooks/auth-hooks.ts::useOAuthCallback`: the page that the OAuth
+/// callback redirects to consumes `?auth=` (store the returned session, drop the
+/// parameter and stay) and `?error=` (show the provider's message, then bounce to
+/// `/login` after a second with a clean URL).
+const OAUTH_LANDING_JS: &str = r#"
+(function oauthLanding(){
+  var params=new URLSearchParams(location.search);
+  var error=params.get('error');
+  var auth=params.get('auth');
+  if(!error&&!auth)return;
+  var clean=function(){params.delete('error');params.delete('auth');var query=params.toString();history.replaceState(null,'',location.pathname+(query?'?'+query:''))};
+  if(error){
+    var toast=document.getElementById('oauthToast');
+    if(!toast){toast=document.createElement('div');toast.id='oauthToast';toast.className='oauth-toast';toast.setAttribute('role','alert');toast.setAttribute('data-testid','oauth-error-toast');document.body.appendChild(toast)}
+    toast.textContent=error;
+    toast.hidden=false;
+    setTimeout(function(){clean();location.href='/login'},1000);
+    return;
+  }
+  try{localStorage.setItem('rayrag_token',auth)}catch(e){}
+  document.cookie='rayrag_token='+auth+';path=/';
+  clean();
+})();
+"#;
 
 /// lucide `ClipboardList` at 16px — the upstream service table's "service details"
 /// action icon.
@@ -8971,6 +9000,49 @@ connection: close
     /// in the card footer through `RAGFlowPagination` (total + page size
     /// 10/20/50/100). Sorting stays disabled upstream (`enableSorting: false`),
     /// as does polling (`useQuery` without `refetchInterval`).
+    /// Upstream `hooks/auth-hooks.ts::useOAuthCallback`: the shared page shell
+    /// consumes `?auth=` (store the session, drop the parameter) and `?error=`
+    /// (show the provider message in a toast, then bounce to `/login`).
+    #[tokio::test]
+    async fn oauth_landing_params_match_the_upstream_hook() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            dashboard(
+                State(state),
+                Request::builder()
+                    .uri("/?auth=abc")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "function oauthLanding()",
+            "params.get('error')",
+            "params.get('auth')",
+            "history.replaceState(null,'',location.pathname+(query?'?'+query:''))",
+            "localStorage.setItem('rayrag_token',auth)",
+            "document.cookie='rayrag_token='+auth+';path=/'",
+            "data-testid','oauth-error-toast'",
+            "toast.setAttribute('role','alert')",
+            "location.href='/login'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "oauth landing marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".oauth-toast{position:fixed;",
+            ".oauth-toast[hidden]{display:none!important}",
+        ] {
+            assert!(css.contains(rule), "oauth toast css missing: {rule}");
+        }
+    }
+
     /// Upstream `components/tree-select.tsx` (Radix `Tree`) keyboard contract:
     /// Arrow Right expands a collapsed branch or enters its first child, Arrow
     /// Left collapses an expanded branch or jumps to the parent, printable keys

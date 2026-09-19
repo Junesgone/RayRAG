@@ -425,3 +425,6 @@ tr:hover .admin-row-actions,tr:focus-within .admin-row-actions{opacity:1}
 .admin-chart-swatch.failed{background:var(--d)}
 .admin-chart-tooltip{position:relative;margin-top:8px;padding:12px;border:1px solid var(--bd);border-radius:8px;background:var(--bgm);box-shadow:var(--shl);color:var(--t2);font-size:12px;max-height:220px;overflow:auto}
 .admin-chart-tooltip-title{margin:0 0 6px;color:var(--t);font-weight:600}
+/* Upstream `hooks/auth-hooks.ts::useOAuthCallback` surfaces the provider error through a toast before bouncing to `/login`. */
+.oauth-toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:2000;max-width:min(560px,90vw);padding:12px 18px;border:1px solid rgba(220,80,80,.5);border-radius:var(--r);background:var(--bgm);box-shadow:var(--shl);color:var(--d);font-size:13px;word-break:break-word}
+.oauth-toast[hidden]{display:none!important}
