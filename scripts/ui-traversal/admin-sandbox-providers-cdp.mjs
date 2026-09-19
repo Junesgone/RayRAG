@@ -52,7 +52,9 @@ try {
   if (!login.ok) throw new Error("login failed: " + JSON.stringify(login.body));
 
   await page.goto(`${ORIGIN}/admin/sandbox-settings`, { waitUntil: "domcontentloaded", timeout: 40000 });
-  await page.waitForSelector("[data-testid='admin-sandbox-providers']", { timeout: 20000 });
+  await page.waitForSelector("[data-testid='admin-sandbox-provider-self_managed']", {
+    timeout: 20000,
+  });
   await page.waitForFunction(
     (ids) => ids.every((id) => document.querySelector(`[data-testid='admin-sandbox-provider-${id}']`)),
     PROVIDERS,
