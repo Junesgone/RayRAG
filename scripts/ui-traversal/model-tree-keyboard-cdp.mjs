@@ -146,13 +146,20 @@ try {
       "second_arrow_right_enters_the_first_child",
       JSON.stringify(child),
     );
+    // Radix collapses an expanded item before leaving it, so a branch child
+    // needs one extra Arrow Left to reach the parent.
     await page.keyboard.press("ArrowLeft");
     await page.waitForTimeout(150);
+    const collapsedChild = await focused();
+    if (collapsedChild && collapsedChild.expanded === "true") {
+      await page.keyboard.press("ArrowLeft");
+      await page.waitForTimeout(150);
+    }
     const parent = await focused();
     check(
       parent && Number(parent.level) === 1 && parent.title === branchTitle,
       "arrow_left_returns_to_the_parent",
-      JSON.stringify(parent),
+      `${JSON.stringify(parent)} after collapsing ${JSON.stringify(collapsedChild)}`,
     );
   }
 
