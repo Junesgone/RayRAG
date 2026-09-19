@@ -131,7 +131,7 @@ try {
 
   // 3. The delete affordance opens the upstream ConfirmDeleteDialog shell.
   await page.click(".added-model-instance .added-model-delete");
-  await page.waitForSelector("[data-testid='confirm-delete-dialog'].show", {
+  await page.waitForSelector("#deleteModelInstanceModal.show", {
     timeout: 10000,
   });
   results.dialog = await page.evaluate(() => {
@@ -163,7 +163,7 @@ try {
   await page.waitForFunction(
     () =>
       !document
-        .querySelector("[data-testid='confirm-delete-dialog']")
+        .getElementById("deleteModelInstanceModal")
         .classList.contains("show"),
     null,
     { timeout: 10000 },
@@ -179,7 +179,7 @@ try {
     timeout: 20000,
   });
   await page.click(".added-model-instance .added-model-delete");
-  await page.waitForSelector("[data-testid='confirm-delete-dialog'].show", {
+  await page.waitForSelector("#deleteModelInstanceModal.show", {
     timeout: 10000,
   });
   results.zh = await page.evaluate(() => ({
@@ -197,7 +197,7 @@ try {
   await page.waitForFunction(
     () =>
       !document
-        .querySelector("[data-testid='confirm-delete-dialog']")
+        .getElementById("deleteModelInstanceModal")
         .classList.contains("show"),
     null,
     { timeout: 10000 },
