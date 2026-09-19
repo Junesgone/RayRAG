@@ -1067,40 +1067,15 @@ async fn run_self_managed_probe(
 /// Upstream opens a real SSH session; RayRAG has no SSH executor, so the probe
 /// reports the reachability it can verify and says so instead of pretending the
 /// code ran.
+/// Run a real snippet on the remote host.
+///
+/// Upstream's `SSHProvider._assert_connectivity` opens a Paramiko session and runs
+/// the interpreter; RayRAG does the same through `crate::ssh_exec`, so the console's
+/// "Test" button proves that code can actually execute remotely instead of only
+/// reporting that the port is open.
 async fn run_ssh_probe(config: &Map<String, Value>) -> Result<Value, String> {
-    let host = config
-        .get("host")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "host is required".to_string())?;
-    let port = config.get("port").and_then(Value::as_i64).unwrap_or(22);
-    let started = Instant::now();
-    let address = format!("{host}:{port}");
-    let connected = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::net::TcpStream::connect(&address),
-    )
-    .await;
-    let execution_time = started.elapsed().as_secs_f64();
-    let reachable = matches!(connected, Ok(Ok(_)));
-    let message = if reachable {
-        format!(
-            "Test FAILED | {address} accepted a TCP connection, but this build executes code in the local sandbox or through sandbox-executor-manager only, so the SSH probe was not run."
-        )
-    } else {
-        format!("Test FAILED | Could not reach {address} within 5 seconds.")
-    };
-    Ok(json!({
-        "success": false,
-        "message": message,
-        "details": {
-            "exit_code": if reachable { 0 } else { 1 },
-            "execution_time": execution_time,
-            "stdout": if reachable { format!("TCP connection to {address} succeeded") } else { String::new() },
-            "stderr": if reachable { String::new() } else { format!("Connection to {address} failed") },
-        },
-    }))
+    let parsed = crate::ssh_exec::SshConfig::from_config(config)?;
+    Ok(crate::ssh_exec::connection_test(&parsed).await)
 }
 
 /// `POST /api/v1/admin/sandbox/test` — upstream body `{provider_type, config}`.

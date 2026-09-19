@@ -2,6 +2,28 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.32] — 2026-09-21（对标批次 v0.3.8j）
+
+### Added
+
+- **SSH 沙箱提供方真正执行代码**（上游 `agent/sandbox/providers/ssh.py`）：此前
+  `/api/v1/admin/sandbox/test` 对 `ssh` 只做 TCP 可达性探测，并明确回复“本构建不通过 SSH 执行代码”；
+  现在新增 `src/ssh_exec.rs`，按上游 `SSHProvider` 的**同一套配置字段**（`host` / `port` / `username` /
+  `password` / `private_key` / `passphrase` / `known_hosts` / `python_bin` / `node_bin` / `work_dir` /
+  `timeout` / `max_output_bytes`）与**同一种认证二选一**（密码或私钥）真实连上远端主机、
+  在 `work_dir/rayrag-ssh` 工作目录里用配置的解释器跑代码，并回传上游形状的
+  `{success, message, details{exit_code, execution_time, stdout, stderr}}`。
+  - 实现方式：调用系统 OpenSSH 客户端（`ssh`；密码认证经 `sshpass -f`，密码只落临时文件、不进进程表），
+    而不是引入新的 Rust SSH 依赖栈；`known_hosts` 配了就走 `StrictHostKeyChecking=yes`，
+    未配则 `accept-new`（对应上游“系统 host key + 未知名主机拒绝”的取舍）。
+  - 安全细节：内联私钥写入 `0600` 临时文件、调用结束立即删除；输出按 `max_output_bytes` 截断并标注；
+    整体受 `timeout` 限制（超时按 executor-manager 约定报 `-1`/255）。
+  - 运行时镜像补装 `openssh-client` 与 `sshpass`（`docker/Dockerfile` 运行阶段），
+    纯 Linux 运行时若缺少 `ssh`/`sshpass` 会给出明确报错而不是静默失败。
+- **踩坑（探针/实测发现）**：`SshConfig` 最初对所有字符串字段统一 `trim()`，导致私钥尾部的换行被吃掉
+  （411 → 410 字节），`ssh` 直接报 `Load key …: error in libcrypto`；改为凭据字段（`password` /
+  `private_key` / `passphrase`）逐字节保留、仅用 `trim()` 判断是否为空，并补了回归测试。
+
 ## [0.4.31] — 2026-09-21（对标批次 v0.3.8i）
 
 ### Changed

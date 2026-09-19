@@ -84,7 +84,9 @@ ARG DEBIAN_MIRROR=
 ARG DEBIAN_SECURITY_MIRROR=
 COPY docker/mirror-setup.sh /usr/local/bin/rayrag-mirror-setup
 RUN chmod 0755 /usr/local/bin/rayrag-mirror-setup \
- && rayrag-mirror-setup "${RAYRAG_MIRROR_PROFILE}" "${DEBIAN_MIRROR}" "${DEBIAN_SECURITY_MIRROR}" base curl libssl3 zlib1g python3 nodejs
+ && rayrag-mirror-setup "${RAYRAG_MIRROR_PROFILE}" "${DEBIAN_MIRROR}" "${DEBIAN_SECURITY_MIRROR}" base curl libssl3 zlib1g python3 nodejs openssh-client sshpass
+# `openssh-client` backs the SSH sandbox provider (`src/ssh_exec.rs`, upstream
+# `agent/sandbox/providers/ssh.py`); `sshpass` only carries password auth.
 
 WORKDIR /app
 COPY --from=builder /src/target/release/rayrag /usr/local/bin/rayrag
