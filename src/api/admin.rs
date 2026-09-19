@@ -485,6 +485,14 @@ pub async fn get_user_details(
     let Some(user) = resolve_user(&state, &username) else {
         return error_response(StatusCode::NOT_FOUND, 404, "User not found");
     };
+    // Upstream `UserMgr.get_user_details` answers with a *list* of matching
+    // accounts (one per e-mail) and this exact field set; the console reads
+    // `data.data[0]`. RayRAG adds the ids the users table needs.
+    ok(serde_json::json!([user_detail_row(&state, &user)]))
+}
+
+/// Upstream `UserMgr.get_user_details` row.
+fn user_detail_row(state: &Arc<AppState>, user: &crate::auth::User) -> serde_json::Value {
     let registry = admin_registry();
     let status = registry.activate_status.lock().unwrap();
     let active = status.get(&user.email).copied().unwrap_or(true);
@@ -495,7 +503,33 @@ pub async fn get_user_details(
         .get(&user.email)
         .map(Vec::len)
         .unwrap_or(0);
-    let datasets: Vec<serde_json::Value> = state
+    serde_json::json!({
+        "id": user.id,
+        "username": user.email,
+        "nickname": user.nickname,
+        "role": user.role,
+        "avatar": if user.avatar.is_empty() { serde_json::Value::Null } else { serde_json::json!(user.avatar) },
+        "email": user.email,
+        "language": "en",
+        "last_login_time": "",
+        "is_active": if active { "1" } else { "0" },
+        "is_anonymous": "0",
+        "is_authenticated": "1",
+        "login_channel": "password",
+        "status": if active { "active" } else { "inactive" },
+        "is_superuser": user.role == "admin",
+        "create_date": format_ms(user.created_at),
+        "update_date": format_ms(user.created_at),
+        "timezone": user.timezone,
+        "api_key_count": key_count,
+        "datasets": user_datasets(state, user),
+    })
+}
+
+/// Upstream `UserServiceMgr.get_user_datasets`: every knowledge base in the
+/// tenants the account belongs to that the account may use.
+fn user_datasets(state: &Arc<AppState>, user: &crate::auth::User) -> Vec<serde_json::Value> {
+    state
         .kbs
         .list_accessible(&user.id, false, |tenant_id, user_id| {
             state.tenants.is_member(tenant_id, user_id)
@@ -505,37 +539,73 @@ pub async fn get_user_details(
             serde_json::json!({
                 "id": kb.id,
                 "name": kb.name,
-                "doc_count": kb.doc_count,
-                "chunk_count": kb.chunk_count,
+                "avatar": if kb.avatar.is_empty() { serde_json::Value::Null } else { serde_json::json!(kb.avatar) },
+                "doc_num": kb.doc_count,
+                "chunk_num": kb.chunk_count,
+                "token_num": 0,
+                "language": kb.language,
+                "permission": kb.permission,
+                "create_date": format_ms(kb.created_at),
+                "update_date": format_ms(kb.updated_at),
             })
         })
-        .collect();
-    // Upstream `AdminService.UserDetail`: the console renders `create_date` /
-    // `update_date` / `language` / `is_anonymous` / `is_superuser` / `is_active`
-    // (as `'0'`/`'1'`) next to the account row, and RayRAG keeps its own
-    // `status` string so the user table can share the payload.
-    ok(serde_json::json!({
-        "id": user.id,
-        "username": user.email,
-        "email": user.email,
-        "nickname": user.nickname,
-        "role": user.role,
-        "status": if active { "active" } else { "inactive" },
-        "is_active": if active { "1" } else { "0" },
-        "is_superuser": user.role == "admin",
-        "is_anonymous": "0",
-        "is_authenticated": "1",
-        "language": "en",
-        "timezone": user.timezone,
-        "avatar": if user.avatar.is_empty() { serde_json::Value::Null } else { serde_json::json!(user.avatar) },
-        "created_at": user.created_at,
-        "create_date": format_ms(user.created_at),
-        "update_date": format_ms(user.created_at),
-        "last_login_time": "",
-        "api_key_count": key_count,
-        "datasets": datasets,
-        "agents": [],
-    }))
+        .collect()
+}
+
+/// `GET /api/v1/admin/users/{username}/datasets`.
+pub async fn list_user_datasets(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(username): Path<String>,
+) -> Response {
+    if let Some(response) = require_admin(&auth) {
+        return response;
+    }
+    let Some(user) = resolve_user(&state, &username) else {
+        return error_response(StatusCode::NOT_FOUND, 404, "User not found");
+    };
+    ok(serde_json::json!(user_datasets(&state, &user)))
+}
+
+/// `GET /api/v1/admin/users/{username}/agents` — upstream
+/// `UserServiceMgr.get_user_agents` returns `title` / `permission` /
+/// `canvas_category` (the first `_`-separated segment) / `avatar`.
+pub async fn list_user_agents(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(username): Path<String>,
+) -> Response {
+    if let Some(response) = require_admin(&auth) {
+        return response;
+    }
+    let Some(user) = resolve_user(&state, &username) else {
+        return error_response(StatusCode::NOT_FOUND, 404, "User not found");
+    };
+    let query = crate::api::features::AgentListQuery {
+        owner_ids: None,
+        ..Default::default()
+    };
+    let agents = state
+        .agents
+        .list_accessible(
+            &user.id,
+            false,
+            |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+            &query,
+        )
+        .map(|(agents, _)| agents)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|agent| {
+            serde_json::json!({
+                "title": agent.name,
+                "permission": agent.permission,
+                "canvas_category": agent.canvas_category.split('_').next().unwrap_or_default(),
+                "avatar": if agent.avatar.is_empty() { serde_json::Value::Null } else { serde_json::json!(agent.avatar) },
+            })
+        })
+        .collect::<Vec<_>>();
+    ok(serde_json::json!(agents))
 }
 
 /// DELETE /api/v1/admin/users/{username}

@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.15] — 2026-09-20（对标批次 v0.3.7s）
+
+### Added
+
+- **补齐上游的「用户资产」管理接口**：上游 `admin/server/routes.py` 的
+  `GET /api/v1/admin/users/{username}/datasets` 与 `/agents` 此前缺失（详情页的 Agent 页签永远是空的）。
+  现在两个接口按 `UserServiceMgr.get_user_datasets` / `get_user_agents` 的语义返回：数据集给出
+  id/name/avatar/doc_num/chunk_num/token_num/language/permission/create_date/update_date，智能体给出
+  `title` / `permission` / `canvas_category`（只取 `_` 前的第一段）/ `avatar`；未知账号 404 `User not found`，非管理员 403。
+- **用户详情接口改为上游的列表形态**：上游 `UserMgr.get_user_details` 返回的是「匹配账号数组」，控制台读
+  `data.data[0]`，而 RayRAG 之前返回单个对象。现在同样返回数组，字段名与上游一致
+  （avatar/email/language/last_login_time/is_active/is_anonymous/login_channel/status/is_superuser/create_date/update_date），
+  另外保留 RayRAG 用户表需要的 id/nickname/role/api_key_count。
+- **`/admin/users/{id}` 页面按上游并行取数并分页**：与上游一样 `Promise.all([detail, datasets, agents])` 同时请求三个接口；
+  Dataset / Agent 两个页签的表格带上了头像+名称（Agent 为标题）列与页脚分页（`Total N` + 10/20/50/100 + Previous/Next）。
+
 ## [0.4.14] — 2026-09-20（对标批次 v0.3.7r）
 
 ### Added

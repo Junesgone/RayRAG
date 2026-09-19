@@ -3639,6 +3639,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::api::admin::revoke_admin),
         )
         .route(
+            "/api/v1/admin/users/{username}/datasets",
+            get(crate::api::admin::list_user_datasets),
+        )
+        .route(
+            "/api/v1/admin/users/{username}/agents",
+            get(crate::api::admin::list_user_agents),
+        )
+        .route(
             "/api/v1/admin/users/{username}/keys",
             get(crate::api::admin::get_user_api_keys)
                 .post(crate::api::admin::generate_user_api_key),
@@ -9126,6 +9134,149 @@ mod tests {
         assert_eq!(forbidden.status(), StatusCode::OK);
         let forbidden_json = response_json(forbidden).await;
         assert_eq!(forbidden_json["code"], 404);
+    }
+
+    /// Upstream `admin/server/routes.py` user surfaces: the detail payload is a
+    /// *list* of matching accounts (`UserMgr.get_user_details`), and the account's
+    /// datasets and agents come from their own endpoints
+    /// (`UserServiceMgr.get_user_datasets` / `get_user_agents`).
+    #[tokio::test]
+    async fn admin_user_assets_follow_the_upstream_endpoints() {
+        let env = test_env();
+        let admin = env
+            .state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = env.state.users.issue_token_for(&admin.id).unwrap();
+        let kb = env
+            .state
+            .kbs
+            .create_for(&admin.id, "Admin KB", "dataset owned by the admin")
+            .unwrap();
+        let agent = env
+            .state
+            .agents
+            .create(
+                &admin.id,
+                crate::api::features::AgentCreateRequest {
+                    name: "Admin Agent".into(),
+                    description: String::new(),
+                    permission: None,
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": {}, "history": [], "path": []}),
+                    canvas_category: Some("agent_canvas".into()),
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let get = |path: String, token: String| {
+            let router = router.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let detail = get("/api/v1/admin/users/boss@example.com".into(), token.clone()).await;
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail = response_json(detail).await;
+        let rows = detail["data"].as_array().expect("the payload is a list");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["email"], "boss@example.com");
+        assert_eq!(rows[0]["is_superuser"], true);
+        assert_eq!(rows[0]["is_anonymous"], "0");
+        assert_eq!(rows[0]["login_channel"], "password");
+        assert!(rows[0]["create_date"].is_string() && rows[0]["update_date"].is_string());
+        assert!(
+            rows[0]["datasets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["id"] == kb.id.as_str())
+        );
+
+        let datasets = get(
+            "/api/v1/admin/users/boss@example.com/datasets".into(),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(datasets.status(), StatusCode::OK);
+        let datasets = response_json(datasets).await;
+        let dataset = datasets["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == kb.id.as_str())
+            .expect("the admin's dataset is listed");
+        for key in [
+            "name",
+            "avatar",
+            "doc_num",
+            "chunk_num",
+            "token_num",
+            "language",
+            "permission",
+            "create_date",
+            "update_date",
+        ] {
+            assert!(
+                dataset.get(key).is_some(),
+                "dataset row missing {key}: {dataset}"
+            );
+        }
+        assert_eq!(dataset["language"], "English", "the KB language column");
+
+        let agents = get(
+            "/api/v1/admin/users/boss@example.com/agents".into(),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(agents.status(), StatusCode::OK);
+        let agents = response_json(agents).await;
+        let agent_row = &agents["data"].as_array().unwrap()[0];
+        assert_eq!(agent_row["title"], "Admin Agent");
+        assert_eq!(agent_row["permission"], "private");
+        assert_eq!(
+            agent_row["canvas_category"], "agent",
+            "upstream keeps only the first `_`-separated segment"
+        );
+        assert_eq!(agent_row["avatar"], serde_json::Value::Null);
+        assert_eq!(agent.id.len() > 0, true);
+
+        // Unknown accounts and non-admins.
+        let missing = get(
+            "/api/v1/admin/users/nobody@example.com/datasets".into(),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(missing).await["message"], "User not found");
+        let plain = env
+            .state
+            .users
+            .create_user("plain@example.com", "secret-passphrase", "user")
+            .unwrap();
+        let plain_token = env.state.users.issue_token_for(&plain.id).unwrap();
+        let forbidden = get(
+            "/api/v1/admin/users/boss@example.com/agents".into(),
+            plain_token,
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
     }
 
     /// Upstream `admin/server/routes.py` sandbox endpoints: the provider registry,
