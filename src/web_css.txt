@@ -391,3 +391,37 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 body.light .search-empty-dark{display:none}
 body.light .search-empty-bri{display:inline-flex}
 .search-empty-text{margin:0;color:var(--t2);font-size:14px}
+/* Upstream `admin/service-detail.tsx` (the shaped `dl` / table / string card) and `admin/task-executor-detail.tsx` (executor cards with the recharts bar chart, rotated time ticks, legend and click tooltip). */
+.admin-row-actions{display:flex;align-items:center;gap:4px;opacity:0;transition:opacity .15s}
+tr:hover .admin-row-actions,tr:focus-within .admin-row-actions{opacity:1}
+.admin-row-icon{display:inline-flex;align-items:center;justify-content:center;padding:4px;border:0;border-radius:4px;background:transparent;color:var(--t2);cursor:pointer}
+.admin-row-icon:hover{background:var(--bgch);color:var(--t)}
+.admin-service-dialog{max-width:1000px;max-height:calc(100vh - 4rem);overflow:auto}
+.admin-service-body{display:flex;flex-direction:column;gap:16px}
+.admin-jsonview{padding:16px;border-radius:12px;background:var(--bgc);color:var(--t2);word-break:break-word}
+.admin-detail-list{display:grid;grid-template-columns:minmax(20%,auto) 1fr;margin:0;border-radius:12px;overflow:hidden;background:var(--bgc)}
+.admin-detail-row{display:contents}
+.admin-detail-term{margin:0;padding:10px 16px;background:var(--bgc);color:var(--t)}
+.admin-detail-value{margin:0;padding:10px 16px;color:var(--t);overflow-wrap:anywhere}
+.admin-detail-term code,.admin-detail-value code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap}
+.admin-detail-string{padding:16px;border-radius:12px;background:var(--bgc);color:var(--t)}
+.admin-detail-string pre{margin:0;white-space:pre-wrap;word-break:break-word}
+.admin-detail-string code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.admin-executor-section{display:flex;flex-direction:column;gap:32px}
+.admin-executor-card{display:flex;flex-direction:column;gap:12px;border:0;background:transparent}
+.admin-executor-head{display:flex;flex-direction:column;gap:4px;color:var(--t)}
+.admin-executor-name{margin:0;font-size:20px;font-weight:600}
+.admin-executor-meta{display:flex;gap:16px;margin:0;color:var(--t2);font-size:13px}
+.admin-chart{width:100%;min-height:160px}
+.admin-chart-grid{stroke:var(--bd)}
+.admin-chart-done{fill:var(--s)}
+.admin-chart-failed{fill:var(--d)}
+.admin-chart-done:hover,.admin-chart-failed:hover{opacity:.8;cursor:pointer}
+.admin-chart-tick{fill:var(--t2);font-size:10px}
+.admin-chart-legend{display:flex;align-items:center;justify-content:center;gap:16px;color:var(--t2);font-size:12px}
+.admin-chart-legend-item{display:inline-flex;align-items:center;gap:6px}
+.admin-chart-swatch{display:inline-block;width:10px;height:10px;border-radius:2px}
+.admin-chart-swatch.done{background:var(--s)}
+.admin-chart-swatch.failed{background:var(--d)}
+.admin-chart-tooltip{position:relative;margin-top:8px;padding:12px;border:1px solid var(--bd);border-radius:8px;background:var(--bgm);box-shadow:var(--shl);color:var(--t2);font-size:12px;max-height:220px;overflow:auto}
+.admin-chart-tooltip-title{margin:0 0 6px;color:var(--t);font-weight:600}

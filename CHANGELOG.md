@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.18] — 2026-09-20（对标批次 v0.3.7v）
+
+### Added
+
+- **后台「服务状态」页的详情弹层按上游组件渲染**：上游有两套渲染——`admin/service-detail.tsx`
+  按载荷形状分支（对象数组 → 以首个对象的键为表头的表格；普通对象 → `键/JSON.stringify(值)` 的定义列表；
+  字符串 → 卡片内 `<pre><code>`；其他 → 原样），`admin/task-executor-detail.tsx` 对 `task_executor`
+  按执行器分组渲染卡片（标题 + `Lag:`/`Pending:` + done/failed 柱状图 + 图例 + 点击柱子的 JSON 提示）。
+  RayRAG 之前把两种载荷都塞进一个 JSON 树里，现在按上游落地：标题也随之变成
+  `Task executor detail` 或 `Service {name} detail`。
+- **拆成两个弹层并补上行内图标动作**：上游的行操作是悬停显示的 `Settings2`（Extra information，渲染
+  `item.extra` 的 JsonView）与 `ClipboardList`（服务详情，`GET /api/v1/admin/services/{id}`）两个图标按钮，
+  RayRAG 之前合并成一个 "Show details" 按钮。
+
 ## [0.4.17] — 2026-09-20（对标批次 v0.3.7u）
 
 ### Added

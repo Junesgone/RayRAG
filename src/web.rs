@@ -1417,6 +1417,14 @@ const DATASET_LANGUAGE_OPTIONS: [&str; 27] = [
     "Dutch",
 ];
 
+/// lucide `ClipboardList` at 16px — the upstream service table's "service details"
+/// action icon.
+const ADMIN_CLIPBOARD_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='8' height='4' x='8' y='2' rx='1' ry='1'/><path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/><path d='M12 11h4'/><path d='M12 16h4'/><path d='M8 11h.01'/><path d='M8 16h.01'/></svg>";
+
+/// lucide `Settings2` at 16px — the upstream service table's "extra information"
+/// action icon.
+const ADMIN_SETTINGS2_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 7h-9'/><path d='M14 17H5'/><circle cx='17' cy='17' r='3'/><circle cx='7' cy='7' r='3'/></svg>";
+
 /// Upstream `components/empty/empty.tsx` + `assets/svg/empty/no-search-data-dark.svg`:
 /// the 84x104 search-empty illustration, rendered at the `iconWidth={80}` the
 /// search view passes. The light-theme twin is `no-search-data-bri.svg`; the page
@@ -4392,7 +4400,18 @@ pub async fn admin_services_page(
     }
     let mut b = String::with_capacity(8192);
     b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Service status</h2></div><div class='admin-toolbar'><label class='admin-filter'><span>Service type</span><select id='adminServiceType' data-testid='admin-service-type-filter' onchange='adminRenderServices()'><option value=''>All</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetServiceFilter()'>Reset</button><input id='adminServiceSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search services' oninput='adminServicePage=1;adminRenderServices()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-services-table'><thead><tr><th>ID</th><th>Name</th><th>Service type</th><th>Host</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead><tbody id='adminServiceRows'><tr><td colspan='7' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminServicePager' data-testid='admin-services-pagination'></footer></div>");
-    b.push_str("<div class='modal-overlay' id='adminServiceDialog' onclick=\"if(event.target===this)adminCloseServiceDialog()\"><div class='modal admin-service-modal'><h2>Service details</h2><p class='admin-dialog-sub' id='adminServiceName'></p><h3 class='admin-dialog-section'>Extra info</h3><pre class='admin-code' id='adminServiceDetail'></pre><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick='adminCloseServiceDialog()'>Close</button></div></div></div>");
+    // Upstream `service-status.tsx` mounts two dialogs: `admin.extraInfo` renders
+    // `item.extra` through `JsonView`, and the details dialog renders
+    // `serviceDetails.message` through `TaskExecutorDetail` for `task_executor`
+    // and `ServiceDetail` otherwise.
+    b.push_str("<div class='modal-overlay' id='adminExtraDialog' data-testid='admin-service-extra-dialog' onclick=\"if(event.target===this)adminCloseExtraDialog()\"><div class='modal admin-service-modal'><h2>");
+    b.push_str(t("Extra information", zh));
+    b.push_str("</h2><div class='admin-jsonview' id='adminServiceExtra'></div><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='admin-extra-close' onclick='adminCloseExtraDialog()'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminServiceDialog' data-testid='admin-service-detail-dialog' onclick=\"if(event.target===this)adminCloseServiceDialog()\"><div class='modal admin-service-dialog'><h2 id='adminServiceDialogTitle'></h2><div class='admin-service-body' id='adminServiceDetail'></div><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='admin-service-detail-close' onclick='adminCloseServiceDialog()'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div>");
     b.push_str(
         r#"<script>var ADMIN_SERVICES=[];function adminServiceStatusBadge(status){var badge=document.createElement('span');badge.className='badge '+(status==='alive'?'bs':(status==='disabled'?'bw':'bd'));badge.textContent=status||'timeout';return badge}// Upstream `service-status.tsx`: the table filters by service type *and* a global search
 // term (`header.search`), then paginates in the card footer via `RAGFlowPagination`
@@ -4406,10 +4425,23 @@ function adminRenderServicePager(total){var host=document.getElementById('adminS
 +"<select class='admin-pager-size' aria-label='Page size' data-testid='admin-services-page-size' onchange='adminServicePageSizeChange(this.value)'>"+sizes+'</select>'}
 function adminServiceGoto(page){if(page<1)return;adminServicePage=page;adminRenderServices()}
 function adminServicePageSizeChange(value){adminServicePageSize=parseInt(value,10)||10;adminServicePage=1;adminRenderServices()}
-function adminRenderServices(){var rows=document.getElementById('adminServiceRows');var matched=adminServiceFiltered();adminRenderServicePager(matched.length);var start=(adminServicePage-1)*adminServicePageSize;var list=matched.slice(start,start+adminServicePageSize);rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(service){var row=document.createElement('tr');row.dataset.testid='admin-service-row';[service.id,service.name,service.service_type,service.host,service.port].forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value==null?'':String(value);if(index===2)cell.className='co';row.appendChild(cell)});var statusCell=document.createElement('td');statusCell.appendChild(adminServiceStatusBadge(service.status));row.appendChild(statusCell);var actionCell=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent='Show details';button.onclick=function(){adminShowService(service.id)};actionCell.appendChild(button);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetServiceFilter(){document.getElementById('adminServiceType').value='';var search=document.getElementById('adminServiceSearch');if(search)search.value='';adminServicePage=1;adminRenderServices()}function adminFillServiceTypes(){var select=document.getElementById('adminServiceType');(ADMIN_SERVICES||[]).forEach(function(service){var type=String(service.service_type||'');if(!type||Array.prototype.some.call(select.options,function(option){return option.value===type}))return;var option=document.createElement('option');option.value=type;option.textContent=type;select.appendChild(option)})}function adminLoadServices(){fetch('/api/v1/admin/services').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load services');ADMIN_SERVICES=data.data||[];adminFillServiceTypes();adminRenderServices()}).catch(function(error){var rows=document.getElementById('adminServiceRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}// Upstream `service-status.tsx` renders the payload through `JsonView` (a
+function adminRenderServices(){var rows=document.getElementById('adminServiceRows');var matched=adminServiceFiltered();adminRenderServicePager(matched.length);var start=(adminServicePage-1)*adminServicePageSize;var list=matched.slice(start,start+adminServicePageSize);rows.textContent='';if(!list.length){var empty=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent='No data';empty.appendChild(cell);rows.appendChild(empty);return}list.forEach(function(service){var row=document.createElement('tr');row.dataset.testid='admin-service-row';[service.id,service.name,service.service_type,service.host,service.port].forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value==null?'':String(value);if(index===2)cell.className='co';row.appendChild(cell)});var statusCell=document.createElement('td');statusCell.appendChild(adminServiceStatusBadge(service.status));row.appendChild(statusCell);var actionCell=document.createElement('td');actionCell.className='col-select';var actions=document.createElement('div');actions.className='admin-row-actions';var detailButton=document.createElement('button');detailButton.type='button';detailButton.className='admin-row-icon';detailButton.title='Show details';detailButton.setAttribute('aria-label','Show details');detailButton.setAttribute('data-testid','admin-service-action-clipboard');detailButton.innerHTML=ADMIN_CLIPBOARD_SVG;detailButton.onclick=function(){adminShowService(service.id)};actions.appendChild(detailButton);var extraButton=document.createElement('button');extraButton.type='button';extraButton.className='admin-row-icon';extraButton.title='Extra information';extraButton.setAttribute('aria-label','Extra information');extraButton.setAttribute('data-testid','admin-service-action-extra');extraButton.innerHTML=ADMIN_SETTINGS2_SVG;extraButton.onclick=function(){adminShowServiceExtra(service)};actions.appendChild(extraButton);actionCell.appendChild(actions);row.appendChild(actionCell);rows.appendChild(row)})}function adminResetServiceFilter(){document.getElementById('adminServiceType').value='';var search=document.getElementById('adminServiceSearch');if(search)search.value='';adminServicePage=1;adminRenderServices()}function adminFillServiceTypes(){var select=document.getElementById('adminServiceType');(ADMIN_SERVICES||[]).forEach(function(service){var type=String(service.service_type||'');if(!type||Array.prototype.some.call(select.options,function(option){return option.value===type}))return;var option=document.createElement('option');option.value=type;option.textContent=type;select.appendChild(option)})}function adminLoadServices(){fetch('/api/v1/admin/services').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load services');ADMIN_SERVICES=data.data||[];adminFillServiceTypes();adminRenderServices()}).catch(function(error){var rows=document.getElementById('adminServiceRows');rows.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=7;cell.className='admin-empty';cell.textContent=error.message;row.appendChild(cell);rows.appendChild(row)})}// Upstream `service-status.tsx` renders the payload through `JsonView` (a
 // collapsible typed tree) inside a scroll area, not as a JSON string.
 function adminJsonValue(value){var type=value===null?'null':Array.isArray(value)?'array':typeof value;if(type==='object'||type==='array'){var entries=type==='array'?value.map(function(item,index){return [String(index),item]}):Object.keys(value).map(function(key){return [key,value[key]]});var node=document.createElement('div');node.className='json-tree-node';var toggle=document.createElement('button');toggle.type='button';toggle.className='json-tree-toggle';toggle.setAttribute('aria-expanded','true');toggle.textContent=(type==='array'?'['+entries.length+']':'{'+entries.length+'}');var list=document.createElement('ul');list.className='json-tree-list';entries.forEach(function(entry){var item=document.createElement('li');item.className='json-tree-item';var key=document.createElement('span');key.className='json-tree-key';key.textContent=entry[0];item.appendChild(key);item.appendChild(document.createTextNode(': '));item.appendChild(adminJsonValue(entry[1]));list.appendChild(item)});toggle.addEventListener('click',function(){var open=toggle.getAttribute('aria-expanded')==='true';toggle.setAttribute('aria-expanded',open?'false':'true');list.hidden=open});node.appendChild(toggle);node.appendChild(list);return node}var leaf=document.createElement('span');leaf.className='json-tree-value json-tree-'+type;leaf.textContent=type==='string'?'"'+value+'"':String(value);return leaf}
-function adminShowService(id){fetch('/api/v1/admin/services/'+id).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load details');var detail=data.data||{};document.getElementById('adminServiceName').textContent=detail.service_name||'';var host=document.getElementById('adminServiceDetail');host.textContent='';host.appendChild(adminJsonValue(detail.message===undefined?detail:detail.message));document.getElementById('adminServiceDialog').classList.add('show')}).catch(function(error){alert(error.message)})}function adminCloseServiceDialog(){document.getElementById('adminServiceDialog').classList.remove('show')}adminLoadServices()</script>"#,
+function adminCloseExtraDialog(){document.getElementById('adminExtraDialog').classList.remove('show')}
+function adminIsPlainObject(value){return !!value&&typeof value==='object'&&!Array.isArray(value)}
+function adminServiceDetailNode(value){
+if(Array.isArray(value)&&value.length&&value.every(function(item){return adminIsPlainObject(item)})){var headers=Object.keys(value[0]);var wrap=document.createElement('div');wrap.className='admin-table-wrap';var table=document.createElement('table');table.className='admin-table';table.setAttribute('data-testid','admin-service-detail-table');var head=document.createElement('thead');var headRow=document.createElement('tr');headers.forEach(function(header){var cell=document.createElement('th');cell.textContent=header;headRow.appendChild(cell)});head.appendChild(headRow);table.appendChild(head);var body=document.createElement('tbody');value.forEach(function(item){var row=document.createElement('tr');headers.forEach(function(header){var cell=document.createElement('td');cell.textContent=item[header]==null?'':String(item[header]);row.appendChild(cell)});body.appendChild(row)});table.appendChild(body);wrap.appendChild(table);return wrap}
+if(adminIsPlainObject(value)){var list=document.createElement('dl');list.className='admin-detail-list';list.setAttribute('data-testid','admin-service-detail-object');Object.keys(value).forEach(function(key){var row=document.createElement('div');row.className='admin-detail-row';var term=document.createElement('dt');term.className='admin-detail-term';var termCode=document.createElement('code');termCode.textContent=key;term.appendChild(termCode);var description=document.createElement('dd');description.className='admin-detail-value';var code=document.createElement('code');code.textContent=JSON.stringify(value[key]===undefined?null:value[key]);description.appendChild(code);row.appendChild(term);row.appendChild(description);list.appendChild(row)});return list}
+if(typeof value==='string'){var box=document.createElement('div');box.className='admin-detail-string';box.setAttribute('data-testid','admin-service-detail-string');var pre=document.createElement('pre');var code=document.createElement('code');code.textContent=value;pre.appendChild(code);box.appendChild(pre);return box}
+var fallback=document.createElement('div');fallback.className='admin-detail-string';fallback.textContent=value==null?'':String(value);return fallback}
+function adminTimeLabel(ms){var date=new Date(Number(ms)||0);var hh=String(date.getHours());var mm=String(date.getMinutes());if(hh.length<2)hh='0'+hh;if(mm.length<2)mm='0'+mm;return hh+':'+mm}
+function adminExecutorChart(name,samples){var items=samples.map(function(item){var copy={};Object.keys(item||{}).forEach(function(key){copy[key]=item[key]});copy.now=Number(item&&item.now)||0;return copy});var width=720;var height=220;var paddingLeft=24;var paddingRight=24;var paddingTop=16;var paddingBottom=56;var plotWidth=width-paddingLeft-paddingRight;var plotHeight=height-paddingTop-paddingBottom;var maxValue=1;items.forEach(function(item){maxValue=Math.max(maxValue,Number(item.done)||0,Number(item.failed)||0)});var slot=items.length?plotWidth/items.length:plotWidth;var barWidth=Math.max(2,Math.min(18,slot/3));var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 '+width+' '+height);svg.setAttribute('class','admin-chart');svg.setAttribute('role','img');svg.setAttribute('data-testid','admin-task-executor-chart');svg.setAttribute('aria-label',name);for(var line=0;line<=4;line+=1){var grid=document.createElementNS('http://www.w3.org/2000/svg','line');var y=paddingTop+plotHeight-(plotHeight*line/4);grid.setAttribute('x1',String(paddingLeft));grid.setAttribute('x2',String(width-paddingRight));grid.setAttribute('y1',String(y));grid.setAttribute('y2',String(y));grid.setAttribute('stroke-dasharray','3 3');grid.setAttribute('class','admin-chart-grid');svg.appendChild(grid)}items.forEach(function(item,index){var center=paddingLeft+slot*index+slot/2;var doneHeight=plotHeight*((Number(item.done)||0)/maxValue);var failedHeight=plotHeight*((Number(item.failed)||0)/maxValue);var doneBar=document.createElementNS('http://www.w3.org/2000/svg','rect');doneBar.setAttribute('x',String(center-barWidth-1));doneBar.setAttribute('y',String(paddingTop+plotHeight-doneHeight));doneBar.setAttribute('width',String(barWidth));doneBar.setAttribute('height',String(Math.max(doneHeight,0)));doneBar.setAttribute('class','admin-chart-done');doneBar.dataset.index=String(index);svg.appendChild(doneBar);var failedBar=document.createElementNS('http://www.w3.org/2000/svg','rect');failedBar.setAttribute('x',String(center+1));failedBar.setAttribute('y',String(paddingTop+plotHeight-failedHeight));failedBar.setAttribute('width',String(barWidth));failedBar.setAttribute('height',String(Math.max(failedHeight,0)));failedBar.setAttribute('class','admin-chart-failed');failedBar.dataset.index=String(index);svg.appendChild(failedBar);var label=document.createElementNS('http://www.w3.org/2000/svg','text');label.setAttribute('x','0');label.setAttribute('y','0');label.setAttribute('transform','translate('+center+','+(paddingTop+plotHeight+8)+') rotate(60)');label.setAttribute('text-anchor','start');label.setAttribute('class','admin-chart-tick');label.textContent=adminTimeLabel(item.now);svg.appendChild(label)});svg.addEventListener('click',function(event){var index=event.target&&event.target.dataset?event.target.dataset.index:null;if(index==null)return;adminExecutorTooltip(svg,items[Number(index)]||{})});return svg}
+function adminExecutorTooltip(host,sample){var existing=host.parentElement.querySelector('.admin-chart-tooltip');if(existing)existing.remove();var card=document.createElement('div');card.className='admin-chart-tooltip';card.setAttribute('data-testid','admin-task-executor-tooltip');var title=document.createElement('p');title.className='admin-chart-tooltip-title';title.textContent=adminTimeLabel(sample.now);card.appendChild(title);card.appendChild(adminJsonValue(sample));host.parentElement.appendChild(card)}
+function adminTaskExecutorDetail(content){if(!adminIsPlainObject(content))return adminServiceDetailNode(content);var section=document.createElement('section');section.className='admin-executor-section';section.setAttribute('data-testid','admin-task-executor-detail');Object.keys(content).forEach(function(name){var data=Array.isArray(content[name])?content[name]:[];var items=data.map(function(item){var copy={};Object.keys(item||{}).forEach(function(key){copy[key]=item[key]});copy.now=Number(item&&item.now)||0;return copy});var last=items.length?items[items.length-1]:{};var card=document.createElement('article');card.className='admin-executor-card';card.setAttribute('data-testid','admin-task-executor-card');var header=document.createElement('header');header.className='admin-executor-head';var heading=document.createElement('h3');heading.className='admin-executor-name';heading.textContent=name;header.appendChild(heading);var meta=document.createElement('p');meta.className='admin-executor-meta';var lag=document.createElement('span');lag.textContent='Lag: '+(last.lag==null?'':last.lag);var pending=document.createElement('span');pending.textContent='Pending: '+(last.pending==null?'':last.pending);meta.appendChild(lag);meta.appendChild(pending);header.appendChild(meta);card.appendChild(header);card.appendChild(adminExecutorChart(name,items));var legend=document.createElement('div');legend.className='admin-chart-legend';[['done','Done'],['failed','Failed']].forEach(function(pair){var chip=document.createElement('span');chip.className='admin-chart-legend-item';var swatch=document.createElement('span');swatch.className='admin-chart-swatch '+pair[0];chip.appendChild(swatch);chip.appendChild(document.createTextNode(pair[1]));legend.appendChild(chip)});card.appendChild(legend);card.appendChild(adminServiceDetailNode(items.length?items[items.length-1]:{}));section.appendChild(card)});return section}
+function adminShowServiceExtra(service){var host=document.getElementById('adminServiceExtra');host.textContent='';host.appendChild(adminJsonValue(service&&service.extra!==undefined?service.extra:{}));document.getElementById('adminExtraDialog').classList.add('show')}
+function adminShowService(id){fetch('/api/v1/admin/services/'+id).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to load details');var detail=data.data||{};var serviceType='';var row=null;var rows=document.querySelectorAll('#adminServiceRows tr[data-testid]');for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll('td');if(cells.length&&cells[0].textContent===String(detail.id||id)){row=rows[i];serviceType=cells[2]?cells[2].textContent:'';break}}var title=document.getElementById('adminServiceDialogTitle');var name=detail.service_name||'';if(serviceType==='task_executor'){title.textContent='Task executor detail'}else{title.textContent='Service '+(name||id)+' detail'}var host=document.getElementById('adminServiceDetail');host.textContent='';host.appendChild(serviceType==='task_executor'?adminTaskExecutorDetail(detail.message):adminServiceDetailNode(detail.message===undefined?detail:detail.message));document.getElementById('adminServiceDialog').classList.add('show')}).catch(function(error){alert(error.message)})}function adminCloseServiceDialog(){document.getElementById('adminServiceDialog').classList.remove('show')}
+adminLoadServices()</script>"#,
     );
     Html(layout_plain(
         "Service status",
@@ -8921,6 +8953,70 @@ connection: close
     /// in the card footer through `RAGFlowPagination` (total + page size
     /// 10/20/50/100). Sorting stays disabled upstream (`enableSorting: false`),
     /// as does polling (`useQuery` without `refetchInterval`).
+    /// Upstream `admin/service-detail.tsx` + `admin/task-executor-detail.tsx`: the
+    /// details dialog renders the payload by shape (table / definition list /
+    /// string card), task executors get a bar chart per executor with rotated
+    /// time ticks, a legend and a click tooltip, and the two dialogs are opened
+    /// by the row's ClipboardList / Settings2 icon actions.
+    #[tokio::test]
+    async fn admin_service_dialog_matches_upstream_detail_components() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let html = body_of(
+            admin_services_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/services")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='admin-service-extra-dialog'",
+            "data-testid='admin-service-detail-dialog'",
+            "id='adminServiceDialogTitle'",
+            "id='adminServiceExtra'",
+            "adminShowServiceExtra(",
+            "function adminServiceDetailNode(",
+            "function adminTaskExecutorDetail(",
+            "function adminExecutorChart(",
+            "function adminTimeLabel(",
+            "function adminIsPlainObject(",
+            "data-testid','admin-service-detail-table'",
+            "data-testid','admin-service-detail-object'",
+            "data-testid','admin-service-detail-string'",
+            "data-testid','admin-task-executor-chart'",
+            "data-testid','admin-task-executor-tooltip'",
+            "data-testid','admin-service-action-clipboard'",
+            "data-testid','admin-service-action-extra'",
+            "admin-chart-done",
+            "admin-chart-failed",
+            "admin-chart-legend",
+            "Task executor detail",
+            "'Service '+(name||id)+' detail'",
+            "rotate(60)",
+            "Extra information",
+        ] {
+            assert!(
+                html.contains(marker),
+                "service dialog marker missing: {marker}"
+            );
+        }
+        // The old merged "Extra info" section is gone.
+        assert!(
+            !html.contains("admin-code' id='adminServiceDetail'"),
+            "the merged dialog body must not linger"
+        );
+    }
+
     #[tokio::test]
     async fn admin_services_table_filters_searches_and_paginates() {
         let (_root, state) = test_state();
@@ -8947,9 +9043,12 @@ connection: close
             "data-testid='admin-services-pagination'",
             "data-testid='admin-services-page-size'",
             "function adminServiceFiltered()",
-            // Upstream renders the payload with `JsonView` (typed collapsible tree).
+            // Upstream renders the extra payload with `JsonView` (typed
+            // collapsible tree) and the details payload through
+            // `ServiceDetail`/`TaskExecutorDetail`.
             "function adminJsonValue(value)",
-            "host.appendChild(adminJsonValue(detail.message===undefined?detail:detail.message))",
+            "host.appendChild(adminJsonValue(service&&service.extra!==undefined?service.extra:{}))",
+            "host.appendChild(serviceType==='task_executor'?adminTaskExecutorDetail(detail.message):adminServiceDetailNode(detail.message===undefined?detail:detail.message))",
             "toggle.className='json-tree-toggle'",
             "function adminRenderServicePager(total)",
             "adminRenderServicePager(matched.length)",
