@@ -1,0 +1,517 @@
+[
+  {
+    "id": "wiki",
+    "kind": "artifacts",
+    "display_name": "Artifacts — Graph-based wiki",
+    "description": "",
+    "config": {
+      "kind": "artifacts",
+      "example": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Opening paragraph (2-4 sentences defining what this is). No heading.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n- 3. Bold key terms on first use; link them with [[ ]] wikilinks.\n- 4. Examples or implications where the source provides them.\n- 5. ## See also section at the end with wikilinks to highly related pages(less than 12).\\n\n- Page structure could be as following: (Not provided)\n",
+      "entity": {
+        "description": "You are a robust graph entity extractor for knowledge graphs.",
+        "fields": [
+          {
+            "type": "person",
+            "description": "A natural person (individual human).",
+            "rule": "- Full name preferred (e.g., \"Elon Musk\", not \"Musk\" alone if ambiguous).\n- Include titles only if integral to identity (e.g., \"Dr. Smith\").\n- Max length: 60 characters.\n"
+          },
+          {
+            "type": "org",
+            "description": "Organization, company, institution, agency, or any collective group.",
+            "rule": "- Use the official name when possible (e.g., \"United Nations\").\n- Abbreviations accepted if widely known (e.g., \"UN\", \"NASA\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "product",
+            "description": "Tangible or intangible product, service, software, or offering.",
+            "rule": "- Include version numbers if relevant (e.g., \"iPhone 14\").\n- Generic categories (e.g., \"smartphone\") only if no specific name is given.\n- Max length: 100 characters.\n"
+          },
+          {
+            "type": "regulation",
+            "description": "Law, policy, standard, guideline, or regulatory document.",
+            "rule": "- Use official title or identifier (e.g., \"GDPR\", \"OSHA standard 1910\").\n- Include jurisdiction if known (e.g., \"EU GDPR\").\n- Max length: 120 characters.\n"
+          },
+          {
+            "type": "location",
+            "description": "Geographic place (country, city, address, region, natural feature).",
+            "rule": "- Hierarchical format allowed (e.g., \"Paris, France\").\n- Avoid overly vague terms (e.g., \"there\") unless resolved.\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "system",
+            "description": "Technical system, platform, framework, or infrastructure.",
+            "rule": "- Distinct from product: system implies integrated environment\n  (e.g., \"Linux OS\", \"power grid\").\n- Use proper naming.\n- Max length: 100 characters.\n"
+          },
+          {
+            "type": "equipment",
+            "description": "Physical device, machinery, hardware, or tool.",
+            "rule": "- Specific model preferred (e.g., \"Boeing 737\").\n- Generic allowed only if precise type (e.g., \"drill press\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "other",
+            "description": "Entities that do not fit any above category.",
+            "rule": "- Use sparingly; prefer mapping to a defined type when possible.\n- Still provide a meaningful label.\n- Max length: 80 characters.\n"
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert in extracting semantic relations between entities.",
+        "fields": [
+          {
+            "type": "owns",
+            "description": "Ownership or possession (legal or de facto).",
+            "rule": "- Direction from owner to owned: (A owns B).\n- Example: \"Company A owns product B\".\n"
+          },
+          {
+            "type": "part_of",
+            "description": "Mereological relation — component to whole.",
+            "rule": "- Direction from part to whole: (A part_of B).\n- Example: \"Engine part_of car\".\n"
+          },
+          {
+            "type": "caused_by",
+            "description": "Causal relation — event, action, or state leads to another.",
+            "rule": "- Direction from effect to cause: (A caused_by B) meaning B causes A.\n- Example: \"Accident caused_by brake failure\".\n"
+          },
+          {
+            "type": "regulates",
+            "description": "Regulatory or governing relation (law/standard controls entity).",
+            "rule": "- Direction from regulator to regulated: (A regulates B).\n- Example: \"GDPR regulates data processing\".\n"
+          },
+          {
+            "type": "uses",
+            "description": "Utilization — an entity employs or consumes another entity.",
+            "rule": "- Direction from user to used: (A uses B).\n- Example: \"System uses equipment\".\n"
+          },
+          {
+            "type": "located_in",
+            "description": "Spatial containment — entity situated inside a location.",
+            "rule": "- Direction from located entity to containing location: (A located_in B).\n- Example: \"Office located_in city\".\n"
+          },
+          {
+            "type": "other",
+            "description": "Any meaningful relation not covered by the above types.",
+            "rule": "- Provide an explicit label in a \"relation_label\" field.\n- Direction must be clear.\n"
+          }
+        ]
+      },
+      "claim": {
+        "fields": [
+          {
+            "statement": "A complete factual sentence stated in the source. Any sentence of the form 'X is Y', 'X has Y', 'X does Y', 'X was founded in Y', 'X is located in Y', 'X reported Y', etc. is a claim. Aim for at least 1-3 claims per entity per chunk that mentions it.",
+            "subject": "Entity/concept this claim is about (must match one of the entity/concept names extracted above)."
+          }
+        ]
+      },
+      "concept": {
+        "fields": [
+          {
+            "term": "Concept name OR a thematic section topic (prefer the source's heading wording when coherent).",
+            "definition_excerpt": "Verbatim or near-verbatim defining phrase from the chunk."
+          }
+        ]
+      },
+      "global_rules": "- Each relation links two entities (subject → object) with a predicate type.\n- Format: {\"subject_id\": \"<entity_id>\", \"predicate\": \"<type>\",\n  \"object_id\": \"<entity_id>\", \"chunk_id\": \"<chunk_ID>\"}.\n- Both subject and object must be previously extracted entities.\n- If ambiguous direction, choose the most logical default\n  (e.g., \"part_of\" always from part to whole).\n- When multiple relations appear in a chunk, list all in order of appearance.\n- Keep language consistent; relation type is always English (the given type name).\n- Every extracted entity must have exactly one type from the list.\n- Entity label (the text representing the entity) is required, non-empty.\n- Format: {\"entity_id\": \"<unique_id>\", \"type\": \"<type>\", \"label\": \"<label>\",\n  \"chunk_id\": \"<chunk_ID>\"}.\n- If no entity in a chunk, output no entity for that chunk.\n- Keep the chunks' original language (Chinese/English etc.) for entities and relations.\n"
+    }
+  },
+  {
+    "id": "knowledge_graph",
+    "kind": "knowledge_graph",
+    "display_name": "Knowledge graph",
+    "description": "",
+    "config": {
+      "kind": "knowledge_graph",
+      "entity": {
+        "description": "You are a robust graph entity extractor for knowledge graphs.",
+        "fields": [
+          {
+            "type": "person",
+            "description": "A natural person (individual human).",
+            "rule": "- Full name preferred (e.g., \"Elon Musk\", not \"Musk\" alone if ambiguous).\n- Include titles only if integral to identity (e.g., \"Dr. Smith\").\n- Max length: 60 characters.\n"
+          },
+          {
+            "type": "org",
+            "description": "Organization, company, institution, agency, or any collective group.",
+            "rule": "- Use the official name when possible (e.g., \"United Nations\").\n- Abbreviations accepted if widely known (e.g., \"UN\", \"NASA\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "product",
+            "description": "Tangible or intangible product, service, software, or offering.",
+            "rule": "- Include version numbers if relevant (e.g., \"iPhone 14\").\n- Generic categories (e.g., \"smartphone\") only if no specific name is given.\n- Max length: 100 characters.\n"
+          },
+          {
+            "type": "regulation",
+            "description": "Law, policy, standard, guideline, or regulatory document.",
+            "rule": "- Use official title or identifier (e.g., \"GDPR\", \"OSHA standard 1910\").\n- Include jurisdiction if known (e.g., \"EU GDPR\").\n- Max length: 120 characters.\n"
+          },
+          {
+            "type": "location",
+            "description": "Geographic place (country, city, address, region, natural feature).",
+            "rule": "- Hierarchical format allowed (e.g., \"Paris, France\").\n- Avoid overly vague terms (e.g., \"there\") unless resolved.\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "other",
+            "description": "Entities that do not fit any above category.",
+            "rule": "- Use sparingly; prefer mapping to a defined type when possible.\n- Still provide a meaningful label.\n- Max length: 80 characters.\n"
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert in extracting semantic relations between entities.",
+        "fields": [
+          {
+            "type": "owns",
+            "description": "Ownership or possession (legal or de facto).",
+            "rule": "- Direction from owner to owned: (A owns B).\n"
+          },
+          {
+            "type": "part_of",
+            "description": "Mereological relation — component to whole.",
+            "rule": "- Direction from part to whole: (A part_of B).\n"
+          },
+          {
+            "type": "caused_by",
+            "description": "Causal relation — event, action, or state leads to another.",
+            "rule": "- Direction from effect to cause: (A caused_by B) meaning B causes A.\n"
+          },
+          {
+            "type": "regulates",
+            "description": "Regulatory or governing relation (law/standard controls entity).",
+            "rule": "- Direction from regulator to regulated: (A regulates B).\n"
+          },
+          {
+            "type": "located_in",
+            "description": "Spatial containment — entity situated inside a location.",
+            "rule": "- Direction from located entity to containing location: (A located_in B).\n"
+          },
+          {
+            "type": "other",
+            "description": "Any meaningful relation not covered by the above types.",
+            "rule": "- Provide an explicit label in a \"relation_label\" field.\n- Direction must be clear.\n"
+          }
+        ]
+      },
+      "global_rules": ""
+    }
+  },
+  {
+    "id": "timeline",
+    "kind": "timeline",
+    "display_name": "List (Timeline) — Chronological events / Graph",
+    "description": "",
+    "config": {
+      "kind": "timeline",
+      "entity": {
+        "description": "You are a robust events-timeline extractor.",
+        "fields": [
+          {
+            "type": "timestamp",
+            "description": "the date or time reference (clean, no extraneous text)",
+            "rule": "- Format: prefer ISO 8601 (YYYY-MM-DD) or a normalized human-readable form\n  (e.g., \"March 5, 2024\").\n- If only a relative time (e.g., \"yesterday\", \"next week\"), convert to\n  absolute when the context allows, else keep as is.\n- \"timestamp\" must be non-empty (or exactly \"-1\" if no valid time/date).\n- If a chunk contains multiple events with distinct timestamps, expand them\n  in chronological order:\n    - Each event → {\"timestamp\":\"...\",\"event\":\"...\",\"chunk_id\":\"<chunk_ID>\"}.\n- When ambiguous, prefer \"-1\" unless the text strongly indicates a specific\n  time/date.\n- Keep language and numbering style of \"timestamp\" consistent with the input.\n"
+          },
+          {
+            "type": "event",
+            "description": "the event description associated with the timestamp (concise, no metadata)",
+            "rule": "- Length restriction:\n    • Chinese event: ≤40 characters\n    • English event: ≤120 characters\n- \"event\" must be non-empty (or exactly \"-1\") if no valid event description.\n- If no valid event but a timestamp exists, output\n  {\"timestamp\":\"...\",\"event\":\"-1\", ...}.\n- Preserve the core action and key entities; omit redundant phrasing.\n"
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert sequential reasoning assistant specializing in chronological timelines.",
+        "fields": [
+          {
+            "type": "ordered",
+            "description": "Events are arranged in strict chronological order (earliest to latest).",
+            "rule": "- \"-1\" for timestamp or event indicates invalid or missing data; such entries\n  do not participate in ordering.\n- Must follow explicit or inferred temporal indicators\n  (e.g., \"then\", \"afterwards\", \"at 3 PM\").\n- If multiple events share the same timestamp, preserve their textual order\n  as a sub-list.\n- Keep language and date formatting consistent across the timeline.\n"
+          }
+        ]
+      },
+      "global_rules": ""
+    }
+  },
+  {
+    "id": "mind_map",
+    "kind": "mind_map",
+    "display_name": "Mind map - Radial concept hierarchy",
+    "description": "",
+    "config": {
+      "kind": "mind_map",
+      "entity": {
+        "description": "You are a robust mind-map extractor. Extract the central concept, major branches, and supporting sub-branches needed to build a non-linear visual hierarchy around the main subject.",
+        "fields": [
+          {
+            "type": "central_topic",
+            "description": "The main idea, goal, problem, or subject placed at the center of the mind map.",
+            "rule": "- Prefer a concise noun phrase that represents the whole chunk or document section.\n- Use the source wording when it clearly names the topic.\n- If no central topic can be inferred, output \"-1\".\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "branch",
+            "description": "A major theme, category, or dimension radiating from the central topic.",
+            "rule": "- Use broad categories that organize multiple related details.\n- Avoid duplicating the central topic as a branch.\n- Keep labels concise and parallel when possible.\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "sub_branch",
+            "description": "A specific detail, task, supporting concept, example, or item under a branch.",
+            "rule": "- Attach each sub-branch to the most specific relevant parent branch.\n- Preserve important source terms, names, quantities, and constraints.\n- Split unrelated details into separate sub-branches.\n- Max length: 120 characters.\n"
+          },
+          {
+            "type": "keyword",
+            "description": "A compact supporting word or phrase that clarifies a branch or sub-branch.",
+            "rule": "- Use only meaningful terms that improve scanability.\n- Do not include filler words or generic labels.\n- Max length: 60 characters.\n"
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert hierarchical reasoning assistant specializing in mind-map structure. Link each concept to its parent so the result forms an intuitive radial hierarchy.",
+        "fields": [
+          {
+            "type": "has_branch",
+            "description": "The central topic contains a major branch.",
+            "rule": "- Direction from central topic to branch: (A has_branch B).\n- Use only for first-level branches radiating from the center.\n"
+          },
+          {
+            "type": "has_sub_branch",
+            "description": "A branch or sub-branch contains a more specific child concept.",
+            "rule": "- Direction from parent to child: (A has_sub_branch B).\n- Use recursively for second-level and deeper details.\n"
+          },
+          {
+            "type": "supports",
+            "description": "A keyword, example, task, or detail supports a parent concept.",
+            "rule": "- Direction from supporting item to supported concept: (A supports B).\n- Use when the item explains, evidences, or clarifies the parent.\n"
+          },
+          {
+            "type": "related_to",
+            "description": "A cross-link between two concepts that are associated but not parent-child.",
+            "rule": "- Use sparingly; prefer parent-child hierarchy when possible.\n- Direction may follow the stronger explanatory dependency.\n"
+          }
+        ]
+      },
+      "global_rules": "- Build a mind map around one central concept whenever possible.\n- Arrange major themes as first-level branches and details as recursive sub-branches.\n- Keep labels short enough for visual nodes; avoid sentence-length node names.\n- Preserve a clear hierarchy; do not create cycles in parent-child relations.\n- Use the same language as the source text unless normalization is necessary.\n"
+    }
+  },
+  {
+    "id": "page_index",
+    "kind": "page_index",
+    "display_name": "PageIndex — Hierarchical table of contents",
+    "description": "",
+    "config": {
+      "kind": "page_index",
+      "entity": {
+        "description": "You are a robust Table-of-Contents (TOC) extractor.",
+        "fields": [
+          {
+            "type": "title",
+            "description": "the heading text (clean, no page numbers or leader dots)",
+            "rule": "- Length restriction:\n    • Chinese heading: ≤25 characters\n    • English heading: ≤80 characters\n- \"title\" must be non-empty (or exactly \"-1\").\n- If any part of a chunk has no valid heading, output that part as {\"title\":\"-1\", ...}.\n- If a chunk contains multiple headings, expand them in order:\n    - Each heading → {\"title\":\"...\",\"chunk_id\":\"<chunk_ID>\"}.\n- When ambiguous, prefer \"-1\" unless the text strongly looks like a heading.\n- Keep language of \"title\" the same as the input.\n- Prefix like following must be titles: 第x章, 第N条, 第N节, 1, 1.1, 1.1.1 ...\n"
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert logical reasoning assistant specializing in hierarchical titles.",
+        "fields": [
+          {
+            "type": "include",
+            "description": "Upper-level title includes lower-level title.",
+            "rule": "- \"-1\" is an invalid title; it does not belong to or include any other titles.\n- Must follow the hierarchical index/numbering (e.g., \"1\", \"2.1\", \"3.2.5\") when present.\n- Keep language of \"title\" the same as the input.\n- 第N章 must include 第N条 or 第N节.\n"
+          }
+        ]
+      },
+      "global_rules": ""
+    }
+  },
+  {
+    "id": "session_essence",
+    "kind": "session_essence",
+    "display_name": "Session Essence — Cross-source entity synopses from conversations",
+    "description": "",
+    "config": {
+      "kind": "knowledge_graph",
+      "entity": {
+        "description": "You are a robust entity and fact extractor for conversational data.",
+        "fields": [
+          {
+            "type": "person",
+            "description": "A person mentioned or participating in the conversation.",
+            "rule": "- Full name preferred (e.g., \"Alice Zhang\", not \"A. Zhang\").\n- Max length: 60 characters.\n"
+          },
+          {
+            "type": "org",
+            "description": "Organization, company, team, or department.",
+            "rule": "- Use the official name when possible (e.g., \"Acme Corp\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "topic",
+            "description": "Discussed topic, theme, or subject area.",
+            "rule": "- Use the phrasing from the conversation (e.g., \"API migration\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "fact",
+            "description": "A verifiable factual statement extracted from the conversation.",
+            "rule": "- Must be a single proposition (subject + predicate + object).\n- Must be directly supported by the source text.\n- Do not include opinions, speculation, or hypotheticals.\n",
+            "fact_fields": [
+              "subject",
+              "predicate",
+              "object",
+              "polarity",
+              "confidence"
+            ]
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert in extracting semantic relations from conversations.",
+        "fields": [
+          {
+            "type": "mentions",
+            "description": "One entity references or brings up another.",
+            "rule": "- Direction from referrer to referred: (A mentions B).\n"
+          }
+        ]
+      },
+      "synthesis": {
+        "enabled": true,
+        "compile_kwd": "essence",
+        "example": "Write a 3-5 sentence executive summary about the entity.\nSynthesize what multiple sources collectively say.\nOutput ONLY the paragraph. No headers, no JSON, no preamble.\n"
+      }
+    }
+  },
+  {
+    "id": "session_graph",
+    "kind": "session_graph",
+    "display_name": "Session Graph — Knowledge graph from conversations",
+    "description": "",
+    "config": {
+      "kind": "knowledge_graph",
+      "entity": {
+        "description": "You are a robust entity and fact extractor for conversational data.",
+        "fields": [
+          {
+            "type": "person",
+            "description": "A person mentioned or participating in the conversation.",
+            "rule": "- Full name preferred (e.g., \"Alice Zhang\", not \"A. Zhang\").\n- Max length: 60 characters.\n"
+          },
+          {
+            "type": "org",
+            "description": "Organization, company, team, or department.",
+            "rule": "- Use the official name when possible (e.g., \"Acme Corp\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "topic",
+            "description": "Discussed topic, theme, or subject area.",
+            "rule": "- Use the phrasing from the conversation (e.g., \"API migration\").\n- Max length: 80 characters.\n"
+          },
+          {
+            "type": "fact",
+            "description": "A verifiable factual statement extracted from the conversation.",
+            "rule": "- Must be a single proposition (subject + predicate + object).\n- Must be directly supported by the source text.\n- Do not include opinions, speculation, or hypotheticals.\n",
+            "fact_fields": [
+              "subject",
+              "predicate",
+              "object",
+              "polarity",
+              "confidence"
+            ]
+          }
+        ]
+      },
+      "relation": {
+        "description": "You are an expert in extracting semantic relations from conversations.",
+        "fields": [
+          {
+            "type": "mentions",
+            "description": "One entity references or brings up another.",
+            "rule": "- Direction from referrer to referred: (A mentions B).\n"
+          },
+          {
+            "type": "decides",
+            "description": "A decision or resolution made during the conversation.",
+            "rule": "- Direction from decision-maker to decision: (A decides B).\n"
+          },
+          {
+            "type": "assigns",
+            "description": "Task or responsibility assigned to someone.",
+            "rule": "- Direction from assigner to assignee: (A assigns B to C).\n"
+          },
+          {
+            "type": "references",
+            "description": "Reference to a prior topic, document, or event.",
+            "rule": "- Direction from current to referenced: (A references B).\n"
+          },
+          {
+            "type": "other",
+            "description": "Any meaningful relation not covered by the above types.",
+            "rule": "- Provide an explicit label in a \"relation_label\" field.\n"
+          }
+        ]
+      },
+      "global_rules": "",
+      "synthesis": {
+        "enabled": true,
+        "compile_kwd": "artifact_page",
+        "example": "- Build a wiki article covering the entity's role in the conversations.\n- Include a summary paragraph and sections for key decisions and actions.\n- Use [[entity_name]] for cross-references to related entities.\n"
+      }
+    }
+  },
+  {
+    "id": "tree",
+    "kind": "tree",
+    "display_name": "Tree — RAPTOR-based document tree",
+    "description": "Recursive Abstractive Processing for Tree-Organized Retrieval over a single document's chunks. Produces a hierarchical summary tree (root summary → cluster summaries → leaf cluster source_chunk_ids).",
+    "config": {
+      "kind": "tree",
+      "raptor": {
+        "prompt": "Please summarize the following paragraphs. Be careful with the numbers, do not make things up. Paragraphs as following:\n      {cluster_content}\nThe above is the content you need to summarize.",
+        "max_token": 512,
+        "threshold": 0.1
+      },
+      "entity": {
+        "description": "",
+        "fields": [
+          {
+            "type": "",
+            "description": "",
+            "rule": ""
+          }
+        ]
+      },
+      "relation": {
+        "description": "",
+        "fields": [
+          {
+            "type": "",
+            "description": "",
+            "rule": ""
+          }
+        ]
+      },
+      "global_rules": ""
+    }
+  },
+  {
+    "id": "empty",
+    "kind": "empty",
+    "display_name": "Empty",
+    "description": "",
+    "config": {
+      "kind": "empty",
+      "entity": {
+        "description": "",
+        "fields": [
+          {
+            "type": "",
+            "description": "",
+            "rule": ""
+          }
+        ]
+      },
+      "relation": {
+        "description": "",
+        "fields": [
+          {
+            "type": "",
+            "description": "",
+            "rule": ""
+          }
+        ]
+      },
+      "global_rules": ""
+    }
+  }
+]
