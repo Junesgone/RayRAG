@@ -67,7 +67,9 @@ try {
   await page.click("[data-testid='admin-new-user']");
   await page.waitForSelector("#adminCreateUserDialog.show", { timeout: 10000 });
   results.create_fields = {
-    labels: await page.locator("#adminCreateUserDialog .admin-field > span").allInnerTexts(),
+    labels: await page
+      .locator("#adminCreateUserDialog label.admin-field > span:first-child")
+      .allInnerTexts(),
     placeholders: {
       email: await page.locator("[data-testid='admin-create-user-email']").getAttribute("placeholder"),
       password: await page
@@ -190,7 +192,9 @@ try {
   await targetRow.getByRole("button", { name: "Change password" }).click();
   await page.waitForSelector("#adminPasswordDialog.show", { timeout: 10000 });
   results.password_fields = {
-    labels: await page.locator("#adminPasswordDialog .admin-field > span").allInnerTexts(),
+    labels: await page
+      .locator("#adminPasswordDialog label.admin-field > span:first-child")
+      .allInnerTexts(),
     email: await page.locator("[data-testid='admin-password-email']").inputValue(),
     emailReadonly: await page.locator("[data-testid='admin-password-email']").getAttribute("readonly"),
     emailBackground: await page

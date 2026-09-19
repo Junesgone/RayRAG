@@ -4652,13 +4652,13 @@ var statusCell=document.createElement('td');var isMe=String(user.email||user.use
 // (`admin.confirmPasswordRequired`) and equal (`admin.confirmPasswordDoNotMatch`).
 function adminValidEmail(value){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value||''))}
 function adminCreateUserErrors(){var email=(document.getElementById('adminNewUserEmail').value||'').trim();var password=document.getElementById('adminNewUserPassword').value||'';var confirm=document.getElementById('adminNewUserConfirm').value||'';var emailError=adminValidEmail(email)?'':'Please input a valid email address!';var passwordError=password.length>=6?'':'Password must be more than 8 characters.';var confirmError=!confirm?'Please confirm your password!':(password===confirm?'':'The password that you entered do not match!');document.getElementById('adminNewUserEmailError').textContent=emailError;document.getElementById('adminNewUserPasswordError').textContent=passwordError;document.getElementById('adminNewUserConfirmError').textContent=confirmError;return !emailError&&!passwordError&&!confirmError}
-function adminCreateUser(){var email=document.getElementById('adminNewUserEmail').value.trim();var password=document.getElementById('adminNewUserPassword').value;var role=document.getElementById('adminNewUserRole').value;var error=document.getElementById('adminCreateUserError');error.textContent='';if(!adminCreateUserErrors())return}fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:email,password:password,role:role})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create failed');document.getElementById('adminCreateUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){error.textContent=failure.message})}function adminToggleUser(user,status){fetch('/api/v1/admin/users/'+encodeURIComponent(user.username||user.email)+'/activate',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activate_status:status==='on'})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadUsers()}).catch(function(failure){alert(failure.message)})}function adminOpenPassword(user){ADMIN_PASSWORD_TARGET=user.username||user.email;var email=document.getElementById('adminPasswordEmail');if(email)email.value=ADMIN_PASSWORD_TARGET;document.getElementById('adminNewPassword').value='';document.getElementById('adminNewPasswordConfirm').value='';document.getElementById('adminPasswordError').textContent='';document.getElementById('adminNewPasswordError').textContent='';document.getElementById('adminNewPasswordConfirmError').textContent='';document.getElementById('adminPasswordDialog').classList.add('show')}
+function adminCreateUser(){var email=document.getElementById('adminNewUserEmail').value.trim();var password=document.getElementById('adminNewUserPassword').value;var role=document.getElementById('adminNewUserRole').value;var error=document.getElementById('adminCreateUserError');error.textContent='';if(!adminCreateUserErrors())return;fetch('/api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:email,password:password,role:role})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create failed');document.getElementById('adminCreateUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){error.textContent=failure.message})}function adminToggleUser(user,status){fetch('/api/v1/admin/users/'+encodeURIComponent(user.username||user.email)+'/activate',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activate_status:status==='on'})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');adminLoadUsers()}).catch(function(failure){alert(failure.message)})}function adminOpenPassword(user){ADMIN_PASSWORD_TARGET=user.username||user.email;var email=document.getElementById('adminPasswordEmail');if(email)email.value=ADMIN_PASSWORD_TARGET;document.getElementById('adminNewPassword').value='';document.getElementById('adminNewPasswordConfirm').value='';document.getElementById('adminPasswordError').textContent='';document.getElementById('adminNewPasswordError').textContent='';document.getElementById('adminNewPasswordConfirmError').textContent='';document.getElementById('adminPasswordDialog').classList.add('show')}
 // Upstream `admin/forms/change-password-form.tsx::useChangePasswordForm`: both
 // the new password and its confirmation need at least eight characters
 // (`admin.passwordMinLength` / `admin.confirmPasswordRequired`) and have to match
 // (`admin.confirmPasswordDoNotMatch`).
 function adminPasswordErrors(){var password=document.getElementById('adminNewPassword').value||'';var confirm=document.getElementById('adminNewPasswordConfirm').value||'';var passwordError=password.length>=8?'':'Password must be more than 8 characters.';var confirmError=confirm.length>=8?(password===confirm?'':'The password that you entered do not match!'):'Please confirm your password!';document.getElementById('adminNewPasswordError').textContent=passwordError;document.getElementById('adminNewPasswordConfirmError').textContent=confirmError;return !passwordError&&!confirmError}
-function adminSubmitPassword(){var password=document.getElementById('adminNewPassword').value;var error=document.getElementById('adminPasswordError');error.textContent='';if(!adminPasswordErrors())return}fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_PASSWORD_TARGET)+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:password})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');document.getElementById('adminPasswordDialog').classList.remove('show')}).catch(function(failure){error.textContent=failure.message})}function adminOpenDelete(user){ADMIN_DELETE_TARGET=user.username||user.email;document.getElementById('adminDeleteTarget').textContent=ADMIN_DELETE_TARGET;document.getElementById('adminDeleteError').textContent='';document.getElementById('adminDeleteUserDialog').classList.add('show')}function adminSubmitDeleteUser(){fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DELETE_TARGET),{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');document.getElementById('adminDeleteUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){document.getElementById('adminDeleteError').textContent=failure.message})}adminLoadUsers()</script>"#,
+function adminSubmitPassword(){var password=document.getElementById('adminNewPassword').value;var error=document.getElementById('adminPasswordError');error.textContent='';if(!adminPasswordErrors())return;fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_PASSWORD_TARGET)+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:password})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Update failed');document.getElementById('adminPasswordDialog').classList.remove('show')}).catch(function(failure){error.textContent=failure.message})}function adminOpenDelete(user){ADMIN_DELETE_TARGET=user.username||user.email;document.getElementById('adminDeleteTarget').textContent=ADMIN_DELETE_TARGET;document.getElementById('adminDeleteError').textContent='';document.getElementById('adminDeleteUserDialog').classList.add('show')}function adminSubmitDeleteUser(){fetch('/api/v1/admin/users/'+encodeURIComponent(ADMIN_DELETE_TARGET),{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');document.getElementById('adminDeleteUserDialog').classList.remove('show');adminLoadUsers()}).catch(function(failure){document.getElementById('adminDeleteError').textContent=failure.message})}adminLoadUsers()</script>"#,
     );
     Html(layout_plain(
         "User management",
@@ -7442,6 +7442,152 @@ mod kb_ui_tests {
             .unwrap()
     }
 
+    /// A rendered page is one long single-line `push_str` literal, so a single
+    /// stray brace silently kills the whole `<script>`: the browser logs
+    /// `Unexpected token 'function'`, the page renders nothing and no substring
+    /// assertion notices. Every `<script>` block of a page therefore gets its
+    /// delimiters checked once strings and comments are skipped.
+    fn assert_inline_scripts_balance(html: &str, page: &str) {
+        let mut scripts = 0usize;
+        let mut cursor = 0usize;
+        while let Some(found) = html[cursor..].find("<script") {
+            let start = cursor + found;
+            let Some(open) = html[start..].find('>') else {
+                break;
+            };
+            let body_start = start + open + 1;
+            let Some(close) = html[body_start..].find("</script>") else {
+                break;
+            };
+            let body = &html[body_start..body_start + close];
+            scripts += 1;
+            if let Err(problem) = balanced_js_delimiters(body) {
+                panic!(
+                    "{page}: script #{scripts} (len {}) {problem}\nhead: {}\ntail: {}",
+                    body.len(),
+                    &body[..body.len().min(180)],
+                    &body[body.len().saturating_sub(180)..]
+                );
+            }
+            cursor = body_start + close + "</script>".len();
+        }
+        assert!(scripts > 0, "{page}: no inline script found");
+    }
+
+    /// Skip `'…'` / `"…"` / `` `…` `` literals plus `//` and `/* … */` comments,
+    /// then require `{}`, `()` and `[]` to nest correctly. Regex literals are
+    /// left to the bracket check, which their character classes satisfy.
+    fn balanced_js_delimiters(body: &str) -> Result<(), String> {
+        let chars: Vec<char> = body.chars().collect();
+        let mut stack: Vec<char> = Vec::new();
+        let mut i = 0usize;
+        let mut prev: Option<char> = None;
+        // `/` opens a regex literal only where a value may start; after an
+        // identifier, `)` or `]` it is a division. `adminEscape` alone needs this
+        // for `.replace(/"/g,'&quot;')`, whose pattern contains a quote.
+        let regex_allowed = |prev: Option<char>| match prev {
+            None => true,
+            Some(p) => matches!(
+                p,
+                '(' | ','
+                    | '='
+                    | ':'
+                    | '['
+                    | '!'
+                    | '&'
+                    | '|'
+                    | '?'
+                    | '{'
+                    | '}'
+                    | ';'
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '%'
+                    | '<'
+                    | '>'
+                    | '~'
+                    | '^'
+            ),
+        };
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '\'' || c == '"' || c == '`' {
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if chars[i] == c {
+                        break;
+                    }
+                    i += 1;
+                }
+                prev = Some(c);
+            } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 1;
+                prev = Some('*');
+            } else if c == '/' && regex_allowed(prev) {
+                i += 1;
+                let mut in_class = false;
+                while i < chars.len() {
+                    let inside = chars[i];
+                    if inside == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if inside == '[' {
+                        in_class = true;
+                    } else if inside == ']' {
+                        in_class = false;
+                    } else if inside == '/' && !in_class {
+                        break;
+                    }
+                    i += 1;
+                }
+                while chars
+                    .get(i + 1)
+                    .is_some_and(|flag| flag.is_ascii_alphabetic())
+                {
+                    i += 1;
+                }
+                prev = Some('/');
+            } else if c == '{' || c == '(' || c == '[' {
+                stack.push(c);
+                prev = Some(c);
+            } else if c == '}' || c == ')' || c == ']' {
+                let want = match c {
+                    '}' => '{',
+                    ')' => '(',
+                    _ => '[',
+                };
+                match stack.pop() {
+                    Some(open) if open == want => {}
+                    Some(open) => return Err(format!("`{c}` at {i} closes `{open}`")),
+                    None => return Err(format!("unmatched `{c}` at {i}")),
+                }
+                prev = Some(c);
+            } else if !c.is_whitespace() {
+                prev = Some(c);
+            }
+            i += 1;
+        }
+        match stack.pop() {
+            Some(open) => Err(format!("unclosed `{open}`")),
+            None => Ok(()),
+        }
+    }
+
     #[test]
     fn inline_json_string_cannot_terminate_script() {
         let encoded = json_script_string("</script>\u{2028}&>");
@@ -9162,6 +9308,7 @@ connection: close
         )
         .await;
 
+        assert_inline_scripts_balance(&body, "/admin/users");
         for marker in [
             // Create-user form: three validated fields, each with its own slot.
             "data-testid='admin-create-user-email' oninput='adminCreateUserErrors()'",
@@ -9194,8 +9341,8 @@ connection: close
             "document.getElementById('adminNewPasswordConfirmError').textContent=confirmError",
             "return !passwordError&&!confirmError}",
             // Submitting is blocked while a resolver reports an error.
-            "error.textContent='';if(!adminCreateUserErrors())return}",
-            "error.textContent='';if(!adminPasswordErrors())return}",
+            "error.textContent='';if(!adminCreateUserErrors())return;",
+            "error.textContent='';if(!adminPasswordErrors())return;",
             // Opening either dialog resets the values *and* the message slots, so a
             // fresh form never starts out red.
             "document.getElementById('adminNewUserConfirm').value=''",
@@ -9262,6 +9409,8 @@ connection: close
             .await,
         )
         .await;
+        assert_inline_scripts_balance(&search, "/search");
+        assert_inline_scripts_balance(&testing, "/dataset/retrieval");
         for html in [&search, &testing] {
             for marker in [
                 "function formatMetadataValue(value)",
@@ -12129,6 +12278,7 @@ connection: close
             .await,
         )
         .await;
+        assert_inline_scripts_balance(&login, "/admin");
         assert!(login.contains("<h1 class='admin-login-title'>Admin console</h1>"));
         assert!(login.contains("data-testid='admin-login-submit'"));
         assert!(login.contains("src='/logo.svg'"));
