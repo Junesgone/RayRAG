@@ -499,6 +499,177 @@ pub async fn metadata_summary(
     .into_response()
 }
 
+/// `RetCode.DATA_ERROR` — `get_error_data_result`'s default and the code
+/// upstream returns for a rejected metadata request.
+const DATA_ERROR: i32 = 102;
+
+/// `get_error_data_result(message)` — upstream answers HTTP 200 with the code in
+/// the body, so the metadata endpoints do too.
+fn data_error(message: &str) -> axum::response::Response {
+    (
+        axum::http::StatusCode::OK,
+        Json(serde_json::json!({ "code": DATA_ERROR, "message": message })),
+    )
+        .into_response()
+}
+
+/// `PATCH /api/v1/datasets/{id}/documents/metadatas` — upstream
+/// `document_api.update_metadata`, the endpoint the dataset metadata manager
+/// calls with `{selector: {document_ids, metadata_condition}, updates, deletes}`.
+///
+/// The selector is resolved exactly like upstream: `document_ids` are validated
+/// against the dataset, `metadata_condition` is evaluated through
+/// [`crate::metadata_filter::convert_conditions`] +
+/// [`crate::metadata_filter::meta_filter`] and intersected with them, and when a
+/// condition list was given but matched nothing the handler short-circuits with
+/// `{updated: 0, matched_docs: 0}`. The response carries `matched_docs` as well
+/// as `updated`.
+pub async fn update_document_metadatas(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Json(request): Json<Value>,
+) -> axum::response::Response {
+    if !kb_manageable(&state, &kb_id, &auth) {
+        // Upstream `f"You don't own the dataset {dataset_id}."`
+        return data_error(&format!("You don't own the dataset {kb_id}."));
+    }
+    let Some(body) = request.as_object() else {
+        return data_error("Request body must be an object.");
+    };
+    let empty = serde_json::Map::new();
+    let selector = match body.get("selector") {
+        None | Some(Value::Null) => &empty,
+        Some(Value::Object(selector)) => selector,
+        Some(_) => return data_error("selector must be an object."),
+    };
+    let updates = match body.get("updates") {
+        None | Some(Value::Null) => &Vec::new(),
+        Some(Value::Array(updates)) => updates,
+        Some(_) => return data_error("updates and deletes must be lists."),
+    };
+    let deletes = match body.get("deletes") {
+        None | Some(Value::Null) => &Vec::new(),
+        Some(Value::Array(deletes)) => deletes,
+        Some(_) => return data_error("updates and deletes must be lists."),
+    };
+    let metadata_condition = match selector.get("metadata_condition") {
+        None | Some(Value::Null) => None,
+        Some(condition @ Value::Object(_)) => Some(condition),
+        Some(_) => return data_error("metadata_condition must be an object."),
+    };
+    let document_ids: Vec<String> = match selector.get("document_ids") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(ids)) => {
+            let mut resolved = Vec::with_capacity(ids.len());
+            for id in ids {
+                let Some(id) = id.as_str() else {
+                    return data_error("document_ids must be a list.");
+                };
+                resolved.push(id.to_string());
+            }
+            resolved
+        }
+        Some(_) => return data_error("document_ids must be a list."),
+    };
+    let mut parsed_updates = Vec::with_capacity(updates.len());
+    for update in updates {
+        let Some(key) = update.get("key").and_then(Value::as_str) else {
+            return data_error("Each update requires key and value.");
+        };
+        if update.get("value").is_none() {
+            return data_error("Each update requires key and value.");
+        }
+        parsed_updates.push(MetadataUpdate {
+            key: key.to_string(),
+            value: update.get("value").cloned().unwrap_or(Value::Null),
+            r#match: update.get("match").cloned(),
+        });
+    }
+    let mut parsed_deletes = Vec::with_capacity(deletes.len());
+    for delete in deletes {
+        let Some(key) = delete.get("key").and_then(Value::as_str) else {
+            return data_error("Each delete requires key.");
+        };
+        parsed_deletes.push(MetadataDelete {
+            key: key.to_string(),
+            value: delete.get("value").cloned(),
+        });
+    }
+
+    let mut target_doc_ids: BTreeSet<String> = BTreeSet::new();
+    if !document_ids.is_empty() {
+        let invalid: Vec<&String> = document_ids
+            .iter()
+            .filter(|doc_id| {
+                state
+                    .docs
+                    .get(doc_id)
+                    .is_none_or(|document| document.kb_id != kb_id)
+            })
+            .collect();
+        if !invalid.is_empty() {
+            return data_error(&format!(
+                "These documents do not belong to dataset {kb_id}: {}",
+                invalid
+                    .iter()
+                    .map(|doc_id| doc_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        target_doc_ids.extend(document_ids.iter().cloned());
+    }
+
+    if let Some(condition) = metadata_condition {
+        let metas = state
+            .document_metadata
+            .flattened(std::slice::from_ref(&kb_id));
+        let logic = condition
+            .get("logic")
+            .and_then(Value::as_str)
+            .unwrap_or("and");
+        let filtered: BTreeSet<String> = crate::metadata_filter::meta_filter(
+            &metas,
+            &crate::metadata_filter::convert_conditions(Some(condition)),
+            logic,
+        )
+        .into_iter()
+        .collect();
+        target_doc_ids = target_doc_ids.intersection(&filtered).cloned().collect();
+        let has_conditions = condition
+            .get("conditions")
+            .and_then(Value::as_array)
+            .is_some_and(|conditions| !conditions.is_empty());
+        if has_conditions && target_doc_ids.is_empty() {
+            return Json(serde_json::json!({
+                "code": 0,
+                "data": { "updated": 0, "matched_docs": 0 }
+            }))
+            .into_response();
+        }
+    }
+
+    let matched_docs = target_doc_ids.len();
+    let target_doc_ids: Vec<String> = target_doc_ids.into_iter().collect();
+    match state.document_metadata.batch_update(
+        &kb_id,
+        &target_doc_ids,
+        &parsed_updates,
+        &parsed_deletes,
+    ) {
+        Ok(updated) => Json(serde_json::json!({
+            "code": 0,
+            "data": { "updated": updated, "matched_docs": matched_docs }
+        }))
+        .into_response(),
+        Err(error) => server_error(&error.to_string()),
+    }
+}
+
+/// RayRAG's original flat `{doc_ids, updates, deletes}` body on
+/// `/api/v1/datasets/{id}/metadata/batch`, kept as a compatible alias for the
+/// contract this build shipped first; it forwards to the upstream shape above.
 pub async fn batch_update_metadata(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -532,9 +703,53 @@ pub async fn batch_update_metadata(
     }
 }
 
-/// Resolve RAGFlow's manual metadata filter and intersect it with explicit document IDs.
-pub fn resolve_metadata_doc_ids(
+/// Everything `apply_meta_data_filter` needs beyond the request body.
+///
+/// Upstream reads the question for the LLM prompt and resolves the chat model
+/// from the search app's `chat_id` when the request carries one, falling back to
+/// the tenant's default chat model.
+pub struct MetadataFilterContext<'a> {
+    pub tenant_id: &'a str,
+    pub question: &'a str,
+    /// Search-app `chat_id` (upstream `search_config["chat_id"]`).
+    pub chat_selector: Option<&'a str>,
+}
+
+impl<'a> MetadataFilterContext<'a> {
+    pub fn new(tenant_id: &'a str, question: &'a str) -> Self {
+        Self {
+            tenant_id,
+            question,
+            chat_selector: None,
+        }
+    }
+
+    pub fn with_chat_selector(mut self, selector: Option<&'a str>) -> Self {
+        self.chat_selector = selector;
+        self
+    }
+}
+
+/// Resolve RAGFlow's metadata filter into the document IDs the retriever may
+/// use — upstream `common/metadata_utils.py::apply_meta_data_filter`.
+///
+/// All three modes are supported now: `manual` filters are evaluated locally,
+/// while `auto` and `semi_auto` first ask the tenant's chat model to turn the
+/// question plus the knowledge base's metadata keys into conditions
+/// (`rag/prompts/generator.py::gen_meta_filter`).
+///
+/// `Ok(None)` means "no document restriction": that is the answer when no filter
+/// was sent, and it is also upstream's answer when an `auto`/`semi_auto` filter
+/// produced nothing. A `manual` filter that matches nothing answers upstream's
+/// `["-999"]` sentinel instead, which the retriever reads as "match nothing".
+///
+/// One documented deviation: when the request also carries explicit `doc_ids`,
+/// upstream *extends* them with the filter matches (`doc_ids.extend(...)`), so a
+/// request that restricts to `doc_ids=[A]` and adds a metadata filter can return
+/// documents the caller excluded. RayRAG keeps the intersection instead.
+pub async fn resolve_metadata_doc_ids(
     state: &AppState,
+    context: &MetadataFilterContext<'_>,
     kb_ids: &[String],
     explicit_doc_ids: Option<&[String]>,
     meta_data_filter: Option<&Value>,
@@ -542,36 +757,69 @@ pub fn resolve_metadata_doc_ids(
     let Some(filter) = meta_data_filter.filter(|filter| !filter.is_null()) else {
         return Ok(explicit_doc_ids.map(<[String]>::to_vec));
     };
-    let method = filter
-        .get("method")
-        .and_then(Value::as_str)
-        .unwrap_or("manual");
-    if method != "manual" {
-        anyhow::bail!("Only manual metadata filters are supported without an LLM filter generator");
-    }
-    let filters: Vec<MetadataFilter> = serde_json::from_value(
-        filter
-            .get("manual")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
-    )?;
-    if filters.is_empty() {
+    // Upstream's `if not meta_data_filter` treats an empty mapping as absent.
+    if filter.as_object().is_some_and(|object| object.is_empty()) {
         return Ok(explicit_doc_ids.map(<[String]>::to_vec));
     }
-    let logic = filter.get("logic").and_then(Value::as_str).unwrap_or("and");
-    let matched = state
-        .document_metadata
-        .filter_doc_ids(kb_ids, &filters, logic)?;
-    if let Some(explicit) = explicit_doc_ids {
-        let explicit: HashSet<_> = explicit.iter().collect();
-        return Ok(Some(
-            matched
-                .into_iter()
-                .filter(|doc_id| explicit.contains(doc_id))
-                .collect(),
-        ));
-    }
-    Ok(Some(matched))
+    let chat = match crate::metadata_filter::filter_method(filter) {
+        crate::metadata_filter::FilterMethod::Auto
+        | crate::metadata_filter::FilterMethod::SemiAuto => {
+            Some(metadata_filter_chat_model(state, context)?)
+        }
+        _ => None,
+    };
+    let base: Vec<String> = explicit_doc_ids.map(<[String]>::to_vec).unwrap_or_default();
+    let applied = crate::metadata_filter::apply_meta_data_filter(
+        filter,
+        context.question,
+        chat.as_deref(),
+        &base,
+        || state.document_metadata.flattened(kb_ids),
+    )
+    .await?;
+    let Some(matched) = applied else {
+        return Ok(None);
+    };
+    let Some(explicit) = explicit_doc_ids else {
+        return Ok(Some(matched));
+    };
+    let explicit: HashSet<&String> = explicit.iter().collect();
+    Ok(Some(
+        matched
+            .into_iter()
+            .filter(|doc_id| {
+                explicit.contains(doc_id) || doc_id == crate::metadata_filter::NO_MATCH_SENTINEL
+            })
+            .collect(),
+    ))
+}
+
+/// Upstream `get_model_config_from_provider_instance(search_config["chat_id"])`
+/// with `get_tenant_default_model_by_type(tenant_id, CHAT)` as the fallback.
+fn metadata_filter_chat_model(
+    state: &AppState,
+    context: &MetadataFilterContext<'_>,
+) -> anyhow::Result<Arc<dyn crate::llm::ChatModel>> {
+    let selector = context
+        .chat_selector
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| state.tenant_models.default_chat_model(context.tenant_id));
+    state
+        .tenant_models
+        .resolve(
+            &state.providers,
+            context.tenant_id,
+            crate::api::tenant_models::ModelCapability::Chat,
+            selector.as_deref(),
+        )?
+        .map(|model| Arc::new(model.llm_client()) as Arc<dyn crate::llm::ChatModel>)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Automatic metadata filters need a chat model; set a default chat model for the tenant"
+            )
+        })
 }
 
 pub fn enrich_metadata(

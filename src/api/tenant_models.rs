@@ -1162,6 +1162,12 @@ fn validate_default_chat_models(
         if tenant_id.trim().is_empty() || selector.trim().is_empty() {
             anyhow::bail!("Tenant default chat selector must not be empty");
         }
+        // Three spellings resolve to the same model: the bare name, RayRAG's
+        // internal `provider/instance/model`, and RAGFlow's
+        // `{model_name}@{instance_name}@{provider_name}` — the form the upstream
+        // web client sends (`use-set-default-model.ts`). The RAGFlow form used to
+        // pass `resolve()` and then fail this check with a 409, so a client
+        // following the upstream contract could never persist the default.
         let matches = instances
             .iter()
             .flat_map(|instance| {
@@ -1174,6 +1180,16 @@ fn validate_default_chat_models(
                                 == &format!(
                                     "{}/{}/{}",
                                     instance.provider_id, instance.instance_id, model.name
+                                )
+                            || selector
+                                == &format!(
+                                    "{}@{}@{}",
+                                    model.name,
+                                    instance.instance_name,
+                                    crate::providers::canonical_provider_name(
+                                        &instance.provider_id,
+                                        ""
+                                    )
                                 ))
                 })
             })
@@ -3604,6 +3620,45 @@ pub async fn delete_tenant_model_instance(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// `use-set-default-model.ts` sends RAGFlow's composite
+    /// `{model_name}@{instance_name}@{provider_name}`; `resolve()` accepted it
+    /// while this validator only knew the bare name and RayRAG's internal
+    /// `provider/instance/model`, so the request answered 409 and the default
+    /// could never be persisted from the upstream-shaped client.
+    #[test]
+    fn default_chat_selector_accepts_the_ragflow_composite() {
+        let instance = TenantModelInstance {
+            tenant_id: "t1".into(),
+            provider_id: "openai".into(),
+            instance_id: "primary".into(),
+            instance_name: "Hosted".into(),
+            api_base: "http://127.0.0.1:1/v1".into(),
+            api_key: None,
+            region: None,
+            models: vec![TenantModelSpec {
+                name: "gpt-4o".into(),
+                model_types: vec![ModelCapability::Chat],
+                max_tokens: None,
+                enabled: true,
+                is_tools: false,
+                ocr_config: None,
+            }],
+            extra: Default::default(),
+        };
+        for selector in ["gpt-4o", "openai/primary/gpt-4o", "gpt-4o@Hosted@OpenAI"] {
+            let defaults = HashMap::from([("t1".to_string(), selector.to_string())]);
+            assert!(
+                validate_default_chat_models(std::slice::from_ref(&instance), &defaults).is_ok(),
+                "selector {selector} must validate"
+            );
+        }
+        // An unknown model still fails.
+        let defaults = HashMap::from([("t1".to_string(), "nope@Hosted@OpenAI".to_string())]);
+        assert!(validate_default_chat_models(std::slice::from_ref(&instance), &defaults).is_err());
+    }
+
     use super::*;
     use crate::api::features::ProviderUpdate;
 

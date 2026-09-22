@@ -161,12 +161,17 @@ pub async fn weighted_search(
     });
     let (include_metadata, metadata_fields) =
         crate::api::document_metadata::reference_metadata_selection(&request_payload);
+    let metadata_context =
+        crate::api::document_metadata::MetadataFilterContext::new(&auth.user_id, &body.question);
     let filtered_doc_ids = match crate::api::document_metadata::resolve_metadata_doc_ids(
         &state,
+        &metadata_context,
         kb_ids,
         body.doc_ids.as_deref(),
         body.meta_data_filter.as_ref(),
-    ) {
+    )
+    .await
+    {
         Ok(doc_ids) => doc_ids,
         Err(error) => {
             return (
@@ -507,12 +512,17 @@ pub async fn dify_retrieval(
     } else {
         top_k
     };
+    let metadata_context =
+        crate::api::document_metadata::MetadataFilterContext::new(&auth.user_id, &body.query);
     let filtered_doc_ids = match crate::api::document_metadata::resolve_metadata_doc_ids(
         &state,
+        &metadata_context,
         std::slice::from_ref(&body.knowledge_id),
         body.doc_ids.as_deref(),
         body.meta_data_filter.as_ref(),
-    ) {
+    )
+    .await
+    {
         Ok(doc_ids) => doc_ids,
         Err(error) => {
             return (

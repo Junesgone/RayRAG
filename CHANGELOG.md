@@ -2,6 +2,54 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.34] — 2026-09-22（对标批次 v0.3.8l）
+
+### Added
+
+- **元数据过滤（metadata filter）三种模式全部按上游实现，含 LLM 自动生成**（上游
+  `common/metadata_utils.py::apply_meta_data_filter` + `rag/prompts/generator.py::gen_meta_filter` +
+  `rag/prompts/meta_filter.md`）：此前 RayRAG 对 `auto` / `semi_auto` 直接报
+  “Only manual metadata filters are supported without an LLM filter generator”，只有 `manual` 可用。
+  - 新增 `src/metadata_filter.rs`（约 1400 行含 11 条单测），逐行移植上游求值器
+    `meta_filter`：14 个算子（`contains` / `not contains` / `in` / `not in` / `start with` / `end with` /
+    `empty` / `not empty` / `=` / `≠` / `>` / `<` / `≥` / `≤`）、`and` 交集（空集提前返回）与 `or` 并集、
+    未知 key 不参与匹配。三条容易写错的语义也照搬：比较类算子先把两侧按
+    **Python `ast.literal_eval`** 求值（所以 `"5" > "30"` 是数字比较、`"5"` 与 `5` 相等），
+    日期形状（`YYYY-MM-DD`，10 位且位置校验）走**字符串比较且“日期查询不匹配非日期值”**，
+    非比较类算子只做小写化；类型不匹配按上游 `except` 吞掉（视为不匹配）。
+  - `gen_meta_filter`：渲染上游 Jinja 模板（`{% if constraints %}` 为假时整行消失、`json.dumps`
+    的 `ensure_ascii=True` 转义与 `", "`/`": "` 分隔符、元数据结构 `{key: [values]}`）、
+    `Generate filters:` 用户消息、剥离 `</think>`/代码块后走 `json_repair` 宽松解析，
+    失败回落到上游的 `{"conditions": []}`。
+  - `apply_meta_data_filter`：`auto` 用全部元数据键、`semi_auto` 只用用户勾选的键并带上
+    `{key: op}` 约束、`manual` 直传条件；返回值语义也照搬——`manual` 匹配为空回 **`["-999"]`**
+    哨兵（检索侧落到“无命中”），`auto`/`semi_auto` 为空回 **`None`**（不退化为“无过滤”之外的任何行为）。
+  - 接入四个检索调用点（`/api/v1/retrieval`、加权检索、Dify 检索、Agent 检索工具）：
+    `resolve_metadata_doc_ids` 改为 async 并接收 `MetadataFilterContext{tenant_id, question, chat_selector}`，
+    LLM 选型按上游——有搜索应用 `chat_id` 用它，否则用租户默认对话模型。
+  - 搜索应用记录新增 `search_config.meta_data_filter` 字段（创建/更新/读取全链路），
+    与上游一致：给了 `search_id` 时优先用应用里存的过滤器。
+
+- **文档元数据批量更新按上游契约实现**（上游 `document_api.update_metadata`）：
+  新增 `PATCH /api/v1/datasets/{id}/documents/metadatas`（数据集元数据管理器真实调用的端点），
+  body 为 `{selector:{document_ids, metadata_condition}, updates, deletes}`，响应对齐
+  `{updated, matched_docs}`；`metadata_condition` 走上面的 `convert_conditions` + `meta_filter`
+  并与 `document_ids` 求交，条件列表非空但无命中时短路回 `{updated: 0, matched_docs: 0}`。
+  逐字段报错文案逐字取自上游（`selector must be an object.` / `updates and deletes must be lists.` /
+  `metadata_condition must be an object.` / `document_ids must be a list.` /
+  `Each update requires key and value.` / `Each delete requires key.` /
+  `These documents do not belong to dataset {id}: …` / `You don't own the dataset {id}.`，均为
+  HTTP 200 + `RetCode.DATA_ERROR=102`）。RayRAG 原有的扁平 body 端点
+  `POST /api/v1/datasets/{id}/metadata/batch` 保留为兼容别名。
+
+### Fixed
+
+- **租户默认对话模型无法用上游的复合选择器设置**：上游 Web 端（`use-set-default-model.ts`）发的是
+  `{model_name}@{instance_name}@{provider_name}`，RayRAG 的 `resolve()` 认这个形式、随后的
+  `validate_default_chat_models` 却只认裸模型名与内部 `provider/instance/model`，于是必然回
+  409 `Tenant default chat selector is not a unique enabled chat model`。现在三种写法都能通过校验
+  （已加回归测试）。
+
 ## [0.4.33] — 2026-09-22（对标批次 v0.3.8k）
 
 ### Added

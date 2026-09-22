@@ -1,0 +1,43 @@
+{
+ "origin": "http://127.0.0.1:11526",
+ "generatedAt": "2026-09-22T13:00:58.685Z",
+ "pages": [
+  {
+   "route": "/chunk",
+   "ok": false,
+   "error": "page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:11526/chunk\nCall log:\n  - navigating to \"http://127.0.0.1:11526/chunk\", waiting until \"domcontentloaded\"\n"
+  },
+  {
+   "route": "/dataflow-result",
+   "ok": true,
+   "finalUrl": "http://127.0.0.1:11526/dataflow-result",
+   "title": "RAGFlow",
+   "state": {
+    "path": "/dataflow-result",
+    "head": "",
+    "buttons": [],
+    "links": [],
+    "fields": [],
+    "headers": [],
+    "tabs": [],
+    "testids": []
+   }
+  },
+  {
+   "route": "/agent/share",
+   "ok": true,
+   "finalUrl": "http://127.0.0.1:11526/agent/share",
+   "title": "RAGFlow",
+   "state": {
+    "path": "/agent/share",
+    "head": "empty",
+    "buttons": [],
+    "links": [],
+    "fields": [],
+    "headers": [],
+    "tabs": [],
+    "testids": []
+   }
+  }
+ ]
+}

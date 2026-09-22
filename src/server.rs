@@ -2880,12 +2880,34 @@ async fn retrieval(
                 .map(|app| app.doc_ids.clone())
                 .filter(|ids| !ids.is_empty())
         });
+    // Upstream prefers the search app's stored `meta_data_filter` and only reads
+    // the request field for a direct retrieval call.
+    let metadata_filter = b
+        .get("meta_data_filter")
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            search_app
+                .as_ref()
+                .map(|app| &app.meta_data_filter)
+                .filter(|value| !value.is_null())
+        });
+    let metadata_context =
+        crate::api::document_metadata::MetadataFilterContext::new(&auth.user_id, q)
+            .with_chat_selector(
+                search_app
+                    .as_ref()
+                    .map(|app| app.chat_id.as_str())
+                    .filter(|chat_id| !chat_id.trim().is_empty()),
+            );
     let filtered_doc_ids = match crate::api::document_metadata::resolve_metadata_doc_ids(
         &state,
+        &metadata_context,
         &kb_ids,
         doc_ids.as_deref(),
-        b.get("meta_data_filter"),
-    ) {
+        metadata_filter,
+    )
+    .await
+    {
         Ok(doc_ids) => doc_ids,
         Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
@@ -3647,6 +3669,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{id}/metadata/summary",
             post(crate::api::document_metadata::metadata_summary),
         )
+        // Upstream `document_api.update_metadata` — the endpoint the dataset
+        // metadata manager calls.
+        .route(
+            "/api/v1/datasets/{id}/documents/metadatas",
+            axum::routing::patch(crate::api::document_metadata::update_document_metadatas),
+        )
+        // RayRAG's original flat-body alias.
         .route(
             "/api/v1/datasets/{id}/metadata/batch",
             post(crate::api::document_metadata::batch_update_metadata),
@@ -11763,6 +11792,186 @@ mod tests {
 
         delete_document_data(&env.state, &doc_a).unwrap();
         assert!(env.state.document_metadata.get(&doc_a.id, &kb.id).is_none());
+    }
+
+    /// Upstream `document_api.update_metadata` (`PATCH
+    /// /api/v1/datasets/{id}/documents/metadatas`): the body is
+    /// `{selector: {document_ids, metadata_condition}, updates, deletes}`, the
+    /// condition is evaluated by `common/metadata_utils.meta_filter`, and the
+    /// answer carries both `updated` and `matched_docs`.
+    #[tokio::test]
+    async fn document_metadata_batch_update_follows_the_upstream_selector() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Metadata Selector KB", "")
+            .unwrap();
+        let doc_a = stored_doc("selector-doc-a", &kb.id, 1);
+        let doc_b = stored_doc("selector-doc-b", &kb.id, 1);
+        env.state.docs.insert(doc_a.clone()).unwrap();
+        env.state.docs.insert(doc_b.clone()).unwrap();
+        env.state
+            .document_metadata
+            .batch_update(
+                &kb.id,
+                &[doc_a.id.clone(), doc_b.id.clone()],
+                &[
+                    crate::api::document_metadata::MetadataUpdate {
+                        key: "owner".into(),
+                        value: serde_json::json!("Farm A"),
+                        r#match: None,
+                    },
+                    crate::api::document_metadata::MetadataUpdate {
+                        key: "owner".into(),
+                        value: serde_json::json!("Farm B"),
+                        r#match: None,
+                    },
+                ],
+                &[],
+            )
+            .unwrap();
+        // `batch_update` applies each update row to every listed document, so the
+        // owner is written per document for the test's purpose.
+        env.state
+            .document_metadata
+            .batch_update(
+                &kb.id,
+                &[doc_a.id.clone()],
+                &[crate::api::document_metadata::MetadataUpdate {
+                    key: "owner".into(),
+                    value: serde_json::json!("Farm A"),
+                    r#match: None,
+                }],
+                &[],
+            )
+            .unwrap();
+        env.state
+            .document_metadata
+            .batch_update(
+                &kb.id,
+                &[doc_b.id.clone()],
+                &[crate::api::document_metadata::MetadataUpdate {
+                    key: "owner".into(),
+                    value: serde_json::json!("Farm B"),
+                    r#match: None,
+                }],
+                &[],
+            )
+            .unwrap();
+
+        let router = build_router(env.state.clone());
+        let uri = format!("/api/v1/datasets/{}/documents/metadatas", kb.id);
+        let patch = |body: serde_json::Value| {
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+
+        // `metadata_condition` selects only Farm A's document, even though both
+        // ids are offered in the selector.
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {
+                    "document_ids": [doc_a.id, doc_b.id],
+                    "metadata_condition": {
+                        "logic": "and",
+                        "conditions": [
+                            {"name": "owner", "comparison_operator": "is", "value": "Farm A"}
+                        ]
+                    }
+                },
+                "updates": [{"key": "tags", "value": "selector"}]
+            })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["updated"], 1);
+        assert_eq!(body["data"]["matched_docs"], 1);
+        assert_eq!(
+            env.state.document_metadata.get(&doc_a.id, &kb.id).unwrap()["tags"],
+            serde_json::json!("selector"),
+            "a key that did not exist yet is written as the given value"
+        );
+        assert!(
+            env.state
+                .document_metadata
+                .get(&doc_b.id, &kb.id)
+                .unwrap()
+                .get("tags")
+                .is_none(),
+            "the condition must exclude the other document"
+        );
+
+        // A condition list that matches nothing short-circuits with
+        // `{updated: 0, matched_docs: 0}`.
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {
+                    "metadata_condition": {
+                        "conditions": [{"name": "owner", "comparison_operator": "is", "value": "Nowhere"}]
+                    }
+                },
+                "updates": [{"key": "tags", "value": "never"}]
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["updated"], 0);
+        assert_eq!(body["data"]["matched_docs"], 0);
+
+        // Upstream's per-field validation messages.
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {"metadata_condition": "nope"},
+                "updates": []
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "metadata_condition must be an object.");
+
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {"document_ids": ["does-not-exist"]},
+                "updates": []
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("These documents do not belong to dataset"),
+            "{}",
+            body["message"]
+        );
+
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {"document_ids": [doc_a.id]},
+                "updates": [{"key": "tags"}]
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "Each update requires key and value.");
     }
 
     #[tokio::test]

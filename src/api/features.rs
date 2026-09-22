@@ -7149,12 +7149,18 @@ impl crate::agent::WorkflowRetriever for AgentWorkflowRetriever<'_> {
             anyhow::bail!("At least one accessible kb_id is required");
         }
         validate_kb_embedding_bindings(self.state, &request.kb_ids)?;
+        let metadata_context = crate::api::document_metadata::MetadataFilterContext::new(
+            self.tenant_id,
+            &request.query,
+        );
         let filtered_doc_ids = crate::api::document_metadata::resolve_metadata_doc_ids(
             self.state,
+            &metadata_context,
             &request.kb_ids,
             None,
             request.meta_data_filter.as_ref(),
-        )?;
+        )
+        .await?;
         let vector_weight = (1.0 - request.keywords_similarity_weight).clamp(0.0, 1.0);
         let embedding = if vector_weight > 0.0 {
             Some(

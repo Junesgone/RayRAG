@@ -331,6 +331,13 @@ impl PromptLibrary {
         PromptTemplate::new(RAGFLOW_META_DATA_PROMPT)
     }
 
+    /// `rag/prompts/meta_filter.md` for callers that render it themselves:
+    /// `metadata_filter::render_prompt` needs the Jinja `{% if %}` semantics of
+    /// the constraints line, which the flat `{var}` replacer cannot express.
+    pub fn meta_filter_template() -> &'static str {
+        RAGFLOW_META_FILTER_PROMPT
+    }
+
     /// RAGFlow `meta_filter.md` — Generate metadata filter conditions (key/value/op + and/or logic).
     pub fn meta_filter() -> PromptTemplate {
         PromptTemplate::new(RAGFLOW_META_FILTER_PROMPT)

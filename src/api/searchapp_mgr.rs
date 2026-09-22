@@ -42,6 +42,11 @@ pub struct SearchAppRecord {
     /// Upstream `search_config.llm_setting` — generation overrides for those calls.
     #[serde(default)]
     pub llm_setting: serde_json::Value,
+    /// Upstream `search_config.meta_data_filter` — the app-level metadata filter
+    /// (`manual` / `semi_auto` / `auto`) that `apply_meta_data_filter` resolves
+    /// when the running search does not send one of its own.
+    #[serde(default)]
+    pub meta_data_filter: serde_json::Value,
     /// Upstream `search_config.chat_settingcross_languages` (sic).
     #[serde(default)]
     pub cross_languages: Vec<String>,
@@ -95,6 +100,8 @@ pub struct SearchAppCreate {
     #[serde(default)]
     pub llm_setting: serde_json::Value,
     #[serde(default)]
+    pub meta_data_filter: serde_json::Value,
+    #[serde(default)]
     pub cross_languages: Vec<String>,
     #[serde(default)]
     pub use_kg: bool,
@@ -128,6 +135,7 @@ impl Default for SearchAppCreate {
             doc_ids: Vec::new(),
             chat_id: String::new(),
             llm_setting: serde_json::Value::Null,
+            meta_data_filter: serde_json::Value::Null,
             cross_languages: Vec::new(),
             use_kg: false,
             highlight: false,
@@ -224,6 +232,7 @@ impl SearchAppStore {
             doc_ids: req.doc_ids,
             chat_id: req.chat_id,
             llm_setting: req.llm_setting,
+            meta_data_filter: req.meta_data_filter,
             cross_languages: req.cross_languages,
             use_kg: req.use_kg,
             highlight: req.highlight,
@@ -337,6 +346,8 @@ pub struct UpdateSearchAppRequest {
     pub chat_id: Option<String>,
     #[serde(default)]
     pub llm_setting: Option<serde_json::Value>,
+    #[serde(default)]
+    pub meta_data_filter: Option<serde_json::Value>,
     #[serde(default)]
     pub cross_languages: Option<Vec<String>>,
     #[serde(default)]
@@ -462,6 +473,12 @@ pub async fn update_search_app(
         next.llm_setting = llm_setting;
         changed = true;
     }
+    if let Some(meta_data_filter) = body.meta_data_filter
+        && meta_data_filter != next.meta_data_filter
+    {
+        next.meta_data_filter = meta_data_filter;
+        changed = true;
+    }
     if let Some(cross_languages) = body.cross_languages
         && cross_languages != next.cross_languages
     {
@@ -565,6 +582,7 @@ mod tests {
                     doc_ids: vec!["doc1".into()],
                     chat_id: "prov/inst/chat".into(),
                     llm_setting: serde_json::json!({ "temperature": 0.5 }),
+                    meta_data_filter: serde_json::Value::Null,
                     cross_languages: vec!["English".into()],
                     use_kg: true,
                     highlight: true,
