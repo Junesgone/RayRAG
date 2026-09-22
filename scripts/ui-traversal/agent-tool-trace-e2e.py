@@ -332,7 +332,7 @@ def main():
                 "embd_id": "probe-embed@tool-trace-probe@OpenAI",
             },
         )
-        check(status == 200 and body.get("code") == 0, "dataset_create", f"{status} {body}")
+        check(200 <= status < 300 and body.get("code") == 0, "dataset_create", f"{status} {body}")
         kb_id = (body.get("data") or {}).get("id")
         created["kb"] = kb_id
         raw, content_type = multipart(
@@ -343,7 +343,7 @@ def main():
         status, body = call(
             "POST", f"/api/v1/datasets/{kb_id}/documents", token, raw=raw, content_type=content_type
         )
-        check(status == 200 and body.get("code") == 0, "document_upload", f"{status} {body}")
+        check(200 <= status < 300 and body.get("code") == 0, "document_upload", f"{status} {body}")
         doc_id = (body.get("data") or {}).get("doc_id") or (body.get("data") or {}).get("id")
         created["doc"] = doc_id
         deadline = time.time() + 120
