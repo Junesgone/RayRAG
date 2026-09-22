@@ -1,0 +1,352 @@
+[
+ {
+  "id": "advanced_ingestion_pipeline",
+  "title": {
+   "en": "Advanced Ingestion Pipeline",
+   "zh": "编排复杂的 Ingestion Pipeline"
+  },
+  "description": {
+   "en": "This template demonstrates how to use an LLM to generate summaries, keywords, Q&A, and metadata for each chunk to support diverse retrieval needs.",
+   "zh": "此模板演示如何利用大模型为切片生成摘要、关键词、问答及元数据，以满足多样化的召回需求。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "chunk_summary",
+  "title": {
+   "en": "Chunk Summary",
+   "zh": "总结切片"
+  },
+  "description": {
+   "en": "This template uses an LLM to generate chunk summaries for building text and vector indexes. During retrieval, summaries enhance matching, and the original chunks are returned as results.",
+   "zh": "此模板利用大模型生成切片摘要，并据此建立全文索引与向量。检索时以摘要提升匹配效果，最终召回对应的原文切片。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "customer_feedback_dispatcher",
+  "title": {
+   "en": "Customer feedback disptacher",
+   "zh": "客户反馈协调员"
+  },
+  "description": {
+   "en": "Automatically classify customer reviews using LLM (Large Language Model) and route them via email to the relevant departments.",
+   "zh": "该模板将自动分类客户评价，并通过电子邮件将结果发送到相关部门。"
+  },
+  "canvas_type": "Customer Support",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "cv_analysis_and_candidate_evaluation",
+  "title": {
+   "en": "CV Analysis and Candidate Evaluation",
+   "zh": "简历分析和候选人评估"
+  },
+  "description": {
+   "en": "This is a workflow that helps companies evaluate resumes, HR uploads a job description first, then submits multiple resumes via the chat window for evaluation.",
+   "zh": "帮助公司评估简历的工作流。HR首先上传职位描述，通过聊天窗口提交多份简历进行评估。"
+  },
+  "canvas_type": "Other",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "data_analysis_beginner_assistant",
+  "title": {
+   "en": "Beginner's data analytics assistant",
+   "zh": "数据分析入门助手"
+  },
+  "description": {
+   "en": "A beginner-friendly data analysis assistant that guides you through exploring datasets step-by-step, automatically generating code and visualizations while explaining the logic behind each insight. ",
+   "zh": "一个面向初学者的数据分析助手，指导您逐步探索数据集，自动生成代码和可视化，同时解释每个洞察背后的逻辑。"
+  },
+  "canvas_type": "Marketing",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "deep_research",
+  "title": {
+   "en": "Deep research",
+   "zh": "Deep research"
+  },
+  "description": {
+   "en": "For professionals in sales, marketing, policy, or consulting, the Multi-Agent Deep research Agentic workflow conducts structured, multi-step investigations across diverse sources and delivers consulting-style reports with clear citations.",
+   "zh": "专为销售、市场、政策或咨询领域的专业人士设计，多智能体的 Deep research 会结合多源信息进行结构化、多步骤地回答问题，并附带有清晰的引用。"
+  },
+  "canvas_type": "Recommended",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_book",
+  "title": {
+   "en": "Book",
+   "zh": "书籍"
+  },
+  "description": {
+   "en": "This template segments parsed files by book structure. Best for books, long-form manuscripts, literary works, and other documents with defined chapters and sections.",
+   "zh": "此模板将解析后的文件按书籍结构进行切片，适用于具有清晰章节层级的文档类型，如书籍、长篇手稿、文学作品及其他按章节组织的文本。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_general",
+  "title": {
+   "en": "General",
+   "zh": "通用"
+  },
+  "description": {
+   "en": "This general-purpose template segments parsed files by token count. Ideal for unstructured documents that lack a fixed layout.",
+   "zh": "此模板采用通用切分逻辑，按照 token 数量对解析后的文件进行切片，适用于不依赖特定结构模式的各类文档。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_laws",
+  "title": {
+   "en": "Laws",
+   "zh": "法律条文"
+  },
+  "description": {
+   "en": "This template segments parsed files by legal provision hierarchy. Best for documents with clearly defined articles, such as laws, regulations, judicial interpretations, and compliance policies.",
+   "zh": "此模板将解析后的文件按法律条文结构进行切片，适用于具有清晰条、款、项层级的文档类型，如法律、法规、司法解释、合规制度及其他法律文本。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_manual",
+  "title": {
+   "en": "Manual",
+   "zh": "手册"
+  },
+  "description": {
+   "en": "This template segments parsed files by manual structure. Best for technical documents with clearly defined sections and operational guidance, such as product manuals, user guides, and installation instructions.",
+   "zh": "此模板将解析后的文件按手册结构进行切片，适用于具有清晰章节层级和操作说明的文档类型，如产品手册、用户指南、安装说明和技术文档。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_one",
+  "title": {
+   "en": "One",
+   "zh": "全文"
+  },
+  "description": {
+   "en": "This template treats the entire parsed file as one segment. Best for short documents or highly coherent text where maintaining full context is critical.",
+   "zh": "此模板将解析后的文件作为一个完整片段处理，不再进一步切分，适用于篇幅较短、内容连贯性较强，或需要保留全文上下文的文档。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_paper",
+  "title": {
+   "en": "Paper",
+   "zh": "论文"
+  },
+  "description": {
+   "en": "This template segments parsed files by paper structure. Best for documents with clearly defined sections, such as scholarly works, conference articles, and research studies.",
+   "zh": "此模板将解析后的文件按论文结构进行切片，适用于具有清晰章节和学术结构的文档类型，如学术论文、研究文章、会议论文和技术研究报告。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "ingestion_pipeline_resume",
+  "title": {
+   "en": "Resume",
+   "zh": "简历"
+  },
+  "description": {
+   "en": "This template segments parsed files into resume-specific sections. Best for career-related documents with clearly defined categories such as experience, education, projects, and skills.",
+   "zh": "此模板将解析后的文件按简历结构进行切片，适用于具有清晰分节的文档类型，如个人信息、教育背景、工作经历、项目经历、技能、证书及其他职业相关内容。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "market_seo_article_writer",
+  "title": {
+   "en": "SEO article writer",
+   "zh": "SEO 博客写手"
+  },
+  "description": {
+   "en": "This SEO article writer automatically generates a complete SEO-optimized blog article based on a simple user input. You don't need any writing experience. Just provide a topic or short request — the system will handle the rest.",
+   "zh": "此 SEO 博客写手根据简单的用户输入自动生成完整的SEO博客文章。你无需任何写作经验，只需提供一个主题或简短请求，系统将处理其余部分。"
+  },
+  "canvas_type": "Marketing",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "photo_text_translator",
+  "title": {
+   "en": "Photo text translator",
+   "zh": "图片文字快译"
+  },
+  "description": {
+   "en": "Photo text translator lets you snap any photo containing text—menus, signs, or documents—and instantly recognize and translate it into your language of choice using advanced AI-powered translation technology.",
+   "zh": "图片文字快译允许您拍摄任何包含文本的照片——菜单、标志或文档——立即识别并转换成您选择的语言。"
+  },
+  "canvas_type": "Consumer App",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "reflective_academic_paper_generator",
+  "title": {
+   "en": "Reflective academic paper generator",
+   "zh": "学术论文生成助手"
+  },
+  "description": {
+   "en": "A reflective academic paper generator using local knowledge base, with advanced capabilities in task planning, reasoning, and reflective analysis. Recommended for academic research paper Q&A",
+   "zh": "一个使用本地知识库的学术论文生成助手，具备高级能力，包括任务规划、推理和反思性分析。推荐用于学术研究论文问答。"
+  },
+  "canvas_type": "Agent",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "seo_article_writer",
+  "title": {
+   "en": "SEO article writer",
+   "zh": "SEO 博客写手"
+  },
+  "description": {
+   "en": "This is a multi-agent version of the SEO blog generation workflow. It simulates a small team of AI “writers”, where each agent plays a specialized role — just like a real editorial team.",
+   "zh": "SEO 博客写手可根据简单的用户输入自动生成完整的SEO博客文章。模拟小型“作家”团队，其中每个智能体扮演一个专业角色——就像真正的编辑团队。"
+  },
+  "canvas_type": "Agent",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "smart_customer_service_specialist",
+  "title": {
+   "en": "Smart customer service specialist",
+   "zh": "智能客户服务专员"
+  },
+  "description": {
+   "en": "This template helps address complex customer needs, such as comparing product features, providing usage support, and coordinating home installation services.",
+   "zh": "该模板可帮助解决复杂的客户需求，例如比较产品功能、提供使用支持和协调家庭安装服务。"
+  },
+  "canvas_type": "Customer Support",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "stock_market_research_assistant",
+  "title": {
+   "en": "Stock market research assistant",
+   "zh": "股市研究助手"
+  },
+  "description": {
+   "en": "This template helps financial analysts quickly organize information — it can automatically retrieve company data, consolidate financial metrics, and integrate research report insights.",
+   "zh": "这个模板可以帮助金融分析师快速整理信息——它能够自动获取公司数据、整合财务指标，并汇总研报观点。"
+  },
+  "canvas_type": "Recommended",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "text2sql_data_expert",
+  "title": {
+   "en": "Text-to-SQL data expert",
+   "zh": "Text-to-SQL 问数专家"
+  },
+  "description": {
+   "en": "Text-to-SQL data expert lets business users turn plain-English questions into fully formed SQL queries. Simply type your question (e.g., 'Show me last quarter's top 10 products by revenue') and Text-to-SQL data expert generates the exact SQL, runs it against your database, and returns the results in seconds. ",
+   "zh": "用户能够将简单文本问题转化为完整的SQL查询并输出结果。只需输入您的问题（例如，展示上个季度前十名按收入排序的产品），SQL助理就会生成精确的SQL语句，对其运行您的数据库，并几秒钟内返回结果。"
+  },
+  "canvas_type": "Marketing",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "title_chunker",
+  "title": {
+   "en": "Title Chunker",
+   "zh": "标题切片"
+  },
+  "description": {
+   "en": "This template slices the parsed file based on its title structure. It is ideal for documents with well-defined headings, such as product manuals, legal contracts, research reports, and academic papers.",
+   "zh": "此模板将解析后的文件按标题结构进行切片，适用于具有清晰标题层级的文档类型，如产品手册、合同法规、研究报告和学术论文等。"
+  },
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "avatar": ""
+ },
+ {
+  "id": "trip_planner",
+  "title": {
+   "en": "Trip planner",
+   "zh": "旅行规划师"
+  },
+  "description": {
+   "en": "This smart trip planner utilizes LLM technology to automatically generate customized travel itineraries, with optional tool integration for enhanced reliability.",
+   "zh": "智能旅行规划师将利用大模型自动生成定制化的旅行行程，附带可选工具集成，以增强可靠性。"
+  },
+  "canvas_type": "Consumer App",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "user_interaction",
+  "title": {
+   "en": "Interactive Agent",
+   "zh": "可交互的 Agent"
+  },
+  "description": {
+   "en": "During the Agent’s execution, users can actively intervene and interact with the Agent to adjust or guide its output, ensuring the final result aligns with their intentions.",
+   "zh": "在 Agent 的运行过程中，用户可以随时介入，与 Agent 进行交互，以调整或引导生成结果，使最终输出更符合预期。"
+  },
+  "canvas_type": "Agent",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "web_search_assistant",
+  "title": {
+   "en": "WebSearch Assistant",
+   "zh": "网页搜索助手"
+  },
+  "description": {
+   "en": "A chat assistant template that integrates information extracted from a knowledge base and web searches to respond to queries. Let's start by setting up your knowledge base in 'Retrieval'!",
+   "zh": "集成了从知识库和网络搜索中提取的信息回答用户问题。让我们从设置您的知识库开始检索！"
+  },
+  "canvas_type": "Other",
+  "canvas_category": "",
+  "avatar": ""
+ },
+ {
+  "id": "your_starter_dataset_chatbot",
+  "title": {
+   "en": "Your starter dataset chatbot",
+   "zh": "入门级知识库聊天助手"
+  },
+  "description": {
+   "en": "This is a document question-and-answer system based on a knowledge base. When a user asks a question, it retrieves relevant document content to provide accurate answers.",
+   "zh": "基于知识库的入门级知识库聊天助手，当用户提出问题时，会检索相关本地文档并提供准确回答。"
+  },
+  "canvas_type": "Recommended",
+  "canvas_category": "",
+  "avatar": ""
+ }
+]
