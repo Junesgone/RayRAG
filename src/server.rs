@@ -75,6 +75,9 @@ pub struct AppState {
     /// each row is the credential the embed/share surfaces present as a bearer
     /// token, so this store also serves the AUTH_BETA lookup.
     pub api_tokens: Arc<crate::api::tokens::ApiTokenStore>,
+    /// RAGFlow `PipelineOperationLog` rows (`/api/v1/datasets/{id}/ingestions`):
+    /// one record per document parse, whose `dsl` drives `/dataflow-result`.
+    pub ingestion_logs: Arc<crate::api::ingestion::IngestionLogStore>,
     /// Effective sign-up switch — upstream `settings.REGISTER_ENABLED` (plus the
     /// legacy `RAYRAG_ALLOW_REGISTRATION` opt-in), resolved once at startup by
     /// `settings::resolve_register_enabled`. Read by both
@@ -519,6 +522,20 @@ pub(crate) fn validate_kb_embedding_bindings(
         binding = Some(current);
     }
     binding.ok_or_else(|| anyhow::anyhow!("At least one knowledge base is required"))
+}
+
+/// `Knowledgebase.parser_id` — upstream stores the chunk method on the dataset
+/// row; RayRAG keeps it inside `parser_config.chunk_method`.
+fn kb_parser_id(kb: &crate::kb::KnowledgeBase) -> String {
+    serde_json::from_str::<serde_json::Value>(&kb.parser_config)
+        .ok()
+        .and_then(|config| {
+            config
+                .get("chunk_method")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "naive".to_string())
 }
 
 pub(crate) fn kb_embedder_for(
@@ -1682,7 +1699,53 @@ async fn process_document(
         let path_str = path
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid upload path"))?;
-        let chunks = pipeline.process(path_str).await?;
+        let (chunks, report) = match pipeline.process_with_report(path_str).await {
+            Ok(result) => result,
+            Err(error) => {
+                // Upstream writes a `PipelineOperationLog` row for failed runs
+                // too, so the dataset's ingestion list keeps the failure.
+                let failed = crate::pipeline::PipelineReport {
+                    stages: vec![crate::pipeline::StageReport {
+                        id: "parser",
+                        component: "Parser",
+                        title: "Parser",
+                        elapsed_seconds: 0.0,
+                        outputs: serde_json::json!({
+                            "output_format": {"type": "string", "value": "text"},
+                            "text": {"type": "string", "value": error.to_string()},
+                            "_elapsed_time": {"type": "number", "value": 0.0}
+                        }),
+                    }],
+                };
+                if let Err(record_error) = crate::api::ingestion::record_parse_run(
+                    &state,
+                    &kb.owner_id,
+                    &doc.kb_id,
+                    &doc.id,
+                    &doc.name,
+                    &kb_parser_id(&kb),
+                    &failed,
+                    "failed",
+                    &error.to_string(),
+                ) {
+                    tracing::warn!(%record_error, "Failed to record ingestion log");
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = crate::api::ingestion::record_parse_run(
+            &state,
+            &kb.owner_id,
+            &doc.kb_id,
+            &doc.id,
+            &doc.name,
+            &kb_parser_id(&kb),
+            &report,
+            "done",
+            "",
+        ) {
+            tracing::warn!(%error, "Failed to record ingestion log");
+        }
         if state.tasks.is_cancelled(&task_id) {
             anyhow::bail!("Processing cancelled");
         }
@@ -3573,6 +3636,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/search/share", get(crate::web::search_share_page))
         // Upstream `Routes.AgentShare` (`/agent/share?shared_id=…&from=agent&auth=<beta>`).
         .route("/agent/share", get(crate::web::agent_share_page))
+        // Upstream `Routes.DataflowResult` — the ingestion-log viewer.
+        .route("/dataflow-result", get(crate::web::dataflow_result_page))
         .route("/document/{doc_id}", get(crate::web::document_viewer_page))
         // Upstream `Routes.Chunk` subtree (`pages/chunk/**`): the standalone
         // chunk workbench with its three panel routes.
@@ -4267,6 +4332,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/pipeline/operation-logs",
             get(crate::api::features::list_operation_logs),
         )
+        // RAGFlow ingestion logs (`dataset_api.py`) — the `/dataflow-result`
+        // page's data source. The literal `summary` route must stay ahead of the
+        // `{log_id}` parameter route.
+        .route(
+            "/api/v1/datasets/{dataset_id}/ingestions/summary",
+            get(crate::api::ingestion::get_ingestion_summary),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/ingestions",
+            get(crate::api::ingestion::list_ingestion_logs),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/ingestions/{log_id}",
+            get(crate::api::ingestion::get_ingestion_log),
+        )
+        .route(
+            "/api/v1/agents/rerun",
+            post(crate::api::ingestion::rerun_agent),
+        )
         .route(
             "/api/v1/tasks/{task_id}/cancel",
             post(crate::api::features::cancel_task),
@@ -4603,6 +4687,7 @@ pub async fn run(
     let skill_index_path = format!("{}/../skill_index.json", static_dir);
     let system_settings_path = format!("{}/../system_settings.json", static_dir);
     let api_tokens_path = format!("{}/../api_tokens.json", static_dir);
+    let ingestion_logs_path = format!("{}/../ingestion_logs.json", static_dir);
     let langfuse_path = format!("{}/../langfuse.json", static_dir);
     let mcp_servers_path = format!("{}/../mcp_servers.json", static_dir);
     let chat_channels_path = format!("{}/../chat_channels.json", static_dir);
@@ -4737,6 +4822,9 @@ pub async fn run(
             &system_settings_path,
         )?),
         api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::new(&api_tokens_path)?),
+        ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::new(
+            &ingestion_logs_path,
+        )?),
         register_enabled: crate::settings::Settings::from_env().register_enabled,
         disable_password_login: crate::settings::Settings::from_env().disable_password_login,
         oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -4996,6 +5084,7 @@ mod tests {
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
+            ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -6247,6 +6336,7 @@ mod tests {
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
+            ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -14454,5 +14544,172 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+    }
+    /// RAGFlow `dataset_api.py` ingestion logs and `agent_api.py::rerun_agent`:
+    /// the dataflow-result page's data source, scoped to the dataset and
+    /// answering the upstream error strings.
+    #[tokio::test]
+    async fn ingestion_logs_and_rerun_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        // The KB belongs to the signed-in user so the ACL check passes.
+        let me = env
+            .state
+            .users
+            .get_user_by_token(&env.token)
+            .expect("token resolves");
+        let kb = env.state.kbs.create_for(&me.id, "Ingestion", "").unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "ingestion-doc".into(),
+            name: "report.pdf".into(),
+            kb_id: kb.id.clone(),
+            size: 1024,
+            storage_name: "ingestion-doc.pdf".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: String::new(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: String::new(),
+            chunk_count: 0,
+            created_at: 1,
+            updated_at: 1,
+        };
+        env.state.docs.insert(doc.clone()).unwrap();
+        // `get_ingestion_summary` reports the dataset row's denormalized
+        // counters (`kb.doc_num` / `kb.chunk_num`), exactly like upstream.
+        env.state.kbs.update_counts(&kb.id, 0, 1).unwrap();
+        std::fs::write(env.root.join("uploads/ingestion-doc.pdf"), b"%PDF-1.4").unwrap();
+        let report = crate::pipeline::PipelineReport {
+            stages: vec![crate::pipeline::StageReport {
+                id: "parser",
+                component: "Parser",
+                title: "Parser",
+                elapsed_seconds: 0.5,
+                outputs: serde_json::json!({
+                    "output_format": {"type": "string", "value": "text"},
+                    "text": {"type": "string", "value": "parsed body"},
+                    "_elapsed_time": {"type": "number", "value": 0.5}
+                }),
+            }],
+        };
+        let log = crate::api::ingestion::record_parse_run(
+            &env.state, &me.id, &kb.id, &doc.id, &doc.name, "naive", &report, "done", "",
+        )
+        .expect("ingestion log recorded");
+        assert_eq!(log.dsl["path"], serde_json::json!(["parser"]));
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["code"], 0);
+        assert_eq!(listed["data"]["total"], 1);
+        assert_eq!(listed["data"]["logs"][0]["document_name"], "report.pdf");
+        assert_eq!(listed["data"]["logs"][0]["operation_status"], "done");
+
+        let detail = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions/{}", kb.id, log.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail = response_json(detail).await;
+        assert_eq!(
+            detail["data"]["dsl"]["components"]["parser"]["obj"]["params"]["outputs"]["text"]["value"],
+            "parsed body"
+        );
+
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions/nope", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Log not found");
+
+        let summary = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions/summary", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let summary = response_json(summary).await;
+        assert_eq!(summary["code"], 0);
+        assert_eq!(summary["data"]["doc_num"], 1);
+        assert!(summary["data"]["status"]["unstart_count"].is_number());
+
+        // `POST /agents/rerun` rewrites the log's `path` and re-queues the parse.
+        let rerun = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/rerun")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": log.id,
+                            "dsl": {"path": ["parser", "tokenChunker"], "components": {}},
+                            "component_id": "parser"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rerun.status(), StatusCode::OK);
+        let rerun = response_json(rerun).await;
+        assert_eq!(rerun["code"], 0);
+        assert_eq!(rerun["data"], true);
+        assert_eq!(
+            env.state.ingestion_logs.get(&kb.id, &log.id).unwrap().dsl["path"],
+            serde_json::json!(["parser"])
+        );
+
+        // An unknown log id keeps upstream's "Document not found.".
+        let unknown = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/rerun")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::json!({"id": "nope"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let unknown = response_json(unknown).await;
+        assert_eq!(unknown["code"], 102);
+        assert_eq!(unknown["message"], "Document not found.");
     }
 }

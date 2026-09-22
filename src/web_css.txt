@@ -664,3 +664,46 @@ switches and the iframe snippet box. */
 .agent-embed-code code{color:var(--t);font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .agent-embed-actions{display:flex;gap:8px;margin-top:8px}
 .agent-embed-status{min-height:16px;margin:8px 0 0;color:var(--tm);font-size:12px}
+
+/* Upstream `pages/dataflow-result/index.tsx` + `parser.tsx` +
+`components/chunk-result-bar`: the back-button header, the timeline strip, the
+two-column body (document preview | step result), the chunk bar and the output
+cards. */
+.dataflow-page{display:flex;flex-direction:column;gap:12px}
+.dataflow-head{display:flex;align-items:center;justify-content:space-between}
+.dataflow-back{display:inline-flex;align-items:center;gap:6px}
+.dataflow-timeline{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:8px 0}
+.dataflow-timeline[hidden]{display:none!important}
+.dataflow-node{display:flex;flex-direction:column;gap:2px;min-width:120px;padding:6px 12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);cursor:pointer}
+.dataflow-node:hover{background:var(--bgch)}
+.dataflow-node.active{border-color:var(--p);color:var(--p)}
+.dataflow-node-title{font-size:13px}
+.dataflow-node-time{color:var(--t2);font-size:11px}
+.dataflow-body{display:flex;gap:32px;margin-top:26px;padding:12px;border:1px solid var(--bd);border-radius:var(--rs);min-height:calc(100vh - 220px)}
+.dataflow-doc{display:flex;width:40%;min-width:0;flex-direction:column}
+.dataflow-doc-head{padding-bottom:5px;color:var(--t);font-size:16px;font-weight:500}
+.dataflow-doc-body{flex:1;min-height:0;overflow:auto;padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t2);font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.dataflow-divider{width:1px;background:var(--bd)}
+.dataflow-step{display:flex;width:60%;min-width:0;flex-direction:column;gap:10px}
+.dataflow-step-head{display:flex;align-items:baseline;gap:8px}
+.dataflow-step-title{margin:0;font-size:18px}
+.dataflow-step-time{color:var(--t2);font-size:12px}
+.dataflow-step-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dataflow-field{display:inline-flex;align-items:center;gap:6px;color:var(--t2);font-size:13px}
+.dataflow-tip{color:var(--tm);font-size:12px}
+.dataflow-tip[hidden]{display:none!important}
+.dataflow-chunk-bar{display:flex;align-items:center;gap:8px}
+.dataflow-chunk-bar[hidden]{display:none!important}
+.dataflow-selected{color:var(--tm);font-size:12px}
+.dataflow-output{display:flex;flex:1;min-height:0;flex-direction:column;gap:12px;overflow:auto}
+.dataflow-empty{color:var(--tm);font-size:13px}
+.dataflow-text{margin:0;padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-family:ui-monospace,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.dataflow-html{padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:14px}
+.dataflow-chunk{padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc)}
+.dataflow-chunk-head{display:flex;align-items:center;gap:8px}
+.dataflow-chunk-label{color:var(--t2);font-size:12px}
+.dataflow-chunk-body{margin-top:8px;color:var(--t);font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.dataflow-raw{margin-top:8px;color:var(--t2);font-size:12px}
+.dataflow-raw pre{max-height:220px;overflow:auto;padding:8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t2);font-family:ui-monospace,monospace}
+.dataflow-dialog{max-width:560px}
+.dataflow-dialog-body{margin:12px 0;color:var(--t2);font-size:13px;line-height:1.7}

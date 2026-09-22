@@ -2,6 +2,42 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.38] — 2026-09-23（对标批次 v0.3.8p）
+
+### Added
+
+- **数据流水线结果页 `/dataflow-result` 上线**（上游 `Routes.DataflowResult` =
+  `pages/dataflow-result/index.tsx` + `parser.tsx` + `components/time-line` +
+  `components/chunk-result-bar`）：此前该路由**没有注册**（访问 404）。现在它按上游结构落地：
+  - `PageHeader` 返回按钮（`LucideArrowBigLeft` + `Back`）回到知识库文件列表（带 `?agent_id=` 时回到智能体）；
+  - 顶部时间线：按 `dsl.path` × `dsl.components` × `dsl.graph.nodes` 重建，每个节点显示标题与
+    `outputs._elapsed_time` 秒数，点击切换当前步骤；若当前步骤被编辑过再切换，先弹上游
+    `dataflowParser.changeStepModalTitle`（「切换步骤警告」/「继续切换」）确认；
+  - 左栏（2/5）文档栏：文档名 + 已解析切片内容预览（上游是 PDF 高亮查看器的位置，此项在台账记为近似）；
+  - 右栏（3/5）步骤结果：`Output format` 选择器（取该步骤 `outputs` 里真实存在的 text/html/json/chunks）、
+    `chunks` 渲染为切片卡片并带「全选 / 反选 / 删除」结果条（删除走
+    `DELETE /api/v1/datasets/{kb}/documents/{doc}/chunks`）、其余格式渲染为文本/JSON，另附原始 JSON 折叠块；
+  - `Rerun from current step`：先弹上游 `dataflowParser.confirmRerun`，确认后把编辑过的 canvas 提交到
+    `POST /api/v1/agents/rerun`。
+- **数据摄入（ingestion）日志接口**（上游 `dataset_api.py` + `dataset_api_service.py`）：
+  `GET /api/v1/datasets/{id}/ingestions`（分页/排序/状态/关键字/日期/`log_type` 过滤，回 `{total, logs}`）、
+  `GET /api/v1/datasets/{id}/ingestions/{log_id}`（含 `dsl` 全量）、
+  `GET /api/v1/datasets/{id}/ingestions/summary`（`doc_num` / `chunk_num` / `token_num` 与按
+  `TaskStatus` 分桶的 `status`），错误文案逐字对齐（`Lack of "Dataset ID"` / `No authorization.` /
+  `Log not found` / `Invalid "log_type", expected "dataset" or "file"`）。
+- **`POST /api/v1/agents/rerun`**（上游 `agent_api.py::rerun_agent`）：把请求里的 `dsl` 写回日志
+  （`dsl.path = [component_id]`）并重新排队解析该文档；文档处理中回 `` `{name}` is processing... ``，
+  找不到回 `Document not found.`。
+- **解析运行分阶段报告**：`Pipeline::process_with_report` 记录每个阶段（Parser / TokenChunker /
+  Tokenizer）的真实耗时与产出（字数、切片数、token 数、向量维度），成功与失败都会写入一条
+  ingestion 日志——dataflow-result 页展示的是 RayRAG 真正跑过的阶段，而非复制上游画布（台账已注明这一替代关系）。
+
+### Notes
+
+- 新增回归：`server::tests::ingestion_logs_and_rerun_match_upstream`、
+  `web::kb_ui_tests::dataflow_result_page_matches_upstream_ingestion_viewer` 与 `api::ingestion` 两条存储/DSL 用例。
+- 全量 `cargo test --locked --lib` **1568 passed / 0 failed / 27 ignored**。
+
 ## [0.4.37] — 2026-09-23（对标批次 v0.3.8o）
 
 ### Added

@@ -23,6 +23,47 @@ impl Embedder for SharedEmbedderAdapter {
     }
 }
 
+/// One executed stage of a parse run, reported for the ingestion log
+/// (`api/apps/services/dataset_api_service.py::get_ingestion_log` serves the
+/// `PipelineOperationLog` row whose `dsl` carries one component per executed
+/// step, and `pages/dataflow-result` rebuilds its timeline from that DSL).
+///
+/// RayRAG's parsing is a fixed sequence rather than a canvas, so the timeline is
+/// synthesized from the stages this run actually executed together with their
+/// measured elapsed time and the outputs they produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageReport {
+    /// Component key inside the synthesized DSL (`parser`, `tokenChunker`, …).
+    pub id: &'static str,
+    /// RAGFlow component name (`Parser`, `TokenChunker`, …).
+    pub component: &'static str,
+    /// Timeline title (`graph.nodes[].data.name` upstream).
+    pub title: &'static str,
+    /// Wall-clock time of the stage in seconds.
+    pub elapsed_seconds: f64,
+    /// `obj.params.outputs`-shaped payload for the dataflow-result right panel.
+    pub outputs: serde_json::Value,
+}
+
+/// Result of one parse run: the chunks plus the executed stages.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineReport {
+    pub stages: Vec<StageReport>,
+}
+
+impl PipelineReport {
+    /// The `_elapsed_time` of a stage, defaulting to zero like upstream's
+    /// `node.params?.outputs?._elapsed_time?.value || 0`.
+    pub fn stage(&self, id: &str) -> Option<&StageReport> {
+        self.stages.iter().find(|stage| stage.id == id)
+    }
+
+    /// Total wall-clock time of every reported stage.
+    pub fn total_seconds(&self) -> f64 {
+        self.stages.iter().map(|stage| stage.elapsed_seconds).sum()
+    }
+}
+
 /// The full RayRAG parsing pipeline.
 pub struct Pipeline {
     config: ParserConfig,
@@ -155,6 +196,15 @@ impl Pipeline {
 
     /// Run the full pipeline on a file: parse → chunk → embed → store.
     pub async fn process(&self, file_path: &str) -> Result<Vec<Chunk>> {
+        Ok(self.process_with_report(file_path).await?.0)
+    }
+
+    /// `process` plus the per-stage report the ingestion log stores.
+    pub async fn process_with_report(
+        &self,
+        file_path: &str,
+    ) -> Result<(Vec<Chunk>, PipelineReport)> {
+        let mut stages: Vec<StageReport> = Vec::new();
         let name = std::path::Path::new(file_path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -165,12 +215,62 @@ impl Pipeline {
             .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {}", name))?;
 
         let data = std::fs::read(file_path)?;
+        let parse_started = std::time::Instant::now();
         let doc = self.parse_document(name, mime, &data).await?;
         tracing::info!("Parsed: {} ({} bytes)", doc.name, doc.size);
+        stages.push(StageReport {
+            id: "parser",
+            component: "Parser",
+            title: "Parser",
+            elapsed_seconds: parse_started.elapsed().as_secs_f64(),
+            outputs: serde_json::json!({
+                "output_format": {"type": "string", "value": "text"},
+                "text": {"type": "string", "value": doc.content},
+                "_elapsed_time": {
+                    "type": "number",
+                    "value": parse_started.elapsed().as_secs_f64()
+                }
+            }),
+        });
 
         // 2. Chunk
+        let chunk_started = std::time::Instant::now();
         let mut chunks = self.chunker.chunk(&doc, &self.config)?;
         tracing::info!("Chunked: {} chunks", chunks.len());
+        let chunk_outputs = serde_json::json!({
+            "output_format": {"type": "string", "value": "chunks"},
+            "chunks": {
+                "type": "array",
+                "value": chunks
+                    .iter()
+                    .map(|chunk| serde_json::json!({
+                        "content": chunk.content,
+                        "docnm_kwd": chunk.metadata.get("docnm_kwd").cloned().unwrap_or_default(),
+                        "important_kwd": chunk
+                            .metadata
+                            .get("important_kwd")
+                            .cloned()
+                            .unwrap_or_default(),
+                    }))
+                    .collect::<Vec<_>>()
+            },
+            "chunk_count": {"type": "number", "value": chunks.len()},
+            "token_count": {
+                "type": "number",
+                "value": chunks.iter().map(|chunk| chunk.token_count).sum::<usize>()
+            },
+            "_elapsed_time": {
+                "type": "number",
+                "value": chunk_started.elapsed().as_secs_f64()
+            }
+        });
+        stages.push(StageReport {
+            id: "tokenChunker",
+            component: "TokenChunker",
+            title: "Token chunker",
+            elapsed_seconds: chunk_started.elapsed().as_secs_f64(),
+            outputs: chunk_outputs,
+        });
 
         // 2.5 Annotate content type + add context for tables/images
         Self::annotate_chunks(&mut chunks, &self.config);
@@ -192,8 +292,32 @@ impl Pipeline {
 
         // 3. Embed (if embedder is configured)
         if let Some(ref embedder) = self.embedder {
+            let embed_started = std::time::Instant::now();
             embedder.embed_chunks(&mut chunks).await?;
             tracing::info!("Embedded: {} vectors", chunks.len());
+            stages.push(StageReport {
+                id: "tokenizer",
+                component: "Tokenizer",
+                title: "Tokenizer",
+                elapsed_seconds: embed_started.elapsed().as_secs_f64(),
+                outputs: serde_json::json!({
+                    "output_format": {"type": "string", "value": "json"},
+                    "json": {
+                        "type": "object",
+                        "value": {
+                            "vector_count": chunks.len(),
+                            "dimension": chunks
+                                .iter()
+                                .find_map(|chunk| chunk.embedding.as_ref().map(Vec::len))
+                                .unwrap_or_default(),
+                        }
+                    },
+                    "_elapsed_time": {
+                        "type": "number",
+                        "value": embed_started.elapsed().as_secs_f64()
+                    }
+                }),
+            });
         }
 
         // 4. Store (if store is configured)
@@ -202,7 +326,7 @@ impl Pipeline {
             tracing::info!("Stored: {} chunks", chunks.len());
         }
 
-        Ok(chunks)
+        Ok((chunks, PipelineReport { stages }))
     }
 
     async fn parse_document(&self, name: &str, mime: &str, data: &[u8]) -> Result<crate::Document> {
@@ -321,54 +445,57 @@ impl Pipeline {
         // 输出元数据占位，与上游 naive figure 行为一致）。
         if crate::ocr::supports_ocr(mime)
             && let Some(vision) = &self.vision
-                && data.len() >= 100 {
-                    let prompt = crate::parser::figure::figure_describe_prompt();
-                    let image = crate::vision::VisionClient::normalize_image(data, mime);
-                    match vision.describe_with_prompt(&image, &prompt).await {
-                        Ok(description) if !description.content.trim().is_empty() => {
-                            return Ok(parser::new_document(
-                                name,
-                                format!(
-                                    "<!--IMAGE_START-->\n[DOCUMENT_LAYOUT: VisionLLM]\n{}\n<!--IMAGE_END-->\n",
-                                    description.content.trim()
-                                ),
-                                mime,
-                                data.len(),
-                            ));
-                        }
-                        Ok(_) => {
-                            tracing::warn!(
-                                %name,
-                                "Vision model returned empty description; falling back to figure parser"
-                            );
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, %name, "Vision description failed; falling back to figure parser");
-                        }
-                    }
+            && data.len() >= 100
+        {
+            let prompt = crate::parser::figure::figure_describe_prompt();
+            let image = crate::vision::VisionClient::normalize_image(data, mime);
+            match vision.describe_with_prompt(&image, &prompt).await {
+                Ok(description) if !description.content.trim().is_empty() => {
+                    return Ok(parser::new_document(
+                        name,
+                        format!(
+                            "<!--IMAGE_START-->\n[DOCUMENT_LAYOUT: VisionLLM]\n{}\n<!--IMAGE_END-->\n",
+                            description.content.trim()
+                        ),
+                        mime,
+                        data.len(),
+                    ));
                 }
-        // 音频：配置 ASR 时转录（OpenAI 兼容 /audio/transcriptions），否则落到元数据占位
-        if (mime.starts_with("audio/") || mime == "application/ogg") && self.stt.is_some()
-            && let Some(stt) = &self.stt {
-                match stt.transcribe(data, name).await {
-                    Ok(transcription) => {
-                        if !transcription.text.trim().is_empty() {
-                            return Ok(parser::new_document(
-                                name,
-                                format!(
-                                    "<!--AUDIO_START-->\n{}\n<!--AUDIO_END-->\n",
-                                    transcription.text.trim()
-                                ),
-                                mime,
-                                data.len(),
-                            ));
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "ASR transcription failed; falling back to metadata");
-                    }
+                Ok(_) => {
+                    tracing::warn!(
+                        %name,
+                        "Vision model returned empty description; falling back to figure parser"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %name, "Vision description failed; falling back to figure parser");
                 }
             }
+        }
+        // 音频：配置 ASR 时转录（OpenAI 兼容 /audio/transcriptions），否则落到元数据占位
+        if (mime.starts_with("audio/") || mime == "application/ogg")
+            && self.stt.is_some()
+            && let Some(stt) = &self.stt
+        {
+            match stt.transcribe(data, name).await {
+                Ok(transcription) => {
+                    if !transcription.text.trim().is_empty() {
+                        return Ok(parser::new_document(
+                            name,
+                            format!(
+                                "<!--AUDIO_START-->\n{}\n<!--AUDIO_END-->\n",
+                                transcription.text.trim()
+                            ),
+                            mime,
+                            data.len(),
+                        ));
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "ASR transcription failed; falling back to metadata");
+                }
+            }
+        }
         let parser = parser::get_parser(mime)
             .ok_or_else(|| anyhow::anyhow!("No parser for MIME: {}", mime))?;
         parser.parse(name, data)

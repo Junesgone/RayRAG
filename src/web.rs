@@ -3774,6 +3774,149 @@ function exploreBoot(){var params=exploreParams();exploreLoadSessions();if(param
 exploreBoot();
 "#;
 
+/// Upstream `Routes.DataflowResult` = `/dataflow-result`
+/// (`web/src/pages/dataflow-result/index.tsx` + `parser.tsx` +
+/// `components/time-line` + `components/chunk-result-bar`).
+///
+/// The page is the ingestion-log viewer: the `PageHeader` back button returns to
+/// the dataset's file list (`?knowledgeId=`), the timeline is rebuilt from
+/// `dsl.components` / `dsl.graph.nodes` (`useTimelineDataFlow`), and the right
+/// panel renders the selected step's `obj.params.outputs` through the format its
+/// `output_format` names — `chunks` as card list with the select-all / invert /
+/// delete bar, anything else as text. `Rerun from current step` posts the edited
+/// canvas to `POST /api/v1/agents/rerun`.
+///
+/// Approximations recorded in the ledger: the left column previews the document
+/// through its parsed chunks instead of the PDF highlighter viewer, and the
+/// `dataflowParser.confirmRerunModalContent` / `changeStepModalContent` bodies are
+/// rendered as their text skeleton.
+pub async fn dataflow_result_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let label = |key: &str| dataflow_label(zh, key);
+    let mut b = String::with_capacity(16384);
+    b.push_str("<div class='dataflow-page' data-testid='dataflow-result'><header class='dataflow-head'><button class='btn btn-o dataflow-back' type='button' id='dataflowBack' data-testid='dataflow-back' onclick='dataflowBack()'>");
+    b.push_str(DATAFLOW_BACK_SVG);
+    b.push_str("<span>");
+    b.push_str(t("Back", zh));
+    b.push_str("</span></button></header><div class='dataflow-timeline' id='dataflowTimeline' data-testid='dataflow-timeline' role='list' hidden></div><div class='dataflow-body'><section class='dataflow-doc'><header class='dataflow-doc-head' id='dataflowDocHead' data-testid='dataflow-document-head'></header><div class='dataflow-doc-body' id='dataflowDocBody' data-testid='dataflow-document-preview'></div></section><div class='dataflow-divider' aria-hidden='true'></div><section class='dataflow-step'><header class='dataflow-step-head'><h2 class='dataflow-step-title' id='dataflowStepTitle' data-testid='dataflow-step-title'></h2><span class='dataflow-step-time' id='dataflowStepTime'></span></header><div class='dataflow-step-actions'><label class='dataflow-field'><span>");
+    b.push_str(label("outputFormat"));
+    b.push_str("</span><select id='dataflowFormat' data-testid='dataflow-format' onchange='dataflowRenderStep()'></select></label><button class='btn btn-p btn-sm' type='button' id='dataflowRerun' data-testid='dataflow-rerun' onclick='dataflowAskRerun()'>");
+    b.push_str(label("rerunFromCurrentStep"));
+    b.push_str("</button><span class='dataflow-tip' id='dataflowRerunTip' data-testid='dataflow-rerun-tip' hidden>");
+    b.push_str(label("rerunFromCurrentStepTip"));
+    b.push_str("</span></div><div class='dataflow-chunk-bar' id='dataflowChunkBar' data-testid='dataflow-chunk-bar' hidden><button class='btn btn-o btn-sm' type='button' data-testid='dataflow-select-all' onclick='dataflowSelectAll()'>");
+    b.push_str(label("selectAll"));
+    b.push_str("</button><button class='btn btn-o btn-sm' type='button' data-testid='dataflow-invert' onclick='dataflowInvert()'>");
+    b.push_str(label("invert"));
+    b.push_str("</button><button class='btn btn-d btn-sm' type='button' data-testid='dataflow-delete-chunks' onclick='dataflowDeleteChunks()'>");
+    b.push_str(t("Delete", zh));
+    b.push_str("</button><span class='dataflow-selected' id='dataflowSelected'></span></div><div class='dataflow-output' id='dataflowOutput' data-testid='dataflow-output'></div><details class='dataflow-raw'><summary>");
+    b.push_str(label("result"));
+    b.push_str("</summary><pre id='dataflowRaw' data-testid='dataflow-raw'></pre></details></section></div>");
+    // `dataflowParser.confirmRerun` + `changeStepModalTitle` dialogs.
+    b.push_str("<div class='modal-overlay' id='dataflowRerunDialog' data-testid='dataflow-rerun-dialog'><div class='modal dataflow-dialog' role='dialog' aria-modal='true' aria-labelledby='dataflowRerunTitle'><h2 id='dataflowRerunTitle'>");
+    b.push_str(label("confirmRerun"));
+    b.push_str("</h2><p class='dataflow-dialog-body' id='dataflowRerunBody'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='dataflow-rerun-cancel' onclick='closeDataflowDialog(\"dataflowRerunDialog\")'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-p' type='button' data-testid='dataflow-rerun-confirm' onclick='dataflowRerun()'>");
+    b.push_str(t("Ok", zh));
+    b.push_str("</button></div></div></div><div class='modal-overlay' id='dataflowSwitchDialog' data-testid='dataflow-switch-dialog'><div class='modal dataflow-dialog' role='dialog' aria-modal='true' aria-labelledby='dataflowSwitchTitle'><h2 id='dataflowSwitchTitle'>");
+    b.push_str(label("changeStepModalTitle"));
+    b.push_str("</h2><p class='dataflow-dialog-body'>");
+    b.push_str(label("changeStepModalContent"));
+    b.push_str("</p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='dataflow-switch-cancel' onclick='dataflowCancelSwitch()'>");
+    b.push_str(label("changeStepModalCancelText"));
+    b.push_str("</button><button class='btn btn-d' type='button' data-testid='dataflow-switch-confirm' onclick='dataflowConfirmSwitch()'>");
+    b.push_str(label("changeStepModalConfirmText"));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<script>var DATAFLOW_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "result": label("result"),
+        "parseSummary": label("parseSummary"),
+        "parserMethod": label("parserMethod"),
+        "chunk": if zh { "切片" } else { "Chunk" },
+        "empty": if zh { "没有可展示的结果" } else { "No result to display" },
+        "failed": if zh { "失败" } else { "Failed" },
+        "selected": if zh { "已选" } else { "selected" },
+        "rerunQueued": if zh { "已重新排队解析" } else { "Rerun queued" },
+    })));
+    b.push_str(";</script><script>");
+    b.push_str(DATAFLOW_RESULT_SCRIPT);
+    b.push_str("</script></div>");
+    Html(layout("Result", &b, zh))
+}
+
+/// Upstream `dataflowParser.*` copy, verbatim per locale.
+const DATAFLOW_LABELS: [(&str, &str, &str); 11] = [
+    ("result", "Result", "结果"),
+    ("parseSummary", "Parse summary", "解析摘要"),
+    ("parserMethod", "Parser method", "解析方法"),
+    ("outputFormat", "Output format", "输出格式"),
+    (
+        "rerunFromCurrentStep",
+        "Rerun from current step",
+        "从当前步骤重新运行",
+    ),
+    (
+        "rerunFromCurrentStepTip",
+        "Changes detected. Click to re-run.",
+        "已修改，点击重新运行。",
+    ),
+    ("confirmRerun", "Confirm rerun process", "确认重新运行流程"),
+    (
+        "changeStepModalTitle",
+        "Step switch warning",
+        "切换步骤警告",
+    ),
+    (
+        "changeStepModalContent",
+        "You are currently editing the results of this stage. If you switch to a later stage, your changes will be lost. To keep them, please click Rerun to re-run the current stage.",
+        "您目前正在编辑此阶段的结果。如果您切换到后续阶段，您的更改将会丢失。要保留这些更改，请点击“重新运行”以重新运行当前阶段。",
+    ),
+    ("changeStepModalCancelText", "Cancel", "取消"),
+    ("changeStepModalConfirmText", "Switch Anyway", "继续切换"),
+];
+
+fn dataflow_label(zh: bool, key: &str) -> &'static str {
+    DATAFLOW_LABELS
+        .iter()
+        .find(|(name, _, _)| *name == key)
+        .map(|(_, en, cn)| if zh { *cn } else { *en })
+        .unwrap_or("")
+}
+
+/// Upstream `LucideArrowBigLeft` of the `PageHeader` back button.
+const DATAFLOW_BACK_SVG: &str = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M9 12h12'/><path d='m3 12 6-6'/><path d='m3 12 6 6'/></svg>";
+
+/// Behaviour of the ingestion-log viewer: parameters, timeline rebuild, step
+/// selection (with the dirty-switch guard), the output renderer, chunk
+/// selection/deletion and the rerun call.
+const DATAFLOW_RESULT_SCRIPT: &str = r#"
+var DATAFLOW={log:null,kb:'',doc:'',nodes:[],active:null,dirty:false,pending:null,selected:[]};
+function dataflowStatus(text,error){var node=document.getElementById('dataflowRerunTip');if(node){node.hidden=!text;node.style.color=error?'var(--d)':''}}
+function dataflowParams(){var params=new URLSearchParams(window.location.search);DATAFLOW.kb=params.get('knowledgeId')||'';DATAFLOW.doc=params.get('doc_id')||'';DATAFLOW.type=params.get('type')||'';DATAFLOW.agent=params.get('agent_id')||'';return {logId:params.get('id')||'',doc:DATAFLOW.doc,kb:DATAFLOW.kb,type:DATAFLOW.type,agent:DATAFLOW.agent}}
+function dataflowBack(){if(DATAFLOW.agent){location.href='/agent/'+encodeURIComponent(DATAFLOW.agent)}else if(DATAFLOW.kb){location.href='/dataset/files/'+encodeURIComponent(DATAFLOW.kb)}else{history.back()}}
+function dataflowFormatKeys(outputs){return Object.keys(outputs||{}).filter(function(key){return ['text','html','json','chunks'].indexOf(key)>=0})}
+function dataflowBuildNodes(dsl){var components=(dsl&&dsl.components)||{};var graphNodes=((dsl&&dsl.graph&&dsl.graph.nodes)||[]);var path=(dsl&&dsl.path)||Object.keys(components);return path.map(function(key,index){var component=components[key];if(!component)return null;var obj=component.obj||{};var outputs=(obj.params||{}).outputs||{};var graphNode=graphNodes.find(function(node){return node.id===key});var elapsed=outputs._elapsed_time&&outputs._elapsed_time.value||0;return {id:String(key),index:index,title:String((graphNode&&graphNode.data&&graphNode.data.name)||obj.component_name||key),component:String(obj.component_name||key),elapsed:Number(elapsed)||0,outputs:outputs,obj:obj}}).filter(Boolean)}
+function dataflowRenderTimeline(){var host=document.getElementById('dataflowTimeline');if(!host)return;host.textContent='';if(DATAFLOW.type!=='dataflow'&&!DATAFLOW.nodes.length){host.hidden=true;return}host.hidden=false;DATAFLOW.nodes.forEach(function(node){var button=document.createElement('button');button.type='button';button.className='dataflow-node'+(DATAFLOW.active===node.id?' active':'');button.setAttribute('data-testid','dataflow-node');button.setAttribute('role','listitem');button.dataset.nodeId=node.id;button.onclick=function(){dataflowSelectNode(node.id)};var title=document.createElement('span');title.className='dataflow-node-title';title.textContent=node.title;button.appendChild(title);var time=document.createElement('span');time.className='dataflow-node-time';time.textContent=node.elapsed.toFixed(2)+'s';button.appendChild(time);host.appendChild(button)})}
+function dataflowCurrent(){return DATAFLOW.nodes.find(function(node){return node.id===DATAFLOW.active})||null}
+function dataflowRenderStep(){var node=dataflowCurrent();var title=document.getElementById('dataflowStepTitle');var time=document.getElementById('dataflowStepTime');var output=document.getElementById('dataflowOutput');var raw=document.getElementById('dataflowRaw');var select=document.getElementById('dataflowFormat');var bar=document.getElementById('dataflowChunkBar');if(!output)return;output.textContent='';if(raw)raw.textContent=node?JSON.stringify(node.obj,null,2):'';if(!node){if(title)title.textContent='';if(time)time.textContent='';if(select)select.textContent='';if(bar)bar.hidden=true;var empty=document.createElement('p');empty.className='dataflow-empty';empty.textContent=DATAFLOW_LABELS.empty;output.appendChild(empty);return}if(title)title.textContent=node.title;if(time)time.textContent=node.elapsed.toFixed(2)+'s';var keys=dataflowFormatKeys(node.outputs);var format=(select&&select.value)||(node.outputs.output_format&&node.outputs.output_format.value)||keys[0]||'';if(keys.indexOf(format)<0)format=keys[0]||'';if(select){select.textContent='';keys.forEach(function(key){var option=document.createElement('option');option.value=key;option.textContent=key;option.selected=key===format;select.appendChild(option)})}var value=format&&node.outputs[format]?node.outputs[format].value:null;DATAFLOW.selected=[];if(bar)bar.hidden=format!=='chunks';if(format==='chunks'&&Array.isArray(value)){value.forEach(function(chunk,index){output.appendChild(dataflowChunkCard(chunk,index))});dataflowUpdateSelected();return}if(value==null){var emptyNode=document.createElement('p');emptyNode.className='dataflow-empty';emptyNode.textContent=DATAFLOW_LABELS.empty;output.appendChild(emptyNode);return}if(format==='html'){var frame=document.createElement('div');frame.className='dataflow-html';frame.innerHTML=String(value);output.appendChild(frame);return}var pre=document.createElement('pre');pre.className='dataflow-text';pre.textContent=typeof value==='string'?value:JSON.stringify(value,null,2);output.appendChild(pre)}
+function dataflowChunkCard(chunk,index){var card=document.createElement('article');card.className='dataflow-chunk';card.setAttribute('data-testid','dataflow-chunk');card.dataset.index=String(index);var head=document.createElement('header');head.className='dataflow-chunk-head';var check=document.createElement('input');check.type='checkbox';check.className='dataflow-chunk-check';check.setAttribute('data-testid','dataflow-chunk-check');check.onchange=function(){dataflowUpdateSelected()};head.appendChild(check);var label=document.createElement('span');label.className='dataflow-chunk-label';label.textContent=DATAFLOW_LABELS.chunk+' #'+(index+1);head.appendChild(label);card.appendChild(head);var body=document.createElement('div');body.className='dataflow-chunk-body';body.textContent=String(chunk&&chunk.content||'');card.appendChild(body);return card}
+function dataflowUpdateSelected(){var checks=Array.prototype.slice.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"));DATAFLOW.selected=checks.filter(function(node){return node.checked}).map(function(node){return Number(node.closest('[data-testid=dataflow-chunk]').dataset.index)});var badge=document.getElementById('dataflowSelected');if(badge)badge.textContent=DATAFLOW.selected.length?DATAFLOW.selected.length+' '+DATAFLOW_LABELS.selected:''}
+function dataflowSelectAll(){Array.prototype.forEach.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"),function(node){node.checked=true});dataflowUpdateSelected()}
+function dataflowInvert(){Array.prototype.forEach.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"),function(node){node.checked=!node.checked});dataflowUpdateSelected()}
+function dataflowDeleteChunks(){var indexes=DATAFLOW.selected.slice();if(!indexes.length)return;var node=dataflowCurrent();if(!node||!Array.isArray(node.outputs.chunks&&node.outputs.chunks.value))return;var chunks=node.outputs.chunks.value;var docId=DATAFLOW.doc||(DATAFLOW.log&&DATAFLOW.log.document_id)||'';var ids=indexes.map(function(index){return (chunks[index]&&(chunks[index].id||chunks[index].chunk_id))||''}).filter(Boolean);node.outputs.chunks.value=chunks.filter(function(item,index){return indexes.indexOf(index)<0});DATAFLOW.dirty=true;if(ids.length&&docId&&DATAFLOW.kb){fetch('/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/documents/'+encodeURIComponent(docId)+'/chunks',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk_ids:ids})}).then(function(response){return response.json()}).catch(function(){})}dataflowStatus(DATAFLOW_LABELS.rerunFromCurrentStepTip,false);dataflowRenderStep();dataflowRenderTimeline()}
+function dataflowSelectNode(id){if(DATAFLOW.active===id)return;if(DATAFLOW.dirty){DATAFLOW.pending=id;document.getElementById('dataflowSwitchDialog').classList.add('show');return}DATAFLOW.active=id;DATAFLOW.dirty=false;dataflowStatus('',false);dataflowRenderTimeline();dataflowRenderStep()}
+function dataflowCancelSwitch(){DATAFLOW.pending=null;document.getElementById('dataflowSwitchDialog').classList.remove('show')}
+function dataflowConfirmSwitch(){var id=DATAFLOW.pending;DATAFLOW.pending=null;document.getElementById('dataflowSwitchDialog').classList.remove('show');DATAFLOW.dirty=false;dataflowStatus('',false);if(id){DATAFLOW.active=id}dataflowRenderTimeline();dataflowRenderStep()}
+function dataflowAskRerun(){var node=dataflowCurrent();var body=document.getElementById('dataflowRerunBody');if(body)body.textContent=node?('Step: '+node.title):'';document.getElementById('dataflowRerunDialog').classList.add('show')}
+function closeDataflowDialog(id){document.getElementById(id).classList.remove('show')}
+function dataflowRerun(){var node=dataflowCurrent();closeDataflowDialog('dataflowRerunDialog');if(!node||!DATAFLOW.log)return;var dsl=DATAFLOW.log.dsl||{};var components=Object.assign({},dsl.components||{});components[node.id]=node.obj;var payload={id:DATAFLOW.log.id,dsl:Object.assign({},dsl,{components:components}),component_id:node.id};fetch('/api/v1/agents/rerun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||DATAFLOW_LABELS.failed);DATAFLOW.dirty=false;dataflowStatus(DATAFLOW_LABELS.rerunQueued,false)}).catch(function(error){dataflowStatus(error.message,true)})}
+function dataflowRenderDocument(){var head=document.getElementById('dataflowDocHead');var host=document.getElementById('dataflowDocBody');if(!head||!host)return;var name=(DATAFLOW.log&&DATAFLOW.log.document_name)||DATAFLOW.doc;head.textContent=name;var docId=DATAFLOW.doc||(DATAFLOW.log&&DATAFLOW.log.document_id)||'';if(!DATAFLOW.kb||!docId){return}fetch('/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/documents/'+encodeURIComponent(docId)+'/chunks').then(function(response){return response.json()}).then(function(data){var chunks=((data.data||{}).chunks)||[];var preview=chunks.slice(0,12).map(function(chunk){return String(chunk.content||'')}).join('\n\n');host.textContent=preview}).catch(function(){})}
+function dataflowLoad(){var params=dataflowParams();var logId=params.logId;var url=logId?'/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/ingestions/'+encodeURIComponent(logId):'/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/ingestions?page=0&page_size=0&log_type=file';fetch(url).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||DATAFLOW_LABELS.failed);var payload=data.data;if(!logId){var logs=(payload&&payload.logs)||[];var match=logs.find(function(row){return row.document_id===DATAFLOW.doc})||logs[0];if(!match)throw new Error(DATAFLOW_LABELS.empty);return fetch('/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/ingestions/'+encodeURIComponent(match.id)).then(function(response){return response.json()}).then(function(detail){return detail.data})}return payload}).then(function(log){if(!log)throw new Error(DATAFLOW_LABELS.empty);DATAFLOW.log=log;DATAFLOW.doc=DATAFLOW.doc||log.document_id||'';DATAFLOW.nodes=dataflowBuildNodes(log.dsl);DATAFLOW.active=DATAFLOW.nodes.length?DATAFLOW.nodes[DATAFLOW.nodes.length-1].id:null;var select=document.getElementById('dataflowFormat');if(select)select.value='';dataflowRenderDocument();dataflowRenderTimeline();dataflowRenderStep()}).catch(function(error){var output=document.getElementById('dataflowOutput');if(output){output.textContent='';var node=document.createElement('p');node.className='dataflow-empty';node.textContent=error.message;output.appendChild(node)}})}
+dataflowLoad();
+"#;
+
 /// Upstream `Routes.AgentShare` = `/agent/share` (`pages/agent/share/index.tsx`)
 /// with `components/embed-container.tsx` and
 /// `hooks/use-send-shared-message.ts`: the embeddable agent chat.
@@ -8173,6 +8316,7 @@ mod kb_ui_tests {
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
+            ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -13497,6 +13641,97 @@ connection: close
             html.contains("confirmPublish"),
             "confirm publish handler missing"
         );
+    }
+
+    /// Upstream `Routes.DataflowResult`: the ingestion-log viewer ships the back
+    /// header, the timeline strip, the document preview column, the step result
+    /// panel with its format selector and rerun flow, and it reads the ingestion
+    /// endpoints.
+    #[tokio::test]
+    async fn dataflow_result_page_matches_upstream_ingestion_viewer() {
+        let request = Request::builder()
+            .uri("/dataflow-result?doc_id=doc-1&knowledgeId=kb-1&type=dataflow&id=log-1")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataflow_result_page(request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='dataflow-result'",
+            "data-testid='dataflow-back'",
+            "data-testid='dataflow-timeline'",
+            "data-testid='dataflow-document-head'",
+            "data-testid='dataflow-document-preview'",
+            "data-testid='dataflow-step-title'",
+            "data-testid='dataflow-format'",
+            "data-testid='dataflow-rerun'",
+            "data-testid='dataflow-rerun-tip'",
+            "data-testid='dataflow-chunk-bar'",
+            "data-testid='dataflow-select-all'",
+            "data-testid='dataflow-invert'",
+            "data-testid='dataflow-delete-chunks'",
+            "data-testid='dataflow-output'",
+            "data-testid='dataflow-raw'",
+            "data-testid='dataflow-rerun-dialog'",
+            "data-testid='dataflow-switch-dialog'",
+        ] {
+            assert!(html.contains(marker), "dataflow marker {marker} missing");
+        }
+        for label in [
+            "Result",
+            "Output format",
+            "Rerun from current step",
+            "Changes detected. Click to re-run.",
+            "Confirm rerun process",
+            "Step switch warning",
+            "Switch Anyway",
+        ] {
+            assert!(html.contains(label), "dataflow label {label} missing");
+        }
+        // The ingestion endpoints and the rerun call of `useRerunDataflow`.
+        assert!(html.contains("'/ingestions/'+encodeURIComponent(logId)"));
+        assert!(html.contains("'/ingestions?page=0&page_size=0&log_type=file'"));
+        assert!(html.contains("fetch('/api/v1/agents/rerun',{method:'POST'"));
+        assert!(html.contains("component_id:node.id"));
+        // Chunk deletion goes through the upstream chunk endpoint.
+        assert!(
+            html.contains("'/documents/'+encodeURIComponent(docId)+'/chunks',{method:'DELETE'")
+        );
+        // The back button returns to the dataset's file list (or the agent page).
+        assert!(html.contains("location.href='/dataset/files/'+encodeURIComponent(DATAFLOW.kb)"));
+        assert!(html.contains("location.href='/agent/'+encodeURIComponent(DATAFLOW.agent)"));
+        // `useTimelineDataFlow`'s node model.
+        assert!(html.contains("function dataflowBuildNodes(dsl)"));
+        assert!(html.contains("outputs._elapsed_time&&outputs._elapsed_time.value||0"));
+
+        let zh_request = Request::builder()
+            .uri("/dataflow-result")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(dataflow_result_page(zh_request).await).await;
+        for label in [
+            "结果",
+            "输出格式",
+            "从当前步骤重新运行",
+            "已修改，点击重新运行。",
+            "确认重新运行流程",
+            "切换步骤警告",
+            "继续切换",
+        ] {
+            assert!(zh_html.contains(label), "zh dataflow label {label} missing");
+        }
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".dataflow-page{",
+            ".dataflow-timeline{",
+            ".dataflow-body{",
+            ".dataflow-chunk{",
+            ".dataflow-dialog{",
+        ] {
+            assert!(css.contains(selector), "dataflow css {selector} missing");
+        }
     }
 
     /// Upstream `Routes.AgentShare` (`/agent/share`) with
