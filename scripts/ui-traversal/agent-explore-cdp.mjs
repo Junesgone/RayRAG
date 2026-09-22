@@ -121,13 +121,17 @@ try {
     timeout: 15000,
   });
   // The shell already ships the no-session placeholder and the disabled send
-  // button (upstream's first paint); waiting for the boot script's own pass
-  // keeps the layout assertions deterministic.
+  // button (upstream's first paint), so those two markers appear before the
+  // behaviour script runs — gate on the script itself, otherwise a click lands
+  // on inline handlers that are not defined yet.
   await page.waitForSelector("[data-testid='explore-no-session']", {
     timeout: 15000,
   });
   await page.waitForFunction(
-    () => document.querySelector("[data-testid='explore-send']").disabled === true,
+    () =>
+      typeof exploreNewSession === "function" &&
+      typeof exploreRenderSessions === "function" &&
+      document.querySelector("[data-testid='explore-send']").disabled === true,
     null,
     { timeout: 15000 },
   );
@@ -314,10 +318,24 @@ try {
 
   // 7. Hover reveals the ellipsis menu; its delete row opens the upstream
   //    confirm dialog and really deletes the session.
+  const moreOpacityBefore = await page.evaluate(
+    () => getComputedStyle(document.querySelector("[data-testid='explore-session-more']")).opacity,
+  );
   await page.hover("[data-testid='explore-session-card']");
+  await page.waitForFunction(
+    () =>
+      Number(
+        getComputedStyle(document.querySelector("[data-testid='explore-session-more']")).opacity,
+      ) > 0.9,
+    null,
+    { timeout: 5000 },
+  );
   const moreOpacity = await page.evaluate(
     () => getComputedStyle(document.querySelector("[data-testid='explore-session-more']")).opacity,
   );
+  if (Number(moreOpacityBefore) > 0.1) {
+    fail("the ellipsis affordance must stay hidden until the card is hovered");
+  }
   await page.click("[data-testid='explore-session-more']");
   await page.waitForSelector("[data-testid='explore-session-delete']", {
     timeout: 10000,
@@ -333,8 +351,8 @@ try {
     confirm: document.querySelector(
       "[data-testid='confirm-delete-dialog-confirm-btn']",
     ).textContent,
-    moreOpacity: null,
   }));
+  results.deleteDialog.moreOpacityBefore = moreOpacityBefore;
   results.deleteDialog.moreOpacity = moreOpacity;
   if (results.deleteDialog.title !== "Are you sure to delete it ?") {
     fail("delete dialog title is not upstream's: " + results.deleteDialog.title);
@@ -392,6 +410,19 @@ try {
   if (pageErrors.length) fail("page errors: " + JSON.stringify(pageErrors));
 } catch (error) {
   results.errors.push(String(error && error.message ? error.message : error));
+  results.diagnostics = await page
+    .evaluate(() => ({
+      url: location.href,
+      cards: document.querySelectorAll("[data-testid='explore-session-card']").length,
+      temp:
+        typeof EXPLORE_TEMP === "undefined" ? "undefined" : JSON.stringify(EXPLORE_TEMP),
+      current: typeof EXPLORE_CURRENT === "undefined" ? "undefined" : EXPLORE_CURRENT,
+      count: document.getElementById("exploreSessionCount")?.textContent,
+      placeholders: Array.from(
+        document.querySelectorAll(".agent-explore-placeholder"),
+      ).map((node) => node.textContent),
+    }))
+    .catch((diagnosticError) => ({ diagnosticError: String(diagnosticError.message) }));
   console.error("PROBE FAILED:", results.errors[results.errors.length - 1]);
 } finally {
   if (agentId) {
