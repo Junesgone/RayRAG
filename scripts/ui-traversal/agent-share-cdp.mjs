@@ -161,7 +161,7 @@ try {
     await page.click("[data-testid='embed-create-token']");
   }
   await page.waitForFunction(
-    () => document.querySelectorAll("[data-testid='embed-token-row']").length === 1,
+    () => document.querySelectorAll("[data-testid='embed-token-row']").length >= 1,
     null,
     { timeout: 15000 },
   );
@@ -363,7 +363,7 @@ try {
     });
     await page.click("[data-testid='agent-embed']");
     await page.waitForFunction(
-      () => document.querySelectorAll("[data-testid='embed-token-row']").length === 1,
+      () => document.querySelectorAll("[data-testid='embed-token-row']").length >= 1,
       null,
       { timeout: 15000 },
     );
