@@ -283,6 +283,17 @@ fn t(k: &str, zh: bool) -> &str {
             "将以下iframe嵌入您的网站处于所需位置"
         }
         "Preview" => "预览",
+        // Upstream embed dialog, floating-widget tab (`components/embed-dialog`).
+        "These settings apply to the floating widget embed." => "这些设置仅用于悬浮组件嵌入。",
+        "Widget title" => "组件标题",
+        "Subtitle" => "副标题",
+        "Footer text" => "页脚文字",
+        "Footer redirect link" => "页脚跳转链接",
+        "Enable streaming responses" => "启用流式响应",
+        "Mute widget sounds" => "静音组件提示音",
+        "Chat Support" => "聊天支持",
+        "We typically reply instantly" => "我们通常会即时回复",
+        "Minimize" => "最小化",
         // Upstream `common.back` (`locales/zh.ts`) — the dataflow-result header.
         "Back" => "返回",
         // Upstream `chat.messagePlaceholder`, the placeholder of every
@@ -3802,6 +3813,106 @@ function exploreBoot(){var params=exploreParams();exploreLoadSessions();if(param
 exploreBoot();
 "#;
 
+/// Upstream `Routes.ChatWidget` = `/chats/widget`
+/// (`pages/next-chats/widget/index.tsx` + `components/floating-chat-widget.tsx`):
+/// the Intercom-style floating widget the embed dialog's "Floating widget"
+/// snippet mounts.
+///
+/// Three modes, exactly like upstream: `mode=full` (default) renders the bubble
+/// and the panel in one page, `mode=master` renders the bubble only and drives a
+/// separate `mode=window` iframe through `postMessage`
+/// (`CREATE_CHAT_WINDOW`/`TOGGLE_CHAT`), and `mode=window` renders the panel
+/// alone. Every widget setting travels in the URL (`widget_title`,
+/// `widget_subtitle`, `widget_footer`, `widget_footer_link`,
+/// `widget_accent_color`, `widget_background_color`, `widget_text_color`,
+/// `widget_header_text_color`, `widget_footer_text_color`, `streaming`, `muted`)
+/// on top of the shared embed parameters (`shared_id`, `from`, `auth`, `release`,
+/// `locale`, `theme`, `visible_avatar`).
+pub async fn chat_widget_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let mut b = String::with_capacity(16384);
+    b.push_str("<style>html,body{background:transparent!important;margin:0;padding:0}#root,.ct{background:transparent!important}</style>");
+    b.push_str("<div class='fcw-root' id='fcwRoot' data-testid='fcw-root' data-mode='full'><div class='fcw-button-wrap' id='fcwButtonWrap' data-testid='fcw-button-wrap' hidden><button class='fcw-button' type='button' id='fcwButton' data-testid='fcw-button' aria-label='");
+    b.push_str(t("Chat Support", zh));
+    b.push_str("' aria-expanded='false' onclick='fcwToggle()'><span class='fcw-button-icon' id='fcwButtonIcon'>");
+    b.push_str(FCW_CHAT_SVG);
+    b.push_str("</span><span class='fcw-badge' id='fcwBadge' data-testid='fcw-badge' hidden>0</span></button></div><section class='fcw-window' id='fcwWindow' data-testid='fcw-window' role='dialog' aria-label='");
+    b.push_str(t("Chat Support", zh));
+    b.push_str("' hidden><header class='fcw-header'><span class='fcw-avatar' id='fcwAvatar' data-testid='fcw-avatar'></span><div class='fcw-identity'><div class='fcw-title' id='fcwTitle' data-testid='fcw-title'>");
+    b.push_str(t("Chat Support", zh));
+    b.push_str("</div><div class='fcw-subtitle' id='fcwSubtitle' data-testid='fcw-subtitle'>");
+    b.push_str(t("We typically reply instantly", zh));
+    b.push_str("</div></div><div class='fcw-actions'><button class='fcw-icon' type='button' id='fcwMinimize' data-testid='fcw-minimize' aria-label='");
+    b.push_str(t("Minimize", zh));
+    b.push_str("' onclick='fcwMinimize()'>");
+    b.push_str(FCW_MINIMIZE_SVG);
+    b.push_str("</button><button class='fcw-icon' type='button' id='fcwClose' data-testid='fcw-close' aria-label='");
+    b.push_str(t("Close", zh));
+    b.push_str("' onclick='fcwClose()'>");
+    b.push_str(FCW_X_SVG);
+    b.push_str("</button></div></header><div class='fcw-messages' id='fcwMessages' data-testid='fcw-messages'></div><div class='fcw-typing' id='fcwTyping' data-testid='fcw-typing' hidden><span></span><span></span><span></span></div><footer class='fcw-input'><textarea id='fcwInput' class='fcw-textarea' data-testid='fcw-input' rows='1' placeholder='");
+    b.push_str(t("Type your message here...", zh));
+    b.push_str("' aria-label='");
+    b.push_str(t("Type your message here...", zh));
+    b.push_str("' oninput='fcwSyncSend()' onkeydown='fcwKeydown(event)'></textarea><button class='fcw-send' type='button' id='fcwSend' data-testid='fcw-send' aria-label='");
+    b.push_str(t("Send message", zh));
+    b.push_str("' disabled onclick='fcwSendMessage()'>");
+    b.push_str(EXPLORE_SEND_SVG);
+    b.push_str("</button></footer><div class='fcw-footer' id='fcwFooter' data-testid='fcw-footer' hidden></div></section></div>");
+    b.push_str("<script>var FCW_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "title": t("Chat Support", zh),
+        "subtitle": t("We typically reply instantly", zh),
+        "running": if zh { "生成中..." } else { "is running...🕞" },
+        "failed": if zh { "失败" } else { "Failed" },
+        "empty": if zh { "请输入内容" } else { "Please input something" },
+        "open": if zh { "打开对话" } else { "Open chat" },
+        "close": if zh { "关闭对话" } else { "Close chat" },
+    })));
+    b.push_str(";</script><script>");
+    b.push_str(CHAT_WIDGET_SCRIPT);
+    b.push_str("</script>");
+    Html(layout_plain("Chat", &b, zh))
+}
+
+/// Upstream `MessageCircle` (24px) — the collapsed bubble glyph.
+const FCW_CHAT_SVG: &str = "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M7.9 20A9 9 0 1 0 4 16.1L2 22Z'/></svg>";
+
+/// Upstream `X` inside the bubble when the panel is open (24px).
+const FCW_X_SVG: &str = "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg>";
+
+/// Upstream panel header control (`Minus`).
+const FCW_MINIMIZE_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 12h14'/></svg>";
+
+/// Behaviour of the floating widget: URL parameters, the three modes and their
+/// `postMessage` handshake, the chat backend (`agentbots` for `from=agent`,
+/// `chatbots` otherwise), optional streaming, the notification sound and the
+/// unread badge.
+const CHAT_WIDGET_SCRIPT: &str = r#"
+var FCW={sharedId:'',from:'chat',release:false,visibleAvatar:true,locale:'',theme:'',mode:'full',streaming:false,muted:false,open:false,minimized:false,timer:null,answer:null,stream:null,unread:0,child:null};
+function fcwEscape(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
+function fcwNormalizeHex(value,fallback){var text=String(value||'').trim();return /^#[0-9a-fA-F]{6}$/.test(text)?text.toLowerCase():fallback}
+function fcwDarken(hex){var value=hex.replace('#','');var parts=[0,2,4].map(function(index){var channel=parseInt(value.substr(index,2),16);channel=Math.max(0,Math.round(channel*0.85));return ('0'+channel.toString(16)).slice(-2)});return '#'+parts.join('')}
+function fcwBoot(){var params=new URLSearchParams(window.location.search);var auth=params.get('auth');if(auth){document.cookie='rayrag_token='+auth+';path=/';try{localStorage.setItem('rayrag_token',auth)}catch(error){}var url=new URL(window.location.href);url.searchParams.delete('auth');window.history.replaceState(null,'',url.pathname+url.search)}FCW.sharedId=params.get('shared_id')||'';FCW.from=params.get('from')||'chat';FCW.release=params.get('release')==='true';FCW.locale=params.get('locale')||'';FCW.theme=params.get('theme')||'';var visible=params.get('visible_avatar');FCW.visibleAvatar=visible?visible!=='1':true;FCW.mode=params.get('mode')||'full';FCW.streaming=params.get('streaming')==='true';FCW.muted=params.get('muted')==='true';var root=document.getElementById('fcwRoot');root.dataset.mode=FCW.mode;var accent=fcwNormalizeHex(params.get('widget_accent_color'),'#2563eb');var background=fcwNormalizeHex(params.get('widget_background_color'),'#ffffff');var text=fcwNormalizeHex(params.get('widget_text_color'),'#111827');var headerText=fcwNormalizeHex(params.get('widget_header_text_color'),'#ffffff');var footerText=fcwNormalizeHex(params.get('widget_footer_text_color'),'#111827');root.style.setProperty('--fcw-accent',accent);root.style.setProperty('--fcw-accent-strong',fcwDarken(accent));root.style.setProperty('--fcw-bg',background);root.style.setProperty('--fcw-text',text);root.style.setProperty('--fcw-header-text',headerText);root.style.setProperty('--fcw-footer-text',footerText);var title=params.get('widget_title');if(title&&title.trim())document.getElementById('fcwTitle').textContent=title.trim();var subtitle=params.get('widget_subtitle');if(subtitle&&subtitle.trim())document.getElementById('fcwSubtitle').textContent=subtitle.trim();var footer=params.get('widget_footer');if(footer&&footer.trim()){var host=document.getElementById('fcwFooter');var link=params.get('widget_footer_link');host.hidden=false;if(link){var anchor=document.createElement('a');anchor.href=link;anchor.target='_blank';anchor.rel='noreferrer';anchor.textContent=footer.trim();host.appendChild(anchor)}else{host.textContent=footer.trim()}}if(FCW.theme){document.body.classList.toggle('light',FCW.theme==='light')}fcwApplyMode();fcwLoad()}
+function fcwApplyMode(){var wrap=document.getElementById('fcwButtonWrap');var windowNode=document.getElementById('fcwWindow');if(FCW.mode==='window'){windowNode.hidden=false;FCW.open=true;return}wrap.hidden=false;if(FCW.mode==='full'&&FCW.open&&!FCW.minimized){windowNode.hidden=false}}
+function fcwPost(message){try{var target=window.self!==window.top?window.parent:window;target.postMessage(message,'*')}catch(error){}}
+function fcwMasterBootstrap(){if(FCW.mode!=='master')return;var src=window.location.href.replace('mode=master','mode=window');if(window.self!==window.top){fcwPost({type:'CREATE_CHAT_WINDOW',src:src})}else if(!document.getElementById('chat-win')){var frame=document.createElement('iframe');frame.id='chat-win';frame.src=src;frame.setAttribute('frameborder','0');frame.style.cssText='position:fixed;bottom:104px;right:24px;width:380px;height:500px;border:none;background:transparent;z-index:9998;display:none';document.body.appendChild(frame);FCW.child=frame}window.addEventListener('message',function(event){if(event.data&&event.data.type==='TOGGLE_CHAT'){var frame=document.getElementById('chat-win');if(frame)frame.style.display=event.data.isOpen?'block':'none'}})}
+function fcwSound(){if(FCW.muted)return;try{var AudioContext=window.AudioContext||window.webkitAudioContext;if(!AudioContext)return;var context=new AudioContext();var oscillator=context.createOscillator();var gain=context.createGain();oscillator.frequency.value=660;oscillator.type='sine';gain.gain.value=0.05;oscillator.connect(gain);gain.connect(context.destination);oscillator.start();oscillator.stop(context.currentTime+0.12);setTimeout(function(){context.close()},400)}catch(error){}}
+function fcwSetIcon(open){document.getElementById('fcwButtonIcon').innerHTML=open?FCW_X:FCW_CHAT}
+function fcwToggle(){if(FCW.mode==='button'){FCW.open=!FCW.open;fcwPost({type:'TOGGLE_CHAT',isOpen:FCW.open});fcwSetIcon(FCW.open);fcwSyncBadge();if(FCW.open)fcwSound();return}if(FCW.mode==='master'){FCW.open=!FCW.open;fcwPost({type:'TOGGLE_CHAT',isOpen:FCW.open});if(FCW.child)FCW.child.style.display=FCW.open?'block':'none';fcwSetIcon(FCW.open);if(FCW.open){FCW.unread=0;fcwSyncBadge();fcwSound()}return}FCW.minimized=false;FCW.open=!FCW.open;document.getElementById('fcwWindow').hidden=!FCW.open;fcwSetIcon(FCW.open);if(FCW.open){FCW.unread=0;fcwSyncBadge();fcwSound()}}
+function fcwMinimize(){if(FCW.mode==='window')return;FCW.minimized=true;FCW.open=false;document.getElementById('fcwWindow').hidden=true;fcwSetIcon(false)}
+function fcwClose(){if(FCW.mode==='window'){fcwPost({type:'TOGGLE_CHAT',isOpen:false});return}FCW.open=false;FCW.minimized=false;document.getElementById('fcwWindow').hidden=true;fcwSetIcon(false);fcwPost({type:'TOGGLE_CHAT',isOpen:false})}
+function fcwSyncBadge(){var badge=document.getElementById('fcwBadge');if(!badge)return;if(FCW.unread>0&&!FCW.open){badge.hidden=false;badge.textContent=FCW.unread>9?'9+':String(FCW.unread)}else{badge.hidden=true}}
+function fcwStatus(text,error){var typing=document.getElementById('fcwTyping');var host=document.getElementById('fcwMessages');if(text===''){typing.hidden=true;return}typing.hidden=false;if(error){typing.textContent=text;typing.style.color='var(--d)'}else{typing.textContent='';typing.appendChild(document.createRange().createContextualFragment('<span></span><span></span><span></span>'))}return host}
+function fcwMessage(role,content){var host=document.getElementById('fcwMessages');var row=document.createElement('article');row.className='fcw-message '+(role==='user'?'user':'assistant');row.setAttribute('data-testid','fcw-message');var body=document.createElement('div');body.className='fcw-message-body';body.textContent=String(content||'');row.appendChild(body);host.appendChild(row);host.scrollTop=host.scrollHeight;return row}
+function fcwSyncSend(){var input=document.getElementById('fcwInput');var button=document.getElementById('fcwSend');if(!input||!button)return;button.disabled=!String(input.value||'').trim()}
+function fcwKeydown(event){if(event.key!=='Enter'||event.shiftKey)return;event.preventDefault();fcwSendMessage()}
+function fcwLoad(){var host=document.getElementById('fcwMessages');if(!FCW.sharedId){host.textContent=FCW_LABELS.failed;return}var infoUrl=FCW.from==='agent'?'/api/v1/agentbots/'+encodeURIComponent(FCW.sharedId)+'/inputs':'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/info';fetch(infoUrl).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||FCW_LABELS.failed);var payload=data.data||{};var title=payload.title||'';if(title&&!document.getElementById('fcwTitle').dataset.custom){document.getElementById('fcwTitle').textContent=title}var avatar=document.getElementById('fcwAvatar');if(avatar){avatar.textContent=String(title||'?').trim().charAt(0).toUpperCase();if(payload.avatar){var image=document.createElement('img');image.src=payload.avatar;image.alt='';avatar.textContent='';avatar.appendChild(image)}}var prologue=payload.prologue||'';if(prologue)fcwMessage('assistant',prologue)}).catch(function(error){fcwMessage('assistant',error.message)})}
+function fcwSendMessage(){var input=document.getElementById('fcwInput');if(!input)return;var value=String(input.value||'').trim();if(!value){return}if(FCW.stream)return;input.value='';fcwSyncSend();var question=value;fcwMessage('user',question);var bubble=fcwMessage('assistant',FCW_LABELS.running);var body=bubble.querySelector('.fcw-message-body');var url=FCW.from==='agent'?'/api/v1/agentbots/'+encodeURIComponent(FCW.sharedId)+'/completions'+(FCW.release?'?release=true':''):'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/completions';var payload={question:question,query:question,stream:FCW.streaming,'openai-compatible':false};var controller=new AbortController();FCW.stream=controller;fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal}).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);var type=response.headers.get('content-type')||'';if(!FCW.streaming||type.indexOf('text/event-stream')<0){return response.json().then(function(data){if(data.code!==0)throw new Error(data.message||FCW_LABELS.failed);var answer=((data.data||{}).answer)||'';body.textContent=answer||FCW_LABELS.failed;FCW.stream=null;fcwNotify();return null})}var reader=response.body.getReader();var decoder=new TextDecoder();var buffer='';var text='';body.textContent='';function pump(){return reader.read().then(function(chunk){if(chunk.done){FCW.stream=null;if(!text)body.textContent=FCW_LABELS.failed;fcwNotify();return null}buffer+=decoder.decode(chunk.value,{stream:true});var lines=buffer.split('\n');buffer=lines.pop();lines.forEach(function(line){if(line.indexOf('data:')!==0)return;var raw=line.slice(5).trim();if(!raw||raw==='[DONE]')return;var event=null;try{event=JSON.parse(raw)}catch(error){return}if(event.code&&event.code!==0)return;var name=event.event||'';var data=event.data||{};if(name==='message'){text=String(data.content||text);body.textContent=text;document.getElementById('fcwMessages').scrollTop=document.getElementById('fcwMessages').scrollHeight;return}var delta=event.choices&&event.choices[0]&&event.choices[0].delta&&event.choices[0].delta.content;if(delta){text+=delta;body.textContent=text;document.getElementById('fcwMessages').scrollTop=document.getElementById('fcwMessages').scrollHeight}});return pump()})}return pump()}).catch(function(error){FCW.stream=null;if(error&&error.name==='AbortError')return;body.textContent=error.message})}
+function fcwNotify(){if(!FCW.open){FCW.unread+=1;fcwSyncBadge()}fcwSound()}
+fcwSetIcon(false);fcwBoot();fcwMasterBootstrap();
+"#;
+
 /// Upstream `Routes.DataflowResult` = `/dataflow-result`
 /// (`web/src/pages/dataflow-result/index.tsx` + `parser.tsx` +
 /// `components/time-line` + `components/chunk-result-bar`).
@@ -4111,10 +4222,8 @@ fn push_agent_embed_modal(b: &mut String, zh: bool) {
     b.push_str(label("embedType"));
     b.push_str("</span><select id='embedType' data-testid='embed-type' onchange='embedSync()'><option value='fullscreen'>");
     b.push_str(label("fullscreenChat"));
-    b.push_str("</option><option value='widget' disabled>");
+    b.push_str("</option><option value='widget'>");
     b.push_str(label("floatingWidget"));
-    b.push_str(" — ");
-    b.push_str(label("comingSoon"));
     b.push_str("</option></select></label><div class='agent-embed-field'><span>");
     b.push_str(label("theme"));
     b.push_str("</span><div class='agent-embed-radios'><label class='agent-embed-radio'><input type='radio' name='embedTheme' value='light' data-testid='embed-theme-light' checked onchange='embedSync()'><span>");
@@ -4142,7 +4251,77 @@ fn push_agent_embed_modal(b: &mut String, zh: bool) {
         b.push_str(name);
         b.push_str("</option>");
     }
-    b.push_str("</select></label></section><section class='agent-embed-section'><h3 class='agent-embed-heading'>");
+    b.push_str("</select></label><div class='agent-embed-widget' id='embedWidgetFields' data-testid='embed-widget-fields' hidden><p class='agent-embed-tip'>");
+    b.push_str(t("These settings apply to the floating widget embed.", zh));
+    b.push_str("</p><div class='agent-embed-grid'><label class='agent-embed-field'><span>");
+    b.push_str(t("Widget title", zh));
+    b.push_str("</span><input id='embedWidgetTitle' data-testid='embed-widget-title' placeholder='Chat Support' oninput='embedSync()'></label><label class='agent-embed-field'><span>");
+    b.push_str(t("Subtitle", zh));
+    b.push_str("</span><input id='embedWidgetSubtitle' data-testid='embed-widget-subtitle' placeholder='We typically reply instantly' oninput='embedSync()'></label><label class='agent-embed-field'><span>");
+    b.push_str(t("Footer text", zh));
+    b.push_str("</span><input id='embedWidgetFooter' data-testid='embed-widget-footer' placeholder='Powered by RAGFlow' oninput='embedSync()'></label><label class='agent-embed-field'><span>");
+    b.push_str(t("Footer redirect link", zh));
+    b.push_str("</span><input id='embedWidgetFooterLink' data-testid='embed-widget-footer-link' placeholder='https://ragflow.io' oninput='embedSync()'></label>");
+    for (id, testid, label_en, label_zh, default) in [
+        (
+            "embedWidgetAccent",
+            "embed-widget-accent",
+            "Widget accent color",
+            "组件主色",
+            "#2563eb",
+        ),
+        (
+            "embedWidgetBackground",
+            "embed-widget-background",
+            "Widget background color",
+            "组件背景色",
+            "#ffffff",
+        ),
+        (
+            "embedWidgetText",
+            "embed-widget-text",
+            "Widget text color",
+            "组件文字颜色",
+            "#111827",
+        ),
+        (
+            "embedWidgetHeaderText",
+            "embed-widget-header-text",
+            "Header text color",
+            "头部文字颜色",
+            "#ffffff",
+        ),
+        (
+            "embedWidgetFooterText",
+            "embed-widget-footer-text",
+            "Footer text color",
+            "页脚文字颜色",
+            "#111827",
+        ),
+    ] {
+        b.push_str("<label class='agent-embed-field agent-embed-color'><span>");
+        b.push_str(if zh { label_zh } else { label_en });
+        b.push_str("</span><input type='color' id='");
+        b.push_str(id);
+        b.push_str("Picker' value='");
+        b.push_str(default);
+        b.push_str("' oninput='embedColorSync(\"");
+        b.push_str(id);
+        b.push_str("\")'><input id='");
+        b.push_str(id);
+        b.push_str("' data-testid='");
+        b.push_str(testid);
+        b.push_str("' value='");
+        b.push_str(default);
+        b.push_str("' oninput='embedColorSync(\"");
+        b.push_str(id);
+        b.push_str("Picker\")'></label>");
+    }
+    b.push_str("<label class='agent-embed-switch'><input type='checkbox' id='embedWidgetStreaming' data-testid='embed-widget-streaming' onchange='embedSync()'><span>");
+    b.push_str(t("Enable streaming responses", zh));
+    b.push_str("</span></label><label class='agent-embed-switch'><input type='checkbox' id='embedWidgetMuted' data-testid='embed-widget-muted' onchange='embedSync()'><span>");
+    b.push_str(t("Mute widget sounds", zh));
+    b.push_str("</span></label></div></div></section><section class='agent-embed-section'><h3 class='agent-embed-heading'>");
     b.push_str(t("Full embed", zh));
     b.push_str("</h3><p class='agent-embed-tip'>");
     b.push_str(t(
@@ -4183,9 +4362,17 @@ function embedDeleteToken(token){fetch('/api/v1/system/tokens/'+encodeURICompone
 function embedCopyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){embedStatus(EMBED_LABELS.copied,false)}).catch(function(){embedStatus(text,false)});return}embedStatus(text,false)}
 function embedHideAvatar(){var node=document.getElementById('embedHideAvatar');return !!(node&&node.checked)}
 function embedTheme(){var node=document.querySelector("input[name='embedTheme']:checked");return node?node.value:'light'}
-function embedUrl(){var token=embedActiveToken();var url=new URL(window.location.origin+'/agent/share');url.searchParams.set('shared_id',aid);url.searchParams.set('from','agent');url.searchParams.set('auth',token?token.beta:'');if(document.getElementById('embedPublished').checked)url.searchParams.set('release','true');if(embedHideAvatar())url.searchParams.set('visible_avatar','1');var locale=document.getElementById('embedLocale').value;if(locale)url.searchParams.set('locale',locale);url.searchParams.set('theme',embedTheme());return url.toString()}
-function embedSync(){var snippet=document.getElementById('embedSnippet');if(!snippet)return;var source=embedUrl();snippet.textContent='<iframe\n  src="'+source+'"\n  style="width: 100%; height: 100%; min-height: 600px"\n  frameborder="0"\n></iframe>\n'}
+function embedType(){var node=document.getElementById('embedType');return node?node.value:'fullscreen'}
+function embedColor(id){var node=document.getElementById(id);return node?embedNormalizeColor(node.value,node.defaultValue||'#000000'):''}
+function embedNormalizeColor(value,fallback){var text=String(value||'').trim();return /^#[0-9a-fA-F]{6}$/.test(text)?text.toLowerCase():fallback}
+function embedDarken(hex){var value=String(hex||'').replace('#','');var parts=[0,2,4].map(function(index){var channel=parseInt(value.substr(index,2),16);channel=Math.max(0,Math.round(channel*0.85));return ('0'+channel.toString(16)).slice(-2)});return '#'+parts.join('')}
+function embedColorSync(pickerId){var picker=document.getElementById(pickerId);if(!picker)return;var textId=pickerId.replace('Picker','');var text=document.getElementById(textId);if(!text)return;if(/^#[0-9a-fA-F]{6}$/.test(String(picker.value||''))){text.value=picker.value.toLowerCase()}else if(/^#[0-9a-fA-F]{6}$/.test(String(text.value||''))){picker.value=text.value.toLowerCase()}embedSync()}
+function embedWidgetFieldsSync(){var host=document.getElementById('embedWidgetFields');if(host)host.hidden=embedType()!=='widget'}
+function embedUrl(){var token=embedActiveToken();var url=new URL(window.location.origin+'/agent/share');if(embedType()==='widget'){url=new URL(window.location.origin+'/chats/widget')}url.searchParams.set('shared_id',aid);url.searchParams.set('from','agent');url.searchParams.set('auth',token?token.beta:'');if(document.getElementById('embedPublished').checked)url.searchParams.set('release','true');if(embedHideAvatar())url.searchParams.set('visible_avatar','1');var locale=document.getElementById('embedLocale').value;if(locale)url.searchParams.set('locale',locale);url.searchParams.set('theme',embedTheme());if(embedType()==='widget'){url.searchParams.set('mode','master');url.searchParams.set('streaming',document.getElementById('embedWidgetStreaming').checked?'true':'false');url.searchParams.set('muted',document.getElementById('embedWidgetMuted').checked?'true':'false');var title=document.getElementById('embedWidgetTitle').value.trim();if(title)url.searchParams.set('widget_title',title);var subtitle=document.getElementById('embedWidgetSubtitle').value.trim();if(subtitle)url.searchParams.set('widget_subtitle',subtitle);var footer=document.getElementById('embedWidgetFooter').value.trim();if(footer)url.searchParams.set('widget_footer',footer);var link=document.getElementById('embedWidgetFooterLink').value.trim();if(link)url.searchParams.set('widget_footer_link',link);[['widget_accent_color','embedWidgetAccent'],['widget_background_color','embedWidgetBackground'],['widget_text_color','embedWidgetText'],['widget_header_text_color','embedWidgetHeaderText'],['widget_footer_text_color','embedWidgetFooterText']].forEach(function(pair){url.searchParams.set(pair[0],embedColor(pair[1]))})}return url.toString()}
+function embedWidgetSnippet(source){return '<iframe\n  src="'+source+'"\n  style="position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;background:transparent;z-index:9999"\n  frameborder="0"\n  allow="microphone;camera"\n></iframe>\n<script>\nwindow.addEventListener(\'message\',e=>{\n  if(e.origin!==\''+window.location.origin+'\')return;\n  if(e.data.type===\'CREATE_CHAT_WINDOW\'){\n    if(document.getElementById(\'chat-win\'))return;\n    const i=document.createElement(\'iframe\');\n    i.id=\'chat-win\';i.src=e.data.src;\n    i.style.cssText=\'position:fixed;bottom:104px;right:24px;width:380px;height:500px;border:none;background:transparent;z-index:9998;display:none\';\n    i.frameBorder=\'0\';i.allow=\'microphone;camera\';\n    document.body.appendChild(i);\n  }else if(e.data.type===\'TOGGLE_CHAT\'){\n    const w=document.getElementById(\'chat-win\');\n    if(w)w.style.display=e.data.isOpen?\'block\':\'none\';\n  }else if(e.data.type===\'SCROLL_PASSTHROUGH\')window.scrollBy(0,e.data.deltaY);\n});\n<\/script>\n'}
+function embedSync(){embedWidgetFieldsSync();var snippet=document.getElementById('embedSnippet');if(!snippet)return;var source=embedUrl();snippet.textContent=embedType()==='widget'?embedWidgetSnippet(source):'<iframe\n  src="'+source+'"\n  style="width: 100%; height: 100%; min-height: 600px"\n  frameborder="0"\n></iframe>\n'}
 function embedCopySnippet(){var node=document.getElementById('embedSnippet');embedCopyText(node?node.textContent:'')}
+function embedPreviewType(){return embedType()==='widget'?'widget':'fullscreen'}
 function embedPreview(){window.open(embedUrl(),'_blank')}
 function embedBoot(){if(document.getElementById('embedModal'))embedLoadTokens()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',embedBoot);else embedBoot();
@@ -13713,6 +13900,99 @@ connection: close
         );
     }
 
+    /// Upstream `Routes.ChatWidget` (`/chats/widget`): the floating widget page
+    /// ships the three modes, the widget settings and the shared chat backends.
+    #[tokio::test]
+    async fn chat_widget_page_matches_upstream_floating_widget() {
+        let request = Request::builder()
+            .uri("/chats/widget?shared_id=agent-1&from=agent&auth=beta-1&mode=master&streaming=true&muted=true&widget_title=Support&widget_accent_color=%232563eb")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_widget_page(request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='fcw-root'",
+            "data-testid='fcw-button-wrap'",
+            "data-testid='fcw-button'",
+            "data-testid='fcw-badge'",
+            "data-testid='fcw-window'",
+            "data-testid='fcw-avatar'",
+            "data-testid='fcw-title'",
+            "data-testid='fcw-subtitle'",
+            "data-testid='fcw-minimize'",
+            "data-testid='fcw-close'",
+            "data-testid='fcw-messages'",
+            "data-testid='fcw-typing'",
+            "data-testid='fcw-input'",
+            "data-testid='fcw-send'",
+            "data-testid='fcw-footer'",
+        ] {
+            assert!(html.contains(marker), "widget marker {marker} missing");
+        }
+        // Transparent shell (upstream `pages/next-chats/widget/index.tsx`).
+        assert!(html.contains("html,body{background:transparent!important"));
+        // The three modes and the postMessage handshake.
+        for hook in [
+            "function fcwApplyMode()",
+            "FCW.mode=params.get('mode')||'full'",
+            "fcwPost({type:'CREATE_CHAT_WINDOW',src:src})",
+            "fcwPost({type:'TOGGLE_CHAT',isOpen:FCW.open})",
+            "event.data.type==='TOGGLE_CHAT'",
+            "mode=master",
+            "mode=window",
+        ] {
+            assert!(html.contains(hook), "widget hook {hook} missing");
+        }
+        // Widget settings travel in the URL, colours through custom properties.
+        for param in [
+            "widget_title",
+            "widget_subtitle",
+            "widget_footer",
+            "widget_footer_link",
+            "widget_accent_color",
+            "widget_background_color",
+            "widget_text_color",
+            "widget_header_text_color",
+            "widget_footer_text_color",
+            "'--fcw-accent'",
+            "'--fcw-accent-strong'",
+        ] {
+            assert!(html.contains(param), "widget param {param} missing");
+        }
+        assert!(html.contains("params.get('streaming')==='true'"));
+        assert!(html.contains("params.get('muted')==='true'"));
+        // Both chat backends, like upstream's `isFromAgent` switch.
+        assert!(html.contains("'/api/v1/agentbots/'+encodeURIComponent(FCW.sharedId)+'/inputs'"));
+        assert!(html.contains("'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/info'"));
+        assert!(
+            html.contains("'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/completions'")
+        );
+        // The `?auth=` bootstrap matches the share page.
+        assert!(html.contains("document.cookie='rayrag_token='+auth"));
+
+        let zh_request = Request::builder()
+            .uri("/chats/widget")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(chat_widget_page(zh_request).await).await;
+        for label in ["聊天支持", "我们通常会即时回复", "请输入消息..."] {
+            assert!(zh_html.contains(label), "zh widget label {label} missing");
+        }
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".fcw-button{",
+            ".fcw-window{",
+            ".fcw-message.user .fcw-message-body{",
+            ".fcw-footer{",
+            "@keyframes fcwBounce{",
+        ] {
+            assert!(css.contains(selector), "widget css {selector} missing");
+        }
+    }
+
     /// Upstream `Routes.DataflowResult`: the ingestion-log viewer ships the back
     /// header, the timeline strip, the document preview column, the step result
     /// panel with its format selector and rerun flow, and it reads the ingestion
@@ -13963,6 +14243,18 @@ connection: close
             "data-testid='embed-token-error'",
             "data-testid='embed-create-token'",
             "data-testid='embed-type'",
+            "data-testid='embed-widget-fields'",
+            "data-testid='embed-widget-title'",
+            "data-testid='embed-widget-subtitle'",
+            "data-testid='embed-widget-footer'",
+            "data-testid='embed-widget-footer-link'",
+            "data-testid='embed-widget-accent'",
+            "data-testid='embed-widget-background'",
+            "data-testid='embed-widget-text'",
+            "data-testid='embed-widget-header-text'",
+            "data-testid='embed-widget-footer-text'",
+            "data-testid='embed-widget-streaming'",
+            "data-testid='embed-widget-muted'",
             "data-testid='embed-theme-light'",
             "data-testid='embed-theme-dark'",
             "data-testid='embed-hide-avatar'",
@@ -13983,7 +14275,13 @@ connection: close
             "Embed type",
             "Fullscreen chat (traditional iframe)",
             "Floating widget (Intercom-style)",
-            "Coming soon",
+            "These settings apply to the floating widget embed.",
+            "Widget title",
+            "Subtitle",
+            "Footer text",
+            "Footer redirect link",
+            "Enable streaming responses",
+            "Mute widget sounds",
             "Theme",
             "Light",
             "Dark",
@@ -14004,6 +14302,15 @@ connection: close
         assert!(html.contains("url.searchParams.set('visible_avatar','1')"));
         assert!(html.contains("'<iframe\\n  src=\"'"));
         assert!(html.contains("min-height: 600px"));
+        // Upstream's widget branch: `/chats/widget?mode=master&…` plus the
+        // postMessage bootstrap that manages the `chat-win` iframe.
+        assert!(html.contains("'/chats/widget'"));
+        assert!(html.contains("url.searchParams.set('mode','master')"));
+        assert!(html.contains("function embedWidgetSnippet(source)"));
+        assert!(html.contains("CREATE_CHAT_WINDOW"));
+        assert!(html.contains("TOGGLE_CHAT"));
+        assert!(html.contains("position:fixed;bottom:0;right:0;width:100px;height:100px"));
+        assert!(html.contains("function embedColorSync(pickerId)"));
         // Token CRUD rides the upstream endpoints.
         assert!(html.contains("fetch('/api/v1/system/tokens'"));
         assert!(html.contains("fetch('/api/v1/system/tokens',{method:'POST'})"));
@@ -14015,6 +14322,8 @@ connection: close
             ".agent-embed-table{",
             ".agent-embed-code{",
             ".agent-embed-error[hidden]{display:none!important}",
+            ".agent-embed-widget{",
+            ".agent-embed-color input[type='color']{",
         ] {
             assert!(css.contains(selector), "embed css {selector} missing");
         }

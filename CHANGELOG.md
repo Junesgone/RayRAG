@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.42] — 2026-09-23（对标批次 v0.3.8t）
+
+### Added
+
+- **悬浮组件嵌入（floating widget）**（上游 `Routes.ChatWidget = /chats/widget` +
+  `pages/next-chats/widget/index.tsx` + `components/floating-chat-widget.tsx`）：嵌入对话框里此前标注
+  「即将推出」的悬浮组件类型现已可用，与上游一致支持三种模式：
+  - `mode=full`（默认）：圆角气泡 + 聊天面板同页；`mode=master`：只渲染气泡，按上游协议向父页面
+    `postMessage`，独立打开时自建 `chat-win` iframe 并响应 `TOGGLE_CHAT` 显示/隐藏；
+    `mode=window`：只渲染面板（供 master 的 iframe 使用）。
+  - 面板：渐变头部（头像 / 标题 / 副标题 + 最小化 / 关闭）、消息区、输入行、可选页脚横幅（可带跳转链接）、
+    未读气泡角标（>9 显示 `9+`）；有新回复时播放提示音，`muted=true` 静音。
+  - 全部组件设置走 URL 参数并逐项对齐上游默认值：`widget_title` / `widget_subtitle` / `widget_footer` /
+    `widget_footer_link` / `widget_accent_color`（#2563eb）/ `widget_background_color`（#ffffff）/
+    `widget_text_color`（#111827）/ `widget_header_text_color`（#ffffff）/ `widget_footer_text_color`
+    （#111827）/ `streaming` / `muted`；六位十六进制以外的取值按上游 `normalizeHexColor` 回退，头部渐变用
+    加深 15% 的强调色（上游 `darkenHexColor`）。
+  - 后端按 `from` 分流：`agent` 走 `agentbots`（inputs / completions），其余走 `chatbots`（info /
+    completions）；`streaming=true` 时按 SSE 增量渲染，否则等完整回答；`?auth=<beta>` 的凭据引导与分享页一致。
+- **嵌入对话框补齐悬浮组件设置**（上游 widget 标签页）：启用「悬浮组件（Intercom 风格）」选项，新增
+  Widget title / Subtitle / Footer text / Footer redirect link、五个成对的取色器 + 十六进制输入
+  （accent / background / text / header text / footer text）以及「启用流式响应」「静音组件提示音」开关；
+  生成的代码块改为上游那套两段式片段——外层 100×100 透明 iframe（`mode=master`）+ 页内脚本响应
+  `CREATE_CHAT_WINDOW` / `TOGGLE_CHAT` / `SCROLL_PASSTHROUGH` 并管理 `chat-win` iframe。
+
+### Notes
+
+- 台账记录的有意偏差：上游片段里的来源校验写成 `location.origin.replace(/:\d+/, ':9222')`（开发端口泄漏），
+  生产环境下会丢弃自己的 postMessage；RayRAG 改为校验真实 `window.location.origin`，使组件真正可用。
+- 新增回归：`web::kb_ui_tests::chat_widget_page_matches_upstream_floating_widget`（20 个标记 + 三模式
+  钩子 + 9 个设置参数 + 两个后端 + 中文面 + CSS），`agent_embed_modal_matches_upstream_embed_dialog` 增补
+  13 个悬浮组件标记、6 条文案与 7 条片段断言。
+- 全量 `cargo test --locked --lib` **1573 passed / 0 failed / 27 ignored**。
+
 ## [0.4.41] — 2026-09-23（对标批次 v0.3.8s）
 
 ### Added

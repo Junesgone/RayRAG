@@ -3652,6 +3652,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // RAGFlow 0.26.4 route parity: /chats (chat apps) and /searches (search apps).
         .route("/chats", get(crate::web::chat_apps_page))
         .route("/chats/share", get(crate::web::chat_share_page))
+        // Upstream `Routes.ChatWidget` (`/chats/widget`) — the floating widget the
+        // embed dialog's widget snippet mounts.
+        .route("/chats/widget", get(crate::web::chat_widget_page))
         .route("/chats/{id}", get(crate::web::chat_app_detail_page))
         .route("/searches", get(crate::web::search_apps_page))
         .route("/searches/{id}", get(crate::web::search_app_detail_page))

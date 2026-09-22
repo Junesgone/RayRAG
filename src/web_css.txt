@@ -770,3 +770,60 @@ result rendered through the JSON viewer). */
 .agent-explore-tool-label{display:block;margin-bottom:2px;color:var(--t2);font-size:11px}
 .agent-explore-tool-value{max-height:180px;margin:0;padding:6px 8px;overflow:auto;border:1px solid var(--bd);border-radius:4px;background:var(--bgc);color:var(--t);font-family:ui-monospace,monospace;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
 .agent-share-thinking-row.tool{margin-bottom:4px}
+
+/* Upstream `components/floating-chat-widget.tsx`: the Intercom-style bubble and
+panel. Every colour comes from the widget_* URL parameters through these custom
+properties. */
+.fcw-root{--fcw-accent:#2563eb;--fcw-accent-strong:#1d4ed8;--fcw-bg:#ffffff;--fcw-text:#111827;--fcw-header-text:#ffffff;--fcw-footer-text:#111827;font-family:inherit}
+.fcw-button-wrap{position:fixed;bottom:24px;right:24px;z-index:9999}
+.fcw-button-wrap[hidden]{display:none!important}
+.fcw-button{position:relative;display:flex;width:56px;height:56px;align-items:center;justify-content:center;border:0;border-radius:999px;background:var(--fcw-accent);color:#fff;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.24);transition:transform .2s}
+.fcw-button:hover{transform:scale(1.05)}
+.fcw-button-icon{display:inline-flex}
+.fcw-badge{position:absolute;top:-8px;right:-8px;display:flex;min-width:24px;height:24px;align-items:center;justify-content:center;padding:0 4px;border-radius:999px;background:#ef4444;color:#fff;font-size:12px;font-weight:700}
+.fcw-badge[hidden]{display:none!important}
+.fcw-window{position:fixed;bottom:24px;right:24px;z-index:9998;display:flex;width:380px;height:500px;flex-direction:column;overflow:hidden;border-radius:16px;background:var(--fcw-bg);color:var(--fcw-text);box-shadow:0 18px 48px rgba(0,0,0,.28)}
+.fcw-window[hidden]{display:none!important}
+.fcw-root[data-mode='window'] .fcw-window{top:0;right:auto;bottom:auto;left:0}
+.fcw-header{display:flex;align-items:center;gap:10px;padding:16px;background:linear-gradient(to right,var(--fcw-accent),var(--fcw-accent-strong));color:var(--fcw-header-text)}
+.fcw-avatar{display:inline-flex;width:32px;height:32px;flex:0 0 32px;align-items:center;justify-content:center;border-radius:999px;background:rgba(255,255,255,.22);font-weight:600;overflow:hidden}
+.fcw-avatar img{width:100%;height:100%;object-fit:cover}
+.fcw-identity{flex:1;min-width:0}
+.fcw-title{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcw-subtitle{font-size:12px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcw-actions{display:flex;align-items:center;gap:4px}
+.fcw-icon{display:inline-flex;align-items:center;justify-content:center;padding:4px;border:0;border-radius:999px;background:transparent;color:var(--fcw-header-text);cursor:pointer}
+.fcw-icon:hover{background:rgba(255,255,255,.18)}
+.fcw-messages{display:flex;flex:1;min-height:0;flex-direction:column;gap:10px;padding:16px;overflow:auto}
+.fcw-message{display:flex;max-width:88%}
+.fcw-message.user{align-self:flex-end}
+.fcw-message.assistant{align-self:flex-start}
+.fcw-message-body{padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.fcw-message.assistant .fcw-message-body{background:color-mix(in srgb,var(--fcw-accent) 12%,transparent);color:var(--fcw-text)}
+.fcw-message.user .fcw-message-body{background:var(--fcw-accent);color:#fff}
+.fcw-typing{display:flex;gap:4px;padding:0 20px 8px}
+.fcw-typing[hidden]{display:none!important}
+.fcw-typing span{width:8px;height:8px;border-radius:999px;background:var(--fcw-accent);opacity:.6;animation:fcwBounce 1s infinite}
+.fcw-typing span:nth-child(2){animation-delay:.15s}
+.fcw-typing span:nth-child(3){animation-delay:.3s}
+@keyframes fcwBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.fcw-input{display:flex;align-items:flex-end;gap:12px;padding:16px;border-top:1px solid rgba(0,0,0,.08)}
+.fcw-textarea{flex:1;min-height:42px;max-height:120px;padding:10px 16px;border:1px solid rgba(0,0,0,.15);border-radius:16px;background:transparent;color:var(--fcw-text);font:inherit;font-size:14px;resize:none;outline:0}
+.fcw-textarea:focus{border-color:var(--fcw-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fcw-accent) 35%,transparent)}
+.fcw-send{display:inline-flex;width:42px;height:42px;align-items:center;justify-content:center;border:0;border-radius:999px;background:var(--fcw-accent);color:#fff;cursor:pointer}
+.fcw-send:disabled{opacity:.5;cursor:not-allowed}
+.fcw-send svg{width:18px;height:18px}
+.fcw-footer{margin:0;padding:12px 16px;background:var(--fcw-accent);color:var(--fcw-footer-text);font-size:12px;text-align:center}
+.fcw-footer[hidden]{display:none!important}
+.fcw-footer a{color:inherit;text-decoration:underline}
+
+/* Upstream `components/embed-dialog/index.tsx` widget tab: the settings grid with
+the paired colour picker + hex input. */
+.agent-embed-widget{margin-top:12px}
+.agent-embed-widget[hidden]{display:none!important}
+.agent-embed-grid{display:flex;flex-direction:column;gap:8px}
+.agent-embed-grid .agent-embed-field{margin-top:0}
+.agent-embed-grid .agent-embed-field>span:first-child{flex:0 0 160px}
+.agent-embed-color{gap:8px}
+.agent-embed-color input[type='color']{flex:0 0 64px;height:32px;padding:2px;border:1px solid var(--bd);border-radius:4px;background:transparent}
+.agent-embed-color input[type='text'],.agent-embed-color input:not([type]){flex:1;min-width:0}
