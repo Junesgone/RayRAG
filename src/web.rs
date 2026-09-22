@@ -14075,7 +14075,11 @@ connection: close
         assert!(html.contains("function dataflowIsToolSample(sample)"));
         assert!(html.contains("function dataflowToolName(name)"));
         assert!(html.contains("['add_memory','gen_citations']"));
-        assert!(html.contains("function dataflowToolFields(sample)"));
+        assert!(html.contains("function dataflowToolFields(sample,labels)"));
+        // The helper takes the page's own label table: the explore page has
+        // EXPLORE_LABELS, the share page SHARE_LABELS, and only
+        // /dataflow-result injects DATAFLOW_LABELS.
+        assert!(html.contains("dataflowToolFields(sample,EXPLORE_LABELS)"));
         // Upstream's first paint: the no-session placeholder plus the disabled
         // send button (`useSendButtonDisabled`).
         assert!(html.contains(

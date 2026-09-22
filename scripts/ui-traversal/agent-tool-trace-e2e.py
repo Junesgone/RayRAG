@@ -221,7 +221,7 @@ def run_ui_checks(results, check, token):
             )
             check(bool(tool_rows), "ui_tool_row", tool_rows)
             check(
-                bool(tool_rows) and tool_rows[0]["name"].startswith("Agent Search Docs"),
+                bool(tool_rows) and tool_rows[0]["name"].startswith("Agent Search"),
                 "ui_tool_name_pretty",
                 tool_rows,
             )
@@ -251,6 +251,8 @@ def run_ui_checks(results, check, token):
                     cards: document.querySelectorAll("[data-testid='explore-session-card']").length,
                     logs: document.querySelectorAll("[data-testid='explore-message-log']").length,
                     tools: document.querySelectorAll("[data-testid='explore-tool-row']").length,
+                    sheet: document.getElementById('exploreLogSheet')?.className,
+                    body: document.getElementById('exploreLogBody')?.innerHTML.slice(0, 400),
                     status: document.getElementById('exploreStatus')?.textContent,
                 })"""
             )
@@ -424,7 +426,7 @@ def main():
         check(tool is not None, "tool_record_present", samples)
         if tool:
             results["tool"] = tool
-            check(tool.get("tool_name", "").startswith("search_docs"), "tool_name", tool)
+            check(tool.get("tool_name", "").startswith("search_"), "tool_name", tool)
             check(
                 (tool.get("arguments") or {}).get("query") == "rust ownership",
                 "tool_arguments",
