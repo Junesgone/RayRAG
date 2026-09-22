@@ -597,3 +597,70 @@ send button is hidden while a run streams, the stop button the rest of the time)
 .agent-explore-send svg{width:16px;height:16px}
 .agent-explore-stop span{display:block;width:10px;height:10px;background:#fff}
 .agent-explore-status{min-height:16px;margin:6px 0 0;color:var(--tm);font-size:12px}
+
+/* Upstream `pages/agent/share/index.tsx` via `components/embed-container.tsx`:
+the shared/embedded agent chat — brand block, the rounded frame with its
+avatar+title header and `Reset` button, and the chat body. */
+.agent-share-page{display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}
+.agent-share-brand{position:fixed;left:12px;top:48px;display:none;align-items:center;gap:8px;width:160px}
+.agent-share-brand img{width:32px;height:32px}
+.agent-share-brand span{font-size:24px;font-weight:700;color:var(--t)}
+@media (min-width:1280px){.agent-share-brand{display:flex}}
+.agent-share-frame{display:flex;flex-direction:column;width:80vw;height:80vh;border:1px solid var(--bd);border-radius:8px;background:var(--bg);overflow:hidden}
+.agent-share-head{position:relative;display:flex;align-items:center;justify-content:space-between;padding:12px;border-bottom:1px solid var(--bd)}
+.agent-share-identity{display:flex;align-items:center;gap:8px}
+.agent-share-avatar{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:999px;background:var(--nab);color:var(--t);font-weight:600;overflow:hidden}
+.agent-share-avatar img{width:100%;height:100%;object-fit:cover}
+.agent-share-title{font-size:20px;color:var(--t)}
+.agent-share-reset{display:inline-flex;align-items:center;gap:6px;font-size:14px}
+.agent-share-body{display:flex;flex:1;min-height:0;flex-direction:column}
+.agent-share-messages{display:flex;flex:1;min-height:0;flex-direction:column;gap:16px;padding:16px;overflow:auto}
+.agent-share-msg{display:flex;flex-direction:column;gap:6px;max-width:85%}
+.agent-share-msg.user{align-self:flex-end;align-items:flex-end}
+.agent-share-msg.assistant{align-self:flex-start}
+.agent-share-msg.no-avatar .agent-share-msg-head{display:none}
+.agent-share-msg-head{color:var(--t2);font-size:12px}
+.agent-share-msg-body{padding:10px 14px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.agent-share-msg.user .agent-share-msg-body{background:var(--nab)}
+.agent-share-refs{margin-top:6px;font-size:12px;color:var(--t2)}
+.agent-share-ref{margin-top:4px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px}
+.agent-share-input{padding:16px}
+.agent-share-input-row{display:flex;align-items:flex-end;gap:8px;padding:8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc)}
+.agent-share-textarea{flex:1;min-height:38px;max-height:160px;padding:8px;border:0;background:transparent;color:var(--t);font:inherit;font-size:14px;resize:vertical;outline:0}
+.agent-share-send,.agent-share-stop{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:999px;background:var(--p);color:#fff;cursor:pointer}
+.agent-share-send:disabled{opacity:.5;cursor:not-allowed}
+.agent-share-send svg{width:16px;height:16px}
+.agent-share-send[hidden],.agent-share-stop[hidden]{display:none!important}
+.agent-share-stop span{display:block;width:10px;height:10px;background:#fff}
+.agent-share-status{min-height:16px;margin:6px 0 0;color:var(--tm);font-size:12px}
+.agent-share-parameter{max-width:520px}
+.agent-share-parameter-body{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.agent-share-parameter-field{display:flex;flex-direction:column;gap:4px;color:var(--t2);font-size:13px}
+.agent-share-parameter-actions{display:flex;justify-content:flex-end;gap:8px}
+/* Upstream `components/embed-dialog/index.tsx`: the token table, the embed
+switches and the iframe snippet box. */
+.agent-embed-modal{max-width:720px}
+.agent-embed-section{margin-top:16px;padding-top:16px;border-top:1px solid var(--bd)}
+.agent-embed-heading{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--t);letter-spacing:.04em}
+.agent-embed-error{margin:0 0 8px;color:var(--d);font-size:13px}
+.agent-embed-error[hidden]{display:none!important}
+.agent-embed-table-wrap{max-height:180px;overflow:auto;border:1px solid var(--bd);border-radius:var(--rs)}
+.agent-embed-table{width:100%;border-collapse:collapse;font-size:13px}
+.agent-embed-table th,.agent-embed-table td{padding:8px 10px;border-bottom:1px solid var(--bd);text-align:left;color:var(--t)}
+.agent-embed-table th{color:var(--t2);font-weight:500}
+.agent-embed-token{word-break:break-all;font-family:ui-monospace,monospace;font-size:12px}
+.agent-embed-icon{padding:2px 6px;border:0;border-radius:4px;background:transparent;color:var(--t2);cursor:pointer}
+.agent-embed-icon:hover{background:var(--bgch);color:var(--t)}
+.agent-embed-icon.danger:hover{color:var(--d)}
+.agent-embed-time{color:var(--t2);font-size:12px}
+.agent-embed-field{display:flex;align-items:center;gap:12px;margin-top:10px;color:var(--t2);font-size:13px}
+.agent-embed-field>span:first-child{flex:0 0 120px}
+.agent-embed-field select{flex:1;min-width:0}
+.agent-embed-radios{display:flex;align-items:center;gap:16px}
+.agent-embed-radio{display:inline-flex;align-items:center;gap:6px;color:var(--t);font-size:13px}
+.agent-embed-switch{display:flex;align-items:center;gap:8px;margin-top:10px;color:var(--t);font-size:13px}
+.agent-embed-tip{margin:6px 0 0;color:var(--tm);font-size:12px}
+.agent-embed-code{margin-top:8px;padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);overflow:auto}
+.agent-embed-code code{color:var(--t);font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.agent-embed-actions{display:flex;gap:8px;margin-top:8px}
+.agent-embed-status{min-height:16px;margin:8px 0 0;color:var(--tm);font-size:12px}

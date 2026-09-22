@@ -8306,6 +8306,86 @@ fn agent_not_found() -> axum::response::Response {
         .into_response()
 }
 
+/// `bot_api.py::begin_inputs` — `GET /api/v1/agentbots/{agent_id}/inputs`.
+///
+/// The embedded/share surface (`pages/agent/share/index.tsx` through
+/// `useFetchExternalAgentInputs`) reads the canvas title, avatar, Begin form,
+/// prologue and dialogue mode from here; the caller authenticates with the
+/// tenant's `APIToken.beta` secret. Upstream answers
+/// `f"Can't find agent by ID: {agent_id}"` when the tenant cannot reach the
+/// canvas.
+pub async fn agent_bot_inputs(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(agent_id): Path<String>,
+) -> axum::response::Response {
+    let Some(agent) = state.agents.get_accessible(
+        &agent_id,
+        &auth.user_id,
+        auth.is_admin,
+        |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+    ) else {
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": format!("Can't find agent by ID: {agent_id}"),
+            "data": null,
+        }))
+        .into_response();
+    };
+    // `canvas.get_component_input_form("begin")`; a canvas without a Begin form
+    // still answers with an empty object instead of failing the embed.
+    let inputs = crate::agent::agent_component_input_form(&agent.dsl, "begin")
+        .map(|form| form.into_owned())
+        .unwrap_or_default();
+    let prologue = crate::agent::extract_prologue(&agent.dsl).unwrap_or_default();
+    let mode = crate::agent::extract_mode(&agent.dsl).unwrap_or_default();
+    Json(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": {
+            "title": agent.name,
+            "avatar": agent.avatar,
+            "inputs": inputs,
+            "prologue": prologue,
+            "mode": mode,
+        }
+    }))
+    .into_response()
+}
+
+/// `bot_api.py::agent_bot_completions` —
+/// `POST /api/v1/agentbots/{agent_id}/completions`.
+///
+/// Upstream runs the same `agent.completion(tenant_id, agent_id, **req)`
+/// generator as `/agents/<id>/completions`; only the access gate and the SSE
+/// envelope differ, so RayRAG reuses the agent chat handler and keeps the
+/// upstream `Can't find agent by ID` rejection in front of it.
+pub async fn agent_bot_completions(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(agent_id): Path<String>,
+    Json(body): Json<AgentChatRequest>,
+) -> axum::response::Response {
+    if state
+        .agents
+        .get_accessible(
+            &agent_id,
+            &auth.user_id,
+            auth.is_admin,
+            |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+        )
+        .is_none()
+    {
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": format!("Can't find agent by ID: {agent_id}"),
+            "data": null,
+        }))
+        .into_response();
+    }
+    agent_complete(State(state), Extension(auth), Path(agent_id), Json(body)).await
+}
+
 fn agent_bad_request(error: anyhow::Error) -> axum::response::Response {
     (
         axum::http::StatusCode::BAD_REQUEST,

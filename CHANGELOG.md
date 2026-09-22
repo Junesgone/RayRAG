@@ -2,6 +2,49 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.37] — 2026-09-23（对标批次 v0.3.8o）
+
+### Added
+
+- **共享 / 嵌入智能体（`/agent/share`）上线**（上游 `Routes.AgentShare` + `pages/agent/share/index.tsx`
+  + `components/embed-container.tsx` + `hooks/use-send-shared-message.ts`）：此前 `/agent/share` 会被
+  `/agent/:id` 当成智能体 ID 命中，渲染成编辑器页面；现在它是上游那个可嵌入的独立聊天页：
+  - `EmbedContainer` 外壳：品牌块（`/logo.svg` + RAGFlow）、带边框的圆角容器、头像 + 标题的头部行、
+    右侧 `Reset` 按钮（上游硬编码英文，未翻译）；
+  - 会话区：开场白（Begin 组件的 prologue）作为第一条消息、消息气泡、引用折叠块、底部输入框
+    （占位符取上游 `chat.messagePlaceholder`：`Type your message here...` / `请输入消息...`），
+    生成中可以停止；
+  - Begin 组件的输入项会先弹出上游的 **`Parameter` 对话框**（无关闭按钮、无页脚、由 `Submit` 提交），
+    提交后的值随请求的 `inputs` 一起发送；
+  - `Reset` 按上游语义清空会话并恢复开场白（`resetSession()` + `clearEventList()` + 重新弹参数框）；
+  - URL 参数完全按上游 `embed-dialog` 的构造器：`shared_id` / `from` / `auth` /
+    `release=true` / `visible_avatar=1`（隐藏头像）/ `locale` / `theme`，以及 `data_*` 透传；
+  - `?auth=<beta>` 的凭据引导按 RayRAG 的方式落地：写入 `rayrag_token` cookie（并同步 localStorage）
+    后从地址栏移除（对应上游 `authorizationUtil.setAuthorization`）。
+- **API Token 接口**（上游 `system_api.py`：`/api/v1/system/tokens` GET/POST/DELETE）：
+  每个 token 行带 `token`（`ragflow-…`）与 **`beta`**（32 位）两个凭据，列表对历史缺 `beta` 的行
+  自动补齐并持久化（上游 `list_token` 的 backfill，前端没有 beta 就不让打开嵌入），删除按
+  `(tenant_id, token)` 精确匹配。
+- **`beta` 凭据即 bearer**：请求中间件在会话 token 之外，按上游 `AUTH_BETA` 的语义用
+  `APIToken.query(beta=…)` 反查所属账号；匿名嵌入页因此无需登录即可对话。
+- **`agentbots` 运行时接口**（上游 `bot_api.py`）：`GET /api/v1/agentbots/{id}/inputs` 返回
+  `{title, avatar, inputs, prologue, mode}`，`POST /api/v1/agentbots/{id}/completions` 复用智能体
+  运行链路（流式 SSE），画布不可达时回上游文案 `Can't find agent by ID: <id>`。
+- **编辑器「🔗 嵌入网站」入口**（上游 Management 下拉里的 `common.embedIntoSite` →
+  `components/embed-dialog/index.tsx`）：对话框内含 API KEY 表格（复制 / 删除 / 创建新密钥）、
+  嵌入类型（全屏 iframe；悬浮组件按上游标为即将推出）、主题（浅色/深色）、隐藏头像、已发布
+  （勾选后 URL 带 `release=true`，含上游 tooltip 文案）、界面语言（上游 17 种），并实时生成
+  上游同款全屏 iframe 代码块，支持复制与预览。
+
+### Notes
+
+- 新增回归：`server::tests::system_tokens_and_agentbots_match_upstream`（造 token → 仅用 beta 调
+  agentbots inputs/completions → 未知 beta 401 → 删除后失效）、
+  `web::kb_ui_tests::agent_share_page_matches_upstream_embed_container`、
+  `web::kb_ui_tests::agent_embed_modal_matches_upstream_embed_dialog`，以及 `api::tokens` 三条
+  存储层用例（beta 形态、backfill 持久化、租户隔离与删除）。
+- 全量 `cargo test --locked --lib` **1564 passed / 0 failed / 27 ignored**。
+
 ## [0.4.36] — 2026-09-23（对标批次 v0.3.8n）
 
 ### Added

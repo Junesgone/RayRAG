@@ -71,6 +71,10 @@ pub struct AppState {
     pub memory_messages: Arc<crate::api::joint_services::MemoryMessageService>,
     pub skill_index: Arc<crate::api::skill_index::SkillIndexStore>,
     pub system_settings: Arc<crate::api::system_settings::SystemSettingsStore>,
+    /// RAGFlow `APIToken` rows (`/api/v1/system/tokens`). The `beta` secret of
+    /// each row is the credential the embed/share surfaces present as a bearer
+    /// token, so this store also serves the AUTH_BETA lookup.
+    pub api_tokens: Arc<crate::api::tokens::ApiTokenStore>,
     /// Effective sign-up switch — upstream `settings.REGISTER_ENABLED` (plus the
     /// legacy `RAYRAG_ALLOW_REGISTRATION` opt-in), resolved once at startup by
     /// `settings::resolve_register_enabled`. Read by both
@@ -3329,12 +3333,29 @@ async fn require_api_auth(
                 })
         });
 
-    if let Some(user_id) = token
-        .as_deref()
-        .and_then(|token| state.users.validate_token(token))
-    {
+    // A session token first (`UserService.query(access_token=...)`); when it is
+    // not one, the credential may be an `APIToken.beta` secret — upstream
+    // `login_required(auth_types=AUTH_BETA)` resolves it through
+    // `APIToken.query(beta=auth_token)` and loads the owner
+    // (`UserService.query(id=objs[0].tenant_id)`). The embed/share surfaces
+    // authenticate exactly this way: the URL carries `?auth=<beta>` and every
+    // follow-up request sends `Authorization: Bearer <beta>`.
+    let resolved = token.as_deref().and_then(|token| {
+        state
+            .users
+            .validate_token(token)
+            .or_else(|| {
+                let tenant_id = state.api_tokens.tenant_for_beta(token)?;
+                // The personal tenant id is the owner's user id, so the token's
+                // tenant must still resolve to a live account.
+                state.users.get_user_by_id(&tenant_id)?;
+                Some(tenant_id)
+            })
+            .map(|user_id| (user_id, token.to_string()))
+    });
+
+    if let Some((user_id, token)) = resolved {
         let is_admin = state.users.is_admin(&user_id);
-        let token = token.unwrap_or_default();
         let mut request = request;
         request.extensions_mut().insert(AuthContext {
             user_id,
@@ -3550,6 +3571,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::web::search_app_detail_page),
         )
         .route("/search/share", get(crate::web::search_share_page))
+        // Upstream `Routes.AgentShare` (`/agent/share?shared_id=…&from=agent&auth=<beta>`).
+        .route("/agent/share", get(crate::web::agent_share_page))
         .route("/document/{doc_id}", get(crate::web::document_viewer_page))
         // Upstream `Routes.Chunk` subtree (`pages/chunk/**`): the standalone
         // chunk workbench with its three panel routes.
@@ -4171,6 +4194,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/agents/chat/completions",
             post(crate::api::features::agent_chat_completion),
         )
+        // `bot_api.py` — the embedded/shared agent surface. It authenticates
+        // with the tenant's `APIToken.beta` secret (`?auth=<beta>` in the embed
+        // URL becomes `Authorization: Bearer <beta>`) and exposes the Begin
+        // form plus the streaming completion for that canvas.
+        .route(
+            "/api/v1/agentbots/{agent_id}/inputs",
+            get(crate::api::features::agent_bot_inputs),
+        )
+        .route(
+            "/api/v1/agentbots/{agent_id}/completions",
+            post(crate::api::features::agent_bot_completions),
+        )
         .route(
             "/api/v1/agents/{id}/versions",
             get(crate::api::features::list_agent_versions),
@@ -4440,6 +4475,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/system/api_keys/{key}",
             axum::routing::delete(delete_my_api_key),
         )
+        // RAGFlow `system_api.py` API-token surface (`web/src/utils/api.ts`:
+        // `getSystemTokenList` / `createSystemToken` / `removeSystemToken`).
+        // Each row also carries the `beta` secret the embed/share surfaces use
+        // as a bearer credential.
+        .route(
+            "/api/v1/system/tokens",
+            get(crate::api::tokens::list_tokens).post(crate::api::tokens::create_token),
+        )
+        .route(
+            "/api/v1/system/tokens/{token}",
+            axum::routing::delete(crate::api::tokens::delete_token),
+        )
         .route("/api/v1/llm/models", get(crate::api::system::list_models))
         .route(
             "/api/v1/llm/factories",
@@ -4555,6 +4602,7 @@ pub async fn run(
     let memory_messages_path = format!("{}/../memory_messages.json", static_dir);
     let skill_index_path = format!("{}/../skill_index.json", static_dir);
     let system_settings_path = format!("{}/../system_settings.json", static_dir);
+    let api_tokens_path = format!("{}/../api_tokens.json", static_dir);
     let langfuse_path = format!("{}/../langfuse.json", static_dir);
     let mcp_servers_path = format!("{}/../mcp_servers.json", static_dir);
     let chat_channels_path = format!("{}/../chat_channels.json", static_dir);
@@ -4688,6 +4736,7 @@ pub async fn run(
         system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::new(
             &system_settings_path,
         )?),
+        api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::new(&api_tokens_path)?),
         register_enabled: crate::settings::Settings::from_env().register_enabled,
         disable_password_login: crate::settings::Settings::from_env().disable_password_login,
         oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -4946,6 +4995,7 @@ mod tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -6196,6 +6246,7 @@ mod tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -14208,5 +14259,200 @@ mod tests {
         let missing = response_json(missing).await;
         assert_eq!(missing["code"], 102);
         assert_eq!(missing["message"], "Agent not found.");
+    }
+    /// RAGFlow `system_api.py` API tokens plus the `bot_api.py` agentbot
+    /// surface: a token's `beta` secret is a bearer credential of its own, and
+    /// the embedded agent chat (`/agentbots/{id}/inputs` and
+    /// `/agentbots/{id}/completions`) answers to it without a user session.
+    #[tokio::test]
+    async fn system_tokens_and_agentbots_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Embedded Agent",
+                            "dsl": {
+                                "graph": {"nodes": [{"id": "begin", "type": "beginNode"}], "edges": []},
+                                "components": {
+                                    "begin": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "mode": "conversational",
+                                            "prologue": "Hello from the embed",
+                                            "input_form": {
+                                                "query": {"type": "line", "name": "Query"}
+                                            }
+                                        },
+                                        "upstream": [],
+                                        "downstream": ["message"]
+                                    },
+                                    "message": {
+                                        "obj": {
+                                            "component_name": "Message",
+                                            "params": {"content": ["embedded answer"]}
+                                        },
+                                        "upstream": ["begin"],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // `POST /system/tokens` — upstream mints `ragflow-<token>` plus a beta.
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/system/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0);
+        let token = created["data"]["token"].as_str().unwrap().to_owned();
+        let beta = created["data"]["beta"].as_str().unwrap().to_owned();
+        assert!(token.starts_with("ragflow-"), "{token}");
+        assert_eq!(beta.len(), 32, "{beta}");
+        assert!(created["data"]["update_time"].is_null());
+        assert!(created["data"]["update_date"].is_null());
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["data"][0]["beta"], beta);
+
+        // The beta alone authenticates the embedded surface: no session token in
+        // the Authorization header, exactly like `?auth=<beta>` in the embed URL.
+        let inputs = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/inputs"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(inputs.status(), StatusCode::OK);
+        let inputs = response_json(inputs).await;
+        assert_eq!(inputs["code"], 0);
+        assert_eq!(inputs["data"]["title"], "Embedded Agent");
+        assert_eq!(inputs["data"]["prologue"], "Hello from the embed");
+        assert_eq!(inputs["data"]["mode"], "conversational");
+        assert_eq!(inputs["data"]["inputs"]["query"]["type"], "line");
+
+        let completion = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agentbots/{agent_id}/completions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"stream": false, "query": "hi"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(completion.status(), StatusCode::OK);
+        let completion = response_json(completion).await;
+        assert_eq!(completion["code"], 0);
+        assert_eq!(completion["data"]["answer"], "embedded answer");
+
+        // Unknown beta secrets stay unauthorized.
+        let rejected = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/inputs"))
+                    .header(header::AUTHORIZATION, "Bearer deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+        // An unknown canvas keeps upstream's `Can't find agent by ID` answer.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agentbots/nope/inputs")
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Can't find agent by ID: nope");
+
+        // `DELETE /system/tokens/{token}` revokes both credentials.
+        let removed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/system/tokens/{token}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(response_json(removed).await["data"], true);
+        let revoked = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/inputs"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -270,6 +270,22 @@ fn t(k: &str, zh: bool) -> &str {
         // conversational agent; the four other Launch labels are page-local
         // because their Chinese text is not shared with any other surface.
         "Launch" => "探索",
+        // Upstream embed-dialog copy (`chat.*` namespace).
+        "Embed into webpage" => "嵌入网站",
+        "Please create API key first." => "请先创建 API Token!",
+        "Published" => "已发布",
+        "Use the published version for this embed. When enabled, the generated URL includes release=true." => {
+            "在嵌入中使用已发布的版本。启用后，生成的 URL 将包含 release=true。"
+        }
+        "Locale" => "地区",
+        "Full embed" => "全屏嵌入",
+        "Embed the following iframe into your website at the desired location" => {
+            "将以下iframe嵌入您的网站处于所需位置"
+        }
+        "Preview" => "预览",
+        // Upstream `chat.messagePlaceholder`, the placeholder of every
+        // `NextMessageInput` (share embed, Launch surface).
+        "Type your message here..." => "请输入消息...",
         "All agents" => "全部智能体",
         "Session ID" => "会话 ID",
         "Type" => "类型",
@@ -3306,6 +3322,11 @@ pub async fn agent_detail_page(
         "</button><button class='btn btn-o' data-testid='agent-launch' onclick='launchAgent()'>🚀 ",
     );
     b.push_str(t("Launch", zh));
+    b.push_str("</button><button class='btn btn-o' data-testid='agent-embed' onclick='openEmbedModal()'>🔗 ");
+    // Upstream keeps this entry inside the Management dropdown
+    // (`AgentDropdownMenuItem onClick={showEmbedModal}` → `common.embedIntoSite`);
+    // RayRAG's toolbar is flat, so it sits next to Management with the same label.
+    b.push_str(t("Embed into webpage", zh));
     b.push_str("</button><button class='btn btn-o' data-testid='agent-management' onclick='openVersions()'>⚙ ");
     b.push_str(t("Management", zh));
     b.push_str("</button><button class='btn btn-o' data-testid='agent-log-link' onclick=\"location.href='/agent-log-page/");
@@ -3339,6 +3360,7 @@ pub async fn agent_detail_page(
     b.push_str("</button></div><div style='display:flex;justify-content:flex-end;margin-top:10px'><button class='btn btn-o' onclick=document.getElementById('chatTestModal').classList.remove('show')>");
     b.push_str(t("Close", zh));
     b.push_str("</button></div></div></div>");
+    push_agent_embed_modal(&mut b, zh);
     b.push_str("<div style='display:flex;gap:6px;margin-top:10px;align-items:center'><button class='btn btn-o btn-sm' title='Zoom In' onclick='zoomCanvas(1)'>🔍+</button><button class='btn btn-o btn-sm' title='Zoom Out' onclick='zoomCanvas(-1)'>🔍−</button><button class='btn btn-o btn-sm' title='Fit View' onclick='fitCanvas()'>⛶</button><button class='btn btn-o btn-sm' title='Toggle Interactivity' onclick='toggleInter()'>✋</button><span style='color:var(--tm);font-size:12px'>Begin · Conversational</span></div>");
     b.push_str("<div class='st' style='margin-top:16px'><div class='sc'><span class='lbl'>ID</span><span class='val' id='agentId' style='font-size:13px'>-</span></div><div class='sc'><span class='lbl'>KBs</span><span class='val' id='agentKbs'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='agentStatus' style='font-size:15px'>-</span></div></div>");
     b.push_str("<div style='display:flex;gap:16px;margin-top:16px;align-items:flex-start'><div class='card' style='width:230px;flex-shrink:0'><h2>");
@@ -3640,7 +3662,9 @@ pub async fn agent_explore_page(
     } else {
         "Are you sure to delete it ?"
     };
-    let send_label = t("Send message", zh);
+    // Upstream `SessionChat` renders the same `NextMessageInput` as the share
+    // embed, so the box carries `chat.messagePlaceholder` here too.
+    let send_label = t("Type your message here...", zh);
     let mut b = String::with_capacity(16384);
     b.push_str("<div class='agent-explore-page' data-agent-id='");
     b.push_str(&html_escape(&agent_id));
@@ -3748,6 +3772,252 @@ function exploreSend(){var input=document.getElementById('exploreInput');if(!inp
 function explorePostSend(value,sessionId){var host=document.getElementById('exploreMessages');if(!host)return;var placeholder=host.querySelector('.agent-explore-placeholder');if(placeholder)placeholder.remove();host.appendChild(exploreMessageNode({role:'user',content:value}));var answer=document.createElement('article');answer.className='agent-explore-msg assistant';answer.setAttribute('data-testid','explore-live-answer');var head=document.createElement('div');head.className='agent-explore-msg-head';head.textContent='Agent';var body=document.createElement('div');body.className='agent-explore-msg-body';body.textContent=EXPLORE_LABELS.running;answer.appendChild(head);answer.appendChild(body);host.appendChild(answer);host.scrollTop=host.scrollHeight;var controller=new AbortController();EXPLORE_STREAM=controller;exploreStreaming(true);document.getElementById('exploreInput').value='';var payload={agent_id:EXPLORE_AGENT,stream:true,query:value,inputs:{},session_id:sessionId,'openai-compatible':false,running_hint_text:EXPLORE_LABELS.running};fetch('/api/v1/agents/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal}).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);var reader=response.body.getReader();var decoder=new TextDecoder();var buffer='';var answer_text='';var references=[];body.textContent='';function pump(){return reader.read().then(function(chunk){if(chunk.done){exploreStreaming(false);EXPLORE_STREAM=null;if(references.length)answer.appendChild(document.createRange().createContextualFragment(exploreReferenceHtml(references)));if(!answer_text)body.textContent=EXPLORE_LABELS.failed;exploreLoadSessions();return}buffer+=decoder.decode(chunk.value,{stream:true});var lines=buffer.split('\n');buffer=lines.pop();lines.forEach(function(line){if(line.indexOf('data:')!==0)return;var raw=line.slice(5).trim();if(!raw||raw==='[DONE]')return;var event=null;try{event=JSON.parse(raw)}catch(error){return}if(event.code&&event.code!==0){exploreStatus(event.message||EXPLORE_LABELS.failed,true);return}var eventName=event.event||'';var data=event.data||{};if(eventName==='message'){answer_text=String(data.content||answer_text);body.textContent=answer_text;host.scrollTop=host.scrollHeight;return}if(eventName==='message_end'){if(Array.isArray(data.reference)&&data.reference.length)references=data.reference;return}if(eventName==='waiting_for_user'){if(data.tips)body.textContent=String(data.tips);return}});return pump()})}return pump()}).catch(function(error){exploreStreaming(false);EXPLORE_STREAM=null;if(error&&error.name==='AbortError'){exploreStatus('');return}body.textContent=error.message;exploreStatus(error.message,true)})}
 function exploreBoot(){var params=exploreParams();exploreLoadSessions();if(params.sessionId){exploreSelectSession(params.sessionId,false)}else if(params.isNew){exploreNewSession()}else{exploreRenderMessages([])}exploreSyncSend();document.addEventListener('click',function(event){if(!event.target.closest||!event.target.closest('.agent-explore-card-actions'))exploreCloseMenus()})}
 exploreBoot();
+"#;
+
+/// Upstream `Routes.AgentShare` = `/agent/share` (`pages/agent/share/index.tsx`)
+/// with `components/embed-container.tsx` and
+/// `hooks/use-send-shared-message.ts`: the embeddable agent chat.
+///
+/// The page carries no path parameter — `?shared_id=` names the canvas, `from`
+/// picks the bot family (`agentbots`), `auth` carries the tenant's `APIToken.beta`
+/// secret, and `release` / `locale` / `theme` / `visible_avatar` / `data_*`
+/// follow `embed-dialog/index.tsx`'s URL builder. `EmbedContainer` renders the
+/// brand block, the bulleted header (`RAGFlowAvatar` + title, `Reset` on the
+/// right) and the chat body; the Begin form's inputs open the `ParameterDialog`
+/// before the first send.
+pub async fn agent_share_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    // Upstream `NextMessageInput` renders `chat.messagePlaceholder` on the box.
+    let send_label = t("Type your message here...", zh);
+    let mut b = String::with_capacity(16384);
+    b.push_str("<section class='agent-share-page' data-testid='agent-share-page'><div class='agent-share-brand' aria-hidden='true'><img src='/logo.svg' alt=''><span>RAGFlow</span></div><div class='agent-share-frame'><div class='agent-share-head'><div class='agent-share-identity'><span class='agent-share-avatar' id='shareAvatar' data-testid='share-avatar'></span><span class='agent-share-title' id='shareTitle' data-testid='share-title'></span></div><button class='btn btn-o agent-share-reset' type='button' id='shareReset' data-testid='share-reset' onclick='shareReset()'>");
+    b.push_str(SHARE_RESET_SVG);
+    b.push_str("<span>Reset</span></button></div><div class='agent-share-body'><div class='agent-share-messages' id='shareMessages' data-testid='share-messages'></div><section class='agent-share-input'><div class='agent-share-input-row'><textarea id='shareInput' class='agent-share-textarea' data-testid='share-input' rows='1' placeholder='");
+    b.push_str(send_label);
+    b.push_str("' aria-label='");
+    b.push_str(send_label);
+    b.push_str("' oninput='shareSyncSend()' onkeydown='shareKeydown(event)'></textarea><button class='agent-share-send' type='button' id='shareSend' data-testid='share-send' aria-label='");
+    b.push_str(send_label);
+    b.push_str("' disabled onclick='shareSendMessage()'>");
+    b.push_str(EXPLORE_SEND_SVG);
+    b.push_str("</button><button class='agent-share-stop' type='button' id='shareStop' data-testid='share-stop' aria-label='Stop' onclick='shareStop()' hidden><span aria-hidden='true'></span></button></div><p class='agent-share-status' id='shareStatus' data-testid='share-status' role='status'></p></section></div></div>");
+    // Upstream `pages/agent/share/parameter-dialog.tsx`: title `Parameter`, no
+    // close affordance, no footer — the dynamic form carries the `Submit`.
+    b.push_str("<div class='modal-overlay' id='shareParameterDialog' data-testid='share-parameter-dialog'><div class='modal agent-share-parameter' role='dialog' aria-modal='true' aria-labelledby='shareParameterTitle'><h2 id='shareParameterTitle'>Parameter</h2><div class='agent-share-parameter-body' id='shareParameterFields'></div><div class='agent-share-parameter-actions'><button class='btn btn-p' type='button' data-testid='share-parameter-submit' onclick='shareParameterSubmit()'>Submit</button></div></div></div>");
+    b.push_str("<script>var SHARE_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "running": if zh { "生成中..." } else { "is running...🕞" },
+        "failed": if zh { "失败" } else { "Failed" },
+        "empty": if zh { "请输入内容" } else { "Please input something" },
+        "noAgent": if zh { "找不到该智能体" } else { "Can't find agent by ID" },
+        "you": if zh { "我" } else { "You" },
+    })));
+    b.push_str(";</script><script>");
+    b.push_str(AGENT_SHARE_SCRIPT);
+    b.push_str("</script></section>");
+    Html(layout_plain("Agent", &b, zh))
+}
+
+/// Upstream `EmbedContainer`'s `RefreshCcw` (14px) glyph.
+/// Upstream embed-dialog copy, taken key by key from `locales/en.ts` /
+/// `locales/zh.ts` so the modal text is verbatim per namespace
+/// (`chat.embedModalTitle`, `chat.apiKey`, `chat.created`, `common.action`, …).
+const AGENT_EMBED_LABELS: [(&str, &str, &str); 13] = [
+    ("title", "Embed into webpage", "嵌入网站"),
+    ("apiKey", "API KEY", "API KEY"),
+    ("createNewKey", "Create new key", "创建新密钥"),
+    ("created", "Created", "创建于"),
+    ("action", "Action", "操作"),
+    ("embedType", "Embed type", "嵌入类型"),
+    (
+        "fullscreenChat",
+        "Fullscreen chat (traditional iframe)",
+        "全屏聊天（传统 iframe）",
+    ),
+    (
+        "floatingWidget",
+        "Floating widget (Intercom-style)",
+        "悬浮组件（Intercom 风格）",
+    ),
+    ("comingSoon", "Coming soon", "即将推出"),
+    ("theme", "Theme", "主题"),
+    ("light", "Light", "浅色"),
+    ("dark", "Dark", "深色"),
+    ("hideAvatar", "Hide avatar", "隐藏头像"),
+];
+
+fn agent_embed_label(zh: bool, key: &str) -> &'static str {
+    AGENT_EMBED_LABELS
+        .iter()
+        .find(|(name, _, _)| *name == key)
+        .map(|(_, en, cn)| if zh { *cn } else { *en })
+        .unwrap_or("")
+}
+
+/// Upstream `components/embed-dialog/index.tsx` — the `Embed into webpage`
+/// dialog the agent editor's Management dropdown opens: the tenant API keys
+/// (`APIToken` rows, table with Copy/Delete per row and a `Create new key`
+/// button), the embed switches (type / theme / hide avatar / published / locale)
+/// and the generated fullscreen iframe snippet with Copy + Preview.
+///
+/// Deviation recorded in the ledger: upstream keeps the API-key table in the
+/// sibling `ChatApiKeyModal` (reached from the chat overview modal, which the
+/// agent page cannot open) and refuses to open the embed dialog without a key
+/// (`chat.tokenError`); RayRAG shows the same error inline and offers the key
+/// table in this dialog so the flow stays completable from the editor.
+fn push_agent_embed_modal(b: &mut String, zh: bool) {
+    let label = |key: &str| agent_embed_label(zh, key);
+    let languages = [
+        ("", "Default"),
+        ("en", "English"),
+        ("zh-Hans", "简体中文"),
+        ("zh-Hant", "繁體中文"),
+        ("ru", "Русский"),
+        ("id", "Bahasa Indonesia"),
+        ("ja", "日本語"),
+        ("es", "Español"),
+        ("vi", "Tiếng việt"),
+        ("pt-BR", "Português BR"),
+        ("de", "Deutsch"),
+        ("fr", "Français"),
+        ("it", "Italiano"),
+        ("bg", "Български"),
+        ("ar", "العربية"),
+        ("tr", "Türkçe"),
+        ("ko", "한국어"),
+        ("nl", "Nederlands"),
+    ];
+    b.push_str("<div class='modal-overlay' id='embedModal' data-testid='agent-embed-modal'><div class='modal agent-embed-modal' role='dialog' aria-modal='true' aria-labelledby='embedModalTitle'><h2 id='embedModalTitle'>");
+    b.push_str(label("title"));
+    b.push_str("</h2><section class='agent-embed-section'><h3 class='agent-embed-heading'>");
+    b.push_str(label("apiKey"));
+    b.push_str("</h3><p class='agent-embed-error' id='embedTokenError' data-testid='embed-token-error' role='alert' hidden>");
+    b.push_str(t("Please create API key first.", zh));
+    b.push_str("</p><div class='agent-embed-table-wrap'><table class='agent-embed-table' data-testid='embed-token-table'><thead><tr><th>Token</th><th>");
+    b.push_str(label("created"));
+    b.push_str("</th><th>");
+    b.push_str(label("action"));
+    b.push_str("</th></tr></thead><tbody id='embedTokenRows'></tbody></table></div><button class='btn btn-p btn-sm' type='button' id='embedCreateToken' data-testid='embed-create-token' onclick='embedCreateToken()'>");
+    b.push_str(label("createNewKey"));
+    b.push_str("</button></section><section class='agent-embed-section'><label class='agent-embed-field'><span>");
+    b.push_str(label("embedType"));
+    b.push_str("</span><select id='embedType' data-testid='embed-type' onchange='embedSync()'><option value='fullscreen'>");
+    b.push_str(label("fullscreenChat"));
+    b.push_str("</option><option value='widget' disabled>");
+    b.push_str(label("floatingWidget"));
+    b.push_str(" — ");
+    b.push_str(label("comingSoon"));
+    b.push_str("</option></select></label><div class='agent-embed-field'><span>");
+    b.push_str(label("theme"));
+    b.push_str("</span><div class='agent-embed-radios'><label class='agent-embed-radio'><input type='radio' name='embedTheme' value='light' data-testid='embed-theme-light' checked onchange='embedSync()'><span>");
+    b.push_str(label("light"));
+    b.push_str("</span></label><label class='agent-embed-radio'><input type='radio' name='embedTheme' value='dark' data-testid='embed-theme-dark' onchange='embedSync()'><span>");
+    b.push_str(label("dark"));
+    b.push_str("</span></label></div></div><label class='agent-embed-switch'><input type='checkbox' id='embedHideAvatar' data-testid='embed-hide-avatar' onchange='embedSync()'><span>");
+    b.push_str(label("hideAvatar"));
+    b.push_str("</span></label><label class='agent-embed-switch'><input type='checkbox' id='embedPublished' data-testid='embed-published' onchange='embedSync()'><span>");
+    b.push_str(t("Published", zh));
+    b.push_str("</span></label><p class='agent-embed-tip'>");
+    b.push_str(t(
+        "Use the published version for this embed. When enabled, the generated URL includes release=true.",
+        zh,
+    ));
+    b.push_str("</p><label class='agent-embed-field'><span>");
+    b.push_str(t("Locale", zh));
+    b.push_str(
+        "</span><select id='embedLocale' data-testid='embed-locale' onchange='embedSync()'>",
+    );
+    for (value, name) in languages {
+        b.push_str("<option value='");
+        b.push_str(value);
+        b.push_str("'>");
+        b.push_str(name);
+        b.push_str("</option>");
+    }
+    b.push_str("</select></label></section><section class='agent-embed-section'><h3 class='agent-embed-heading'>");
+    b.push_str(t("Full embed", zh));
+    b.push_str("</h3><p class='agent-embed-tip'>");
+    b.push_str(t(
+        "Embed the following iframe into your website at the desired location",
+        zh,
+    ));
+    b.push_str("</p><div class='agent-embed-code'><code id='embedSnippet' data-testid='embed-snippet'></code></div><div class='agent-embed-actions'><button class='btn btn-o btn-sm' type='button' data-testid='embed-copy' onclick='embedCopySnippet()'>");
+    b.push_str(t("Copy", zh));
+    b.push_str("</button><button class='btn btn-o btn-sm' type='button' data-testid='embed-preview' onclick='embedPreview()'>");
+    b.push_str(t("Preview", zh));
+    b.push_str("</button></div><p class='agent-embed-status' id='embedStatus' data-testid='embed-status' role='status'></p></section><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='embed-close' onclick='closeEmbedModal()'>");
+    b.push_str(t("Close", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<script>var EMBED_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "tokenError": t("Please create API key first.", zh),
+        "copied": if zh { "已复制" } else { "Copied" },
+        "failed": if zh { "失败" } else { "Failed" },
+    })));
+    b.push_str(";</script><script>");
+    b.push_str(AGENT_EMBED_SCRIPT);
+    b.push_str("</script>");
+}
+
+/// Behaviour of the embed dialog: token table (`/api/v1/system/tokens`), the
+/// URL builder of `embed-dialog/index.tsx::generateIframeSrc` and the
+/// fullscreen iframe snippet.
+const AGENT_EMBED_SCRIPT: &str = r#"
+var EMBED_TOKENS=[];
+function embedStatus(text,error){var node=document.getElementById('embedStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
+function openEmbedModal(){document.getElementById('embedModal').classList.add('show');embedLoadTokens()}
+function closeEmbedModal(){document.getElementById('embedModal').classList.remove('show')}
+function embedActiveToken(){return EMBED_TOKENS.length?EMBED_TOKENS[0]:null}
+function embedRenderTokens(){var rows=document.getElementById('embedTokenRows');if(!rows)return;rows.textContent='';var error=document.getElementById('embedTokenError');if(error)error.hidden=EMBED_TOKENS.length>0;var create=document.getElementById('embedCreateToken');if(create)create.disabled=EMBED_TOKENS.length>0;EMBED_TOKENS.forEach(function(token){var row=document.createElement('tr');row.dataset.testid='embed-token-row';var cell=document.createElement('td');cell.className='agent-embed-token';cell.textContent=token.token;row.appendChild(cell);var created=document.createElement('td');created.textContent=token.create_date||'';row.appendChild(created);var actions=document.createElement('td');var copy=document.createElement('button');copy.type='button';copy.className='agent-embed-icon';copy.setAttribute('aria-label','Copy');copy.setAttribute('data-testid','embed-token-copy');copy.textContent='⧉';copy.onclick=function(){embedCopyText(token.token)};actions.appendChild(copy);var remove=document.createElement('button');remove.type='button';remove.className='agent-embed-icon danger';remove.setAttribute('aria-label','Delete');remove.setAttribute('data-testid','embed-token-delete');remove.textContent='🗑';remove.onclick=function(){embedDeleteToken(token.token)};actions.appendChild(remove);row.appendChild(actions);rows.appendChild(row)});embedSync()}
+function embedLoadTokens(){fetch('/api/v1/system/tokens').then(function(response){return response.json()}).then(function(data){EMBED_TOKENS=Array.isArray(data.data)?data.data:[];embedRenderTokens()}).catch(function(error){embedStatus(error.message,true)})}
+function embedCreateToken(){var error=document.getElementById('embedTokenError');fetch('/api/v1/system/tokens',{method:'POST'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||EMBED_LABELS.failed);EMBED_TOKENS=[data.data].concat(EMBED_TOKENS);embedRenderTokens()}).catch(function(failure){if(error)error.hidden=false;embedStatus(failure.message,true)})}
+function embedDeleteToken(token){fetch('/api/v1/system/tokens/'+encodeURIComponent(token),{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||EMBED_LABELS.failed);EMBED_TOKENS=EMBED_TOKENS.filter(function(row){return row.token!==token});embedRenderTokens()}).catch(function(failure){embedStatus(failure.message,true)})}
+function embedCopyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){embedStatus(EMBED_LABELS.copied,false)}).catch(function(){embedStatus(text,false)});return}embedStatus(text,false)}
+function embedHideAvatar(){var node=document.getElementById('embedHideAvatar');return !!(node&&node.checked)}
+function embedTheme(){var node=document.querySelector("input[name='embedTheme']:checked");return node?node.value:'light'}
+function embedUrl(){var token=embedActiveToken();var url=new URL(window.location.origin+'/agent/share');url.searchParams.set('shared_id',aid);url.searchParams.set('from','agent');url.searchParams.set('auth',token?token.beta:'');if(document.getElementById('embedPublished').checked)url.searchParams.set('release','true');if(embedHideAvatar())url.searchParams.set('visible_avatar','1');var locale=document.getElementById('embedLocale').value;if(locale)url.searchParams.set('locale',locale);url.searchParams.set('theme',embedTheme());return url.toString()}
+function embedSync(){var snippet=document.getElementById('embedSnippet');if(!snippet)return;var source=embedUrl();snippet.textContent='<iframe\n  src="'+source+'"\n  style="width: 100%; height: 100%; min-height: 600px"\n  frameborder="0"\n></iframe>\n'}
+function embedCopySnippet(){var node=document.getElementById('embedSnippet');embedCopyText(node?node.textContent:'')}
+function embedPreview(){window.open(embedUrl(),'_blank')}
+function embedBoot(){if(document.getElementById('embedModal'))embedLoadTokens()}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',embedBoot);else embedBoot();
+"#;
+
+const SHARE_RESET_SVG: &str = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8'/><path d='M21 3v5h-5'/><path d='M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16'/><path d='M8 16H3v5'/></svg>";
+
+/// Behaviour of the shared-agent embed: URL parameters, the beta credential
+/// bootstrap, the Begin form dialog, the `/agentbots/{id}/completions` stream
+/// and `Reset`.
+///
+/// RayRAG mapping of upstream's credential hand-off: the embed URL carries
+/// `?auth=<beta>`, which `routes.tsx`'s root loader stores through
+/// `authorizationUtil.setAuthorization` before stripping the parameter. RayRAG's
+/// pages authenticate with the `rayrag_token` cookie (the request middleware
+/// reads bearer first, then that cookie), so this script writes the beta into
+/// the same cookie plus `localStorage`, then removes `auth` from the address bar.
+const AGENT_SHARE_SCRIPT: &str = r#"
+var SHARE_STATE={sharedId:'',from:'agent',release:false,visibleAvatar:true,locale:'',theme:'',inputs:{},values:{},prologue:'',answer:'',stream:null,messages:[]};
+function shareStatus(text,error){var node=document.getElementById('shareStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
+function shareEscape(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
+function shareBootAuth(params){var auth=params.get('auth');if(!auth)return;document.cookie='rayrag_token='+auth+';path=/';try{localStorage.setItem('rayrag_token',auth)}catch(error){}var url=new URL(window.location.href);url.searchParams.delete('auth');window.history.replaceState(null,'',url.pathname+url.search)}
+function shareParams(){var params=new URLSearchParams(window.location.search);shareBootAuth(params);SHARE_STATE.sharedId=params.get('shared_id')||'';SHARE_STATE.from=params.get('from')||'agent';SHARE_STATE.release=params.get('release')==='true';SHARE_STATE.locale=params.get('locale')||'';SHARE_STATE.theme=params.get('theme')||'';var visible=params.get('visible_avatar');SHARE_STATE.visibleAvatar=visible?visible!=='1':true;var data={};params.forEach(function(value,key){if(key.indexOf('data_')===0)data[key.slice(5)]=value});SHARE_STATE.data=data}
+function shareRenderAvatar(title,avatar){var node=document.getElementById('shareAvatar');if(!node)return;node.textContent=(title||'?').trim().charAt(0).toUpperCase();if(avatar){var image=document.createElement('img');image.src=avatar;image.alt='';node.textContent='';node.appendChild(image)}}
+function shareNode(message){var role=String(message.role||'assistant');var node=document.createElement('article');node.className='agent-share-msg '+(role==='user'?'user':'assistant');if(!SHARE_STATE.visibleAvatar)node.classList.add('no-avatar');var head=document.createElement('div');head.className='agent-share-msg-head';head.textContent=role==='user'?SHARE_LABELS.you:'Agent';node.appendChild(head);var body=document.createElement('div');body.className='agent-share-msg-body';body.textContent=String(message.content||'');node.appendChild(body);if(message.reference&&message.reference.length){var refs=document.createElement('details');refs.className='agent-share-refs';refs.innerHTML='<summary>'+message.reference.length+' references</summary>';message.reference.forEach(function(reference,index){var row=document.createElement('div');row.className='agent-share-ref';row.textContent='['+(index+1)+'] '+String((reference&&reference.content)||'').substring(0,160);refs.appendChild(row)});node.appendChild(refs)}return node}
+function shareRenderMessages(){var host=document.getElementById('shareMessages');if(!host)return;host.textContent='';SHARE_STATE.messages.forEach(function(message){host.appendChild(shareNode(message))});host.scrollTop=host.scrollHeight}
+function sharePush(message){SHARE_STATE.messages.push(message);shareRenderMessages()}
+function shareSyncSend(){var input=document.getElementById('shareInput');var button=document.getElementById('shareSend');if(!input||!button)return;button.disabled=!String(input.value||'').trim()}
+function shareStreaming(on){var button=document.getElementById('shareSend');var stop=document.getElementById('shareStop');if(button)button.hidden=!!on;if(stop)stop.hidden=!on;if(!on)shareSyncSend()}
+function shareKeydown(event){if(event.key!=='Enter'||event.shiftKey)return;event.preventDefault();shareSendMessage()}
+function shareStop(){if(SHARE_STATE.stream){SHARE_STATE.stream.abort();SHARE_STATE.stream=null}shareStreaming(false)}
+function shareInputRows(){var fields=document.getElementById('shareParameterFields');if(!fields)return[];var rows=[];Array.prototype.forEach.call(fields.querySelectorAll('[data-share-input]'),function(wrap){var key=wrap.getAttribute('data-share-input');var input=wrap.querySelector('input,textarea,select');var value=input?String(input.value||''):'';var name=wrap.getAttribute('data-share-input-name')||key;var type=wrap.getAttribute('data-share-input-type')||'line';rows.push({key:key,name:name,type:type,value:value})});return rows}
+function shareRenderParameters(inputs){var host=document.getElementById('shareParameterFields');if(!host)return;host.textContent='';Object.keys(inputs||{}).forEach(function(key){var descriptor=inputs[key]||{};var wrap=document.createElement('label');wrap.className='agent-share-parameter-field';wrap.setAttribute('data-share-input',key);wrap.setAttribute('data-share-input-name',String(descriptor.name||key));wrap.setAttribute('data-share-input-type',String(descriptor.type||'line'));var span=document.createElement('span');span.textContent=String(descriptor.name||key);wrap.appendChild(span);var control;if(String(descriptor.type)==='options'&&Array.isArray(descriptor.options)){control=document.createElement('select');descriptor.options.forEach(function(option){var node=document.createElement('option');var value=Array.isArray(option)?option[1]:option;node.value=String(value);node.textContent=Array.isArray(option)?String(option[0]):String(option);control.appendChild(node)})}else{control=document.createElement('input');control.type=String(descriptor.type)==='number'?'number':'text'}if(descriptor.value!=null&&control.tagName!=='SELECT')control.value=String(descriptor.value);wrap.appendChild(control);host.appendChild(wrap)})}
+function shareParameterSubmit(){var rows=shareInputRows();SHARE_STATE.values={};rows.forEach(function(row){SHARE_STATE.values[row.key]={name:row.name,type:row.type,value:row.value}});document.getElementById('shareParameterDialog').classList.remove('show');shareStatus('')}
+function shareMaybeParameters(){var keys=Object.keys(SHARE_STATE.inputs||{});if(!keys.length)return false;if(Object.keys(SHARE_STATE.values).length)return false;shareRenderParameters(SHARE_STATE.inputs);document.getElementById('shareParameterDialog').classList.add('show');return true}
+function shareReset(){shareStop();SHARE_STATE.messages=[];SHARE_STATE.values={};SHARE_STATE.answer='';if(SHARE_STATE.prologue)sharePush({role:'assistant',content:SHARE_STATE.prologue});shareStatus('');shareMaybeParameters()}
+function shareLoad(){shareParams();var host=document.getElementById('shareMessages');if(!SHARE_STATE.sharedId){if(host)host.textContent=SHARE_LABELS.noAgent;return}fetch('/api/v1/agentbots/'+encodeURIComponent(SHARE_STATE.sharedId)+'/inputs').then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||SHARE_LABELS.noAgent);var payload=data.data||{};SHARE_STATE.inputs=payload.inputs||{};SHARE_STATE.prologue=String(payload.prologue||'');document.getElementById('shareTitle').textContent=String(payload.title||'');shareRenderAvatar(payload.title,payload.avatar);if(SHARE_STATE.visibleAvatar)shareRenderAvatar(payload.title,payload.avatar);if(SHARE_STATE.prologue)sharePush({role:'assistant',content:SHARE_STATE.prologue});else shareRenderMessages();shareMaybeParameters()}).catch(function(error){if(host)host.textContent=error.message;shareStatus(error.message,true)})}
+function shareSendMessage(){var input=document.getElementById('shareInput');var value=String(input.value||'').trim();if(!value){shareStatus(SHARE_LABELS.empty,true);return}if(SHARE_STATE.stream)return;if(shareMaybeParameters())return;input.value='';shareSyncSend();shareStatus('');var question=value;sharePush({role:'user',content:question});var answer={role:'assistant',content:SHARE_LABELS.running,reference:[]};SHARE_STATE.messages.push(answer);shareRenderMessages();var host=document.getElementById('shareMessages');var node=host.lastElementChild;var body=node.querySelector('.agent-share-msg-body');var controller=new AbortController();SHARE_STATE.stream=controller;shareStreaming(true);var url='/api/v1/agentbots/'+encodeURIComponent(SHARE_STATE.sharedId)+'/completions'+(SHARE_STATE.release?'?release=true':'');var payload={stream:true,query:question,inputs:SHARE_STATE.values,'openai-compatible':false,running_hint_text:SHARE_LABELS.running};Object.keys(SHARE_STATE.data||{}).forEach(function(key){payload[key]=SHARE_STATE.data[key]});fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal}).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);var reader=response.body.getReader();var decoder=new TextDecoder();var buffer='';var text='';var references=[];body.textContent='';function pump(){return reader.read().then(function(chunk){if(chunk.done){shareStreaming(false);SHARE_STATE.stream=null;answer.content=text;answer.reference=references;if(references.length)shareRenderMessages();if(!text)body.textContent=SHARE_LABELS.failed;return}buffer+=decoder.decode(chunk.value,{stream:true});var lines=buffer.split('\n');buffer=lines.pop();lines.forEach(function(line){if(line.indexOf('data:')!==0)return;var raw=line.slice(5).trim();if(!raw||raw==='[DONE]')return;var event=null;try{event=JSON.parse(raw)}catch(error){return}if(event.code&&event.code!==0){shareStatus(event.message||SHARE_LABELS.failed,true);return}var name=event.event||'';var data=event.data||{};if(name==='message'){text=String(data.content||text);body.textContent=text;host.scrollTop=host.scrollHeight;return}if(name==='message_end'){if(Array.isArray(data.reference)&&data.reference.length)references=data.reference;return}if(name==='waiting_for_user'){if(data.tips)body.textContent=String(data.tips);return}});return pump()})}return pump()}).catch(function(error){shareStreaming(false);SHARE_STATE.stream=null;if(error&&error.name==='AbortError')return;body.textContent=error.message;shareStatus(error.message,true)})}
+function shareBoot(){shareLoad();shareSyncSend()}
+shareBoot();
 "#;
 
 /// Upstream `pages/agents/agent-log-page.tsx` (417 lines) with
@@ -7902,6 +8172,7 @@ mod kb_ui_tests {
             memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
             skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -13226,6 +13497,159 @@ connection: close
             html.contains("confirmPublish"),
             "confirm publish handler missing"
         );
+    }
+
+    /// Upstream `Routes.AgentShare` (`/agent/share`) with
+    /// `components/embed-container.tsx` and `hooks/use-send-shared-message.ts`:
+    /// the embeddable agent chat ships the brand block, the avatar+title header
+    /// with `Reset`, the message list, the input row and the `Parameter` dialog,
+    /// and it drives the beta-authenticated `agentbots` endpoints.
+    #[tokio::test]
+    async fn agent_share_page_matches_upstream_embed_container() {
+        let request = Request::builder()
+            .uri("/agent/share?shared_id=agent-1&from=agent&auth=beta-1&locale=zh-Hans&visible_avatar=1")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_share_page(request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='agent-share-page'",
+            "data-testid='share-avatar'",
+            "data-testid='share-title'",
+            "data-testid='share-reset'",
+            "data-testid='share-messages'",
+            "data-testid='share-input'",
+            "data-testid='share-send'",
+            "data-testid='share-stop'",
+            "data-testid='share-parameter-dialog'",
+            "data-testid='share-parameter-submit'",
+        ] {
+            assert!(html.contains(marker), "share marker {marker} missing");
+        }
+        // Upstream's `EmbedContainer`: the brand block and the hard-coded
+        // `Reset` label (it is not translated in the React source either).
+        assert!(html.contains("<div class='agent-share-brand'"));
+        assert!(html.contains("<span>Reset</span>"));
+        // First paint: the send button starts disabled (`useSendButtonDisabled`).
+        assert!(
+            html.contains(
+                "data-testid='share-send' aria-label='Type your message here...' disabled"
+            )
+        );
+        // The beta credential bootstrap and the two agentbot endpoints.
+        assert!(html.contains("document.cookie='rayrag_token='+auth"));
+        assert!(html.contains("url.searchParams.delete('auth')"));
+        assert!(
+            html.contains("/api/v1/agentbots/'+encodeURIComponent(SHARE_STATE.sharedId)+'/inputs'")
+        );
+        assert!(html.contains(
+            "/api/v1/agentbots/'+encodeURIComponent(SHARE_STATE.sharedId)+'/completions'"
+        ));
+        assert!(html.contains("SHARE_STATE.release?'?release=true'"));
+        // `visible_avatar=1` hides the avatar (`chat.avatarHidden` semantics).
+        assert!(html.contains("SHARE_STATE.visibleAvatar=visible?visible!=='1':true"));
+        assert!(html.contains("function shareReset()"));
+
+        let zh_request = Request::builder()
+            .uri("/agent/share")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(agent_share_page(zh_request).await).await;
+        // Upstream `chat.messagePlaceholder` on the box.
+        assert!(
+            zh_html.contains("placeholder='请输入消息...'"),
+            "{zh_html:.0}"
+        );
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".agent-share-page{",
+            ".agent-share-frame{",
+            ".agent-share-head{",
+            ".agent-share-msg{",
+            ".agent-share-send[hidden],.agent-share-stop[hidden]{display:none!important}",
+        ] {
+            assert!(css.contains(selector), "share css {selector} missing");
+        }
+    }
+
+    /// Upstream `components/embed-dialog/index.tsx` on the agent editor: the
+    /// `Embed into webpage` entry opens the dialog that lists the tenant API
+    /// keys, carries the embed switches and prints the fullscreen iframe snippet.
+    #[tokio::test]
+    async fn agent_embed_modal_matches_upstream_embed_dialog() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agents/agent-1")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_detail_page(Path("agent-1".to_string()), request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='agent-embed'",
+            "data-testid='agent-embed-modal'",
+            "data-testid='embed-token-table'",
+            "data-testid='embed-token-error'",
+            "data-testid='embed-create-token'",
+            "data-testid='embed-type'",
+            "data-testid='embed-theme-light'",
+            "data-testid='embed-theme-dark'",
+            "data-testid='embed-hide-avatar'",
+            "data-testid='embed-published'",
+            "data-testid='embed-locale'",
+            "data-testid='embed-snippet'",
+            "data-testid='embed-copy'",
+            "data-testid='embed-preview'",
+        ] {
+            assert!(html.contains(marker), "embed marker {marker} missing");
+        }
+        for label in [
+            "Embed into webpage",
+            "API KEY",
+            "Create new key",
+            "Created",
+            "Action",
+            "Embed type",
+            "Fullscreen chat (traditional iframe)",
+            "Floating widget (Intercom-style)",
+            "Coming soon",
+            "Theme",
+            "Light",
+            "Dark",
+            "Hide avatar",
+            "Published",
+            "Please create API key first.",
+            "Full embed",
+            "Embed the following iframe into your website at the desired location",
+        ] {
+            assert!(html.contains(label), "embed label {label} missing");
+        }
+        // The URL builder mirrors `generateIframeSrc` and the snippet mirrors
+        // the fullscreen branch of `embedCode`.
+        assert!(html.contains("url.searchParams.set('shared_id',aid)"));
+        assert!(html.contains("url.searchParams.set('from','agent')"));
+        assert!(html.contains("url.searchParams.set('auth',token?token.beta:'')"));
+        assert!(html.contains("url.searchParams.set('release','true')"));
+        assert!(html.contains("url.searchParams.set('visible_avatar','1')"));
+        assert!(html.contains("'<iframe\\n  src=\"'"));
+        assert!(html.contains("min-height: 600px"));
+        // Token CRUD rides the upstream endpoints.
+        assert!(html.contains("fetch('/api/v1/system/tokens'"));
+        assert!(html.contains("fetch('/api/v1/system/tokens',{method:'POST'})"));
+        assert!(html.contains("method:'DELETE'"));
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".agent-embed-modal{",
+            ".agent-embed-table{",
+            ".agent-embed-code{",
+            ".agent-embed-error[hidden]{display:none!important}",
+        ] {
+            assert!(css.contains(selector), "embed css {selector} missing");
+        }
     }
 
     /// Upstream `Routes.AgentExplore` (`/agent/:id/explore`): the Launch surface

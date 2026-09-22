@@ -31,4 +31,5 @@ pub mod skill_index;
 pub mod system;
 pub mod system_settings;
 pub mod tenant_models;
+pub mod tokens;
 pub mod utils;
