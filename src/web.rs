@@ -2727,7 +2727,8 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
     b.push_str("function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')};");
-    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return !isDocDisabled(x.id);if(f==='disabled')return isDocDisabled(x.id);if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox onclick=docSelAll(this.checked)></th><th>名称</th><th>上传时间</th><th style=min-width:150px>状态</th><th>块数</th><th>大小</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=isDocDisabled(dd.id);var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name='+nm+' '+(dis?'disabled':'')+'></td><td style=font-weight:500>'+nm+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td><a class=\\\"btn btn-o btn-sm\\\" href=\\\"/documents/'+kbId+'/'+dd.id+'\\\">查看</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar();updateOverview(docs)})};");
+    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return !isDocDisabled(x.id);if(f==='disabled')return isDocDisabled(x.id);if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox onclick=docSelAll(this.checked)></th><th>名称</th><th>上传时间</th><th style=min-width:150px>状态</th><th>块数</th><th>大小</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=isDocDisabled(dd.id);var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name='+nm+' '+(dis?'disabled':'')+'></td><td style=font-weight:500>'+nm+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td><a class=\\\"btn btn-o btn-sm\\\" href=\\\"/documents/'+kbId+'/'+dd.id+'\\\">查看</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-doc-id=\\\"'+dd.id+'\\\" data-testid=\\\"dataset-file-result\\\" onclick=\\\"openDataflowResult(this)\\\" title=\\\"View result\\\">📋</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar();updateOverview(docs)})};");
+    b.push_str("function openDataflowResult(btn){var docId=btn.getAttribute('data-id');fetch('/api/v1/datasets/'+kbId+'/ingestions?page=0&page_size=0&log_type=file').then(function(r){return r.json()}).then(function(d){var logs=((d.data||{}).logs)||[];var match=logs.find(function(row){return row.document_id===docId});if(!match){alert('No ingestion log yet');return}location.href='/dataflow-result?id='+encodeURIComponent(match.id)+'&knowledgeId='+encodeURIComponent(kbId)+'&doc_id='+encodeURIComponent(docId)+'&is_read_only=false&type=dataflow'})};");
     b.push_str("function updateBatchBar(){var n=document.querySelectorAll('.docCk:checked').length;var bar=document.getElementById('batchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('selCount');if(sc)sc.textContent=n+' selected'}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){if(!x.disabled)x.checked=on});updateBatchBar()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
     b.push_str("function selIds(){var ids=[];document.querySelectorAll('.docCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchParse(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('重新解析选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();schedulePoll();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function batchDisable(on){var ids=selIds();if(!ids.length){alert('请先选择文档');return}ids.forEach(function(id){setDocDisabled(id,on)});loadDocs()};");
@@ -13732,6 +13733,36 @@ connection: close
         ] {
             assert!(css.contains(selector), "dataflow css {selector} missing");
         }
+    }
+
+    /// Upstream `dataset-overview/overview-table.tsx`: a parsed file row carries
+    /// the `View result` action that opens `/dataflow-result` for that ingestion
+    /// log (`navigateToDataflowResult`).
+    #[tokio::test]
+    async fn dataset_file_rows_open_the_dataflow_result_page() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Result KB", "").unwrap();
+        let request = Request::builder()
+            .uri(format!("/dataset/files/{}", kb.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            dataset_tab_page(
+                State(state),
+                Path(("files".to_string(), kb.id.clone())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        let html = html.as_str();
+        assert!(html.contains("dataset-file-result"));
+        assert!(html.contains("openDataflowResult(this)"));
+        assert!(html.contains("function openDataflowResult(btn)"));
+        assert!(html.contains("log_type=file"));
+        assert!(html.contains("/dataflow-result?id="));
+        assert!(html.contains("&type=dataflow"));
     }
 
     /// Upstream `Routes.AgentShare` (`/agent/share`) with
