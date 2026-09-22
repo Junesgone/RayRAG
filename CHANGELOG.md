@@ -2,6 +2,31 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.40] — 2026-09-23（对标批次 v0.3.8r）
+
+### Added
+
+- **智能体运行轨迹（trace）**（上游 `agent_api.py::get_agent_logs` +
+  `bot_api.py::agent_bot_logs` + `pages/agent/log-sheet/*`）：每次智能体运行都会按消息记录一条
+  **运行轨迹**，键与上游一致（`{agent_id}-{message_id}-logs`），内容是上游的 `ITraceData[]`
+  （`{component_id, trace:[{progress,message,datetime,timestamp,elapsed_time}]}`）。
+  - 轨迹由画布生命周期事件（`node_started`/`node_finished`）实时累积，**运行中即可轮询**（上游日志抽屉
+    是 `refetchInterval: 3000`），结束时完整落库；解析失败会在该采样的 `message` 上留下错误文本。
+  - 新增 `GET /api/v1/agents/{agent_id}/logs/{message_id}`（登录态）与
+    `GET /api/v1/agentbots/{shared_id}/logs/{message_id}`（beta 令牌，供嵌入页使用）；没有轨迹时按上游
+    返回 `data: {}`。
+- **探索页「运行轨迹」抽屉**：助手消息下方新增 🧭 按钮，打开右侧抽屉列出本次运行经过的每个组件及其
+  时间线（时间 / 说明 / 耗时）；运行中每 3 秒自动刷新，结束后自动停止轮询。
+- **分享/嵌入页「思考过程（Thinking）」展开**：助手气泡上新增 Thinking 开关，展开后通过 beta 令牌读取
+  同一份轨迹（对应上游 `next-message-item` 的 Thinking 展开与 `fetchSharedTrace`）。
+
+### Notes
+
+- 新增回归：`api::agent_trace` 两条（键名与上游 Redis 键一致、事件聚合与边跑边落库）、
+  `server::tests::agent_run_traces_match_upstream`（真实跑一次画布 → 轨迹含 begin/message 组件与上游采样
+  字段 → 未知消息回 `{}` → beta 兄弟端点可用）；探索页与分享页测试各增补抽屉/展开标记与端点断言。
+- 全量 `cargo test --locked --lib` **1572 passed / 0 failed / 27 ignored**。
+
 ## [0.4.39] — 2026-09-23（对标批次 v0.3.8q）
 
 ### Added

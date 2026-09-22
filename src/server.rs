@@ -78,6 +78,10 @@ pub struct AppState {
     /// RAGFlow `PipelineOperationLog` rows (`/api/v1/datasets/{id}/ingestions`):
     /// one record per document parse, whose `dsl` drives `/dataflow-result`.
     pub ingestion_logs: Arc<crate::api::ingestion::IngestionLogStore>,
+    /// RAGFlow `APIToken`-scoped agent run traces
+    /// (`/api/v1/agents/{id}/logs/{message_id}` and its beta sibling): one
+    /// `ITraceData` array per assistant message, written while the run streams.
+    pub agent_traces: Arc<crate::api::agent_trace::AgentTraceStore>,
     /// Effective sign-up switch — upstream `settings.REGISTER_ENABLED` (plus the
     /// legacy `RAYRAG_ALLOW_REGISTRATION` opt-in), resolved once at startup by
     /// `settings::resolve_register_enabled`. Read by both
@@ -4271,6 +4275,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/agentbots/{agent_id}/completions",
             post(crate::api::features::agent_bot_completions),
         )
+        // `agent_api.get_agent_logs` / `bot_api.agent_bot_logs`: the per-message
+        // run trace the log sheet (and the share embed's Thinking button) polls.
+        .route(
+            "/api/v1/agents/{agent_id}/logs/{message_id}",
+            get(crate::api::agent_trace::get_agent_logs),
+        )
+        .route(
+            "/api/v1/agentbots/{shared_id}/logs/{message_id}",
+            get(crate::api::agent_trace::agent_bot_logs),
+        )
         .route(
             "/api/v1/agents/{id}/versions",
             get(crate::api::features::list_agent_versions),
@@ -4688,6 +4702,7 @@ pub async fn run(
     let system_settings_path = format!("{}/../system_settings.json", static_dir);
     let api_tokens_path = format!("{}/../api_tokens.json", static_dir);
     let ingestion_logs_path = format!("{}/../ingestion_logs.json", static_dir);
+    let agent_traces_path = format!("{}/../agent_traces.json", static_dir);
     let langfuse_path = format!("{}/../langfuse.json", static_dir);
     let mcp_servers_path = format!("{}/../mcp_servers.json", static_dir);
     let chat_channels_path = format!("{}/../chat_channels.json", static_dir);
@@ -4824,6 +4839,9 @@ pub async fn run(
         api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::new(&api_tokens_path)?),
         ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::new(
             &ingestion_logs_path,
+        )?),
+        agent_traces: Arc::new(crate::api::agent_trace::AgentTraceStore::new(
+            &agent_traces_path,
         )?),
         register_enabled: crate::settings::Settings::from_env().register_enabled,
         disable_password_login: crate::settings::Settings::from_env().disable_password_login,
@@ -5085,6 +5103,7 @@ mod tests {
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
             ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
+            agent_traces: Arc::new(crate::api::agent_trace::AgentTraceStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -6337,6 +6356,7 @@ mod tests {
             system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
             api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
             ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
+            agent_traces: Arc::new(crate::api::agent_trace::AgentTraceStore::in_memory()),
             register_enabled: 1,
             disable_password_login: false,
             oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
@@ -14711,5 +14731,154 @@ mod tests {
         let unknown = response_json(unknown).await;
         assert_eq!(unknown["code"], 102);
         assert_eq!(unknown["message"], "Document not found.");
+    }
+    /// RAGFlow `get_agent_logs` / `bot_api.agent_bot_logs`: the per-message run
+    /// trace the log sheet polls, plus its beta-token sibling.
+    #[tokio::test]
+    async fn agent_run_traces_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Trace Agent",
+                            "dsl": {
+                                "graph": {"nodes": [{"id": "begin", "type": "beginNode"}], "edges": []},
+                                "components": {
+                                    "begin": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "mode": "conversational"
+                                        },
+                                        "upstream": [],
+                                        "downstream": ["message"]
+                                    },
+                                    "message": {
+                                        "obj": {
+                                            "component_name": "Message",
+                                            "params": {"content": ["traced answer"]}
+                                        },
+                                        "upstream": ["begin"],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let run = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{agent_id}/completions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"question": "trace me", "stream": false}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(run.status(), StatusCode::OK);
+        let run = response_json(run).await;
+        let message_id = run["data"]["message_id"].as_str().unwrap().to_owned();
+
+        let trace = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/logs/{message_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(trace.status(), StatusCode::OK);
+        let trace = response_json(trace).await;
+        assert_eq!(trace["code"], 0);
+        let components = trace["data"].as_array().expect("trace array");
+        let ids: Vec<&str> = components
+            .iter()
+            .filter_map(|component| component["component_id"].as_str())
+            .collect();
+        assert!(ids.contains(&"begin"), "trace: {trace}");
+        assert!(ids.contains(&"message"), "trace: {trace}");
+        let message_trace = components
+            .iter()
+            .find(|component| component["component_id"] == "message")
+            .unwrap();
+        let samples = message_trace["trace"].as_array().unwrap();
+        assert!(!samples.is_empty());
+        // Upstream's sample shape (`ITraceData.trace[]`).
+        assert!(samples[0]["message"].is_string());
+        assert!(samples[0]["elapsed_time"].is_number());
+        assert!(samples[0]["timestamp"].is_number());
+        assert!(samples[0]["progress"].is_number());
+
+        // A message without a run answers the empty object, not an empty array.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/logs/does-not-exist"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(missing).await["data"], serde_json::json!({}));
+
+        // The beta sibling authenticates with the token's beta secret.
+        let token = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/system/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let beta = response_json(token).await["data"]["beta"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let shared = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/logs/{message_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shared.status(), StatusCode::OK);
+        let shared = response_json(shared).await;
+        assert_eq!(shared["code"], 0);
+        assert!(shared["data"].as_array().is_some(), "trace: {shared}");
     }
 }

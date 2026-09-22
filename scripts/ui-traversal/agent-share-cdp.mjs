@@ -299,6 +299,39 @@ try {
   step("shared chat", results.chat);
   await page.screenshot({ path: `${shots}/agent-share-chat-${STAMP}.png` });
 
+  // 5b. The Thinking expander reads the beta trace endpoint
+  //     (`bot_api.agent_bot_logs`) exactly like the embed does.
+  const traceCalls = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/logs/")) traceCalls.push(request.url());
+  });
+  await page.click("[data-testid='share-thinking']");
+  await page.waitForFunction(
+    () => document.querySelector("[data-testid='share-thinking']").getAttribute("aria-expanded") === "true",
+    null,
+    { timeout: 10000 },
+  );
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".agent-share-thinking-component").length > 0 ||
+      !!document.querySelector(".agent-share-thinking-empty"),
+    null,
+    { timeout: 15000 },
+  );
+  results.thinking = await page.evaluate(() => ({
+    components: Array.from(document.querySelectorAll(".agent-share-thinking-component h4")).map(
+      (node) => node.textContent,
+    ),
+    rows: document.querySelectorAll(".agent-share-thinking-row").length,
+    empty: !!document.querySelector(".agent-share-thinking-empty"),
+  }));
+  if (!traceCalls.length) fail("the Thinking expander never called the beta trace endpoint");
+  if (!results.thinking.components.length) {
+    fail("the Thinking expander listed no component: " + JSON.stringify(results.thinking));
+  }
+  await page.screenshot({ path: `${shots}/agent-share-thinking-${STAMP}.png` });
+  step("thinking", results.thinking);
+
   // 6. `Reset` clears the thread and restores the prologue (upstream
   //    `resetSession()` + `clearEventList()` + parameter dialog).
   await page.click("[data-testid='share-reset']");

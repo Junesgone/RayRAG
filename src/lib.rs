@@ -28,7 +28,7 @@ pub mod build_info {
     /// Crate version from `Cargo.toml`.
     pub const VERSION: &str = env!("CARGO_PKG_VERSION");
     /// RAGFlow parity slice currently landed in this build.
-    pub const PARITY_SLICE: &str = "v0.3.8q";
+    pub const PARITY_SLICE: &str = "v0.3.8r";
     /// Short git revision the binary was built from.
     pub const GIT_REV: &str = env!("RAYRAG_BUILD_GIT_REV");
     /// `clean` or `dirty` working-tree marker captured at build time.

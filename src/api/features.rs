@@ -7518,6 +7518,19 @@ async fn agent_complete_inner(
     if !resumed && let Some(emitter) = event_emitter.as_ref() {
         emitter.workflow_started(&event_question);
     }
+    // RAGFlow stores one trace per assistant message under
+    // `f"{agent_id}-{message_id}-logs"`, written while the run streams so the log
+    // sheet can poll it (`useFetchMessageTrace`, `refetchInterval: 3000`). The
+    // collector observes the same lifecycle events the SSE adapter forwards and
+    // keeps them in `state.agent_traces`.
+    let trace_collector = crate::api::agent_trace::AgentTraceCollector::new(
+        state.agent_traces.clone(),
+        agent.id.clone(),
+        stream.map(|stream| stream.message_id.clone()),
+        event_emitter
+            .as_ref()
+            .map(|emitter| emitter as &dyn crate::agent::WorkflowEventObserver),
+    );
     let mut workflow_outcome = if let Some(workflow) = workflow.as_ref() {
         let input = crate::agent::WorkflowRunInput {
             question: &body.question,
@@ -7537,27 +7550,19 @@ async fn agent_complete_inner(
                     serde_json::Value::Object(body.inputs.clone())
                 }
             });
-            if let Some(observer) = event_emitter.as_ref() {
-                workflow
-                    .resume_interactive_observed(
-                        llm,
-                        input,
-                        claim.record.checkpoint.clone(),
-                        resume_data,
-                        observer,
-                    )
-                    .await
-            } else {
-                workflow
-                    .resume_interactive(llm, input, claim.record.checkpoint.clone(), resume_data)
-                    .await
-            }
-        } else if let Some(observer) = event_emitter.as_ref() {
             workflow
-                .run_interactive_observed(llm, input, observer)
+                .resume_interactive_observed(
+                    llm,
+                    input,
+                    claim.record.checkpoint.clone(),
+                    resume_data,
+                    &trace_collector,
+                )
                 .await
         } else {
-            workflow.run_interactive(llm, input).await
+            workflow
+                .run_interactive_observed(llm, input, &trace_collector)
+                .await
         };
         match outcome {
             Ok(outcome) => Some(outcome),
@@ -7666,6 +7671,12 @@ async fn agent_complete_inner(
                 return agent_server_error(error);
             }
         };
+        // RAGFlow persists the run trace under the assistant message id
+        // (`{agent_id}-{message_id}-logs`); streaming runs already wrote it while
+        // the run was in flight, the non-streaming path publishes it here.
+        if let Err(error) = trace_collector.finish(&message_id) {
+            tracing::warn!(%error, "Failed to persist agent trace");
+        }
         // A paused run is a successful step: refresh the DSL snapshot and
         // clear any earlier failure so the log row shows a green dot.
         let _ = state
@@ -7788,6 +7799,11 @@ async fn agent_complete_inner(
             return agent_server_error(error);
         }
     };
+    // A paused (UserFillUp) run keeps the trace collected so far, exactly like
+    // upstream's incrementally written log key.
+    if let Err(error) = trace_collector.finish(&message_id) {
+        tracing::warn!(%error, "Failed to persist agent trace");
+    }
     if let Some(claim) = checkpoint_claim.as_ref()
         && let Err(error) = state.agent_checkpoints.delete_claimed(claim)
     {

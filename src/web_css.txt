@@ -724,3 +724,36 @@ count, trash) and `parse-editer/*` (click-to-edit content blocks). */
 .dataflow-edit{outline:0;cursor:text}
 .dataflow-edit:focus{border-color:var(--p);box-shadow:0 0 0 1px var(--p)}
 .dataflow-chunk-body.ellipse{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+
+/* Upstream `pages/agent/log-sheet/index.tsx` (the per-message run log the
+assistant's action group opens) and `components/next-message-item`'s Thinking
+expander fed by the shared trace endpoint. */
+.agent-explore-actions{display:flex;gap:4px;margin-top:4px}
+.agent-explore-action{padding:2px 6px;border:0;border-radius:4px;background:transparent;color:var(--t2);font-size:14px;cursor:pointer}
+.agent-explore-action:hover{background:var(--bgch);color:var(--t)}
+.agent-explore-log-sheet{position:fixed;top:0;right:0;z-index:130;display:flex;flex-direction:column;width:min(520px,92vw);height:100vh;border-left:1px solid var(--bd);background:var(--bgm);box-shadow:var(--shl);transform:translateX(100%);transition:transform .2s ease}
+.agent-explore-log-sheet.open{transform:translateX(0)}
+.agent-explore-log-sheet[aria-hidden='true']{visibility:hidden}
+.agent-explore-log-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bd)}
+.agent-explore-log-head h2{margin:0;font-size:16px}
+.agent-explore-log-close{padding:2px 8px;border:0;border-radius:4px;background:transparent;color:var(--t);font-size:18px;cursor:pointer}
+.agent-explore-log-close:hover{background:var(--bgch)}
+.agent-explore-log-body{flex:1;padding:16px;overflow:auto}
+.agent-explore-log-component{margin-bottom:16px}
+.agent-explore-log-title{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--t)}
+.agent-explore-log-row{display:flex;align-items:baseline;gap:8px;padding:4px 0;border-bottom:1px dashed var(--bd);font-size:12px;color:var(--t2)}
+.agent-explore-log-time{flex:0 0 64px;font-family:ui-monospace,monospace}
+.agent-explore-log-text{flex:1;min-width:0;color:var(--t)}
+.agent-explore-log-elapsed{flex:0 0 auto;color:var(--tm)}
+.agent-share-thinking{margin-top:6px}
+.agent-share-thinking-toggle{padding:2px 8px;border:1px solid var(--bd);border-radius:999px;background:transparent;color:var(--t2);font:inherit;font-size:12px;cursor:pointer}
+.agent-share-thinking-toggle:hover{color:var(--t)}
+.agent-share-thinking-toggle[aria-expanded='true']{border-color:var(--p);color:var(--p)}
+.agent-share-thinking-body{margin-top:8px;padding:8px 10px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc)}
+.agent-share-thinking-body[hidden]{display:none!important}
+.agent-share-thinking-component{margin-bottom:8px}
+.agent-share-thinking-component h4{margin:0 0 4px;font-size:12px;color:var(--t)}
+.agent-share-thinking-row{display:flex;gap:8px;font-size:12px;color:var(--t2)}
+.agent-share-thinking-time{flex:0 0 60px;font-family:ui-monospace,monospace}
+.agent-share-thinking-elapsed{color:var(--tm)}
+.agent-share-thinking-empty,.agent-explore-empty{color:var(--tm);font-size:12px}

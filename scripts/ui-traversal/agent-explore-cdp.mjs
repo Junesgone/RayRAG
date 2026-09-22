@@ -279,6 +279,46 @@ try {
   step("first send", results.firstSend);
   await page.screenshot({ path: `${shots}/agent-explore-chat-${STAMP}.png` });
 
+  // 4b. The assistant action group opens the run log sheet (upstream
+  //     `pages/agent/log-sheet`), fed by `/agents/{id}/logs/{message_id}`.
+  const traceCalls = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/logs/")) traceCalls.push(request.url());
+  });
+  await page.click("[data-testid='explore-message-log']");
+  await page.waitForFunction(
+    () => document.getElementById("exploreLogSheet").classList.contains("open"),
+    null,
+    { timeout: 10000 },
+  );
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll("[data-testid='explore-log-component']").length > 0 ||
+      !!document.querySelector("[data-testid='explore-log-empty']"),
+    null,
+    { timeout: 15000 },
+  );
+  results.runLog = await page.evaluate(() => ({
+    open: document.getElementById("exploreLogSheet").classList.contains("open"),
+    components: Array.from(
+      document.querySelectorAll("[data-testid='explore-log-component']"),
+    ).map((node) => node.querySelector(".agent-explore-log-title").textContent),
+    rows: document.querySelectorAll(".agent-explore-log-row").length,
+    empty: !!document.querySelector("[data-testid='explore-log-empty']"),
+  }));
+  if (!results.runLog.components.length) {
+    fail("the run log sheet listed no component: " + JSON.stringify(results.runLog));
+  }
+  if (!traceCalls.length) fail("the run log sheet never called the trace endpoint");
+  await page.screenshot({ path: `${shots}/agent-explore-runlog-${STAMP}.png` });
+  await page.click("[data-testid='explore-log-close']");
+  await page.waitForFunction(
+    () => !document.getElementById("exploreLogSheet").classList.contains("open"),
+    null,
+    { timeout: 10000 },
+  );
+  step("run log", results.runLog);
+
   // 5. Reload restores the transcript from the stored session.
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(
