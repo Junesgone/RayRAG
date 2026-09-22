@@ -532,6 +532,95 @@ pub async fn get_agent_session(
     }
 }
 
+/// `POST /api/v1/agents/{agent_id}/sessions` — `create_agent_session`
+/// (`api/apps/restful_apis/agent_api.py`). Upstream builds the row from the
+/// request's `name`, the canvas DSL snapshot (`cvs.dsl = json.loads(str(canvas))`,
+/// i.e. `canvas.reset()` followed by the serialized canvas), the canvas prologue
+/// seeded as the first assistant message, an empty `reference` array and the
+/// latest version title, then answers `_normalize_agent_session(conv)`.
+///
+/// `user_id` defaults to the calling tenant exactly like
+/// `req.get("user_id") or request.args.get("user_id", tenant_id)`.
+pub async fn create_agent_session(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(agent_id): Path<String>,
+    Json(body): Json<CreateAgentSessionRequest>,
+) -> Response {
+    let Some(agent) = state.agents.get_accessible(
+        &agent_id,
+        &auth.user_id,
+        auth.is_admin,
+        |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
+    ) else {
+        // Upstream answers `get_data_error_result(message="Agent not found.")`.
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": "Agent not found.",
+        }))
+        .into_response();
+    };
+    let tenant_id = if agent.built_in {
+        auth.user_id.clone()
+    } else {
+        agent.owner_id.clone()
+    };
+    let user_id = body
+        .user_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&tenant_id)
+        .to_string();
+    // `Canvas.get_prologue()` reads the Begin component's `prologue` param; an
+    // agent without a readable Begin node still creates a session (upstream's
+    // Canvas would have raised earlier, RayRAG degrades to an empty prologue).
+    let prologue = crate::agent::extract_prologue(&agent.dsl)
+        .unwrap_or_default()
+        .to_string();
+    let version_title = state
+        .canvas_versions
+        .latest_title(&agent_id, body.release.unwrap_or(false));
+    let seed = crate::llm::NewAgentSession {
+        owner_id: &user_id,
+        tenant_id: &tenant_id,
+        canvas_id: &agent.id,
+        name: body.name.as_deref().unwrap_or_default(),
+        kb_ids: agent.kb_ids.clone(),
+        prologue: &prologue,
+        dsl: Some(agent.dsl.clone()),
+        version_title,
+    };
+    match state.conversations.create_agent_session(seed) {
+        Ok(session) => {
+            let query = SessionQuery::default();
+            let identity = chunk_index(&state);
+            Json(serde_json::json!({
+                "code": 0,
+                "message": "success",
+                "data": normalize_agent_session(&session, &query, &identity),
+            }))
+            .into_response()
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Request body of `create_agent_session`. Upstream reads `name`, `user_id` and
+/// `release`; everything else in the payload is ignored.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct CreateAgentSessionRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub release: Option<bool>,
+}
+
 /// `DELETE /api/v1/agents/{agent_id}/sessions/{session_id}` —
 /// `delete_agent_session_item`: the session must exist, belong to the canvas
 /// and be owned by the caller.

@@ -266,6 +266,10 @@ fn t(k: &str, zh: bool) -> &str {
         }
         "Search messages" => "搜索消息",
         "Agent" => "智能体",
+        // Upstream `explore.title` (`locales/zh.ts`): the Launch entry point of a
+        // conversational agent; the four other Launch labels are page-local
+        // because their Chinese text is not shared with any other surface.
+        "Launch" => "探索",
         "All agents" => "全部智能体",
         "Session ID" => "会话 ID",
         "Type" => "类型",
@@ -3298,7 +3302,9 @@ pub async fn agent_detail_page(
     b.push_str(t("Publish", zh));
     b.push_str("</button><button class='btn btn-o' onclick='openVersions()'>📚 ");
     b.push_str(t("Versions", zh));
-    b.push_str("</button><button class='btn btn-o' data-testid='agent-launch' onclick='openChatTest()'>🚀 ");
+    b.push_str(
+        "</button><button class='btn btn-o' data-testid='agent-launch' onclick='launchAgent()'>🚀 ",
+    );
     b.push_str(t("Launch", zh));
     b.push_str("</button><button class='btn btn-o' data-testid='agent-management' onclick='openVersions()'>⚙ ");
     b.push_str(t("Management", zh));
@@ -3372,7 +3378,7 @@ pub async fn agent_detail_page(
     b.push_str("</h2><div id='runLog' style='font-size:12px;color:var(--t2);max-height:300px;overflow:auto'><p style='color:var(--tm)'>No runs yet.</p></div></div></div>");
     b.push_str("<script>var aid='");
     b.push_str(&agent_id);
-    b.push_str("';function editDsl(){var pre=document.getElementById('agentDsl');var ta=document.getElementById('agentDslEdit');ta.value=pre.textContent;ta.style.display='block';pre.style.display='none';ta.focus()};function saveDsl(){var ta=document.getElementById('agentDslEdit');var v;try{v=JSON.parse(ta.value)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2);renderTopology(a.dsl||a.canvas||{})})};function renderTopology(dsl){var nodes=(dsl.nodes||[]);var edges=(dsl.edges||[]);if(!nodes.length){document.getElementById('canvasView').innerHTML='<p style=color:var(--tm)>Empty canvas</p>';return}var xMin=1e9,yMin=1e9,xMax=-1e9,yMax=-1e9;var pos={};nodes.forEach(function(n){var p=n.position||{x:0,y:0};pos[n.id]=p;xMin=Math.min(xMin,p.x);yMin=Math.min(yMin,p.y);xMax=Math.max(xMax,p.x);yMax=Math.max(yMax,p.y)});var W=xMax-xMin+300,H=yMax-yMin+300;var svg='<svg width='+W+' height='+H+' style=background:var(--bg)><defs><marker id=arr markerWidth=8 markerHeight=8 refX=8 refY=4 orient=auto><path d=M0,0L8,4L0,8 fill=var(--p)></path></marker></defs>';edges.forEach(function(e){var s=pos[e.source]||{x:0,y:0};var t=pos[e.target]||{x:0,y:0};svg+='<line x1='+(s.x-xMin+150)+' y1='+(s.y-yMin+150)+' x2='+(t.x-xMin+150)+' y2='+(t.y-yMin+150)+' stroke=var(--p) stroke-width=1.5 marker-end=url(#arr)></line>'});nodes.forEach(function(n){var p=pos[n.id];var label=n.data&&(n.data.title||n.data.name)||n.id;svg+='<g><rect x='+(p.x-xMin+120)+' y='+(p.y-yMin+130)+' width=150 height=40 rx=8 fill=var(--card) stroke=var(--p)></rect><text x='+(p.x-xMin+195)+' y='+(p.y-yMin+153)+' text-anchor=middle font-size=12 fill=var(--t2)>'+label+'</text></g>'});svg+='</svg>';document.getElementById('canvasView').innerHTML=svg};function logRun(q,status,out){var lg=document.getElementById('runLog');var ph=lg.querySelector('p');if(ph)ph.remove();var d=new Date();var ts=d.getHours()+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);var div=document.createElement('div');div.style.cssText='padding:8px;border-bottom:1px solid var(--bd);white-space:pre-wrap';div.innerHTML='<span style=color:var(--tm)>['+ts+'] '+status+' &middot; Q: '+(q||'').substring(0,120)+'</span><br>'+String(out).substring(0,600);lg.insertBefore(div,lg.firstChild)};function runAgent(){document.getElementById('aa2').textContent='Running agent...';logRun('Run agent once','running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun('Run agent once',d.code===0?'done':'error',out)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;document.getElementById('aa2').textContent='Running...';logRun(q,'running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun(q,d.code===0?'done':'error',out)})};function saveAgent(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var v;try{v=JSON.parse(raw)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Saved');loadAgent();updateAutosave()}else{alert('Save failed: '+(d.message||'unknown'))}})};function publishAgent(){document.getElementById('pubModal').classList.add('show')}function confirmPublish(){fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({release:true})}).then(r=>r.json()).then(function(d){document.getElementById('pubModal').classList.remove('show');if(d.code===0){openChatTest()}else{alert('Publish failed: '+(d.message||'unknown'))}})}function openChatTest(){document.getElementById('chatTestModal').classList.add('show')}function sendTestMsg(){var q=document.getElementById('testQ').value;if(!q)return;document.getElementById('testOut').textContent='Thinking...';fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(function(d){document.getElementById('testOut').textContent=d.data?d.data.answer:JSON.stringify(d)})}function updateAutosave(){var el=document.getElementById('autosaveSt');if(el)el.textContent='Autosaved '+new Date().toLocaleString()}function zoomCanvas(dir){var p=document.getElementById('compPanel');var cur=parseFloat(p.dataset.z||'12');cur=Math.min(20,Math.max(9,cur+dir));p.dataset.z=cur;p.style.fontSize=cur+'px'}function fitCanvas(){var p=document.getElementById('compPanel');p.dataset.z='12';p.style.fontSize='12px'}function toggleInter(){var p=document.getElementById('compPanel');p.classList.toggle('no-click')}function addComponent(name){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};var dsl=a.dsl||a.canvas||{};if(!dsl.components)dsl.components={};var n=0;var base=name.replace(/[^A-Za-z0-9_]/g,'');var key=base+':'+n;while(dsl.components[key]){n++;key=base+':'+n}var node={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':[]};if(dsl.components['begin']){dsl.components['begin'].downstream=dsl.components['begin'].downstream||[];dsl.components['begin'].downstream.push(key);node.upstream=['begin']}dsl.components[key]=node;var ta=document.getElementById('agentDslEdit');var pre=document.getElementById('agentDsl');ta.value=JSON.stringify(dsl,null,2);ta.style.display='block';pre.style.display='none';ta.focus();alert('Component \"'+name+'\" added to DSL. Click 💾 Save to persist.')})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};function openVersions(){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>Loading...</p>';document.getElementById('verModal').classList.add('show');fetch('/api/v1/agents/'+aid+'/versions').then(r=>r.json()).then(function(d){var vs=d.data||[];if(!vs.length){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>No versions yet</p>';return}var h='<table><thead><tr><th>ID</th><th>Title</th><th>Created</th><th></th></tr></thead><tbody>';vs.forEach(function(v){h+='<tr><td style=font-family:monospace;font-size:12px>'+v.id+'</td><td>'+(v.title||'')+'</td><td style=color:var(--tm);font-size:12px>'+new Date(v.created_at).toLocaleString()+'</td><td><button class=btn btn-o btn-sm onclick=downloadVersion(&quot;'+v.id+'&quot;)>Download</button></td></tr>'});document.getElementById('verList').innerHTML=h+'</tbody></table>'})};function downloadVersion(vid){fetch('/api/v1/agents/'+aid+'/versions/'+encodeURIComponent(vid)).then(r=>r.json()).then(function(d){var v=(d.data||{}).dsl||{};var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(v,null,2));a.download='agent_'+aid+'_v'+vid+'.json';a.click()})};function exportAgentJson(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(raw);a.download='agent_'+aid+'.json';a.click()};loadAgent()</script>");
+    b.push_str("';function editDsl(){var pre=document.getElementById('agentDsl');var ta=document.getElementById('agentDslEdit');ta.value=pre.textContent;ta.style.display='block';pre.style.display='none';ta.focus()};function saveDsl(){var ta=document.getElementById('agentDslEdit');var v;try{v=JSON.parse(ta.value)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2);renderTopology(a.dsl||a.canvas||{})})};function renderTopology(dsl){var nodes=(dsl.nodes||[]);var edges=(dsl.edges||[]);if(!nodes.length){document.getElementById('canvasView').innerHTML='<p style=color:var(--tm)>Empty canvas</p>';return}var xMin=1e9,yMin=1e9,xMax=-1e9,yMax=-1e9;var pos={};nodes.forEach(function(n){var p=n.position||{x:0,y:0};pos[n.id]=p;xMin=Math.min(xMin,p.x);yMin=Math.min(yMin,p.y);xMax=Math.max(xMax,p.x);yMax=Math.max(yMax,p.y)});var W=xMax-xMin+300,H=yMax-yMin+300;var svg='<svg width='+W+' height='+H+' style=background:var(--bg)><defs><marker id=arr markerWidth=8 markerHeight=8 refX=8 refY=4 orient=auto><path d=M0,0L8,4L0,8 fill=var(--p)></path></marker></defs>';edges.forEach(function(e){var s=pos[e.source]||{x:0,y:0};var t=pos[e.target]||{x:0,y:0};svg+='<line x1='+(s.x-xMin+150)+' y1='+(s.y-yMin+150)+' x2='+(t.x-xMin+150)+' y2='+(t.y-yMin+150)+' stroke=var(--p) stroke-width=1.5 marker-end=url(#arr)></line>'});nodes.forEach(function(n){var p=pos[n.id];var label=n.data&&(n.data.title||n.data.name)||n.id;svg+='<g><rect x='+(p.x-xMin+120)+' y='+(p.y-yMin+130)+' width=150 height=40 rx=8 fill=var(--card) stroke=var(--p)></rect><text x='+(p.x-xMin+195)+' y='+(p.y-yMin+153)+' text-anchor=middle font-size=12 fill=var(--t2)>'+label+'</text></g>'});svg+='</svg>';document.getElementById('canvasView').innerHTML=svg};function logRun(q,status,out){var lg=document.getElementById('runLog');var ph=lg.querySelector('p');if(ph)ph.remove();var d=new Date();var ts=d.getHours()+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);var div=document.createElement('div');div.style.cssText='padding:8px;border-bottom:1px solid var(--bd);white-space:pre-wrap';div.innerHTML='<span style=color:var(--tm)>['+ts+'] '+status+' &middot; Q: '+(q||'').substring(0,120)+'</span><br>'+String(out).substring(0,600);lg.insertBefore(div,lg.firstChild)};function runAgent(){document.getElementById('aa2').textContent='Running agent...';logRun('Run agent once','running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun('Run agent once',d.code===0?'done':'error',out)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;document.getElementById('aa2').textContent='Running...';logRun(q,'running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun(q,d.code===0?'done':'error',out)})};function saveAgent(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var v;try{v=JSON.parse(raw)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Saved');loadAgent();updateAutosave()}else{alert('Save failed: '+(d.message||'unknown'))}})};function publishAgent(){document.getElementById('pubModal').classList.add('show')}function confirmPublish(){fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({release:true})}).then(r=>r.json()).then(function(d){document.getElementById('pubModal').classList.remove('show');if(d.code===0){openChatTest()}else{alert('Publish failed: '+(d.message||'unknown'))}})}function openChatTest(){document.getElementById('chatTestModal').classList.add('show')}function launchAgent(){location.href='/agent/'+encodeURIComponent(aid)+'/explore'}function sendTestMsg(){var q=document.getElementById('testQ').value;if(!q)return;document.getElementById('testOut').textContent='Thinking...';fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(function(d){document.getElementById('testOut').textContent=d.data?d.data.answer:JSON.stringify(d)})}function updateAutosave(){var el=document.getElementById('autosaveSt');if(el)el.textContent='Autosaved '+new Date().toLocaleString()}function zoomCanvas(dir){var p=document.getElementById('compPanel');var cur=parseFloat(p.dataset.z||'12');cur=Math.min(20,Math.max(9,cur+dir));p.dataset.z=cur;p.style.fontSize=cur+'px'}function fitCanvas(){var p=document.getElementById('compPanel');p.dataset.z='12';p.style.fontSize='12px'}function toggleInter(){var p=document.getElementById('compPanel');p.classList.toggle('no-click')}function addComponent(name){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};var dsl=a.dsl||a.canvas||{};if(!dsl.components)dsl.components={};var n=0;var base=name.replace(/[^A-Za-z0-9_]/g,'');var key=base+':'+n;while(dsl.components[key]){n++;key=base+':'+n}var node={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':[]};if(dsl.components['begin']){dsl.components['begin'].downstream=dsl.components['begin'].downstream||[];dsl.components['begin'].downstream.push(key);node.upstream=['begin']}dsl.components[key]=node;var ta=document.getElementById('agentDslEdit');var pre=document.getElementById('agentDsl');ta.value=JSON.stringify(dsl,null,2);ta.style.display='block';pre.style.display='none';ta.focus();alert('Component \"'+name+'\" added to DSL. Click 💾 Save to persist.')})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};function openVersions(){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>Loading...</p>';document.getElementById('verModal').classList.add('show');fetch('/api/v1/agents/'+aid+'/versions').then(r=>r.json()).then(function(d){var vs=d.data||[];if(!vs.length){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>No versions yet</p>';return}var h='<table><thead><tr><th>ID</th><th>Title</th><th>Created</th><th></th></tr></thead><tbody>';vs.forEach(function(v){h+='<tr><td style=font-family:monospace;font-size:12px>'+v.id+'</td><td>'+(v.title||'')+'</td><td style=color:var(--tm);font-size:12px>'+new Date(v.created_at).toLocaleString()+'</td><td><button class=btn btn-o btn-sm onclick=downloadVersion(&quot;'+v.id+'&quot;)>Download</button></td></tr>'});document.getElementById('verList').innerHTML=h+'</tbody></table>'})};function downloadVersion(vid){fetch('/api/v1/agents/'+aid+'/versions/'+encodeURIComponent(vid)).then(r=>r.json()).then(function(d){var v=(d.data||{}).dsl||{};var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(v,null,2));a.download='agent_'+aid+'_v'+vid+'.json';a.click()})};function exportAgentJson(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(raw);a.download='agent_'+aid+'.json';a.click()};loadAgent()</script>");
     Html(layout("Agent", &b, zh))
 }
 
@@ -3560,6 +3566,182 @@ fn agent_log_label(zh: bool, key: &str) -> String {
         .unwrap_or(key)
         .to_string()
 }
+
+/// Upstream `components/more-button.tsx`: the hover-revealed ghost `Ellipsis`
+/// trigger of every session card (`size-3.5`, transparent background, visible on
+/// card hover / focus-within / expanded).
+const EXPLORE_ELLIPSIS_SVG: &str = "<svg viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'><circle cx='12' cy='12' r='1'/><circle cx='12' cy='5' r='1'/><circle cx='12' cy='19' r='1'/></svg>";
+
+/// Upstream `pages/agent/explore/components/session-list.tsx`: the ghost `Plus`
+/// button that starts a temporary session.
+const EXPLORE_PLUS_SVG: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 12h14'/><path d='M12 5v14'/></svg>";
+
+/// Upstream `components/message-input/next` submit glyph (lucide `ArrowUp` in a
+/// filled circle) and the stop square shown while a run streams.
+const EXPLORE_SEND_SVG: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 7-7 7 7'/><path d='M12 19V5'/></svg>";
+
+/// Upstream `components/ui/confirm-delete-dialog.tsx` close glyph (lucide `X`).
+const EXPLORE_X_SVG: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg>";
+
+/// Upstream `Routes.AgentExplore` = `/agent/:id/explore`
+/// (`web/src/pages/agent/explore/index.tsx` + `components/session-list.tsx` +
+/// `components/session-card.tsx` + `components/session-chat.tsx`): the Launch
+/// surface of a conversational agent.
+///
+/// * `PageHeader` (`bg-text-title-invert p-5`) carries the breadcrumb
+///   `header.flow` → the canvas title (`agentDetail?.title || explore.title`).
+/// * The left `w-[296px] border-r` column is `SessionList`: the
+///   `explore.sessions` heading with its count, a ghost `Plus` button adding a
+///   temporary session, the `explore.searchSessions` box and one card per
+///   session whose hover `Ellipsis` menu opens `ConfirmDeleteDialog`
+///   (`common.deleteModalTitle` + Cancel/Delete).
+/// * The right column is `SessionChat`: `explore.noSessionSelected` until a
+///   session is active, the session's messages, and the message input that
+///   creates the session on first send (`POST /agents/{id}/sessions`, name =
+///   the trimmed question) before streaming `POST /agents/chat/completions`
+///   with `session_id`.
+pub async fn agent_explore_page(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    let title = state
+        .agents
+        .list()
+        .into_iter()
+        .find(|agent| agent.id == agent_id)
+        .map(|agent| agent.name)
+        .unwrap_or_default();
+    let page_title = if title.is_empty() {
+        t("Launch", zh).to_string()
+    } else {
+        title
+    };
+    let sessions_label = if zh { "会话列表" } else { "Sessions" };
+    let new_session_label = if zh { "新建会话" } else { "New Session" };
+    let search_label = if zh {
+        "搜索会话..."
+    } else {
+        "Search sessions..."
+    };
+    let empty_sessions = if zh {
+        "未找到会话"
+    } else {
+        "No sessions found"
+    };
+    let no_session = if zh {
+        "请选择一个会话或创建新会话"
+    } else {
+        "Please select a session or create a new one"
+    };
+    let delete_title = if zh {
+        "确定删除吗?"
+    } else {
+        "Are you sure to delete it ?"
+    };
+    let send_label = t("Send message", zh);
+    let mut b = String::with_capacity(16384);
+    b.push_str("<div class='agent-explore-page' data-agent-id='");
+    b.push_str(&html_escape(&agent_id));
+    b.push_str("'><header class='agent-explore-header'><nav class='chunk-breadcrumb' aria-label='Breadcrumb'><a class='chunk-breadcrumb-link' href='/agent/");
+    b.push_str(&html_escape(&agent_id));
+    b.push_str("' data-testid='explore-breadcrumb-agent'>");
+    b.push_str(t("Agent", zh));
+    b.push_str("</a><span class='chunk-breadcrumb-sep' aria-hidden='true'>");
+    b.push_str(EXPLORE_BREADCRUMB_SEP);
+    b.push_str(
+        "</span><span class='chunk-breadcrumb-page' data-testid='explore-breadcrumb-title'>",
+    );
+    b.push_str(&html_escape(&page_title));
+    b.push_str("</span></nav></header><section class='agent-explore-body'><aside class='agent-explore-sessions'><section class='agent-explore-sessions-inner'><div class='agent-explore-sessions-head'><div class='agent-explore-sessions-title'><h2>");
+    b.push_str(sessions_label);
+    b.push_str("</h2><span class='agent-explore-count' id='exploreSessionCount' data-testid='explore-session-count'>0</span></div><button class='agent-explore-icon-btn' type='button' aria-label='");
+    b.push_str(new_session_label);
+    b.push_str("' data-testid='explore-new-session' onclick='exploreNewSession()'>");
+    b.push_str(EXPLORE_PLUS_SVG);
+    b.push_str("</button></div><div class='agent-explore-search'><input id='exploreSessionSearch' type='search' placeholder='");
+    b.push_str(search_label);
+    b.push_str("' aria-label='");
+    b.push_str(search_label);
+    b.push_str("' data-testid='explore-session-search' oninput='exploreRenderSessions()'></div><div class='agent-explore-cards' id='exploreSessionCards' data-testid='explore-session-list'></div></section></aside><section class='agent-explore-chat'><div class='agent-explore-messages' id='exploreMessages' data-testid='explore-messages'></div><section class='agent-explore-input'><div class='agent-explore-input-row'><textarea id='exploreInput' class='agent-explore-textarea' rows='1' placeholder='");
+    b.push_str(send_label);
+    b.push_str("' aria-label='");
+    b.push_str(send_label);
+    b.push_str("' data-testid='explore-input' oninput='exploreSyncSend()' onkeydown='exploreKeydown(event)'></textarea><button class='agent-explore-send' type='button' id='exploreSend' aria-label='");
+    b.push_str(send_label);
+    b.push_str("' data-testid='explore-send' onclick='exploreSend()'>");
+    b.push_str(EXPLORE_SEND_SVG);
+    b.push_str("</button><button class='agent-explore-stop' type='button' id='exploreStop' aria-label='Stop' data-testid='explore-stop' onclick='exploreStop()' hidden><span aria-hidden='true'></span></button></div><p class='agent-explore-status' id='exploreStatus' data-testid='explore-status' role='status'></p></section></section></section>");
+    // Upstream `components/ui/confirm-delete-dialog.tsx` shell.
+    b.push_str("<div class='modal-overlay' id='exploreDeleteDialog' data-testid='confirm-delete-dialog'><div class='modal confirm-delete-dialog' role='alertdialog' aria-modal='true' aria-labelledby='exploreDeleteTitle'><div class='confirm-delete-head'><h2 id='exploreDeleteTitle'>");
+    b.push_str(delete_title);
+    b.push_str("</h2><button class='confirm-delete-close' type='button' aria-label='");
+    b.push_str(t("Close", zh));
+    b.push_str("' onclick='exploreDeleteCancel()'>");
+    b.push_str(EXPLORE_X_SVG);
+    b.push_str("</button></div><p class='confirm-delete-body' id='exploreDeleteBody'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' data-testid='confirm-delete-dialog-cancel-btn' onclick='exploreDeleteCancel()'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-d' type='button' data-testid='confirm-delete-dialog-confirm-btn' onclick='exploreDeleteConfirm()'>");
+    b.push_str(t("Delete", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<script>var EXPLORE_AGENT=");
+    b.push_str(&json_script_string(&agent_id));
+    b.push_str(";var EXPLORE_LABELS=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "sessions": sessions_label,
+        "newSession": new_session_label,
+        "searchSessions": search_label,
+        "noSessionsFound": empty_sessions,
+        "noSessionSelected": no_session,
+        "deleteSession": delete_title,
+        "noMessages": "No messages in this session",
+        "sessionPrefix": if zh { "会话 " } else { "Session " },
+        "running": if zh { "生成中..." } else { "is running...🕞" },
+        "failed": if zh { "失败" } else { "Failed" },
+    })));
+    b.push_str(";var EXPLORE_ELLIPSIS=\"");
+    b.push_str(EXPLORE_ELLIPSIS_SVG);
+    b.push_str("\";</script>");
+    b.push_str("<script>");
+    b.push_str(EXPLORE_SCRIPT);
+    b.push_str("</script>");
+    Html(layout("Launch", &b, zh)).into_response()
+}
+
+/// Upstream `BreadcrumbSeparator` renders a lucide `ChevronRight` glyph.
+const EXPLORE_BREADCRUMB_SEP: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m9 18 6-6-6-6'/></svg>";
+
+/// Behaviour of the Launch surface. Kept beside the markup so the two stay in
+/// step: session list load/filter, temporary session, confirm-delete, session
+/// transcript, first-send session creation and the agent SSE stream.
+const EXPLORE_SCRIPT: &str = r#"
+var EXPLORE_SESSIONS=[];var EXPLORE_TEMP=null;var EXPLORE_CURRENT='';var EXPLORE_STREAM=null;var EXPLORE_DELETE=null;
+function exploreEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function exploreParams(){var params=new URLSearchParams(window.location.search);return {sessionId:params.get('sessionId')||'',isNew:params.get('isNew')==='true'}}
+function exploreSetParams(sessionId,isNew){var params=new URLSearchParams();if(sessionId)params.set('sessionId',sessionId);if(isNew)params.set('isNew','true');var query=params.toString();window.history.replaceState(null,'','/agent/'+encodeURIComponent(EXPLORE_AGENT)+'/explore'+(query?'?'+query:''))}
+function exploreStatus(text,error){var node=document.getElementById('exploreStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
+function exploreRenderSessions(){var host=document.getElementById('exploreSessionCards');if(!host)return;var term=(document.getElementById('exploreSessionSearch').value||'').trim().toLowerCase();var rows=[];if(EXPLORE_TEMP)rows.push(EXPLORE_TEMP);Array.prototype.push.apply(rows,EXPLORE_SESSIONS);var filtered=rows.filter(function(session){if(!term)return true;return String(session.name||'').toLowerCase().indexOf(term)>=0});var counter=document.getElementById('exploreSessionCount');if(counter)counter.textContent=String(rows.length);host.textContent='';if(!filtered.length){var empty=document.createElement('div');empty.className='agent-explore-empty';empty.setAttribute('data-testid','explore-session-empty');empty.textContent=EXPLORE_LABELS.noSessionsFound;host.appendChild(empty);return}filtered.forEach(function(session){var card=document.createElement('article');card.className='agent-explore-card';var isTemp=!!session.is_new;var selected=isTemp?(EXPLORE_CURRENT===''&&!!EXPLORE_TEMP):(session.id===EXPLORE_CURRENT);if(selected)card.classList.add('selected');card.dataset.testid='explore-session-card';card.dataset.sessionId=session.id||'';if(isTemp)card.dataset.temp='1';card.onclick=function(){exploreSelectSession(session.id||'',isTemp)};var name=document.createElement('div');name.className='agent-explore-card-name';name.textContent=isTemp?EXPLORE_LABELS.newSession:(session.name||EXPLORE_LABELS.sessionPrefix+session.id);card.appendChild(name);var actions=document.createElement('div');actions.className='agent-explore-card-actions';var more=document.createElement('button');more.type='button';more.className='agent-explore-more';more.setAttribute('data-testid','explore-session-more');more.setAttribute('aria-label','More');more.setAttribute('aria-expanded','false');more.innerHTML=EXPLORE_ELLIPSIS;more.onclick=function(event){event.stopPropagation();exploreToggleMenu(more,session,isTemp)};actions.appendChild(more);card.appendChild(actions);host.appendChild(card)})}
+function exploreCloseMenus(){Array.prototype.forEach.call(document.querySelectorAll('.agent-explore-menu'),function(menu){menu.remove()});Array.prototype.forEach.call(document.querySelectorAll('.agent-explore-more'),function(button){button.setAttribute('aria-expanded','false')})}
+function exploreToggleMenu(trigger,session,isTemp){var open=trigger.getAttribute('aria-expanded')==='true';exploreCloseMenus();if(open)return;trigger.setAttribute('aria-expanded','true');var menu=document.createElement('div');menu.className='agent-explore-menu';menu.setAttribute('role','menu');var row=document.createElement('button');row.type='button';row.className='agent-explore-menu-item';row.setAttribute('data-testid','explore-session-delete');row.textContent=EXPLORE_LABELS.deleteSession;row.onclick=function(event){event.stopPropagation();exploreCloseMenus();exploreDeletePrompt(session,isTemp)};menu.appendChild(row);trigger.parentElement.appendChild(menu)}
+function exploreDeletePrompt(session,isTemp){EXPLORE_DELETE={id:session.id||'',isTemp:!!isTemp};var body=document.getElementById('exploreDeleteBody');if(body)body.textContent=EXPLORE_LABELS.deleteSession;document.getElementById('exploreDeleteDialog').classList.add('show')}
+function exploreDeleteCancel(){document.getElementById('exploreDeleteDialog').classList.remove('show')}
+function exploreDeleteConfirm(){var target=EXPLORE_DELETE;exploreDeleteCancel();if(!target)return;if(target.isTemp){EXPLORE_TEMP=null;EXPLORE_CURRENT='';exploreSetParams('',false);exploreRenderSessions();exploreRenderMessages([]);return}fetch('/api/v1/agents/'+encodeURIComponent(EXPLORE_AGENT)+'/sessions/'+encodeURIComponent(target.id),{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||EXPLORE_LABELS.failed);if(EXPLORE_CURRENT===target.id){EXPLORE_CURRENT='';exploreSetParams('',true);exploreRenderMessages([])}exploreLoadSessions()}).catch(function(error){exploreStatus(error.message,true)})}
+function exploreNewSession(){exploreCloseMenus();EXPLORE_TEMP={id:'',name:EXPLORE_LABELS.newSession,is_new:true};EXPLORE_CURRENT='';exploreSetParams('',true);exploreRenderSessions();exploreRenderMessages([]);var input=document.getElementById('exploreInput');if(input)input.focus()}
+function exploreSelectSession(id,isNew){exploreCloseMenus();if(isNew||!id){exploreNewSession();return}EXPLORE_TEMP=null;EXPLORE_CURRENT=id;exploreSetParams(id,false);exploreRenderSessions();fetch('/api/v1/agents/'+encodeURIComponent(EXPLORE_AGENT)+'/sessions/'+encodeURIComponent(id)).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||EXPLORE_LABELS.failed);exploreRenderMessages(((data.data||{}).message)||[])}).catch(function(error){exploreStatus(error.message,true)})}
+function exploreLoadSessions(){fetch('/api/v1/agents/'+encodeURIComponent(EXPLORE_AGENT)+'/sessions?page=1&page_size=100').then(function(response){return response.json()}).then(function(data){EXPLORE_SESSIONS=Array.isArray(data.data)?data.data:[];exploreRenderSessions()}).catch(function(error){exploreStatus(error.message,true)})}
+function exploreReferenceHtml(references){if(!references||!references.length)return '';var html="<details class='agent-explore-refs'><summary>"+references.length+" references</summary>";references.forEach(function(reference,index){html+='<div class="agent-explore-ref">['+(index+1)+'] '+exploreEscape(String((reference&&reference.content)||'').substring(0,160))+'</div>'});return html+'</details>'}
+function exploreMessageNode(message){var role=String((message&&message.role)||'assistant');var node=document.createElement('article');node.className='agent-explore-msg '+(role==='user'?'user':'assistant');var head=document.createElement('div');head.className='agent-explore-msg-head';head.textContent=role==='user'?'You':'Agent';node.appendChild(head);var body=document.createElement('div');body.className='agent-explore-msg-body';body.textContent=String((message&&message.content)||'');node.appendChild(body);node.appendChild(document.createRange().createContextualFragment(exploreReferenceHtml(message&&message.reference)));return node}
+function exploreRenderMessages(messages){var host=document.getElementById('exploreMessages');if(!host)return;host.textContent='';var active=!!EXPLORE_CURRENT||!!EXPLORE_TEMP;if(!active){var idle=document.createElement('div');idle.className='agent-explore-placeholder';idle.setAttribute('data-testid','explore-no-session');idle.textContent=EXPLORE_LABELS.noSessionSelected;host.appendChild(idle);return}if(!messages||!messages.length){var empty=document.createElement('div');empty.className='agent-explore-placeholder';empty.setAttribute('data-testid','explore-no-messages');empty.textContent=EXPLORE_LABELS.noMessages;host.appendChild(empty);return}messages.forEach(function(message){host.appendChild(exploreMessageNode(message))});host.scrollTop=host.scrollHeight}
+function exploreSyncSend(){var input=document.getElementById('exploreInput');var button=document.getElementById('exploreSend');if(!input||!button)return;button.disabled=!String(input.value||'').trim()}
+function exploreKeydown(event){if(event.key!=='Enter'||event.shiftKey)return;event.preventDefault();exploreSend()}
+function exploreStop(){if(EXPLORE_STREAM){EXPLORE_STREAM.abort();EXPLORE_STREAM=null}exploreStreaming(false);exploreStatus('')}
+function exploreStreaming(on){var button=document.getElementById('exploreSend');var stop=document.getElementById('exploreStop');var input=document.getElementById('exploreInput');if(button)button.hidden=!!on;if(stop)stop.hidden=!on;if(input)input.disabled=false;if(!on)exploreSyncSend()}
+function exploreSend(){var input=document.getElementById('exploreInput');if(!input)return;var value=String(input.value||'').trim();if(!value||EXPLORE_STREAM)return;exploreStatus('');var sessionId=EXPLORE_CURRENT;if(sessionId){explorePostSend(value,sessionId);return}var name=value;fetch('/api/v1/agents/'+encodeURIComponent(EXPLORE_AGENT)+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||EXPLORE_LABELS.failed);var id=((data.data||{}).id)||'';if(!id)throw new Error(EXPLORE_LABELS.failed);EXPLORE_TEMP=null;EXPLORE_CURRENT=id;exploreSetParams(id,false);exploreLoadSessions();explorePostSend(value,id)}).catch(function(error){exploreStatus(error.message,true)})}
+function explorePostSend(value,sessionId){var host=document.getElementById('exploreMessages');if(!host)return;var placeholder=host.querySelector('.agent-explore-placeholder');if(placeholder)placeholder.remove();host.appendChild(exploreMessageNode({role:'user',content:value}));var answer=document.createElement('article');answer.className='agent-explore-msg assistant';answer.setAttribute('data-testid','explore-live-answer');var head=document.createElement('div');head.className='agent-explore-msg-head';head.textContent='Agent';var body=document.createElement('div');body.className='agent-explore-msg-body';body.textContent=EXPLORE_LABELS.running;answer.appendChild(head);answer.appendChild(body);host.appendChild(answer);host.scrollTop=host.scrollHeight;var controller=new AbortController();EXPLORE_STREAM=controller;exploreStreaming(true);document.getElementById('exploreInput').value='';var payload={agent_id:EXPLORE_AGENT,stream:true,query:value,inputs:{},session_id:sessionId,'openai-compatible':false,running_hint_text:EXPLORE_LABELS.running};fetch('/api/v1/agents/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal}).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);var reader=response.body.getReader();var decoder=new TextDecoder();var buffer='';var answer_text='';var references=[];body.textContent='';function pump(){return reader.read().then(function(chunk){if(chunk.done){exploreStreaming(false);EXPLORE_STREAM=null;if(references.length)answer.appendChild(document.createRange().createContextualFragment(exploreReferenceHtml(references)));if(!answer_text)body.textContent=EXPLORE_LABELS.failed;exploreLoadSessions();return}buffer+=decoder.decode(chunk.value,{stream:true});var lines=buffer.split('\n');buffer=lines.pop();lines.forEach(function(line){if(line.indexOf('data:')!==0)return;var raw=line.slice(5).trim();if(!raw||raw==='[DONE]')return;var event=null;try{event=JSON.parse(raw)}catch(error){return}if(event.code&&event.code!==0){exploreStatus(event.message||EXPLORE_LABELS.failed,true);return}var eventName=event.event||'';var data=event.data||{};if(eventName==='message'){answer_text=String(data.content||answer_text);body.textContent=answer_text;host.scrollTop=host.scrollHeight;return}if(eventName==='message_end'){if(Array.isArray(data.reference)&&data.reference.length)references=data.reference;return}if(eventName==='waiting_for_user'){if(data.tips)body.textContent=String(data.tips);return}});return pump()})}return pump()}).catch(function(error){exploreStreaming(false);EXPLORE_STREAM=null;if(error&&error.name==='AbortError'){exploreStatus('');return}body.textContent=error.message;exploreStatus(error.message,true)})}
+function exploreBoot(){var params=exploreParams();exploreLoadSessions();if(params.sessionId){exploreSelectSession(params.sessionId,false)}else if(params.isNew){exploreNewSession()}else{exploreRenderMessages([])}exploreSyncSend();document.addEventListener('click',function(event){if(!event.target.closest||!event.target.closest('.agent-explore-card-actions'))exploreCloseMenus()})}
+exploreBoot();
+"#;
 
 /// Upstream `pages/agents/agent-log-page.tsx` (417 lines) with
 /// `agent-log-detail-modal.tsx` (151) and `hooks/use-export-agent-log.ts` (86):
@@ -13037,6 +13219,106 @@ connection: close
             html.contains("confirmPublish"),
             "confirm publish handler missing"
         );
+    }
+
+    /// Upstream `Routes.AgentExplore` (`/agent/:id/explore`): the Launch surface
+    /// landed with the session column, the session chat and the confirm-delete
+    /// shell, and the canvas toolbar's Launch button navigates there instead of
+    /// opening the legacy chat modal.
+    #[tokio::test]
+    async fn agent_explore_page_matches_upstream_launch_surface() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agent/agent-1/explore")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            agent_explore_page(State(state.clone()), Path("agent-1".to_string()), request).await,
+        )
+        .await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='explore-breadcrumb-agent'",
+            "data-testid='explore-breadcrumb-title'",
+            "data-testid='explore-new-session'",
+            "data-testid='explore-session-search'",
+            "data-testid='explore-session-list'",
+            "data-testid='explore-messages'",
+            "data-testid='explore-input'",
+            "data-testid='explore-send'",
+            "data-testid='explore-stop'",
+            "data-testid='confirm-delete-dialog'",
+            "data-testid='confirm-delete-dialog-confirm-btn'",
+        ] {
+            assert!(html.contains(marker), "explore marker {marker} missing");
+        }
+        // `header.flow` breadcrumb target, the session APIs the page drives and
+        // the confirm-delete flow of `SessionDropdown`.
+        assert!(html.contains("href='/agent/agent-1'"));
+        assert!(html.contains("/api/v1/agents/'+encodeURIComponent(EXPLORE_AGENT)+'/sessions'"));
+        assert!(html.contains("/api/v1/agents/chat/completions"));
+        assert!(html.contains("exploreDeleteConfirm"));
+        assert!(html.contains("exploreNewSession"));
+        // Upstream labels (English face).
+        for label in [
+            "Sessions",
+            "New Session",
+            "Search sessions...",
+            "Please select a session or create a new one",
+            "No sessions found",
+            "Are you sure to delete it ?",
+        ] {
+            assert!(html.contains(label), "explore label {label} missing");
+        }
+
+        let zh_request = Request::builder()
+            .uri("/agent/agent-1/explore")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(
+            agent_explore_page(
+                State(state.clone()),
+                Path("agent-1".to_string()),
+                zh_request,
+            )
+            .await,
+        )
+        .await;
+        for label in [
+            "会话列表",
+            "新建会话",
+            "搜索会话...",
+            "请选择一个会话或创建新会话",
+            "未找到会话",
+            "确定删除吗?",
+        ] {
+            assert!(zh_html.contains(label), "zh explore label {label} missing");
+        }
+
+        // The canvas toolbar's Launch button is upstream's `explore.title`
+        // navigation (`navigateToAgentExplore`), not the legacy chat modal.
+        let detail_request = Request::builder()
+            .uri("/agents/agent-1")
+            .body(Body::empty())
+            .unwrap();
+        let detail =
+            body_of(agent_detail_page(Path("agent-1".to_string()), detail_request).await).await;
+        assert!(detail.contains("onclick='launchAgent()'"));
+        assert!(detail.contains("function launchAgent(){location.href='/agent/'"));
+        assert!(!detail.contains("data-testid='agent-launch' onclick='openChatTest()'"));
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".agent-explore-page{",
+            ".agent-explore-sessions{width:296px",
+            ".agent-explore-card{",
+            ".agent-explore-menu{",
+            ".agent-explore-input-row{",
+        ] {
+            assert!(css.contains(selector), "explore css {selector} missing");
+        }
     }
 
     #[tokio::test]

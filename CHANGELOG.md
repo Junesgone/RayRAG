@@ -2,6 +2,44 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.36] — 2026-09-23（对标批次 v0.3.8n）
+
+### Added
+
+- **智能体「探索（Launch）」页面上线**（上游 `Routes.AgentExplore = /agent/:id/explore`，
+  `web/src/pages/agent/explore/index.tsx` + `components/session-list.tsx` + `session-card.tsx` +
+  `session-chat.tsx`）：这是此前**根本没有注册**的路由（访问 404）。现在按上游逐层复刻：
+  - `PageHeader` 面包屑（`header.flow`「智能体」→ 画布标题，标题为空时回退 `explore.title`「探索」）。
+  - 左侧 296px 会话列（`SessionList`）：`explore.sessions`「会话列表」标题 + 计数、ghost `Plus`
+    新建临时会话（`explore.newSession`「新建会话」）、`explore.searchSessions` 搜索框按名称实时过滤
+    （无命中显示 `explore.noSessionsFound`「未找到会话」）、每张会话卡右上角**悬停才出现**的 `Ellipsis`
+    菜单，菜单里的删除行打开上游 `ConfirmDeleteDialog`（`common.deleteModalTitle`「确定删除吗?」+
+    取消/删除）。
+  - 右侧会话聊天（`SessionChat`）：未选会话时显示 `explore.noSessionSelected`「请选择一个会话或创建新会话」；
+    选中后按 `/api/v1/agents/{id}/sessions/{session_id}` 的历史渲染消息；底部消息输入框（空内容时发送键禁用、
+    Enter 发送、Shift+Enter 换行）。
+  - **首次发送自动建会话**：与上游一致，先 `POST /api/v1/agents/{id}/sessions`（会话名 = 问题原文），
+    拿到 `session_id` 后再 `POST /api/v1/agents/chat/completions` 流式生成，并把 `sessionId` 写回地址栏。
+- **新增端点 `POST /api/v1/agents/{id}/sessions`**（上游 `agent_api.py::create_agent_session`）：
+  `{name}` 建会话，`user_id` 缺省取租户；会话行按上游写入 `source=agent`、画布 DSL 快照、
+  最新版本标题，并把 `canvas.get_prologue()`（Begin 组件 prologue）**作为第一条 assistant 消息**播种；
+  返回 `_normalize_agent_session` 形状（`{code:0,data:{id,name,message,source,agent_id,...}}`）；
+  画布不存在回 `{code:102,message:"Agent not found."}`。
+- **新增端点 `POST /api/v1/agents/chat/completions`**（上游 `api.ts::agentChatCompletion`）：
+  上游所有智能体聊天入口（编辑器调试、探索页、分享页）都往这个**把画布 id 放在 body 里**的地址发流式请求；
+  此前只有 `/api/v1/agents/{id}/completions`，该地址会 404。现在与路径版共用同一处理器；
+  请求体的 `session_id` 与 `conversation_id` 两种写法都能选中会话，`query` 缺省（上游表单消息只发
+  `inputs`）也不再报错。
+- **画布工具栏「🚀 探索」按钮**改为上游行为：点击跳转 `/agent/{id}/explore`（上游
+  `navigateToAgentExplore`），不再弹旧的自测对话框。
+
+### Notes
+
+- 新增回归：`web::kb_ui_tests::agent_explore_page_matches_upstream_launch_surface`（标记/双语标签/CSS/
+  Launch 接线）与 `server::tests::agent_explore_session_creation_and_chat_route_match_upstream`
+  （建会话播种 prologue、列表回读、body 寻址聊天路由、未知画布 102）。
+- 全量 `cargo test --locked --lib` **1558 passed / 0 failed / 27 ignored**。
+
 ## [0.4.35] — 2026-09-22（对标批次 v0.3.8m）
 
 ### Added

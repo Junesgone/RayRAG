@@ -153,8 +153,15 @@ pub struct ChatRequest {
 
 #[derive(Deserialize)]
 pub struct AgentChatRequest {
+    /// Session to continue. Upstream's agent chat surfaces post `session_id`
+    /// (`pages/agent/chat/use-send-agent-message.ts` sets `params.session_id`),
+    /// while the earlier RayRAG callers used `conversation_id`; both spellings
+    /// resolve to the same stored session.
+    #[serde(alias = "session_id")]
     pub conversation_id: Option<String>,
-    #[serde(alias = "query")]
+    /// Upstream posts the question as `query`; the form-message path
+    /// (`sendFormMessage`) sends only `inputs`, so an absent question is legal.
+    #[serde(default, alias = "query")]
     pub question: String,
     pub kb_ids: Option<Vec<String>>,
     /// Runtime values consumed by the Canvas Begin component.
@@ -7316,6 +7323,34 @@ pub async fn agent_complete(
         return agent_live_sse_response(state, auth, agent_id, body);
     }
     agent_complete_inner(state, auth, agent_id, body, None).await
+}
+
+/// POST /api/v1/agents/chat/completions — `api.ts::agentChatCompletion`, the
+/// endpoint every upstream agent chat surface posts to
+/// (`pages/agent/chat/use-send-agent-message.ts`, reused by the Explore page and
+/// the shared-agent embed). The canvas id travels in the body as `agent_id`
+/// instead of the path, so the request is forwarded to the same handler as
+/// `/api/v1/agents/{id}/completions`; `session_id` selects the session.
+#[derive(Deserialize)]
+pub struct AgentChatCompletionRequest {
+    pub agent_id: String,
+    #[serde(flatten)]
+    pub chat: AgentChatRequest,
+}
+
+pub async fn agent_chat_completion(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<AgentChatCompletionRequest>,
+) -> axum::response::Response {
+    let agent_id = body.agent_id.clone();
+    agent_complete(
+        State(state),
+        Extension(auth),
+        Path(agent_id),
+        Json(body.chat),
+    )
+    .await
 }
 
 async fn agent_complete_inner(

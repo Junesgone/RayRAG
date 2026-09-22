@@ -539,3 +539,58 @@ tr:hover .admin-row-actions,tr:focus-within .admin-row-actions{opacity:1}
 .chunk-metadata-value{color:var(--t)}
 .chunk-metadata-section{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--bd);border-radius:4px}
 .chunk-metadata-line{font-size:12px}
+
+/* Upstream `pages/agent/explore/index.tsx` + `components/session-list.tsx` +
+`components/session-card.tsx` + `components/session-chat.tsx`: the Launch
+surface — the `bg-text-title-invert p-5` PageHeader with its breadcrumb, the
+296px session column (`p-5` + `space-y-3` cards, hover-revealed ellipsis menu,
+`ConfirmDeleteDialog` shell) and the chat column with its message list and
+message input. */
+.agent-explore-page{display:flex;flex-direction:column;min-height:0;height:calc(100vh - 96px)}
+.agent-explore-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px;background:var(--bgc)}
+.agent-explore-header .chunk-breadcrumb svg{width:14px;height:14px}
+.agent-explore-body{display:flex;flex:1;min-height:0}
+.agent-explore-sessions{width:296px;min-width:0;border-right:1px solid var(--bd)}
+.agent-explore-sessions-inner{display:flex;flex-direction:column;height:100%;padding:20px}
+.agent-explore-sessions-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.agent-explore-sessions-title{display:flex;align-items:center;gap:8px}
+.agent-explore-sessions-title h2{margin:0;font-size:16px;font-weight:700}
+.agent-explore-count{color:var(--t2);font-size:12px}
+.agent-explore-icon-btn{display:inline-flex;align-items:center;justify-content:center;padding:6px;border:0;border-radius:var(--rs);background:transparent;color:var(--t);cursor:pointer}
+.agent-explore-icon-btn:hover{background:var(--bgch)}
+.agent-explore-icon-btn svg{width:16px;height:16px}
+.agent-explore-search{margin-bottom:16px}
+.agent-explore-search input{width:100%}
+.agent-explore-cards{display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;overflow:auto}
+.agent-explore-empty{padding:32px 0;color:var(--t2);font-size:13px;text-align:center}
+.agent-explore-card{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bg);cursor:pointer;transition:box-shadow .15s}
+.agent-explore-card:hover{box-shadow:var(--shl)}
+.agent-explore-card.selected{background:var(--bgc)}
+.agent-explore-card-name{flex:1;min-width:0;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-explore-card-actions{position:relative;display:flex;align-items:center}
+.agent-explore-more{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;padding:0;border:0;background:transparent;color:var(--t2);opacity:0;cursor:pointer;transition:opacity .15s}
+.agent-explore-card:hover .agent-explore-more,.agent-explore-more:focus-visible,.agent-explore-more[aria-expanded='true']{opacity:1}
+.agent-explore-more svg{width:14px;height:14px}
+.agent-explore-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:60;min-width:150px;padding:4px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgm);box-shadow:var(--shl)}
+.agent-explore-menu-item{display:block;width:100%;padding:8px 10px;border:0;border-radius:4px;background:transparent;color:var(--d);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.agent-explore-menu-item:hover{background:var(--bgch)}
+.agent-explore-chat{display:flex;flex:1;min-width:0;flex-direction:column}
+.agent-explore-messages{display:flex;flex:1;min-height:0;flex-direction:column;gap:16px;padding:20px;overflow:auto}
+.agent-explore-placeholder{display:flex;flex:1;align-items:center;justify-content:center;color:var(--t2);font-size:14px}
+.agent-explore-msg{display:flex;flex-direction:column;gap:6px;max-width:85%}
+.agent-explore-msg.user{align-self:flex-end;align-items:flex-end}
+.agent-explore-msg.assistant{align-self:flex-start}
+.agent-explore-msg-head{color:var(--t2);font-size:12px}
+.agent-explore-msg-body{padding:10px 14px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.agent-explore-msg.user .agent-explore-msg-body{background:var(--nab)}
+.agent-explore-refs{margin-top:6px;font-size:12px;color:var(--t2)}
+.agent-explore-refs summary{cursor:pointer;color:var(--p)}
+.agent-explore-ref{margin-top:4px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px}
+.agent-explore-input{padding:16px}
+.agent-explore-input-row{display:flex;align-items:flex-end;gap:8px;padding:8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc)}
+.agent-explore-textarea{flex:1;min-height:38px;max-height:160px;padding:8px;border:0;background:transparent;color:var(--t);font:inherit;font-size:14px;resize:vertical;outline:0}
+.agent-explore-send,.agent-explore-stop{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:999px;background:var(--p);color:#fff;cursor:pointer}
+.agent-explore-send:disabled{opacity:.5;cursor:not-allowed}
+.agent-explore-send svg{width:16px;height:16px}
+.agent-explore-stop span{display:block;width:10px;height:10px;background:#fff}
+.agent-explore-status{min-height:16px;margin:6px 0 0;color:var(--tm);font-size:12px}

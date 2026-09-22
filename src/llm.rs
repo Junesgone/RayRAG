@@ -262,6 +262,20 @@ fn default_conversation_source() -> String {
     "chat".into()
 }
 
+/// Everything `create_agent_session` needs to persist a new agent session.
+/// Borrowed so the handler can pass request strings straight through; `dsl` and
+/// `version_title` are owned because both come from other stores.
+pub struct NewAgentSession<'a> {
+    pub owner_id: &'a str,
+    pub tenant_id: &'a str,
+    pub canvas_id: &'a str,
+    pub name: &'a str,
+    pub kb_ids: Vec<String>,
+    pub prologue: &'a str,
+    pub dsl: Option<serde_json::Value>,
+    pub version_title: Option<String>,
+}
+
 /// LLM client configuration.
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -1040,6 +1054,41 @@ impl ConvStore {
             dsl: None,
             errors: None,
             version_title: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.mutate(|conversations| {
+            conversations.insert(conversation.id.clone(), conversation.clone());
+            Ok(conversation)
+        })
+    }
+
+    /// Create the row that upstream `agent_api.py::create_agent_session` writes:
+    /// the request's name, the canvas DSL snapshot, the canvas prologue seeded as
+    /// the first assistant message and the latest version title.
+    ///
+    /// Upstream seeds `message: [{"role": "assistant", "content":
+    /// canvas.get_prologue()}]` unconditionally, so an empty prologue still
+    /// produces one empty assistant entry; `reference` starts empty and
+    /// `source` is `agent`.
+    pub fn create_agent_session(&self, seed: NewAgentSession<'_>) -> Result<Conversation> {
+        let now = now_ms();
+        let conversation = Conversation {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: seed.name.to_string(),
+            owner_id: seed.owner_id.to_string(),
+            tenant_id: seed.tenant_id.to_string(),
+            source: "agent".into(),
+            canvas_id: Some(seed.canvas_id.to_string()),
+            app_id: None,
+            kb_ids: seed.kb_ids,
+            chat_model: None,
+            embedding_model: None,
+            messages: vec![ChatMessage::new("assistant", seed.prologue)],
+            duration_ms: 0,
+            dsl: seed.dsl,
+            errors: None,
+            version_title: seed.version_title,
             created_at: now,
             updated_at: now,
         };

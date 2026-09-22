@@ -3535,6 +3535,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // singular (`/agent/:id`, `/search/:id`, `/document/:id`).
         .route("/login-next", get(crate::web::login_page))
         .route("/agent/{agent_id}", get(crate::web::agent_detail_page))
+        // Upstream `Routes.AgentExplore` (`/agent/:id/explore`); the plural
+        // spelling mirrors RayRAG's `/agents` alias for the same page bundle.
+        .route(
+            "/agent/{agent_id}/explore",
+            get(crate::web::agent_explore_page),
+        )
+        .route(
+            "/agents/{agent_id}/explore",
+            get(crate::web::agent_explore_page),
+        )
         .route(
             "/search/{search_id}",
             get(crate::web::search_app_detail_page),
@@ -4154,6 +4164,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/agents/{id}/completions",
             post(crate::api::features::agent_complete),
         )
+        // `api.ts::agentChatCompletion` — the canvas id rides in the body, so
+        // this literal route must exist next to the `{id}` spelling above
+        // (matchit ranks the static segment over the parameter).
+        .route(
+            "/api/v1/agents/chat/completions",
+            post(crate::api::features::agent_chat_completion),
+        )
         .route(
             "/api/v1/agents/{id}/versions",
             get(crate::api::features::list_agent_versions),
@@ -4168,7 +4185,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // `/v1/canvas/{canvas_id}/sessions` because `webAPI = /v1`.
         .route(
             "/api/v1/agents/{id}/sessions",
-            get(crate::api::agent_log::list_agent_sessions),
+            get(crate::api::agent_log::list_agent_sessions)
+                .post(crate::api::agent_log::create_agent_session),
         )
         .route(
             "/api/v1/agents/{id}/sessions/{session_id}",
@@ -14047,5 +14065,148 @@ mod tests {
             checkpoint.graph.node_count() > 0,
             "compiled graph nodes persisted"
         );
+    }
+
+    /// Upstream `agent_api.py::create_agent_session` plus
+    /// `api.ts::agentChatCompletion`: the Explore surface creates a session with
+    /// the canvas prologue seeded as its first assistant message, lists it back,
+    /// and posts the conversation to the body-addressed chat route.
+    #[tokio::test]
+    async fn agent_explore_session_creation_and_chat_route_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Launch Agent",
+                            "dsl": {
+                                "graph": {"nodes": [{"id": "begin", "type": "beginNode"}], "edges": []},
+                                "components": {
+                                    "begin": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "mode": "conversational",
+                                            "prologue": "Hi! I'm your assistant."
+                                        },
+                                        "upstream": [],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let session = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "First session"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(session.status(), StatusCode::OK);
+        let session = response_json(session).await;
+        assert_eq!(session["code"], 0);
+        assert_eq!(session["message"], "success");
+        assert_eq!(session["data"]["name"], "First session");
+        assert_eq!(session["data"]["source"], "agent");
+        assert_eq!(session["data"]["agent_id"], agent_id);
+        let session_id = session["data"]["id"].as_str().unwrap().to_owned();
+        assert!(!session_id.is_empty());
+        // `canvas.get_prologue()` is seeded as the first assistant message.
+        assert_eq!(session["data"]["message"][0]["role"], "assistant");
+        assert_eq!(
+            session["data"]["message"][0]["content"],
+            "Hi! I'm your assistant."
+        );
+
+        let list = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        let list = response_json(list).await;
+        assert!(
+            list["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == session_id.as_str()),
+            "created session missing from the list: {list}"
+        );
+
+        // `api.ts::agentChatCompletion` carries the canvas id in the body; the
+        // literal route must win over `/api/v1/agents/{id}/completions`.
+        let chat = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/chat/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "agent_id": agent_id,
+                            "session_id": session_id,
+                            "query": "hello",
+                            "stream": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(chat.status(), StatusCode::NOT_FOUND);
+        assert_ne!(chat.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let missing = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/does-not-exist/sessions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Agent not found.");
     }
 }
