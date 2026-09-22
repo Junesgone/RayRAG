@@ -29,6 +29,10 @@ BASE = os.environ.get("RAYRAG_BASE", "http://127.0.0.1:9498")
 PASSWORD = os.environ.get("RAYRAG_ADMIN_PASSWORD")
 EMAIL = os.environ.get("RAYRAG_ADMIN_EMAIL", "admin@rayrag.local")
 STUB_PORT = int(os.environ.get("RAYRAG_STUB_PORT", "18081"))
+# The stub binds localhost by default; when RayRAG runs in a container, bind the
+# bridge gateway and hand that address to the provider instance instead.
+STUB_BIND = os.environ.get("RAYRAG_STUB_BIND", "127.0.0.1")
+STUB_BASE = os.environ.get("RAYRAG_STUB_BASE", f"http://127.0.0.1:{STUB_PORT}/v1")
 DIMENSION = 384
 if not PASSWORD:
     print("RAYRAG_ADMIN_PASSWORD is required", file=sys.stderr)
@@ -169,9 +173,9 @@ def main():
         if not ok:
             results["errors"].append(label + (f" ({detail})" if detail else ""))
 
-    server = ThreadingHTTPServer(("127.0.0.1", STUB_PORT), StubHandler)
+    server = ThreadingHTTPServer((STUB_BIND, STUB_PORT), StubHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    results["stub"] = f"http://127.0.0.1:{STUB_PORT}/v1"
+    results["stub"] = STUB_BASE
 
     status, body = call("POST", "/api/v1/auth/login", body={"email": EMAIL, "password": PASSWORD})
     token = (body.get("data") or {}).get("access_token")
