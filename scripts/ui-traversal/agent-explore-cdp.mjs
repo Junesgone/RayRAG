@@ -120,6 +120,17 @@ try {
   await page.waitForSelector("[data-testid='explore-session-list']", {
     timeout: 15000,
   });
+  // The shell already ships the no-session placeholder and the disabled send
+  // button (upstream's first paint); waiting for the boot script's own pass
+  // keeps the layout assertions deterministic.
+  await page.waitForSelector("[data-testid='explore-no-session']", {
+    timeout: 15000,
+  });
+  await page.waitForFunction(
+    () => document.querySelector("[data-testid='explore-send']").disabled === true,
+    null,
+    { timeout: 15000 },
+  );
   results.routing = { url: page.url() };
   if (!page.url().includes(`/agent/${agentId}/explore`)) {
     fail("Launch did not navigate to the explore route: " + page.url());
@@ -214,7 +225,7 @@ try {
     { timeout: 30000 },
   );
   await page.waitForFunction(
-    () => !document.querySelector("[data-testid='explore-stop']").hidden === false,
+    () => document.querySelector("[data-testid='explore-stop']").hidden === true,
     null,
     { timeout: 15000 },
   );

@@ -3664,13 +3664,20 @@ pub async fn agent_explore_page(
     b.push_str(search_label);
     b.push_str("' aria-label='");
     b.push_str(search_label);
-    b.push_str("' data-testid='explore-session-search' oninput='exploreRenderSessions()'></div><div class='agent-explore-cards' id='exploreSessionCards' data-testid='explore-session-list'></div></section></aside><section class='agent-explore-chat'><div class='agent-explore-messages' id='exploreMessages' data-testid='explore-messages'></div><section class='agent-explore-input'><div class='agent-explore-input-row'><textarea id='exploreInput' class='agent-explore-textarea' rows='1' placeholder='");
+    b.push_str("' data-testid='explore-session-search' oninput='exploreRenderSessions()'></div><div class='agent-explore-cards' id='exploreSessionCards' data-testid='explore-session-list'></div></section></aside><section class='agent-explore-chat'><div class='agent-explore-messages' id='exploreMessages' data-testid='explore-messages'><div class='agent-explore-placeholder' data-testid='explore-no-session'>");
+    // Upstream `SessionChat` renders `explore.noSessionSelected` whenever no
+    // session is active, which is also the first paint — so the shell ships the
+    // same node instead of flashing an empty column before the script boots.
+    b.push_str(no_session);
+    b.push_str("</div></div><section class='agent-explore-input'><div class='agent-explore-input-row'><textarea id='exploreInput' class='agent-explore-textarea' rows='1' placeholder='");
     b.push_str(send_label);
     b.push_str("' aria-label='");
     b.push_str(send_label);
     b.push_str("' data-testid='explore-input' oninput='exploreSyncSend()' onkeydown='exploreKeydown(event)'></textarea><button class='agent-explore-send' type='button' id='exploreSend' aria-label='");
     b.push_str(send_label);
-    b.push_str("' data-testid='explore-send' onclick='exploreSend()'>");
+    // Upstream's `useSendButtonDisabled(value)` is true while the box is empty,
+    // so the shipped button starts disabled for the same first paint.
+    b.push_str("' data-testid='explore-send' disabled onclick='exploreSend()'>");
     b.push_str(EXPLORE_SEND_SVG);
     b.push_str("</button><button class='agent-explore-stop' type='button' id='exploreStop' aria-label='Stop' data-testid='explore-stop' onclick='exploreStop()' hidden><span aria-hidden='true'></span></button></div><p class='agent-explore-status' id='exploreStatus' data-testid='explore-status' role='status'></p></section></section></section>");
     // Upstream `components/ui/confirm-delete-dialog.tsx` shell.
@@ -13245,6 +13252,7 @@ connection: close
             "data-testid='explore-session-search'",
             "data-testid='explore-session-list'",
             "data-testid='explore-messages'",
+            "data-testid='explore-no-session'",
             "data-testid='explore-input'",
             "data-testid='explore-send'",
             "data-testid='explore-stop'",
@@ -13260,6 +13268,12 @@ connection: close
         assert!(html.contains("/api/v1/agents/chat/completions"));
         assert!(html.contains("exploreDeleteConfirm"));
         assert!(html.contains("exploreNewSession"));
+        // Upstream's first paint: the no-session placeholder plus the disabled
+        // send button (`useSendButtonDisabled`).
+        assert!(html.contains(
+            "data-testid='explore-no-session'>Please select a session or create a new one</div>"
+        ));
+        assert!(html.contains("data-testid='explore-send' disabled"));
         // Upstream labels (English face).
         for label in [
             "Sessions",
