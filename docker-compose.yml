@@ -1,0 +1,140 @@
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:18.4}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${RAYRAG_POSTGRES_DATABASE:-rayrag}
+      POSTGRES_USER: ${RAYRAG_POSTGRES_USER:-rayrag}
+      POSTGRES_PASSWORD: ${RAYRAG_POSTGRES_PASSWORD:?set RAYRAG_POSTGRES_PASSWORD}
+    ports:
+      - "${RAYRAG_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - rayrag-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 90s
+
+  rayrag:
+    build:
+      context: .
+      args:
+        RUST_IMAGE: ${RUST_IMAGE:-docker.m.daocloud.io/library/rust:1.97.1-bookworm}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-docker.m.daocloud.io/library/debian:bookworm-slim}
+        RAYRAG_FEATURES: ${RAYRAG_FEATURES:-postgres-backend,zvec-backend}
+        # auto probes a domestic mirror and falls back to upstream; force with
+        # RAYRAG_MIRROR_PROFILE=cn (mainland mirrors) or =global (crates.io /
+        # deb.debian.org / github.com direct).
+        RAYRAG_MIRROR_PROFILE: ${RAYRAG_MIRROR_PROFILE:-auto}
+        # Build identity: the image has no .git, so pass the revision in.
+        RAYRAG_BUILD_GIT_REV: ${RAYRAG_BUILD_GIT_REV:-}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
+        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-}
+        ZVEC_RELEASE_BASE: ${ZVEC_RELEASE_BASE:-https://xget.xi-xu.me/gh/zvec-ai/zvec-rust/releases/download}
+        ZVEC_RELEASE_FALLBACK_BASE: ${ZVEC_RELEASE_FALLBACK_BASE:-https://github.com/zvec-ai/zvec-rust/releases/download}
+        # Each zvec mirror attempt is capped so a stalled mirror cannot hang the
+        # build; the second mirror is tried afterwards.
+        ZVEC_DOWNLOAD_TIMEOUT: ${ZVEC_DOWNLOAD_TIMEOUT:-900}
+    image: ${RAYRAG_IMAGE:-rayrag:local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Container-local wall clock; RAGFlow's compose exposes the same knob as
+      # TIMEZONE. Date filters and log timestamps use it.
+      TZ: ${RAYRAG_TIMEZONE:-Asia/Shanghai}
+      RAYRAG_POSTGRES_URL: postgresql://${RAYRAG_POSTGRES_USER:-rayrag}:${RAYRAG_POSTGRES_PASSWORD}@postgres:5432/${RAYRAG_POSTGRES_DATABASE:-rayrag}
+      RAYRAG_POSTGRES_REQUIRED_VERSION: "18.4"
+      RAYRAG_POSTGRES_NAMESPACE: ${RAYRAG_POSTGRES_NAMESPACE:-default}
+      RAYRAG_VECTOR_BACKEND: ${RAYRAG_VECTOR_BACKEND:-zvec}
+      RAYRAG_ZVEC_DIR: /var/lib/rayrag/zvec
+      RAYRAG_EMBEDDING_DIMENSION: ${RAYRAG_EMBEDDING_DIMENSION:-384}
+      EMBED_API_BASE: ${EMBED_API_BASE:-}
+      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-}
+      RERANK_API_BASE: ${RERANK_API_BASE:-}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_MODEL: ${RERANK_MODEL:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      RAYRAG_OCR_PROVIDER: ${RAYRAG_OCR_PROVIDER:-}
+      RAYRAG_OCR_BASE_URL: ${RAYRAG_OCR_BASE_URL:-http://127.0.0.1:8097}
+      PADDLEOCR_BASE_URL: ${PADDLEOCR_BASE_URL:-https://paddleocr.aistudio-app.com}
+      PADDLEOCR_ACCESS_TOKEN: ${PADDLEOCR_ACCESS_TOKEN:-}
+      RAYRAG_ASR_API_BASE: ${RAYRAG_ASR_API_BASE:-}
+      RAYRAG_ASR_API_KEY: ${RAYRAG_ASR_API_KEY:-}
+      RAYRAG_ASR_MODEL: ${RAYRAG_ASR_MODEL:-}
+      RAYRAG_NO_FSYNC: ${RAYRAG_NO_FSYNC:-1}
+      # Upstream `settings.REGISTER_ENABLED` / `DISABLE_PASSWORD_LOGIN` and the
+      # `oauth:` registry consumed by the login page (see src/oauth_config.rs).
+      # `REGISTER_ENABLED` gates both the page's sign-up face and
+      # `POST /api/v1/user/register`; 0 disables registration end to end.
+      REGISTER_ENABLED: ${REGISTER_ENABLED:-1}
+      DISABLE_PASSWORD_LOGIN: ${DISABLE_PASSWORD_LOGIN:-false}
+      RAYRAG_OAUTH_CONFIG: ${RAYRAG_OAUTH_CONFIG:-}
+      SEARXNG_URL: ${SEARXNG_URL:-}
+      PADDLEOCR_ALGORITHM: ${PADDLEOCR_ALGORITHM:-PaddleOCR-VL}
+      PADDLEOCR_REQUEST_TIMEOUT_SECONDS: ${PADDLEOCR_REQUEST_TIMEOUT_SECONDS:-600}
+      OPENDATALOADER_APISERVER: ${OPENDATALOADER_APISERVER:-}
+      OPENDATALOADER_API_KEY: ${OPENDATALOADER_API_KEY:-}
+      OPENDATALOADER_TIMEOUT: ${OPENDATALOADER_TIMEOUT:-600}
+      MINERU_APISERVER: ${MINERU_APISERVER:-}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
+      MINERU_OUTPUT_DIR: ${MINERU_OUTPUT_DIR:-}
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_SERVER_URL: ${MINERU_SERVER_URL:-}
+      MINERU_DELETE_OUTPUT: ${MINERU_DELETE_OUTPUT:-1}
+      MINERU_REQUEST_TIMEOUT_SECONDS: ${MINERU_REQUEST_TIMEOUT_SECONDS:-1800}
+      MINERU_TIMEOUT_SECONDS: ${MINERU_TIMEOUT_SECONDS:-30}
+      SOMARK_BASE_URL: ${SOMARK_BASE_URL:-}
+      SOMARK_API_KEY: ${SOMARK_API_KEY:-}
+      SOMARK_IMAGE_FORMAT: ${SOMARK_IMAGE_FORMAT:-url}
+      SOMARK_FORMULA_FORMAT: ${SOMARK_FORMULA_FORMAT:-latex}
+      SOMARK_TABLE_FORMAT: ${SOMARK_TABLE_FORMAT:-html}
+      SOMARK_CS_FORMAT: ${SOMARK_CS_FORMAT:-image}
+      SOMARK_ENABLE_TEXT_CROSS_PAGE: ${SOMARK_ENABLE_TEXT_CROSS_PAGE:-0}
+      SOMARK_ENABLE_TABLE_CROSS_PAGE: ${SOMARK_ENABLE_TABLE_CROSS_PAGE:-0}
+      SOMARK_ENABLE_TITLE_LEVEL_RECOGNITION: ${SOMARK_ENABLE_TITLE_LEVEL_RECOGNITION:-0}
+      SOMARK_ENABLE_INLINE_IMAGE: ${SOMARK_ENABLE_INLINE_IMAGE:-1}
+      SOMARK_ENABLE_TABLE_IMAGE: ${SOMARK_ENABLE_TABLE_IMAGE:-1}
+      SOMARK_ENABLE_IMAGE_UNDERSTANDING: ${SOMARK_ENABLE_IMAGE_UNDERSTANDING:-1}
+      SOMARK_KEEP_HEADER_FOOTER: ${SOMARK_KEEP_HEADER_FOOTER:-0}
+      SOMARK_SUBMIT_REQUEST_TIMEOUT_SECONDS: ${SOMARK_SUBMIT_REQUEST_TIMEOUT_SECONDS:-60}
+      SOMARK_POLL_REQUEST_TIMEOUT_SECONDS: ${SOMARK_POLL_REQUEST_TIMEOUT_SECONDS:-30}
+      SOMARK_SUBMIT_BUDGET_SECONDS: ${SOMARK_SUBMIT_BUDGET_SECONDS:-600}
+      SOMARK_POLL_BUDGET_SECONDS: ${SOMARK_POLL_BUDGET_SECONDS:-600}
+      RAYRAG_ADMIN_EMAIL: ${RAYRAG_ADMIN_EMAIL:-admin@rayrag.local}
+      RAYRAG_ADMIN_PASSWORD: ${RAYRAG_ADMIN_PASSWORD:?set RAYRAG_ADMIN_PASSWORD}
+      # Optional RAGFlow-compatible RSA password transport. The path must be
+      # mounted into the container by an operator-owned Compose override.
+      RAYRAG_PASSWORD_PRIVATE_KEY_FILE: ${RAYRAG_PASSWORD_PRIVATE_KEY_FILE:-}
+    command: ["serve", "--port", "8080"]
+    ports:
+      - "${RAYRAG_PORT:-9380}:8080"
+    volumes:
+      - rayrag-state:/app/web
+      - rayrag-zvec-data:/var/lib/rayrag/zvec
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8080/api/v1/system/healthz >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  rayrag-postgres-data:
+  rayrag-state:
+  rayrag-zvec-data:
