@@ -2,6 +2,39 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.35] — 2026-09-22（对标批次 v0.3.8m）
+
+### Added
+
+- **检索页设置抽屉按上游 `next-search/search-setting.tsx` 重建**：此前 `/search` 的检索参数是一个
+  固定宽 240px 的侧栏卡片（Top K / 阈值 / 向量权重三个 `<select>` + 快速问题链接），上游实际是一个
+  `w-[440px]` 的**滑出抽屉**。现在逐字段对齐上游顺序与语义：
+  - 触发器（工具栏右侧齿轮，`data-testid="search-settings-trigger"`）→ 抽屉标题行（`search.searchSettings`
+    + 16px `X`）→ 可滚动主体 → 底部固定的 Cancel/Save（`search.cancelText` / `search.okText`，
+    Save 带 `data-testid="search-settings-save"`，即上游的 testId）。
+  - 主体字段顺序：头像 + 名称 + 描述（描述默认 `search.descriptionValue`）→ 数据集多选 → 元数据过滤
+    （Disabled / Automatic / Semi-automatic / Manual，manual 与 semi_auto 各自可增删行）→
+    「显示块元数据」开关 + 元数据字段多选（键来自 `/api/v1/datasets/metadata/flattened`）→
+    相似度阈值与向量权重滑杆（滑杆与数字框双向同步）→ 重排开关 + 必填重排模型树（复用共享
+    `push_default_model_selector`）+ Top K 滑杆（0–2048，仅重排开启时出现，与上游一致）→
+    AI 总结开关 + LLM 设置（自由度预设 + temperature / top_p / presence / frequency 四行，带启用勾选）→
+    关联搜索开关 → 查询思维导图开关。
+  - 请求侧：`meta_data_filter`（三种模式）、`reference_metadata{include,fields}`、`summary`、
+    `query_mindmap` 现在真的进入 `/api/v1/retrieval` 请求体；思维导图按钮的可见性也随抽屉开关联动。
+  - 保存走 `PUT /api/v1/searchapps/{id}`（未保存的应用则 `POST` 新建），Cancel 用应用记录回滚后关闭。
+- **检索应用详情端点补齐（上游 `search_api.detail`）**：`GET /api/v1/searches/{id}` 之前**根本没有注册**
+  （`/api/v1/searchapps/{id}` 也只挂了 PUT/DELETE，GET 回 405 空响应），所以按上游契约读取检索应用的客户端
+  拿不到任何数据——设置抽屉同样无从回填。现在 `GET /api/v1/searches/{id}` 与
+  `GET /api/v1/searchapps/{id}` 都返回 `{code:0,data:{…}}`，未知 id 回上游文案
+  `Can't find this Search App!`（102），非属主回 `Has no permission for this operation.`（103）。
+  同时把检索应用 CRUD 按上游路径补齐别名：`GET/POST /api/v1/searches`、`GET/PUT/DELETE /api/v1/searches/{id}`
+  （上游 `web/src/utils/api.ts` 的 `createSearch`/`getSearchList`/`getSearchDetail`/`updateSearchSetting`/`deleteSearch`）。
+
+### Fixed
+
+- 检索工具栏里残留的 `id='rerank'` 复选框与抽屉里的重排开关**同 id**，`getElementById` 取到的是先出现的
+  隐藏那个，于是点抽屉开关时行不展开、Top K 不出现。旧复选框已移除，`ssRerankSync` 负责 Top K 的显示。
+
 ## [0.4.34] — 2026-09-22（对标批次 v0.3.8l）
 
 ### Added

@@ -3980,7 +3980,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/searchapps/{id}",
-            axum::routing::put(crate::api::searchapp_mgr::update_search_app)
+            get(crate::api::searchapp_mgr::get_search_app)
+                .put(crate::api::searchapp_mgr::update_search_app)
+                .delete(crate::api::searchapp_mgr::delete_search_app),
+        )
+        // Upstream `search_api` mounts the same CRUD on `/api/v1/searches`
+        // (`web/src/utils/api.ts::createSearch` / `getSearchList` /
+        // `getSearchDetail` / `updateSearchSetting` / `deleteSearch`), so the
+        // upstream-shaped client reaches the same store through these aliases.
+        .route(
+            "/api/v1/searches",
+            get(crate::api::searchapp_mgr::list_search_apps)
+                .post(crate::api::searchapp_mgr::create_search_app),
+        )
+        .route(
+            "/api/v1/searches/{id}",
+            get(crate::api::searchapp_mgr::get_search_app)
+                .put(crate::api::searchapp_mgr::update_search_app)
                 .delete(crate::api::searchapp_mgr::delete_search_app),
         )
         .route(
@@ -11799,6 +11815,102 @@ mod tests {
     /// `{selector: {document_ids, metadata_condition}, updates, deletes}`, the
     /// condition is evaluated by `common/metadata_utils.meta_filter`, and the
     /// answer carries both `updated` and `matched_docs`.
+    /// Upstream `search_api` mounts the search app CRUD on `/api/v1/searches`
+    /// and answers `GET /api/v1/searches/{id}` with the stored app. The route
+    /// used to be missing: a `GET` on `/api/v1/searchapps/{id}` returned 405 with
+    /// an empty body, which left the search page's settings drawer with nothing
+    /// to load.
+    #[tokio::test]
+    async fn search_app_detail_matches_the_upstream_route_and_shape() {
+        let mut env = test_env();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-search-detail-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        Arc::get_mut(&mut env.state).unwrap().search_apps = Some(store.clone());
+        let env = env;
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/searches")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "Drawer app", "kb_ids": []}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let created = response_json(create).await;
+        assert_eq!(created["code"], 0);
+        let app_id = created["data"]["id"].as_str().unwrap().to_string();
+
+        for uri in [
+            format!("/api/v1/searches/{app_id}"),
+            format!("/api/v1/searchapps/{app_id}"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 0, "{uri}");
+            assert_eq!(body["data"]["name"], "Drawer app", "{uri}");
+            assert_eq!(body["data"]["id"], app_id, "{uri}");
+        }
+
+        // Unknown id and a foreign app keep upstream's messages.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/searches/does-not-exist")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "Can't find this Search App!");
+
+        let stored = env
+            .state
+            .search_apps
+            .as_ref()
+            .unwrap()
+            .get(&app_id)
+            .unwrap();
+        assert_eq!(stored.owner_id, "test-user");
+        let removed = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/searches/{app_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+    }
+
     #[tokio::test]
     async fn document_metadata_batch_update_follows_the_upstream_selector() {
         let env = test_env();

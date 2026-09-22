@@ -80,6 +80,8 @@ fn t(k: &str, zh: bool) -> &str {
         "Top N" => "检索条数",
         "Empty Response" => "空回复文案",
         "Rerank Model" => "重排模型",
+        // Upstream `search.rerankModel` (the drawer's switch label).
+        "Rerank model" => "重排模型",
         // dataset tag tabs (upstream `knowledgeConfiguration.tagCloud/tagTable`).
         "Tag cloud" => "标签云",
         // skills search-config modal (upstream `skillSearch.*`).
@@ -1590,6 +1592,8 @@ const SELECT_SAVE_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' f
 const SB_PROVIDER_ICONS_JS: &str = r#"var SB_PROVIDER_ICONS={local:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='20' height='14' x='2' y='3' rx='2'/><line x1='8' x2='16' y1='21' y2='21'/><line x1='12' x2='12' y1='17' y2='21'/></svg>",self_managed:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='20' height='8' x='2' y='2' rx='2' ry='2'/><rect width='20' height='8' x='2' y='14' rx='2' ry='2'/><line x1='6' x2='6.01' y1='6' y2='6'/><line x1='6' x2='6.01' y1='18' y2='18'/></svg>",ssh:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><polyline points='4 17 10 11 4 5'/><line x1='12' x2='20' y1='19' y2='19'/></svg>",aliyun_codeinterpreter:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z'/></svg>",e2b:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z'/></svg>",default:"<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='20' height='8' x='2' y='2' rx='2' ry='2'/><rect width='20' height='8' x='2' y='14' rx='2' ry='2'/><line x1='6' x2='6.01' y1='6' y2='6'/><line x1='6' x2='6.01' y1='18' y2='18'/></svg>"};"#;
 
 /// Upstream `SelectWithSearch` trigger chevron: lucide `ChevronDown` at 16px.
+/// lucide `Settings` at 18px — the search settings trigger icon.
+const SEARCH_GEAR_SVG: &str = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z'/><circle cx='12' cy='12' r='3'/></svg>";
 const SELECT_CHEVRON_DOWN_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m6 9 6 6 6-6'/></svg>";
 
 /// Upstream `SelectWithSearch` selected-row affordance: lucide `Check` at 16px
@@ -3009,9 +3013,7 @@ fn search_page_markup(
     b.push_str(&chunks.to_string());
     b.push_str(" chunks</p></div>");
     // Search results (hidden initially)
-    b.push_str("<div id='searchView' style='display:none'><div style='display:flex;gap:16px'><div style='flex:1'><div class='card'><div class='search-ask'><input id='q2' class='search-ask-input' placeholder='__GREETING__' onkeydown='if(event.key===&quot;Enter&quot;)doSearch2()'><div class='search-ask-actions'><span class='search-ask-clear' id='searchAskClear' role='button' tabindex='0' aria-label='__CLEAR__' onclick='searchAskReset()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></span><span class='search-ask-sep' aria-hidden='true'>|</span><button type='button' class='search-ask-submit' id='searchAskSubmit' data-testid='search-ask-submit' aria-label='__SUBMIT__' onclick='searchAskAction()'><svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg></button></div></div><div style='display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap'><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='rerank' onchange='searchRerankToggle()'> ");
-    b.push_str(t("Rerank Model", zh));
-    b.push_str("</label><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='hybrid'> BM25+Vector</label><label style='font-size:12px'>");
+    b.push_str("<div id='searchView' style='display:none'><div style='display:flex;gap:16px'><div style='flex:1'><div class='card'><div class='search-ask'><input id='q2' class='search-ask-input' placeholder='__GREETING__' onkeydown='if(event.key===&quot;Enter&quot;)doSearch2()'><div class='search-ask-actions'><span class='search-ask-clear' id='searchAskClear' role='button' tabindex='0' aria-label='__CLEAR__' onclick='searchAskReset()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></span><span class='search-ask-sep' aria-hidden='true'>|</span><button type='button' class='search-ask-submit' id='searchAskSubmit' data-testid='search-ask-submit' aria-label='__SUBMIT__' onclick='searchAskAction()'><svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg></button></div></div><div style='display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap'><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='hybrid'> BM25+Vector</label><label style='font-size:12px'>");
     b.push_str(t("Knowledge Base", zh));
     b.push_str("</label><select id='kbSel' style='font-size:12px;max-width:200px' onchange='kbSelChange()'><option value='__all__'>All knowledge bases</option></select><label style='font-size:12px'>");
     // Upstream `next-search/retrieval-documents/index.tsx`: the trigger shows the
@@ -3038,21 +3040,40 @@ fn search_page_markup(
     b.push_str(t("Clear", zh));
     b.push_str("</button><span class='search-docs-sep' id='searchDocsFooterSep' hidden aria-hidden='true'></span><button type='button' class='search-docs-action' onclick='searchDocsClose()'>");
     b.push_str(t("Close", zh));
-    b.push_str("</button></div></div></div></div><div id='searchRerankRow' style='display:none;margin-top:8px'><p style='font-size:11px;color:var(--d);margin:0 0 4px'>* ");
-    b.push_str(t("Rerank model is required when rerank is enabled", zh));
-    b.push_str("</p><p id='searchRerankError' class='provider-instance-error'></p>");
-    push_default_model_selector(&mut b, &SEARCH_PAGE_RERANK_SELECTOR_FIELD, zh);
-    b.push_str("</div><div id='kbChips' style='margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:12px'></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>💾 Save as App</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='aiSummaryBlock' data-testid='search-ai-summary' hidden><div class='search-ai-title'>__AI_SUMMARY__</div><div class='search-ai-body' id='aiSummaryBody'></div><div class='search-ai-divider'></div></div><div class='search-result-bar'><button type='button' class='btn btn-o btn-sm' id='searchMindBtn' data-testid='search-mindmap' hidden onclick='searchMindmapOpen()'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 12h-8'/><path d='M21 6H8'/><path d='M21 18h-8'/><path d='M3 6v4c0 1.1.9 2 2 2h3'/><path d='M3 10v6c0 1.1.9 2 2 2h3'/></svg><span>__MIND_LABEL__</span></button><span class='search-result-total' id='searchTotal'></span></div><div id='results' style='margin-top:16px'></div></div>");
-    // Settings sidebar
-    b.push_str("<div class='card' style='width:240px;flex-shrink:0'><h3>Search Settings</h3><label style='font-size:12px;display:block;margin:8px 0'>");
-    b.push_str("Top K");
-    b.push_str("</label><select id='topK'><option>5</option><option selected>10</option><option>20</option><option>50</option></select><label style='font-size:12px;display:block;margin:8px 0'>");
-    b.push_str(t("Threshold", zh));
-    b.push_str("</label><select id='thresh'><option>0.0</option><option selected>0.3</option><option>0.5</option><option>0.7</option></select><label style='font-size:12px;display:block;margin:8px 0'>");
-    b.push_str(t("Vector Weight", zh));
-    b.push_str("</label><select id='vWeight'><option>0.3</option><option>0.5</option><option selected>0.7</option><option>1.0</option></select><label style='font-size:12px;display:flex;align-items:center;gap:6px;margin:8px 0'><input type='checkbox' id='relatedSearch' onchange='searchRelatedToggle()'> ");
-    b.push_str(t("Enable related search", zh));
-    b.push_str("</label><h3 style='margin-top:20px'>Quick Questions</h3><a href='#' onclick='quickQ(\"What is RayRAG?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>What is RayRAG?</a><a href='#' onclick='quickQ(\"How does RAG work?\")' style='display:block;font-size:12px;color:var(--p);text-decoration:none;padding:4px 0'>How does RAG work?</a></div></div></div>");
+    b.push_str("</button></div></div></div></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>💾 Save as App</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='aiSummaryBlock' data-testid='search-ai-summary' hidden><div class='search-ai-title'>__AI_SUMMARY__</div><div class='search-ai-body' id='aiSummaryBody'></div><div class='search-ai-divider'></div></div><div class='search-result-bar'><button type='button' class='btn btn-o btn-sm' id='searchMindBtn' data-testid='search-mindmap' hidden onclick='searchMindmapOpen()'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 12h-8'/><path d='M21 6H8'/><path d='M21 18h-8'/><path d='M3 6v4c0 1.1.9 2 2 2h3'/><path d='M3 10v6c0 1.1.9 2 2 2h3'/></svg><span>__MIND_LABEL__</span></button><span class='search-result-total' id='searchTotal'></span></div><div id='results' style='margin-top:16px'></div></div>");
+    // Upstream `next-search/search-setting.tsx`: the settings live in a
+    // slide-out drawer opened from the toolbar, not in a fixed sidebar card.
+    push_search_settings_drawer(&mut b, zh);
+    b.push_str("</div></div>");
+    b.push_str(r#"<script>
+// Upstream `next-search/search-setting.tsx`: the drawer owns the config it
+// edits. `ssLoad` fills it from the loaded search app, `ssPayload` returns the
+// object the drawer would save, and `ssSave` writes it back through
+// `PUT /api/v1/searchapps/{id}` (or creates one when the page is unsaved).
+function ssToggle(open){var drawer=document.getElementById('ssDrawer');var trigger=document.getElementById('ssOpen');if(!drawer)return;drawer.dataset.open=open?'true':'false';drawer.setAttribute('aria-hidden',open?'false':'true');if(trigger)trigger.setAttribute('aria-expanded',open?'true':'false');if(open)ssMetaKeysLoad()}
+function ssTouch(id){window.__SEARCH_TOUCHED=window.__SEARCH_TOUCHED||{};window.__SEARCH_TOUCHED[id]=true}
+function ssSync(id,value){var node=document.getElementById(id);if(node)node.value=value;var range=document.getElementById(id==='thresh'?'ssThreshRange':id==='vWeight'?'ssWeightRange':id==='topK'?'ssTopKRange':null);if(range)range.value=value;ssTouch(id)}
+function ssNumber(id,fallback){var node=document.getElementById(id);if(!node)return fallback;var value=parseFloat(node.value);return isNaN(value)?fallback:value}
+function ssChecked(id){var node=document.getElementById(id);return !!(node&&node.checked)}
+function ssValue(id,fallback){var node=document.getElementById(id);return node&&node.value!==''?node.value:(fallback||'')}
+function ssMetaChange(){var method=ssValue('ssMetaMethod','disabled');var manual=document.getElementById('ssMetaManual');var semi=document.getElementById('ssMetaSemi');var hint=document.getElementById('ssMetaHint');if(manual)manual.hidden=method!=='manual';if(semi)semi.hidden=method!=='semi_auto';if(hint){hint.hidden=method!=='auto'&&method!=='semi_auto';hint.textContent=SEARCH_LABELS.metaHint||''}if(method==='manual'&&!document.querySelectorAll('#ssMetaManualRows .ss-meta-row').length)ssMetaAddRow();if(method==='semi_auto'&&!document.querySelectorAll('#ssMetaSemiRows .ss-meta-row').length)ssMetaAddSemiRow();ssTouch('ssMetaMethod')}
+function ssMetaAddRow(){var host=document.getElementById('ssMetaManualRows');if(!host)return;var row=document.createElement('div');row.className='ss-meta-row';row.innerHTML="<input class='ss-input ss-meta-key' placeholder='"+SEARCH_LABELS.metaKey+"'><select class='ss-select ss-meta-op'>"+SEARCH_META_OPS.map(function(op){return "<option value='"+op+"'>"+op+"</option>"}).join('')+"</select><input class='ss-input ss-meta-value' placeholder='"+SEARCH_LABELS.metaValue+"'><button type='button' class='ss-remove' aria-label='"+SEARCH_LABELS.remove+"' onclick='ssMetaRemove(this)'>×</button>";host.appendChild(row);ssMetaKeysLoad()}
+function ssMetaAddSemiRow(){var host=document.getElementById('ssMetaSemiRows');if(!host)return;var row=document.createElement('div');row.className='ss-meta-row';var options=(SEARCH_META_KEYS||[]).map(function(key){return "<option value='"+key+"'>"+key+"</option>"}).join('');row.innerHTML="<select class='ss-select ss-meta-key'>"+options+"</select><select class='ss-select ss-meta-op'><option value=''>"+SEARCH_LABELS.metaAuto+"</option>"+SEARCH_META_OPS.map(function(op){return "<option value='"+op+"'>"+op+"</option>"}).join('')+"</select><button type='button' class='ss-remove' aria-label='"+SEARCH_LABELS.remove+"' onclick='ssMetaRemove(this)'>×</button>";host.appendChild(row)}
+function ssMetaRemove(button){var row=button&&button.closest?button.closest('.ss-meta-row'):null;if(row&&row.parentNode)row.parentNode.removeChild(row);ssTouch('ssMetaMethod')}
+function ssMetaKeysLoad(){fetch('/api/v1/datasets/metadata/flattened?page=1&page_size=1000').then(function(response){return response.json()}).then(function(data){var keys=Object.keys((data&&data.data)||{});SEARCH_META_KEYS=keys;var host=document.getElementById('ssMetaFields');if(!host)return;var picked=[];document.querySelectorAll('#ssMetaFields .ss-chip.on').forEach(function(chip){picked.push(chip.dataset.value)});host.replaceChildren();keys.forEach(function(key){var chip=document.createElement('button');chip.type='button';chip.className='ss-chip'+(picked.indexOf(key)>=0?' on':'');chip.dataset.value=key;chip.textContent=key;chip.setAttribute('aria-pressed',picked.indexOf(key)>=0?'true':'false');chip.onclick=function(){var on=chip.classList.toggle('on');chip.setAttribute('aria-pressed',on?'true':'false');ssTouch('ssMetaFields')};host.appendChild(chip)});var semiRows=document.querySelectorAll('#ssMetaSemiRows .ss-meta-key');semiRows.forEach(function(select){var current=select.value;select.replaceChildren();keys.forEach(function(key){var option=document.createElement('option');option.value=key;option.textContent=key;select.appendChild(option)});if(current)select.value=current})}).catch(function(){})}
+function ssRerankSync(){var field=document.getElementById('ssTopKField');if(field)field.hidden=!ssChecked('rerank')}
+function ssRefMetaChange(){var row=document.getElementById('ssMetaFieldsRow');var on=ssChecked('ssRefMeta');if(row)row.hidden=!on;if(on)ssMetaKeysLoad();ssTouch('ssRefMeta')}
+function ssSummaryChange(){var fields=document.getElementById('ssLlmFields');if(fields)fields.hidden=!ssChecked('ssSummary');ssTouch('ssSummary')}
+function ssFreedomChange(){var presets={default:['0.7','0.9','0.0','0.0'],precise:['0.2','0.1','0.0','0.0'],balanced:['0.5','0.8','0.0','0.0'],imaginative:['1.0','0.95','0.2','0.2']};var picked=presets[ssValue('ssFreedom','default')];if(!picked)return;[['ssTemperature',picked[0]],['ssTopP',picked[1]],['ssPresencePenalty',picked[2]],['ssFrequencyPenalty',picked[3]]].forEach(function(pair){var node=document.getElementById(pair[0]);if(node)node.value=pair[1];var toggle=document.getElementById(pair[0]+'On');if(toggle)toggle.checked=true;ssTouch(pair[0])})}
+function ssAvatarPick(input){var file=input&&input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');if(image){image.src=String(reader.result||'');image.hidden=false}if(empty)empty.hidden=true;ssTouch('ssAvatar')};reader.readAsDataURL(file)}
+function ssMetaFieldsPayload(){var out=[];document.querySelectorAll('#ssMetaFields .ss-chip.on').forEach(function(chip){out.push(chip.dataset.value)});return out}
+function ssMetaFilterPayload(){var method=ssValue('ssMetaMethod','disabled');if(method==='disabled')return null;if(method==='auto')return {method:'auto'};if(method==='semi_auto'){var semi=[];document.querySelectorAll('#ssMetaSemiRows .ss-meta-row').forEach(function(row){var key=(row.querySelector('.ss-meta-key')||{}).value||'';var op=(row.querySelector('.ss-meta-op')||{}).value||'';if(!key)return;semi.push(op?{key:key,op:op}:key)});return {method:'semi_auto',semi_auto:semi}}var manual=[];document.querySelectorAll('#ssMetaManualRows .ss-meta-row').forEach(function(row){var key=((row.querySelector('.ss-meta-key')||{}).value||'').trim();var op=(row.querySelector('.ss-meta-op')||{}).value||'';var value=(row.querySelector('.ss-meta-value')||{}).value||'';if(key)manual.push({key:key,op:op,value:value})});return {method:'manual',logic:'and',manual:manual}}
+function ssLoad(app){if(!app)return;var name=document.getElementById('ssName');if(name)name.value=app.name||'';var desc=document.getElementById('ssDesc');if(desc)desc.value=app.description||SEARCH_LABELS.descriptionValue;var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');if(image&&app.avatar){image.src=app.avatar;image.hidden=false;if(empty)empty.hidden=true}var mind=document.getElementById('ssMindmap');if(mind)mind.checked=!!app.query_mindmap;var summary=document.getElementById('ssSummary');if(summary)summary.checked=!!app.summary;ssSummaryChange();var refmeta=(app.reference_metadata||{});var refSwitch=document.getElementById('ssRefMeta');if(refSwitch){refSwitch.checked=!!refmeta.include;ssRefMetaChange()}var filter=app.meta_data_filter||null;var method=document.getElementById('ssMetaMethod');if(method){method.value=(filter&&filter.method)||'disabled';if(filter&&filter.method==='manual'){(filter.manual||[]).forEach(function(item){ssMetaAddRow();var rows=document.querySelectorAll('#ssMetaManualRows .ss-meta-row');var row=rows[rows.length-1];if(!row)return;(row.querySelector('.ss-meta-key')||{}).value=item.key||'';(row.querySelector('.ss-meta-op')||{}).value=item.op||'=';(row.querySelector('.ss-meta-value')||{}).value=item.value==null?'':String(item.value)})}if(filter&&filter.method==='semi_auto'){(filter.semi_auto||[]).forEach(function(item){ssMetaAddSemiRow();var rows=document.querySelectorAll('#ssMetaSemiRows .ss-meta-row');var row=rows[rows.length-1];if(!row)return;var key=typeof item==='string'?item:(item.key||'');(row.querySelector('.ss-meta-key')||{}).value=key;(row.querySelector('.ss-meta-op')||{}).value=(item&&item.op)||''})}ssMetaChange()}}
+function ssPayload(){return {name:ssValue('ssName',''),description:ssValue('ssDesc',''),avatar:(document.getElementById('ssAvatarImg')||{}).src||'',kb_ids:searchDocsSelectedKbs(),top_k:ssNumber('topK',1024),similarity_threshold:ssNumber('thresh',0.3),vector_similarity_weight:ssNumber('vWeight',0.7),rerank:ssChecked('rerank'),rerank_id:(function(){var node=document.getElementById('searchRerankSel');return node?(node.dataset.value||''):''})(),related_search:ssChecked('relatedSearch'),query_mindmap:ssChecked('ssMindmap'),summary:ssChecked('ssSummary'),llm_setting:ssLlmPayload(),reference_metadata:{include:ssChecked('ssRefMeta'),fields:(ssChecked('ssRefMeta')?ssMetaFieldsPayload():[])},meta_data_filter:ssMetaFilterPayload()}}
+function ssLlmPayload(){var out={};[['temperature','ssTemperature'],['top_p','ssTopP'],['presence_penalty','ssPresencePenalty'],['frequency_penalty','ssFrequencyPenalty']].forEach(function(pair){var toggle=document.getElementById(pair[1]+'On');if(toggle&&toggle.checked)out[pair[0]]=ssNumber(pair[1],0)});var freedom=ssValue('ssFreedom','default');if(freedom!=='default')out.parameter=freedom;return out}
+function ssSave(){var body=ssPayload();var app=window.__SAPP__;var url=app&&app.id?'/api/v1/searchapps/'+encodeURIComponent(app.id):'/api/v1/searchapps';var method=app&&app.id?'PUT':'POST';fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0){alert('Save failed: '+(data.message||'unknown'));return}ssToggle(false)}).catch(function(error){alert('Save failed: '+error.message)})}
+function ssCancel(){var app=window.__SAPP__;if(app)ssLoad(app);ssToggle(false)}
+</script>"#);
     b.push_str("<script>var SEARCH_LABELS=");
     b.push_str(&json_script_value(&serde_json::json!({
         "relatedSearch": t("Related search", zh),
@@ -3069,6 +3090,14 @@ fn search_page_markup(
         "answerFailed": if zh { "暂时无法生成 AI 总结" } else { "The AI summary is unavailable" },
         "stopped": if zh { "已停止生成" } else { "Generation stopped" },
         "total": t("Total", zh),
+        // Drawer runtime strings (`search-setting.tsx` rows and the metadata
+        // filter's own placeholders).
+        "descriptionValue": t("You are an intelligent assistant.", zh),
+        "metaHint": t("The model reads your question and picks the filter conditions.", zh),
+        "metaKey": t("Key", zh),
+        "metaValue": t("Value", zh),
+        "metaAuto": t("Automatic", zh),
+        "remove": t("Remove", zh),
     })));
     b.push_str(";</script>");
     b.push_str("<script>var SEARCH_EMPTY_HTML=");
@@ -3077,7 +3106,7 @@ fn search_page_markup(
         t("No results found", zh),
         ""
     )));
-    b.push_str(";function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked,related_search:document.getElementById('relatedSearch').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){if(typeof searchDocsLoad==='function')searchDocsLoad();var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search;searchRerankToggle();var tk=document.getElementById('topK');var has=false;[...tk.options].forEach(function(o){if(String(o.value)===String(s.top_k))has=true});if(!has){var o=document.createElement('option');o.value=s.top_k;o.textContent=s.top_k;tk.appendChild(o)}tk.value=String(s.top_k);var th=document.getElementById('thresh');var thHas=false;[...th.options].forEach(function(o){if(String(o.value)===String(s.similarity_threshold))thHas=true});if(!thHas){var o=document.createElement('option');o.value=s.similarity_threshold;o.textContent=s.similarity_threshold;th.appendChild(o)}th.value=String(s.similarity_threshold);var vw=document.getElementById('vWeight');var vwHas=false;[...vw.options].forEach(function(o){if(String(o.value)===String(s.vector_similarity_weight))vwHas=true});if(!vwHas){var o=document.createElement('option');o.value=s.vector_similarity_weight;o.textContent=s.vector_similarity_weight;vw.appendChild(o)}vw.value=String(s.vector_similarity_weight)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};var SEARCH_STREAM=null;var SEARCH_MIND=null;var SEARCH_EMPTY_MARKUP=SEARCH_EMPTY_HTML;var SEARCH_SEARCH_ICON=\"<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>\";var SEARCH_FILES_ICON=\"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 7h-3a2 2 0 0 1-2-2V2'/><path d='M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z'/><path d='M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8'/></svg>\";var SEARCH_X_ICON=\"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg>\";var SEARCH_CHECK_SVG=\"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 6 9 17l-5-5'/></svg>\";
+    b.push_str(";function saveApp(){var n=prompt('Search app name:');if(!n)return;var kbs=[];[...document.getElementById('kbSel').selectedOptions].forEach(function(o){if(o.value)kbs.push(o.value)});var body={name:n,kb_ids:kbs,hybrid:document.getElementById('hybrid').checked,rerank:document.getElementById('rerank').checked,related_search:document.getElementById('relatedSearch').checked};fetch('/api/v1/searchapps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Search app saved: '+n)}else{alert('Save failed: '+(d.message||'unknown'))}})};var lastResults=[];var lastQuery='';function loadKbs(){fetch('/api/v1/datasets').then(r=>r.json()).then(d=>{var list=d.data||[];var chips='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value=__all__ checked onchange=kbChipChange(this)> All</label>';var opts='<option value=__all__>All knowledge bases</option>';list.forEach(function(k){chips+='<label style=display:flex;align-items:center;gap:4px><input type=checkbox class=kbCk value='+k.id+' onchange=kbChipChange(this)> '+k.name+'</label>';opts+='<option value='+k.id+'>'+k.name+'</option>'});document.getElementById('kbChips').innerHTML=chips;document.getElementById('kbSel').innerHTML=opts;applySapp()})};function kbChipChange(c){if(c.value==='__all__'&&c.checked){document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(x.value==='__all__')})}else{document.querySelectorAll('.kbCk').forEach(function(x){if(x.value==='__all__')x.checked=false})}};function kbSelChange(){if(typeof searchDocsLoad==='function')searchDocsLoad();var v=document.getElementById('kbSel').value;document.querySelectorAll('.kbCk').forEach(function(x){x.checked=(v==='__all__')?(x.value==='__all__'):(x.value===v)})};function applySapp(){var s=window.__SAPP__;if(!s)return;var cks=document.querySelectorAll('.kbCk');cks.forEach(function(c){c.checked=(s.kb_ids||[]).indexOf(c.value)>=0});if(!(s.kb_ids||[]).length){cks.forEach(function(c){if(c.value==='__all__')c.checked=true})}document.getElementById('rerank').checked=!!s.rerank;document.getElementById('hybrid').checked=!!s.hybrid;var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search;searchRerankToggle();ssLoad(s)};loadKbs();function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};var SEARCH_STREAM=null;var SEARCH_MIND=null;var SEARCH_EMPTY_MARKUP=SEARCH_EMPTY_HTML;var SEARCH_SEARCH_ICON=\"<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>\";var SEARCH_FILES_ICON=\"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 7h-3a2 2 0 0 1-2-2V2'/><path d='M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z'/><path d='M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8'/></svg>\";var SEARCH_X_ICON=\"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg>\";var SEARCH_CHECK_SVG=\"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 6 9 17l-5-5'/></svg>\";
 function searchAskReset(){var input=document.getElementById('q2');if(input)input.value='';var box=document.getElementById('aiSummaryBlock');if(box)box.hidden=true;var body=document.getElementById('aiSummaryBody');if(body)body.replaceChildren()}
 function searchAskSetStreaming(streaming){var button=document.getElementById('searchAskSubmit');if(!button)return;button.classList.toggle('streaming',streaming);button.setAttribute('aria-busy',streaming?'true':'false');button.innerHTML=streaming?\"<span class='search-ask-stop' aria-hidden='true'></span>\":SEARCH_SEARCH_ICON}
 function searchAskAction(){if(SEARCH_STREAM){searchStopOutput();return}doSearch2()}
@@ -3110,7 +3139,7 @@ function searchDocsToggleValue(id){var index=SEARCH_DOCS.selected.indexOf(id);if
 function searchDocsRender(){var list=document.getElementById('searchDocsList');if(!list)return;var input=document.getElementById('searchDocsQuery');var query=input?(input.value||'').trim().toLowerCase():'';list.replaceChildren();var matches=SEARCH_DOCS.items.filter(function(item){return !query||String(item.name).toLowerCase().indexOf(query)>=0});matches.forEach(function(item){var row=document.createElement('div');row.className='search-docs-row';row.setAttribute('role','option');row.setAttribute('tabindex','0');row.setAttribute('data-testid','search-documents-option');row.setAttribute('aria-selected',SEARCH_DOCS.selected.indexOf(item.id)>=0?'true':'false');row.dataset.value=item.id;var box=document.createElement('span');box.className='search-docs-check'+(SEARCH_DOCS.selected.indexOf(item.id)>=0?' on':'');box.innerHTML=SEARCH_CHECK_SVG;row.appendChild(box);var label=document.createElement('span');label.className='search-docs-name';label.textContent=item.name;row.appendChild(label);row.onclick=function(){searchDocsToggleValue(item.id)};row.onkeydown=function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();searchDocsToggleValue(item.id)}};list.appendChild(row)});var empty=document.getElementById('searchDocsEmpty');if(empty)empty.hidden=matches.length>0;searchDocsSync()}
 document.addEventListener('click',function(event){if(!SEARCH_DOCS.open)return;var field=document.getElementById('searchDocsField');if(field&&field.contains(event.target))return;searchDocsClose()});
 document.addEventListener('keydown',function(event){if(event.key==='Escape')searchDocsClose()});
-function searchRelatedOn(){var box=document.getElementById('relatedSearch');return !!(box&&box.checked)}function searchRelatedDrop(){var host=document.getElementById('relatedQuestions');if(host)host.remove()}function searchRelatedToggle(){if(!searchRelatedOn())searchRelatedDrop()}function searchRelatedClick(text){var box=document.getElementById('q2');if(box)box.value=text;runSearch(text)}function loadRelatedQuestions(q){if(!searchRelatedOn()||!q){searchRelatedDrop();return}var sid=(window.__SAPP__&&window.__SAPP__.id)||'';fetch('/api/v1/chat/recommendation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,search_id:sid})}).then(function(response){return response.json()}).then(function(data){var list=((data&&data.data)||[]).slice(0,5);if(!searchRelatedOn()||!list.length){searchRelatedDrop();return}searchRelatedDrop();var wrap=document.createElement('div');wrap.id='relatedQuestions';wrap.className='search-related';var title=document.createElement('p');title.className='search-related-title';title.textContent=SEARCH_LABELS.relatedSearch;wrap.appendChild(title);var chips=document.createElement('div');chips.className='search-related-chips';list.forEach(function(text){var chip=document.createElement('button');chip.type='button';chip.className='search-related-chip';chip.textContent=text;chip.onclick=function(){searchRelatedClick(text)};chips.appendChild(chip)});wrap.appendChild(chips);var host=document.getElementById('results');if(host)host.appendChild(wrap)}).catch(function(){searchRelatedDrop()})}function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function runSearch(q){if(typeof searchDocsLoad==='function')searchDocsLoad();var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);if(r&&!searchRerankSelected()){var err=document.getElementById('searchRerankError');if(err)err.textContent='Rerank model is required when rerank is enabled';var row=document.getElementById('searchRerankRow');if(row)row.style.display='';return}searchRerankHideError();var e='/api/v1/retrieval';
+function searchRelatedOn(){var box=document.getElementById('relatedSearch');return !!(box&&box.checked)}function searchRelatedDrop(){var host=document.getElementById('relatedQuestions');if(host)host.remove()}function searchRelatedToggle(){if(!searchRelatedOn())searchRelatedDrop()}function searchRelatedClick(text){var box=document.getElementById('q2');if(box)box.value=text;runSearch(text)}function loadRelatedQuestions(q){if(!searchRelatedOn()||!q){searchRelatedDrop();return}var sid=(window.__SAPP__&&window.__SAPP__.id)||'';fetch('/api/v1/chat/recommendation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,search_id:sid})}).then(function(response){return response.json()}).then(function(data){var list=((data&&data.data)||[]).slice(0,5);if(!searchRelatedOn()||!list.length){searchRelatedDrop();return}searchRelatedDrop();var wrap=document.createElement('div');wrap.id='relatedQuestions';wrap.className='search-related';var title=document.createElement('p');title.className='search-related-title';title.textContent=SEARCH_LABELS.relatedSearch;wrap.appendChild(title);var chips=document.createElement('div');chips.className='search-related-chips';list.forEach(function(text){var chip=document.createElement('button');chip.type='button';chip.className='search-related-chip';chip.textContent=text;chip.onclick=function(){searchRelatedClick(text)};chips.appendChild(chip)});wrap.appendChild(chips);var host=document.getElementById('results');if(host)host.appendChild(wrap)}).catch(function(){searchRelatedDrop()})}function doSearch(){var q=document.getElementById('query').value;if(!q)return;document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function doSearch2(){runSearch(document.getElementById('q2').value)};function quickQ(q){document.getElementById('searchHome').style.display='none';document.getElementById('searchView').style.display='block';document.getElementById('q2').value=q;runSearch(q)};function searchPage(d){window.sPage+=d;runSearch(lastQuery)};function runSearch(q){if(typeof searchDocsLoad==='function')searchDocsLoad();var r=document.getElementById('rerank').checked;var h=document.getElementById('hybrid').checked;var k=parseInt(document.getElementById('topK').value);var t=parseFloat(document.getElementById('thresh').value);if(r&&!searchRerankSelected()){var err=document.getElementById('searchRerankError');if(err)err.textContent='Rerank model is required when rerank is enabled';var row=document.getElementById('searchRerankRow');if(row){row.hidden=false;row.style.display=''}return}searchRerankHideError();var e='/api/v1/retrieval';
 // Upstream `next-search/hooks.ts` posts `{kb_id, highlight, question, doc_ids,
 // page, size, search_id}` and lets the server read the app's `search_config`;
 // the sidebar only sends the fields the user actually changed.
@@ -3131,6 +3160,11 @@ if(!app&&!window.__SEARCH_TOUCHED){body.similarity_threshold=parseFloat(document
 var rrEl=document.getElementById('searchRerankSel');var rr=rrEl?(rrEl.dataset.value||''):'';
 if(r&&rr){body.rerank_id=rr}
 if(kbIds&&kbIds.length&&!allOn)body.kb_id=kbIds;
+var ssFilter=ssMetaFilterPayload();if(ssFilter)body.meta_data_filter=ssFilter;
+if(ssChecked('ssRefMeta')){body.include_metadata=true;body.reference_metadata={include:true,fields:ssMetaFieldsPayload()}}
+if(ssChecked('ssSummary')){body.summary=true}
+if(ssChecked('ssMindmap')){body.query_mindmap=true}
+var mindButton=document.getElementById('searchMindBtn');if(mindButton)mindButton.hidden=!ssChecked('ssMindmap');
 document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:24px>Searching...</p>';fetch(e,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{var items=((d.data||{}).chunks||(d.data||{}).results||[]).filter(function(chunk){return chunk!=null});var h='';var gc=(d.data&&d.data.graph_context)||[];items.forEach(function(c,i){c=c.chunk||c;var content=(c.content||c.text||'').substring(0,500);var fullContent=(c.content||c.text||'');var docName=(c.doc_name||c.document_name||'Unknown');var score=(c.similarity||c.score||0).toFixed(4);h+='<div class=ri><span class=rs>#'+(i+1)+' &middot; '+score+(r?' &middot; reranked':'')+'</span><div class=rc>'+hl(content,q)+'</div>'+metadataChips(c.document_metadata)+'<div class=rm>'+docName+' &middot; '+(c.chunk_id||c.id||'')+' <a href=# onclick=\\\"previewDoc(\\''+docName.replace(/'/g,'')+'\\',\\''+fullContent.replace(/'/g,'').substring(0,2000)+'\\')\\\" style=\\\"color:var(--p);font-size:11px;margin-left:8px\\\">📄 Preview</a></div></div>'});if(gc&&gc.length){h+='<div class=card style=margin-top:16px><h3>🔗 Graph Context</h3>'+gc.map(function(g,i){return '<div class=cc>['+(i+1)+'] '+g.substring(0,120)+'</div>'}).join('')+'</div>'}lastResults=items;lastQuery=q;document.getElementById('results').innerHTML=h||SEARCH_EMPTY_MARKUP;var total=document.getElementById('searchTotal');if(total)total.textContent=SEARCH_LABELS.total+': '+items.length;searchAskSetStreaming(false);loadRelatedQuestions(q);searchSummaryStart(q)})};function exportResults(){if(!lastResults.length){alert('No results to export');return}var md='# Search: '+lastQuery+'\\n\\n';lastResults.forEach(function(c,i){c=c.chunk||c;md+='## '+(i+1)+'. '+(c.doc_name||'Unknown')+' (score '+(c.similarity||c.score||0).toFixed(4)+')\\n\\n'+(c.content||c.text||'')+'\\n\\n'});var blob=new Blob([md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='search-export.md';a.click()};function previewDoc(name,content){var m=document.getElementById('docPreview');document.getElementById('docPreviewTitle').textContent=name;document.getElementById('docPreviewContent').textContent=content;m.classList.add('show')};function closePreview(){document.getElementById('docPreview').classList.remove('show')}</script>");
     b.push_str("<script>const MODEL_FIELDS=");
     b.push_str(&json_script_value(&serde_json::json!([{
@@ -3142,6 +3176,16 @@ document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:2
         "required": false,
         "placeholder": "Please select"
     }])));
+    // The metadata filter's operator vocabulary (`meta_filter.md`), shared by the
+    // drawer's manual and semi-automatic rows.
+    b.push_str(";var SEARCH_META_OPS=");
+    b.push_str(&json_script_value(&serde_json::Value::Array(
+        crate::metadata_filter::OPERATORS
+            .iter()
+            .map(|op| serde_json::Value::String((*op).to_string()))
+            .collect(),
+    )));
+    b.push_str(";var SEARCH_META_KEYS=[];");
     b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
     b.push_str("function seedModelTrigger(type,value){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;trigger.dataset.value=String(value||'');trigger.dataset.savedValue=String(value||'');renderDefaultModelTrigger(field)}");
@@ -3149,7 +3193,7 @@ document.getElementById('results').innerHTML='<p style=color:var(--tm);padding:2
     // picked rerank model only rides the retrieval request (`search_config
     // .rerank_id`). Shadow the shared tenant-default persist hook.
     b.push_str(FORM_LOCAL_SAVE_MODEL_DEFAULT);
-    b.push_str("var SEARCH_RERANK_TOPK_DEFAULT=1024;var searchRerankWasOn=false;function searchRerankToggle(){var box=document.getElementById('rerank');var on=box.checked;var row=document.getElementById('searchRerankRow');if(row)row.style.display=on?'':'none';if(searchRerankWasOn&&!on){var tk=document.getElementById('topK');if(tk&&String(tk.value)!=='1024'){var has=false;[].forEach.call(tk.options,function(o){if(String(o.value)==='1024')has=true});if(!has){var o=document.createElement('option');o.value='1024';o.textContent='1024';tk.appendChild(o)}tk.value='1024'}}searchRerankWasOn=on;searchRerankHideError()}function searchApplyLabels(){var input=document.getElementById('q2');if(input)input.placeholder=SEARCH_LABELS.greeting;var clear=document.getElementById('searchAskClear');if(clear)clear.setAttribute('aria-label',SEARCH_LABELS.clear);var submit=document.getElementById('searchAskSubmit');if(submit)submit.setAttribute('aria-label',SEARCH_LABELS.submit);var title=document.querySelector('.search-ai-title');if(title)title.textContent=SEARCH_LABELS.aiSummary;var mind=document.getElementById('searchMindBtn');if(mind)mind.querySelector('span').textContent=SEARCH_LABELS.mind;var sheetTitle=document.getElementById('mindSheetTitle');if(sheetTitle)sheetTitle.textContent=SEARCH_LABELS.mind;var sheetClose=document.querySelector('.mind-sheet-close');if(sheetClose)sheetClose.setAttribute('aria-label',SEARCH_LABELS.close);var mindBtn=document.getElementById('searchMindBtn');if(mindBtn){var app=window.__SAPP__;mindBtn.hidden=!(app&&app.query_mindmap)}}
+    b.push_str("var SEARCH_RERANK_TOPK_DEFAULT=1024;var searchRerankWasOn=false;function searchRerankToggle(){var box=document.getElementById('rerank');var on=box.checked;var row=document.getElementById('searchRerankRow');if(row){row.hidden=!on;row.style.display=on?'':'none'}if(searchRerankWasOn&&!on){var tk=document.getElementById('topK');if(tk&&String(tk.value)!=='1024'){var has=false;[].forEach.call(tk.options,function(o){if(String(o.value)==='1024')has=true});if(!has){var o=document.createElement('option');o.value='1024';o.textContent='1024';tk.appendChild(o)}tk.value='1024'}}searchRerankWasOn=on;searchRerankHideError()}function searchApplyLabels(){var input=document.getElementById('q2');if(input)input.placeholder=SEARCH_LABELS.greeting;var clear=document.getElementById('searchAskClear');if(clear)clear.setAttribute('aria-label',SEARCH_LABELS.clear);var submit=document.getElementById('searchAskSubmit');if(submit)submit.setAttribute('aria-label',SEARCH_LABELS.submit);var title=document.querySelector('.search-ai-title');if(title)title.textContent=SEARCH_LABELS.aiSummary;var mind=document.getElementById('searchMindBtn');if(mind)mind.querySelector('span').textContent=SEARCH_LABELS.mind;var sheetTitle=document.getElementById('mindSheetTitle');if(sheetTitle)sheetTitle.textContent=SEARCH_LABELS.mind;var sheetClose=document.querySelector('.mind-sheet-close');if(sheetClose)sheetClose.setAttribute('aria-label',SEARCH_LABELS.close);var mindBtn=document.getElementById('searchMindBtn');if(mindBtn){var app=window.__SAPP__;mindBtn.hidden=!(app&&app.query_mindmap)}}
 // The mind-map sheet markup is appended after this script block, so the labels
 // are applied once the document has been parsed.
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',searchApplyLabels)}else{searchApplyLabels()}
@@ -5542,6 +5586,163 @@ fn provider_icon_html(provider_name: &str, class: &str) -> String {
 /// search input and the `role='tree'` container. Extracted from
 /// `providers_page` so every page that upstream renders through
 /// `ModelTreeSelect` can reuse the identical markup.
+/// Upstream `next-search/search-setting.tsx` — the search page's settings
+/// drawer.
+///
+/// The upstream drawer is `w-[440px]` with a title row (`search.searchSettings`
+/// plus a 16px `X`), a scrollable body and a pinned footer
+/// (`search.cancelText` / `search.okText`, the latter carrying
+/// `data-testid="search-settings-save"`). Its fields, in source order:
+/// avatar + name + description, the dataset multi-select, the metadata filter,
+/// the reference-metadata switch and its field list, the similarity slider pair,
+/// the rerank switch with its required model tree and Top K slider, the AI
+/// summary switch with the LLM setting rows, and finally the related-search and
+/// query-mindmap switches.
+///
+/// The controls keep the ids the rest of the page already drives (`topK`,
+/// `thresh`, `vWeight`, `rerank`, `relatedSearch`, `kbChips`, and the shared
+/// model tree's `searchRerankSel`), so `runSearch()` keeps reading the same
+/// nodes while the drawer owns their presentation.
+fn push_search_settings_drawer(b: &mut String, zh: bool) {
+    let number_input = |id: &str, value: &str, step: &str| {
+        format!(
+            "<input class='ss-number' type='number' id='{id}' value='{value}' step='{step}' \
+             oninput=\"ssTouch('{id}')\">"
+        )
+    };
+    b.push_str(
+        "<button type='button' class='ss-open' id='ssOpen' data-testid='search-settings-trigger' \
+         aria-controls='ssDrawer' aria-expanded='false' onclick='ssToggle(true)'>",
+    );
+    b.push_str(SEARCH_GEAR_SVG);
+    b.push_str("</button>");
+    b.push_str(
+        "<aside class='ss-drawer' id='ssDrawer' data-open='false' data-testid='search-settings-drawer' \
+         aria-hidden='true' aria-label='",
+    );
+    b.push_str(t("Search settings", zh));
+    b.push_str("'><div class='ss-head'><span>");
+    b.push_str(t("Search settings", zh));
+    b.push_str("</span><button type='button' class='ss-close' id='ssClose' aria-label='");
+    b.push_str(t("Close", zh));
+    b.push_str("' onclick='ssToggle(false)'>");
+    b.push_str(SEARCH_X_SVG);
+    b.push_str("</button></div><div class='ss-body'>");
+    // Avatar + name + description (`AvatarNameDescription`).
+    b.push_str("<div class='ss-field ss-avatar-row'><span class='ss-label'>");
+    b.push_str(t("Avatar", zh));
+    b.push_str(
+        "</span><button type='button' class='ss-avatar' id='ssAvatarBtn' data-testid='search-settings-avatar' \
+         aria-label='",
+    );
+    b.push_str(t("Avatar", zh));
+    b.push_str("' onclick=\"document.getElementById('ssAvatarFile').click()\"><img id='ssAvatarImg' alt='' hidden><span id='ssAvatarEmpty'>+</span></button><input type='file' id='ssAvatarFile' accept='image/*' hidden onchange='ssAvatarPick(this)'></div>");
+    b.push_str("<label class='ss-field'><span class='ss-label'>");
+    b.push_str(t("Name", zh));
+    b.push_str("</span><input id='ssName' class='ss-input' oninput=\"ssTouch('ssName')\"></label>");
+    b.push_str("<label class='ss-field'><span class='ss-label'>");
+    b.push_str(t("Description", zh));
+    b.push_str("</span><input id='ssDesc' class='ss-input' oninput=\"ssTouch('ssDesc')\"></label>");
+    // Datasets (the existing checkbox list keeps its id so `loadKbs` fills it).
+    b.push_str("<div class='ss-field'><span class='ss-label'>");
+    b.push_str(t("Datasets", zh));
+    b.push_str("</span><div id='kbChips' class='ss-kbs'></div></div>");
+    // Metadata filter.
+    b.push_str("<div class='ss-field'><span class='ss-label'>");
+    b.push_str(t("Meta data", zh));
+    b.push_str(
+        "</span><select class='ss-select' id='ssMetaMethod' data-testid='search-settings-metadata-method' onchange='ssMetaChange()'><option value='disabled'>",
+    );
+    b.push_str(t("Disabled", zh));
+    b.push_str("</option><option value='auto'>");
+    b.push_str(t("Automatic", zh));
+    b.push_str("</option><option value='semi_auto'>");
+    b.push_str(t("Semi-automatic", zh));
+    b.push_str("</option><option value='manual'>");
+    b.push_str(t("Manual", zh));
+    b.push_str("</option></select><p class='ss-hint' id='ssMetaHint' hidden></p><div id='ssMetaManual' hidden><div id='ssMetaManualRows'></div><button type='button' class='ss-add' id='ssMetaManualAdd' onclick='ssMetaAddRow()'>+ ");
+    b.push_str(t("Add", zh));
+    b.push_str("</button></div><div id='ssMetaSemi' hidden><div id='ssMetaSemiRows'></div><button type='button' class='ss-add' id='ssMetaSemiAdd' onclick='ssMetaAddSemiRow()'>+ ");
+    b.push_str(t("Add", zh));
+    b.push_str("</button></div></div>");
+    // Reference metadata.
+    b.push_str("<label class='ss-switch'><input type='checkbox' id='ssRefMeta' data-testid='search-settings-reference-metadata' onchange='ssRefMetaChange()'><span>");
+    b.push_str(t("Show chunk metadata", zh));
+    b.push_str("</span><span class='tip' tabindex='0' role='button' aria-label='");
+    b.push_str(t("Show chunk metadata", zh));
+    b.push_str("' data-tip='");
+    b.push_str(&html_escape(t("Show chunk metadata Tip", zh)));
+    b.push_str("'>?</span></label><div class='ss-field' id='ssMetaFieldsRow' hidden><span class='ss-label'>");
+    b.push_str(t("Metadata fields", zh));
+    b.push_str("</span><div class='ss-chips' id='ssMetaFields' role='group' aria-label='");
+    b.push_str(t("Metadata fields", zh));
+    b.push_str("'></div></div>");
+    // Similarity threshold + vector weight.
+    b.push_str("<div class='ss-field'><span class='ss-label'>");
+    b.push_str(t("Similarity Threshold", zh));
+    b.push_str("</span><div class='ss-slider-row'><input type='range' id='ssThreshRange' min='0' max='1' step='0.01' value='0.3' oninput=\"ssSync('thresh',this.value)\">");
+    b.push_str(&number_input("thresh", "0.3", "0.01"));
+    b.push_str("</div></div><div class='ss-field'><span class='ss-label'>");
+    b.push_str(t("Vector Weight", zh));
+    b.push_str("</span><div class='ss-slider-row'><input type='range' id='ssWeightRange' min='0' max='1' step='0.01' value='0.7' oninput=\"ssSync('vWeight',this.value)\">");
+    b.push_str(&number_input("vWeight", "0.7", "0.01"));
+    b.push_str("</div></div>");
+    // Rerank switch + model tree + Top K.
+    b.push_str("<label class='ss-switch'><input type='checkbox' id='rerank' data-testid='search-settings-rerank' onchange='searchRerankToggle();ssRerankSync()'><span>");
+    b.push_str(t("Rerank model", zh));
+    b.push_str("</span></label><div id='searchRerankRow' class='ss-field' hidden><span class='ss-label required'>");
+    b.push_str(t("Model", zh));
+    b.push_str("</span>");
+    push_default_model_selector(b, &SEARCH_PAGE_RERANK_SELECTOR_FIELD, zh);
+    // Upstream's `superRefine` message for an enabled rerank switch with no model.
+    b.push_str("<p class='ss-hint'>* ");
+    b.push_str(t("Rerank model is required when rerank is enabled", zh));
+    b.push_str("</p><p id='searchRerankError' class='provider-instance-error'></p></div><div class='ss-field' id='ssTopKField' hidden><span class='ss-label'>Top K</span><div class='ss-slider-row'><input type='range' id='ssTopKRange' min='1' max='2048' step='1' value='1024' oninput=\"ssSync('topK',this.value)\">");
+    b.push_str(&number_input("topK", "1024", "1"));
+    b.push_str("</div></div>");
+    // AI summary switch + LLM setting rows.
+    b.push_str("<label class='ss-switch'><input type='checkbox' id='ssSummary' data-testid='search-settings-summary' onchange='ssSummaryChange()'><span>");
+    b.push_str(t("AI summary", zh));
+    b.push_str(
+        "</span></label><div id='ssLlmFields' hidden><div class='ss-field'><span class='ss-label'>",
+    );
+    b.push_str(t("Freedom", zh));
+    b.push_str("</span><select class='ss-select' id='ssFreedom' onchange='ssFreedomChange()'><option value='default'>Default</option><option value='custom'>");
+    b.push_str(t("Custom", zh));
+    b.push_str("</option><option value='precise'>Precise</option><option value='balanced'>Balanced</option><option value='imaginative'>Imaginative</option></select></div>");
+    for (id, label, value) in [
+        ("ssTemperature", t("Temperature", zh), "0.7"),
+        ("ssTopP", t("Top P", zh), "0.9"),
+        ("ssPresencePenalty", t("Presence penalty", zh), "0.0"),
+        ("ssFrequencyPenalty", t("Frequency penalty", zh), "0.0"),
+    ] {
+        b.push_str("<div class='ss-llm-row'><label class='ss-switch ss-switch-sm'><input type='checkbox' id='");
+        b.push_str(id);
+        b.push_str("On' onchange=\"ssTouch('");
+        b.push_str(id);
+        b.push_str("')\"><span>");
+        b.push_str(label);
+        b.push_str("</span></label>");
+        let input = format!(
+            "<input class='ss-number' type='number' id='{id}' value='{value}' step='0.1' oninput=\"ssTouch('{id}')\">"
+        );
+        b.push_str(&input);
+        b.push_str("</div>");
+    }
+    b.push_str("</div>");
+    // Related search + query mindmap.
+    b.push_str("<label class='ss-switch'><input type='checkbox' id='relatedSearch' data-testid='search-settings-related' onchange='searchRelatedToggle()'><span>");
+    b.push_str(t("Enable related search", zh));
+    b.push_str("</span></label><label class='ss-switch'><input type='checkbox' id='ssMindmap' data-testid='search-settings-mindmap'><span>");
+    b.push_str(t("Show query mindmap", zh));
+    b.push_str("</span></label>");
+    b.push_str("</div><div class='ss-footer'><button type='button' class='btn btn-o' id='ssCancel' onclick='ssCancel()'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button type='button' class='btn btn-p' id='ssSave' data-testid='search-settings-save' onclick='ssSave()'>");
+    b.push_str(t("Save", zh));
+    b.push_str("</button></div></aside>");
+}
+
 fn push_default_model_selector(b: &mut String, field: &DefaultModelField, zh: bool) {
     b.push_str("<div class='provider-default-field' data-default-model-root='");
     b.push_str(field.dom_id);
@@ -8676,8 +8877,8 @@ connection: close
             .unwrap();
         let html = body_of(search_page(axum::extract::State(state.clone()), req).await).await;
         for marker in [
-            "id='rerank' onchange='searchRerankToggle()'",
-            "Rerank Model</label>",
+            "id='rerank' data-testid='search-settings-rerank' onchange='searchRerankToggle();ssRerankSync()'",
+            "Rerank model</span>",
             "id='searchRerankRow'",
             "id='searchRerankError'",
             "Rerank model is required when rerank is enabled",
@@ -11841,6 +12042,93 @@ connection: close
     /// residuals closed in v0.3.6c: the greeting input row (clear X, separator,
     /// round submit/stop), the AI-summary block with its skeleton and divider,
     /// the `Total: N` bar with the mind-map button and the sheet itself.
+    /// Upstream `next-search/search-setting.tsx`: the search page's settings are a
+    /// 440px slide-out drawer (title row + `X`, scrollable body, pinned
+    /// Cancel/Save footer with `data-testid="search-settings-save"`) holding the
+    /// avatar/name/description block, the dataset list, the metadata filter, the
+    /// reference-metadata switch and field list, the similarity slider pair, the
+    /// rerank switch with its required model tree and Top K slider, the AI-summary
+    /// switch with the LLM rows, and the related-search / query-mindmap switches.
+    #[tokio::test]
+    async fn search_page_renders_the_upstream_settings_drawer() {
+        let (_root, state) = test_state();
+        let body = body_of(search_page(State(state), english_request("/search")).await).await;
+        assert_inline_scripts_balance(&body, "/search");
+        for marker in [
+            // Trigger + drawer shell.
+            "data-testid='search-settings-trigger'",
+            "id='ssDrawer' data-open='false' data-testid='search-settings-drawer'",
+            "class='ss-head'",
+            "class='ss-close' id='ssClose'",
+            "class='ss-body'",
+            "class='ss-footer'",
+            "data-testid='search-settings-save'",
+            // Fields, in the upstream order.
+            "id='ssAvatarBtn' data-testid='search-settings-avatar'",
+            "id='ssName' class='ss-input'",
+            "id='ssDesc' class='ss-input'",
+            "id='kbChips' class='ss-kbs'",
+            "id='ssMetaMethod' data-testid='search-settings-metadata-method'",
+            "id='ssMetaManualRows'",
+            "id='ssMetaSemiRows'",
+            "id='ssRefMeta' data-testid='search-settings-reference-metadata'",
+            "id='ssMetaFields' role='group'",
+            "id='ssThreshRange'",
+            "id='thresh'",
+            "id='ssWeightRange'",
+            "id='vWeight'",
+            "id='rerank' data-testid='search-settings-rerank'",
+            "id='searchRerankRow' class='ss-field' hidden",
+            "id='ssTopKRange'",
+            "<p class='ss-hint'>* ",
+            "id='topK'",
+            "id='ssSummary' data-testid='search-settings-summary'",
+            "id='ssLlmFields' hidden",
+            "id='ssFreedom'",
+            "id='ssTemperatureOn'",
+            "id='relatedSearch' data-testid='search-settings-related'",
+            "id='ssMindmap' data-testid='search-settings-mindmap'",
+            // The drawer owns the config it edits.
+            "function ssToggle(open){",
+            "function ssSync(id,value){",
+            "function ssMetaAddRow(){",
+            "function ssMetaAddSemiRow(){",
+            "function ssMetaKeysLoad(){",
+            "function ssMetaFilterPayload(){",
+            "function ssPayload(){",
+            "function ssLlmPayload(){",
+            "function ssSave(){",
+            "function ssCancel(){",
+            "var SEARCH_META_OPS=",
+            "ssLoad(s)};",
+            // The retrieval request carries the drawer's filter, reference
+            // metadata, summary and mind-map switches.
+            "var ssFilter=ssMetaFilterPayload();if(ssFilter)body.meta_data_filter=ssFilter;",
+            "body.reference_metadata={include:true,fields:ssMetaFieldsPayload()}",
+            "if(ssChecked('ssSummary')){body.summary=true}",
+            "if(ssChecked('ssMindmap')){body.query_mindmap=true}",
+            "if(mindButton)mindButton.hidden=!ssChecked('ssMindmap');",
+        ] {
+            assert!(
+                body.contains(marker),
+                "search settings marker missing: {marker}"
+            );
+        }
+        // The old fixed sidebar card is gone.
+        assert!(
+            !body.contains("Settings sidebar") && !body.contains(">Quick Questions<"),
+            "the fixed sidebar and its quick questions must be replaced by the drawer"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".ss-drawer{position:fixed;top:0;right:0;z-index:70;display:flex;width:440px;max-width:100vw;height:100dvh;flex-direction:column;border-left:1px solid var(--bd);background:var(--bgm);color:var(--t);transform:translateX(100%);transition:transform .2s ease;visibility:hidden}",
+            ".ss-drawer[data-open='true']{transform:translateX(0);visibility:visible}",
+            ".ss-footer{position:absolute;bottom:0;right:0;display:flex;width:100%;justify-content:flex-end;gap:8px;padding:10px 12px;background:var(--bgm);border-top:1px solid var(--bd)}",
+        ] {
+            assert!(css.contains(rule), "search drawer css missing: {rule}");
+        }
+    }
+
     /// Upstream `next-search/retrieval-documents/index.tsx`: the sidebar's file
     /// control is the `Files` trigger (counter + X + separator + ChevronDown)
     /// over a command popover with per-document checkbox rows and a Clear/Close

@@ -300,6 +300,34 @@ pub async fn list_search_apps(
     json(serde_json::json!({"code": 0, "data": visible}))
 }
 
+/// `GET /api/v1/searches/{search_id}` — upstream `search_api.detail`.
+///
+/// The upstream web client reads the search app back through this path before
+/// opening the settings drawer (`getSearchDetail`), and the route used to be
+/// missing here: `/api/v1/searchapps/{id}` only answered `PUT`/`DELETE`, so a
+/// `GET` returned 405 with an empty body and the drawer had nothing to load.
+pub async fn get_search_app(
+    State(state): State<std::sync::Arc<crate::server::AppState>>,
+    Extension(auth): Extension<crate::server::AuthContext>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(store) = &state.search_apps else {
+        return json(serde_json::json!({"code": 404, "message": "Search apps disabled"}));
+    };
+    let Some(app) = store.get(&id) else {
+        // Upstream `get_data_error_result(message="Can't find this Search App!")`.
+        return json(serde_json::json!({"code": 102, "message": "Can't find this Search App!"}));
+    };
+    if app.owner_id != auth.user_id && !auth.is_admin {
+        // Upstream `RetCode.OPERATING_ERROR` for a tenant that does not own it.
+        return json(serde_json::json!({
+            "code": 103,
+            "message": "Has no permission for this operation."
+        }));
+    }
+    json(serde_json::json!({"code": 0, "data": app}))
+}
+
 pub async fn create_search_app(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
     Extension(auth): Extension<crate::server::AuthContext>,

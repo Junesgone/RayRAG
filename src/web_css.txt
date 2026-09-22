@@ -413,6 +413,42 @@ body.light .model-providers-spotlight{--srgb:194,221,243}
 /* Upstream `next-search/retrieval-documents/index.tsx`: the `Files` trigger (`w-full p-1 rounded-md text-base border min-h-10 justify-between`), the X + separator + ChevronDown controls, and the command popover with checkbox rows and the Clear/Close footer. */
 .search-docs{position:relative;width:100%}
 .search-docs[hidden]{display:none!important}
+/* Upstream `next-search/search-setting.tsx`: a 440px right-hand drawer with a title row, a scrollable body and a pinned Cancel/Save footer. */
+.ss-open{position:sticky;top:0;align-self:flex-start;display:inline-flex;width:32px;height:32px;flex:0 0 32px;align-items:center;justify-content:center;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t2);cursor:pointer}
+.ss-open:hover{color:var(--t);background:var(--bgch)}
+.ss-drawer{position:fixed;top:0;right:0;z-index:70;display:flex;width:440px;max-width:100vw;height:100dvh;flex-direction:column;border-left:1px solid var(--bd);background:var(--bgm);color:var(--t);transform:translateX(100%);transition:transform .2s ease;visibility:hidden}
+.ss-drawer[data-open='true']{transform:translateX(0);visibility:visible}
+.ss-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 0;font-size:16px}
+.ss-close{border:0;background:0;color:var(--t);cursor:pointer;display:inline-flex;padding:4px}
+.ss-body{flex:1;overflow-y:auto;padding:16px 12px 72px;display:flex;flex-direction:column;gap:18px;color:var(--t2)}
+.ss-field{display:flex;flex-direction:column;gap:6px}
+.ss-drawer [hidden]{display:none!important}
+.ss-label{font-size:13px;color:var(--t2)}
+.ss-label.required::after{content:' *';color:var(--d)}
+.ss-input,.ss-select,.ss-number{padding:7px 10px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font:inherit;font-size:13px}
+.ss-number{width:84px}
+.ss-slider-row{display:flex;align-items:center;gap:12px}
+.ss-slider-row input[type='range']{flex:1;accent-color:var(--p)}
+.ss-switch{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--t)}
+.ss-switch-sm{flex:1}
+.ss-kbs{display:flex;flex-wrap:wrap;gap:6px;font-size:12px}
+.ss-kbs label{display:inline-flex;align-items:center;gap:4px}
+.ss-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ss-chip{padding:3px 8px;border:1px solid var(--bd);border-radius:9999px;background:var(--bgc);color:var(--t2);font:inherit;font-size:12px;cursor:pointer}
+.ss-chip.on{background:var(--t);color:var(--bg);border-color:var(--t)}
+.ss-meta-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.ss-meta-row .ss-meta-key{flex:2;min-width:0}
+.ss-meta-row .ss-meta-op{flex:1;min-width:0}
+.ss-meta-value{flex:2;min-width:0}
+.ss-remove{border:0;background:0;color:var(--tm);font-size:16px;line-height:1;cursor:pointer;padding:0 4px}
+.ss-remove:hover{color:var(--d)}
+.ss-add{align-self:flex-start;border:1px dashed var(--bd);border-radius:var(--rs);background:0;color:var(--t2);font:inherit;font-size:12px;padding:3px 10px;cursor:pointer}
+.ss-llm-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.ss-avatar-row{flex-direction:row;align-items:center;gap:10px}
+.ss-avatar{display:inline-flex;width:56px;height:56px;align-items:center;justify-content:center;border:1px dashed var(--bd);border-radius:50%;background:var(--bgc);color:var(--tm);font-size:20px;cursor:pointer;overflow:hidden}
+.ss-avatar img{width:100%;height:100%;object-fit:cover}
+.ss-hint{margin:0;font-size:11px;color:var(--tm)}
+.ss-footer{position:absolute;bottom:0;right:0;display:flex;width:100%;justify-content:flex-end;gap:8px;padding:10px 12px;background:var(--bgm);border-top:1px solid var(--bd)}
 .search-docs-trigger{display:flex;width:100%;min-height:40px;align-items:center;justify-content:space-between;gap:8px;padding:4px;border:1px solid var(--bd);border-radius:6px;background:inherit;color:var(--t);font:inherit;font-size:14px;cursor:pointer;text-align:left}
 .search-docs-trigger:hover{background:var(--bgch)}
 .search-docs-main{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
