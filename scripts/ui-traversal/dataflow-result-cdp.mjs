@@ -46,6 +46,20 @@ const step = (name, value) => {
 const fail = (message) => {
   throw new Error(message);
 };
+// Selecting another step while the current one is edited opens the upstream
+// `changeStepModalTitle` guard; confirm it so the walk continues.
+const switchNode = async (page, nodeId) => {
+  await page.click(`[data-testid='dataflow-node'][data-node-id='${nodeId}']`);
+  const guard = await page.$("[data-testid='dataflow-switch-dialog'].show");
+  if (guard) {
+    await page.click("[data-testid='dataflow-switch-confirm']");
+    await page.waitForFunction(
+      () => !document.getElementById("dataflowSwitchDialog").classList.contains("show"),
+      null,
+      { timeout: 10000 },
+    );
+  }
+};
 
 let kbId = null;
 try {
@@ -261,7 +275,7 @@ try {
   step("edit text", results.editText);
 
   // 3c. Editing a chunk card body works the same way.
-  await page.click("[data-testid='dataflow-node'][data-node-id='tokenChunker']");
+  await switchNode(page, "tokenChunker");
   await page.waitForSelector("[data-testid='dataflow-edit-chunk']", { timeout: 10000 });
   await page.click("[data-testid='dataflow-edit-chunk']");
   await page.evaluate(() => {
@@ -278,8 +292,53 @@ try {
   }
   step("edit chunk", results.editChunk);
 
+  // 3d. The `+` button of the chunk result bar really creates a chunk
+  //     (upstream `createChunk('')` posts an empty chunk to the chunk endpoint).
+  const chunkPosts = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/chunks")) {
+      chunkPosts.push(request.postData() || "");
+    }
+  });
+  await page.click("[data-testid='dataflow-create-chunk']");
+  for (let attempt = 0; attempt < 20 && !chunkPosts.length; attempt += 1) {
+    await page.waitForTimeout(500);
+  }
+  results.createChunk = {
+    posts: chunkPosts.length,
+    emptyContent: chunkPosts.some((body) => body.includes('"content":""')),
+  };
+  if (!chunkPosts.length) fail("the create-chunk button did not call the chunk endpoint");
+  if (!results.createChunk.emptyContent) {
+    fail("the created chunk is not the upstream empty payload: " + chunkPosts[0]);
+  }
+  step("create chunk", results.createChunk);
+
+  // 3d. Rerun while the chunker step is active: the payload must carry that
+  //     step's edited chunk text (upstream merges only the active component).
+  const chunkEditReruns = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/agents/rerun")) {
+      chunkEditReruns.push(request.postData() || "");
+    }
+  });
+  await page.click("[data-testid='dataflow-rerun']");
+  await page.waitForSelector("[data-testid='dataflow-rerun-dialog'].show", { timeout: 10000 });
+  await page.click("[data-testid='dataflow-rerun-confirm']");
+  for (let attempt = 0; attempt < 20 && !chunkEditReruns.length; attempt += 1) {
+    await page.waitForTimeout(500);
+  }
+  results.chunkEditRerun = {
+    requests: chunkEditReruns.length,
+    carriesChunkEdit: chunkEditReruns.some((body) => body.includes("CHUNK-EDIT")),
+  };
+  if (!results.chunkEditRerun.carriesChunkEdit) {
+    fail("the chunker rerun payload does not carry the edited chunk");
+  }
+  step("chunk edit rerun", results.chunkEditRerun);
+
   // 4. Deleting a selection marks the step dirty, which arms the switch guard.
-  await page.click("[data-testid='dataflow-node'][data-node-id='tokenChunker']");
+  await switchNode(page, "tokenChunker");
   await page.waitForSelector("[data-testid='dataflow-chunk-check']", { timeout: 10000 });
   await page.click("[data-testid='dataflow-chunk-check']");
   await page.click("[data-testid='dataflow-delete-chunks']");
@@ -333,15 +392,12 @@ try {
     carriesEditedOutputs: rerunRequests.some((request) =>
       request.body.includes("EDITED-BY-PROBE"),
     ),
-    carriesEditedChunk: rerunRequests.some((request) => request.body.includes("CHUNK-EDIT")),
   };
   if (!rerunRequests.length) fail("the rerun button did not call /api/v1/agents/rerun");
   if (!results.rerun.carriesEditedOutputs) {
     fail("the rerun payload does not carry the edited parser output");
   }
-  if (!results.rerun.carriesEditedChunk) {
-    fail("the rerun payload does not carry the edited chunk text");
-  }
+
   step("rerun", results.rerun);
 
   // 6. The zh face of the same page.
