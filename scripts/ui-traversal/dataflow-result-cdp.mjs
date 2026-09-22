@@ -110,12 +110,23 @@ try {
     kbId,
     { timeout: 120000 },
   );
-  const logRow = await page.evaluate(async (kb) => {
-    const listed = await fetch(
-      `/api/v1/datasets/${kb}/ingestions?page=0&page_size=0&log_type=file`,
-    ).then((res) => res.json());
-    return { code: listed.code, total: (listed.data || {}).total, first: ((listed.data || {}).logs || [])[0] || null };
-  }, kbId);
+  // The log is written by the parse task itself; poll briefly so the probe never
+  // races the worker's last write.
+  let logRow = { code: 0, total: 0, first: null };
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    logRow = await page.evaluate(async (kb) => {
+      const listed = await fetch(
+        `/api/v1/datasets/${kb}/ingestions?page=0&page_size=0&log_type=file`,
+      ).then((res) => res.json());
+      return {
+        code: listed.code,
+        total: (listed.data || {}).total,
+        first: ((listed.data || {}).logs || [])[0] || null,
+      };
+    }, kbId);
+    if (logRow.code === 0 && logRow.total) break;
+    await page.waitForTimeout(500);
+  }
   results.log = {
     code: logRow.code,
     total: logRow.total,
@@ -183,7 +194,7 @@ try {
   await page.screenshot({ path: `${shots}/dataflow-result-${STAMP}.png` });
 
   // 2. Switch to the first step and back with real clicks.
-  await page.click("[data-testid='dataflow-node']");
+  await page.click("[data-testid='dataflow-node'][data-node-id='parser']");
   await page.waitForFunction(
     (title) =>
       document.querySelector("[data-testid='dataflow-step-title']").textContent === title,
@@ -199,7 +210,8 @@ try {
   step("first step", results.firstStep);
 
   // 3. The chunk result bar appears on the chunker step and drives the selection.
-  await page.click("[data-testid='dataflow-node']:last-of-type");
+  // The chunk result bar belongs to the chunker step, not the last one.
+  await page.click("[data-testid='dataflow-node'][data-node-id='tokenChunker']");
   await page.waitForFunction(
     () => !document.getElementById("dataflowChunkBar").hidden,
     null,
@@ -227,7 +239,7 @@ try {
     null,
     { timeout: 10000 },
   );
-  await page.click("[data-testid='dataflow-node']");
+  await page.click("[data-testid='dataflow-node'][data-node-id='parser']");
   await page.waitForSelector("[data-testid='dataflow-switch-dialog'].show", {
     timeout: 10000,
   });
@@ -298,9 +310,20 @@ try {
     .evaluate(() => ({
       url: location.href,
       nodes: document.querySelectorAll("[data-testid='dataflow-node']").length,
+      chunks: document.querySelectorAll("[data-testid='dataflow-chunk']").length,
+      checked: document.querySelectorAll("[data-testid='dataflow-chunk-check']:checked").length,
+      stepTitle: document.getElementById("dataflowStepTitle")?.textContent,
+      format: document.getElementById("dataflowFormat")?.value,
+      barHidden: document.getElementById("dataflowChunkBar")?.hidden,
+      tipHidden: document.getElementById("dataflowRerunTip")?.hidden,
       output: document.getElementById("dataflowOutput")?.textContent?.slice(0, 200),
+      dialogs: [
+        document.getElementById("dataflowSwitchDialog")?.className,
+        document.getElementById("dataflowRerunDialog")?.className,
+      ],
     }))
     .catch((diagnosticError) => ({ diagnosticError: String(diagnosticError.message) }));
+  results.pageErrors = pageErrors;
   console.error("PROBE FAILED:", results.errors[results.errors.length - 1]);
 } finally {
   if (kbId) {
