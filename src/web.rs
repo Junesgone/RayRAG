@@ -283,6 +283,8 @@ fn t(k: &str, zh: bool) -> &str {
             "将以下iframe嵌入您的网站处于所需位置"
         }
         "Preview" => "预览",
+        // Upstream `common.back` (`locales/zh.ts`) — the dataflow-result header.
+        "Back" => "返回",
         // Upstream `chat.messagePlaceholder`, the placeholder of every
         // `NextMessageInput` (share embed, Launch surface).
         "Type your message here..." => "请输入消息...",
