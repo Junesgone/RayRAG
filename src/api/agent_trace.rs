@@ -28,26 +28,35 @@ use std::{
 };
 
 /// `ITraceData` (`interfaces/database/agent.ts`).
+///
+/// `trace` is heterogeneous exactly like upstream's: progress samples written by
+/// the pipeline callback (`{progress, message, datetime, timestamp,
+/// elapsed_time}`) and `tool_use_callback` records
+/// (`{path, tool_name, arguments, result, elapsed_time}`) share the same array —
+/// `pages/agent/log-sheet/tool-timeline-item.tsx` reads the records that carry a
+/// `tool_name`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TraceComponent {
     pub component_id: String,
     #[serde(default)]
-    pub trace: Vec<TraceEntry>,
+    pub trace: Vec<serde_json::Value>,
 }
 
-/// One trace sample. Field names are upstream's
-/// (`Pipeline.callback` / `workflow_timeline`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TraceEntry {
-    pub progress: f64,
-    #[serde(default)]
-    pub message: String,
-    #[serde(default)]
-    pub datetime: String,
-    #[serde(default)]
-    pub timestamp: i64,
-    #[serde(default)]
-    pub elapsed_time: f64,
+/// One progress sample (`Pipeline.callback`); tool records are built by
+/// `crate::agent::ToolUseTrace`.
+pub fn progress_sample(
+    message: impl Into<String>,
+    datetime: impl Into<String>,
+    timestamp: i64,
+    elapsed_time: f64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "progress": 1.0,
+        "message": message.into(),
+        "datetime": datetime.into(),
+        "timestamp": timestamp,
+        "elapsed_time": elapsed_time,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -282,16 +291,20 @@ impl crate::agent::WorkflowEventObserver for AgentTraceCollector<'_> {
                         .iter_mut()
                         .find(|component| component.component_id == component_id)
                     {
-                        component.trace.push(TraceEntry {
-                            // The canvas does not report a pipeline-style
-                            // percentage; a finished sample is 100 % and the
-                            // sheet renders `elapsed_time` and `message`.
-                            progress: 1.0,
-                            message,
-                            datetime,
-                            timestamp,
-                            elapsed_time: elapsed,
-                        });
+                        component
+                            .trace
+                            .push(progress_sample(message, datetime, timestamp, elapsed));
+                        // `tool_use_callback` records ride in the node outputs
+                        // and join the same array, which is what
+                        // `tool-timeline-item.tsx` renders.
+                        if let Some(tools) = event
+                            .data
+                            .get("outputs")
+                            .and_then(|outputs| outputs.get("tool_trace"))
+                            .and_then(serde_json::Value::as_array)
+                        {
+                            component.trace.extend(tools.iter().cloned());
+                        }
                     }
                 }
                 self.persist();
@@ -426,9 +439,9 @@ mod tests {
         assert_eq!(mid.len(), 2);
         assert_eq!(mid[0].component_id, "begin");
         assert_eq!(mid[0].trace.len(), 2);
-        assert_eq!(mid[0].trace[0].elapsed_time, 0.5);
-        assert_eq!(mid[0].trace[0].message, "Begin");
-        assert_eq!(mid[0].trace[0].progress, 1.0);
+        assert_eq!(mid[0].trace[0]["elapsed_time"], 0.5);
+        assert_eq!(mid[0].trace[0]["message"], "Begin");
+        assert_eq!(mid[0].trace[0]["progress"], 1.0);
         assert_eq!(mid[1].component_id, "retrieval");
         assert_eq!(mid[1].trace.len(), 1);
 
@@ -444,7 +457,42 @@ mod tests {
             }),
         });
         let trace = store.get("agent-1", "msg-1").unwrap();
-        assert_eq!(trace[1].trace[1].message, "boom");
+        assert_eq!(trace[1].trace[1]["message"], "boom");
+
+        // `tool_use_callback` records in the node outputs join the same trace
+        // array (`tool-timeline-item.tsx` reads the entries carrying tool_name).
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "retrieval",
+                "component_name": "Retrieval",
+                "elapsed_time": 0.3,
+                "created_at": 1_700_086_405.0,
+                "outputs": {
+                    "tool_trace": [{
+                        "path": "retrieval-->google",
+                        "tool_name": "google",
+                        "arguments": {"q": "rust"},
+                        "result": "ok",
+                        "elapsed_time": 0.42
+                    }]
+                }
+            }),
+        });
+        let trace = store.get("agent-1", "msg-1").unwrap();
+        let retrieval = trace
+            .iter()
+            .find(|component| component.component_id == "retrieval")
+            .unwrap();
+        let tool = retrieval
+            .trace
+            .iter()
+            .find(|entry| entry.get("tool_name").is_some())
+            .expect("tool record merged");
+        assert_eq!(tool["tool_name"], "google");
+        assert_eq!(tool["arguments"]["q"], "rust");
+        assert_eq!(tool["result"], "ok");
+        assert_eq!(tool["elapsed_time"], 0.42);
 
         // Non-streaming runs publish once the assistant message id is known.
         let late_store = new_store();

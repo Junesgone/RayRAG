@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.41] — 2026-09-23（对标批次 v0.3.8s）
+
+### Added
+
+- **工具调用时间线**（上游 `pages/agent/log-sheet/tool-timeline-item.tsx` + `tool_use_callback`）：
+  智能体运行轨迹里现在会有**工具调用记录**，与上游一样和进度采样共用同一个 `trace` 数组
+  （`{path, tool_name, arguments, result, elapsed_time}`），UI 按「有 `tool_name` 即工具记录」区分。
+  - 运行时侧：Agent 组件的工具循环为**每一次真实执行**记录一条 `ToolUseTrace`（工具名、解析后的参数、
+    结果文本、实测耗时），并随节点输出落到轨迹里；无工具调用的普通 LLM 回合不受影响。
+  - 界面侧：探索页「运行轨迹」抽屉与分享页「思考过程」把工具记录渲染成可展开的行——工具名按上游
+    `Agent <Words>` 规则美化、显示耗时，展开后是 **Arguments / Result** 两个代码块；上游黑名单
+    （`add_memory`、`gen_citations`）同样过滤。
+
+### Notes
+
+- 新增/加强回归：`agent` 工具循环测试现在断言节点输出里的 `tool_trace`（工具名、`path`、
+  解析后的 `arguments`、`result`、耗时），`api::agent_trace` 的采集用例断言工具记录与进度采样合并进
+  同一数组，两个页面测试断言工具行的标记、美化函数与黑名单。
+- 新增端到端探针 `scripts/ui-traversal/agent-tool-trace-e2e.py`：自建 OpenAI 兼容 stub（首轮返回工具调用、
+  次轮返回最终答案）+ 知识库 + 带 Retrieval 工具的智能体，真实跑一次智能体，断言轨迹里的工具记录字段，
+  再用 Chrome CDP 打开试跑页 → 会话 → 运行轨迹抽屉 → 展开工具行核对 Arguments/Result。
+- 全量 `cargo test --locked --lib` **1572 passed / 0 failed / 27 ignored**。
+
 ## [0.4.40] — 2026-09-23（对标批次 v0.3.8r）
 
 ### Added

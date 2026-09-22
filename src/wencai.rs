@@ -157,9 +157,10 @@ impl WenCaiClient {
             if let Some(rows) = self
                 .fetch_landing_rows(&components[0], request, top_n, query_type, endpoint)
                 .await?
-                && let Some(table) = render_rows_table(&rows) {
-                    return Ok(table);
-                }
+                && let Some(table) = render_rows_table(&rows)
+            {
+                return Ok(table);
+            }
             // 分页数据不可用时回退：渲染 condition/comp_id/uuid 字典
             let mut fallback = serde_json::Map::new();
             for key in ["condition", "comp_id", "uuid"] {
@@ -382,9 +383,10 @@ fn render_components(components: &[Value]) -> Vec<String> {
                     .and_then(Value::as_array)
                     .and_then(|datas| datas.first())
                     .cloned()
-                    && let Some(table) = render_rows_table(&[row]) {
-                        sections.push(format!("{key}\n{table}"));
-                    }
+                    && let Some(table) = render_rows_table(&[row])
+                {
+                    sections.push(format!("{key}\n{table}"));
+                }
             }
             "textblocklinkone" => {
                 // 文本块链接：data.result.data 为行数组
@@ -394,9 +396,10 @@ fn render_components(components: &[Value]) -> Vec<String> {
                     .and_then(|result| result.get("data"))
                     .and_then(Value::as_array)
                     .cloned()
-                    && let Some(table) = render_rows_table(&rows) {
-                        sections.push(format!("{key}\n{table}"));
-                    }
+                    && let Some(table) = render_rows_table(&rows)
+                {
+                    sections.push(format!("{key}\n{table}"));
+                }
             }
             "nestedblocks" | "wiki1" => {
                 // 需要额外 HTTP 拉取子页面，Rust 侧跳过（wiki1 上游亦已注释）

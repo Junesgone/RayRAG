@@ -4335,6 +4335,9 @@ fn normalize_download_info(value: &Value) -> Value {
 struct CanvasAgentToolRun {
     content: String,
     calls: Vec<ToolCall>,
+    /// `tool_use_callback` records (RAGFlow appends one entry per executed tool
+    /// into the run trace; `merge_tool_use_trace` folds them into `ITraceData`).
+    tool_traces: Vec<ToolUseTrace>,
 }
 
 async fn execute_canvas_agent_tool_loop(
@@ -4349,6 +4352,7 @@ async fn execute_canvas_agent_tool_loop(
     let definitions: Vec<_> = tools.iter().map(|tool| tool.definition.clone()).collect();
     let mut history: Vec<_> = messages.iter().map(ToolChatMessage::from_chat).collect();
     let mut observed = Vec::new();
+    let mut tool_traces: Vec<ToolUseTrace> = Vec::new();
     let max_rounds = node
         .params
         .get("max_rounds")
@@ -4364,15 +4368,28 @@ async fn execute_canvas_agent_tool_loop(
             return Ok(CanvasAgentToolRun {
                 content: completion.content,
                 calls: observed,
+                tool_traces,
             });
         }
 
         history.push(ToolChatMessage::assistant(completion.tool_calls.clone()));
         for call in completion.tool_calls {
+            let started_at = std::time::Instant::now();
             let result = match execute_canvas_agent_tool(runtime, node, tools, &call, input).await {
                 Ok(result) => result,
                 Err(error) => error.to_string(),
             };
+            let elapsed = started_at.elapsed().as_secs_f64();
+            tool_traces.push(ToolUseTrace {
+                path: format!("{}-->{}", node.id, call.function.name),
+                tool_name: call.function.name.clone(),
+                // The function arguments travel as a JSON string (upstream's
+                // `tool_use_callback` stores the parsed object when it can).
+                arguments: serde_json::from_str::<Value>(&call.function.arguments)
+                    .unwrap_or_else(|_| Value::String(call.function.arguments.clone())),
+                result: Value::String(result.clone()),
+                elapsed_time: Some(elapsed),
+            });
             history.push(ToolChatMessage::tool(call.id.clone(), result));
             observed.push(call);
         }
@@ -4388,6 +4405,7 @@ async fn execute_canvas_agent_tool_loop(
     Ok(CanvasAgentToolRun {
         content: completion.content,
         calls: observed,
+        tool_traces,
     })
 }
 
@@ -4929,6 +4947,11 @@ async fn execute_agent_tavily_with_timeout(
     }
 }
 
+/// `tool_use_callback` output — the tool records the run trace carries.
+fn canvas_agent_tool_trace_output(traces: &[ToolUseTrace]) -> Value {
+    Value::Array(traces.iter().map(ToolUseTrace::to_value).collect())
+}
+
 fn canvas_agent_tool_calls_output(calls: &[ToolCall]) -> Value {
     Value::Array(
         calls
@@ -5014,6 +5037,7 @@ async fn execute_node(
                             CanvasAgentToolRun {
                                 content: completion.content,
                                 calls: Vec::new(),
+                                tool_traces: Vec::new(),
                             }
                         })
                 } else {
@@ -5043,6 +5067,12 @@ async fn execute_node(
                                         canvas_agent_tool_calls_output(&completion.calls),
                                     );
                                 }
+                                if !completion.tool_traces.is_empty() {
+                                    outputs.insert(
+                                        "tool_trace".into(),
+                                        canvas_agent_tool_trace_output(&completion.tool_traces),
+                                    );
+                                }
                                 runtime.outputs.insert(node.id.clone(), outputs);
                                 return Ok(None);
                             }
@@ -5056,6 +5086,12 @@ async fn execute_node(
                                 outputs.insert(
                                     "tool_calls".into(),
                                     canvas_agent_tool_calls_output(&completion.calls),
+                                );
+                            }
+                            if !completion.tool_traces.is_empty() {
+                                outputs.insert(
+                                    "tool_trace".into(),
+                                    canvas_agent_tool_trace_output(&completion.tool_traces),
                                 );
                             }
                             runtime.outputs.insert(node.id.clone(), outputs);
@@ -6841,9 +6877,10 @@ async fn execute_code_exec_with_provider(
     }
     let mut arguments = Map::new();
     if let Some(raw) = node.params.get("arguments")
-        && let Value::Object(map) = raw {
-            arguments = map.clone();
-        }
+        && let Value::Object(map) = raw
+    {
+        arguments = map.clone();
+    }
     let provider = std::env::var("RAYRAG_SANDBOX_PROVIDER")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -7096,17 +7133,18 @@ async fn execute_wencai_with_provider(
         .unwrap_or("")
         .to_string();
     if query.trim().is_empty()
-        && let Some(input_query) = input.inputs.get("query") {
-            query = match input_query {
-                Value::String(value) => value.clone(),
-                Value::Array(items) => items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-                    .join(","),
-                other => other.to_string(),
-            };
-        }
+        && let Some(input_query) = input.inputs.get("query")
+    {
+        query = match input_query {
+            Value::String(value) => value.clone(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join(","),
+            other => other.to_string(),
+        };
+    }
     if query.trim().is_empty() {
         query = input.question.to_string();
     }
@@ -7204,9 +7242,10 @@ async fn execute_crawler_with_provider(
         url = input.question.to_string();
     }
     if url.trim().is_empty()
-        && let Some(query) = node.params.get("query").and_then(Value::as_str) {
-            url = query.to_string();
-        }
+        && let Some(query) = node.params.get("query").and_then(Value::as_str)
+    {
+        url = query.to_string();
+    }
     let extract_type = node
         .params
         .get("extract_type")
@@ -7256,9 +7295,10 @@ async fn execute_translate_with_provider(
         text = input.question.to_string();
     }
     if text.trim().is_empty()
-        && let Some(query) = node.params.get("query").and_then(Value::as_str) {
-            text = query.to_string();
-        }
+        && let Some(query) = node.params.get("query").and_then(Value::as_str)
+    {
+        text = query.to_string();
+    }
     let source_lang = node
         .params
         .get("source_lang")
@@ -13000,10 +13040,7 @@ fn llm_component_generation_patch(node: &CanvasNode) -> Result<GenerationParamsP
         )?,
         presence_penalty: llm_component_float(node, "presence_penalty", "presencePenaltyEnabled")?,
         max_tokens: llm_component_max_tokens(node)?,
-        reasoning: node
-            .params
-            .get("reasoning")
-            .and_then(Value::as_bool),
+        reasoning: node.params.get("reasoning").and_then(Value::as_bool),
     })
 }
 
@@ -19524,6 +19561,23 @@ mod tests {
             runtime.outputs["agent"]["tool_calls"][0]["name"],
             "search_my_dateset_0"
         );
+        // `tool_use_callback` parity: the executed tool lands in the node
+        // outputs as a trace record (`merge_tool_use_trace` folds exactly these
+        // into the run's ITraceData array).
+        let tool_trace = runtime.outputs["agent"]["tool_trace"]
+            .as_array()
+            .expect("tool trace recorded");
+        assert_eq!(tool_trace.len(), 1);
+        assert_eq!(tool_trace[0]["tool_name"], "search_my_dateset_0");
+        assert_eq!(tool_trace[0]["path"], "agent-->search_my_dateset_0");
+        assert_eq!(tool_trace[0]["arguments"]["query"], "rust ownership");
+        assert!(
+            tool_trace[0]["result"]
+                .as_str()
+                .unwrap()
+                .contains("Rust ownership guide")
+        );
+        assert!(tool_trace[0]["elapsed_time"].as_f64().unwrap() >= 0.0);
         assert_eq!(runtime.references.len(), 1);
 
         let requests = requests.lock().unwrap();

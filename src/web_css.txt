@@ -757,3 +757,16 @@ expander fed by the shared trace endpoint. */
 .agent-share-thinking-time{flex:0 0 60px;font-family:ui-monospace,monospace}
 .agent-share-thinking-elapsed{color:var(--tm)}
 .agent-share-thinking-empty,.agent-explore-empty{color:var(--tm);font-size:12px}
+
+/* Upstream `pages/agent/log-sheet/tool-timeline-item.tsx`: the tool call rows of
+the run timeline (prettified tool name, elapsed time, expandable arguments and
+result rendered through the JSON viewer). */
+.agent-explore-log-row.tool,.agent-share-thinking-row.tool{display:block;padding:0;border-bottom:0}
+.agent-explore-log-row.tool summary,.agent-share-thinking-row.tool summary{display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:12px;color:var(--t);list-style:none}
+.agent-explore-log-row.tool summary::-webkit-details-marker,.agent-share-thinking-row.tool summary::-webkit-details-marker{display:none}
+.agent-explore-log-row.tool summary::before,.agent-share-thinking-row.tool summary::before{content:'🛠';font-size:12px}
+.agent-explore-tool-fields,.agent-share-thinking-body .agent-explore-tool-fields{margin:0 0 8px 18px}
+.agent-explore-tool-field{margin-bottom:6px}
+.agent-explore-tool-label{display:block;margin-bottom:2px;color:var(--t2);font-size:11px}
+.agent-explore-tool-value{max-height:180px;margin:0;padding:6px 8px;overflow:auto;border:1px solid var(--bd);border-radius:4px;background:var(--bgc);color:var(--t);font-family:ui-monospace,monospace;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+.agent-share-thinking-row.tool{margin-bottom:4px}
