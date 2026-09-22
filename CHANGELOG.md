@@ -2,6 +2,59 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.33] — 2026-09-22（对标批次 v0.3.8k）
+
+### Added
+
+- **头像裁剪对话框真正可用，并与上游 `components/avatar-upload.tsx` 的交互对齐**：
+  - **滚轮缩放**按上游 `handleWheel` 实现——`delta = deltaY > 0 ? 0.9 : 1.1`，新边长夹在
+    `[20, min(图宽, 图高)]`，保持选区中心比例后重新夹回图像范围（`preventDefault` 阻止页面滚动）。
+  - 选区样式对齐上游：`2px dashed #fff` 虚线框 + `box-shadow: 0 0 0 9999px rgba(0,0,0,.5)` 遮罩，
+    舞台补 `touch-action:none`。
+  - **修复对话框的 Promise 管线**：此前 `openAvatarCropModal()` 直接把图片加载 Promise 返回给调用方，
+    `avatarCropConfirm()` 只写预览、不 resolve，导致数据集头像的 `await` 永远拿到 `null`
+    （点“确定”后不生效）；现在 OK 以裁剪结果 resolve、取消以 `null` resolve。
+  - **用户设置页头像改走同一个裁剪对话框**（此前是自动居中裁剪的近似实现），与上游
+    `AvatarUpload` 在资料页与数据集页行为一致：选文件 → 弹裁剪框 → 确定后 `PATCH /api/v1/users/me`。
+
+### Fixed
+
+- **注册开关被两套环境变量拆成两半：`REGISTER_ENABLED=1` 时登录页给注册表单、提交却回 403
+  `Registration is disabled`**：`GET /api/v1/system/config`（登录页据此显示/隐藏注册入口）读的是上游
+  `settings.REGISTER_ENABLED`，而 `POST /api/v1/user/register` 只认 RayRAG 私有的
+  `RAYRAG_ALLOW_REGISTRATION`——该变量连 `docker-compose.yml` 都没有透传，于是页面与接口永远不可能同时
+  成立。现在两处读同一个解析值（新增 `settings::resolve_register_enabled()`，在 `Settings::from_env()`
+  里一次性算好存进 `AppState::register_enabled`）：`REGISTER_ENABLED` 未设默认 1（与上游一致），显式 `0`
+  才关闭注册；旧的 `RAYRAG_ALLOW_REGISTRATION=true` 保留为只能“打开”的逃生开关（隔离测试 binary 仍可用）。
+  行为矩阵实测：`0`→`registerEnabled:0` + 拒注册；`0`+旧开关→`1` + 放行；`1`→`1` + 放行。
+
+- **注册接口按上游 `user_api.py::user_add` 的路径与契约重建**（此前只有 RayRAG 私有的
+  `POST /api/v1/user/register`，且成功/失败状态码都是自造的）：
+  - **路径**：上游 `web/src/utils/api.ts::register` 提交到 `` `${restAPIv1}/users` ``，blueprint
+    `api/apps/restful_apis/user_api.py` 挂在 `/api/v1`，因此注册端点是 **`POST /api/v1/users`**——
+    与列用户的 `GET` 同路径。现在两者合并注册，`GET` 仍需 token、`POST` 免登录（鉴权中间件由
+    “只看路径”改为 `public_api_request(method, path)`）；旧的 `/api/v1/user/register` 保留为兼容别名。
+  - **传输层**：上游 `get_json_result` 对 `RetCode` 一律回 **HTTP 200** 且仅在 `code == 0` 时带 `data`。
+    原先禁用注册回 403、重复邮箱回 400、成功回 201 全部改为上游形状。新增 `src/user_register.rs`
+    逐字承载 `api/utils/nickname_validation.py` 与 `user_api.py` 的校验与文案：
+    `@validate_request` → `required argument are missing: nickname,email,password; `（101）、
+    `User registration is disabled!`（103）、`Invalid email address: {email}!`（103）、
+    `Email: {email} has already registered!`（103）、昵称五条（`Nickname is required.` /
+    `Nickname must be a string.` / `Nickname cannot be empty.` /
+    `Nickname must be at most 100 characters.` / `Nickname contains invalid characters.`，101）、
+    `User registration failure, error: {e}`（100）、成功 `{nickname}, welcome aboard!` 并把凭据写进
+    `Authorization` 响应头（上游 `construct_response(auth=user.get_id())`）。邮箱正则
+    `^[\w\._-]+@([\w_-]+\.)+[\w-]{2,}$` 与昵称正则 `^[\w ._'-]+$` 均按上游原文。
+  - **登录页注册流程对齐** `use-login-request.ts::useRegister` + `login-next/index.tsx::onCheck`：
+    提交到 `/api/v1/users`，成功后提示 `message.registered`（en `Registered!` / zh `注册成功`）并
+    **翻回登录面**（原先会自动登录并跳首页，属自造行为），消息含 `registration is disabled` 时提示
+    `message.registerDisabled`；提示沿用 `.auth-error` 行并新增 `.success` 绿色态（上游是 antd 的
+    3 秒 toast，这里同样 3 秒后自清）。
+  - **顺带修掉一个真实缺陷**：`UserStore::register` 把小写化后的邮箱作为存储键，而 `login`/`get_user`
+    用调用方原样传入的字符串查表，于是 `Ada@Example.com` 注册后永远登不进去（键是
+    `ada@example.com`）。两处查表改用大小写不敏感解析（精确命中优先，随后回退扫描，兼容旧
+    `users.json` 里的混合大小写键）。
+
 ## [0.4.32] — 2026-09-21（对标批次 v0.3.8j）
 
 ### Added

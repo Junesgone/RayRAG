@@ -71,8 +71,11 @@ pub struct AppState {
     pub memory_messages: Arc<crate::api::joint_services::MemoryMessageService>,
     pub skill_index: Arc<crate::api::skill_index::SkillIndexStore>,
     pub system_settings: Arc<crate::api::system_settings::SystemSettingsStore>,
-    /// `REGISTER_ENABLED` — exposed by `GET /api/v1/system/config` (upstream
-    /// `settings.REGISTER_ENABLED`, 0 disables the sign-up face).
+    /// Effective sign-up switch — upstream `settings.REGISTER_ENABLED` (plus the
+    /// legacy `RAYRAG_ALLOW_REGISTRATION` opt-in), resolved once at startup by
+    /// `settings::resolve_register_enabled`. Read by both
+    /// `GET /api/v1/system/config` (the login page's `registerEnabled` gate) and
+    /// `POST /api/v1/user/register` so the two can never disagree.
     pub register_enabled: i64,
     /// `DISABLE_PASSWORD_LOGIN` — second field of the same payload.
     pub disable_password_login: bool,
@@ -153,47 +156,114 @@ async fn login(State(state): State<Arc<AppState>>, Json(b): Json<serde_json::Val
     }
 }
 
-async fn register(
+/// Upstream `RetCode` body shape: `get_json_result` answers **HTTP 200** for
+/// every `RetCode` failure and only ever emits `data` when `code == 0`
+/// (`api/utils/api_utils.py::get_result`).
+fn ret_code_response(code: i32, message: &str) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "code": code, "message": message })),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/users` — upstream `api/apps/restful_apis/user_api.py::user_add`,
+/// the endpoint `web/src/utils/api.ts::register` posts to (the blueprint is
+/// mounted at `/api/v1`, the same prefix as the `GET` that lists users).
+///
+/// `POST /api/v1/user/register` stays mounted on this handler as a compatible
+/// alias for clients written against earlier RayRAG builds; upstream has no
+/// such path.
+///
+/// The upstream order is kept exactly: `@validate_request` → `REGISTER_ENABLED`
+/// → email shape → duplicate email → `validate_nickname` → insert. The gate is
+/// `settings.REGISTER_ENABLED`, the very value `GET /api/v1/system/config`
+/// reports as `registerEnabled` and the login page uses to show or hide its
+/// sign-up face, so the page can never offer a form this handler refuses.
+async fn user_add(
     State(state): State<Arc<AppState>>,
     Json(b): Json<serde_json::Value>,
 ) -> Response {
-    if !std::env::var("RAYRAG_ALLOW_REGISTRATION")
-        .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
-        .unwrap_or(false)
+    use crate::user_register as upstream;
+
+    if let Some(message) =
+        upstream::missing_required_arguments(&b, &["nickname", "email", "password"])
     {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(ApiResponse {
-                code: 403,
-                message: "Registration is disabled".into(),
-                data: None,
-            }),
-        )
-            .into_response();
+        return ret_code_response(upstream::ARGUMENT_ERROR, &message);
     }
 
-    let nick = b.get("nickname").and_then(|v| v.as_str()).unwrap_or("user");
-    let email = b.get("email").and_then(|v| v.as_str()).unwrap_or("");
-    let pass = b.get("password").and_then(|v| v.as_str()).unwrap_or("");
-    match state.users.register(nick, email, pass) {
-        Ok(_) => (
-            StatusCode::CREATED,
-            Json(ApiResponse {
-                code: 0,
-                message: "ok".into(),
-                data: None,
-            }),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse {
-                code: 400,
-                message: e.to_string(),
-                data: None,
-            }),
-        )
-            .into_response(),
+    if state.register_enabled == 0 {
+        return ret_code_response(
+            upstream::OPERATING_ERROR,
+            upstream::REGISTRATION_DISABLED_MESSAGE,
+        );
+    }
+
+    let raw_email = b
+        .get("email")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let email = raw_email.trim();
+    // Upstream would raise on a non-string email here and answer a 500 through
+    // the generic handler; answering the invalid-address message is the
+    // graceful reading of the same intent.
+    if !upstream::email_is_valid(email) {
+        return ret_code_response(
+            upstream::OPERATING_ERROR,
+            &upstream::invalid_email_message(email),
+        );
+    }
+
+    if state.users.get_user(email).is_some() {
+        return ret_code_response(
+            upstream::OPERATING_ERROR,
+            &upstream::duplicate_email_message(email),
+        );
+    }
+
+    let nickname = match upstream::validate_nickname(b.get("nickname")) {
+        Ok(nickname) => nickname,
+        Err(message) => return ret_code_response(upstream::ARGUMENT_ERROR, &message),
+    };
+
+    let password = b
+        .get("password")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    match state.users.register(&nickname, email, password) {
+        Ok(user) => {
+            // Upstream calls `login_user(user)` and passes `auth=user.get_id()`
+            // to `construct_response`, which puts the credential in the
+            // `Authorization` response header.
+            let token = state.users.issue_token_for(&user.id);
+            let mut response = Json(serde_json::json!({
+                "code": 0,
+                "message": upstream::welcome_message(&user.nickname),
+                "data": {
+                    "id": user.id,
+                    "nickname": user.nickname,
+                    "email": user.email,
+                    "avatar": user.avatar,
+                    "timezone": user.timezone,
+                    "role": user.role,
+                    "created_at": user.created_at,
+                    "access_token": token,
+                },
+            }))
+            .into_response();
+            if let Some(token) = token {
+                if let Ok(value) = axum::http::HeaderValue::from_str(&token) {
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::AUTHORIZATION, value);
+                }
+            }
+            response
+        }
+        Err(error) => ret_code_response(
+            upstream::EXCEPTION_ERROR,
+            &upstream::registration_failure_message(&error.to_string()),
+        ),
     }
 }
 
@@ -3133,6 +3203,17 @@ async fn chat_completion(
 
 // ── API authentication ────────────────────────────────────────
 
+/// The middleware's view of a request: most unauthenticated endpoints are
+/// decided by path alone, but `/api/v1/users` carries both the public sign-up
+/// `POST` and the authenticated `GET` from the same upstream blueprint, so the
+/// method is part of the check there.
+fn public_api_request(method: &Method, path: &str) -> bool {
+    if method == Method::POST && path == "/api/v1/users" {
+        return true;
+    }
+    public_api_path(path)
+}
+
 fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
@@ -3200,7 +3281,7 @@ async fn require_api_auth(
 ) -> Response {
     if request.method() == Method::OPTIONS
         || !request.uri().path().starts_with("/api/v1/")
-        || public_api_path(request.uri().path())
+        || public_api_request(request.method(), request.uri().path())
     {
         return next.run(request).await;
     }
@@ -3509,7 +3590,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             }),
         )
         .route("/api/v1/auth/login", post(login))
-        .route("/api/v1/user/register", post(register))
+        // Compatible alias for clients written against earlier RayRAG builds;
+        // upstream registers only `POST /api/v1/users` (see the user routes).
+        .route("/api/v1/user/register", post(user_add))
         .route(
             "/api/v1/system/password-public-key",
             get(password_public_key),
@@ -4148,7 +4231,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/skills/reindex",
             post(crate::api::skill_index::reindex_skills),
         )
-        .route("/api/v1/users", get(crate::api::system::list_users))
+        // Upstream `api/apps/restful_apis/user_api.py` mounts both verbs on
+        // `/api/v1/users`: `GET` is `@login_required` and lists users, `POST`
+        // (`user_add`) is the unauthenticated sign-up face. The middleware's
+        // public-path table therefore has to look at the method, not just the
+        // path.
+        .route(
+            "/api/v1/users",
+            get(crate::api::system::list_users).post(user_add),
+        )
         .route("/api/v1/users/{id}", put(crate::api::system::update_user))
         .route(
             "/api/v1/users/me",
@@ -4817,6 +4908,225 @@ mod tests {
             memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
         });
         TestEnv { root, state, token }
+    }
+
+    /// Upstream `user_api.user_add`: `web/src/utils/api.ts::register` posts to
+    /// `${restAPIv1}/users`, so the sign-up face lives on `POST /api/v1/users`
+    /// (the `GET` on the same path stays authenticated), every rejection is
+    /// HTTP 200 carrying a `RetCode` body, and the success payload is
+    /// `{code:0, message:"{nickname}, welcome aboard!", data:{…}}` with the
+    /// credential in the `Authorization` header.
+    #[tokio::test]
+    async fn user_add_matches_the_upstream_registration_contract() {
+        let env = test_env();
+        let post = |uri: &'static str, body: serde_json::Value| {
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let register_body = |nickname: &str, email: &str| {
+            serde_json::json!({
+                "nickname": nickname,
+                "email": email,
+                "password": "a long enough password",
+            })
+        };
+
+        // `@validate_request("nickname","email","password")` → 101, HTTP 200.
+        for (body, expected) in [
+            (
+                serde_json::json!({}),
+                "required argument are missing: nickname,email,password; ",
+            ),
+            (
+                serde_json::json!({"nickname": "N"}),
+                "required argument are missing: email,password; ",
+            ),
+        ] {
+            let response = build_router(env.state.clone())
+                .oneshot(post("/api/v1/users", body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(json["code"], 101);
+            assert_eq!(json["message"], expected);
+            assert!(
+                json.get("data").is_none(),
+                "upstream only emits `data` for code 0"
+            );
+        }
+
+        // email shape → 103 "Invalid email address: {email}!"
+        let response = build_router(env.state.clone())
+            .oneshot(post("/api/v1/users", register_body("Newcomer", "nope")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 103);
+        assert_eq!(json["message"], "Invalid email address: nope!");
+
+        // nickname validation → 101 with the exact `nickname_validation.py` text.
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/users",
+                register_body("bad/name", "nickname@example.com"),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 101);
+        assert_eq!(json["message"], "Nickname contains invalid characters.");
+
+        // Success: HTTP 200, the welcome message, the self-safe user and the
+        // credential in the `Authorization` header.
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/users",
+                register_body("Newcomer", "newcomer@example.com"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let authorization = response
+            .headers()
+            .get(header::AUTHORIZATION)
+            .expect("upstream `construct_response(auth=...)` sets the header")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 0);
+        assert_eq!(json["message"], "Newcomer, welcome aboard!");
+        assert_eq!(json["data"]["email"], "newcomer@example.com");
+        assert_eq!(json["data"]["nickname"], "Newcomer");
+        assert!(
+            json["data"].get("password").is_none() && json["data"].get("password_hash").is_none(),
+            "`to_safe_dict` strips the password"
+        );
+
+        // The freshly minted token really works (`GET /api/v1/user/info` is the
+        // authenticated self-read in this build).
+        let me = Request::builder()
+            .uri("/api/v1/user/info")
+            .header(header::AUTHORIZATION, format!("Bearer {authorization}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = build_router(env.state.clone()).oneshot(me).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["data"]["email"], "newcomer@example.com");
+
+        // Duplicate → 103 "Email: {email} has already registered!"
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/users",
+                register_body("Newcomer", "newcomer@example.com"),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 103);
+        assert_eq!(
+            json["message"],
+            "Email: newcomer@example.com has already registered!"
+        );
+
+        // The `GET` sibling on the same path keeps requiring a token.
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // The RayRAG-only alias answers the same contract.
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/user/register",
+                register_body("Alias User", "alias@example.com"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["message"], "Alias User, welcome aboard!");
+    }
+
+    /// Regression: an instance with `REGISTER_ENABLED=1` advertised
+    /// `registerEnabled: 1` from `/api/v1/system/config` — so the login page
+    /// showed its sign-up face — and then answered the submitted form with 403
+    /// "Registration is disabled", because this handler gated on its own
+    /// `RAYRAG_ALLOW_REGISTRATION` env var. One resolved switch, two consumers.
+    #[tokio::test]
+    async fn register_endpoint_follows_the_register_enabled_switch() {
+        let env = test_env();
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/users")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "nickname": "Newcomer",
+                        "email": "newcomer@example.com",
+                        "password": "a long enough password",
+                    })
+                    .to_string(),
+                ))
+                .unwrap()
+        };
+
+        // `REGISTER_ENABLED` unset (upstream default 1) is enough on its own.
+        let response = build_router(env.state.clone())
+            .oneshot(request())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Switching it off closes the API and the page's gate together. The
+        // transport is upstream's: HTTP 200 with `RetCode.OPERATING_ERROR`.
+        let mut disabled = (*env.state).clone();
+        disabled.register_enabled = 0;
+        let disabled = Arc::new(disabled);
+        let response = build_router(disabled.clone())
+            .oneshot(request())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 103);
+        assert_eq!(json["message"], "User registration is disabled!");
+
+        let response = build_router(disabled)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let config: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(config["data"]["registerEnabled"], 0);
     }
 
     #[tokio::test]

@@ -76,6 +76,8 @@ services:
       RAYRAG_NO_FSYNC: ${RAYRAG_NO_FSYNC:-1}
       # Upstream `settings.REGISTER_ENABLED` / `DISABLE_PASSWORD_LOGIN` and the
       # `oauth:` registry consumed by the login page (see src/oauth_config.rs).
+      # `REGISTER_ENABLED` gates both the page's sign-up face and
+      # `POST /api/v1/user/register`; 0 disables registration end to end.
       REGISTER_ENABLED: ${REGISTER_ENABLED:-1}
       DISABLE_PASSWORD_LOGIN: ${DISABLE_PASSWORD_LOGIN:-false}
       RAYRAG_OAUTH_CONFIG: ${RAYRAG_OAUTH_CONFIG:-}

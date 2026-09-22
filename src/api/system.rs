@@ -251,7 +251,10 @@ pub async fn system_version_public() -> impl IntoResponse {
 /// GET `/api/v1/system/config` — upstream `system_api.get_config`:
 /// `{"registerEnabled": settings.REGISTER_ENABLED,
 ///   "disablePasswordLogin": settings.DISABLE_PASSWORD_LOGIN}`.
-/// The login page reads `registerEnabled` to gate the sign-up face.
+/// The login page reads `registerEnabled` to gate the sign-up face, and
+/// `POST /api/v1/user/register` reads the same resolved value, so the switch is
+/// never shown for a form the API rejects. Keep the field numeric: the page
+/// tests `config.registerEnabled !== 0`, which a boolean `false` would pass.
 pub async fn system_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(serde_json::json!({
         "code": 0,

@@ -53,6 +53,25 @@ pub struct UserStore {
     password_transport: Option<Arc<crate::password_transport::PasswordTransport>>,
 }
 
+/// Resolve an email to its stored user.
+///
+/// Every write path stores the lower-cased address (`register` and
+/// `create_user` both call `to_ascii_lowercase`), and upstream's MySQL
+/// comparison is case-insensitive too, but a store file written by an older
+/// build can still hold mixed case — so an exact hit wins and a
+/// case-insensitive scan follows. Without this fallback a user who signed up as
+/// `Ada@Example.com` was stored as `ada@example.com` and could never sign in
+/// with the address they typed.
+fn find_user<'a>(users: &'a HashMap<String, User>, email: &str) -> Option<&'a User> {
+    let email = email.trim();
+    if let Some(user) = users.get(email) {
+        return Some(user);
+    }
+    users
+        .values()
+        .find(|user| user.email.eq_ignore_ascii_case(email))
+}
+
 impl UserStore {
     /// Create or load user store from file.
     pub fn new(file_path: &str) -> Result<Self> {
@@ -116,7 +135,7 @@ impl UserStore {
         let password = self.decode_password(password)?;
         let (user_id, needs_upgrade) = {
             let users = self.users.read().unwrap();
-            let user = match users.get(email) {
+            let user = match find_user(&users, email) {
                 Some(user) => user,
                 None => return Ok(None),
             };
@@ -362,7 +381,7 @@ impl UserStore {
 
     /// Get user by email.
     pub fn get_user(&self, email: &str) -> Option<User> {
-        self.users.read().unwrap().get(email).cloned()
+        find_user(&self.users.read().unwrap(), email).cloned()
     }
 
     /// Get user by stable id.
@@ -592,6 +611,62 @@ mod tests {
                 .is_some()
         );
         assert_eq!(store.password_public_key(), Some(public_key.as_str()));
+        std::fs::remove_file(path).ok();
+    }
+
+    /// `register` stores the address lower-cased, so a lookup that used the
+    /// typed address verbatim locked out anyone who signed up as
+    /// `Ada@Example.com`: the account existed under `ada@example.com` and the
+    /// login answered "Invalid credentials" forever. Upstream compares through
+    /// MySQL's case-insensitive collation and never sees the difference.
+    #[test]
+    fn email_lookup_ignores_case_and_surrounding_space() {
+        let path = temp_path("email-case");
+        let seed = User {
+            id: "seed-user".into(),
+            nickname: "Seed".into(),
+            email: "seed@example.com".into(),
+            password_hash: hash_password("correct horse battery staple").unwrap(),
+            role: "admin".into(),
+            avatar: String::new(),
+            timezone: String::new(),
+            created_at: now_ms(),
+        };
+        std::fs::write(&path, serde_json::to_vec(&vec![seed]).unwrap()).unwrap();
+        let store = UserStore::new(&path).unwrap();
+        let user = store
+            .register("Ada", "Ada@Example.com", "correct horse battery staple")
+            .unwrap();
+        assert_eq!(user.email, "ada@example.com", "writes normalise the address");
+
+        // Every spelling of the same mailbox reaches the same account.
+        for typed in [
+            "ada@example.com",
+            "Ada@Example.com",
+            "ADA@EXAMPLE.COM",
+            "  ada@example.com  ",
+        ] {
+            assert!(
+                store
+                    .login(typed, "correct horse battery staple")
+                    .unwrap()
+                    .is_some(),
+                "login must accept {typed}"
+            );
+            assert_eq!(
+                store.get_user(typed).map(|user| user.id),
+                Some(user.id.clone()),
+                "get_user must resolve {typed}"
+            );
+        }
+        // A genuinely different mailbox still misses.
+        assert!(store.get_user("ada@example.org").is_none());
+        assert!(
+            store
+                .login("ada@example.org", "correct horse battery staple")
+                .unwrap()
+                .is_none()
+        );
         std::fs::remove_file(path).ok();
     }
 

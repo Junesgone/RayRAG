@@ -236,6 +236,43 @@ pub fn parse_disable_password_login_env(value: &str) -> bool {
     matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
 }
 
+/// Resolve the sign-up switch from the two environment variables that can
+/// carry it.
+///
+/// `REGISTER_ENABLED` is the upstream switch (`common/settings.py`), defaults
+/// to 1 when unset, and is the value `GET /api/v1/system/config` hands the
+/// login page to gate its sign-up face. `RAYRAG_ALLOW_REGISTRATION` is the
+/// RayRAG-only opt-in that `POST /api/v1/user/register` used to require on its
+/// own: because the two were read by different layers, an instance could
+/// advertise `registerEnabled: 1` and still answer the form with 403
+/// "Registration is disabled". Both layers now read this single resolved value,
+/// so the page can never offer a form the API refuses.
+///
+/// The legacy opt-in is kept as an additive escape hatch for isolated test
+/// binaries (`RAYRAG_ALLOW_REGISTRATION=true`): it can only turn the switch on.
+pub fn resolve_register_enabled(
+    register_enabled: Option<&str>,
+    allow_registration: Option<&str>,
+) -> i64 {
+    let upstream = register_enabled
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .unwrap_or(1);
+    if upstream != 0 {
+        return upstream;
+    }
+    match allow_registration {
+        Some(value)
+            if matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            ) =>
+        {
+            1
+        }
+        _ => 0,
+    }
+}
+
 /// All settings snapshotted from the environment, mirroring the Python module
 /// globals. Field names follow the Python names so porting stays mechanical.
 #[derive(Debug, Clone, PartialEq)]
@@ -338,9 +375,10 @@ impl Settings {
         settings.embedding_batch_size = get("EMBEDDING_BATCH_SIZE")
             .and_then(|v| v.trim().parse::<u32>().ok())
             .unwrap_or(DEFAULT_EMBEDDING_BATCH_SIZE);
-        settings.register_enabled = get("REGISTER_ENABLED")
-            .and_then(|v| v.trim().parse::<i64>().ok())
-            .unwrap_or(1);
+        settings.register_enabled = resolve_register_enabled(
+            get("REGISTER_ENABLED").as_deref(),
+            get("RAYRAG_ALLOW_REGISTRATION").as_deref(),
+        );
         if let Some(value) = get("DISABLE_PASSWORD_LOGIN") {
             settings.disable_password_login = parse_disable_password_login_env(&value);
         }
@@ -1893,6 +1931,36 @@ mod tests {
                 .find(|(k, _)| *k == key)
                 .map(|(_, v)| v.to_string())
         }
+    }
+
+    #[test]
+    fn register_enabled_resolution_keeps_the_page_and_the_api_in_step() {
+        // Upstream default: unset means enabled (`settings.REGISTER_ENABLED = 1`),
+        // which is what the login page's `registerEnabled` gate already assumed.
+        assert_eq!(resolve_register_enabled(None, None), 1);
+        assert_eq!(resolve_register_enabled(Some("1"), None), 1);
+        assert_eq!(resolve_register_enabled(Some(" 1 "), None), 1);
+        // Explicitly off stays off.
+        assert_eq!(resolve_register_enabled(Some("0"), None), 0);
+        // A nonsense value falls back to the upstream default, like `int()` failing.
+        assert_eq!(resolve_register_enabled(Some("nope"), None), 1);
+        // The legacy RayRAG opt-in can only widen the gate, never narrow it.
+        assert_eq!(resolve_register_enabled(Some("0"), Some("true")), 1);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("YES")), 1);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("1")), 1);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("0")), 0);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("false")), 0);
+        // The upstream switch decides, so the two can never contradict each
+        // other into the old failure mode (page enabled, API 403).
+        assert_eq!(resolve_register_enabled(Some("1"), Some("0")), 1);
+
+        let settings = Settings::from_reader(reader(&[("RAYRAG_ALLOW_REGISTRATION", "true")]));
+        assert_eq!(settings.register_enabled, 1);
+        let settings = Settings::from_reader(reader(&[
+            ("REGISTER_ENABLED", "0"),
+            ("RAYRAG_ALLOW_REGISTRATION", "true"),
+        ]));
+        assert_eq!(settings.register_enabled, 1);
     }
 
     #[test]
