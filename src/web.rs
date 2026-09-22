@@ -3807,13 +3807,28 @@ pub async fn dataflow_result_page(req: axum::http::Request<axum::body::Body>) ->
     b.push_str(label("rerunFromCurrentStep"));
     b.push_str("</button><span class='dataflow-tip' id='dataflowRerunTip' data-testid='dataflow-rerun-tip' hidden>");
     b.push_str(label("rerunFromCurrentStepTip"));
-    b.push_str("</span></div><div class='dataflow-chunk-bar' id='dataflowChunkBar' data-testid='dataflow-chunk-bar' hidden><button class='btn btn-o btn-sm' type='button' data-testid='dataflow-select-all' onclick='dataflowSelectAll()'>");
+    // Upstream `components/chunk-result-bar/index.tsx`: the Full/Ellipse text-mode
+    // segmented control plus the `+` (create chunk) button, and
+    // `checkbox-sets.tsx`: the select-all checkbox, the count and the trash.
+    b.push_str("</span></div><div class='dataflow-chunk-bar' id='dataflowChunkBar' data-testid='dataflow-chunk-bar' hidden><div class='dataflow-segmented'><button class='dataflow-segment active' type='button' id='dataflowTextFull' data-testid='dataflow-text-full' onclick='dataflowTextMode(\"full\")'>");
+    b.push_str(label("fullText"));
+    b.push_str("</button><button class='dataflow-segment' type='button' id='dataflowTextEllipse' data-testid='dataflow-text-ellipse' onclick='dataflowTextMode(\"ellipse\")'>");
+    b.push_str(label("ellipse"));
+    b.push_str("</button></div><button class='agent-explore-icon-btn dataflow-create' type='button' data-testid='dataflow-create-chunk' aria-label='");
+    b.push_str(label("createChunk"));
+    b.push_str("' title='");
+    b.push_str(label("createChunk"));
+    b.push_str("' onclick='dataflowCreateChunk()'>");
+    b.push_str(EXPLORE_PLUS_SVG);
+    b.push_str("</button></div><div class='dataflow-chunk-sets' id='dataflowChunkSets' data-testid='dataflow-chunk-sets' hidden><label class='dataflow-switch'><input type='checkbox' id='all_chunks_checkbox' data-testid='dataflow-select-all' onchange='dataflowSelectAll(this.checked)'><span>");
     b.push_str(label("selectAll"));
-    b.push_str("</button><button class='btn btn-o btn-sm' type='button' data-testid='dataflow-invert' onclick='dataflowInvert()'>");
-    b.push_str(label("invert"));
-    b.push_str("</button><button class='btn btn-d btn-sm' type='button' data-testid='dataflow-delete-chunks' onclick='dataflowDeleteChunks()'>");
-    b.push_str(t("Delete", zh));
-    b.push_str("</button><span class='dataflow-selected' id='dataflowSelected'></span></div><div class='dataflow-output' id='dataflowOutput' data-testid='dataflow-output'></div><details class='dataflow-raw'><summary>");
+    b.push_str("</span></label><span class='dataflow-selected' id='dataflowSelected' data-testid='dataflow-selected'></span><button class='agent-explore-icon-btn dataflow-trash' type='button' data-testid='dataflow-delete-chunks' aria-label='");
+    b.push_str(label("deleteSelected"));
+    b.push_str("' title='");
+    b.push_str(label("deleteSelected"));
+    b.push_str("' onclick='dataflowDeleteChunks()'>");
+    b.push_str(DATAFLOW_TRASH_SVG);
+    b.push_str("</button></div><div class='dataflow-output' id='dataflowOutput' data-testid='dataflow-output'></div><details class='dataflow-raw'><summary>");
     b.push_str(label("result"));
     b.push_str("</summary><pre id='dataflowRaw' data-testid='dataflow-raw'></pre></details></section></div>");
     // `dataflowParser.confirmRerun` + `changeStepModalTitle` dialogs.
@@ -3844,6 +3859,7 @@ pub async fn dataflow_result_page(req: axum::http::Request<axum::body::Body>) ->
         "rerunQueued": if zh { "已重新排队解析" } else { "Rerun queued" },
         "rerunFromCurrentStepTip": label("rerunFromCurrentStepTip"),
         "emptyChunks": if zh { "该步骤没有切片" } else { "No chunks in this step" },
+        "chunkCreated": if zh { "已创建空切片，可直接编辑" } else { "Empty chunk created" },
     })));
     b.push_str(";</script><script>");
     b.push_str(DATAFLOW_RESULT_SCRIPT);
@@ -3852,7 +3868,7 @@ pub async fn dataflow_result_page(req: axum::http::Request<axum::body::Body>) ->
 }
 
 /// Upstream `dataflowParser.*` copy, verbatim per locale.
-const DATAFLOW_LABELS: [(&str, &str, &str); 11] = [
+const DATAFLOW_LABELS: [(&str, &str, &str); 16] = [
     ("result", "Result", "结果"),
     ("parseSummary", "Parse summary", "解析摘要"),
     ("parserMethod", "Parser method", "解析方法"),
@@ -3880,6 +3896,12 @@ const DATAFLOW_LABELS: [(&str, &str, &str); 11] = [
     ),
     ("changeStepModalCancelText", "Cancel", "取消"),
     ("changeStepModalConfirmText", "Switch Anyway", "继续切换"),
+    // Upstream `chunk` namespace: the result-bar controls.
+    ("fullText", "Full text", "全文"),
+    ("ellipse", "Ellipse", "省略"),
+    ("selectAll", "Select all", "选择所有"),
+    ("createChunk", "Create chunk", "创建解析块"),
+    ("deleteSelected", "Delete selected", "删除选定的"),
 ];
 
 fn dataflow_label(zh: bool, key: &str) -> &'static str {
@@ -3890,6 +3912,9 @@ fn dataflow_label(zh: bool, key: &str) -> &'static str {
         .unwrap_or("")
 }
 
+/// Upstream `components/chunk-result-bar/checkbox-sets.tsx` trash glyph.
+const DATAFLOW_TRASH_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3 6h18'/><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6'/><path d='M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/></svg>";
+
 /// Upstream `LucideArrowBigLeft` of the `PageHeader` back button.
 const DATAFLOW_BACK_SVG: &str = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M9 12h12'/><path d='m3 12 6-6'/><path d='m3 12 6 6'/></svg>";
 
@@ -3897,7 +3922,7 @@ const DATAFLOW_BACK_SVG: &str = "<svg width='18' height='18' viewBox='0 0 24 24'
 /// selection (with the dirty-switch guard), the output renderer, chunk
 /// selection/deletion and the rerun call.
 const DATAFLOW_RESULT_SCRIPT: &str = r#"
-var DATAFLOW={log:null,kb:'',doc:'',nodes:[],active:null,dirty:false,pending:null,selected:[]};
+var DATAFLOW={log:null,kb:'',doc:'',nodes:[],active:null,dirty:false,pending:null,selected:[],textMode:'full',format:''};
 function dataflowStatus(text,error){var node=document.getElementById('dataflowRerunTip');if(node){node.hidden=!text;node.style.color=error?'var(--d)':''}}
 function dataflowParams(){var params=new URLSearchParams(window.location.search);DATAFLOW.kb=params.get('knowledgeId')||'';DATAFLOW.doc=params.get('doc_id')||'';DATAFLOW.type=params.get('type')||'';DATAFLOW.agent=params.get('agent_id')||'';return {logId:params.get('id')||'',doc:DATAFLOW.doc,kb:DATAFLOW.kb,type:DATAFLOW.type,agent:DATAFLOW.agent}}
 function dataflowBack(){if(DATAFLOW.agent){location.href='/agent/'+encodeURIComponent(DATAFLOW.agent)}else if(DATAFLOW.kb){location.href='/dataset/files/'+encodeURIComponent(DATAFLOW.kb)}else{history.back()}}
@@ -3905,12 +3930,18 @@ function dataflowFormatKeys(outputs){return Object.keys(outputs||{}).filter(func
 function dataflowBuildNodes(dsl){var components=(dsl&&dsl.components)||{};var graphNodes=((dsl&&dsl.graph&&dsl.graph.nodes)||[]);var path=(dsl&&dsl.path)||Object.keys(components);return path.map(function(key,index){var component=components[key];if(!component)return null;var obj=component.obj||{};var outputs=(obj.params||{}).outputs||{};var graphNode=graphNodes.find(function(node){return node.id===key});var elapsed=outputs._elapsed_time&&outputs._elapsed_time.value||0;return {id:String(key),index:index,title:String((graphNode&&graphNode.data&&graphNode.data.name)||obj.component_name||key),component:String(obj.component_name||key),elapsed:Number(elapsed)||0,outputs:outputs,obj:obj}}).filter(Boolean)}
 function dataflowRenderTimeline(){var host=document.getElementById('dataflowTimeline');if(!host)return;host.textContent='';if(DATAFLOW.type!=='dataflow'&&!DATAFLOW.nodes.length){host.hidden=true;return}host.hidden=false;DATAFLOW.nodes.forEach(function(node){var button=document.createElement('button');button.type='button';button.className='dataflow-node'+(DATAFLOW.active===node.id?' active':'');button.setAttribute('data-testid','dataflow-node');button.setAttribute('role','listitem');button.dataset.nodeId=node.id;button.onclick=function(){dataflowSelectNode(node.id)};var title=document.createElement('span');title.className='dataflow-node-title';title.textContent=node.title;button.appendChild(title);var time=document.createElement('span');time.className='dataflow-node-time';time.textContent=node.elapsed.toFixed(2)+'s';button.appendChild(time);host.appendChild(button)})}
 function dataflowCurrent(){return DATAFLOW.nodes.find(function(node){return node.id===DATAFLOW.active})||null}
-function dataflowRenderStep(){var node=dataflowCurrent();var title=document.getElementById('dataflowStepTitle');var time=document.getElementById('dataflowStepTime');var output=document.getElementById('dataflowOutput');var raw=document.getElementById('dataflowRaw');var select=document.getElementById('dataflowFormat');var bar=document.getElementById('dataflowChunkBar');if(!output)return;output.textContent='';if(raw)raw.textContent=node?JSON.stringify(node.obj,null,2):'';if(!node){if(title)title.textContent='';if(time)time.textContent='';if(select)select.textContent='';if(bar)bar.hidden=true;var empty=document.createElement('p');empty.className='dataflow-empty';empty.textContent=DATAFLOW_LABELS.empty;output.appendChild(empty);return}if(title)title.textContent=node.title;if(time)time.textContent=node.elapsed.toFixed(2)+'s';var keys=dataflowFormatKeys(node.outputs);var format=(select&&select.value)||(node.outputs.output_format&&node.outputs.output_format.value)||keys[0]||'';if(keys.indexOf(format)<0)format=keys[0]||'';if(select){select.textContent='';keys.forEach(function(key){var option=document.createElement('option');option.value=key;option.textContent=key;option.selected=key===format;select.appendChild(option)})}var value=format&&node.outputs[format]?node.outputs[format].value:null;DATAFLOW.selected=[];if(bar)bar.hidden=format!=='chunks';if(format==='chunks'&&Array.isArray(value)){if(!value.length){var none=document.createElement('p');none.className='dataflow-empty';none.setAttribute('data-testid','dataflow-no-chunks');none.textContent=DATAFLOW_LABELS.emptyChunks;output.appendChild(none);dataflowUpdateSelected();return}value.forEach(function(chunk,index){output.appendChild(dataflowChunkCard(chunk,index))});dataflowUpdateSelected();return}if(value==null){var emptyNode=document.createElement('p');emptyNode.className='dataflow-empty';emptyNode.textContent=DATAFLOW_LABELS.empty;output.appendChild(emptyNode);return}if(format==='html'){var frame=document.createElement('div');frame.className='dataflow-html';frame.innerHTML=String(value);output.appendChild(frame);return}var pre=document.createElement('pre');pre.className='dataflow-text';pre.textContent=typeof value==='string'?value:JSON.stringify(value,null,2);output.appendChild(pre)}
-function dataflowChunkCard(chunk,index){var card=document.createElement('article');card.className='dataflow-chunk';card.setAttribute('data-testid','dataflow-chunk');card.dataset.index=String(index);var head=document.createElement('header');head.className='dataflow-chunk-head';var check=document.createElement('input');check.type='checkbox';check.className='dataflow-chunk-check';check.setAttribute('data-testid','dataflow-chunk-check');check.onchange=function(){dataflowUpdateSelected()};head.appendChild(check);var label=document.createElement('span');label.className='dataflow-chunk-label';label.textContent=DATAFLOW_LABELS.chunk+' #'+(index+1);head.appendChild(label);card.appendChild(head);var body=document.createElement('div');body.className='dataflow-chunk-body';body.textContent=String(chunk&&chunk.content||'');card.appendChild(body);return card}
+function dataflowRenderStep(){var node=dataflowCurrent();var title=document.getElementById('dataflowStepTitle');var time=document.getElementById('dataflowStepTime');var output=document.getElementById('dataflowOutput');var raw=document.getElementById('dataflowRaw');var select=document.getElementById('dataflowFormat');var bar=document.getElementById('dataflowChunkBar');var sets=document.getElementById('dataflowChunkSets');if(!output)return;output.textContent='';if(raw)raw.textContent=node?JSON.stringify(node.obj,null,2):'';if(!node){if(title)title.textContent='';if(time)time.textContent='';if(select)select.textContent='';if(bar)bar.hidden=true;if(sets)sets.hidden=true;var empty=document.createElement('p');empty.className='dataflow-empty';empty.textContent=DATAFLOW_LABELS.empty;output.appendChild(empty);return}if(title)title.textContent=node.title;if(time)time.textContent=node.elapsed.toFixed(2)+'s';var keys=dataflowFormatKeys(node.outputs);var format=(select&&select.value)||(node.outputs.output_format&&node.outputs.output_format.value)||keys[0]||'';if(keys.indexOf(format)<0)format=keys[0]||'';if(select){select.textContent='';keys.forEach(function(key){var option=document.createElement('option');option.value=key;option.textContent=key;option.selected=key===format;select.appendChild(option)})}DATAFLOW.format=format;var value=format&&node.outputs[format]?node.outputs[format].value:null;DATAFLOW.selected=[];var chunkMode=format==='chunks'||(format==='json'&&Array.isArray(value));if(bar)bar.hidden=!chunkMode;if(sets)sets.hidden=!chunkMode;if(chunkMode&&Array.isArray(value)){if(!value.length){var none=document.createElement('p');none.className='dataflow-empty';none.setAttribute('data-testid','dataflow-no-chunks');none.textContent=DATAFLOW_LABELS.emptyChunks;output.appendChild(none);dataflowUpdateSelected();return}value.forEach(function(item,index){if(dataflowItemText(item)==='')return;output.appendChild(dataflowChunkCard(item,index))});dataflowUpdateSelected();return}if(value==null){var emptyNode=document.createElement('p');emptyNode.className='dataflow-empty';emptyNode.textContent=DATAFLOW_LABELS.empty;output.appendChild(emptyNode);return}if(format==='html'){var frame=document.createElement('div');frame.className='dataflow-html dataflow-edit';frame.setAttribute('data-testid','dataflow-edit-text');frame.setAttribute('contenteditable','true');frame.dataset.field='html';frame.textContent=String(value);frame.onblur=function(){dataflowSaveObjectEdit(frame)};output.appendChild(frame);return}if(format==='text'){var box=document.createElement('pre');box.className='dataflow-text dataflow-edit';box.setAttribute('data-testid','dataflow-edit-text');box.setAttribute('contenteditable','true');box.dataset.field='text';box.textContent=String(value);box.onblur=function(){dataflowSaveObjectEdit(box)};output.appendChild(box);return}var pre=document.createElement('pre');pre.className='dataflow-text';pre.textContent=typeof value==='string'?value:JSON.stringify(value,null,2);output.appendChild(pre)}
+function dataflowItemText(item){if(item==null)return '';var field=dataflowItemField();var value=field?(item[field]==null?'':item[field]):(item.content==null?(item.text==null?'':item.text):item.content);return String(value==null?'':value)}
+function dataflowItemField(){var node=dataflowCurrent();var params=(node&&node.obj&&node.obj.params)||{};var field=params.field_name;if(field)return String(field);return DATAFLOW.format==='chunks'?'text':'text'}
+function dataflowChunkCard(chunk,index){var card=document.createElement('article');card.className='dataflow-chunk';card.setAttribute('data-testid','dataflow-chunk');card.dataset.index=String(index);var head=document.createElement('header');head.className='dataflow-chunk-head';var check=document.createElement('input');check.type='checkbox';check.className='dataflow-chunk-check';check.setAttribute('data-testid','dataflow-chunk-check');check.onchange=function(){dataflowUpdateSelected()};head.appendChild(check);var label=document.createElement('span');label.className='dataflow-chunk-label';label.textContent=DATAFLOW_LABELS.chunk+' #'+(index+1);head.appendChild(label);card.appendChild(head);var body=document.createElement('div');body.className='dataflow-chunk-body dataflow-edit'+(DATAFLOW.textMode==='ellipse'?' ellipse':'');body.setAttribute('data-testid','dataflow-edit-chunk');body.setAttribute('contenteditable','true');body.dataset.index=String(index);body.textContent=dataflowItemText(chunk);body.onblur=function(){dataflowSaveChunkEdit(index,body)};card.appendChild(body);return card}
+function dataflowSaveObjectEdit(element){var node=dataflowCurrent();if(!node)return;var field=element.dataset.field||DATAFLOW.format;var entry=node.outputs[field];if(!entry)return;var text=element.textContent||'';if(entry.value===text)return;entry.value=text;dataflowMarkChanged()}
+function dataflowSaveChunkEdit(index,element){var node=dataflowCurrent();if(!node)return;var entry=node.outputs[DATAFLOW.format];if(!entry||!Array.isArray(entry.value))return;var field=dataflowItemField();var item=entry.value[index];if(!item||typeof item!=='object')return;var text=element.textContent||'';if(String(item[field]==null?'':item[field])===text)return;item[field]=text;dataflowMarkChanged()}
+function dataflowMarkChanged(){DATAFLOW.dirty=true;dataflowStatus(DATAFLOW_LABELS.rerunFromCurrentStepTip,false);var tip=document.getElementById('dataflowRerunTip');if(tip)tip.hidden=false}
+function dataflowTextMode(mode){DATAFLOW.textMode=mode;var full=document.getElementById('dataflowTextFull');var ellipse=document.getElementById('dataflowTextEllipse');if(full)full.classList.toggle('active',mode==='full');if(ellipse)ellipse.classList.toggle('active',mode==='ellipse');Array.prototype.forEach.call(document.querySelectorAll("[data-testid='dataflow-edit-chunk']"),function(node){node.classList.toggle('ellipse',mode==='ellipse')})}
+function dataflowCreateChunk(){var docId=DATAFLOW.doc||(DATAFLOW.log&&DATAFLOW.log.document_id)||'';if(!DATAFLOW.kb||!docId)return;fetch('/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/documents/'+encodeURIComponent(docId)+'/chunks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'',important_keywords:[],questions:[]})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||DATAFLOW_LABELS.failed);var node=dataflowCurrent();if(node&&node.outputs[DATAFLOW.format]&&Array.isArray(node.outputs[DATAFLOW.format].value)){node.outputs[DATAFLOW.format].value.push({text:'',content:''})}dataflowStatus(DATAFLOW_LABELS.chunkCreated,false);dataflowRenderStep()}).catch(function(error){dataflowStatus(error.message,true)})}
 function dataflowUpdateSelected(){var checks=Array.prototype.slice.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"));DATAFLOW.selected=checks.filter(function(node){return node.checked}).map(function(node){return Number(node.closest('[data-testid=dataflow-chunk]').dataset.index)});var badge=document.getElementById('dataflowSelected');if(badge)badge.textContent=DATAFLOW.selected.length?DATAFLOW.selected.length+' '+DATAFLOW_LABELS.selected:''}
-function dataflowSelectAll(){Array.prototype.forEach.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"),function(node){node.checked=true});dataflowUpdateSelected()}
-function dataflowInvert(){Array.prototype.forEach.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"),function(node){node.checked=!node.checked});dataflowUpdateSelected()}
-function dataflowDeleteChunks(){var indexes=DATAFLOW.selected.slice();if(!indexes.length)return;var node=dataflowCurrent();if(!node||!Array.isArray(node.outputs.chunks&&node.outputs.chunks.value))return;var chunks=node.outputs.chunks.value;var docId=DATAFLOW.doc||(DATAFLOW.log&&DATAFLOW.log.document_id)||'';var ids=indexes.map(function(index){return (chunks[index]&&(chunks[index].id||chunks[index].chunk_id))||''}).filter(Boolean);node.outputs.chunks.value=chunks.filter(function(item,index){return indexes.indexOf(index)<0});DATAFLOW.dirty=true;if(ids.length&&docId&&DATAFLOW.kb){fetch('/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/documents/'+encodeURIComponent(docId)+'/chunks',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk_ids:ids})}).then(function(response){return response.json()}).catch(function(){})}dataflowStatus(DATAFLOW_LABELS.rerunFromCurrentStepTip,false);dataflowRenderStep();dataflowRenderTimeline()}
+function dataflowSelectAll(checked){Array.prototype.forEach.call(document.querySelectorAll("[data-testid='dataflow-chunk-check']"),function(node){node.checked=checked!==false});dataflowUpdateSelected()}
+function dataflowDeleteChunks(){var indexes=DATAFLOW.selected.slice();if(!indexes.length)return;var node=dataflowCurrent();var entry=node&&node.outputs[DATAFLOW.format];if(!entry||!Array.isArray(entry.value))return;var chunks=entry.value;var docId=DATAFLOW.doc||(DATAFLOW.log&&DATAFLOW.log.document_id)||'';var ids=indexes.map(function(index){return (chunks[index]&&(chunks[index].id||chunks[index].chunk_id))||''}).filter(Boolean);node.outputs[DATAFLOW.format].value=chunks.filter(function(item,index){return indexes.indexOf(index)<0});DATAFLOW.dirty=true;if(ids.length&&docId&&DATAFLOW.kb){fetch('/api/v1/datasets/'+encodeURIComponent(DATAFLOW.kb)+'/documents/'+encodeURIComponent(docId)+'/chunks',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk_ids:ids})}).then(function(response){return response.json()}).catch(function(){})}dataflowStatus(DATAFLOW_LABELS.rerunFromCurrentStepTip,false);dataflowRenderStep();dataflowRenderTimeline()}
 function dataflowSelectNode(id){if(DATAFLOW.active===id)return;if(DATAFLOW.dirty){DATAFLOW.pending=id;document.getElementById('dataflowSwitchDialog').classList.add('show');return}DATAFLOW.active=id;DATAFLOW.dirty=false;dataflowStatus('',false);dataflowRenderTimeline();dataflowRenderStep()}
 function dataflowCancelSwitch(){DATAFLOW.pending=null;document.getElementById('dataflowSwitchDialog').classList.remove('show')}
 function dataflowConfirmSwitch(){var id=DATAFLOW.pending;DATAFLOW.pending=null;document.getElementById('dataflowSwitchDialog').classList.remove('show');DATAFLOW.dirty=false;dataflowStatus('',false);if(id){DATAFLOW.active=id}dataflowRenderTimeline();dataflowRenderStep()}
@@ -13672,8 +13703,12 @@ connection: close
             "data-testid='dataflow-rerun'",
             "data-testid='dataflow-rerun-tip'",
             "data-testid='dataflow-chunk-bar'",
+            "data-testid='dataflow-text-full'",
+            "data-testid='dataflow-text-ellipse'",
+            "data-testid='dataflow-create-chunk'",
+            "data-testid='dataflow-chunk-sets'",
             "data-testid='dataflow-select-all'",
-            "data-testid='dataflow-invert'",
+            "data-testid='dataflow-selected'",
             "data-testid='dataflow-delete-chunks'",
             "data-testid='dataflow-output'",
             "data-testid='dataflow-raw'",
@@ -13690,6 +13725,9 @@ connection: close
             "Confirm rerun process",
             "Step switch warning",
             "Switch Anyway",
+            "Full text",
+            "Ellipse",
+            "Select all",
         ] {
             assert!(html.contains(label), "dataflow label {label} missing");
         }
@@ -13707,6 +13745,14 @@ connection: close
         assert!(html.contains("location.href='/agent/'+encodeURIComponent(DATAFLOW.agent)"));
         // `useTimelineDataFlow`'s node model.
         assert!(html.contains("function dataflowBuildNodes(dsl)"));
+        // Upstream `parse-editer`: click-to-edit blocks that mark the step dirty
+        // (`isChange`) and feed the rerun payload.
+        assert!(html.contains("data-testid','dataflow-edit-text'"));
+        assert!(html.contains("data-testid','dataflow-edit-chunk'"));
+        assert!(html.contains("function dataflowSaveObjectEdit(element)"));
+        assert!(html.contains("function dataflowSaveChunkEdit(index,element)"));
+        assert!(html.contains("function dataflowTextMode(mode)"));
+        assert!(html.contains("function dataflowCreateChunk()"));
         assert!(html.contains("outputs._elapsed_time&&outputs._elapsed_time.value||0"));
 
         let zh_request = Request::builder()
@@ -13723,6 +13769,9 @@ connection: close
             "确认重新运行流程",
             "切换步骤警告",
             "继续切换",
+            "全文",
+            "省略",
+            "选择所有",
         ] {
             assert!(zh_html.contains(label), "zh dataflow label {label} missing");
         }
@@ -13734,6 +13783,9 @@ connection: close
             ".dataflow-body{",
             ".dataflow-chunk{",
             ".dataflow-dialog{",
+            ".dataflow-segmented{",
+            ".dataflow-chunk-sets{",
+            ".dataflow-chunk-body.ellipse{",
         ] {
             assert!(css.contains(selector), "dataflow css {selector} missing");
         }

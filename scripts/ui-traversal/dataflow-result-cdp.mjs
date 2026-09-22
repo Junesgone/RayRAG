@@ -209,8 +209,8 @@ try {
   }));
   step("first step", results.firstStep);
 
-  // 3. The chunk result bar appears on the chunker step and drives the selection.
-  // The chunk result bar belongs to the chunker step, not the last one.
+  // 3. The chunk result bar belongs to the chunker step: the upstream segmented
+  //    Full/Ellipse control, the `+` create button and the select-all checkbox.
   await page.click("[data-testid='dataflow-node'][data-node-id='tokenChunker']");
   await page.waitForFunction(
     () => !document.getElementById("dataflowChunkBar").hidden,
@@ -222,16 +222,65 @@ try {
     checked: document.querySelectorAll("[data-testid='dataflow-chunk-check']:checked").length,
     label: document.getElementById("dataflowSelected").textContent,
   }));
-  await page.click("[data-testid='dataflow-invert']");
-  const inverted = await page.evaluate(
-    () => document.querySelectorAll("[data-testid='dataflow-chunk-check']:checked").length,
+  await page.click("[data-testid='dataflow-text-ellipse']");
+  const ellipsed = await page.evaluate(
+    () => document.querySelectorAll("[data-testid='dataflow-edit-chunk'].ellipse").length,
   );
-  results.chunkBar = { selectedAll, invertedAfterInvert: inverted };
+  await page.click("[data-testid='dataflow-text-full']");
+  const afterFull = await page.evaluate(
+    () => document.querySelectorAll("[data-testid='dataflow-edit-chunk'].ellipse").length,
+  );
+  results.chunkBar = { selectedAll, ellipseMode: ellipsed, ellipseAfterFull: afterFull };
   if (selectedAll.checked === 0) fail("select-all selected no chunk");
-  if (inverted !== 0) fail("invert did not clear the selection: " + inverted);
+  if (ellipsed === 0) fail("the Ellipse mode did not clamp any chunk");
+  if (afterFull !== 0) fail("switching back to Full text left clamped chunks: " + afterFull);
   step("chunk bar", results.chunkBar);
 
+  // 3b. `parse-editer` click-to-edit: the parser step's text block, which marks
+  //     the step dirty and feeds the rerun payload.
+  await page.click("[data-testid='dataflow-node'][data-node-id='parser']");
+  await page.waitForSelector("[data-testid='dataflow-edit-text']", { timeout: 10000 });
+  await page.click("[data-testid='dataflow-edit-text']");
+  await page.evaluate(() => {
+    const node = document.querySelector("[data-testid='dataflow-edit-text']");
+    node.textContent = node.textContent + " EDITED-BY-PROBE";
+  });
+  await page.click("[data-testid='dataflow-step-title']");
+  await page.waitForFunction(
+    () => !document.getElementById("dataflowRerunTip").hidden,
+    null,
+    { timeout: 10000 },
+  );
+  results.editText = await page.evaluate(() => ({
+    tip: document.getElementById("dataflowRerunTip").textContent,
+    value: document.querySelector("[data-testid='dataflow-edit-text']").textContent.slice(-16),
+  }));
+  if (!results.editText.value.includes("EDITED-BY-PROBE")) {
+    fail("the text edit did not stick: " + JSON.stringify(results.editText));
+  }
+  step("edit text", results.editText);
+
+  // 3c. Editing a chunk card body works the same way.
+  await page.click("[data-testid='dataflow-node'][data-node-id='tokenChunker']");
+  await page.waitForSelector("[data-testid='dataflow-edit-chunk']", { timeout: 10000 });
+  await page.click("[data-testid='dataflow-edit-chunk']");
+  await page.evaluate(() => {
+    const node = document.querySelector("[data-testid='dataflow-edit-chunk']");
+    node.textContent = node.textContent + " CHUNK-EDIT";
+  });
+  await page.click("[data-testid='dataflow-step-title']");
+  await page.waitForTimeout(300);
+  results.editChunk = await page.evaluate(() =>
+    document.querySelector("[data-testid='dataflow-edit-chunk']").textContent.slice(-10),
+  );
+  if (!results.editChunk.includes("CHUNK-EDIT")) {
+    fail("the chunk edit did not stick: " + results.editChunk);
+  }
+  step("edit chunk", results.editChunk);
+
   // 4. Deleting a selection marks the step dirty, which arms the switch guard.
+  await page.click("[data-testid='dataflow-node'][data-node-id='tokenChunker']");
+  await page.waitForSelector("[data-testid='dataflow-chunk-check']", { timeout: 10000 });
   await page.click("[data-testid='dataflow-chunk-check']");
   await page.click("[data-testid='dataflow-delete-chunks']");
   await page.waitForFunction(
@@ -262,7 +311,9 @@ try {
   // 5. The rerun dialog and the real `POST /api/v1/agents/rerun` call.
   const rerunRequests = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/agents/rerun")) rerunRequests.push(request.url());
+    if (request.url().includes("/api/v1/agents/rerun")) {
+      rerunRequests.push({ url: request.url(), body: request.postData() || "" });
+    }
   });
   await page.click("[data-testid='dataflow-rerun']");
   await page.waitForSelector("[data-testid='dataflow-rerun-dialog'].show", {
@@ -276,8 +327,21 @@ try {
   for (let attempt = 0; attempt < 30 && !rerunRequests.length; attempt += 1) {
     await page.waitForTimeout(500);
   }
-  results.rerun = { ...results.rerunDialog, requests: rerunRequests.length };
+  results.rerun = {
+    ...results.rerunDialog,
+    requests: rerunRequests.length,
+    carriesEditedOutputs: rerunRequests.some((request) =>
+      request.body.includes("EDITED-BY-PROBE"),
+    ),
+    carriesEditedChunk: rerunRequests.some((request) => request.body.includes("CHUNK-EDIT")),
+  };
   if (!rerunRequests.length) fail("the rerun button did not call /api/v1/agents/rerun");
+  if (!results.rerun.carriesEditedOutputs) {
+    fail("the rerun payload does not carry the edited parser output");
+  }
+  if (!results.rerun.carriesEditedChunk) {
+    fail("the rerun payload does not carry the edited chunk text");
+  }
   step("rerun", results.rerun);
 
   // 6. The zh face of the same page.

@@ -707,3 +707,20 @@ cards. */
 .dataflow-raw pre{max-height:220px;overflow:auto;padding:8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t2);font-family:ui-monospace,monospace}
 .dataflow-dialog{max-width:560px}
 .dataflow-dialog-body{margin:12px 0;color:var(--t2);font-size:13px;line-height:1.7}
+
+/* Upstream `components/chunk-result-bar/index.tsx` (Full/Ellipse segmented
+control + `+` create-chunk button), `checkbox-sets.tsx` (select-all checkbox,
+count, trash) and `parse-editer/*` (click-to-edit content blocks). */
+.dataflow-segmented{display:inline-flex;gap:2px;padding:3px;border-radius:6px;background:var(--bgc)}
+.dataflow-segment{padding:5px 16px;border:0;border-radius:4px;background:transparent;color:var(--t);font:inherit;font-size:13px;cursor:pointer}
+.dataflow-segment.active{background:var(--bg);color:var(--p)}
+.dataflow-create,.dataflow-trash{display:inline-flex;align-items:center;justify-content:center;padding:6px;border:0;border-radius:6px;background:var(--bgc);color:var(--t2);cursor:pointer}
+.dataflow-create:hover,.dataflow-trash:hover{background:var(--bgch);color:var(--t)}
+.dataflow-trash:hover{color:var(--d)}
+.dataflow-chunk-sets{display:flex;align-items:center;gap:40px;padding:16px 8px}
+.dataflow-chunk-sets[hidden]{display:none!important}
+.dataflow-switch{display:inline-flex;align-items:center;gap:12px;color:var(--t2);font-size:13px;cursor:pointer}
+.dataflow-switch input{accent-color:var(--p)}
+.dataflow-edit{outline:0;cursor:text}
+.dataflow-edit:focus{border-color:var(--p);box-shadow:0 0 0 1px var(--p)}
+.dataflow-chunk-body.ellipse{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}

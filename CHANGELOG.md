@@ -2,6 +2,33 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.39] — 2026-09-23（对标批次 v0.3.8q）
+
+### Added
+
+- **设计流水线结果可编辑**（上游 `pages/dataflow-result/components/parse-editer/*`）：
+  `/dataflow-result` 右栏的解析结果现在可以**就地编辑**——点击文本块或某条切片即可修改，失焦保存后该步骤
+  标记为「已修改」并显示 `dataflowParser.rerunFromCurrentStepTip` 提示；此时点「从当前步骤重新运行」，
+  提交给 `POST /api/v1/agents/rerun` 的 `dsl` 会携带**编辑后的 outputs**（与上游 `handleReRunFunc`
+  的构造方式一致：`components[key] = {...obj, params:{...params, outputs:{...outputs, [format]:{type,value}}}}`）。
+  - `text` / `html` 格式：整块可编辑（上游 `ObjectContainer` 的 `contentEditable` + blur 保存）。
+  - `chunks` / 数组型 `json` 格式：每张切片卡片正文可编辑（上游 `ArrayContainer`，文本字段取
+    `params.field_name`，缺省为 `text`），空内容的条目按上游跳过不渲染。
+- **切片结果条按上游重做**（`components/chunk-result-bar/index.tsx` + `checkbox-sets.tsx`）：
+  - `Full text` / `Ellipse` 分段控件（`chunk.full` / `chunk.ellipse`），Ellipse 模式下切片正文按上游
+    `contentEllipsis` 收成 4 行；
+  - `＋` 新建切片按钮：真实调用 `POST /api/v1/datasets/{kb}/documents/{doc}/chunks`（上游
+    `createChunk('')` 先建空切片再编辑）；
+  - 「选择所有」改为上游的复选框 + 计数 + 垃圾桶按钮（替代此前的三个独立按钮）。
+
+### Notes
+
+- 新增回归：`web::kb_ui_tests::dataflow_result_page_matches_upstream_ingestion_viewer` 增补 11 个标记与
+  三处行为断言（可编辑块、切片编辑、文本模式、新建切片）。
+- CDP 探针扩展为 12 步：真点编辑并断言 rerun 请求体携带编辑内容。
+- 全量 `cargo test --locked --lib` **1569 passed / 0 failed / 27 ignored**。
+- GitHub Release 说明自本轮起统一使用英文书写（历史三个 Release 的中文说明与标题已改写为英文）。
+
 ## [0.4.38] — 2026-09-23（对标批次 v0.3.8p）
 
 ### Added
