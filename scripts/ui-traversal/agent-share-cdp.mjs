@@ -142,15 +142,24 @@ try {
   if (results.gate.title !== "Embed into webpage") {
     fail("embed dialog title is not upstream's: " + results.gate.title);
   }
-  if (results.gate.tokenError !== "Please create API key first.") {
-    fail("token gate missing: " + JSON.stringify(results.gate));
+  // The tenant may already own an API key (the operator's own, or a leftover
+  // from an interrupted probe): reuse it instead of revoking somebody's key.
+  const reused = results.gate.rows > 0;
+  if (!reused) {
+    if (results.gate.tokenError !== "Please create API key first.") {
+      fail("token gate missing: " + JSON.stringify(results.gate));
+    }
+    if (results.gate.createDisabled) fail("Create new key must be enabled");
+  } else {
+    step("existing api key reused", results.gate.rows);
   }
-  if (results.gate.rows !== 0) fail("probe expected an empty token table");
-  step("embed gate", results.gate);
+  step("embed gate", { ...results.gate, reused });
   await page.screenshot({ path: `${shots}/agent-embed-gate-${STAMP}.png` });
 
   // 2. Real click on `Create new key` → one token row, error gone.
-  await page.click("[data-testid='embed-create-token']");
+  if (!reused) {
+    await page.click("[data-testid='embed-create-token']");
+  }
   await page.waitForFunction(
     () => document.querySelectorAll("[data-testid='embed-token-row']").length === 1,
     null,
@@ -312,31 +321,34 @@ try {
   step("reset", results.reset);
   await page.screenshot({ path: `${shots}/agent-share-reset-${STAMP}.png` });
 
-  // 7. The API key table really revokes through the upstream endpoint.
-  await page.goto(`${ORIGIN}/agent/${agentId}`, {
-    waitUntil: "domcontentloaded",
-    timeout: 30000,
-  });
-  await page.click("[data-testid='agent-embed']");
-  await page.waitForFunction(
-    () => document.querySelectorAll("[data-testid='embed-token-row']").length === 1,
-    null,
-    { timeout: 15000 },
-  );
-  await page.click("[data-testid='embed-token-delete']");
-  await page.waitForFunction(
-    () => document.querySelectorAll("[data-testid='embed-token-row']").length === 0,
-    null,
-    { timeout: 15000 },
-  );
-  results.revoke = await page.evaluate(() => ({
-    rows: document.querySelectorAll("[data-testid='embed-token-row']").length,
-    errorHidden: document.getElementById("embedTokenError").hidden,
-  }));
-  if (results.revoke.errorHidden) {
-    fail("revoking the only key must restore the upstream token gate");
+  // 7. The API key table really revokes through the upstream endpoint — run
+  //    only for the key this probe created, so an operator's own key survives.
+  if (!reused) {
+    await page.goto(`${ORIGIN}/agent/${agentId}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    await page.click("[data-testid='agent-embed']");
+    await page.waitForFunction(
+      () => document.querySelectorAll("[data-testid='embed-token-row']").length === 1,
+      null,
+      { timeout: 15000 },
+    );
+    await page.click("[data-testid='embed-token-delete']");
+    await page.waitForFunction(
+      () => document.querySelectorAll("[data-testid='embed-token-row']").length === 0,
+      null,
+      { timeout: 15000 },
+    );
+    results.revoke = await page.evaluate(() => ({
+      rows: document.querySelectorAll("[data-testid='embed-token-row']").length,
+      errorHidden: document.getElementById("embedTokenError").hidden,
+    }));
+    if (results.revoke.errorHidden) {
+      fail("revoking the only key must restore the upstream token gate");
+    }
+    step("revoke", results.revoke);
   }
-  step("revoke", results.revoke);
 
   results.pageErrors = pageErrors;
   if (pageErrors.length) fail("page errors: " + JSON.stringify(pageErrors));
