@@ -264,7 +264,7 @@ try {
   );
   await page.fill("[data-testid='share-input']", QUESTION);
   await page.waitForFunction(
-    () => !document.getElementById("share-send").disabled,
+    () => !document.querySelector("[data-testid='share-send']").disabled,
     null,
     { timeout: 5000 },
   );
@@ -282,9 +282,10 @@ try {
       role: node.className.includes("user") ? "user" : "assistant",
       content: node.querySelector(".agent-share-msg-body").textContent,
     })),
-    sendHidden: document.getElementById("share-send").hidden,
-    stopHidden: document.getElementById("share-stop").hidden,
-    status: document.getElementById("share-status").textContent,
+    sendHidden: document.querySelector("[data-testid='share-send']").hidden,
+    stopHidden: document.querySelector("[data-testid='share-stop']").hidden,
+    status: document.querySelector("[data-testid='share-status']").textContent,
+    theme: document.body.classList.contains("light") ? "light" : "dark",
   }));
   step("shared chat", results.chat);
   await page.screenshot({ path: `${shots}/agent-share-chat-${STAMP}.png` });
