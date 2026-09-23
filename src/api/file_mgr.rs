@@ -182,12 +182,13 @@ pub async fn delete_file(
     }
 }
 
-/// GET /api/v1/files/{id}/download — 下载文件内容。
-pub async fn download_file(
-    State(state): State<std::sync::Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
-    axum::extract::Path(file_id): axum::extract::Path<String>,
-) -> Response {
+/// Shared body of the byte-serving file routes. Upstream exposes the raw blob at
+/// `GET /api/v1/files/<file_id>` (`api/apps/restful_apis/file_api.py::download`), which is the
+/// branch `web/src/utils/file-util.ts::fetchPreviewBlob` takes for `resource === 'files'` in
+/// `previewHtmlFile()` / `downloadDocument()`; RayRAG's older `/download` alias keeps the same
+/// bytes. Upstream first looks the blob up under the record's `parent_id`, then falls back to
+/// the file→document storage address, and answers `This file is empty.` when neither holds it.
+async fn serve_file_bytes(state: &AppState, auth: &AuthContext, file_id: &str) -> Response {
     let record = state
         .files
         .list_for(&auth.user_id, auth.is_admin, "root")
@@ -203,19 +204,40 @@ pub async fn download_file(
         .unwrap_or("")
         .to_ascii_lowercase();
     let physical = std::path::Path::new(&state.files.data_dir).join(if extension.is_empty() {
-        file_id.clone()
+        file_id.to_string()
     } else {
         format!("{file_id}.{extension}")
     });
     match tokio::fs::read(&physical).await {
-        Ok(bytes) => {
-            let mime = crate::parser::mime_from_extension(&extension)
+        Ok(bytes) if !bytes.is_empty() => {
+            // `mime_from_extension` takes a *name*: passing the bare extension
+            // answered `application/octet-stream` for every file, which broke
+            // images and video in the previewer.
+            let mime = crate::parser::mime_from_extension(&record.name)
                 .unwrap_or("application/octet-stream");
             ([(axum::http::header::CONTENT_TYPE, mime)], bytes).into_response()
         }
-        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content not found" }))
+        _ => Json(serde_json::json!({ "code": 404, "message": "This file is empty." }))
             .into_response(),
     }
+}
+
+/// GET /api/v1/files/{file_id} — upstream `file_api.py::download`'s blob route.
+pub async fn get_file(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Response {
+    serve_file_bytes(&state, &auth, &file_id).await
+}
+
+/// GET /api/v1/files/{id}/download — 下载文件内容（RayRAG 既有别名，与上游 blob 路由同源）。
+pub async fn download_file(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Response {
+    serve_file_bytes(&state, &auth, &file_id).await
 }
 
 /// POST /api/v1/files/upload — upload one validated multipart file.

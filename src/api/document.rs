@@ -453,6 +453,152 @@ pub async fn preview_doc(
     }
 }
 
+/// `GET /api/v1/documents/{document_id}` — upstream
+/// `api/apps/restful_apis/document_api.py::download_document`
+/// (`@manager.route("/documents/<document_id>", methods=["GET"])`). It is the branch
+/// `utils/file-util.ts::fetchPreviewBlob` takes for `resource === 'document'`, i.e. the
+/// byte source behind `previewHtmlFile()` and `downloadDocument()`. Upstream answers
+/// "Document not found!" for a document the caller cannot read, "This file is empty."
+/// when the stored blob is missing, and serves the bytes with an `attachment`
+/// disposition under the document's own MIME type.
+pub async fn download_document(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(doc_id): Path<String>,
+) -> axum::response::Response {
+    let Some(doc) = state.docs.get(&doc_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found!" }))
+            .into_response();
+    };
+    if !kb_accessible(&state, &doc.kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found!" }))
+            .into_response();
+    }
+    let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
+    let physical = uploads.join(&doc.storage_name);
+    match tokio::fs::read(&physical).await {
+        Ok(bytes) if !bytes.is_empty() => {
+            let content_type = mime_for_document(&doc.name);
+            let filename = doc.name.replace(['"', '\\', '/'], "_");
+            let disposition = format!("attachment; filename=\"{filename}\"");
+            let headers = [
+                (axum::http::header::CONTENT_TYPE, content_type),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    disposition.as_str(),
+                ),
+            ];
+            (headers, bytes).into_response()
+        }
+        _ => Json(serde_json::json!({ "code": 404, "message": "This file is empty." }))
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/documents/{doc_id}/preview/sheets` — the workbook grid the
+/// spreadsheet previewer renders. Upstream builds this in the browser through
+/// `@js-preview/excel` (`components/document-preview/hooks.ts::useFetchExcel`,
+/// which hands the raw arraybuffer to the library); RayRAG answers the same grid
+/// from its own Rust reader (`parser::excel::read_xlsx_sheets`), so the preview
+/// needs no npm dependency and stays inside the Rust implementation.
+///
+/// The payload is `{sheets:[{name, rows:[[cell,…],…]}], truncated:bool}`. Rows and
+/// columns are capped so one huge workbook cannot bloat the response; the flag
+/// tells the page to say so instead of silently cutting the sheet short.
+pub async fn preview_sheets(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(doc_id): Path<String>,
+) -> axum::response::Response {
+    const MAX_ROWS: usize = 500;
+    const MAX_COLUMNS: usize = 64;
+    let Some(doc) = state.docs.get(&doc_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    };
+    if !kb_accessible(&state, &doc.kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    }
+    let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
+    let physical = uploads.join(&doc.storage_name);
+    let Ok(bytes) = tokio::fs::read(&physical).await else {
+        return Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
+            .into_response();
+    };
+    let sheets = match crate::parser::excel::read_xlsx_sheets(&bytes, MAX_ROWS) {
+        Ok(sheets) => sheets,
+        Err(error) => {
+            return Json(
+                serde_json::json!({ "code": 500, "message": format!("Failed to read workbook: {error}") }),
+            )
+            .into_response();
+        }
+    };
+    let mut truncated = false;
+    let payload: Vec<serde_json::Value> = sheets
+        .into_iter()
+        .map(|sheet| {
+            truncated |= sheet.truncated;
+            let rows: Vec<Vec<String>> = sheet
+                .rows
+                .into_iter()
+                .map(|row| {
+                    let mut cells = row;
+                    if cells.len() > MAX_COLUMNS {
+                        truncated = true;
+                        cells.truncate(MAX_COLUMNS);
+                    }
+                    cells
+                })
+                .collect();
+            serde_json::json!({ "name": sheet.name, "rows": rows })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "sheets": payload, "truncated": truncated },
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/documents/{doc_id}/preview/slides` — the deck text the slides
+/// previewer renders. Upstream draws real slides in the browser with
+/// `pptx-preview` (`components/document-preview/ppt-preview.tsx`); RayRAG returns
+/// the per-slide text its own reader extracts (`parser::ppt::slide_texts`), which
+/// is the part of a deck the chunker indexes. Shapes, theme and images are not
+/// reproduced — the ledger keeps this branch `partial` for exactly that reason.
+pub async fn preview_slides(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(doc_id): Path<String>,
+) -> axum::response::Response {
+    let Some(doc) = state.docs.get(&doc_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    };
+    if !kb_accessible(&state, &doc.kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    }
+    let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
+    let physical = uploads.join(&doc.storage_name);
+    let Ok(bytes) = tokio::fs::read(&physical).await else {
+        return Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
+            .into_response();
+    };
+    let slides = match crate::parser::ppt::slide_texts(&bytes) {
+        Ok(slides) => slides,
+        Err(error) => {
+            return Json(
+                serde_json::json!({ "code": 500, "message": format!("Failed to read presentation: {error}") }),
+            )
+            .into_response();
+        }
+    };
+    Json(serde_json::json!({ "code": 0, "data": { "slides": slides } })).into_response()
+}
+
 /// Content type for a stored document, by extension. The previewer renders PDFs
 /// through pdf.js, images and text natively, and everything else as a download.
 fn mime_for_document(name: &str) -> &'static str {

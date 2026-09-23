@@ -224,6 +224,16 @@ fn t(k: &str, zh: bool) -> &str {
         "Name" => "名称",
         "Created" => "创建时间",
         "Size" => "大小",
+        // Upstream `locales/*.ts` has no zh entry for `chunk.uploadedTime`
+        // (fallbackLng would show the English string); RayRAG's key table is a
+        // global English→Chinese map, so the zh face carries the translation.
+        "Uploaded time" => "上传时间",
+        // Upstream `locales/zh.ts::fileManager.fileError`.
+        "File error" => "文件错误",
+        "Preview is not available yet" => "暂不支持预览",
+        "Word documents (.doc/.docx) have no previewer yet; the parsed text is available from the chunk workbench." => {
+            "Word 文档（.doc/.docx）暂无预览器；解析后的文本可在切片工作台查看。"
+        }
         "Reparse" => "重新解析",
         "Parse Status" => "解析状态",
         "Chunks" => "块数",
@@ -4547,6 +4557,534 @@ async function docviewBoot(){
 document.addEventListener('DOMContentLoaded',function(){var scroll=dvEl('docviewScroll');if(scroll)scroll.addEventListener('scroll',dvSyncPage);docviewBoot()});
 "#;
 
+// ---------------------------------------------------------------------------
+// Document previewer format matrix
+// ---------------------------------------------------------------------------
+
+/// Upstream `constants/common.ts::Images`: the extensions the image branch
+/// dispatches on. `svg` stays out — upstream comments it out because the API
+/// answers with the wrong content type for it.
+const PREVIEW_IMAGE_EXTS: [&str; 9] = [
+    "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "ico",
+];
+
+/// Upstream `components/document-preview/index.tsx`: the video branch list.
+const PREVIEW_VIDEO_EXTS: [&str; 11] = [
+    "mp4", "avi", "mov", "mkv", "wmv", "flv", "mpeg", "mpg", "asf", "rm", "rmvb",
+];
+
+/// Upstream `constants/common.ts::SupportedPreviewDocumentTypes` (the
+/// `ExceptiveType` list). It gates the Eye button of the Files page action cell
+/// (`utils/document-util.ts::isSupportedPreviewDocumentType`) and is narrower than
+/// the previewer dispatch tables: `txt`, `csv` and `ppt`/`pptx` preview fine but
+/// get no Eye button there.
+const SUPPORTED_PREVIEW_EXTS: [&str; 15] = [
+    "xlsx", "xls", "pdf", "docx", "md", "mdx", "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff",
+    "webp", "ico",
+];
+
+/// Which surface asks for a preview. Upstream ships **two** dispatch tables that
+/// are not identical:
+///
+/// * `pages/document-viewer/index.tsx` (`/document/:id?ext=…&resource=…`) knows
+///   images, md/mdx, txt, pdf, xlsx **and** xls, docx and ppt/pptx, and handles
+///   `ext=html` by downloading the file (`previewHtmlFile`) instead of rendering;
+/// * `components/document-preview/index.tsx` (the shared `DocumentPreview` used by
+///   the chunk workbench, the search drawer and the dataflow result page) knows
+///   pdf, doc/docx, txt, images, the eleven video extensions, ppt/pptx, xlsx, csv
+///   and md/mdx — no `xls`, and `doc` shares the docx branch.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreviewSurface {
+    Standalone,
+    Dispatcher,
+}
+
+/// The previewer a file type selects.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PreviewKind {
+    Pdf,
+    Image,
+    Txt,
+    Markdown,
+    Csv,
+    Video,
+    Spreadsheet,
+    Docx,
+    Slides,
+    /// `ext=html`: upstream downloads the bytes instead of rendering them.
+    Html,
+    /// No branch matches upstream's tables; the section renders the `fileError`
+    /// notice rather than an empty page, so a missing branch is never silent.
+    None,
+}
+
+/// Upstream's two dispatch tables, transcribed branch for branch.
+fn preview_kind(ext: &str, surface: PreviewSurface) -> PreviewKind {
+    let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    match surface {
+        PreviewSurface::Standalone => match ext.as_str() {
+            "html" => PreviewKind::Html,
+            "md" | "mdx" => PreviewKind::Markdown,
+            "txt" => PreviewKind::Txt,
+            "pdf" => PreviewKind::Pdf,
+            "xlsx" | "xls" => PreviewKind::Spreadsheet,
+            "docx" => PreviewKind::Docx,
+            "ppt" | "pptx" => PreviewKind::Slides,
+            other if PREVIEW_IMAGE_EXTS.contains(&other) => PreviewKind::Image,
+            _ => PreviewKind::None,
+        },
+        PreviewSurface::Dispatcher => match ext.as_str() {
+            "pdf" => PreviewKind::Pdf,
+            "doc" | "docx" => PreviewKind::Docx,
+            "txt" => PreviewKind::Txt,
+            "ppt" | "pptx" => PreviewKind::Slides,
+            "xlsx" => PreviewKind::Spreadsheet,
+            "csv" => PreviewKind::Csv,
+            "md" | "mdx" => PreviewKind::Markdown,
+            other if PREVIEW_IMAGE_EXTS.contains(&other) => PreviewKind::Image,
+            other if PREVIEW_VIDEO_EXTS.contains(&other) => PreviewKind::Video,
+            _ => PreviewKind::None,
+        },
+    }
+}
+
+/// The extension a stored document name carries, lowercased and without the dot.
+fn document_extension(name: &str) -> String {
+    name.rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+/// Upstream `utils/file-util.ts::formatBytes`: base-1024 with the unit table
+/// `['bytes','KB','MB',…]` and one decimal only while the value is below 10.
+fn format_bytes(x: u64) -> String {
+    const UNITS: [&str; 9] = ["bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+    let mut n = x as f64;
+    let mut l = 0usize;
+    while n >= 1024.0 && l + 1 < UNITS.len() {
+        n /= 1024.0;
+        l += 1;
+    }
+    if n < 10.0 && l > 0 {
+        format!("{n:.1} {}", UNITS[l])
+    } else {
+        format!("{:.0} {}", n, UNITS[l])
+    }
+}
+
+/// Upstream `utils/date.ts::formatDate` default format `DD/MM/YYYY HH:mm:ss`
+/// (the page stores `create_date` in milliseconds).
+fn format_date_ms(ms: u64) -> String {
+    if ms == 0 {
+        return String::new();
+    }
+    let seconds = (ms / 1000) as i64;
+    let days = seconds.div_euclid(86_400);
+    let time_of_day = seconds.rem_euclid(86_400);
+    let (hour, minute, second) = (
+        time_of_day / 3600,
+        (time_of_day % 3600) / 60,
+        time_of_day % 60,
+    );
+    // Civil-from-days (Howard Hinnant's algorithm), UTC.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{d:02}/{m:02}/{y:04} {hour:02}:{minute:02}:{second:02}")
+}
+
+/// Upstream `components/document-preview/document-header.tsx`: the document name
+/// over a `Size` / `Uploaded time` definition list (`chunk.size` and
+/// `chunk.uploadedTime`).
+fn document_header_markup(name: &str, size: u64, create_date: u64, zh: bool) -> String {
+    let mut b = String::new();
+    b.push_str("<header class='docpreview-header' data-testid='document-header'><h2 class='docpreview-title' data-testid='document-header-name'>");
+    b.push_str(&html_escape(name));
+    b.push_str("</h2><dl class='docpreview-meta'><dt>");
+    b.push_str(t("Size", zh));
+    b.push_str("</dt><dd data-testid='document-header-size'>");
+    b.push_str(&format_bytes(size));
+    b.push_str("</dd><dt>");
+    b.push_str(t("Uploaded time", zh));
+    b.push_str("</dt><dd data-testid='document-header-uploaded'>");
+    b.push_str(&format_date_ms(create_date));
+    b.push_str("</dd></dl></header>");
+    b
+}
+
+/// Upstream `pages/document-viewer/file-error/index.tsx`: the red notice the
+/// markdown previewer falls back to, and the box RayRAG shows whenever a file
+/// type has no previewer yet (upstream renders nothing at all in that case,
+/// which is exactly the silent failure RayRAG must not ship).
+fn file_error_markup(message: &str) -> String {
+    let mut b = String::new();
+    b.push_str("<div class='docpreview-error-wrap' data-testid='file-error'><div class='docpreview-error'><div class='docpreview-error-line'><div class='docpreview-error-text'>");
+    b.push_str(&html_escape(message));
+    b.push_str("</div></div></div></div>");
+    b
+}
+
+/// The previewer body for one file type — the RayRAG counterpart of
+/// `components/document-preview/<kind>-preview.tsx`. Every branch keeps the
+/// upstream container classes (`image-previewer`, `video-previewer`,
+/// `excel-csv-previewer`, `ppt-previewer`), the absolutely positioned spinner
+/// and the element the fetch fills in.
+fn preview_section_markup(kind: PreviewKind, zh: bool) -> String {
+    let spinner = "<div class='docpreview-spin' id='dpSpin' data-testid='dp-spin'><span class='docpreview-spinner' aria-hidden='true'></span></div>";
+    match kind {
+        PreviewKind::Pdf => String::new(), // the two-pane PDF viewer renders this
+        PreviewKind::Image => format!(
+            "<section><div class='docpreview-panel image-previewer' data-testid='preview-image'>{spinner}<img class='docpreview-img' id='dpImage' data-testid='dp-image' alt='image' hidden></div></section>"
+        ),
+        PreviewKind::Txt => format!(
+            "<section><div class='docpreview-panel' data-testid='preview-txt'>{spinner}<pre class='docpreview-pre' id='dpText' data-testid='dp-text'></pre></div></section>"
+        ),
+        PreviewKind::Markdown => format!(
+            "<section><div class='docpreview-panel markdown-body docpreview-md' id='dpMarkdown' data-testid='preview-md'>{spinner}</div></section>"
+        ),
+        PreviewKind::Csv => format!(
+            "<section><div class='docpreview-panel docpreview-scroll' data-testid='preview-csv'>{spinner}<table class='docpreview-table' id='dpCsv' data-testid='dp-csv' hidden></table></div></section>"
+        ),
+        PreviewKind::Video => format!(
+            "<section><div class='docpreview-panel video-previewer' data-testid='preview-video'>{spinner}<div class='docpreview-media-wrap'><video class='docpreview-video' id='dpVideo' data-testid='dp-video' controls hidden></video></div></div></section>"
+        ),
+        // Upstream renders xlsx through the `@js-preview/excel` client library and
+        // ppt/pptx through `pptx-preview`; RayRAG renders the workbook grid from its
+        // own Rust reader (`parser::excel::read_xlsx_sheets`) and the deck text from
+        // `parser::ppt::slide_texts`, so both keep working with no npm dependency.
+        PreviewKind::Spreadsheet => format!(
+            "<section><div class='docpreview-panel excel-csv-previewer' data-testid='preview-excel'>{spinner}<div class='docpreview-sheets' id='dpSheets' data-testid='dp-sheets'></div><div class='docpreview-grid' id='dpGrid' data-testid='dp-grid'></div></div></section>"
+        ),
+        // Upstream renders .doc/.docx through `@extend-ai/react-docx`; RayRAG's
+        // Word previewer is still pending, so the section says so in the page
+        // instead of rendering nothing (never a silent empty preview).
+        PreviewKind::Docx => {
+            let mut section =
+                String::from("<section><div class='docpreview-panel' data-testid='preview-docx'>");
+            section.push_str(&file_error_markup(t("Preview is not available yet", zh)));
+            section.push_str("<p class='docpreview-note' data-testid='dp-pending'>");
+            section.push_str(t(
+                "Word documents (.doc/.docx) have no previewer yet; the parsed text is available from the chunk workbench.",
+                zh,
+            ));
+            section.push_str("</p></div></section>");
+            section
+        }
+        PreviewKind::Slides => format!(
+            "<section><div class='docpreview-panel ppt-previewer' data-testid='preview-ppt'>{spinner}<div class='docpreview-slides' id='dpSlides' data-testid='dp-slides'></div></div></section>"
+        ),
+        PreviewKind::Html => "<section data-testid='preview-html'></section>".to_string(),
+        PreviewKind::None => file_error_markup(t("File error", zh)),
+    }
+}
+
+/// Behaviour of the non-PDF previewers: fetch the bytes, then render text,
+/// markdown, a CSV table, an image or a video exactly where the upstream React
+/// components put them. Error strings are the literals upstream passes to
+/// `message.error` (they are not translated upstream either).
+const DOCUMENT_PREVIEW_SCRIPT: &str = r#"
+// The page assigns `DP_STATE` before this script runs; re-declaring it with an
+// initializer would wipe that assignment (the empty state silently disabled the
+// whole previewer), so the fallback only applies when nothing was assigned.
+var DP_STATE=window.DP_STATE||{kind:'',url:'',ext:'',name:''};
+function dpEl(id){return document.getElementById(id)}
+function dpToast(text){var node=dpEl('dpToast');if(!node)return;node.textContent=text;node.hidden=false;clearTimeout(dpToast.timer);dpToast.timer=setTimeout(function(){node.hidden=true},3000)}
+function dpSpin(on){var node=dpEl('dpSpin');if(node)node.hidden=!on}
+function dpFetchText(url){return fetch(url).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);return response.text()})}
+function dpFetchBlob(url){return fetch(url).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);return response.blob()})}
+// Upstream `react-markdown` runs `remark-gfm` + `remark-breaks`; this is the
+// same subset rendered by hand: ATX headings, fenced code, blockquotes, GFM
+// tables, task lists, ordered/unordered lists, hr, and the inline marks plus a
+// hard break for every single newline inside a paragraph.
+function dpEsc(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function dpSafeUrl(value){var url=String(value==null?'':value).trim();if(/^[a-z][a-z0-9+.-]*:/i.test(url)&&!/^(https?|mailto|tel):/i.test(url))return '';return url}
+function dpInline(text){
+  var codes=[];
+  var out=dpEsc(text);
+  out=out.replace(/`([^`]+)`/g,function(match,code){codes.push('<code>'+code+'</code>');return '\u0001'+(codes.length-1)+'\u0001'});
+  out=out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,function(match,alt,src){var url=dpSafeUrl(src);return url?'<img src="'+url+'" alt="'+alt+'">':alt});
+  out=out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,function(match,label,href){var url=dpSafeUrl(href);return url?'<a href="'+url+'" target="_blank" rel="noreferrer">'+label+'</a>':label});
+  out=out.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,function(match,prefix,url){return prefix+'<a href="'+url+'" target="_blank" rel="noreferrer">'+url+'</a>'});
+  out=out.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  out=out.replace(/__([^_]+)__/g,'<strong>$1</strong>');
+  out=out.replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>');
+  out=out.replace(/(^|[^_\w])_([^_\n]+)_/g,'$1<em>$2</em>');
+  out=out.replace(/~~([^~]+)~~/g,'<del>$1</del>');
+  out=out.replace(/\u0001(\d+)\u0001/g,function(match,index){return codes[Number(index)]});
+  return out;
+}
+function dpSplitRow(row){var text=String(row).trim();if(text.charAt(0)==='|')text=text.slice(1);if(text.charAt(text.length-1)==='|')text=text.slice(0,-1);return text.split('|').map(function(cell){return cell.trim()})}
+function dpTableAt(lines,index){
+  if(index+1>=lines.length)return false;
+  if(lines[index].indexOf('|')<0)return false;
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(lines[index+1].trim());
+}
+function dpAlignRow(delimiter){return dpSplitRow(delimiter).map(function(cell){if(/^:-+:$/.test(cell))return 'center';if(/-+:$/.test(cell))return 'right';return ''})}
+function dpListBlock(lines,start){
+  var ordered=/^\s*\d+[.)]\s+/.test(lines[start]);
+  var base=(/^(\s*)/.exec(lines[start])[1]||'').length;
+  var items=[];var index=start;
+  while(index<lines.length){
+    var match=/^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[index]);
+    if(!match)break;
+    var indent=match[1].length;
+    if(indent<base)break;
+    if(indent>base&&items.length){var nested=dpListBlock(lines,index);items[items.length-1].children.push(nested.html);index=nested.next;continue}
+    items.push({text:match[3],children:[]});
+    index++;
+    while(index<lines.length&&/^\s+\S/.test(lines[index])&&!/^\s*([-*+]|\d+[.)])\s+/.test(lines[index])){items[items.length-1].text+='\n'+lines[index].trim();index++}
+  }
+  var tag=ordered?'ol':'ul';
+  var html='<'+tag+'>'+items.map(function(item){
+    var text=item.text;
+    var box='';
+    var task=/^\[([ xX])\]\s+(.*)$/.exec(text);
+    if(task){box='<input type="checkbox" disabled'+(task[1]===' '?'':' checked')+'> ';text=task[2]}
+    return '<li>'+box+text.split('\n').map(dpInline).join('<br>')+item.children.join('')+'</li>';
+  }).join('')+'</'+tag+'>';
+  return {html:html,next:index};
+}
+function dpMarkdown(text){
+  var lines=String(text==null?'':text).replace(/\r\n?/g,'\n').split('\n');
+  var html=[];var index=0;
+  while(index<lines.length){
+    var line=lines[index];
+    if(/^\s*$/.test(line)){index++;continue}
+    var fence=/^\s*(```|~~~)\s*([^`]*)$/.exec(line);
+    if(fence){
+      var language=fence[2].trim();var body=[];index++;
+      while(index<lines.length&&!/^\s*(```|~~~)\s*$/.test(lines[index])){body.push(lines[index]);index++}
+      index++;
+      html.push('<pre class="md-code"><code'+(language?' class="language-'+dpEsc(language)+'"':'')+'>'+dpEsc(body.join('\n'))+'</code></pre>');
+      continue;
+    }
+    var heading=/^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    if(heading){var level=heading[1].length;html.push('<h'+level+'>'+dpInline(heading[2])+'</h'+level+'>');index++;continue}
+    if(/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)){html.push('<hr>');index++;continue}
+    if(/^\s*>/.test(line)){
+      var quote=[];
+      while(index<lines.length&&/^\s*>/.test(lines[index])){quote.push(lines[index].replace(/^\s*>\s?/,''));index++}
+      html.push('<blockquote>'+dpMarkdown(quote.join('\n'))+'</blockquote>');
+      continue;
+    }
+    if(dpTableAt(lines,index)){
+      var head=dpSplitRow(lines[index]);var align=dpAlignRow(lines[index+1]);index+=2;
+      var rows=[];
+      while(index<lines.length&&lines[index].indexOf('|')>=0&&!/^\s*$/.test(lines[index])){rows.push(dpSplitRow(lines[index]));index++}
+      var cell=function(tag,value,column){var style=align[column]?' style="text-align:'+align[column]+'"':'';return '<'+tag+style+'>'+dpInline(value)+'</'+tag+'>'};
+      html.push('<table class="md-table"><thead><tr>'+head.map(function(value,column){return cell('th',value,column)}).join('')+'</tr></thead><tbody>'+
+        rows.map(function(row){return '<tr>'+row.map(function(value,column){return cell('td',value,column)}).join('')+'</tr>'}).join('')+'</tbody></table>');
+      continue;
+    }
+    if(/^\s*([-*+]|\d+[.)])\s+/.test(line)){var list=dpListBlock(lines,index);html.push(list.html);index=list.next;continue}
+    var paragraph=[];
+    while(index<lines.length&&!/^\s*$/.test(lines[index])&&!/^\s*(```|~~~|>|#{1,6}\s)/.test(lines[index])&&!/^\s*([-*+]|\d+[.)])\s+/.test(lines[index])&&!dpTableAt(lines,index)){paragraph.push(lines[index]);index++}
+    html.push('<p>'+paragraph.map(dpInline).join('<br>')+'</p>');
+  }
+  return html.join('\n');
+}
+// Upstream `papaparse` with `{header:false, skipEmptyLines:false}`: the first row
+// is the header, quoted fields may hold separators and newlines, and a doubled
+// quote is a literal one.
+function dpParseCsv(text){
+  var source=String(text==null?'':text).replace(/\r\n?/g,'\n');
+  var rows=[];var row=[];var field='';var quoted=false;var index=0;
+  while(index<source.length){
+    var character=source.charAt(index);
+    if(quoted){
+      if(character==='"'){if(source.charAt(index+1)==='"'){field+='"';index+=2;continue}quoted=false;index++;continue}
+      field+=character;index++;continue;
+    }
+    if(character==='"'){quoted=true;index++;continue}
+    if(character===','){row.push(field);field='';index++;continue}
+    if(character==='\n'){row.push(field);rows.push(row);row=[];field='';index++;continue}
+    field+=character;index++;
+  }
+  if(field!==''||row.length){row.push(field);rows.push(row)}
+  return rows;
+}
+function dpRenderCsv(text){
+  var rows=dpParseCsv(text);
+  var table=dpEl('dpCsv');
+  if(!table)return;
+  if(!rows.length){table.hidden=true;return}
+  var headers=rows[0]||[];var body=rows.slice(1);
+  var html='<thead><tr>'+headers.map(function(cell){return '<th>'+dpEsc(cell)+'</th>'}).join('')+'</tr></thead><tbody>'+
+    body.map(function(row){return '<tr>'+row.map(function(cell){return '<td>'+dpEsc(cell||'-')+'</td>'}).join('')+'</tr>'}).join('')+'</tbody>';
+  table.innerHTML=html;table.hidden=false;
+}
+function dpRenderSheets(payload){
+  var tabs=dpEl('dpSheets');var grid=dpEl('dpGrid');
+  if(!tabs||!grid)return;
+  var sheets=(payload&&payload.sheets)||[];
+  if(!sheets.length){grid.innerHTML='<p class="docpreview-note">'+dpEsc(payload&&payload.message||'')+'</p>';return}
+  tabs.replaceChildren();
+  var render=function(sheet){
+    Array.prototype.forEach.call(tabs.children,function(node){node.classList.toggle('active',node.dataset.sheet===sheet.name)});
+    var head=(sheet.rows[0]||[]);
+    grid.innerHTML='<table class="docpreview-table"><thead><tr>'+head.map(function(cell){return '<th>'+dpEsc(cell==null?'':cell)+'</th>'}).join('')+'</tr></thead><tbody>'+
+      sheet.rows.slice(1).map(function(row){return '<tr>'+row.map(function(cell){return '<td>'+dpEsc(cell==null||cell===''?'-':cell)+'</td>'}).join('')+'</tr>'}).join('')+'</tbody></table>';
+  };
+  sheets.forEach(function(sheet){
+    var button=document.createElement('button');
+    button.type='button';button.className='docpreview-sheet-tab';button.dataset.sheet=sheet.name;button.dataset.testid='dp-sheet-tab';button.textContent=sheet.name;
+    button.addEventListener('click',function(){render(sheet)});
+    tabs.appendChild(button);
+  });
+  render(sheets[0]);
+}
+function dpRenderSlides(payload){
+  var host=dpEl('dpSlides');
+  if(!host)return;
+  var slides=(payload&&payload.slides)||[];
+  host.innerHTML=slides.map(function(text,index){
+    return '<article class="docpreview-slide" data-testid="dp-slide"><h3 class="docpreview-slide-title">Slide '+(index+1)+'</h3><div class="docpreview-slide-body">'+dpMarkdown(text||'')+'</div></article>';
+  }).join('');
+}
+async function dpPreviewHtml(url){
+  try{
+    var blob=await dpFetchBlob(url);
+    var objectUrl=URL.createObjectURL(new Blob([blob],{type:'text/html'}));
+    var link=document.createElement('a');link.href=objectUrl;link.click();
+    URL.revokeObjectURL(objectUrl);
+    dpToast('Downloading the HTML file');
+  }catch(error){dpToast('Failed to load file')}
+}
+async function dpLoadGrid(){
+  try{
+    var response=await fetch('/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/sheets');
+    var payload=await response.json();
+    if(payload.code!==0)throw new Error(payload.message||('HTTP '+payload.code));
+    dpRenderSheets(payload.data||{});
+  }catch(error){dpToast(String(error.message||error))}
+}
+async function dpLoadSlides(){
+  try{
+    var response=await fetch('/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/slides');
+    var payload=await response.json();
+    if(payload.code!==0)throw new Error(payload.message||('HTTP '+payload.code));
+    dpRenderSlides(payload.data||{});
+  }catch(error){dpToast(String(error.message||error))}
+}
+async function dpBoot(){
+  if(!DP_STATE.kind||!DP_STATE.url)return;
+  var url=DP_STATE.url;
+  try{
+    if(DP_STATE.kind==='html'){await dpPreviewHtml(url);return}
+    if(DP_STATE.kind==='spreadsheet'){dpSpin(true);await dpLoadGrid();dpSpin(false);return}
+    if(DP_STATE.kind==='slides'){dpSpin(true);await dpLoadSlides();dpSpin(false);return}
+    if(DP_STATE.kind==='txt'){
+      dpSpin(true);
+      var text=await dpFetchText(url);
+      var node=dpEl('dpText');if(node)node.textContent=text;
+      dpSpin(false);return;
+    }
+    if(DP_STATE.kind==='md'){
+      dpSpin(true);
+      var markdown=await dpFetchText(url);
+      var body=dpEl('dpMarkdown');if(body)body.innerHTML=dpMarkdown(markdown);
+      dpSpin(false);return;
+    }
+    if(DP_STATE.kind==='csv'){
+      dpSpin(true);
+      var csv=await dpFetchText(url);
+      dpRenderCsv(csv);
+      dpSpin(false);return;
+    }
+    if(DP_STATE.kind==='image'){
+      dpSpin(true);
+      var imageBlob=await dpFetchBlob(url);
+      var image=dpEl('dpImage');
+      if(image){image.src=URL.createObjectURL(imageBlob);image.hidden=false;image.addEventListener('load',function(){URL.revokeObjectURL(image.src)})}
+      dpSpin(false);return;
+    }
+    if(DP_STATE.kind==='video'){
+      dpSpin(true);
+      var videoBlob=await dpFetchBlob(url);
+      var video=dpEl('dpVideo');
+      if(video){video.src=URL.createObjectURL(videoBlob);video.hidden=false;video.addEventListener('loadeddata',function(){URL.revokeObjectURL(video.src)})}
+      dpSpin(false);return;
+    }
+  }catch(error){
+    dpSpin(false);
+    var messages={txt:'Failed to load file',image:'Failed to load image',video:'Failed to load video',csv:'file load failed',md:'Failed to load file'};
+    dpToast(messages[DP_STATE.kind]||String(error.message||error));
+  }
+}
+document.addEventListener('DOMContentLoaded',dpBoot);
+"#;
+
+/// Upstream `pages/document-viewer/index.tsx` with `components/document-preview/*`:
+/// the section markup, the `DocumentHeader` and the fetch/render script for one
+/// stored document. `url` follows the page's own rule — `resource=files` reads
+/// `/api/v1/files/{id}`, otherwise the document preview route.
+#[allow(clippy::too_many_arguments)]
+fn document_preview_markup(
+    doc_id: &str,
+    name: &str,
+    size: u64,
+    create_date: u64,
+    ext: &str,
+    resource: &str,
+    surface: PreviewSurface,
+    // Upstream only stacks `DocumentHeader` over the previewer on the chunk
+    // workbench (`knowledge-chunk/index.tsx`); the standalone
+    // `pages/document-viewer/index.tsx` renders the previewer alone.
+    with_header: bool,
+    zh: bool,
+) -> String {
+    let kind = preview_kind(ext, surface);
+    let url = if resource == "files" {
+        format!("/api/v1/files/{doc_id}")
+    } else {
+        format!("/api/v1/documents/{doc_id}/preview")
+    };
+    let script_kind = match kind {
+        PreviewKind::Pdf => "pdf",
+        PreviewKind::Image => "image",
+        PreviewKind::Txt => "txt",
+        PreviewKind::Markdown => "md",
+        PreviewKind::Csv => "csv",
+        PreviewKind::Video => "video",
+        PreviewKind::Spreadsheet => "spreadsheet",
+        PreviewKind::Docx => "docx",
+        PreviewKind::Slides => "slides",
+        PreviewKind::Html => "html",
+        PreviewKind::None => "",
+    };
+    let mut b = String::new();
+    b.push_str("<div class='docpreview-section' data-testid='docpreview-section' data-kind='");
+    b.push_str(script_kind);
+    b.push_str("' data-ext='");
+    b.push_str(&html_escape(ext));
+    b.push_str("'>");
+    if with_header {
+        b.push_str(&document_header_markup(name, size, create_date, zh));
+    }
+    b.push_str(&preview_section_markup(kind, zh));
+    b.push_str("<p class='docpreview-toast' id='dpToast' data-testid='dp-toast' hidden></p>");
+    b.push_str("</div><script>window.DP_STATE=");
+    b.push_str(&json_script_value(&serde_json::json!({
+        "kind": script_kind,
+        "url": url,
+        "ext": ext,
+        "name": name,
+        "docId": doc_id,
+        "resource": resource,
+    })));
+    b.push_str(";");
+    b.push_str(DOCUMENT_PREVIEW_SCRIPT);
+    b.push_str("</script>");
+    b
+}
+
 const SHARE_RESET_SVG: &str = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8'/><path d='M21 3v5h-5'/><path d='M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16'/><path d='M8 16H3v5'/></svg>";
 
 /// Behaviour of the shared-agent embed: URL parameters, the beta credential
@@ -5033,7 +5571,18 @@ pub async fn files_page(
     b.push_str(&json_script_string(folder_label));
     b.push_str(",folderRequired:");
     b.push_str(&json_script_string(folder_name_required));
-    b.push_str("};let fileItems=[];let filePage=1;let filePageSize=50;let fileKeyword='';let filePendingLink=[];function fe(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function fileFilter(value){fileKeyword=String(value||'').trim().toLowerCase();filePage=1;renderFiles()}function filteredFiles(){if(!fileKeyword)return fileItems;return fileItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(fileKeyword)>=0})}function fileSize(item){if(item.file_type==='folder')return '-';var bytes=Number(item.size||0);if(bytes>=1048576)return (bytes/1048576).toFixed(1)+' MB';if(bytes>=1024)return (bytes/1024).toFixed(0)+' KB';return bytes+' B'}function fileDate(item){var raw=item.create_time||item.created_at;if(!raw)return '';var value=typeof raw==='number'?raw:Date.parse(raw);if(!value||isNaN(value))return String(raw);return new Date(value).toLocaleDateString()}function fileDataset(item){var kb=item.kb_id||item.dataset_id;return kb?fe(String(kb).slice(0,8)):''}function renderFiles(){var body=document.getElementById('fl');if(!body)return;var list=filteredFiles();if(!list.length){body.innerHTML=\"<tr><td colspan='6' class='table-empty'>\"+FILE_LABELS.empty+\"</td></tr>\";renderFilePagination(0);return}var pages=Math.max(1,Math.ceil(list.length/filePageSize));if(filePage>pages)filePage=pages;var slice=list.slice((filePage-1)*filePageSize,filePage*filePageSize);body.innerHTML=slice.map(function(item){var isFolder=item.file_type==='folder';var actions=\"<button type='button' class='btn btn-o btn-sm' onclick='renameF(\\\"\"+item.id+\"\\\",\\\"\"+fe(item.name)+\"\\\")'>\"+FILE_LABELS.rename+\"</button> <button type='button' class='btn btn-d btn-sm' onclick='delFile(\\\"\"+item.id+\"\\\")'>\"+FILE_LABELS.delete+\"</button>\";if(!isFolder){actions=\"<a class='btn btn-o btn-sm' href='/api/v1/files/\"+item.id+\"/download' target='_blank' rel='noreferrer'>\"+FILE_LABELS.download+\"</a> <button type='button' class='btn btn-o btn-sm' onclick='linkFile(\\\"\"+item.id+\"\\\")'>\"+FILE_LABELS.link+\"</button> \"+actions}return \"<tr data-name=\\\"\"+fe(String(item.name||'').toLowerCase())+\"\\\"><td class='col-select'><input type='checkbox' class='fileCk' value='\"+item.id+\"' onchange='updateFileBatch()'></td><td class='file-name'>\"+(isFolder?'📁 ':'')+fe(item.name)+\"</td><td class='co'>\"+fileDate(item)+\"</td><td class='co'>\"+fileSize(item)+\"</td><td class='co'>\"+fileDataset(item)+\"</td><td class='file-actions'>\"+actions+\"</td></tr>\"}).join('');renderFilePagination(list.length);updateFileBatch()}function renderFilePagination(total){var host=document.getElementById('filePagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/filePageSize));host.innerHTML=\"<span class='list-total'>\"+FILE_LABELS.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='filePageSizeChange(this.value)'><option value='50'\"+(filePageSize===50?' selected':'')+\">50</option><option value='20'\"+(filePageSize===20?' selected':'')+\">20</option><option value='100'\"+(filePageSize===100?' selected':'')+\">100</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(filePage<=1?'disabled':'')+\" onclick='fileGoto(filePage-1)'>‹</button><span class='list-page-now'>\"+filePage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(filePage>=pages?'disabled':'')+\" onclick='fileGoto(filePage+1)'>›</button></span>\"}function fileGoto(page){filePage=page;renderFiles()}function filePageSizeChange(value){filePageSize=parseInt(value,10)||50;filePage=1;renderFiles()}function selFileIds(){var ids=[];document.querySelectorAll('.fileCk:checked').forEach(function(box){ids.push(box.value)});return ids}function updateFileBatch(){var ids=selFileIds();var bar=document.getElementById('fileBatchBar');var count=document.getElementById('fileSelCount');if(count)count.textContent=FILE_LABELS.selected+' '+ids.length;if(bar)bar.hidden=ids.length===0}function fileSelAll(on){document.querySelectorAll('.fileCk').forEach(function(box){box.checked=on});updateFileBatch()}function loadF(){fetch('/api/v1/files').then(function(response){return response.json()}).then(function(data){fileItems=Array.isArray(data.data)?data.data:[];fileFolders();renderFiles()}).catch(function(){})}function fileFolders(){var select=document.getElementById('moveTarget');if(!select)return;var folders=fileItems.filter(function(item){return item.file_type==='folder'});select.innerHTML=\"<option value=''>/</option>\"+folders.map(function(item){return \"<option value='\"+item.id+\"'>\"+fe(item.name)+\"</option>\"}).join('')}function afUpload(){document.getElementById('fu').click()}function afNewFolder(){document.getElementById('folderName').value='';var err=document.getElementById('folderNameError');if(err)err.textContent='';document.getElementById('newFolderModal').classList.add('show')}function closeNewFolder(){document.getElementById('newFolderModal').classList.remove('show')}function createFolder(){var name=document.getElementById('folderName').value.trim();if(!name){document.getElementById('folderNameError').textContent=FILE_LABELS.folderRequired;return}fetch('/api/v1/files/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create folder failed');closeNewFolder();loadF()}).catch(function(error){document.getElementById('folderNameError').textContent=error.message})}function uploadF(){var input=document.getElementById('fu');var file=input.files&&input.files[0];if(!file)return;var form=new FormData();form.append('file',file,file.name);fetch('/api/v1/files/upload',{method:'POST',body:form}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Upload failed');input.value='';loadF()}).catch(function(error){alert(error.message)})}function renameF(id,current){var next=prompt(FILE_LABELS.rename,current);if(!next||next===current)return;fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:next})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');loadF()}).catch(function(error){alert(error.message)})}function delFile(id){if(!confirm(FILE_LABELS.delete+'?'))return;fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');loadF()}).catch(function(error){alert(error.message)})}function batchDelete(){var ids=selFileIds();if(!ids.length)return;if(!confirm(FILE_LABELS.delete+' '+ids.length+'?'))return;var index=0;function next(){if(index>=ids.length){loadF();return}var id=ids[index++];fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()}function batchMove(){var ids=selFileIds();if(!ids.length)return;filePendingLink=[];document.getElementById('moveFileModal').classList.add('show');window.__moveIds=ids}function closeMove(){document.getElementById('moveFileModal').classList.remove('show')}function moveSubmit(){var ids=window.__moveIds||[];var target=document.getElementById('moveTarget').value;if(!ids.length)return;Promise.all(ids.map(function(id){return fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({parent_id:target})})})).then(function(){closeMove();loadF()}).catch(function(error){alert(error.message)})}function linkFile(id){filePendingLink=[id];document.getElementById('linkDatasetId').value='';document.getElementById('linkFileModal').classList.add('show')}function batchLink(){var ids=selFileIds();if(!ids.length)return;filePendingLink=ids;document.getElementById('linkDatasetId').value='';document.getElementById('linkFileModal').classList.add('show')}function closeLink(){document.getElementById('linkFileModal').classList.remove('show')}function linkSubmit(){var dataset=document.getElementById('linkDatasetId').value.trim();if(!dataset||!filePendingLink.length)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:filePendingLink,dataset_id:dataset})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Link failed');closeLink();loadF()}).catch(function(error){alert(error.message)})}loadF()</script>");
+    b.push_str(",preview:");
+    b.push_str(&json_script_string(t("Preview", zh)));
+    // Upstream `utils/document-util.ts::isSupportedPreviewDocumentType` gates the
+    // action cell's Eye button on `SupportedPreviewDocumentTypes` (the
+    // `ExceptiveType` list), which is narrower than the previewer dispatch table:
+    // txt, csv and ppt have a previewer but no Eye button on this page.
+    b.push_str("};var FILE_PREVIEW_EXTS=");
+    b.push_str(&json_script_value(&serde_json::json!(
+        SUPPORTED_PREVIEW_EXTS
+    )));
+    b.push_str(";let fileItems=[];let filePage=1;let filePageSize=50;let fileKeyword='';let filePendingLink=[];function fe(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function fileExt(name){var text=String(name||'');var dot=text.lastIndexOf('.');return dot<0?'':text.slice(dot+1).toLowerCase()}function fileFilter(value){fileKeyword=String(value||'').trim().toLowerCase();filePage=1;renderFiles()}function filteredFiles(){if(!fileKeyword)return fileItems;return fileItems.filter(function(item){return String(item.name||'').toLowerCase().indexOf(fileKeyword)>=0})}function fileSize(item){if(item.file_type==='folder')return '-';var bytes=Number(item.size||0);if(bytes>=1048576)return (bytes/1048576).toFixed(1)+' MB';if(bytes>=1024)return (bytes/1024).toFixed(0)+' KB';return bytes+' B'}function fileDate(item){var raw=item.create_time||item.created_at;if(!raw)return '';var value=typeof raw==='number'?raw:Date.parse(raw);if(!value||isNaN(value))return String(raw);return new Date(value).toLocaleDateString()}function fileDataset(item){var kb=item.kb_id||item.dataset_id;return kb?fe(String(kb).slice(0,8)):''}function renderFiles(){var body=document.getElementById('fl');if(!body)return;var list=filteredFiles();if(!list.length){body.innerHTML=\"<tr><td colspan='6' class='table-empty'>\"+FILE_LABELS.empty+\"</td></tr>\";renderFilePagination(0);return}var pages=Math.max(1,Math.ceil(list.length/filePageSize));if(filePage>pages)filePage=pages;var slice=list.slice((filePage-1)*filePageSize,filePage*filePageSize);body.innerHTML=slice.map(function(item){var isFolder=item.file_type==='folder';var actions=\"<button type='button' class='btn btn-o btn-sm' onclick='renameF(\\\"\"+item.id+\"\\\",\\\"\"+fe(item.name)+\"\\\")'>\"+FILE_LABELS.rename+\"</button> <button type='button' class='btn btn-d btn-sm' onclick='delFile(\\\"\"+item.id+\"\\\")'>\"+FILE_LABELS.delete+\"</button>\";if(!isFolder){var extension=fileExt(item.name);var preview='';if(FILE_PREVIEW_EXTS.indexOf(extension)>=0){preview=\"<a class='btn btn-o btn-sm file-preview' data-testid='file-preview-link' aria-label='\"+FILE_LABELS.preview+\"' title='\"+FILE_LABELS.preview+\"' href='/document/\"+encodeURIComponent(item.id)+\"?ext=\"+encodeURIComponent(extension)+\"&resource=files' target='_blank' rel='noreferrer'>👁</a> \"}actions=preview+\"<a class='btn btn-o btn-sm' href='/api/v1/files/\"+item.id+\"/download' target='_blank' rel='noreferrer'>\"+FILE_LABELS.download+\"</a> <button type='button' class='btn btn-o btn-sm' onclick='linkFile(\\\"\"+item.id+\"\\\")'>\"+FILE_LABELS.link+\"</button> \"+actions}
+return \"<tr data-name=\\\"\"+fe(String(item.name||'').toLowerCase())+\"\\\"><td class='col-select'><input type='checkbox' class='fileCk' value='\"+item.id+\"' onchange='updateFileBatch()'></td><td class='file-name'>\"+(isFolder?'📁 ':'')+fe(item.name)+\"</td><td class='co'>\"+fileDate(item)+\"</td><td class='co'>\"+fileSize(item)+\"</td><td class='co'>\"+fileDataset(item)+\"</td><td class='file-actions'>\"+actions+\"</td></tr>\"}).join('');renderFilePagination(list.length);updateFileBatch()}function renderFilePagination(total){var host=document.getElementById('filePagination');if(!host)return;if(!total){host.innerHTML='';return}var pages=Math.max(1,Math.ceil(total/filePageSize));host.innerHTML=\"<span class='list-total'>\"+FILE_LABELS.total+' '+total+\"</span><span class='list-page-size'><select aria-label='Page size' onchange='filePageSizeChange(this.value)'><option value='50'\"+(filePageSize===50?' selected':'')+\">50</option><option value='20'\"+(filePageSize===20?' selected':'')+\">20</option><option value='100'\"+(filePageSize===100?' selected':'')+\">100</option></select></span><span class='list-pager'><button type='button' class='btn btn-o btn-sm' \"+(filePage<=1?'disabled':'')+\" onclick='fileGoto(filePage-1)'>‹</button><span class='list-page-now'>\"+filePage+' / '+pages+\"</span><button type='button' class='btn btn-o btn-sm' \"+(filePage>=pages?'disabled':'')+\" onclick='fileGoto(filePage+1)'>›</button></span>\"}function fileGoto(page){filePage=page;renderFiles()}function filePageSizeChange(value){filePageSize=parseInt(value,10)||50;filePage=1;renderFiles()}function selFileIds(){var ids=[];document.querySelectorAll('.fileCk:checked').forEach(function(box){ids.push(box.value)});return ids}function updateFileBatch(){var ids=selFileIds();var bar=document.getElementById('fileBatchBar');var count=document.getElementById('fileSelCount');if(count)count.textContent=FILE_LABELS.selected+' '+ids.length;if(bar)bar.hidden=ids.length===0}function fileSelAll(on){document.querySelectorAll('.fileCk').forEach(function(box){box.checked=on});updateFileBatch()}function loadF(){fetch('/api/v1/files').then(function(response){return response.json()}).then(function(data){fileItems=Array.isArray(data.data)?data.data:[];fileFolders();renderFiles()}).catch(function(){})}function fileFolders(){var select=document.getElementById('moveTarget');if(!select)return;var folders=fileItems.filter(function(item){return item.file_type==='folder'});select.innerHTML=\"<option value=''>/</option>\"+folders.map(function(item){return \"<option value='\"+item.id+\"'>\"+fe(item.name)+\"</option>\"}).join('')}function afUpload(){document.getElementById('fu').click()}function afNewFolder(){document.getElementById('folderName').value='';var err=document.getElementById('folderNameError');if(err)err.textContent='';document.getElementById('newFolderModal').classList.add('show')}function closeNewFolder(){document.getElementById('newFolderModal').classList.remove('show')}function createFolder(){var name=document.getElementById('folderName').value.trim();if(!name){document.getElementById('folderNameError').textContent=FILE_LABELS.folderRequired;return}fetch('/api/v1/files/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Create folder failed');closeNewFolder();loadF()}).catch(function(error){document.getElementById('folderNameError').textContent=error.message})}function uploadF(){var input=document.getElementById('fu');var file=input.files&&input.files[0];if(!file)return;var form=new FormData();form.append('file',file,file.name);fetch('/api/v1/files/upload',{method:'POST',body:form}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Upload failed');input.value='';loadF()}).catch(function(error){alert(error.message)})}function renameF(id,current){var next=prompt(FILE_LABELS.rename,current);if(!next||next===current)return;fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:next})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Rename failed');loadF()}).catch(function(error){alert(error.message)})}function delFile(id){if(!confirm(FILE_LABELS.delete+'?'))return;fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Delete failed');loadF()}).catch(function(error){alert(error.message)})}function batchDelete(){var ids=selFileIds();if(!ids.length)return;if(!confirm(FILE_LABELS.delete+' '+ids.length+'?'))return;var index=0;function next(){if(index>=ids.length){loadF();return}var id=ids[index++];fetch('/api/v1/files/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()}function batchMove(){var ids=selFileIds();if(!ids.length)return;filePendingLink=[];document.getElementById('moveFileModal').classList.add('show');window.__moveIds=ids}function closeMove(){document.getElementById('moveFileModal').classList.remove('show')}function moveSubmit(){var ids=window.__moveIds||[];var target=document.getElementById('moveTarget').value;if(!ids.length)return;Promise.all(ids.map(function(id){return fetch('/api/v1/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({parent_id:target})})})).then(function(){closeMove();loadF()}).catch(function(error){alert(error.message)})}function linkFile(id){filePendingLink=[id];document.getElementById('linkDatasetId').value='';document.getElementById('linkFileModal').classList.add('show')}function batchLink(){var ids=selFileIds();if(!ids.length)return;filePendingLink=ids;document.getElementById('linkDatasetId').value='';document.getElementById('linkFileModal').classList.add('show')}function closeLink(){document.getElementById('linkFileModal').classList.remove('show')}function linkSubmit(){var dataset=document.getElementById('linkDatasetId').value.trim();if(!dataset||!filePendingLink.length)return;fetch('/api/v1/file2document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:filePendingLink,dataset_id:dataset})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Link failed');closeLink();loadF()}).catch(function(error){alert(error.message)})}loadF()</script>");
     Html(layout(title_label, &b, zh))
 }
 
@@ -6101,12 +6650,12 @@ function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(r
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
 
-/// Shared body of the document viewer, used by both `/documents/{kb}/{doc}`
-/// and upstream's standalone `Routes.Document = /document/:id`.
-fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
+/// The workbench toolbar of the document page (back link, title, reparse, delete,
+/// export) plus the chunk editor dialog.
+fn document_toolbar_markup(kb_id: &str, zh: bool) -> String {
     let mut b = String::new();
     b.push_str("<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap'><a class='btn btn-o' href='/dataset/");
-    b.push_str(&kb_id);
+    b.push_str(kb_id);
     b.push_str("'>← ");
     b.push_str(t("Back to Dataset", zh));
     b.push_str("</a><h1 style='margin:0;flex:1' id='docTitle'>📄 ...</h1><button class='btn btn-o' onclick='reparse()'>");
@@ -6123,10 +6672,14 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     b.push_str("</button><button class='btn btn-o' onclick='document.getElementById(\"chunkModal\").classList.remove(\"show\")'>");
     b.push_str(t("Cancel", zh));
     b.push_str("</button></div></div></div>");
-    // Previewer column: upstream `PdfPreview` + `PdfHighlighter` (toolbar, page
-    // list with per-page canvas and highlight layer). The chunk column keeps the
-    // workbench's list/edit flow and drives the overlay through the rows.
-    b.push_str("<div class='docview-split'><section class='docview-pane'><div class='docview-toolbar' data-testid='docview-toolbar'><button type='button' class='btn btn-o btn-sm' data-testid='docview-prev' onclick='dvStep(-1)'>");
+    b
+}
+
+/// The PDF column of the viewer: upstream `PdfPreview` + `PdfHighlighter` (page
+/// toolbar, run of canvases with one highlight layer each).
+fn pdf_viewer_markup(doc_id: &str, zh: bool) -> String {
+    let mut b = String::new();
+    b.push_str("<section class='docview-pane'><div class='docview-toolbar' data-testid='docview-toolbar'><button type='button' class='btn btn-o btn-sm' data-testid='docview-prev' onclick='dvStep(-1)'>");
     b.push_str(t("Previous", zh));
     b.push_str("</button><span class='docview-page-label' id='docviewPageLabel' data-testid='docview-page-label'>1 / 1</span><button type='button' class='btn btn-o btn-sm' data-testid='docview-next' onclick='dvStep(1)'>");
     b.push_str(t("Next", zh));
@@ -6136,7 +6689,14 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     b.push_str(&doc_id);
     b.push_str("/preview' download>");
     b.push_str(t("Download", zh));
-    b.push_str("</a></div><div class='docview-scroll' id='docviewScroll' data-testid='docview-scroll'><div class='docview-pages' id='docviewPages' data-testid='docview-pages'></div></div><p class='docview-status' id='docviewStatus' data-testid='docview-status'></p></section><section class='docview-chunk-pane'>");
+    b.push_str("</a></div><div class='docview-scroll' id='docviewScroll' data-testid='docview-scroll'><div class='docview-pages' id='docviewPages' data-testid='docview-pages'></div></div><p class='docview-status' id='docviewStatus' data-testid='docview-status'></p></section>");
+    b
+}
+
+/// The right-hand chunk column: the counters and the chunk list.
+fn document_chunk_pane_markup(zh: bool) -> String {
+    let mut b = String::new();
+    b.push_str("<section class='docview-chunk-pane'>");
     b.push_str("<div class='st' style='margin-top:0'><div class='sc'><span class='lbl'>");
     b.push_str(t("Chunks", zh));
     b.push_str("</span><span class='val' id='docChunks'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='docStatus' style='font-size:15px'>-</span></div></div>");
@@ -6146,7 +6706,14 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
         " <span id='cTotal' style='font-size:13px;color:var(--tm)'></span></h2><div id='cl'>",
     );
     b.push_str(t("Loading...", zh));
-    b.push_str("</div></div></section></div>");
+    b.push_str("</div></div></section>");
+    b
+}
+
+/// The scripts the chunk column runs: the viewer state hook and the shared chunk
+/// script (both keyed by the `kbId` / `docId` globals).
+fn document_workbench_scripts(kb_id: &str, doc_id: &str) -> String {
+    let mut b = String::new();
     b.push_str("<script>var DV_STATE=");
     b.push_str(&json_script_value(&serde_json::json!({ "chunk": "" })));
     b.push_str(";");
@@ -6161,39 +6728,162 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     b
 }
 
+/// Shared body of the document viewer, used by both `/documents/{kb}/{doc}`
+/// and upstream's standalone `Routes.Document = /document/:id`.
+fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
+    let mut b = document_toolbar_markup(kb_id, zh);
+    // Previewer column: upstream `PdfPreview` + `PdfHighlighter` (toolbar, page
+    // list with per-page canvas and highlight layer). The chunk column keeps the
+    // workbench's list/edit flow and drives the overlay through the rows.
+    b.push_str("<div class='docview-split'>");
+    b.push_str(&pdf_viewer_markup(doc_id, zh));
+    b.push_str(&document_chunk_pane_markup(zh));
+    b.push_str("</div>");
+    b.push_str(&document_workbench_scripts(kb_id, doc_id));
+    b
+}
+
+/// The chunk workbench face for a document that is **not** a PDF: upstream
+/// `pages/chunk/parsed-result/add-knowledge/components/knowledge-chunk/index.tsx`
+/// stacks `DocumentHeader` over the shared `DocumentPreview` dispatcher and keeps
+/// the chunk list beside it. The PDF face keeps the two-pane viewer above, whose
+/// page list is what the highlight overlay is drawn on.
+fn document_workbench_markup(
+    kb_id: &str,
+    doc_id: &str,
+    name: &str,
+    size: u64,
+    created_at: u64,
+    ext: &str,
+    zh: bool,
+) -> String {
+    let mut b = document_toolbar_markup(kb_id, zh);
+    b.push_str("<div class='docview-split'><section class='docview-pane'>");
+    b.push_str(&document_header_markup(name, size, created_at, zh));
+    b.push_str(&document_preview_markup(
+        doc_id,
+        name,
+        size,
+        created_at,
+        ext,
+        "document",
+        PreviewSurface::Dispatcher,
+        true,
+        zh,
+    ));
+    b.push_str("</section>");
+    b.push_str(&document_chunk_pane_markup(zh));
+    b.push_str("</div>");
+    b.push_str(&document_workbench_scripts(kb_id, doc_id));
+    b
+}
+
 pub async fn document_page(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     axum::extract::Path((kb_id, doc_id)): axum::extract::Path<(String, String)>,
     req: axum::http::Request<axum::body::Body>,
 ) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
-    Html(layout(
-        "Document",
-        &document_view_markup(&kb_id, &doc_id, zh),
-        zh,
-    ))
+    let body = match state.docs.get(&doc_id) {
+        Some(doc) => {
+            let ext = document_extension(&doc.name);
+            match preview_kind(&ext, PreviewSurface::Dispatcher) {
+                PreviewKind::Pdf => document_view_markup(&kb_id, &doc_id, zh),
+                kind => {
+                    tracing::debug!(
+                        doc_id = %doc_id,
+                        ext = %ext,
+                        ?kind,
+                        "chunk workbench previewer selected"
+                    );
+                    document_workbench_markup(
+                        &kb_id,
+                        &doc_id,
+                        &doc.name,
+                        doc.size as u64,
+                        doc.created_at,
+                        &ext,
+                        zh,
+                    )
+                }
+            }
+        }
+        // Unknown document id: the page still renders the viewer shell, which
+        // reports the missing record through its own status line.
+        None => document_view_markup(&kb_id, &doc_id, zh),
+    };
+    Html(layout("Document", &body, zh))
 }
 
 /// Upstream `Routes.Document = /document/:id` (standalone document viewer, no
 /// layout). The knowledge base is resolved from the document record, so the
 /// page renders at the upstream path instead of redirecting.
+///
+/// `pages/document-viewer/index.tsx` reads two query parameters: `ext` selects the
+/// previewer (see `preview_kind`) and `resource` selects the byte source
+/// (`files` → `/api/v1/files/{id}`, anything else → the document preview route).
+/// When `ext` is absent RayRAG falls back to the stored file name's extension —
+/// upstream would render nothing at all, which is the silent blank page the
+/// previewer must not ship.
 pub async fn document_viewer_page(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(doc_id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> axum::response::Response {
     let zh = detect_lang(req.headers());
-    match state.docs.get(&doc_id) {
-        Some(doc) => Html(layout(
-            "Document",
-            &document_view_markup(&doc.kb_id, &doc_id, zh),
-            zh,
-        ))
-        .into_response(),
+    let resource = match query.get("resource").map(String::as_str) {
+        Some("files") => "files",
+        _ => "document",
+    };
+    let document = state.docs.get(&doc_id);
+    // A file id (`resource=files`, the Files page's Eye button) has no document
+    // record; upstream's page never looks one up either — it only needs the id for
+    // the byte source, and the fetch reports a missing file on its own.
+    if document.is_none() && resource != "files" {
         // Unknown document: render the shared 404 page with a real 404 status
         // (the fallback service does the same for unrouted paths).
-        None => (axum::http::StatusCode::NOT_FOUND, not_found_page(req).await).into_response(),
+        return (axum::http::StatusCode::NOT_FOUND, not_found_page(req).await).into_response();
     }
+    let name = document
+        .as_ref()
+        .map(|doc| doc.name.clone())
+        .unwrap_or_default();
+    let requested = query.get("ext").cloned().unwrap_or_default();
+    let ext = if requested.trim().is_empty() {
+        document_extension(&name)
+    } else {
+        requested
+            .trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+    };
+    let kind = preview_kind(&ext, PreviewSurface::Standalone);
+    tracing::debug!(
+        doc_id = %doc_id,
+        ext = %ext,
+        resource = %resource,
+        ?kind,
+        "document viewer previewer selected"
+    );
+    let body = match (&document, kind) {
+        // The PDF branch keeps the two-pane viewer (rendered pages plus the chunk
+        // workbench column); every other file type gets the previewer section that
+        // matches upstream's dispatch table.
+        (Some(doc), PreviewKind::Pdf) => document_view_markup(&doc.kb_id, &doc_id, zh),
+        _ => document_preview_markup(
+            &doc_id,
+            &name,
+            document.as_ref().map(|doc| doc.size as u64).unwrap_or(0),
+            document.as_ref().map(|doc| doc.created_at).unwrap_or(0),
+            &ext,
+            resource,
+            PreviewSurface::Standalone,
+            false,
+            zh,
+        ),
+    };
+    Html(layout("Document", &body, zh)).into_response()
 }
 
 pub async fn skills_page(
@@ -14549,7 +15239,16 @@ connection: close
             .body(Body::empty())
             .unwrap();
         let html = body_of(
-            document_viewer_page(State(state.clone()), Path("doc-1".to_string()), request).await,
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-1".to_string()),
+                axum::extract::Query(std::collections::HashMap::from([(
+                    "ext".to_string(),
+                    "pdf".to_string(),
+                )])),
+                request,
+            )
+            .await,
         )
         .await;
         let html = html.as_str();
@@ -14616,6 +15315,379 @@ connection: close
         ] {
             assert!(css.contains(selector), "viewer css {selector} missing");
         }
+    }
+
+    /// Upstream `pages/document-viewer/index.tsx` + `components/document-preview/*`:
+    /// the file type selects the previewer, and the two dispatch tables upstream
+    /// ships are not the same one.
+    #[test]
+    fn document_viewer_dispatches_upstream_previewer_tables() {
+        for ext in [
+            "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "ico",
+        ] {
+            assert_eq!(
+                preview_kind(ext, PreviewSurface::Standalone),
+                PreviewKind::Image,
+                "{ext} must preview as an image"
+            );
+        }
+        for ext in [
+            "mp4", "avi", "mov", "mkv", "wmv", "flv", "mpeg", "mpg", "asf", "rm", "rmvb",
+        ] {
+            assert_eq!(
+                preview_kind(ext, PreviewSurface::Dispatcher),
+                PreviewKind::Video
+            );
+        }
+        // The standalone page knows pdf/md/mdx/txt/xlsx+xls/docx/ppt+pptx/html; the
+        // shared dispatcher swaps xls away and adds csv, video and the `doc` alias.
+        for (ext, kind) in [
+            ("pdf", PreviewKind::Pdf),
+            ("md", PreviewKind::Markdown),
+            ("mdx", PreviewKind::Markdown),
+            ("txt", PreviewKind::Txt),
+            ("xlsx", PreviewKind::Spreadsheet),
+            ("xls", PreviewKind::Spreadsheet),
+            ("docx", PreviewKind::Docx),
+            ("ppt", PreviewKind::Slides),
+            ("pptx", PreviewKind::Slides),
+            ("html", PreviewKind::Html),
+        ] {
+            assert_eq!(
+                preview_kind(ext, PreviewSurface::Standalone),
+                kind,
+                "standalone {ext}"
+            );
+        }
+        assert_eq!(
+            preview_kind("xls", PreviewSurface::Dispatcher),
+            PreviewKind::None
+        );
+        assert_eq!(
+            preview_kind("doc", PreviewSurface::Dispatcher),
+            PreviewKind::Docx
+        );
+        assert_eq!(
+            preview_kind("csv", PreviewSurface::Dispatcher),
+            PreviewKind::Csv
+        );
+        assert_eq!(
+            preview_kind("csv", PreviewSurface::Standalone),
+            PreviewKind::None
+        );
+        assert_eq!(
+            preview_kind("mp4", PreviewSurface::Standalone),
+            PreviewKind::None
+        );
+        assert_eq!(
+            preview_kind("html", PreviewSurface::Dispatcher),
+            PreviewKind::None
+        );
+        // Case and a leading dot never change the branch.
+        assert_eq!(
+            preview_kind(".PDF", PreviewSurface::Standalone),
+            PreviewKind::Pdf
+        );
+        assert_eq!(
+            preview_kind("PNG", PreviewSurface::Dispatcher),
+            PreviewKind::Image
+        );
+        // Anything else must stay loud rather than render an empty section.
+        assert_eq!(
+            preview_kind("exe", PreviewSurface::Standalone),
+            PreviewKind::None
+        );
+    }
+
+    /// `document-header.tsx` renders `formatBytes` + `formatDate` over the record.
+    #[test]
+    fn document_header_formats_size_and_uploaded_time_like_upstream() {
+        assert_eq!(format_bytes(0), "0 bytes");
+        assert_eq!(format_bytes(512), "512 bytes");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(10 * 1024), "10 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 + 512 * 1024), "5.5 MB");
+        // dayjs `DD/MM/YYYY HH:mm:ss`.
+        assert_eq!(format_date_ms(0), "");
+        assert_eq!(format_date_ms(1_700_000_000_000), "14/11/2023 22:13:20");
+        let header = document_header_markup("report.pdf", 2048, 1_700_000_000_000, false);
+        for marker in [
+            "data-testid='document-header'",
+            "data-testid='document-header-name'",
+            ">report.pdf<",
+            "data-testid='document-header-size'",
+            ">2.0 KB<",
+            "data-testid='document-header-uploaded'",
+            ">14/11/2023 22:13:20<",
+            ">Size<",
+            ">Uploaded time<",
+        ] {
+            assert!(
+                header.contains(marker),
+                "document header marker {marker} missing"
+            );
+        }
+        let zh_header = document_header_markup("报告.pdf", 2048, 1_700_000_000_000, true);
+        assert!(
+            zh_header.contains(">上传时间<"),
+            "zh uploaded-time label missing"
+        );
+    }
+
+    /// The previewer section carries the upstream marker classes and the element
+    /// each fetch fills in; the script holds the fetch/render flow and the literal
+    /// error strings upstream passes to `message.error`.
+    #[test]
+    fn document_preview_sections_and_script_match_upstream() {
+        let image = preview_section_markup(PreviewKind::Image, false);
+        assert!(image.contains("docpreview-panel image-previewer"));
+        assert!(image.contains("id='dpImage'"));
+        assert!(image.contains("alt='image'"));
+        let video = preview_section_markup(PreviewKind::Video, false);
+        assert!(video.contains("docpreview-panel video-previewer"));
+        assert!(video.contains("<video"));
+        assert!(video.contains("controls"));
+        let csv = preview_section_markup(PreviewKind::Csv, false);
+        assert!(csv.contains("id='dpCsv'"));
+        assert!(preview_section_markup(PreviewKind::Txt, false).contains("id='dpText'"));
+        assert!(preview_section_markup(PreviewKind::Markdown, false).contains("docpreview-md"));
+        assert!(preview_section_markup(PreviewKind::Spreadsheet, false).contains("id='dpGrid'"));
+        assert!(preview_section_markup(PreviewKind::Slides, false).contains("id='dpSlides'"));
+        // The docx branch is loud until its previewer lands.
+        let docx = preview_section_markup(PreviewKind::Docx, false);
+        assert!(docx.contains("data-testid='preview-docx'"));
+        assert!(docx.contains("data-testid='file-error'"));
+        assert!(docx.contains("data-testid='dp-pending'"));
+        // An unknown extension renders the `fileError` notice, never a blank page.
+        let none = preview_section_markup(PreviewKind::None, false);
+        assert!(none.contains("data-testid='file-error'"));
+        assert!(none.contains(">File error<"));
+        for hook in [
+            // The page assigns the state object before this script runs; a plain
+            // re-declaration would wipe it and silently disable every previewer.
+            "var DP_STATE=window.DP_STATE||",
+            "function dpMarkdown(text)",
+            "function dpParseCsv(text)",
+            "function dpRenderSheets(payload)",
+            "function dpRenderSlides(payload)",
+            "function dpPreviewHtml(url)",
+            "function dpBoot()",
+            "document.addEventListener('DOMContentLoaded',dpBoot)",
+            // remark-breaks: a single newline inside a paragraph is a hard break.
+            "paragraph.map(dpInline).join('<br>')",
+            // GFM table detection uses the delimiter row.
+            "function dpTableAt(lines,index)",
+            // The three upstream toast literals.
+            "txt:'Failed to load file'",
+            "image:'Failed to load image'",
+            "video:'Failed to load video'",
+            "csv:'file load failed'",
+            // fetchPreviewBlob's two sources.
+            "'/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/sheets'",
+            "'/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/slides'",
+        ] {
+            assert!(
+                DOCUMENT_PREVIEW_SCRIPT.contains(hook),
+                "preview script hook {hook} missing"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".docpreview-panel{",
+            ".docpreview-spin{",
+            ".docpreview-table thead{",
+            ".docpreview-error{",
+            ".docpreview-md blockquote{",
+        ] {
+            assert!(css.contains(selector), "preview css {selector} missing");
+        }
+    }
+
+    /// `resources=files` reads the file route and the document branch reads the
+    /// preview route; `ext=html` downloads instead of rendering.
+    #[tokio::test]
+    async fn document_viewer_page_uses_resource_and_ext_query() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("test-user", "Preview KB", "").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-md".into(),
+                name: "notes.md".into(),
+                kb_id: kb.id.clone(),
+                size: 2048,
+                storage_name: "doc-md.md".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: 1_700_000_000_000,
+                updated_at: 1_700_000_000_000,
+            })
+            .unwrap();
+        let query = |pairs: &[(&str, &str)]| {
+            axum::extract::Query(
+                pairs
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect::<std::collections::HashMap<String, String>>(),
+            )
+        };
+        let request = || {
+            Request::builder()
+                .uri("/document/doc-md?ext=md")
+                .header("Cookie", "lang=en")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let html = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "md")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(html.contains("data-testid='docpreview-section'"));
+        assert!(html.contains("data-kind='md'"));
+        assert!(html.contains("DP_STATE={\"kind\":\"md\""));
+        assert!(html.contains("\"url\":\"/api/v1/documents/doc-md/preview\""));
+        // Upstream's standalone page renders the previewer alone; the
+        // `DocumentHeader` belongs to the chunk workbench face.
+        assert!(!html.contains("data-testid='document-header'"));
+        assert!(html.contains("window.DP_STATE="));
+        // The PDF chrome must not leak into a markdown preview.
+        assert!(!html.contains("data-testid='docview-toolbar'"));
+
+        // `resource=files` switches the byte source to the file route.
+        let files_html = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "md"), ("resource", "files")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(files_html.contains("\"url\":\"/api/v1/files/doc-md\""));
+
+        // A missing `ext` falls back to the stored name instead of a blank page.
+        let fallback = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            fallback.contains("data-kind='md'"),
+            "stored extension fallback missing"
+        );
+
+        // `ext=html` renders the download branch (upstream `previewHtmlFile`).
+        let html_ext = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "html")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(html_ext.contains("data-kind='html'"));
+        assert!(html_ext.contains("function dpPreviewHtml(url)"));
+
+        // An unsupported extension renders the notice, not an empty section.
+        let unknown = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "exe")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(unknown.contains("data-testid='file-error'"));
+    }
+
+    /// The chunk workbench previews non-PDF documents through the shared
+    /// dispatcher (`knowledge-chunk/index.tsx`), while the PDF face keeps the
+    /// two-pane viewer.
+    #[tokio::test]
+    async fn document_page_selects_previewer_by_stored_type() {
+        let (_root, state) = test_state();
+        let kb = state
+            .kbs
+            .create_for("test-user", "Workbench KB", "")
+            .unwrap();
+        for (id, name) in [("doc-pdf", "paper.pdf"), ("doc-txt", "notes.txt")] {
+            state
+                .docs
+                .insert(crate::api::document::DocRecord {
+                    id: id.into(),
+                    name: name.into(),
+                    kb_id: kb.id.clone(),
+                    size: 1024,
+                    storage_name: format!("{id}.{}", name.rsplit('.').next().unwrap()),
+                    content_hash: String::new(),
+                    indexed_content_hash: String::new(),
+                    run: "DONE".into(),
+                    progress: 1.0,
+                    progress_msg: String::new(),
+                    chunk_count: 0,
+                    created_at: 1_700_000_000_000,
+                    updated_at: 1_700_000_000_000,
+                })
+                .unwrap();
+        }
+        let request = || {
+            Request::builder()
+                .uri("/documents/kb/doc")
+                .header("Cookie", "lang=en")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let pdf_html = body_of(
+            document_page(
+                State(state.clone()),
+                Path((kb.id.clone(), "doc-pdf".to_string())),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(pdf_html.contains("data-testid='docview-toolbar'"));
+        assert!(!pdf_html.contains("data-testid='docpreview-section'"));
+
+        let txt_html = body_of(
+            document_page(
+                State(state.clone()),
+                Path((kb.id.clone(), "doc-txt".to_string())),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(txt_html.contains("data-testid='docpreview-section'"));
+        assert!(txt_html.contains("data-kind='txt'"));
+        assert!(txt_html.contains("data-testid='document-header'"));
+        assert!(txt_html.contains("data-testid='dp-text'"));
+        // The chunk column and its scripts stay on the page.
+        assert!(txt_html.contains("data-testid='docview'") == false);
+        assert!(txt_html.contains("id='cl'"));
+        assert!(txt_html.contains("var DOC_CHUNKS=[]"));
     }
 
     /// landed with the session column, the session chat and the confirm-delete
@@ -15497,6 +16569,52 @@ connection: close
             "链接知识库",
         ] {
             assert!(zh_html.contains(label), "zh files label {label} missing");
+        }
+    }
+
+    /// Upstream `pages/files/action-cell.tsx` wraps an Eye button in
+    /// `NewDocumentLink` for every `SupportedPreviewDocumentType`, pointing at
+    /// `/document/{id}?ext={extension}&resource=files`. txt/csv/ppt preview fine but
+    /// are **not** in that list, so they get no Eye button.
+    #[tokio::test]
+    async fn files_page_preview_button_follows_supported_preview_types() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state), request).await).await;
+        for marker in [
+            "data-testid='file-preview-link'",
+            "href='/document/\"+encodeURIComponent(item.id)+\"?ext=\"+encodeURIComponent(extension)+\"&resource=files'",
+            "function fileExt(name){",
+            "FILE_PREVIEW_EXTS.indexOf(extension)>=0",
+        ] {
+            assert!(
+                html.contains(marker),
+                "files preview marker {marker} missing"
+            );
+        }
+        let payload = html
+            .split("var FILE_PREVIEW_EXTS=")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .expect("FILE_PREVIEW_EXTS payload");
+        let exts: Vec<String> = serde_json::from_str(payload).unwrap();
+        for ext in [
+            "xlsx", "xls", "pdf", "docx", "md", "mdx", "jpg", "png", "webp", "ico",
+        ] {
+            assert!(
+                exts.iter().any(|value| value == ext),
+                "{ext} must be previewable"
+            );
+        }
+        for ext in ["txt", "csv", "ppt", "pptx", "mp4"] {
+            assert!(
+                !exts.iter().any(|value| value == ext),
+                "{ext} has no Eye button upstream"
+            );
         }
     }
 

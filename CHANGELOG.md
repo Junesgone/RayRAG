@@ -2,6 +2,65 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.45] — 2026-09-23（对标批次 v0.3.8w）
+
+### Added
+
+- **文档预览器格式矩阵**（上游 `pages/document-viewer/index.tsx` +
+  `components/document-preview/{index,txt-preview,csv-preview,image-preview,video-preview,md,document-header}.tsx`
+  + `pages/document-viewer/file-error/index.tsx` + `components/new-document-link.tsx`）：文档页不再只认识 PDF。
+  `ext` 决定预览器，`resource` 决定字节源（`document` → `/api/v1/documents/{id}/preview`，
+  `files` → `/api/v1/files/{id}`），与上游**两张并不相同的分发表**逐条对齐：
+  - **独立页**（`/document/{id}?ext=…&resource=…`）：图片（jpg/jpeg/png/gif/bmp/tif/tiff/webp/ico）、
+    `md`/`mdx`、`txt`、`pdf`、`xlsx`/`xls`、`docx`、`ppt`/`pptx`，`ext=html` 把字节交给浏览器；
+  - **共享分发器**（切片工作台 `/documents/{kb}/{doc}`）：pdf、`doc`/`docx`、txt、图片、
+    **11 种视频**（mp4/avi/mov/mkv/wmv/flv/mpeg/mpg/asf/rm/rmvb）、ppt/pptx、**仅 `xlsx`**、`csv`、md/mdx。
+- **文本类预览器**：`TxtPreviewer`（`<pre>` + 加载态）、`CSVFileViewer`（分隔符/引号/换行齐全的 CSV
+  解析，表头 + 行表，空单元格显示 `-`）、`Md`（GFM 表格、任务列表、围栏代码、引用、粗斜体/删除线/
+  链接/自动链接，`remark-breaks` 语义：段内单个换行即 `<br>`）、`ImagePreviewer`（Blob 对象 URL）、
+  `VideoPreviewer`（`controls` + 80vh 滚动容器）。
+- **`DocumentHeader`**（上游 `document-header.tsx`）：切片工作台预览器上方显示文档名 + `Size`
+  （`formatBytes`：1024 进制、单位表 `bytes/KB/MB/…`、小于 10 才带一位小数）+ `Uploaded time`
+  （`DD/MM/YYYY HH:mm:ss`）。
+- **文件页 Eye 预览按钮**（上游 `action-cell.tsx` + `new-document-link.tsx`）：仅
+  `SupportedPreviewDocumentTypes`（xlsx/xls/pdf/docx/md/mdx + 图片）显示，指向
+  `/document/{id}?ext={ext}&resource=files` 并在新标签页打开 —— txt/csv/ppt 可预览但**不**显示该按钮，
+  与上游一致。
+- **上游端点**：`GET /api/v1/documents/{id}`（`document_api.py::download_document`，`attachment` +
+  扩展名 MIME）与 `GET /api/v1/files/{id}`（`file_api.py::download`，`fetchPreviewBlob(..., 'files')`
+  的字节源）。
+- **表格/幻灯片读取端点**（RayRAG 侧 `replaced`，上游在浏览器用 `@js-preview/excel` / `pptx-preview`）：
+  `GET /api/v1/documents/{id}/preview/sheets`（按工作表返回单元格网格，行/列上限并带 `truncated` 标记）、
+  `GET /api/v1/documents/{id}/preview/slides`（逐页文本）。
+
+### Fixed
+
+- **`GET /api/v1/files/{id}` 的 MIME 一律 `application/octet-stream`**：`mime_from_extension` 取的是
+  *文件名*，旧代码传裸扩展名（`"png"`）导致永远落空，图片/视频在预览器里拿不到正确类型。
+- **预览器状态被脚本重置（静默失效）**：页面先赋值 `DP_STATE`，紧随其后的脚本又用
+  `var DP_STATE={…}` 初始化，把页面赋值冲掉 —— 所有 fetch 预览器都不渲染且不报错。改为
+  `var DP_STATE=window.DP_STATE||…`，并加回归断言锁住这次交接。
+- CSV/video 在**独立页**没有分支：上游同样如此，RayRAG 现在渲染 `fileError` 红框而不是空白页。
+
+### Notes
+
+- 新增回归 6 条：`document_viewer_dispatches_upstream_previewer_tables`（两张分发表逐条 + 大小写/点前缀）、
+  `document_header_formats_size_and_uploaded_time_like_upstream`（`formatBytes`/`formatDate` 边界）、
+  `document_preview_sections_and_script_match_upstream`（面板标记 + 脚本钩子 + CSS）、
+  `document_viewer_page_uses_resource_and_ext_query`（ext/resource/缺省回退/html/未知类型）、
+  `document_page_selects_previewer_by_stored_type`（PDF 双栏保留、非 PDF 走分发器）、
+  `files_page_preview_button_follows_supported_preview_types`；服务端 3 条：
+  `document_download_route_serves_attachment_bytes`、`file_blob_route_serves_raw_bytes`、
+  `preview_reader_routes_return_workbook_grid_and_deck_text`。
+- 新增真点探针 `scripts/ui-traversal/document-preview-matrix-cdp.mjs`（14/14）：真实浏览器里上传
+  txt/md/csv/png/xlsx/pptx/docx 后逐个打开，断言渲染结果与上游语义（含 `?ext=csv` 在独立页返回
+  `fileError`、`resource=files` 走文件路由、文件页 Eye 链接只出现在受支持类型上）。
+- PDF 分支的标记在这一批里被拆成 `document_toolbar_markup` / `pdf_viewer_markup` /
+  `document_chunk_pane_markup` / `document_workbench_scripts` 四个部分，拼接结果与拆分前**逐字节相同**
+  （已用脚本比对确认）。
+- 挂账：docx 预览器（上游 `@extend-ai/react-docx`）、pptx 形状/主题/图片（当前只有逐页文本）、
+  markdown 的 KaTeX/rehype 插件链。
+
 ## [0.4.44] — 2026-09-23（对标批次 v0.3.8v）
 
 ### Added

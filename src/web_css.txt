@@ -852,3 +852,68 @@ the paired colour picker + hex input. */
 .docview-chunk-pane{min-width:0}
 .docview-chunk.active{outline:1px solid var(--p);outline-offset:1px}
 @media (max-width:1100px){.docview-split{grid-template-columns:minmax(0,1fr)}}
+
+/* Document previewer matrix (upstream `components/document-preview/*` +
+   `pages/document-viewer/*`): the per-format panels, the document header from
+   `document-header.tsx` and the `file-error` notice. Upstream builds each panel
+   from Tailwind utilities — `relative w-full h-full p-4 bg-background-paper
+   border border-border-normal rounded-md` plus the absolutely positioned spin
+   container — and RayRAG keeps the same boxes and the same marker classes
+   (`image-previewer`, `video-previewer`, `excel-csv-previewer`, `ppt-previewer`). */
+.docpreview-section{display:flex;flex-direction:column;gap:12px}
+.docpreview-header{padding:4px 0}
+.docpreview-title{margin:0;font-size:24px;font-weight:600;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.docpreview-meta{display:flex;align-items:baseline;gap:0;margin:6px 0 0;color:var(--t2);font-size:14px}
+.docpreview-meta dt{color:var(--t2)}
+.docpreview-meta dt::after{content:':';margin-inline-end:.5ch}
+.docpreview-meta dd{margin-inline-end:2ch;color:var(--t)}
+.docpreview-panel{position:relative;width:100%;height:100%;padding:16px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bgc)}
+.docpreview-panel.image-previewer,.docpreview-panel.docpreview-scroll{max-height:80vh;overflow:auto;padding:8px}
+.docpreview-spin{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.docpreview-spin[hidden]{display:none!important}
+.docpreview-spinner{display:inline-block;width:22px;height:22px;border:2px solid var(--bd);border-top-color:var(--p);border-radius:50%;animation:docpreviewSpin .8s linear infinite}
+@keyframes docpreviewSpin{to{transform:rotate(360deg)}}
+.docpreview-img{display:block;width:100%;height:auto;max-width:100%;object-fit:contain}
+.docpreview-img[hidden],.docpreview-video[hidden]{display:none!important}
+.docpreview-pre{margin:0;padding:8px;white-space:pre-wrap;color:var(--t);font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace}
+.docpreview-md{position:relative;height:calc(100vh - 200px);padding:4px;overflow:scroll}
+.docpreview-media-wrap{max-height:80vh;overflow:auto;padding:8px}
+.docpreview-video{display:block;width:100%;height:auto;max-width:100%;object-fit:contain}
+.docpreview-sheets{display:flex;flex-wrap:wrap;gap:4px;padding:0 8px 8px;border-bottom:1px solid var(--bd);margin-bottom:8px}
+.docpreview-sheet-tab{padding:5px 12px;border:0;border-radius:var(--rs);background:transparent;color:var(--t2);font:inherit;font-size:13px;cursor:pointer}
+.docpreview-sheet-tab:hover{background:var(--bgch);color:var(--t)}
+.docpreview-sheet-tab.active{background:var(--t);color:var(--bg);font-weight:500}
+.docpreview-grid{max-height:76vh;overflow:auto}
+.docpreview-slides{display:flex;flex-direction:column;gap:16px;padding:8px}
+.docpreview-slide{border:1px solid var(--bd);border-radius:var(--rs);background:var(--bg);padding:14px 16px}
+.docpreview-slide-title{margin:0 0 8px;color:var(--tm);font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+.docpreview-slide-body{color:var(--t);font-size:14px;line-height:1.7}
+.docpreview-note{margin:8px 0 0;color:var(--tm);font-size:12px}
+.docpreview-toast{position:sticky;bottom:0;margin:0;padding:8px 12px;border:1px solid var(--d);border-radius:var(--rs);background:var(--bgm);color:var(--d);font-size:13px}
+.docpreview-toast[hidden]{display:none!important}
+/* Upstream `pages/document-viewer/file-error/index.tsx`: a centred red card. */
+.docpreview-error-wrap{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 240px)}
+.docpreview-error{padding:16px;border:1px solid var(--d);border-radius:var(--r);background:rgba(255,81,81,.12);box-shadow:var(--sh)}
+.docpreview-error-line{display:flex;margin-left:12px}
+.docpreview-error-text{color:#fff;font-weight:500}
+/* Upstream `csv-preview.tsx` table: head on `bg-background-header-bar`, cells
+   `px-6 py-3` / `px-6 py-4` with the `divide-y` row borders. */
+.docpreview-table{min-width:100%;border-collapse:collapse}
+.docpreview-table thead{background:var(--bgch)}
+.docpreview-table th{padding:12px 24px;text-align:left;font-size:13px;font-weight:500;color:var(--t);border-bottom:1px solid var(--bd);text-transform:none;letter-spacing:normal}
+.docpreview-table td{padding:16px 24px;white-space:nowrap;font-size:13px;color:var(--t2);border-bottom:1px solid var(--bdc)}
+.docpreview-table tr:hover td{background:var(--bgch)}
+/* Upstream `react-markdown` output inside `markdown-body`. */
+.docpreview-md h1,.docpreview-md h2,.docpreview-md h3,.docpreview-md h4,.docpreview-md h5,.docpreview-md h6{color:var(--t);margin:16px 0 8px;font-weight:600}
+.docpreview-md p{margin:8px 0;color:var(--t);font-size:14px;line-height:1.75}
+.docpreview-md a{color:var(--p)}
+.docpreview-md code{padding:1px 5px;border-radius:4px;background:var(--bgc);font-family:ui-monospace,monospace;font-size:13px}
+.docpreview-md pre.md-code{padding:12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bg);overflow:auto}
+.docpreview-md pre.md-code code{padding:0;background:transparent}
+.docpreview-md blockquote{margin:8px 0;padding:4px 12px;border-left:3px solid var(--bd);color:var(--t2)}
+.docpreview-md table.md-table{margin:12px 0}
+.docpreview-md table.md-table th,.docpreview-md table.md-table td{padding:8px 12px;border:1px solid var(--bd);font-size:13px}
+.docpreview-md hr{margin:16px 0;border:0;border-top:1px solid var(--bd)}
+.docpreview-md ul,.docpreview-md ol{margin:8px 0;padding-left:24px;color:var(--t)}
+.docpreview-md li{margin:4px 0;font-size:14px}
+.docpreview-md img{max-width:100%;height:auto}

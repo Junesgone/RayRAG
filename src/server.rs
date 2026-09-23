@@ -3760,6 +3760,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/documents/{doc_id}/preview",
             get(crate::api::document::preview_doc),
         )
+        // Upstream `document_api.py::download_document`: the byte source behind
+        // `fetchPreviewBlob(id, 'document')` (`previewHtmlFile` / `downloadDocument`).
+        .route(
+            "/api/v1/documents/{doc_id}",
+            get(crate::api::document::download_document),
+        )
+        // RayRAG-side readers for the previewers upstream builds in the browser:
+        // the xlsx grid (`@js-preview/excel`) and the per-slide deck text
+        // (`pptx-preview`). No upstream route exists, so both are documented as
+        // `replaced` in the coverage ledger.
+        .route(
+            "/api/v1/documents/{doc_id}/preview/sheets",
+            get(crate::api::document::preview_sheets),
+        )
+        .route(
+            "/api/v1/documents/{doc_id}/preview/slides",
+            get(crate::api::document::preview_slides),
+        )
         .route(
             "/api/v1/datasets/{id}/documents/{did}/download",
             get(crate::api::document::download_doc),
@@ -4001,7 +4019,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/files/{file_id}",
-            axum::routing::delete(crate::api::file_mgr::delete_file).patch(rename_file),
+            axum::routing::get(crate::api::file_mgr::get_file)
+                .delete(crate::api::file_mgr::delete_file)
+                .patch(rename_file),
         )
         .route("/api/v1/files/{file_id}/copy", post(copy_file))
         .route(
@@ -10720,6 +10740,257 @@ mod tests {
             .unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["code"], 404);
+    }
+
+    /// Upstream `document_api.py::download_document` (`GET /api/v1/documents/<id>`,
+    /// the byte source behind `fetchPreviewBlob(id, 'document')`): an attachment
+    /// under the document's own MIME type, and `This file is empty.` when the
+    /// stored blob is gone.
+    #[tokio::test]
+    async fn document_download_route_serves_attachment_bytes() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Download KB", "")
+            .unwrap();
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "download-doc".into(),
+                name: "notes.md".into(),
+                kb_id: kb.id.clone(),
+                size: 6,
+                storage_name: "download-doc.md".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        std::fs::write(env.root.join("uploads/download-doc.md"), b"# hi\n").unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/download-doc")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        let disposition = response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.starts_with("attachment"), "{disposition}");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"# hi\n");
+
+        // A record whose blob vanished answers upstream's empty-file message.
+        std::fs::remove_file(env.root.join("uploads/download-doc.md")).unwrap();
+        let empty = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/download-doc")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(empty.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["message"], "This file is empty.");
+    }
+
+    /// Upstream `file_api.py::download` (`GET /api/v1/files/<file_id>`, the branch
+    /// `fetchPreviewBlob(id, 'files')` takes): the raw bytes of a stored file.
+    #[tokio::test]
+    async fn file_blob_route_serves_raw_bytes() {
+        let env = test_env();
+        let files_dir = std::path::Path::new(&env.state.files.data_dir);
+        std::fs::create_dir_all(files_dir).unwrap();
+        std::fs::write(files_dir.join("file-blob.txt"), b"blob-bytes").unwrap();
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "file-blob".into(),
+                name: "notes.txt".into(),
+                owner_id: "test-user".into(),
+                parent_id: "root".into(),
+                size: 10,
+                content_hash: String::new(),
+                file_type: "file".into(),
+                created_at: 1,
+            })
+            .unwrap();
+
+        for uri in [
+            "/api/v1/files/file-blob",
+            "/api/v1/files/file-blob/download",
+        ] {
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(&body[..], b"blob-bytes", "{uri}");
+        }
+
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/files/nope")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(missing.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 404);
+    }
+
+    /// Minimal .pptx container: one `ppt/slides/slideN.xml` per slide holding a
+    /// single text shape, which is all `parser::ppt::slide_texts` reads.
+    fn pptx_with_slide_texts(texts: &[&str]) -> Vec<u8> {
+        use std::io::Write;
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            let options = zip::write::SimpleFileOptions::default();
+            for (index, text) in texts.iter().enumerate() {
+                writer
+                    .start_file(format!("ppt/slides/slide{}.xml", index + 1), options)
+                    .unwrap();
+                write!(
+                    writer,
+                    "<p:sld xmlns:p=\"p\" xmlns:a=\"a\"><p:sp><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"
+                )
+                .unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        buffer.into_inner()
+    }
+
+    /// The RayRAG-side readers behind the spreadsheet and slides previewers: the
+    /// workbook grid comes from `parser::excel::read_xlsx_sheets`, the deck text
+    /// from `parser::ppt::slide_texts`. Both are classified `replaced` in the
+    /// ledger — upstream builds them in the browser.
+    #[tokio::test]
+    async fn preview_reader_routes_return_workbook_grid_and_deck_text() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Readers KB", "")
+            .unwrap();
+        for (id, name, storage) in [
+            ("sheet-doc", "book.xlsx", "sheet-doc.xlsx"),
+            ("deck-doc", "deck.pptx", "deck-doc.pptx"),
+        ] {
+            env.state
+                .docs
+                .insert(crate::api::document::DocRecord {
+                    id: id.into(),
+                    name: name.into(),
+                    kb_id: kb.id.clone(),
+                    size: 0,
+                    storage_name: storage.into(),
+                    content_hash: String::new(),
+                    indexed_content_hash: String::new(),
+                    run: "DONE".into(),
+                    progress: 1.0,
+                    progress_msg: String::new(),
+                    chunk_count: 0,
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .unwrap();
+        }
+        let workbook = crate::parser::excel::write_xlsx_sheets(&[(
+            "Sheet1".to_string(),
+            vec![
+                vec![serde_json::json!("name"), serde_json::json!("size")],
+                vec![serde_json::json!("alpha"), serde_json::json!(3)],
+            ],
+        )])
+        .unwrap();
+        std::fs::write(env.root.join("uploads/sheet-doc.xlsx"), &workbook).unwrap();
+        std::fs::write(
+            env.root.join("uploads/deck-doc.pptx"),
+            pptx_with_slide_texts(&["First slide", "Second slide"]),
+        )
+        .unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/sheet-doc/preview/sheets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 0);
+        assert_eq!(payload["data"]["sheets"][0]["name"], "Sheet1");
+        assert_eq!(payload["data"]["sheets"][0]["rows"][0][0], "name");
+        assert_eq!(payload["data"]["sheets"][0]["rows"][1][1], "3");
+        assert_eq!(payload["data"]["truncated"], false);
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/deck-doc/preview/slides")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 0);
+        assert_eq!(payload["data"]["slides"][0], "First slide");
+        assert_eq!(payload["data"]["slides"][1], "Second slide");
     }
 
     async fn explicit_reparse_queues_even_when_content_hash_is_unchanged() {
