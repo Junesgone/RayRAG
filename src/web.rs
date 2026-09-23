@@ -4405,6 +4405,96 @@ function embedBoot(){if(document.getElementById('embedModal'))embedLoadTokens()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',embedBoot);else embedBoot();
 "#;
 
+/// The chunk workbench half of the document page: upstream
+/// `pages/chunk/parsed-result/**` lists a document's chunks, opens the editor
+/// and exports them, and `pages/document-viewer` reuses the same rows to drive
+/// the previewer's highlight layer.
+///
+/// The rows carry `data-chunk` / `data-edit-chunk` and one delegated listener
+/// owns both actions, so re-rendering a page of rows can never lose a binding
+/// (and no chunk text travels through markup).
+const DOCUMENT_CHUNKS_SCRIPT: &str = r#"
+var DOC_CHUNKS=[];
+window.cPage=0;window.cPageSize=20;
+function chunkPage(delta){window.cPage+=delta;renderPage()}
+function renderPage(){
+  var start=window.cPage*window.cPageSize;
+  var end=Math.min(start+window.cPageSize,DOC_CHUNKS.length);
+  var markup='';
+  DOC_CHUNKS.slice(start,end).forEach(function(chunk,index){
+    markup+="<div class='ri docview-chunk' data-chunk='"+chunk.id+"' style='cursor:pointer'>";
+    markup+="<span class='rs'>#"+(start+index+1)+" &middot; pos "+(chunk.position||0)+" &middot; "+(chunk.token_count||0)+" tokens</span>";
+    markup+="<div class='rc' style='white-space:pre-wrap'>"+String(chunk.content||'').slice(0,800)+"</div>";
+    markup+="<button class='btn btn-o btn-sm' style='margin-top:6px' data-edit-chunk='"+chunk.id+"'>Edit</button>";
+    markup+="</div>";
+  });
+  var pager='<div style=margin-top:12px>';
+  if(window.cPage>0)pager+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';
+  pager+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(DOC_CHUNKS.length/window.cPageSize))+' ('+DOC_CHUNKS.length+' chunks) </span>';
+  if(end<DOC_CHUNKS.length)pager+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';
+  pager+='</div>';
+  document.getElementById('cl').innerHTML=(markup+pager)||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>';
+}
+function loadChunks(){
+  fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/'+encodeURIComponent(docId)+'/chunks').then(function(response){return response.json()}).then(function(payload){
+    var data=payload.data||{};
+    DOC_CHUNKS=data.chunks||[];
+    window.DOC_CHUNKS=DOC_CHUNKS;
+    var doc=data.doc||{};
+    if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;
+    if(doc.run)document.getElementById('docStatus').textContent=doc.run;
+    document.getElementById('docChunks').textContent=DOC_CHUNKS.length;
+    document.getElementById('cTotal').textContent='('+DOC_CHUNKS.length+')';
+    renderPage();
+  });
+}
+var editingChunk='';
+function editChunkRow(id){
+  var chunk=DOC_CHUNKS.filter(function(item){return item.id===id})[0];
+  if(!chunk)return;
+  editingChunk=chunk.id;
+  document.getElementById('chunkContent').value=chunk.content||'';
+  document.getElementById('chunkModal').classList.add('show');
+}
+document.addEventListener('click',function(event){
+  var node=event.target;
+  while(node&&node!==document.body){
+    if(node.dataset&&node.dataset.editChunk){editChunkRow(node.dataset.editChunk);return}
+    if(node.classList&&node.classList.contains('docview-chunk')){if(node.dataset.chunk)docviewSelect(node.dataset.chunk);return}
+    node=node.parentNode;
+  }
+});
+function saveChunk(){
+  var content=document.getElementById('chunkContent').value;
+  fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/'+encodeURIComponent(docId)+'/chunks/'+encodeURIComponent(editingChunk),{
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({content:content}),
+  }).then(function(response){return response.json()}).then(function(payload){
+    document.getElementById('chunkModal').classList.remove('show');
+    if(payload.code===0){location.reload()}else{alert('Error: '+(payload.message||'unknown'))}
+  });
+}
+function reparse(){
+  if(!confirm('Reparse this document?'))return;
+  fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/'+encodeURIComponent(docId)+'/reparse',{method:'POST'}).then(function(){location.reload()});
+}
+function delDoc(){
+  if(!confirm('Delete this document?'))return;
+  fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/'+encodeURIComponent(docId),{method:'DELETE'}).then(function(){location.href='/dataset/'+encodeURIComponent(kbId)});
+}
+function exportChunks(){
+  fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/'+encodeURIComponent(docId)+'/chunks').then(function(response){return response.json()}).then(function(payload){
+    var chunks=(payload.data||{}).chunks||[];
+    var anchor=document.createElement('a');
+    anchor.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(chunks,null,2));
+    anchor.download='doc_'+docId+'_chunks.json';
+    anchor.click();
+  });
+}
+loadChunks();
+"#;
+
 /// Upstream `components/document-preview/pdf-preview.tsx` +
 /// `components/pdf-drawer/index.tsx` + `pages/document-viewer/index.tsx`: the
 /// document viewer renders the stored PDF with pdf.js and overlays the selected
@@ -6065,7 +6155,13 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     b.push_str(&kb_id);
     b.push_str("';var docId='");
     b.push_str(&doc_id);
-    b.push_str("';function chunkPage(d){window.cPage+=d;loadChunks()};function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';window.cPage=0;window.cPageSize=20;var pageData=chunks;window.DOC_CHUNKS=pageData;function renderPage(){var h='';var start=window.cPage*window.cPageSize;var end=Math.min(start+window.cPageSize,pageData.length);pageData.slice(start,end).forEach(function(c,i){h+=\"<div class='ri docview-chunk' data-chunk='\"+c.id+\"' style='cursor:pointer'><span class='rs'>#\"+(start+i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div><button class='btn btn-o btn-sm' style='margin-top:6px' data-edit-chunk='\"+c.id+\"'>Edit</button></div>\"});var pn='<div style=margin-top:12px>';if(window.cPage>0)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';pn+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(pageData.length/window.cPageSize))+' ('+pageData.length+' chunks) </span>';if(end<pageData.length)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';pn+='</div>';h+=pn;document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};var editingChunk='';function editChunk(cid,content){editingChunk=cid;document.getElementById('chunkContent').value=content;document.getElementById('chunkModal').classList.add('show')};function saveChunk(){var content=document.getElementById('chunkContent').value;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks/'+editingChunk,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(r){return r.json()}).then(function(d){document.getElementById('chunkModal').classList.remove('show');if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};document.addEventListener('click',function(event){var node=event.target;while(node&&node!==document.body){if(node.classList&&node.classList.contains('docview-chunk')){if(node.dataset.chunk)docviewSelect(node.dataset.chunk);return}if(node.dataset&&node.dataset.editChunk){editChunkRow(node.dataset.editChunk);return}node=node.parentNode}});function editChunkRow(id){var chunk=(window.DOC_CHUNKS||[]).filter(function(c){return c.id===id})[0];if(chunk)editChunk(chunk.id,(chunk.content||'').substring(0,2000))}function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};function exportChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(function(d){var data=d.data||{};var chunks=data.chunks||[];var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(chunks,null,2));a.download='doc_'+docId+'_chunks.json';a.click()})};loadChunks()</script>");
+    b.push_str("</script><script>var kbId=");
+    b.push_str(&json_script_value(&serde_json::json!(kb_id)));
+    b.push_str(";var docId=");
+    b.push_str(&json_script_value(&serde_json::json!(doc_id)));
+    b.push_str(";");
+    b.push_str(DOCUMENT_CHUNKS_SCRIPT);
+    b.push_str("</script>");
     b
 }
 
@@ -14497,9 +14593,10 @@ connection: close
             "box.style.height=Math.max(2,(position[4]-position[3])*scale)+'px'",
             "function docviewSelect(chunkId)", // chunk rows drive the overlay
             // Rows are re-rendered on every page change, so one delegated
-            // listener on the document drives the overlay.
-            "document.addEventListener('click',function(event){var node=event.target;",
-            "function editChunkRow(id)",
+            // listener on the document drives the overlay and the editor.
+            "document.addEventListener('click',function(event){",
+            "if(node.dataset&&node.dataset.editChunk){editChunkRow(node.dataset.editChunk);return}",
+            "function editChunkRow(id){",
             // Upstream `HighlightPopup`: hovering a box shows the chunk text.
             "box.className='docview-highlight'",
             "popup.className='docview-popup'",
