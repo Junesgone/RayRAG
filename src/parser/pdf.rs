@@ -11,6 +11,7 @@
 //! [`Document::metadata`] under the same key.
 
 use crate::ocr::OcrClient;
+use crate::parser::pdf_text;
 use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
 use serde::{Deserialize, Serialize};
@@ -95,8 +96,17 @@ impl PdfParser {
     }
 
     /// Extract text from PDF bytes using lopdf.
+    ///
+    /// The positioned pass (`pdf_text`) wins whenever it finds text, because it
+    /// decodes subset fonts through `/ToUnicode` and keeps each line's box, which
+    /// the chunker projects into `position_int`. The raw operator walk stays as
+    /// the fallback for streams the interpreter cannot follow.
     async fn extract_text(&self, data: &[u8]) -> Result<String> {
         let doc = lopdf::Document::load_mem(data)?;
+        let tagged = pdf_text::tagged_content(&pdf_text::extract_positioned_lines(&doc));
+        if !tagged.trim().is_empty() {
+            return Ok(tagged);
+        }
         let mut text = String::new();
 
         // Try OCR first if client is available
@@ -130,16 +140,60 @@ impl PdfParser {
 
         Ok(text)
     }
+
+    /// Drive [`Self::extract_text`] from the synchronous `Parse` interface.
+    ///
+    /// Parsing runs on the server's own worker threads, so a nested
+    /// `Runtime::block_on` is a hard panic ("Cannot start a runtime from within a
+    /// runtime"): without an OCR client there is nothing to await, and with one
+    /// the current runtime is borrowed through `block_in_place` instead.
+    fn extract_text_blocking(&self, data: &[u8]) -> Result<String> {
+        if self.ocr.is_none() {
+            return futures_lite_block_on(self.extract_text(data));
+        }
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(self.extract_text(data))),
+            Err(_) => tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(self.extract_text(data)),
+        }
+    }
+}
+
+/// Run a future that never actually awaits anything external to completion.
+///
+/// `extract_text` is async only because of the optional OCR health probe; on the
+/// no-OCR path every awaited call resolves immediately, so a parked, unpolled
+/// future still yields its value. The helper keeps that path free of a nested
+/// runtime entirely.
+fn futures_lite_block_on<F: std::future::Future>(mut future: F) -> F::Output {
+    use std::task::{Context, Poll, Waker};
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => return value,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    }
 }
 
 impl Parse for PdfParser {
     fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
-        // Create a blocking runtime for async OCR calls
-        let content = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(self.extract_text(data))?;
+        let content = self.extract_text_blocking(data)?;
         let mut doc = new_document(name, content, "application/pdf", data.len());
+        // Position tags in the content flip the chunker into position-aware mode
+        // (`_rayrag_ragflow_position_tags`): `naive_merge` then strips the tags
+        // from the visible text and writes `position_int` / `page_num_int` /
+        // `top_int` onto every chunk, exactly like upstream's DeepDOC parsers.
+        if doc.content.contains("@@") && doc.content.contains("##") {
+            doc.metadata.insert(
+                crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
+                "true".to_string(),
+            );
+        }
         // RAGFlow transient `__outline__`: attach the PDF outline tree to the
         // document metadata (mirrors naive.py attaching it to chunks[0]).
         let outlines = Self::extract_outlines(data)?;
@@ -211,6 +265,94 @@ mod tests {
         let data = minimal_pdf();
         let doc = PdfParser::new().parse("no_outline.pdf", &data).unwrap();
         assert!(!doc.metadata.contains_key("__outline__"));
+    }
+
+    /// A one-page PDF with two 12 pt lines at known baselines.
+    fn positioned_pdf() -> Vec<u8> {
+        use lopdf::{Document as PdfDocument, Object, Stream, dictionary};
+        let mut doc = PdfDocument::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "FirstChar" => 32,
+            "LastChar" => 126,
+            "Widths" => (32..=126)
+                .map(|code| Object::Real(if code == 32 { 250.0 } else { 500.0 }))
+                .collect::<Vec<Object>>(),
+            "Encoding" => "WinAnsiEncoding",
+        });
+        let content_id = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 72 700 Td (positioned line one) Tj 0 -200 Td (positioned line two) Tj ET"
+                .to_vec(),
+        ));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content_id,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font_id } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save generated pdf");
+        bytes
+    }
+
+    #[test]
+    fn parse_emits_position_tags_and_marks_the_document_position_aware() {
+        let data = positioned_pdf();
+        let doc = PdfParser::new().parse("positioned.pdf", &data).unwrap();
+        assert!(
+            doc.metadata
+                .contains_key(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA),
+            "positioned content must flip the chunker into position-aware mode"
+        );
+        assert!(
+            doc.content.contains("positioned line one@@1\t"),
+            "{}",
+            doc.content
+        );
+
+        // The chunker keeps the boxes as `position_int` and drops the tags from
+        // the visible text, exactly like `naive_merge`.
+        use crate::chunk::{ChunkStrategy, NaiveChunker};
+        let chunks = NaiveChunker::new()
+            .chunk(&doc, &crate::ParserConfig::default())
+            .unwrap();
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert_eq!(
+            chunks[0].content,
+            "positioned line one\npositioned line two"
+        );
+        let positions: Vec<Vec<i32>> = serde_json::from_str(
+            chunks[0]
+                .metadata
+                .get("position_int")
+                .expect("position_int metadata"),
+        )
+        .expect("positions parse");
+        assert_eq!(positions.len(), 2, "{positions:?}");
+        for position in &positions {
+            assert_eq!(position.len(), 5, "{positions:?}");
+            assert_eq!(position[0], 1, "page numbers are 1-based: {positions:?}");
+        }
+        // First paragraph: x0 72, top 792 - (700 + 9) = 83.
+        assert_eq!(positions[0][1], 72);
+        assert_eq!(positions[0][3], 83);
+        // Second paragraph moved down 200 pt by `0 -200 Td`.
+        assert_eq!(positions[1][3], 283);
     }
 
     // Real-PDF outline extraction (ignored by default). Requires

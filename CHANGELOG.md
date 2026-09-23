@@ -2,6 +2,46 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.43] — 2026-09-23（对标批次 v0.3.8u）
+
+### Added
+
+- **PDF 文本坐标与切片 positions**（上游 `deepdoc/parser/pdf_parser.py` 的 box/`_line_tag` 与
+  `rag/flow/parser/pdf_chunk_metadata.py::extract_pdf_positions`）：PDF 解析不再只吐文本，而是像上游一样
+  为每个文本块打上定位标签 `@@page\tx0\tx1\ttop\tbottom##`，切片因此带上真实坐标——这是网页预览器在
+  渲染页面上叠加高亮的几何数据（上游 `buildChunkHighlights` + `pdf-preview.tsx`），此前挂账的
+  「文档预览只有切片文本」由此拿到半边地基。
+  - **新增 `src/parser/pdf_text.rs`**（12 条单测）：自写内容流解释器，逐页跟踪图形状态与文本状态
+    （`q/Q`、`cm`、`BT/ET`、`Tf/Tc/Tw/Tz/TL/Ts/Tr`、`Td/TD/Tm/T*`、`Tj/TJ/'/"`），把每次 show-text 送到
+    设备空间得到行盒；行内按基线聚类、行间按阅读顺序（自上而下、自左向右）排序，坐标换算成上游那套
+    「点为单位、top 从页顶往下量」的页面局部坐标；`CropBox`/`MediaBox` 沿页树继承并作为投影基准。
+  - **字体度量**：简单字体读 `/Widths` + `/FirstChar`，CID 字体读 `/W` + `/DW`，缺失宽度按 `/MissingWidth`
+    回退，升降部取 `/Ascent` / `/Descent`；文本解码优先 `/ToUnicode`（自写 CMap 解析，支持 `bfchar`、
+    `bfrange` 及其数组形式），否则按 CID 双字节 UTF-16 或 WinAnsi 解码——子集 Identity-H 字体不再是一串
+    字形编号。
+  - **段落合并沿用已有移植**：行盒交给 `src/parser/pdfbox.rs` 里既有的 DeepDOC 算法
+    （`concat_downward` 排序 → `naive_vertical_merge` 合段 → `line_tag` 打标），
+    `mean_height`/`mean_width`/`page_cum_height`/页高（zoom=3）按上游口径重算，英文判定改为确定性扫描
+    （上游是随机采样）。文档因此带上位置标签元数据，切片器的位置感知分支（`_rayrag_ragflow_position_tags`）
+    自动把标签投影成 `position_int` / `page_num_int` / `top_int`，可见文本里不留标签。
+
+### Fixed
+
+- **服务端解析 PDF 会 panic 的嵌套运行时**：`PdfParser::parse` 一直在同步接口里新建 tokio 运行时并
+  `block_on`，在服务器自身的 worker 线程上直接 `Cannot start a runtime from within a runtime`，上传 PDF
+  解析必挂（文档停在 `RUNNING 0.05 Parsing document`）。现在无 OCR 客户端时走零运行时的同步驱动，配置了 OCR
+  时借用当前运行时的 `block_in_place`，只有脱离运行时（CLI/测试）才新建临时运行时。该缺陷是本轮新增的
+  端到端探针抓到的。
+
+### Notes
+
+- 新增探针 `scripts/ui-traversal/pdf-positions-e2e.py`：现场生成坐标已知的两段式 PDF → 建库 → 上传 →
+  排队解析 → 轮询 → 拉切片接口，断言每个切片都有 5 元组坐标、页码 1 基、盒子良构、正文无标签残留、
+  `page_num_int`/`top_int` 与 `positions` 一致，并且首个盒子的 x0/top 正是生成时写入的 72.0 / 83.0。
+  部署镜像上 **22 项检查全 ok**。
+- 台账记录的有意近似：RayRAG 没有上游的版面模型（ONNX layout recognizer），因此盒子是**文本行盒**而非
+  模型判定的版面框，`layout_type` 恒为空；行内/行间合并、坐标口径、标签格式、`positions` 归一化均按上游。
+
 ## [0.4.42] — 2026-09-23（对标批次 v0.3.8t）
 
 ### Added
