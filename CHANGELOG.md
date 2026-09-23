@@ -2,6 +2,56 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.46] — 2026-09-23（对标批次 v0.3.8x）
+
+> 本版是一次**内存安全**修复：RayRAG 曾把整台机器的内存吃光导致主机卡死，这一版从启动路径、
+> 集合回收、索引同步和文件响应四个方向把内存占用变回有界、按需。
+
+### Fixed
+
+- **Markdown 解析器的死循环（主机卡死的直接原因）**（`src/parser/markdown.rs`）：逐行遍历用
+  `sections.last().map(|s| s.end_line + 1)` 取下一个位置，而 `include_meta == false` 时入栈的元素
+  被改写成 `end_line = 0` —— 于是 `i` 永远回到 1，**任何多行的 Markdown**（列表 / 围栏代码 / 表格）
+  都会无限把段落压进结果里，内存以每秒上百 MB 增长，直到把整台机器吃光。上游用的是
+  `element["end_line"] + 1`（`deepdoc/parser/markdown_parser.py:385`），现按上游改为用刚抽取出的
+  元素自身位置推进；`push_section` 也不再改写行号。复现与验证：同一个 34 字节表格文件，
+  `.txt` 正常、`.md` 在 3 GB 上限下 OOM；修复后 4 个 Markdown 样本（列表/代码/表格/混合）在 2 GB
+  上限下毫秒级完成。
+- **启动不再重写全部向量集合**（`src/store/mod.rs`）：旧实现每次启动都把整个索引克隆两份
+  （含 embedding）再做 `delete_all` + 全量 `upsert` + `flush`，把 **每一个** 集合重写一遍 ——
+  部署实例上就是每次启动重写 1.3 GB 原生集合，单次启动在这段里跑了数分钟、内存涨到数 GB。
+  现在启动只做一件事：把索引不再引用的集合目录**直接从磁盘回收**（不打开、不加载），
+  漂移检查与修复统统移出启动路径。
+- **修复改为后台、按需、逐个进行**（`server::start_mirror_repair`）：启动 30 秒后开始，每 5 分钟
+  一轮，**每轮只修一个 owner**，按 kb_id 排序，修完即释放；修不好的 owner 只告警一次并在本进程内
+  不再重试（修复循环永远不会变成新的失控点）。
+- **清空集合改为分页删除**（`ZvecCollection::clear`）：`delete_by_filter("position >= 0")` 会让
+  原生层先把所有主键收集起来 —— 部署实例上单个 523 MB 集合的这一次调用就冲破了 6 GB 上限并被
+  容器内 OOM 杀掉。现在用「只取主键的迭代器 + 每页 512 个 id 批量删除」，峰值内存与页大小成正比。
+- **原生写缓冲加上限**（`RAYRAG_ZVEC_MAX_BUFFER_BYTES`，默认 64 MiB）：进程无法解释的内存不再无界增长。
+- **索引同步不再克隆整库**（`sync_snapshot`）：分组改为借用（`owners_by_kb` 只存切片引用），
+  一次提交只为「真正变化的 chunk」复制数据，而不是把 previous/current 两侧的全部 chunk
+  各克隆一遍。文档越多、内存放大越明显的那个问题由此消失。
+- **文件响应改为流式**（`api::common::stream_stored_file`）：预览/下载不再把整个文件读进内存
+  （一个 2 GB 视频的预览曾经就是 2 GB 常驻内存），改为 64 KiB 分块按需读取；空文件仍回上游的
+  `This file is empty.`。
+
+### Added
+
+- **容器内存上限**（`RAYRAG_MEMORY_LIMIT`，compose 默认 `6g`）：进程失控时由内核在容器内结束它，
+  而不是把主机拖死。稳态占用只有几十 MB，因此这个上限对正常使用没有影响。
+
+### Notes
+
+- 新增回归：`online_native_mirror_reclaims_directories_the_index_dropped`（回收不再打开的目录、
+  已打开的集合不动其存储）、`online_native_mirror_loads_chunks_only_for_drifted_collections`
+  （与索引一致的集合一个 chunk 都不加载，只有漂移的 owner 才被读取与重写）、
+  `native_collection_upserts_queries_and_reopens` 增加分页清空断言（38 行、页大小 5 全部删净）、
+  `api::common::tests::stream_stored_file_delivers_large_files_and_reports_empty_ones`
+  （跨多个分块的大文件字节一致 + 空文件/缺失文件的上游报文）。
+- 实测（部署实例，`docker compose`）：修复前单次启动 **5.5 分钟 / 峰值 5.44 GB**；现在
+  **约 9 秒 / 19 MiB**，后台修复轮次期间内存保持平稳（隔离复现中 17.9 MiB → 51 MiB 并回落）。
+
 ## [0.4.45] — 2026-09-23（对标批次 v0.3.8w）
 
 ### Added

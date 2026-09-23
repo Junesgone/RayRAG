@@ -83,11 +83,7 @@ pub fn atan_normalize(score: f32) -> f32 {
 /// weighting is active (`vector_weight > 0`). Term-only retrieval
 /// (`vector_weight <= 0`) keeps every candidate — a similarity threshold is
 /// meaningless for term-only scores.
-pub fn similarity_threshold_mask(
-    scores: &[f32],
-    threshold: f32,
-    vector_weight: f32,
-) -> Vec<bool> {
+pub fn similarity_threshold_mask(scores: &[f32], threshold: f32, vector_weight: f32) -> Vec<bool> {
     let post_threshold = if vector_weight <= 0.0 { 0.0 } else { threshold };
     scores
         .iter()
@@ -255,6 +251,43 @@ impl SearchEngine {
     /// Get a copy of all indexed chunks.
     pub fn to_vec(&self) -> Vec<IndexedChunk> {
         self.chunks.clone()
+    }
+
+    /// How many chunks each knowledge base owns, without copying any chunk.
+    ///
+    /// The native mirror uses this to decide whether a collection already agrees
+    /// with the index; comparing counts costs one pass over the chunk metadata
+    /// instead of cloning every embedding.
+    pub fn chunk_counts_by_kb(&self) -> HashMap<String, usize> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for chunk in self
+            .chunks
+            .iter()
+            .filter(|chunk| !chunk.embedding.is_empty())
+        {
+            if let Some(kb_id) = chunk
+                .metadata
+                .get("kb_id")
+                .map(String::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                *counts.entry(kb_id.to_string()).or_default() += 1;
+            }
+        }
+        counts
+    }
+
+    /// Copy one knowledge base's chunks, in index order.
+    ///
+    /// Loading a single owner at a time keeps reconciliation memory bounded by the
+    /// owner being repaired instead of by the whole corpus.
+    pub fn chunks_for_kb(&self, kb_id: &str) -> Vec<IndexedChunk> {
+        self.chunks
+            .iter()
+            .filter(|chunk| !chunk.embedding.is_empty())
+            .filter(|chunk| chunk.metadata.get("kb_id").map(String::as_str) == Some(kb_id))
+            .cloned()
+            .collect()
     }
 
     /// Adjust one chunk's persisted pagerank feature within the supported range.
@@ -654,10 +687,8 @@ fn field_bm25_scores<'a>(
     // entities/locations/numbers dominate, stop words drop out. Tokens not
     // in the map keep weight 1.0, so behavior degrades gracefully.
     let tw = crate::nlp::TermWeightComputer::new();
-    let query_weights: Vec<(String, f64)> = tw
-        .weights(&[query.to_string()], true)
-        .into_iter()
-        .collect();
+    let query_weights: Vec<(String, f64)> =
+        tw.weights(&[query.to_string()], true).into_iter().collect();
     let weight_refs: Vec<(&str, f64)> = query_weights
         .iter()
         .map(|(t, w)| (t.as_str(), *w))

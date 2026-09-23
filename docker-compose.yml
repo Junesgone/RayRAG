@@ -43,6 +43,13 @@ services:
         ZVEC_DOWNLOAD_TIMEOUT: ${ZVEC_DOWNLOAD_TIMEOUT:-900}
     image: ${RAYRAG_IMAGE:-rayrag:local}
     restart: unless-stopped
+    # The service is a memory *client* of the host: indexing a large collection can
+    # spike, and an unbounded spike must never take the whole machine down. The cap
+    # turns a runaway into a container-local OOM kill (logged by Docker) instead of
+    # a host freeze; steady-state usage is a few hundred MB, so the default is
+    # generous. Raise RAYRAG_MEMORY_LIMIT for very large corpora.
+    mem_limit: ${RAYRAG_MEMORY_LIMIT:-6g}
+    memswap_limit: ${RAYRAG_MEMORY_LIMIT:-6g}
     depends_on:
       postgres:
         condition: service_healthy

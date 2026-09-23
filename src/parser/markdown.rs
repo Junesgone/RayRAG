@@ -253,12 +253,18 @@ impl<'a> MarkdownElementExtractor<'a> {
 
             if header_re.is_match(line) {
                 let el = extract_header(&self.lines, i);
+                // Advance from the element that was just extracted. Reading the
+                // position back out of `sections` broke as soon as an element was
+                // dropped (empty content) or its meta was cleared: `i` fell back to
+                // the previous element's end and a multi-line markdown document
+                // looped forever, appending sections until the process died. Upstream
+                // uses `element["end_line"] + 1` (markdown_parser.py:385).
+                i = el.end_line + 1;
                 push_section(&mut sections, el, include_meta);
-                i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else if line.trim_start().starts_with("```") {
                 let el = extract_code_block(&self.lines, i);
+                i = el.end_line + 1;
                 push_section(&mut sections, el, include_meta);
-                i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else if bullet_re.is_match(line) || ordered_re.is_match(line) {
                 let el = extract_list_block(
                     &self.lines,
@@ -269,16 +275,16 @@ impl<'a> MarkdownElementExtractor<'a> {
                     &indent_ordered_re,
                     &indent_text_re,
                 );
+                i = el.end_line + 1;
                 push_section(&mut sections, el, include_meta);
-                i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else if line.trim_start().starts_with('>') {
                 let el = extract_blockquote(&self.lines, i);
+                i = el.end_line + 1;
                 push_section(&mut sections, el, include_meta);
-                i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else if !line.trim().is_empty() {
                 let el = extract_text_block(&self.lines, i, &header_re, &bullet_re, &ordered_re);
+                i = el.end_line + 1;
                 push_section(&mut sections, el, include_meta);
-                i = sections.last().map(|s| s.end_line + 1).unwrap_or(i + 1);
             } else {
                 i += 1;
             }
@@ -288,13 +294,25 @@ impl<'a> MarkdownElementExtractor<'a> {
     }
 }
 
+/// Append one extracted element unless it is blank.
+///
+/// `include_meta` only decides whether the line numbers are kept; it must never
+/// change where the extractor resumes, so the element is pushed with its own
+/// positions either way (upstream filters blank sections after the walk,
+/// markdown_parser.py:407-411).
 fn push_section(sections: &mut Vec<MarkdownElement>, el: MarkdownElement, include_meta: bool) {
+    if el.content.trim().is_empty() {
+        return;
+    }
     if include_meta {
-        if !el.content.trim().is_empty() {
-            sections.push(el);
-        }
-    } else if !el.content.trim().is_empty() {
-        sections.push(MarkdownElement::new(el.content, 0, 0, el.element_type));
+        sections.push(el);
+    } else {
+        sections.push(MarkdownElement::new(
+            el.content,
+            el.start_line,
+            el.end_line,
+            el.element_type,
+        ));
     }
 }
 
@@ -486,6 +504,57 @@ mod tests {
         assert!(out.contains("\\[start\\]"));
         assert!(out.contains("\\[end\\]"));
         assert_eq!(parts.len(), 3);
+    }
+
+    /// The line walk must advance from the element it just extracted. Reading the
+    /// position back out of the output vector reset `i` to 1 whenever an element's
+    /// meta was cleared (`include_meta == false`), so **any multi-line markdown
+    /// document looped forever**, appending sections until the process ran the
+    /// machine out of memory: a 168-byte list/table/code file froze the host.
+    #[test]
+    fn extract_elements_terminates_on_multiline_markdown() {
+        for (label, markdown) in [
+            ("list", "- item one\n- item two\n"),
+            ("code", "```rust\nfn main() {}\n```\n"),
+            ("table", "| a | b |\n| --- | --- |\n| 1 | 2 |\n"),
+            (
+                "mixed",
+                "# Heading\n\nSome **bold** text.\n\n- one\n- two\n\n```rust\nfn main() {}\n```\n\n> quoted\n",
+            ),
+        ] {
+            for include_meta in [false, true] {
+                let elements =
+                    MarkdownElementExtractor::new(markdown).extract_elements(None, include_meta);
+                assert!(
+                    !elements.is_empty(),
+                    "{label}: a non-empty document must yield elements"
+                );
+                // Every element must sit inside the document and the walk must have
+                // consumed it: a regression would have produced unbounded output.
+                let last_end = elements
+                    .iter()
+                    .map(|element| element.end_line)
+                    .max()
+                    .unwrap_or(0);
+                // The extractor splits on '\n', so a trailing newline is a line of
+                // its own; positions must stay inside that view of the document.
+                assert!(
+                    last_end < markdown.split('\n').count(),
+                    "{label}: element positions must stay inside the document"
+                );
+                let joined = elements
+                    .iter()
+                    .map(|element| element.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    joined.contains("item one")
+                        || joined.contains("fn main")
+                        || joined.contains("| a |"),
+                    "{label}: the block content must survive extraction"
+                );
+            }
+        }
     }
 
     #[test]

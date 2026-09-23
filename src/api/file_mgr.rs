@@ -208,18 +208,12 @@ async fn serve_file_bytes(state: &AppState, auth: &AuthContext, file_id: &str) -
     } else {
         format!("{file_id}.{extension}")
     });
-    match tokio::fs::read(&physical).await {
-        Ok(bytes) if !bytes.is_empty() => {
-            // `mime_from_extension` takes a *name*: passing the bare extension
-            // answered `application/octet-stream` for every file, which broke
-            // images and video in the previewer.
-            let mime = crate::parser::mime_from_extension(&record.name)
-                .unwrap_or("application/octet-stream");
-            ([(axum::http::header::CONTENT_TYPE, mime)], bytes).into_response()
-        }
-        _ => Json(serde_json::json!({ "code": 404, "message": "This file is empty." }))
-            .into_response(),
-    }
+    // `mime_from_extension` takes a *name*: passing the bare extension answered
+    // `application/octet-stream` for every file, which broke images and video in
+    // the previewer.
+    let mime =
+        crate::parser::mime_from_extension(&record.name).unwrap_or("application/octet-stream");
+    crate::api::common::stream_stored_file(&physical, mime, "inline", "This file is empty.").await
 }
 
 /// GET /api/v1/files/{file_id} — upstream `file_api.py::download`'s blob route.

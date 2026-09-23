@@ -2457,6 +2457,88 @@ fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::
     }
 }
 
+/// How often the background mirror repair wakes up, and how long it waits before
+/// its first pass (startup stays quiet; the first repair happens after the server
+/// is already serving).
+const MIRROR_REPAIR_INTERVAL_MS: u64 = 300_000;
+const MIRROR_REPAIR_INITIAL_DELAY_MS: u64 = 30_000;
+
+/// Repair native zvec collections that drifted from the JSON index, **one owner per
+/// pass**, in a deterministic order.
+///
+/// A repair rewrites a single collection (delete + upsert), so peak memory is
+/// bounded by that one owner instead of the whole corpus; running it off the
+/// startup path means a large repair can never delay or spike a boot. An owner that
+/// still disagrees after a repair is reported once and then left alone for the rest
+/// of the process — the repair loop must never become the runaway it replaces.
+fn start_mirror_repair(state: Arc<AppState>) {
+    if !state.vector_mirror.is_enabled() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut attempted: std::collections::HashSet<String> = std::collections::HashSet::new();
+        tokio::time::sleep(std::time::Duration::from_millis(
+            MIRROR_REPAIR_INITIAL_DELAY_MS,
+        ))
+        .await;
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_millis(MIRROR_REPAIR_INTERVAL_MS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let counts = state.engine.read().unwrap().chunk_counts_by_kb();
+            let drifted = match state.vector_mirror.drifted_owners(&counts) {
+                Ok(drifted) => drifted,
+                Err(error) => {
+                    tracing::warn!(%error, "zvec repair pass could not inspect the mirror");
+                    continue;
+                }
+            };
+            let Some(kb_id) = drifted.into_iter().find(|kb_id| !attempted.contains(kb_id)) else {
+                continue;
+            };
+            // Exactly one owner per pass: its chunks are loaded, written and
+            // released before the loop looks at anything else.
+            let chunks = state.engine.read().unwrap().chunks_for_kb(&kb_id);
+            let outcome = state.vector_mirror.repair_owner(&kb_id, &chunks);
+            drop(chunks);
+            match outcome {
+                Ok(false) => {
+                    attempted.insert(kb_id.clone());
+                    tracing::warn!(
+                        kb_id = %kb_id,
+                        "zvec collection could not be repaired; leaving it untouched"
+                    );
+                }
+                Ok(true) => {
+                    let still_drifted = state
+                        .vector_mirror
+                        .drifted_owners(&counts)
+                        .map(|owners| owners.contains(&kb_id))
+                        .unwrap_or(false);
+                    if still_drifted {
+                        attempted.insert(kb_id.clone());
+                        tracing::warn!(
+                            kb_id = %kb_id,
+                            "zvec collection still differs from the index after a repair; it will not be retried in this process"
+                        );
+                    } else {
+                        tracing::info!(kb_id = %kb_id, "Repaired one zvec collection");
+                    }
+                }
+                Err(error) => {
+                    attempted.insert(kb_id.clone());
+                    tracing::warn!(
+                        kb_id = %kb_id,
+                        %error,
+                        "zvec collection repair failed; it will not be retried in this process"
+                    );
+                }
+            }
+        }
+    });
+}
+
 fn start_document_task_dispatcher(state: Arc<AppState>) {
     let task_slots = Arc::new(tokio::sync::Semaphore::new(max_concurrent_document_tasks()));
     dispatch_pending_document_tasks(state.clone(), task_slots.clone());
@@ -4782,8 +4864,21 @@ pub async fn run(
     };
     let vector_mirror = Arc::new(crate::store::OnlineVectorMirror::from_env()?);
     if vector_mirror.is_enabled() {
-        let current = engine.read().unwrap().to_vec();
-        vector_mirror.reconcile_snapshot(&current)?;
+        // Startup only reclaims what the index no longer carries: it opens nothing
+        // and loads nothing, so boot stays flat no matter how large the corpus is.
+        // Repairing a collection that drifted is a *rewrite*, and rewrites are
+        // deferred to `start_mirror_repair` so they can never spike a boot.
+        let counts = engine.read().unwrap().chunk_counts_by_kb();
+        match vector_mirror.reclaim_unindexed_collections(&counts) {
+            Ok(0) => {}
+            Ok(reclaimed) => tracing::info!(reclaimed, "Reclaimed leftover zvec collections"),
+            Err(error) => {
+                tracing::warn!(%error, "Failed to reclaim leftover zvec collections");
+            }
+        }
+        // Even counting rows opens each collection, so the drift inspection is
+        // deferred to the repair pass as well: startup touches no native storage
+        // beyond removing what the index no longer carries.
     }
     let embedder: Option<SharedEmbedder> = match (
         std::env::var("EMBED_API_BASE").ok(),
@@ -4907,6 +5002,7 @@ pub async fn run(
     });
 
     start_document_task_dispatcher(state.clone());
+    start_mirror_repair(state.clone());
     // Start the async task executor (RAGFlow task_executor port): it drains the
     // same TaskQueue entries submitted by queue_document_processing. The
     // TaskQueue lease makes execution exclusive with the legacy dispatcher, so

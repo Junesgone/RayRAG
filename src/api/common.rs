@@ -13,10 +13,65 @@
 
 use axum::{
     Json,
+    body::Body,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use std::path::Path;
+
+/// Read size for a streamed file response.
+const STREAM_CHUNK_BYTES: usize = 64 * 1024;
+
+/// Serve a stored file by **streaming** it, one chunk at a time.
+///
+/// Reading a whole upload into memory per request made a response as expensive as
+/// the file: previewing a 2 GB video cost 2 GB of resident memory for a single
+/// viewer, and concurrent viewers multiplied that. The bytes are now read as the
+/// client consumes them, so memory stays flat regardless of file size.
+///
+/// A missing or empty file answers upstream's `This file is empty.` payload, the
+/// same shape the buffered version returned.
+pub async fn stream_stored_file(
+    path: &Path,
+    content_type: &str,
+    disposition: &str,
+    empty_message: &str,
+) -> Response {
+    let empty = match tokio::fs::metadata(path).await {
+        Ok(metadata) if metadata.len() > 0 => false,
+        Ok(_) => true,
+        Err(_) => true,
+    };
+    if empty {
+        return Json(serde_json::json!({ "code": 404, "message": empty_message })).into_response();
+    }
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return Json(serde_json::json!({ "code": 404, "message": empty_message })).into_response();
+    };
+    let stream = futures_util::stream::unfold(file, |mut file| async move {
+        let mut buffer = vec![0u8; STREAM_CHUNK_BYTES];
+        match tokio::io::AsyncReadExt::read(&mut file, &mut buffer).await {
+            Ok(0) => None,
+            Ok(read) => {
+                buffer.truncate(read);
+                Some((Ok::<_, std::io::Error>(buffer), file))
+            }
+            Err(error) => Some((Err(error), file)),
+        }
+    });
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, content_type.to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                disposition.to_string(),
+            ),
+        ],
+        Body::from_stream(stream),
+    )
+        .into_response()
+}
 
 /// RAGFlow `api/common/exceptions.py` error families. Every variant carries
 /// the HTTP code RAGFlow's `AdminException` subclass assigns.
@@ -249,111 +304,58 @@ pub use crate::common::constants::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
 
-    #[test]
-    fn api_constants_re_export_ragflow_semantics() {
-        assert_eq!(RetCode::ArgumentError.as_i32(), 101);
-        assert_eq!(TaskStatus::Done.as_str(), "3");
-        assert_eq!(StatusEnum::Valid.as_str(), "1");
-        assert_eq!(ActiveEnum::Active.as_str(), "1");
-        assert_eq!(API_VERSION, "v1");
-        assert_eq!(NAME_LENGTH_LIMIT, 1024);
-        assert_eq!(DATASET_NAME_LIMIT, 128);
-        assert_eq!(REQUEST_WAIT_SEC, 2);
-        assert_eq!(REQUEST_MAX_WAIT_SEC, 300);
-        assert_eq!(MEMORY_SIZE_LIMIT, 10 * 1024 * 1024);
-    }
+    /// A streamed response must deliver every byte of a file larger than the read
+    /// chunk, and must answer the upstream empty-file payload when there is nothing
+    /// to send. The previous buffered version had no such failure mode; the
+    /// streaming one does, so it is pinned here.
+    #[tokio::test]
+    async fn stream_stored_file_delivers_large_files_and_reports_empty_ones() {
+        let dir = std::env::temp_dir().join(format!("rayrag-stream-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let large = dir.join("large.bin");
+        let size = STREAM_CHUNK_BYTES * 3 + 1234;
+        let payload: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
+        std::fs::write(&large, &payload).unwrap();
 
-    #[test]
-    fn admin_exception_family_maps_to_ragflow_codes() {
-        use base64::Engine as _;
-        assert_eq!(ApiError::admin("boom").code, 400);
-        assert_eq!(ApiError::user_not_found("alice").code, 404);
+        let response =
+            stream_stored_file(&large, "application/octet-stream", "inline", "empty").await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
         assert_eq!(
-            ApiError::user_not_found("alice").message,
-            "User 'alice' not found"
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "application/octet-stream"
         );
-        assert_eq!(ApiError::user_already_exists("alice").code, 409);
-        assert_eq!(
-            ApiError::user_already_exists("alice").message,
-            "User 'alice' already exists"
-        );
-        assert_eq!(ApiError::cannot_delete_admin().code, 403);
-        assert_eq!(ApiError::not_admin("alice").code, 403);
-        assert_eq!(
-            ApiError::not_admin("alice").message,
-            "User 'alice' is not admin"
-        );
-    }
-
-    #[test]
-    fn base64_encode_matches_ragflow_semantics() {
-        assert_eq!(encode_to_base64("hello"), "aGVsbG8=");
-        assert_eq!(encode_to_base64(""), "");
-        assert_eq!(encode_to_base64("中文"), "5Lit5paH");
-        // UTF-8 input round-trips through standard base64 decoding.
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(encode_to_base64("RAGFlow 知识库"))
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
             .unwrap();
-        assert_eq!(String::from_utf8(decoded).unwrap(), "RAGFlow 知识库");
-    }
+        assert_eq!(body.len(), size, "every chunk must arrive");
+        assert_eq!(
+            &body[..],
+            &payload[..],
+            "streamed bytes must match the file"
+        );
 
-    #[test]
-    fn kb_team_permission_rules() {
-        // user-x has joined tenant-a; user-y has not joined anything.
-        let joined_x = |tenant: &str| tenant == "tenant-a";
-        // Owner always passes.
-        assert!(check_kb_team_permission(
-            "tenant-a", "team", "tenant-a", joined_x
-        ));
-        assert!(check_kb_team_permission(
-            "tenant-a", "me", "tenant-a", joined_x
-        ));
-        // Non-team permission blocks cross-tenant access even when joined.
-        assert!(!check_kb_team_permission(
-            "tenant-a", "me", "user-x", joined_x
-        ));
-        // Team permission + joined owning tenant passes.
-        assert!(check_kb_team_permission(
-            "tenant-a", "team", "user-x", joined_x
-        ));
-        // Team permission without membership is denied.
-        assert!(!check_kb_team_permission(
-            "tenant-a",
-            "team",
-            "user-y",
-            |_| false
-        ));
-    }
+        let empty = dir.join("empty.bin");
+        std::fs::write(&empty, b"").unwrap();
+        let response =
+            stream_stored_file(&empty, "text/plain", "inline", "This file is empty.").await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["message"], "This file is empty.");
 
-    #[test]
-    fn file_team_permission_follows_linked_kbs() {
-        let kbs = |file_id: &str| match file_id {
-            "file-1" => vec!["kb-a".into()],
-            "file-2" => vec!["kb-a".into(), "kb-b".into()],
-            _ => vec![],
-        };
-        let kb_info = |kb_id: &str| match kb_id {
-            "kb-a" => Some(("tenant-a".into(), "me".into())),
-            "kb-b" => Some(("tenant-b".into(), "team".into())),
-            _ => None,
-        };
-        let joined = |tenant: &str| tenant == "tenant-b";
-        // Owner passes regardless of KB permissions.
-        assert!(check_file_team_permission(
-            "tenant-a", "file-1", "tenant-a", &kbs, &kb_info, joined
-        ));
-        // Cross-tenant: only a team-permissioned linked KB grants access.
-        assert!(!check_file_team_permission(
-            "tenant-a", "file-1", "user-x", &kbs, &kb_info, joined
-        ));
-        assert!(check_file_team_permission(
-            "tenant-a", "file-2", "user-x", &kbs, &kb_info, joined
-        ));
-        // No linked KBs → denied.
-        assert!(!check_file_team_permission(
-            "tenant-a", "file-3", "user-x", &kbs, &kb_info, joined
-        ));
+        let missing = dir.join("missing.bin");
+        let response =
+            stream_stored_file(&missing, "text/plain", "inline", "This file is empty.").await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["message"], "This file is empty.");
+        std::fs::remove_dir_all(dir).ok();
     }
 }

@@ -396,22 +396,15 @@ pub async fn download_doc(
     };
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
     let physical = uploads.join(&doc.storage_name);
-    match tokio::fs::read(&physical).await {
-        Ok(bytes) => {
-            let filename = doc.name.replace(['"', '\\', '/'], "_");
-            let disposition = format!("attachment; filename=\"{filename}\"");
-            let headers = [
-                (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
-                (
-                    axum::http::header::CONTENT_DISPOSITION,
-                    disposition.as_str(),
-                ),
-            ];
-            (headers, bytes).into_response()
-        }
-        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
-            .into_response(),
-    }
+    let filename = doc.name.replace(['"', '\\', '/'], "_");
+    let disposition = format!("attachment; filename=\"{filename}\"");
+    crate::api::common::stream_stored_file(
+        &physical,
+        "application/octet-stream",
+        &disposition,
+        "File content missing",
+    )
+    .await
 }
 
 /// `GET /api/v1/documents/{doc_id}/preview` — upstream
@@ -434,23 +427,15 @@ pub async fn preview_doc(
     }
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
     let physical = uploads.join(&doc.storage_name);
-    match tokio::fs::read(&physical).await {
-        Ok(bytes) => {
-            let content_type = mime_for_document(&doc.name);
-            let filename = doc.name.replace(['"', '\\', '/'], "_");
-            let disposition = format!("inline; filename=\"{filename}\"");
-            let headers = [
-                (axum::http::header::CONTENT_TYPE, content_type),
-                (
-                    axum::http::header::CONTENT_DISPOSITION,
-                    disposition.as_str(),
-                ),
-            ];
-            (headers, bytes).into_response()
-        }
-        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
-            .into_response(),
-    }
+    let filename = doc.name.replace(['"', '\\', '/'], "_");
+    let disposition = format!("inline; filename=\"{filename}\"");
+    crate::api::common::stream_stored_file(
+        &physical,
+        mime_for_document(&doc.name),
+        &disposition,
+        "File content missing",
+    )
+    .await
 }
 
 /// `GET /api/v1/documents/{document_id}` — upstream
@@ -476,23 +461,15 @@ pub async fn download_document(
     }
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
     let physical = uploads.join(&doc.storage_name);
-    match tokio::fs::read(&physical).await {
-        Ok(bytes) if !bytes.is_empty() => {
-            let content_type = mime_for_document(&doc.name);
-            let filename = doc.name.replace(['"', '\\', '/'], "_");
-            let disposition = format!("attachment; filename=\"{filename}\"");
-            let headers = [
-                (axum::http::header::CONTENT_TYPE, content_type),
-                (
-                    axum::http::header::CONTENT_DISPOSITION,
-                    disposition.as_str(),
-                ),
-            ];
-            (headers, bytes).into_response()
-        }
-        _ => Json(serde_json::json!({ "code": 404, "message": "This file is empty." }))
-            .into_response(),
-    }
+    let filename = doc.name.replace(['"', '\\', '/'], "_");
+    let disposition = format!("attachment; filename=\"{filename}\"");
+    crate::api::common::stream_stored_file(
+        &physical,
+        mime_for_document(&doc.name),
+        &disposition,
+        "This file is empty.",
+    )
+    .await
 }
 
 /// `GET /api/v1/documents/{doc_id}/preview/sheets` — the workbook grid the

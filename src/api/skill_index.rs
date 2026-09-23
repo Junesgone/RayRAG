@@ -297,7 +297,7 @@ impl SkillIndexStore {
         if store.path.as_ref().is_some_and(|path| !path.exists()) {
             store.persist_current()?;
         }
-        store.vector_mirror.reconcile_snapshot(&skill_chunks(
+        store.vector_mirror.reconcile_chunks(&skill_chunks(
             &store.state.read().expect("skill index lock poisoned"),
         ))?;
         Ok(store)
