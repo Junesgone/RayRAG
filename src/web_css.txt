@@ -917,3 +917,19 @@ the paired colour picker + hex input. */
 .docpreview-md ul,.docpreview-md ol{margin:8px 0;padding-left:24px;color:var(--t)}
 .docpreview-md li{margin:4px 0;font-size:14px}
 .docpreview-md img{max-width:100%;height:auto}
+
+/* First-login setup page (`api::setup` + `web::setup_page`): the guided form, its
+   per-field live/restart badges and the home-page pointer. */
+.setup-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 20px;padding:14px 18px;border:1px solid var(--p);border-radius:var(--r);background:var(--bgc)}
+.setup-banner-text{margin:0;color:var(--t);font-size:14px}
+.setup-host{margin-bottom:16px}
+.setup-card{margin-bottom:16px}
+.setup-field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.setup-field-label{color:var(--t2);font-size:13px;display:flex;align-items:center;gap:6px}
+.setup-field input,.setup-field select{max-width:520px}
+.setup-help{color:var(--tm);font-size:12px}
+.setup-live{background:rgba(16,185,129,.15);color:var(--s)}
+.setup-actions{display:flex;align-items:center;gap:12px;margin:20px 0 8px}
+.setup-status{min-height:20px;color:var(--tm);font-size:13px}
+.setup-status.error{color:var(--d)}
+.setup-from-env{background:rgba(79,70,229,.12);color:var(--p)}

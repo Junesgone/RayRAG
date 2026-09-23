@@ -3409,7 +3409,7 @@ fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
     // segment-wise instead of as literals.
-    const PATTERNS: [&str; 11] = [
+    const PATTERNS: [&str; 12] = [
         "/api/v1/auth/login",
         // Upstream mounts the admin console login on the unauthenticated group
         // (`internal/router/router.go`): it is how the console obtains a token.
@@ -3425,6 +3425,9 @@ fn public_api_path(path: &str) -> bool {
         // a token.
         "/api/v1/system/version",
         "/api/v1/system/config",
+        // The wizard's status route answers "does this deployment still need
+        // setup?" before a session exists.
+        "/api/v1/setup/status",
         "/api/v1/auth/login/channels",
         "/api/v1/auth/login/{channel}",
         "/api/v1/auth/oauth/{channel}/callback",
@@ -3793,6 +3796,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::web::admin_sandbox_settings_page),
         )
         .route("/login", get(crate::web::login_page))
+        .route("/setup", get(crate::web::setup_page))
         .route("/metrics", get(prometheus_metrics))
         // API
         .route(
@@ -4686,6 +4690,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/system/config",
             get(crate::api::system::system_config),
         )
+        // First-login setup: the guided counterpart of the environment file.
+        .route("/api/v1/setup/status", get(crate::api::setup::setup_status))
+        .route(
+            "/api/v1/setup/options",
+            get(crate::api::setup::setup_options),
+        )
+        .route(
+            "/api/v1/setup/complete",
+            post(crate::api::setup::setup_complete),
+        )
         .route(
             "/api/v1/system/new_api_key",
             post(crate::api::system::new_api_key),
@@ -4809,6 +4823,8 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     // 统一命令超时输入：用户 env 环境文件（RAYRAG_CMD_TIMEOUT，默认 7200 秒/2 小时）
     crate::common::cmd_timeout::load_user_env_file();
+    // The setup page writes the values it collects back to the file the process read.
+    crate::api::setup::remember_loaded_env_file();
     let u = format!("{}/../users.json", static_dir);
     let k = format!("{}/../kbs.json", static_dir);
     let tenants_path = format!("{}/../tenants.json", static_dir);

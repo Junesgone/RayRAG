@@ -28,6 +28,7 @@ pub mod openai_proxy;
 pub mod runtime_config;
 pub mod sandbox_admin;
 pub mod search;
+pub mod setup;
 pub mod searchapp_mgr;
 pub mod skill_index;
 pub mod system;

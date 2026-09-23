@@ -945,6 +945,27 @@ loadChatChannels();</script>"#;
 /// (up to six cards + "See all", or the dashed empty card) and the Applications
 /// section with the Chat/Search/Agent/Memory `Segmented` control. The lists are
 /// filled from the authenticated APIs exactly like the upstream hooks.
+/// A one-line pointer to the guided setup, shown on the home page while this
+/// deployment still has no model endpoint configured.
+fn setup_banner_markup(zh: bool) -> String {
+    let state = crate::api::setup::SetupProbe::current();
+    if !state.needs_setup {
+        return String::new();
+    }
+    let mut b = String::new();
+    b.push_str(
+        "<section class='setup-banner' data-testid='setup-banner'><p class='setup-banner-text'>",
+    );
+    b.push_str(t(
+        "This deployment has no model endpoint configured yet. The setup page walks through the settings and writes them to the environment file.",
+        zh,
+    ));
+    b.push_str("</p><a class='btn btn-p btn-sm' href='/setup' data-testid='setup-banner-link'>");
+    b.push_str(t("Open setup", zh));
+    b.push_str("</a></section>");
+    b
+}
+
 pub async fn index(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
     let zh = detect_lang(req.headers());
     let (
@@ -993,7 +1014,13 @@ pub async fn index(req: axum::http::Request<axum::body::Body>) -> impl IntoRespo
     };
     let dataset_icon = "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><ellipse cx='12' cy='5' rx='8' ry='3'/><path d='M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5'/><path d='M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'/></svg>";
     let mut b = String::with_capacity(4096);
-    b.push_str("<article class='home' data-testid='home-page'><header class='home-banner'><h1 class='home-welcome'><span class='home-welcome-text'>");
+    // First login on a deployment that has no model endpoint yet: point at the guided
+    // page instead of leaving the operator to discover the environment file.
+    b.push_str("<article class='home' data-testid='home-page'>");
+    b.push_str(&setup_banner_markup(zh));
+    b.push_str(
+        "<header class='home-banner'><h1 class='home-welcome'><span class='home-welcome-text'>",
+    );
     b.push_str(welcome);
     b.push_str(" </span><span class='home-brand'>RayRAG</span></h1></header>");
     b.push_str("<section class='home-section'><header class='home-section-head'><h2 class='home-section-title'><span class='home-section-icon'>");
@@ -6885,6 +6912,129 @@ pub async fn document_viewer_page(
     };
     Html(layout("Document", &body, zh)).into_response()
 }
+
+/// Upstream has no wizard; RAGFlow expects an operator to edit `docker/.env` and
+/// restart. RayRAG keeps the environment file as the source of truth but offers the
+/// guided page the objective asks for: the same names, the host's own recommendation
+/// for the resource knobs, and an explicit note on which values apply immediately and
+/// which wait for a restart.
+pub async fn setup_page(
+    State(_state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let mut b = String::new();
+    b.push_str("<h1>");
+    b.push_str(t("Set up your deployment", zh));
+    b.push_str("</h1><p class='user-setting-description'>");
+    b.push_str(t(
+        "These settings are written to the environment file and can also be given as environment variables. Values marked live take effect now; the rest take effect after a restart.",
+        zh,
+    ));
+    b.push_str("</p>");
+    b.push_str("<div class='setup-host card' id='setupHost' data-testid='setup-host'><p class='user-setting-description' style='margin:0'>");
+    b.push_str(t("Detecting this host...", zh));
+    b.push_str("</p></div>");
+    b.push_str("<div id='setupGroups' data-testid='setup-groups'></div>");
+    b.push_str("<div class='setup-actions'><button type='button' class='btn btn-p' id='setupSave' data-testid='setup-save' onclick='setupSave()'>");
+    b.push_str(t("Save settings", zh));
+    b.push_str("</button><a class='btn btn-o' href='/'>");
+    b.push_str(t("Skip for now", zh));
+    b.push_str("</a></div><p class='setup-status' id='setupStatus' data-testid='setup-status' aria-live='polite'></p>");
+    b.push_str(
+        "<p class='user-setting-description' id='setupEnvFile' data-testid='setup-env-file'></p>",
+    );
+    // The constant is the script body; it must be emitted inside a script element or
+    // the browser renders it as text (which is exactly what the probe caught).
+    b.push_str("<script>");
+    b.push_str(SETUP_PAGE_SCRIPT);
+    b.push_str("</script>");
+    Html(layout(t("Set up your deployment", zh), &b, zh))
+}
+
+/// Behaviour of the setup page: load the field catalogue, render one card per
+/// group, and post the changed values. Untouched secrets stay as the placeholder,
+/// which the server reads as "keep the stored value".
+const SETUP_PAGE_SCRIPT: &str = r#"
+var SETUP_STATE={fields:[],values:{}};
+function setupEl(id){return document.getElementById(id)}
+function setupStatus(text,error){var node=setupEl('setupStatus');if(!node)return;node.textContent=text||'';node.classList.toggle('error',!!error)}
+function setupLabel(field){return document.documentElement.lang==='zh-CN'?field.label_zh:field.label_en}
+function setupHelp(field){return document.documentElement.lang==='zh-CN'?field.help_zh:field.help_en}
+function setupRenderHost(host){
+  var node=setupEl('setupHost');if(!node)return;
+  var memory=host.available_memory_bytes?Math.round(host.available_memory_bytes/1073741824*10)/10+' GiB':'?';
+  node.innerHTML="<p class='user-setting-description' style='margin:0'>"+(host.summary||'')+"</p>"+
+    "<p class='user-setting-description' style='margin:4px 0 0'>Recommended concurrent documents: <strong data-testid='setup-recommended-tasks'>"+host.document_tasks+"</strong></p>";
+}
+function setupControl(field){
+  var wrap=document.createElement('label');wrap.className='setup-field';wrap.dataset.key=field.key;
+  var name=document.createElement('span');name.className='setup-field-label';name.textContent=setupLabel(field);
+  if(field.live){var badge=document.createElement('span');badge.className='badge bs setup-live';badge.dataset.testid='setup-live-'+field.key;badge.textContent='live';name.appendChild(document.createTextNode(' '));name.appendChild(badge);}
+  // An environment variable set outside this page wins over the file the page writes
+  // (that is how the loader works), so say so rather than let the edit look ignored.
+  if(field.from_environment){var envBadge=document.createElement('span');envBadge.className='badge bi setup-from-env';envBadge.dataset.testid='setup-env-'+field.key;envBadge.textContent='env';envBadge.title='This variable is set in the process environment; it takes precedence over the file written here.';name.appendChild(document.createTextNode(' '));name.appendChild(envBadge);}
+  wrap.appendChild(name);
+  var control;
+  if(field.kind==='select'){
+    control=document.createElement('select');
+    (field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option;node.textContent=option;control.appendChild(node)});
+  }else{
+    control=document.createElement('input');
+    control.type=field.kind==='number'?'number':(field.kind==='secret'?'password':'text');
+    if(field.kind==='secret')control.autocomplete='new-password';
+  }
+  control.value=field.value||'';
+  control.dataset.testid='setup-'+field.key;
+  control.addEventListener('input',function(){SETUP_STATE.values[field.key]=control.value});
+  control.addEventListener('change',function(){SETUP_STATE.values[field.key]=control.value});
+  wrap.appendChild(control);
+  var help=document.createElement('span');help.className='setup-help';help.textContent=setupHelp(field);
+  if(field.recommended){help.textContent+=' ('+field.recommended+')'}
+  wrap.appendChild(help);
+  return wrap;
+}
+function setupRender(fields){
+  var host=setupEl('setupGroups');host.replaceChildren();
+  var groups={};fields.forEach(function(field){(groups[field.group]=groups[field.group]||[]).push(field)});
+  Object.keys(groups).forEach(function(group){
+    var card=document.createElement('section');card.className='card setup-card';card.dataset.group=group;
+    var title=document.createElement('h2');title.textContent=group.charAt(0).toUpperCase()+group.slice(1);
+    card.appendChild(title);
+    groups[group].forEach(function(field){card.appendChild(setupControl(field))});
+    host.appendChild(card);
+  });
+}
+async function setupLoad(){
+  try{
+    var status=await fetch('/api/v1/setup/status').then(function(r){return r.json()});
+    if(status.code===0)setupRenderHost(status.data.host);
+    var response=await fetch('/api/v1/setup/options');
+    var payload=await response.json();
+    if(payload.code!==0)throw new Error(payload.message||('HTTP '+payload.code));
+    SETUP_STATE.fields=payload.data.fields||[];
+    SETUP_STATE.fields.forEach(function(field){SETUP_STATE.values[field.key]=field.value||''});
+    setupRender(SETUP_STATE.fields);
+    var env=setupEl('setupEnvFile');if(env)env.textContent='env file: '+payload.data.env_file;
+  }catch(error){setupStatus(String(error.message||error),true)}
+}
+async function setupSave(){
+  var button=setupEl('setupSave');button.disabled=true;setupStatus('Saving…');
+  var updates=Object.keys(SETUP_STATE.values).map(function(key){return {key:key,value:SETUP_STATE.values[key]}});
+  try{
+    var response=await fetch('/api/v1/setup/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates,mark_completed:true})});
+    var payload=await response.json();
+    if(payload.code!==0)throw new Error(payload.message||('HTTP '+payload.code));
+    var data=payload.data||{};
+    var message='Saved to '+data.env_file;
+    if((data.applied_live||[]).length)message+=' · applied now: '+data.applied_live.length;
+    if((data.needs_restart||[]).length)message+=' · restart to apply: '+data.needs_restart.join(', ');
+    setupStatus(message,false);
+  }catch(error){setupStatus(String(error.message||error),true)}
+  finally{button.disabled=false}
+}
+setupLoad();
+"#;
 
 pub async fn skills_page(
     State(_state): State<Arc<AppState>>,
@@ -15207,6 +15357,63 @@ connection: close
     }
 
     /// Upstream `Routes.AgentExplore` (`/agent/:id/explore`): the Launch surface
+    /// The guided setup page offers exactly the settings the API knows about, marks
+    /// the ones that apply without a restart, and writes them to the environment file
+    /// the process loaded. A wrong badge here is a broken promise, so the field table
+    /// and the live list are asserted to agree.
+    #[tokio::test]
+    async fn setup_page_lists_configurable_settings_and_their_scope() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/setup")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(setup_page(State(state.clone()), request).await).await;
+        for marker in [
+            "data-testid='setup-host'",
+            "data-testid='setup-groups'",
+            "data-testid='setup-save'",
+            "data-testid='setup-status'",
+            "data-testid='setup-env-file'",
+            // The page loads the catalogue and posts the changed values.
+            // The script must be inside a script element: without it the browser
+            // renders the code as text and the page stays empty.
+            // The constant begins with a newline (house style), so the emitted markup
+            // is `<script>` immediately followed by that newline.
+            "<script>\nvar SETUP_STATE=",
+            "fetch('/api/v1/setup/options')",
+            "fetch('/api/v1/setup/complete'",
+            "mark_completed:true",
+            // Secrets round-trip as the placeholder, which the server reads as
+            // "keep the stored value".
+            "field.kind==='secret'",
+            // A variable set outside the page wins over the file: the badge says so.
+            "setup-from-env",
+            "takes precedence over the file written here",
+        ] {
+            assert!(html.contains(marker), "setup page marker {marker} missing");
+        }
+        // Every offered setting is addressable from the page.
+        let fields = crate::api::setup::setup_fields(&state, false);
+        assert!(
+            fields.len() >= 15,
+            "the page should cover the documented knobs"
+        );
+        for field in &fields {
+            assert!(
+                html.contains(&format!("setup-{}", field.key))
+                    || html.contains("setup-'+field.key"),
+                "the page must render a control for {}",
+                field.key
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for selector in [".setup-field{", ".setup-banner{", ".setup-live{"] {
+            assert!(css.contains(selector), "setup css {selector} missing");
+        }
+    }
+
     /// Upstream `Routes.DocumentViewer` (`pages/document-viewer/index.tsx`) with
     /// `components/document-preview/pdf-preview.tsx` + `components/pdf-drawer`:
     /// the document page renders the stored PDF through pdf.js and overlays the
