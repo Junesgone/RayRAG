@@ -3869,7 +3869,11 @@ pub async fn chat_widget_page(req: axum::http::Request<axum::body::Body>) -> imp
         "open": if zh { "打开对话" } else { "Open chat" },
         "close": if zh { "关闭对话" } else { "Close chat" },
     })));
-    b.push_str(";</script><script>");
+    b.push_str(";var FCW_CHAT=\"");
+    b.push_str(FCW_CHAT_SVG);
+    b.push_str("\";var FCW_X=\"");
+    b.push_str(FCW_X_SVG);
+    b.push_str("\";</script><script>");
     b.push_str(CHAT_WIDGET_SCRIPT);
     b.push_str("</script>");
     Html(layout_plain("Chat", &b, zh))
@@ -13970,6 +13974,9 @@ connection: close
         );
         // The `?auth=` bootstrap matches the share page.
         assert!(html.contains("document.cookie='rayrag_token='+auth"));
+        // The bubble glyphs the script swaps between (upstream `MessageCircle`/`X`).
+        assert!(html.contains("var FCW_CHAT=\"<svg"));
+        assert!(html.contains("var FCW_X=\"<svg"));
 
         let zh_request = Request::builder()
             .uri("/chats/widget")
