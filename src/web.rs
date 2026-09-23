@@ -7299,6 +7299,7 @@ pub async fn setup_page(
     b.push_str("<div class='setup-host card' id='setupHost' data-testid='setup-host'><p class='user-setting-description' style='margin:0'>");
     b.push_str(t("Detecting this host...", zh));
     b.push_str("</p></div>");
+    b.push_str("<div class='setup-sync' id='setupSync' data-testid='setup-sync' hidden><span id='setupSyncText'></span><button type='button' class='btn btn-o btn-sm' id='setupSyncReload' data-testid='setup-sync-reload' onclick='setupReloadFromFile()'></button></div>");
     b.push_str("<div id='setupGroups' data-testid='setup-groups'></div>");
     b.push_str("<div class='setup-actions'><button type='button' class='btn btn-p' id='setupSave' data-testid='setup-save' onclick='setupSave()'>");
     b.push_str(t("Save settings", zh));
@@ -7332,6 +7333,20 @@ pub async fn setup_page(
             "copied": t("Copied", zh),
             "copyManual": t("Select the line and press Ctrl+C", zh),
             "nextModel": t("Continue to model providers", zh),
+            // Prefilled fields say where the value came from; the page polls the file and
+            // tells the operator when it changed underneath.
+            "defaultBadge": t("default", zh),
+            "fileBadge": t("from file", zh),
+            "externalChange": t(
+                "The environment file changed outside this page. Reload it to see the new values.",
+                zh,
+            ),
+            "externalChangeDirty": t(
+                "The environment file changed outside this page, and you have unsaved edits. Reloading discards them.",
+                zh,
+            ),
+            "reload": t("Reload", zh),
+            "reloaded": t("Reloaded from the environment file", zh),
             "needsModel": t(
                 "No model endpoint is configured yet — add one to enable answers, embeddings and reranking.",
                 zh,
@@ -7349,7 +7364,7 @@ pub async fn setup_page(
 /// group, and post the changed values. Untouched secrets stay as the placeholder,
 /// which the server reads as "keep the stored value".
 const SETUP_PAGE_SCRIPT: &str = r#"
-var SETUP_STATE={fields:[],values:{}};
+var SETUP_STATE={fields:[],values:{},dirty:{},fingerprint:'',syncTimer:null,syncHideTimer:null,syncWarning:false};
 function setupEl(id){return document.getElementById(id)}
 function setupStatus(text,error){var node=setupEl('setupStatus');if(!node)return;node.textContent=text||'';node.classList.toggle('error',!!error)}
 function setupLabel(field){return document.documentElement.lang==='zh-CN'?field.label_zh:field.label_en}
@@ -7375,6 +7390,9 @@ function setupControl(field){
   // An environment variable set outside this page wins over the file the page writes
   // (that is how the loader works), so say so rather than let the edit look ignored.
   if(field.from_environment){var envBadge=document.createElement('span');envBadge.className='badge bi setup-from-env';envBadge.dataset.testid='setup-env-'+field.key;envBadge.textContent='env';envBadge.title='This variable is set in the process environment; it takes precedence over the file written here.';name.appendChild(document.createTextNode(' '));name.appendChild(envBadge);}
+  // Where the shown value came from. A prefilled default is labelled so nobody mistakes
+  // it for something the operator (or an operator before them) chose.
+  if(field.is_default){var defaultBadge=document.createElement('span');defaultBadge.className='badge bw setup-default';defaultBadge.dataset.testid='setup-default-'+field.key;defaultBadge.textContent=SETUP_TEXT.defaultBadge;defaultBadge.title='Nothing is set for this variable; the value shown is the built-in default. Saving writes it explicitly.';name.appendChild(document.createTextNode(' '));name.appendChild(defaultBadge);}
   wrap.appendChild(name);
   if(field.kind==='readonly'){
     // Shown, never written: the value belongs to the container definition. The page
@@ -7407,8 +7425,8 @@ function setupControl(field){
   }
   control.value=field.value||'';
   control.dataset.testid='setup-'+field.key;
-  control.addEventListener('input',function(){SETUP_STATE.values[field.key]=control.value});
-  control.addEventListener('change',function(){SETUP_STATE.values[field.key]=control.value});
+  control.addEventListener('input',function(){SETUP_STATE.values[field.key]=control.value;SETUP_STATE.dirty[field.key]=true;if(!SETUP_STATE.syncWarning)setupSyncHide()});
+  control.addEventListener('change',function(){SETUP_STATE.values[field.key]=control.value;SETUP_STATE.dirty[field.key]=true;if(!SETUP_STATE.syncWarning)setupSyncHide()});
   wrap.appendChild(control);
   var help=document.createElement('span');help.className='setup-help';help.textContent=setupHelp(field);
   if(field.recommended){help.textContent+=' ('+field.recommended+')'}
@@ -7437,9 +7455,46 @@ async function setupLoad(){
     // Read-only rows are shown, never posted: sending one back would be a write the API
     // refuses (and did — the wizard's own save failed on the memory limit).
     SETUP_STATE.fields.forEach(function(field){if(field.kind==='readonly')return;SETUP_STATE.values[field.key]=field.value||''});
+    SETUP_STATE.dirty={};
+    SETUP_STATE.fingerprint=(payload.data.file&&payload.data.file.digest)||'';
     setupRender(SETUP_STATE.fields);
     var env=setupEl('setupEnvFile');if(env)env.textContent='env file: '+payload.data.env_file;
+    setupSyncStart();
   }catch(error){setupStatus(String(error.message||error),true)}
+}
+// The wizard and the environment file stay in step: the page polls a cheap fingerprint
+// while the operator reads the form. An edit made outside (vi, a config tool, another
+// browser tab) reloads into the fields; if there are unsaved edits the page asks first,
+// because silently discarding them would be worse than showing a stale value.
+function setupSyncHide(){var bar=setupEl('setupSync');if(bar){bar.hidden=true;bar.classList.remove('warn')}SETUP_STATE.syncWarning=false}
+// The "reloaded" note is information, not a task: it disappears on its own, and any edit
+// makes it moot.
+function setupSyncAutoHide(){
+  if(SETUP_STATE.syncHideTimer)clearTimeout(SETUP_STATE.syncHideTimer);
+  SETUP_STATE.syncHideTimer=setTimeout(function(){if(!SETUP_STATE.syncWarning)setupSyncHide()},6000);
+}
+function setupSyncShow(text,warn){
+  var bar=setupEl('setupSync');var label=setupEl('setupSyncText');var button=setupEl('setupSyncReload');
+  if(!bar||!label||!button)return;
+  label.textContent=text;button.textContent=SETUP_TEXT.reload;bar.hidden=false;bar.classList.toggle('warn',!!warn);
+  SETUP_STATE.syncWarning=!!warn;
+}
+function setupHasDirtyEdits(){return Object.keys(SETUP_STATE.dirty).some(function(key){return SETUP_STATE.dirty[key]})}
+function setupReloadFromFile(){setupStatus(SETUP_TEXT.reloaded,false);setupSyncHide();setupLoad()}
+async function setupSyncTick(){
+  if(!SETUP_STATE.fingerprint)return;
+  try{
+    var response=await fetch('/api/v1/setup/watch?fingerprint='+encodeURIComponent(SETUP_STATE.fingerprint));
+    var payload=await response.json();
+    if(payload.code!==0||!payload.data)return;
+    if(!payload.data.changed){if(!setupHasDirtyEdits())setupSyncHide();return}
+    if(setupHasDirtyEdits())setupSyncShow(SETUP_TEXT.externalChangeDirty,true);
+    else{setupSyncShow(SETUP_TEXT.reloaded,false);setupLoad();setupSyncAutoHide()}
+  }catch(error){}
+}
+function setupSyncStart(){
+  if(SETUP_STATE.syncTimer)clearInterval(SETUP_STATE.syncTimer);
+  SETUP_STATE.syncTimer=setInterval(setupSyncTick,5000);
 }
 // Saving endpoints is half of a working deployment; the models themselves are added on
 // the provider page, so the receipt continues there instead of stopping at the file.
@@ -7468,6 +7523,8 @@ async function setupSave(){
     if((data.needs_restart||[]).length)message+=' · restart to apply: '+data.needs_restart.join(', ');
     setupStatus(message,false);
     setupNextStep(data.next);
+    if(data.file&&data.file.digest)SETUP_STATE.fingerprint=data.file.digest;
+    SETUP_STATE.dirty={};setupSyncHide();
   }catch(error){setupStatus(String(error.message||error),true)}
   finally{button.disabled=false}
 }
@@ -16143,6 +16200,19 @@ connection: close
             "field.key+'='+(field.value||field.recommended||'')",
             "function setupCopyText(text,button)",
             "if(field.kind==='readonly')return;SETUP_STATE.values[field.key]=field.value||''",
+            // Prefilled values carry a badge saying they are the built-in default, and the
+            // page polls the file so an edit made outside shows up.
+            "defaultBadge.dataset.testid='setup-default-'+field.key",
+            "field.is_default",
+            "data-testid='setup-sync'",
+            "data-testid='setup-sync-reload'",
+            "function setupSyncTick()",
+            "fetch('/api/v1/setup/watch?fingerprint='+encodeURIComponent(SETUP_STATE.fingerprint))",
+            "setInterval(setupSyncTick,5000)",
+            "function setupHasDirtyEdits()",
+            "function setupReloadFromFile()",
+            "SETUP_STATE.fingerprint=(payload.data.file&&payload.data.file.digest)||''",
+            "if(data.file&&data.file.digest)SETUP_STATE.fingerprint=data.file.digest",
             "navigator.clipboard.writeText(text)",
             "document.execCommand('copy')",
             ".setup-readonly-value",
@@ -16177,6 +16247,8 @@ connection: close
             ".setup-live{",
             ".setup-readonly-value{",
             ".setup-next{",
+            ".setup-sync{",
+            ".setup-sync.warn{",
         ] {
             assert!(css.contains(selector), "setup css {selector} missing");
         }

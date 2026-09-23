@@ -4775,6 +4775,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::setup::setup_complete),
         )
         .route(
+            // The page polls this while the operator reads the form: an edit to `.env`
+            // made outside the wizard shows up instead of leaving stale values on screen.
+            "/api/v1/setup/watch",
+            get(crate::api::setup::setup_watch),
+        )
+        .route(
             "/api/v1/system/new_api_key",
             post(crate::api::system::new_api_key),
         )

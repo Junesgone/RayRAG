@@ -190,8 +190,16 @@ pub struct SetupField {
     pub help_zh: &'static str,
     /// Current effective value (secrets are replaced by a marker).
     pub value: String,
+    /// Value the process would use when this variable is unset — the default the page
+    /// prefills, so a first-login user only has to confirm what is already correct.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill: Option<String>,
     /// True when the value came from the real environment rather than the file.
     pub from_environment: bool,
+    /// Where [`Self::value`] came from: `env`, `file` or `default`.
+    pub source: &'static str,
+    /// True when nothing is set, so the page shows [`Self::prefill`] as a default.
+    pub is_default: bool,
     /// True when the process reads this on every call, so the change applies at once.
     pub live: bool,
     /// Choices for [`FieldKind::Select`]. A value the table does not list (a
@@ -586,6 +594,55 @@ fn field_specs() -> Vec<(
     ]
 }
 
+/// The value the process falls back to when a variable is unset.
+///
+/// These are the same constants the code reads (`cmd_timeout::DEFAULT_SECS` and friends),
+/// so the wizard can prefill a field with what is already in force. A variable without a
+/// safe default (an endpoint, a key, a database URL) has none, and stays empty: guessing
+/// one would write a setting the operator never chose.
+pub fn field_defaults() -> Vec<(&'static str, String)> {
+    use crate::common::cmd_timeout as limits;
+    vec![
+        ("RAYRAG_EMBEDDING_DIMENSION", "384".to_string()),
+        ("RAYRAG_VECTOR_BACKEND", "zvec".to_string()),
+        ("RAYRAG_ZVEC_DIR", "zvec-data".to_string()),
+        ("RAYRAG_CMD_TIMEOUT", limits::DEFAULT_SECS.to_string()),
+        (
+            "RAYRAG_MODEL_TIMEOUT",
+            limits::DEFAULT_MODEL_SECS.to_string(),
+        ),
+        (
+            "RAYRAG_HTTP_BODY_LIMIT_BYTES",
+            limits::DEFAULT_BODY_LIMIT.to_string(),
+        ),
+        (
+            "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES",
+            limits::DEFAULT_CONNECTOR_BODY_LIMIT.to_string(),
+        ),
+        (
+            "RAYRAG_PDF_STREAM_LIMIT_BYTES",
+            crate::parser::pdf_stream::DEFAULT_PDF_STREAM_BYTES.to_string(),
+        ),
+        ("RAYRAG_ZVEC_MAX_BUFFER_BYTES", (64u64 << 20).to_string()),
+        ("RAYRAG_MAX_UPLOAD_BYTES", (64u64 << 20).to_string()),
+        ("RAYRAG_OCR_PROVIDER", "none".to_string()),
+        ("REGISTER_ENABLED", "1".to_string()),
+        ("DISABLE_PASSWORD_LOGIN", "false".to_string()),
+        (
+            limits::MEMORY_LIMIT_ENV,
+            limits::DEFAULT_MEMORY_LIMIT.to_string(),
+        ),
+    ]
+}
+
+/// The default for one key, if the code has one.
+pub fn field_default(key: &str) -> Option<String> {
+    field_defaults()
+        .into_iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, value)| value)
+}
+
 /// Read a key the way the process sees it: the real environment first, then the
 /// environment file (a deployment may have edited the file without restarting).
 fn effective_value(key: &str, file_entries: &[(String, String)]) -> (String, bool) {
@@ -608,9 +665,6 @@ pub fn setup_fields(state: &AppState, reveal_secrets: bool) -> Vec<SetupField> {
     let mut fields = Vec::new();
     for (key, label_en, label_zh, group, kind, help_en, help_zh, live, options) in field_specs() {
         let (mut value, from_environment) = effective_value(key, &entries);
-        if kind == FieldKind::Secret && !value.is_empty() && !reveal_secrets {
-            value = SECRET_PLACEHOLDER.to_string();
-        }
         let recommended = match key {
             "RAYRAG_MAX_CONCURRENT_TASKS" => Some(host.document_task_limit().to_string()),
             "RAYRAG_CMD_TIMEOUT" => Some(crate::common::cmd_timeout::DEFAULT_SECS.to_string()),
@@ -626,6 +680,22 @@ pub fn setup_fields(state: &AppState, reveal_secrets: bool) -> Vec<SetupField> {
             | "RAYRAG_ZVEC_MAX_BUFFER_BYTES" => None,
             _ => None,
         };
+        // The wizard's own recommendation is the default for the worker count: the code
+        // derives it from this host, so "empty" means "use the detected value".
+        let mut prefill = match key {
+            "RAYRAG_MAX_CONCURRENT_TASKS" => Some(host.document_task_limit().to_string()),
+            _ => field_default(key),
+        };
+        // A default that the operator already overrode in the file is not a prefill.
+        let is_default = value.is_empty();
+        if value.is_empty() {
+            value = prefill.clone().unwrap_or_default();
+        } else {
+            prefill = None;
+        }
+        if kind == FieldKind::Secret && !value.is_empty() && !reveal_secrets {
+            value = SECRET_PLACEHOLDER.to_string();
+        }
         let mut options: Vec<String> = options.into_iter().map(str::to_string).collect();
         if kind == FieldKind::Select
             && !value.is_empty()
@@ -645,7 +715,16 @@ pub fn setup_fields(state: &AppState, reveal_secrets: bool) -> Vec<SetupField> {
             help_en,
             help_zh,
             value,
+            prefill,
             from_environment,
+            source: if from_environment {
+                "env"
+            } else if is_default {
+                "default"
+            } else {
+                "file"
+            },
+            is_default,
             live,
             options,
             recommended,
@@ -702,6 +781,50 @@ impl SetupProbe {
             needs_setup: embed.trim().is_empty() && llm.trim().is_empty(),
         }
     }
+}
+
+/// Identity of the environment file's current content.
+///
+/// The page keeps the fingerprint it loaded and asks whether it still matches: an
+/// operator who edits `.env` by hand (or a tool that rewrites it) should see the wizard
+/// follow along instead of leaving stale values on screen.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EnvFileFingerprint {
+    pub path: String,
+    pub exists: bool,
+    pub size: u64,
+    /// Modification time in milliseconds since the epoch (0 when unknown).
+    pub mtime_ms: u64,
+    /// Stable hash of the content, so a rewrite with identical bytes is not a change.
+    pub digest: String,
+}
+
+/// Fingerprint the environment file without loading it into the field table.
+pub fn env_file_fingerprint(path: &Path) -> EnvFileFingerprint {
+    let metadata = std::fs::metadata(path).ok();
+    let content = std::fs::read(path).unwrap_or_default();
+    EnvFileFingerprint {
+        path: path.display().to_string(),
+        exists: metadata.is_some(),
+        size: metadata.as_ref().map(|value| value.len()).unwrap_or(0),
+        mtime_ms: metadata
+            .as_ref()
+            .and_then(|value| value.modified().ok())
+            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| value.as_millis() as u64)
+            .unwrap_or(0),
+        digest: content_digest(&content),
+    }
+}
+
+/// FNV-1a over the bytes: short, dependency-free, and only used to notice a change.
+fn content_digest(content: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in content {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// Read `KEY=value` pairs from an environment file, ignoring comments.
@@ -858,17 +981,51 @@ pub async fn setup_options(
 ) -> impl IntoResponse {
     let fields = setup_fields(&state, false);
     let host = HostResources::detect();
+    let path = env_file_path(&state);
     Json(serde_json::json!({
         "code": 0,
         "data": {
             "fields": fields,
-            "env_file": env_file_path(&state).display().to_string(),
+            "env_file": path.display().to_string(),
+            "file": env_file_fingerprint(&path),
             "host": {
                 "cpus": host.cpus,
                 "available_memory_bytes": host.available_memory_bytes,
                 "document_tasks": host.document_task_limit(),
                 "summary": host.summary(),
             },
+        }
+    }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetupWatchQuery {
+    /// The fingerprint the page loaded, when it has one.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
+/// `GET /api/v1/setup/watch` — has the environment file changed under the page?
+///
+/// Cheap on purpose: the page polls it while the operator reads the form, so it only
+/// stats and hashes one small file. The content is never returned, only whether it
+/// differs from what the caller last saw.
+pub async fn setup_watch(
+    State(state): State<Arc<AppState>>,
+    Extension(_auth): Extension<AuthContext>,
+    axum::extract::Query(query): axum::extract::Query<SetupWatchQuery>,
+) -> impl IntoResponse {
+    let path = env_file_path(&state);
+    let current = env_file_fingerprint(&path);
+    let changed = query
+        .fingerprint
+        .as_deref()
+        .is_some_and(|known| known != current.digest);
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "changed": changed,
+            "file": current,
         }
     }))
 }
@@ -964,11 +1121,13 @@ pub async fn setup_complete(
     let (embed, _) = effective_value("EMBED_API_BASE", &entries);
     let (llm, _) = effective_value("LLM_API_BASE", &entries);
     let needs_model_provider = embed.trim().is_empty() && llm.trim().is_empty();
+    let fingerprint = env_file_fingerprint(&path);
     Json(serde_json::json!({
         "code": 0,
         "message": "Saved",
         "data": {
             "env_file": path.display().to_string(),
+            "file": fingerprint,
             "applied_live": applied_live,
             "needs_restart": needs_restart,
             "next": {
@@ -1244,6 +1403,90 @@ mod tests {
             content.ends_with('\n'),
             "the file must stay complete: {content:?}"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The wizard prefills what is already in force, so a first-login user confirms
+    /// rather than researches: every field with a code default must report it, and a
+    /// value that came from the file must not be labelled a default.
+    #[test]
+    fn every_field_with_a_code_default_is_prefilled_and_labelled() {
+        let defaults = field_defaults();
+        for (key, value) in &defaults {
+            assert!(!value.is_empty(), "{key} has an empty default");
+            assert!(
+                field_specs().iter().any(|spec| spec.0 == *key),
+                "{key} has a default but is not offered by the page"
+            );
+        }
+        for key in [
+            "RAYRAG_CMD_TIMEOUT",
+            "RAYRAG_MODEL_TIMEOUT",
+            "RAYRAG_HTTP_BODY_LIMIT_BYTES",
+            "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES",
+            "RAYRAG_PDF_STREAM_LIMIT_BYTES",
+            "RAYRAG_ZVEC_MAX_BUFFER_BYTES",
+            "RAYRAG_EMBEDDING_DIMENSION",
+            "RAYRAG_VECTOR_BACKEND",
+            "RAYRAG_MAX_UPLOAD_BYTES",
+            "REGISTER_ENABLED",
+            "DISABLE_PASSWORD_LOGIN",
+        ] {
+            assert!(field_default(key).is_some(), "{key} must prefill");
+        }
+        // The numbers must be the ones the code reads, not copies that can drift.
+        use crate::common::cmd_timeout as limits;
+        assert_eq!(
+            field_default("RAYRAG_CMD_TIMEOUT").as_deref(),
+            Some(limits::DEFAULT_SECS.to_string().as_str())
+        );
+        assert_eq!(
+            field_default("RAYRAG_MODEL_TIMEOUT").as_deref(),
+            Some(limits::DEFAULT_MODEL_SECS.to_string().as_str())
+        );
+        assert_eq!(
+            field_default("RAYRAG_HTTP_BODY_LIMIT_BYTES").as_deref(),
+            Some(limits::DEFAULT_BODY_LIMIT.to_string().as_str())
+        );
+        assert_eq!(
+            field_default("RAYRAG_PDF_STREAM_LIMIT_BYTES").as_deref(),
+            Some(
+                crate::parser::pdf_stream::DEFAULT_PDF_STREAM_BYTES
+                    .to_string()
+                    .as_str()
+            )
+        );
+        // A variable whose absence is meaningful (an endpoint) has no default: guessing
+        // one would write an address the operator never chose.
+        for key in [
+            "EMBED_API_BASE",
+            "LLM_API_KEY",
+            "SEARXNG_URL",
+            "RAYRAG_POSTGRES_URL",
+        ] {
+            assert!(field_default(key).is_none(), "{key} must stay empty");
+        }
+    }
+
+    #[test]
+    fn the_file_fingerprint_notices_a_real_change_and_ignores_a_rewrite() {
+        let dir = std::env::temp_dir().join(format!("rayrag-setup-fp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".env");
+        std::fs::write(&path, "LLM_MODEL=a\n").unwrap();
+        let first = env_file_fingerprint(&path);
+        assert!(first.exists);
+        assert_eq!(first.size, std::fs::metadata(&path).unwrap().len());
+        // The same bytes written again are not a change (the page polls this every five
+        // seconds and must not reload for nothing).
+        std::fs::write(&path, "LLM_MODEL=a\n").unwrap();
+        assert_eq!(env_file_fingerprint(&path).digest, first.digest);
+        std::fs::write(&path, "LLM_MODEL=b\n").unwrap();
+        assert_ne!(env_file_fingerprint(&path).digest, first.digest);
+        // A file that does not exist is reported, not invented.
+        let missing = env_file_fingerprint(&dir.join("nope.env"));
+        assert!(!missing.exists);
+        assert_eq!(missing.size, 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 

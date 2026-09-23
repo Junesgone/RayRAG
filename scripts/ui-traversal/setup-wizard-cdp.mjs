@@ -93,6 +93,53 @@ try {
   step("page render", results.render);
   await page.screenshot({ path: `${shots}/setup-wizard-${STAMP}.png` });
 
+  // 2a. Values the deployment never set are prefilled with the built-in default and
+  //     labelled as such, so a first-login user confirms instead of researching.
+  results.prefill = await page.evaluate(() => {
+    const read = (key) => {
+      const control = document.querySelector(`[data-testid='setup-${key}']`);
+      return {
+        value: control ? control.value : null,
+        isDefault: !!document.querySelector(`[data-testid='setup-default-${key}']`),
+      };
+    };
+    return {
+      cmdTimeout: read("RAYRAG_CMD_TIMEOUT"),
+      bodyLimit: read("RAYRAG_HTTP_BODY_LIMIT_BYTES"),
+      uploadLimit: read("RAYRAG_MAX_UPLOAD_BYTES"),
+      dimension: read("RAYRAG_EMBEDDING_DIMENSION"),
+      backend: read("RAYRAG_VECTOR_BACKEND"),
+      register: read("REGISTER_ENABLED"),
+      embedBase: read("EMBED_API_BASE"),
+    };
+  });
+  step("prefilled defaults", results.prefill);
+  // A deployment that already sets a variable shows its own value (source `env`/`file`);
+  // one that does not shows the code default with the `default` badge. Both are "prefilled
+  // and only needs confirming", which is the contract under test.
+  if (results.prefill.cmdTimeout.value !== "7200") {
+    fail("the command timeout must show 7200: " + JSON.stringify(results.prefill.cmdTimeout));
+  }
+  if (results.prefill.bodyLimit.value !== "33554432") {
+    fail("the body limit must show 32 MiB: " + JSON.stringify(results.prefill.bodyLimit));
+  }
+  if (results.prefill.uploadLimit.value !== "67108864") {
+    fail("the upload limit must show 64 MiB: " + JSON.stringify(results.prefill.uploadLimit));
+  }
+  if (results.prefill.dimension.value !== "384" || results.prefill.backend.value !== "zvec") {
+    fail("the vector settings must be prefilled: " + JSON.stringify(results.prefill));
+  }
+  if (!results.prefill.register.value) {
+    fail("the sign-up switch must be prefilled: " + JSON.stringify(results.prefill.register));
+  }
+  if (results.prefill.embedBase.isDefault || results.prefill.embedBase.isDefault === undefined) {
+    fail("an endpoint without a default must not be labelled one");
+  }
+  const labelled = Object.entries(results.prefill).filter(([, entry]) => entry.isDefault);
+  if (!labelled.length) {
+    fail("at least the unset fields must carry the default badge: " + JSON.stringify(results.prefill));
+  }
+
   // 2b. The container memory limit is shown as a copyable line, not an editable
   //     setting: its value lives in docker-compose.yml, and an input here would
   //     store a line nothing reads.
@@ -189,6 +236,67 @@ try {
   if (results.nextStep.href !== "/user-setting/model") {
     fail("the hand-off must point at the model-provider page");
   }
+
+  // 3c. The wizard follows the environment file: an edit made outside the page (here a
+  //     direct append, as an operator would do with vi) reloads into the form.
+  writeFileSync(
+    ENV_PATH,
+    readFileSync(ENV_PATH, "utf8").replace(/^RAYRAG_MAX_UPLOAD_BYTES=.*$/m, "") +
+      "RAYRAG_MAX_UPLOAD_BYTES=12345678\n",
+  );
+  await page.waitForFunction(
+    () => {
+      const control = document.querySelector("[data-testid='setup-RAYRAG_MAX_UPLOAD_BYTES']");
+      return control && control.value === "12345678";
+    },
+    null,
+    { timeout: 30000 },
+  );
+  // `waitForSelector` waits for *visibility*, so a hidden banner needs the predicate form.
+  await page.waitForFunction(() => document.getElementById("setupSync").hidden, null, {
+    timeout: 30000,
+  });
+  results.externalEdit = await page.evaluate(() => ({
+    value: document.querySelector("[data-testid='setup-RAYRAG_MAX_UPLOAD_BYTES']").value,
+    isDefault: !!document.querySelector("[data-testid='setup-default-RAYRAG_MAX_UPLOAD_BYTES']"),
+    banner: document.getElementById("setupSync").hidden,
+  }));
+  step("external edit picked up", results.externalEdit);
+  if (results.externalEdit.isDefault) {
+    fail("a value read from the file must not be labelled a default");
+  }
+
+  // 3d. With unsaved edits the page warns instead of silently discarding them.
+  await page.fill("[data-testid='setup-RAYRAG_CORS_ORIGIN']", "http://typed.example");
+  writeFileSync(
+    ENV_PATH,
+    readFileSync(ENV_PATH, "utf8").replace(/^RAYRAG_OCR_PROVIDER=.*$/m, "") +
+      "RAYRAG_OCR_PROVIDER=none\n",
+  );
+  // Wait for the *warning*: an informational banner from the earlier reload must not
+  // satisfy this check.
+  await page.waitForSelector("[data-testid='setup-sync'].warn", { timeout: 30000 });
+  results.dirtyWarning = await page.evaluate(() => ({
+    text: document.getElementById("setupSyncText").textContent,
+    warn: document.getElementById("setupSync").classList.contains("warn"),
+    typed: document.querySelector("[data-testid='setup-RAYRAG_CORS_ORIGIN']").value,
+    reloadLabel: document.getElementById("setupSyncReload").textContent,
+  }));
+  step("unsaved-edit warning", results.dirtyWarning);
+  if (!results.dirtyWarning.warn) fail("the warning must be marked as a warning");
+  if (results.dirtyWarning.typed !== "http://typed.example") {
+    fail("the page must not discard unsaved edits");
+  }
+  await page.click("[data-testid='setup-sync-reload']");
+  await page.waitForFunction(
+    () => {
+      const control = document.querySelector("[data-testid='setup-RAYRAG_CORS_ORIGIN']");
+      return control && control.value === "";
+    },
+    null,
+    { timeout: 30000 },
+  );
+  step("reloaded after confirming", true);
 
   // 4. The file the process writes is the one it read at startup.
   const onDisk = await page.evaluate(async () => {

@@ -131,6 +131,15 @@ the sign-up switch. Saving writes them to the project's `.env` and tells you whi
 effect immediately and which need a restart. Everything there can also be set by environment
 variable, exactly as in RAGFlow.
 
+Two things make it quick to trust:
+
+- **Values are filled in already.** Anything RayRAG would default to is shown and tagged
+  `default`, so you read it and press Save; fields that have no safe default (a model
+  endpoint, an API key, your database) stay empty rather than guessing an address for you.
+- **The page and `.env` stay in step.** Edit `.env` in another window and the page picks the
+  change up within seconds. If you have unsaved edits at that moment it asks before
+  reloading, so nothing you typed is thrown away silently.
+
 ---
 
 ## 3. Connect a model (what makes answers smart)

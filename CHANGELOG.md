@@ -2,6 +2,34 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.53] — 2026-09-24（对标批次 v0.3.9e）
+
+### Added
+
+- **引导页预填默认值，用户只需确认**（`src/api/setup.rs::field_defaults`）：凡是代码里有默认值的项，
+  页面直接给出该值并打 `default` 徽标（现取自 `cmd_timeout` 的各个常量、`pdf_stream` 的解压上限、
+  向量后端/维度/目录、上传上限、注册开关等 14 项），用户看一眼点保存即可；**没有安全默认值的项
+  （模型端点、密钥、数据库连接串、搜索地址）保持空白**——猜一个地址写进去比留空更糟。
+  已经由环境变量或 `.env` 设定的项照旧显示实际值并标 `env`/`from file`，不会被误标为默认值。
+- **引导页与 `.env` 动态同步**：新增 `GET /api/v1/setup/watch?fingerprint=`，页面每 5 秒比对
+  环境文件的指纹（大小 + mtime + 内容 FNV-1a，同内容重写不算变化，只 stat + 哈希一个小文件，
+  不返回内容）。文件被外部修改时：
+  - **没有未保存修改** → 自动重新加载并显示「已从环境文件重新加载」提示（提示会自行消失）；
+  - **有未保存修改** → 显示警示条「环境文件已在页面外被修改，重新加载会丢弃未保存的修改」并给出
+    `Reload` 按钮，**绝不静默丢弃用户输入**；
+  - 保存成功后页面用响应里的新指纹刷新基线，自己写的那次不会被当成外部修改。
+
+### Notes
+
+- 新增回归 2 条：`every_field_with_a_code_default_is_prefilled_and_labelled`（有默认值的项必须与代码
+  常量逐一对齐、端点类必须没有默认值）、`the_file_fingerprint_notices_a_real_change_and_ignores_a_rewrite`
+  （同内容重写不算变化、内容变化必定被发现、文件不存在时如实报告）。页面回归补充预填徽标、
+  同步条与轮询代码的断言。
+- CDP 真点（`scripts/ui-traversal/setup-wizard-cdp.mjs`，已扩展）：真点确认预填值（7200 / 33554432 /
+  67108864 / 384 / zvec）、直接改写 `.env` 后页面在数秒内自动跟进新值、有未保存输入时出现警示条且
+  输入保留、点 `Reload` 后才采用文件值；探针结束时把 `.env` 原样写回（实测与跑前逐字节一致）。
+- 全量 `cargo test --locked --offline --lib` **1631 passed / 0 failed / 27 ignored**。
+
 ## [0.4.52] — 2026-09-24（对标批次 v0.3.9d）
 
 ### Fixed
