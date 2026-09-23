@@ -55,6 +55,14 @@ pub struct RerankerConfig {
     pub api_base: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Model the endpoint should rerank with (`RERANK_MODEL`).
+    ///
+    /// The field was documented but never sent: an operator who set `RERANK_MODEL`
+    /// (as the README instructs) got a silently different model, and endpoints that
+    /// require a model name — TEI with several models loaded, vLLM, Xinference —
+    /// answered with an error the user could not connect to their configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -62,6 +70,8 @@ pub struct PublicRerankerConfig {
     pub enabled: bool,
     pub api_base: String,
     pub api_key_configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 pub struct RerankerManager {
@@ -107,6 +117,10 @@ impl RerankerManager {
             enabled: config.enabled,
             api_base: config.api_base.clone(),
             api_key_configured: config.api_key.as_ref().is_some_and(|key| !key.is_empty()),
+            model: config
+                .model
+                .clone()
+                .filter(|model| !model.trim().is_empty()),
         }
     }
 
@@ -139,6 +153,8 @@ impl RerankerManager {
             enabled,
             api_base,
             api_key,
+            // The settings form does not edit the model, so a patch must not drop it.
+            model: current.model,
         })
     }
 }
@@ -170,6 +186,15 @@ fn build_reranker(config: &RerankerConfig) -> Result<Option<Arc<dyn Reranker>>> 
         Some(key) => reranker.with_api_key(key),
         None => reranker,
     };
+    let reranker = match config
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
+        Some(model) => reranker.with_model(model),
+        None => reranker,
+    };
     Ok(Some(Arc::new(reranker)))
 }
 
@@ -177,8 +202,12 @@ fn build_reranker(config: &RerankerConfig) -> Result<Option<Arc<dyn Reranker>>> 
 ///
 /// Sends POST to `{base_url}/v1/rerank` with:
 /// ```json
-/// {"query": "...", "documents": [...], "top_k": N}
+/// {"query": "...", "documents": [...], "top_k": N, "model": "bge-reranker-v2-m3"}
 /// ```
+///
+/// `model` is sent only when `RERANK_MODEL` (or the provider's rerank model) names
+/// one: a single-model endpoint rejects an unknown name, and omitting the field keeps
+/// those deployments working.
 ///
 /// Expects response:
 /// ```json
@@ -189,6 +218,8 @@ pub struct RemoteReranker {
     base_url: String,
     /// Optional API key
     api_key: Option<String>,
+    /// Optional model name sent as `model` in the request body
+    model: Option<String>,
     /// HTTP client
     client: reqwest::Client,
 }
@@ -199,6 +230,7 @@ impl RemoteReranker {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: None,
+            model: None,
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .timeout(std::time::Duration::from_secs(30))
@@ -210,6 +242,13 @@ impl RemoteReranker {
     /// Set an API key for the reranker.
     pub fn with_api_key(mut self, key: &str) -> Self {
         self.api_key = Some(key.to_string());
+        self
+    }
+
+    /// Name the model the endpoint should rerank with (`RERANK_MODEL`).
+    pub fn with_model(mut self, model: &str) -> Self {
+        let model = model.trim();
+        self.model = (!model.is_empty()).then(|| model.to_string());
         self
     }
 
@@ -232,11 +271,14 @@ impl Reranker for RemoteReranker {
     ) -> Result<Vec<(usize, f32)>> {
         let url = self.endpoint();
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "query": query,
             "documents": documents,
             "top_k": top_k,
         });
+        if let Some(model) = &self.model {
+            body["model"] = serde_json::Value::String(model.clone());
+        }
 
         let mut req = self.client.post(&url).json(&body);
         if let Some(ref key) = self.api_key {
@@ -461,6 +503,73 @@ mod tests {
         );
     }
 
+    /// `RERANK_MODEL` used to be documented and never sent. A body without the model
+    /// is what a single-model endpoint wants, so it must stay omitted when unset.
+    #[tokio::test]
+    async fn the_request_names_the_model_only_when_one_is_configured() {
+        use axum::{Router, routing::post};
+        let captured: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> =
+            std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/v1/rerank",
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    // Every document needs a score: the client rejects a short answer
+                    // rather than silently dropping candidates.
+                    axum::Json(serde_json::json!({
+                        "results": [
+                            {"index": 0, "relevance_score": 0.9},
+                            {"index": 1, "relevance_score": 0.1}
+                        ]
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let documents = vec!["alpha".to_string(), "beta".to_string()];
+        let with_model = RemoteReranker::new(&format!("http://{addr}"))
+            .with_api_key("secret")
+            .with_model("bge-reranker-v2-m3");
+        with_model.rerank("question", &documents, 2).await.unwrap();
+        let without_model = RemoteReranker::new(&format!("http://{addr}"));
+        without_model
+            .rerank("question", &documents, 2)
+            .await
+            .unwrap();
+
+        let requests = captured.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["model"], "bge-reranker-v2-m3");
+        assert_eq!(requests[0]["query"], "question");
+        assert_eq!(requests[0]["top_k"], 2);
+        assert!(
+            requests[1].get("model").is_none(),
+            "an unset RERANK_MODEL must not send a model name: {}",
+            requests[1]
+        );
+
+        // The manager builds the same client from the config, and the provider path
+        // no longer discards the instance's model.
+        let manager = RerankerManager::in_memory(None);
+        manager
+            .update(RerankerConfig {
+                enabled: true,
+                api_base: format!("http://{addr}"),
+                api_key: Some("secret".into()),
+                model: Some("  ".into()),
+            })
+            .unwrap();
+        assert_eq!(manager.public_config().model, None, "blank is not a model");
+    }
+
     #[test]
     fn reranker_manager_persists_config_without_exposing_secret() {
         let root = std::env::temp_dir().join(format!("rayrag-reranker-{}", uuid::Uuid::new_v4()));
@@ -472,10 +581,12 @@ mod tests {
                 enabled: true,
                 api_base: "http://127.0.0.1:8899".into(),
                 api_key: Some("secret".into()),
+                model: Some("bge-reranker-v2-m3".into()),
             })
             .unwrap();
         assert!(public.enabled);
         assert!(public.api_key_configured);
+        assert_eq!(public.model.as_deref(), Some("bge-reranker-v2-m3"));
         assert!(manager.current().is_some());
 
         let reloaded = RerankerManager::new(&path, RerankerConfig::default()).unwrap();
@@ -502,6 +613,7 @@ mod tests {
                     enabled: true,
                     api_base: "file:///tmp/reranker".into(),
                     api_key: None,
+                    model: None,
                 })
                 .is_err()
         );

@@ -100,6 +100,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+> **Where your settings live:** the `.env` file in this project folder. RayRAG mounts it
+> into the container, so the first-login setup page (section 2) writes exactly the file
+> you can open, edit and back up — one file, no hidden copy.
+
 ---
 
 ## 2. Open the web UI, first steps
@@ -119,6 +123,13 @@ docker compose up -d --build
      start chatting.
 
 Almost every button is bilingual (`English` / `简体中文`); switch it under your avatar → `Language`.
+
+**First login already configures the important parts for you.** The opening page (`/setup`)
+detects this host's CPU and memory, suggests how many documents to parse at once, and lists
+the settings that matter — model endpoints, storage, resource limits, the search engine, and
+the sign-up switch. Saving writes them to the project's `.env` and tells you which took
+effect immediately and which need a restart. Everything there can also be set by environment
+variable, exactly as in RAGFlow.
 
 ---
 

@@ -138,6 +138,8 @@ PY
 
 blue "$(m "==> 准备配置文件 .env" "==> Preparing .env")"
 NEW_PASSWORDS=0
+# The compose file bind-mounts `.env` into the container so the first-login setup page
+# writes the file the operator edits; the file must therefore exist before `up`.
 if [ -f .env ]; then
     green "    $(m "已有 .env，保留现有密码与配置" "existing .env kept (passwords and settings preserved)")"
 else

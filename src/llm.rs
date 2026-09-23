@@ -2798,11 +2798,15 @@ pub fn rerank_model_for(
     model: &str,
     api_base: Option<&str>,
 ) -> Result<Box<dyn crate::rerank::Reranker>> {
-    let _ = model;
+    // `model` used to be discarded (`let _ = model;`): the instance's rerank model
+    // reached the endpoint only as a name the endpoint had to guess.
     let base = resolve_base_url(provider, api_base, "http://127.0.0.1:8899");
     let mut reranker = crate::rerank::RemoteReranker::new(&base);
     if !api_key.is_empty() {
         reranker = reranker.with_api_key(api_key);
+    }
+    if !model.trim().is_empty() {
+        reranker = reranker.with_model(model);
     }
     Ok(Box::new(reranker))
 }

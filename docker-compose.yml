@@ -124,12 +124,21 @@ services:
       # Optional RAGFlow-compatible RSA password transport. The path must be
       # mounted into the container by an operator-owned Compose override.
       RAYRAG_PASSWORD_PRIVATE_KEY_FILE: ${RAYRAG_PASSWORD_PRIVATE_KEY_FILE:-}
+      # Where the setup page writes: the project root's `.env`, bind-mounted above. The
+      # container's `/app` is the project root of the image.
+      RAYRAG_ENV_FILE: /app/.env
     command: ["serve", "--port", "8080"]
     ports:
       - "${RAYRAG_PORT:-9380}:8080"
     volumes:
       - rayrag-state:/app/web
       - rayrag-zvec-data:/var/lib/rayrag/zvec
+      # The deployment's configuration file lives at the project root, where a person
+      # looks for it and where `docker compose` reads it. Mounting just that file (the
+      # installer always creates it before the first start) lets the first-login setup
+      # page write the same file the operator edits, instead of a second copy inside
+      # the state volume that nobody finds.
+      - ./.env:/app/.env
     healthcheck:
       test:
         [

@@ -1499,6 +1499,12 @@ pub mod cmd_timeout {
     pub const DEFAULT_CONNECTOR_BODY_LIMIT: usize = 256 << 20;
     /// 连接器下载上限环境变量
     pub const CONNECTOR_BODY_LIMIT_ENV: &str = "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES";
+    /// 容器内存上限的默认值，与 `docker-compose.yml` 的
+    /// `mem_limit: ${RAYRAG_MEMORY_LIMIT:-6g}` 保持一致（引导页只读展示，
+    /// 让用户知道该把哪一行复制进 compose 环境）。
+    pub const DEFAULT_MEMORY_LIMIT: &str = "6g";
+    /// 容器内存上限环境变量（compose 读取，进程不读）
+    pub const MEMORY_LIMIT_ENV: &str = "RAYRAG_MEMORY_LIMIT";
 
     /// 当前命令超时秒数：`RAYRAG_CMD_TIMEOUT`，默认 7200，钳制在 1..=7200
     pub fn seconds() -> u64 {

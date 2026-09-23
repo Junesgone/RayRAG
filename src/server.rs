@@ -1477,6 +1477,7 @@ pub(crate) fn register_document_upload(
         chunk_count: 0,
         created_at: now,
         updated_at: now,
+        status: crate::api::document::enabled_status(),
     };
     let doc = state.docs.insert_unique(doc)?;
     let name = doc.name.clone();
@@ -3080,6 +3081,42 @@ async fn retrieval(
         Ok(doc_ids) => doc_ids,
         Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
+    // Upstream `retrieval_service.py` keeps only documents whose `status` is "1": a
+    // document the operator disabled must stop appearing in answers, for every client,
+    // not just in the browser that flipped the switch. Only restrict the query when a
+    // disabled document is actually involved, so the common path is unchanged.
+    let filtered_doc_ids = {
+        let disabled: Vec<String> = state
+            .docs
+            .list_all()
+            .into_iter()
+            .filter(|doc| doc.status != "1" && kb_ids.contains(&doc.kb_id))
+            .map(|doc| doc.id)
+            .collect();
+        if disabled.is_empty() {
+            filtered_doc_ids
+        } else {
+            match filtered_doc_ids {
+                Some(ids) => Some(
+                    ids.into_iter()
+                        .filter(|id| !disabled.contains(id))
+                        .collect::<Vec<_>>(),
+                ),
+                None => {
+                    // The engine takes an allow-list, so it is built from the
+                    // documents that are still enabled in the queried datasets.
+                    let enabled: Vec<String> = state
+                        .docs
+                        .list_all()
+                        .into_iter()
+                        .filter(|doc| kb_ids.contains(&doc.kb_id) && doc.status == "1")
+                        .map(|doc| doc.id)
+                        .collect();
+                    Some(enabled)
+                }
+            }
+        }
+    };
     let (include_metadata, metadata_fields) =
         crate::api::document_metadata::reference_metadata_selection(&b);
     let rank_feature = b
@@ -3846,7 +3883,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/datasets/{id}/documents",
-            post(upload_document).get(crate::api::document::list_docs),
+            post(upload_document)
+                .get(crate::api::document::list_docs)
+                // Upstream `document_api.py::delete_documents`: the bulk bar deletes a
+                // selection in one request instead of one request per file.
+                .delete(crate::api::document::delete_docs_bulk),
+        )
+        .route(
+            // Upstream `document_api.py::batch_update_document_status`.
+            "/api/v1/datasets/{id}/documents/batch-update-status",
+            post(crate::api::document::batch_update_document_status),
+        )
+        .route(
+            // Upstream `document_api.py::ingest`: parse or cancel a whole selection.
+            "/api/v1/documents/ingest",
+            post(crate::api::document::ingest_documents),
         )
         .route(
             "/api/v1/datasets/{id}/documents/{did}",
@@ -4966,6 +5017,11 @@ pub async fn run(
             api_key: std::env::var("RERANK_API_KEY")
                 .ok()
                 .filter(|key| !key.is_empty()),
+            // RAGFlow-compatible name; a reranker that needs to be told which model
+            // to run (TEI with several loaded, vLLM, Xinference) reads it here.
+            model: std::env::var("RERANK_MODEL")
+                .ok()
+                .filter(|model| !model.trim().is_empty()),
         },
     )?);
 
@@ -10955,6 +11011,7 @@ mod tests {
             chunk_count: 1,
             created_at: 1,
             updated_at: 1,
+            status: crate::api::document::enabled_status(),
         };
         env.state.docs.insert(doc).unwrap();
         std::fs::write(env.root.join("uploads/preview-doc.pdf"), b"%PDF-").unwrap();
@@ -11033,6 +11090,7 @@ mod tests {
                 chunk_count: 0,
                 created_at: 1,
                 updated_at: 1,
+                status: crate::api::document::enabled_status(),
             })
             .unwrap();
         std::fs::write(env.root.join("uploads/download-doc.md"), b"# hi\n").unwrap();
@@ -11199,6 +11257,7 @@ mod tests {
                     chunk_count: 0,
                     created_at: 1,
                     updated_at: 1,
+                    status: crate::api::document::enabled_status(),
                 })
                 .unwrap();
         }
@@ -11277,6 +11336,7 @@ mod tests {
             chunk_count: 1,
             created_at: 1,
             updated_at: 1,
+            status: crate::api::document::enabled_status(),
         };
         env.state.docs.insert(doc).unwrap();
         std::fs::write(env.root.join("uploads/indexed-doc.txt"), b"same").unwrap();
@@ -13016,6 +13076,7 @@ mod tests {
                 chunk_count: 0,
                 created_at: 1,
                 updated_at: 1,
+                status: crate::api::document::enabled_status(),
             })
             .unwrap();
         let response = build_router(env.state.clone())
@@ -13317,6 +13378,260 @@ mod tests {
         }
     }
 
+    /// The files page's bulk bar calls three upstream endpoints. Each one is checked
+    /// here against the contract the page relies on: a refusal that names the reason,
+    /// a per-document result map, and state that survives in the document store (the
+    /// first implementation kept the enabled/disabled switch in the browser, so a
+    /// disabled document happily kept answering questions).
+    #[tokio::test]
+    async fn bulk_document_operations_follow_the_upstream_contract() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Bulk KB", "")
+            .unwrap();
+        let other = env
+            .state
+            .kbs
+            .create_for("test-user", "Other KB", "")
+            .unwrap();
+        for (id, kb_id) in [
+            ("bulk-doc-a", kb.id.as_str()),
+            ("bulk-doc-b", kb.id.as_str()),
+            ("bulk-doc-foreign", other.id.as_str()),
+        ] {
+            env.state.docs.insert(stored_doc(id, kb_id, 1)).unwrap();
+        }
+        let post = |uri: &str, body: serde_json::Value| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let bulk_uri = format!("/api/v1/datasets/{}/documents/batch-update-status", kb.id);
+
+        // The list the page renders from carries the status.
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(listed.into_body(), 256 * 1024).await.unwrap();
+        let listed: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(listed["data"][0]["status"], "1");
+
+        // Disable one document, then the other, and watch each answer.
+        let disabled = router
+            .clone()
+            .oneshot(post(
+                &bulk_uri,
+                serde_json::json!({"doc_ids": ["bulk-doc-a"], "status": 0}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::OK);
+        let payload = to_bytes(disabled.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["bulk-doc-a"]["status"], "0");
+        assert_eq!(env.state.docs.get("bulk-doc-a").unwrap().status, "0");
+        assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().status, "1");
+
+        // A document from another dataset is reported per id, not silently accepted.
+        let mixed = router
+            .clone()
+            .oneshot(post(
+                &bulk_uri,
+                serde_json::json!({"doc_ids": ["bulk-doc-b", "bulk-doc-foreign"], "status": 1}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(mixed.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(
+            body["code"], 500,
+            "partial failure must be reported: {body}"
+        );
+        assert_eq!(body["message"], "Partial failure");
+        assert!(
+            body["data"]["bulk-doc-foreign"]["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("not found in this dataset")),
+            "{body}"
+        );
+        assert_eq!(body["data"]["bulk-doc-b"]["status"], "1");
+
+        // Argument validation mirrors upstream's messages.
+        for (body, needle) in [
+            (
+                serde_json::json!({"doc_ids": [], "status": 1}),
+                "non-empty list",
+            ),
+            (
+                serde_json::json!({"doc_ids": ["bulk-doc-a"], "status": 7}),
+                "must be either 0 or 1",
+            ),
+        ] {
+            let response = router.clone().oneshot(post(&bulk_uri, body)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(body["code"], 400);
+            assert!(
+                body["message"].as_str().is_some_and(|m| m.contains(needle)),
+                "{body}"
+            );
+        }
+
+        // Parsing a selection: `run` is validated, a document whose upload is missing
+        // reports its own error instead of a blanket success, and a real document is
+        // queued once its file exists.
+        let invalid_run = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 3}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(invalid_run.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 400, "{body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("'run' must be either 0 or 1")),
+            "{body}"
+        );
+
+        let missing_file = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 1}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(missing_file.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(
+            body["code"], 500,
+            "a missing upload must not be a success: {body}"
+        );
+        assert!(
+            body["data"]["errors"][0]["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing")),
+            "{body}"
+        );
+
+        // With the file in place the same call queues a task.
+        let uploads = std::path::Path::new(&env.state.static_dir).join("../uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(uploads.join("sample.txt"), b"hello").unwrap();
+        let queued = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 1}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(queued.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"][0]["document_id"], "bulk-doc-b");
+        assert!(
+            body["data"][0]["task_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
+            "{body}"
+        );
+
+        // Cancelling the selection (`run: 2`) marks the document and stops the task.
+        let cancelled = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 2}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(cancelled.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().run, "CANCELLED");
+
+        // Deleting a selection: ids from another dataset are refused, both `ids` and
+        // `delete_all` together are refused, and the accepted ids really disappear.
+        let delete_uri = format!("/api/v1/datasets/{}/documents", kb.id);
+        for (body, needle) in [
+            (
+                serde_json::json!({"ids": ["bulk-doc-a", "bulk-doc-foreign"]}),
+                "do not belong to dataset",
+            ),
+            (
+                serde_json::json!({"ids": ["bulk-doc-a"], "delete_all": true}),
+                "should not provide both",
+            ),
+            (serde_json::json!({}), "should either provide doc ids"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri(&delete_uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(body["code"], 400, "{body}");
+            assert!(
+                body["message"].as_str().is_some_and(|m| m.contains(needle)),
+                "{body}"
+            );
+        }
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(&delete_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"ids": ["bulk-doc-a"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(deleted.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["success_count"], 1);
+        assert!(env.state.docs.get("bulk-doc-a").is_none());
+        assert!(env.state.docs.get("bulk-doc-b").is_some());
+    }
+
     #[tokio::test]
     async fn multipart_rejects_path_traversal_filename() {
         let env = test_env();
@@ -13379,6 +13694,7 @@ mod tests {
             chunk_count,
             created_at: 1,
             updated_at: 1,
+            status: crate::api::document::enabled_status(),
         }
     }
 
@@ -15209,6 +15525,7 @@ mod tests {
             chunk_count: 0,
             created_at: 1,
             updated_at: 1,
+            status: crate::api::document::enabled_status(),
         };
         env.state.docs.insert(doc.clone()).unwrap();
         // `get_ingestion_summary` reports the dataset row's denormalized

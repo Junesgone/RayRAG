@@ -153,7 +153,50 @@ fn t(k: &str, zh: bool) -> &str {
         "Registered!" => "注册成功",
         "Log out" => "登出",
         "Set default models" => "设置默认模型",
-        "Please complete these settings before beginning" => "开始前请完成这些设置",
+        // 数据集文件页批量操作栏（上游 `bulk-operate-bar.tsx` /
+        // `pages/dataset/dataset/*`）与相关对话框文案，键为上游 en.ts 原文。
+        "Selected" => "已选择",
+        "Bulk operate" => "批量操作",
+        "Delete files" => "删除文件",
+        "Are you sure to delete them?" => "确定要删除吗？",
+        "Selected {{count}} files" => "已选择 {{count}} 个文件",
+        "Parse file" => "解析文件",
+        "Are you sure to parse?" => "您确定要解析吗？",
+        "Do you want to clear the existing {{chunkNum}} chunks?" => {
+            "是否清空已有 {{chunkNum}}个 chunk？"
+        }
+        "Clear existing chunks" => "清除现有分块",
+        "Apply global auto-metadata settings" => "应用全局自动元数据设置",
+        "The document being parsed cannot be deleted" => "正在解析的文档不能被删除",
+        "Operated" => "操作成功",
+        "Deleted" => "删除成功",
+        "Modified" => "更新成功",
+        "Please select a non-empty file list" => "请选择非空文件列表",
+        "Find" => "查找",
+        "Replace with" => "替换为",
+        "Add prefix" => "添加前缀",
+        "Files that will be renamed:" => "将被重命名的文件：",
+        "Enter something to find or a prefix" => "请输入要查找的内容或前缀",
+        "Renamed" => "重命名成功",
+        "Metadata management is available on the dataset configuration page." => {
+            "元数据管理请到知识库配置页面操作。"
+        }
+        "Enabled" => "启用",
+        "Filter" => "筛选",
+        "All" => "全部",
+        // 首次登录引导页的分组标题与只读行文案（RayRAG 扩展，上游无对应 key）。
+        "Models" => "模型",
+        "Storage" => "存储",
+        "Resources" => "资源",
+        "Search" => "检索",
+        "Access control" => "访问控制",
+        "Copy" => "复制",
+        "Copied" => "已复制",
+        "Select the line and press Ctrl+C" => "请选中该行后按 Ctrl+C",
+        "Continue to model providers" => "继续添加模型提供商",
+        "No model endpoint is configured yet — add one to enable answers, embeddings and reranking." => {
+            "尚未配置模型端点——添加后才能进行问答、嵌入与重排。"
+        }
         // RayRAG 扩展：公共模型目录（`https://models.agent-one.dev/list`）在自定义
         // 提供商/模型对话框中的文案。上游 RAGFlow 没有这个功能，因此这些键只存在于
         // 这张表里，中文不随 `locales/zh.ts` 变化。
@@ -982,9 +1025,12 @@ fn setup_banner_markup(zh: bool) -> String {
         "This deployment has no model endpoint configured yet. The setup page walks through the settings and writes them to the environment file.",
         zh,
     ));
-    b.push_str("</p><a class='btn btn-p btn-sm' href='/setup' data-testid='setup-banner-link'>");
+    b.push_str("</p><div class='setup-banner-actions'>");
+    b.push_str("<a class='btn btn-p btn-sm' href='/setup' data-testid='setup-banner-link'>");
     b.push_str(t("Open setup", zh));
-    b.push_str("</a></section>");
+    b.push_str("</a><a class='btn btn-o btn-sm' href='/user-setting/model' data-testid='setup-banner-models'>");
+    b.push_str(t("Model providers", zh));
+    b.push_str("</a></div></section>");
     b
 }
 
@@ -1692,6 +1738,168 @@ const SEARCH_X_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill
 
 /// lucide `Check` at 16px — the selected checkbox inside the popover rows.
 const SEARCH_CHECK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M20 6 9 17l-5-5'/></svg>";
+/// Behaviour of the files page's bulk-operate bar (upstream `bulk-operate-bar.tsx`
+/// plus `pages/dataset/dataset/{index,use-bulk-operate-dataset,reparse-dialog}.tsx`).
+///
+/// Upstream calls three endpoints the page now also calls:
+/// `POST /api/v1/datasets/{id}/documents/batch-update-status` (enable/disable),
+/// `POST /api/v1/documents/ingest` (parse with `run:1` / cancel with `run:2`, plus the
+/// `redo` checkbox as `delete`), and `DELETE /api/v1/datasets/{id}/documents` with
+/// `{ids}`. The status lives on the document, so a disabled file stops being used for
+/// retrieval by every client — the first version of this page only greyed the row out
+/// in the browser it was clicked in.
+const BULK_OPERATE_JS: &str = r#"
+function bulkStatus(node,text,error){if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
+function bulkSelectedLabel(count){return BULK_TEXT.selectedFiles.replace('{{count}}',String(count))}
+function bulkSelection(){var ids=[];document.querySelectorAll('.docCk:checked').forEach(function(box){ids.push(box.value)});return ids}
+function bulkSelDocs(){var ids=bulkSelection();var all=Array.from(document.querySelectorAll('.docCk'));return ids.map(function(id){var box=all.filter(function(x){return x.value===id})[0];return {id:id,name:box?(box.dataset.name||''):''}})}
+async function bulkRequest(url,options){
+  var response=await fetch(url,options);
+  var payload=await response.json().catch(function(){return {}});
+  if(payload.code!==0)throw new Error(payload.message||('HTTP '+response.status));
+  return payload.data;
+}
+async function bulkSetStatus(on){
+  var ids=bulkSelection();
+  if(!ids.length){alert(BULK_TEXT.noSelection);return}
+  var count=document.getElementById('selCount');
+  if(count)count.textContent=BULK_TEXT.working;
+  try{
+    await bulkRequest('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:ids,status:on?1:0})});
+    docSelAll(false);loadDocs()
+  }catch(error){alert(error.message);updateBatchBar()}
+}
+async function bulkCancel(){
+  var ids=bulkSelection();
+  if(!ids.length){alert(BULK_TEXT.noSelection);return}
+  try{
+    await bulkRequest('/api/v1/documents/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:ids,run:2})});
+    docSelAll(false);loadDocs()
+  }catch(error){alert(error.message)}
+}
+function showBulkParse(){
+  var docs=bulkSelDocs();
+  if(!docs.length){alert(BULK_TEXT.noSelection);return}
+  BULK_STATE.parse=docs;
+  var chunks=docs.reduce(function(sum,doc){var box=document.querySelector('.docCk[value="'+doc.id+'"]');var row=box?box.closest('tr'):null;var cell=row?row.querySelector('[data-chunks]'):null;return sum+(cell?Number(cell.dataset.chunks||0):0)},0);
+  BULK_STATE.chunks=chunks;
+  var redo=document.getElementById('bulkParseRedo');
+  redo.checked=chunks>0;
+  document.getElementById('bulkParseRedoText').textContent=chunks>0?BULK_TEXT.redo.replace('{{chunkNum}}',String(chunks)):BULK_TEXT.redoAll;
+  var metaRow=document.getElementById('bulkParseMetaRow');
+  metaRow.hidden=true;
+  document.getElementById('bulkParseStatus').textContent='';
+  document.getElementById('bulkParseModal').classList.add('show');
+}
+function closeBulkParse(){document.getElementById('bulkParseModal').classList.remove('show')}
+async function bulkParse(){
+  var docs=BULK_STATE.parse||[];
+  if(!docs.length)return;
+  var button=document.getElementById('bulkParseOk');
+  var status=document.getElementById('bulkParseStatus');
+  button.disabled=true;bulkStatus(status,BULK_TEXT.working);
+  try{
+    await bulkRequest('/api/v1/documents/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:docs.map(function(doc){return doc.id}),run:1,delete:document.getElementById('bulkParseRedo').checked,apply_kb:document.getElementById('bulkParseMeta').checked})});
+    closeBulkParse();docSelAll(false);loadDocs();schedulePoll()
+  }catch(error){bulkStatus(status,error.message,true)}
+  finally{button.disabled=false}
+}
+function showBulkDelete(){
+  var docs=bulkSelDocs();
+  if(!docs.length){alert(BULK_TEXT.noSelection);return}
+  BULK_STATE.remove=docs;
+  document.getElementById('bulkDeleteCount').textContent=bulkSelectedLabel(docs.length);
+  document.getElementById('bulkDeleteStatus').textContent='';
+  document.getElementById('bulkDeleteModal').classList.add('show');
+}
+function closeBulkDelete(){document.getElementById('bulkDeleteModal').classList.remove('show')}
+async function bulkDelete(){
+  var docs=BULK_STATE.remove||[];
+  if(!docs.length)return;
+  var button=document.getElementById('bulkDeleteOk');
+  var status=document.getElementById('bulkDeleteStatus');
+  // Upstream refuses to delete a document that is being parsed right now; saying so is
+  // better than a request that fails halfway through the selection.
+  var running=docs.filter(function(doc){
+    var box=document.querySelector('.docCk[value="'+doc.id+'"]');
+    var row=box?box.closest('tr'):null;
+    return row&&row.dataset.run==='RUNNING';
+  });
+  if(running.length===docs.length){
+    bulkStatus(status,BULK_TEXT.runningCannotBeDeleted,true);return;
+  }
+  // Removing the chunks of a document that is being parsed waits for that parse to
+  // commit, so say what is happening instead of leaving the dialog silent.
+  button.disabled=true;bulkStatus(status,BULK_TEXT.working);
+  try{
+    await bulkRequest('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:docs.map(function(doc){return doc.id})})});
+    closeBulkDelete();docSelAll(false);loadDocs()
+  }catch(error){bulkStatus(status,error.message,true)}
+  finally{button.disabled=false}
+}
+function showBulkMetadata(){
+  var docs=bulkSelDocs();
+  if(!docs.length){alert(BULK_TEXT.noSelection);return}
+  // Upstream opens the manage-metadata modal for the selection; RayRAG keeps metadata
+  // management on the dataset configuration page, so the bar says where to go.
+  alert(BULK_TEXT.metadataUnavailable);
+}
+function bulkRenamePlan(){
+  var find=document.getElementById('bulkRenameFind').value;
+  var replace=document.getElementById('bulkRenameReplace').value;
+  var prefix=document.getElementById('bulkRenamePrefix').value;
+  return bulkSelDocs().map(function(doc){
+    var name=doc.name;
+    if(find)name=name.split(find).join(replace);
+    if(prefix)name=prefix+name;
+    return {id:doc.id,from:doc.name,to:name};
+  });
+}
+function bulkRenamePreview(){
+  var plan=bulkRenamePlan();
+  var list=document.getElementById('bulkRenamePreview');
+  list.replaceChildren();
+  plan.forEach(function(entry){
+    var row=document.createElement('li');
+    row.textContent=entry.from+' → '+entry.to;
+    if(!entry.to.trim()||entry.to===entry.from)row.className='unchanged';
+    list.appendChild(row);
+  });
+}
+function showBulkRename(){
+  var docs=bulkSelDocs();
+  if(!docs.length){alert(BULK_TEXT.noSelection);return}
+  BULK_STATE.rename=docs;
+  document.getElementById('bulkRenameCount').textContent=bulkSelectedLabel(docs.length);
+  ['bulkRenameFind','bulkRenameReplace','bulkRenamePrefix'].forEach(function(id){document.getElementById(id).value=''});
+  document.getElementById('bulkRenameStatus').textContent='';
+  bulkRenamePreview();
+  document.getElementById('bulkRenameModal').classList.add('show');
+}
+function closeBulkRename(){document.getElementById('bulkRenameModal').classList.remove('show')}
+async function bulkRename(){
+  var plan=bulkRenamePlan().filter(function(entry){return entry.to.trim()&&entry.to!==entry.from});
+  var status=document.getElementById('bulkRenameStatus');
+  if(!plan.length){bulkStatus(status,BULK_TEXT.renameNeedsPattern,true);return}
+  var button=document.getElementById('bulkRenameOk');
+  button.disabled=true;bulkStatus(status,'');
+  var failures=[];
+  bulkStatus(status,BULK_TEXT.working);
+  for(var i=0;i<plan.length;i++){
+    try{
+      await bulkRequest('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/'+encodeURIComponent(plan[i].id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:plan[i].to})});
+    }catch(error){failures.push(plan[i].from+': '+error.message)}
+  }
+  button.disabled=false;
+  if(failures.length){bulkStatus(status,failures.join('; '),true);return}
+  closeBulkRename();docSelAll(false);loadDocs()
+}
+var BULK_STATE={parse:[],remove:[],rename:[],chunks:0};
+"#;
+
+/// Upstream `bulk-operate-bar.tsx` prints a `BrushCleaning` icon next to the selected
+/// count; clicking it clears the selection.
+const SEARCH_BRUSH_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m16 22-1-4'/><path d='M19 13.99a1 1 0 0 0 1-1V12a2 2 0 0 0-2-2h-3a1 1 0 0 1-1-1V4a2 2 0 0 0-4 0v5a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2v.99a1 1 0 0 0 1 1'/><path d='M5 14h14l1.973 6.767A1 1 0 0 1 20 22H4a1 1 0 0 1-.973-1.233z'/></svg>";
 
 /// lucide `Link` at 16px — the Test connection button icon.
 const SELECT_LINK_SVG: &str = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/><path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/></svg>";
@@ -2258,7 +2466,7 @@ pub async fn kb_detail_page(
     b.push_str("function renameDoc(btn){var id=btn.getAttribute('data-id');var old=btn.getAttribute('data-name')||'';var nn=prompt('重命名文档：',old);if(!nn)return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(function(){loadDocs()})};");
     b.push_str("function reparseDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('重新解析该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){loadDocs();schedulePoll()})};");
     b.push_str("function delDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('删除该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){loadDocs()})};");
-    b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');setDocDisabled(id,!isDocDisabled(id));loadDocs()};");
+    b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');var on=btn.getAttribute('data-status')==='0';fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:[id],status:on?1:0})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){alert(d.message||'HTTP '+d.code);return}loadDocs()})};");
     b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str(SWS_JS);
@@ -2349,20 +2557,111 @@ pub async fn dataset_page(
     b.push_str("</h2><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><input type='file' id='fi' multiple style='max-width:400px'><button class='btn btn-p' id='upBtn' onclick='uploadDoc()'>");
     b.push_str(t("Upload", zh));
     b.push_str("</button><span id='upMsg' style='font-size:12px;color:var(--tm)'></span></div><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT, PNG/JPG(OCR), MP3/WAV(ASR)</p></div>");
-    // Batch operations bar (解析 / 禁用 / 启用 / 删除) — appears once rows are selected
-    b.push_str("<div class='card' id='batchBar' style='display:none'><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span id='selCount' style='font-size:13px;color:var(--tm)'></span><button class='btn btn-p btn-sm' onclick='batchParse()'>");
-    b.push_str(t("Parse", zh));
-    b.push_str("</button><button class='btn btn-o btn-sm' onclick='batchDisable(true)'>");
-    b.push_str(t("Disable", zh));
-    b.push_str("</button><button class='btn btn-o btn-sm' onclick='batchDisable(false)'>");
-    b.push_str(t("Enable", zh));
-    b.push_str("</button><button class='btn btn-d btn-sm' onclick='batchDelete()'>");
-    b.push_str(t("Delete", zh));
-    b.push_str(
-        "</button><button class='btn btn-o btn-sm' onclick='docSelAll(false);updateBatchBar()'>✕ ",
-    );
+    // Upstream `components/bulk-operate-bar.tsx`: one `role="menu"` bar that appears
+    // once rows are selected, carrying the selected count and the same item set the
+    // files page offers (enable / disable / parse / cancel / metadata / delete).
+    b.push_str("<div class='card bulk-operate-bar' id='batchBar' role='menu' aria-label='");
+    b.push_str(t("Bulk operate", zh));
+    b.push_str("' data-testid='bulk-operate-bar' hidden><p class='bulk-operate-count' id='selCount' data-testid='bulk-operate-count'></p><button type='button' class='bulk-operate-clear' onclick='docSelAll(false)' aria-label='");
     b.push_str(t("Clear", zh));
-    b.push_str("</button></div></div>");
+    b.push_str("' title='");
+    b.push_str(t("Clear", zh));
+    b.push_str("'>");
+    b.push_str(SEARCH_BRUSH_SVG);
+    b.push_str("</button><span class='bulk-operate-sep' aria-hidden='true'></span><ul class='bulk-operate-items'>");
+    for (id, label, handler, class_name) in [
+        (
+            "bulk-enabled",
+            t("Enable", zh),
+            "bulkSetStatus(1)",
+            "btn btn-o btn-sm",
+        ),
+        (
+            "bulk-disabled",
+            t("Disable", zh),
+            "bulkSetStatus(0)",
+            "btn btn-o btn-sm",
+        ),
+        (
+            "bulk-run",
+            t("Parse", zh),
+            "showBulkParse()",
+            "btn btn-o btn-sm",
+        ),
+        (
+            "bulk-cancel",
+            t("Cancel", zh),
+            "bulkCancel()",
+            "btn btn-o btn-sm",
+        ),
+        (
+            "bulk-metadata",
+            t("Metadata", zh),
+            "showBulkMetadata()",
+            "btn btn-o btn-sm",
+        ),
+        (
+            "bulk-rename",
+            t("Rename", zh),
+            "showBulkRename()",
+            "btn btn-o btn-sm",
+        ),
+        (
+            "bulk-delete",
+            t("Delete", zh),
+            "showBulkDelete()",
+            "btn btn-d btn-sm",
+        ),
+    ] {
+        b.push_str("<li><button type='button' class='");
+        b.push_str(class_name);
+        b.push_str("' role='menuitem' data-testid='");
+        b.push_str(id);
+        b.push_str("' onclick='");
+        b.push_str(handler);
+        b.push_str("'>");
+        b.push_str(label);
+        b.push_str("</button></li>");
+    }
+    b.push_str("</ul></div>");
+    // Upstream `reparse-dialog.tsx` (`knowledgeDetails.parseFile` over
+    // `ConfirmDeleteDialog`) and `confirm-delete-dialog.tsx` for the bulk delete.
+    b.push_str("<div class='modal-overlay' id='bulkParseModal' data-testid='bulk-parse-dialog' onclick='if(event.target===this)closeBulkParse()'><div class='modal bulk-operate-modal' role='dialog' aria-modal='true' aria-labelledby='bulkParseTitle'><h2 id='bulkParseTitle'>");
+    b.push_str(t("Parse file", zh));
+    b.push_str("</h2><p class='bulk-operate-tip'>");
+    b.push_str(t("Are you sure to parse?", zh));
+    b.push_str("</p><div class='bulk-operate-options'><label class='bulk-operate-check'><input type='checkbox' id='bulkParseRedo' data-testid='bulk-parse-redo'><span id='bulkParseRedoText'></span></label><label class='bulk-operate-check' id='bulkParseMetaRow' hidden><input type='checkbox' id='bulkParseMeta' data-testid='bulk-parse-meta'><span>");
+    b.push_str(t("Apply global auto-metadata settings", zh));
+    b.push_str("</span></label></div><p id='bulkParseStatus' class='bulk-operate-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeBulkParse()'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-p' type='button' id='bulkParseOk' data-testid='bulk-parse-ok' onclick='bulkParse()'>");
+    b.push_str(t("Confirm", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='bulkDeleteModal' data-testid='bulk-delete-dialog' onclick='if(event.target===this)closeBulkDelete()'><div class='modal bulk-operate-modal' role='dialog' aria-modal='true' aria-labelledby='bulkDeleteTitle'><h2 id='bulkDeleteTitle'>");
+    b.push_str(t("Delete files", zh));
+    b.push_str("</h2><p class='bulk-operate-tip'>");
+    b.push_str(t("Are you sure to delete them?", zh));
+    b.push_str("</p><p class='bulk-operate-tip' id='bulkDeleteCount' data-testid='bulk-delete-count'></p><p id='bulkDeleteStatus' class='bulk-operate-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeBulkDelete()'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-d' type='button' id='bulkDeleteOk' data-testid='bulk-delete-ok' onclick='bulkDelete()'>");
+    b.push_str(t("Delete", zh));
+    b.push_str("</button></div></div></div>");
+    // RayRAG extension the operator asked for: renaming a whole selection at once.
+    // Upstream renames one file per row (`use-rename-document.ts`); the bulk form works
+    // on the same PATCH contract, with find/replace and an optional prefix.
+    b.push_str("<div class='modal-overlay' id='bulkRenameModal' data-testid='bulk-rename-dialog' onclick='if(event.target===this)closeBulkRename()'><div class='modal bulk-operate-modal' role='dialog' aria-modal='true' aria-labelledby='bulkRenameTitle'><h2 id='bulkRenameTitle'>");
+    b.push_str(t("Rename", zh));
+    b.push_str("</h2><p class='bulk-operate-tip' id='bulkRenameCount'></p><label class='provider-instance-field'>");
+    b.push_str(t("Find", zh));
+    b.push_str("<input id='bulkRenameFind' data-testid='bulk-rename-find' autocomplete='off' oninput='bulkRenamePreview()'></label><label class='provider-instance-field'>");
+    b.push_str(t("Replace with", zh));
+    b.push_str("<input id='bulkRenameReplace' data-testid='bulk-rename-replace' autocomplete='off' oninput='bulkRenamePreview()'></label><label class='provider-instance-field'>");
+    b.push_str(t("Add prefix", zh));
+    b.push_str("<input id='bulkRenamePrefix' data-testid='bulk-rename-prefix' autocomplete='off' oninput='bulkRenamePreview()'></label><ul class='bulk-rename-preview' id='bulkRenamePreview' data-testid='bulk-rename-preview'></ul><p id='bulkRenameStatus' class='bulk-operate-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' onclick='closeBulkRename()'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button class='btn btn-p' type='button' id='bulkRenameOk' data-testid='bulk-rename-ok' onclick='bulkRename()'>");
+    b.push_str(t("Confirm", zh));
+    b.push_str("</button></div></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Documents", zh));
     b.push_str(" <span id='docCount' style='font-size:13px;color:var(--tm)'></span></h2><div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'><label style='font-size:12px;color:var(--tm)'>");
@@ -2819,16 +3118,59 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
     b.push_str("function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')};");
-    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return !isDocDisabled(x.id);if(f==='disabled')return isDocDisabled(x.id);if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox onclick=docSelAll(this.checked)></th><th>名称</th><th>上传时间</th><th style=min-width:150px>状态</th><th>块数</th><th>大小</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=isDocDisabled(dd.id);var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name='+nm+' '+(dis?'disabled':'')+'></td><td style=font-weight:500>'+nm+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td><a class=\\\"btn btn-o btn-sm\\\" href=\\\"/documents/'+kbId+'/'+dd.id+'\\\">查看</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-doc-id=\\\"'+dd.id+'\\\" data-testid=\\\"dataset-file-result\\\" onclick=\\\"openDataflowResult(this)\\\" title=\\\"View result\\\">📋</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar();updateOverview(docs)})};");
+    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return x.status!=='0';if(f==='disabled')return x.status==='0';if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox id=\\\"docSelAll\\\" data-testid=\\\"doc-select-all\\\" aria-label=\\\"Select all\\\" onclick=\\\"docSelAll(this.checked)\\\"></th><th>名称</th><th>上传时间</th><th style=min-width:150px>状态</th><th>块数</th><th>大小</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=dd.status==='0';var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' data-run=\\\"'+dd.run+'\\\" data-status=\\\"'+dd.status+'\\\" style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name=\\\"'+nm+'\\\" data-testid=\\\"doc-select-row\\\" aria-label=\\\"Select row\\\"></td><td style=font-weight:500>'+nm+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td data-chunks='+(dd.chunk_count||0)+'>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td><a class=\\\"btn btn-o btn-sm\\\" href=\\\"/documents/'+kbId+'/'+dd.id+'\\\">查看</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-doc-id=\\\"'+dd.id+'\\\" data-testid=\\\"dataset-file-result\\\" onclick=\\\"openDataflowResult(this)\\\" title=\\\"View result\\\">📋</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-status=\\\"'+dd.status+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar();updateOverview(docs)})};");
     b.push_str("function openDataflowResult(btn){var docId=btn.getAttribute('data-id');fetch('/api/v1/datasets/'+kbId+'/ingestions?page=0&page_size=0&log_type=file').then(function(r){return r.json()}).then(function(d){var logs=((d.data||{}).logs)||[];var match=logs.find(function(row){return row.document_id===docId});if(!match){alert('No ingestion log yet');return}location.href='/dataflow-result?id='+encodeURIComponent(match.id)+'&knowledgeId='+encodeURIComponent(kbId)+'&doc_id='+encodeURIComponent(docId)+'&is_read_only=false&type=dataflow'})};");
-    b.push_str("function updateBatchBar(){var n=document.querySelectorAll('.docCk:checked').length;var bar=document.getElementById('batchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('selCount');if(sc)sc.textContent=n+' selected'}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){if(!x.disabled)x.checked=on});updateBatchBar()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
+    b.push_str("const BULK_TEXT=");
+    b.push_str(
+        &serde_json::to_string(&serde_json::json!({
+            // Upstream `common.selected` + `knowledgeDetails.files`.
+            "selected": t("Selected", zh),
+            "files": t("Files", zh),
+            "bulkOperate": t("Bulk operate", zh),
+            "deleteFiles": t("Delete files", zh),
+            "deleteThem": t("Are you sure to delete them?", zh),
+            // Upstream `deleteModal.delFilesContent` carries the count in the string;
+            // the page interpolates it where the placeholder sits, so the sentence
+            // reads "Selected 2 files" rather than a reassembled fragment.
+            "selectedFiles": t("Selected {{count}} files", zh),
+            "parseFile": t("Parse file", zh),
+            "parseFileTip": t("Are you sure to parse?", zh),
+            // Upstream `knowledgeDetails.redo` / `redoAll`.
+            "redo": t("Do you want to clear the existing {{chunkNum}} chunks?", zh),
+            "redoAll": t("Clear existing chunks", zh),
+            "applyKb": t("Apply global auto-metadata settings", zh),
+            "runningCannotBeDeleted": t("The document being parsed cannot be deleted", zh),
+            "operated": t("Operated", zh),
+            "deleted": t("Deleted", zh),
+            "modified": t("Modified", zh),
+            "noSelection": t("Please select a non-empty file list", zh),
+            // Upstream shows a spinner while a bulk request runs; the page says so in
+            // words, because a button that looks dead for ten seconds invites a second
+            // click on a slow delete.
+            "working": t("Working…", zh),
+            "metadataUnavailable": t(
+                "Metadata management is available on the dataset configuration page.",
+                zh,
+            ),
+            "find": t("Find", zh),
+            "replaceWith": t("Replace with", zh),
+            "addPrefix": t("Add prefix", zh),
+            "renamePreview": t("Files that will be renamed:", zh),
+            "renameNeedsPattern": t("Enter something to find or a prefix", zh),
+            "renamed": t("Renamed", zh),
+        }))
+        .expect("bulk operate labels serialize"),
+    );
+    b.push_str(";");
+    b.push_str(BULK_OPERATE_JS);
+    b.push_str("function updateBatchBar(){var boxes=Array.from(document.querySelectorAll('.docCk'));var checked=boxes.filter(function(x){return x.checked});var bar=document.getElementById('batchBar');if(bar){bar.hidden=!checked.length;var sc=document.getElementById('selCount');if(sc){sc.textContent=BULK_TEXT.selected+': '+checked.length+' '+BULK_TEXT.files}}var all=document.getElementById('docSelAll');if(all){all.checked=boxes.length>0&&checked.length===boxes.length;all.indeterminate=checked.length>0&&checked.length<boxes.length}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){x.checked=on});updateBatchBar()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
     b.push_str("function selIds(){var ids=[];document.querySelectorAll('.docCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchParse(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('重新解析选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();schedulePoll();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function batchDisable(on){var ids=selIds();if(!ids.length){alert('请先选择文档');return}ids.forEach(function(id){setDocDisabled(id,on)});loadDocs()};");
     b.push_str("function batchDelete(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('删除选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function renameDoc(btn){var id=btn.getAttribute('data-id');var old=btn.getAttribute('data-name')||'';var nn=prompt('重命名文档：',old);if(!nn)return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(function(r){return r.json()}).then(function(){loadDocs()})};");
     b.push_str("function reparseDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('重新解析该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){loadDocs();schedulePoll()})};");
     b.push_str("function delDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('删除该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){loadDocs()})};");
-    b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');setDocDisabled(id,!isDocDisabled(id));loadDocs()};");
+    b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');var on=btn.getAttribute('data-status')==='0';fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:[id],status:on?1:0})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){alert(d.message||'HTTP '+d.code);return}loadDocs()})};");
     b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function clearAll(){if(!confirm('Delete ALL documents in this dataset?'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];if(!docs.length){loadDocs();return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()})}next()})};");
@@ -6963,12 +7305,41 @@ pub async fn setup_page(
     b.push_str("</button><a class='btn btn-o' href='/'>");
     b.push_str(t("Skip for now", zh));
     b.push_str("</a></div><p class='setup-status' id='setupStatus' data-testid='setup-status' aria-live='polite'></p>");
+    // The link inside carries the test id; the container keeps only the id, so a probe
+    // asking for `setup-next` finds the anchor it means.
+    b.push_str("<div class='setup-next' id='setupNext' hidden></div>");
     b.push_str(
         "<p class='user-setting-description' id='setupEnvFile' data-testid='setup-env-file'></p>",
     );
     // The constant is the script body; it must be emitted inside a script element or
     // the browser renders it as text (which is exactly what the probe caught).
     b.push_str("<script>");
+    b.push_str("const SETUP_GROUP_LABELS=");
+    b.push_str(
+        &serde_json::to_string(&serde_json::json!({
+            "models": t("Models", zh),
+            "storage": t("Storage", zh),
+            "resources": t("Resources", zh),
+            "search": t("Search", zh),
+            "access": t("Access control", zh),
+        }))
+        .expect("setup group labels serialize"),
+    );
+    b.push_str(";const SETUP_TEXT=");
+    b.push_str(
+        &serde_json::to_string(&serde_json::json!({
+            "copy": t("Copy", zh),
+            "copied": t("Copied", zh),
+            "copyManual": t("Select the line and press Ctrl+C", zh),
+            "nextModel": t("Continue to model providers", zh),
+            "needsModel": t(
+                "No model endpoint is configured yet — add one to enable answers, embeddings and reranking.",
+                zh,
+            ),
+        }))
+        .expect("setup page text serializes"),
+    );
+    b.push_str(";");
     b.push_str(SETUP_PAGE_SCRIPT);
     b.push_str("</script>");
     Html(layout(t("Set up your deployment", zh), &b, zh))
@@ -6989,6 +7360,14 @@ function setupRenderHost(host){
   node.innerHTML="<p class='user-setting-description' style='margin:0'>"+(host.summary||'')+"</p>"+
     "<p class='user-setting-description' style='margin:4px 0 0'>Recommended concurrent documents: <strong data-testid='setup-recommended-tasks'>"+host.document_tasks+"</strong></p>";
 }
+function setupGroupLabel(group){return (typeof SETUP_GROUP_LABELS!=='undefined'&&SETUP_GROUP_LABELS[group])||group}
+function setupCopyText(text,button){
+  function done(ok){button.textContent=ok?SETUP_TEXT.copied:SETUP_TEXT.copyManual;setTimeout(function(){button.textContent=SETUP_TEXT.copy},2200)}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){done(true)},function(){done(false)});return}
+  // A plain-http LAN origin has no clipboard API; fall back to selecting the text so
+  // the operator can copy it by hand instead of being told nothing happened.
+  try{var range=document.createRange();range.selectNodeContents(button.previousElementSibling);var selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);done(document.execCommand('copy'))}catch(error){done(false)}
+}
 function setupControl(field){
   var wrap=document.createElement('label');wrap.className='setup-field';wrap.dataset.key=field.key;
   var name=document.createElement('span');name.className='setup-field-label';name.textContent=setupLabel(field);
@@ -6997,6 +7376,26 @@ function setupControl(field){
   // (that is how the loader works), so say so rather than let the edit look ignored.
   if(field.from_environment){var envBadge=document.createElement('span');envBadge.className='badge bi setup-from-env';envBadge.dataset.testid='setup-env-'+field.key;envBadge.textContent='env';envBadge.title='This variable is set in the process environment; it takes precedence over the file written here.';name.appendChild(document.createTextNode(' '));name.appendChild(envBadge);}
   wrap.appendChild(name);
+  if(field.kind==='readonly'){
+    // Shown, never written: the value belongs to the container definition. The page
+    // offers the exact line to copy instead of an input that would store a setting
+    // nothing reads (the API refuses such a write too).
+    wrap.classList.add('setup-field-readonly');
+    var line=document.createElement('code');
+    line.className='setup-readonly-value';
+    line.dataset.testid='setup-readonly-'+field.key;
+    line.textContent=field.key+'='+(field.value||field.recommended||'');
+    wrap.appendChild(line);
+    var copy=document.createElement('button');
+    copy.type='button';copy.className='btn btn-o btn-sm setup-copy';
+    copy.dataset.testid='setup-copy-'+field.key;
+    copy.textContent=SETUP_TEXT.copy;
+    copy.addEventListener('click',function(event){event.preventDefault();setupCopyText(line.textContent,copy)});
+    wrap.appendChild(copy);
+    var readonlyHelp=document.createElement('span');readonlyHelp.className='setup-help';readonlyHelp.textContent=setupHelp(field);
+    wrap.appendChild(readonlyHelp);
+    return wrap;
+  }
   var control;
   if(field.kind==='select'){
     control=document.createElement('select');
@@ -7021,7 +7420,7 @@ function setupRender(fields){
   var groups={};fields.forEach(function(field){(groups[field.group]=groups[field.group]||[]).push(field)});
   Object.keys(groups).forEach(function(group){
     var card=document.createElement('section');card.className='card setup-card';card.dataset.group=group;
-    var title=document.createElement('h2');title.textContent=group.charAt(0).toUpperCase()+group.slice(1);
+    var title=document.createElement('h2');title.textContent=setupGroupLabel(group);
     card.appendChild(title);
     groups[group].forEach(function(field){card.appendChild(setupControl(field))});
     host.appendChild(card);
@@ -7035,10 +7434,26 @@ async function setupLoad(){
     var payload=await response.json();
     if(payload.code!==0)throw new Error(payload.message||('HTTP '+payload.code));
     SETUP_STATE.fields=payload.data.fields||[];
-    SETUP_STATE.fields.forEach(function(field){SETUP_STATE.values[field.key]=field.value||''});
+    // Read-only rows are shown, never posted: sending one back would be a write the API
+    // refuses (and did — the wizard's own save failed on the memory limit).
+    SETUP_STATE.fields.forEach(function(field){if(field.kind==='readonly')return;SETUP_STATE.values[field.key]=field.value||''});
     setupRender(SETUP_STATE.fields);
     var env=setupEl('setupEnvFile');if(env)env.textContent='env file: '+payload.data.env_file;
   }catch(error){setupStatus(String(error.message||error),true)}
+}
+// Saving endpoints is half of a working deployment; the models themselves are added on
+// the provider page, so the receipt continues there instead of stopping at the file.
+function setupNextStep(next){
+  var host=setupEl('setupNext');if(!host)return;
+  host.replaceChildren();host.hidden=true;
+  if(!next)return;
+  if(next.needs_model_provider){
+    var hint=document.createElement('p');hint.className='setup-help';hint.dataset.testid='setup-next-hint';
+    hint.textContent=SETUP_TEXT.needsModel;host.appendChild(hint);
+  }
+  var link=document.createElement('a');link.className='btn btn-p';link.href=next.url||'/user-setting/model';
+  link.dataset.testid='setup-next';link.textContent=SETUP_TEXT.nextModel;
+  host.appendChild(link);host.hidden=false;
 }
 async function setupSave(){
   var button=setupEl('setupSave');button.disabled=true;setupStatus('Saving…');
@@ -7052,6 +7467,7 @@ async function setupSave(){
     if((data.applied_live||[]).length)message+=' · applied now: '+data.applied_live.length;
     if((data.needs_restart||[]).length)message+=' · restart to apply: '+data.needs_restart.join(', ');
     setupStatus(message,false);
+    setupNextStep(data.next);
   }catch(error){setupStatus(String(error.message||error),true)}
   finally{button.disabled=false}
 }
@@ -15027,6 +15443,151 @@ connection: close
         );
     }
 
+    /// Upstream `pages/dataset/dataset/index.tsx` + `components/bulk-operate-bar.tsx`:
+    /// selecting rows in a dataset reveals one bar with the selected count and the item
+    /// set enable / disable / parse / cancel / metadata / delete, the parse item opening
+    /// `reparse-dialog.tsx` and the delete item `confirm-delete-dialog.tsx`. RayRAG adds
+    /// a rename item because batch renaming a selection was asked for explicitly; it
+    /// reuses the same PATCH contract as the per-row rename.
+    #[tokio::test]
+    async fn dataset_files_bulk_bar_matches_upstream_operate_bar() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/dataset/files/kb-bulk")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            dataset_tab_page(
+                State(state.clone()),
+                axum::extract::Path(("files".to_string(), "kb-bulk".to_string())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&html, "/dataset/files");
+        for marker in [
+            // The bar itself: upstream renders `role="menu"` labelled `common.bulkOperate`.
+            "data-testid='bulk-operate-bar'",
+            "role='menu'",
+            "aria-label='Bulk operate'",
+            "id='selCount'",
+            "data-testid='bulk-operate-count'",
+            "bulk-operate-clear",
+            "M5 14h14l1.973 6.767A1 1 0 0 1 20 22H4a1 1 0 0 1-.973-1.233z",
+            // One item per upstream entry, in upstream order.
+            "data-testid='bulk-enabled'",
+            "data-testid='bulk-disabled'",
+            "data-testid='bulk-run'",
+            "data-testid='bulk-cancel'",
+            "data-testid='bulk-metadata'",
+            "data-testid='bulk-delete'",
+            "data-testid='bulk-rename'",
+            "role='menuitem'",
+            "onclick='bulkSetStatus(1)'",
+            "onclick='bulkSetStatus(0)'",
+            "onclick='showBulkParse()'",
+            "onclick='bulkCancel()'",
+            "onclick='showBulkDelete()'",
+            // The parse dialog carries upstream's `redo` checkbox and the metadata switch.
+            "data-testid='bulk-parse-dialog'",
+            "data-testid='bulk-parse-redo'",
+            "id='bulkParseRedoText'",
+            "data-testid='bulk-parse-ok'",
+            "data-testid='bulk-parse-meta'",
+            // The delete dialog names the selection.
+            "data-testid='bulk-delete-dialog'",
+            "data-testid='bulk-delete-count'",
+            "data-testid='bulk-delete-ok'",
+            // The rename dialog previews every name it would write.
+            "data-testid='bulk-rename-dialog'",
+            "data-testid='bulk-rename-find'",
+            "data-testid='bulk-rename-replace'",
+            "data-testid='bulk-rename-prefix'",
+            "data-testid='bulk-rename-preview'",
+            "data-testid='bulk-rename-ok'",
+            // The three upstream endpoints the bar calls.
+            "'/documents/batch-update-status'",
+            "'/api/v1/documents/ingest'",
+            "run:2",
+            "run:1,delete:document.getElementById('bulkParseRedo').checked",
+            "method:'DELETE'",
+            "body:JSON.stringify({ids:",
+            // Selection plumbing on the table.
+            "id=\\\"docSelAll\\\"",
+            "aria-label=\\\"Select all\\\"",
+            "data-testid=\\\"doc-select-row\\\" aria-label=\\\"Select row\\\"",
+            "all.indeterminate=checked.length>0&&checked.length<boxes.length",
+            "BULK_TEXT.selected+': '+checked.length+' '+BULK_TEXT.files",
+            "function bulkSelectedLabel(count)",
+            "BULK_TEXT.selectedFiles.replace('{{count}}',String(count))",
+            // The row state comes from the server, not the browser.
+            "var dis=dd.status==='0'",
+            "data-status=\\\"'+dd.status+'\\\"",
+            "data-chunks='+(dd.chunk_count||0)+'",
+            "data-run=\\\"'+dd.run+'\\\"",
+            "if(f==='enabled')return x.status!=='0'",
+            "if(f==='disabled')return x.status==='0'",
+            "'/documents/batch-update-status'",
+        ] {
+            assert!(html.contains(marker), "bulk bar marker missing: {marker}");
+        }
+        // Upstream copy from the shared label table.
+        for marker in [
+            "\"selected\":\"Selected\"",
+            "\"files\":\"Files\"",
+            "\"deleteFiles\":\"Delete files\"",
+            "\"deleteThem\":\"Are you sure to delete them?\"",
+            "\"parseFile\":\"Parse file\"",
+            "\"parseFileTip\":\"Are you sure to parse?\"",
+            "\"redoAll\":\"Clear existing chunks\"",
+            "\"applyKb\":\"Apply global auto-metadata settings\"",
+            "\"runningCannotBeDeleted\":\"The document being parsed cannot be deleted\"",
+        ] {
+            assert!(html.contains(marker), "bulk label missing: {marker}");
+        }
+        // The switch is no longer browser-local storage.
+        assert!(
+            !html.contains("setDocDisabled(id,!isDocDisabled(id))"),
+            "the enable/disable switch must reach the server"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".bulk-operate-bar{",
+            ".bulk-operate-items{",
+            ".bulk-operate-check{",
+            ".bulk-rename-preview{",
+        ] {
+            assert!(css.contains(rule), "bulk bar css missing: {rule}");
+        }
+
+        // The Chinese page uses the same table.
+        let (_zh_root, zh_state) = test_state();
+        let zh_request = Request::builder()
+            .uri("/dataset/files/kb-bulk")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(
+            dataset_tab_page(
+                State(zh_state),
+                axum::extract::Path(("files".to_string(), "kb-bulk".to_string())),
+                zh_request,
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "\"selected\":\"已选择\"",
+            "\"deleteFiles\":\"删除文件\"",
+            "\"parseFileTip\":\"您确定要解析吗？\"",
+            "\"redo\":\"是否清空已有 {{chunkNum}}个 chunk？\"",
+        ] {
+            assert!(zh_html.contains(marker), "zh bulk label missing: {marker}");
+        }
+    }
+
     #[tokio::test]
     async fn agents_page_renders_import_json_button() {
         let (_root, state) = test_state();
@@ -15557,7 +16118,14 @@ connection: close
             // renders the code as text and the page stays empty.
             // The constant begins with a newline (house style), so the emitted markup
             // is `<script>` immediately followed by that newline.
-            "<script>\nvar SETUP_STATE=",
+            // The script is emitted inside a `<script>` element (the probe once caught
+            // the bare constant being rendered as text), and the label tables the page
+            // needs come first.
+            "<script>const SETUP_GROUP_LABELS=",
+            ";const SETUP_TEXT=",
+            ";\nvar SETUP_STATE=",
+            "\"models\":\"Models\"",
+            "\"access\":\"Access control\"",
             "fetch('/api/v1/setup/options')",
             "fetch('/api/v1/setup/complete'",
             "mark_completed:true",
@@ -15567,6 +16135,24 @@ connection: close
             // A variable set outside the page wins over the file: the badge says so.
             "setup-from-env",
             "takes precedence over the file written here",
+            // A container-level setting is shown with the exact line to copy instead of
+            // an input that would write a file nothing reads.
+            "field.kind==='readonly'",
+            "dataset.testid='setup-readonly-'+field.key",
+            "dataset.testid='setup-copy-'+field.key",
+            "field.key+'='+(field.value||field.recommended||'')",
+            "function setupCopyText(text,button)",
+            "if(field.kind==='readonly')return;SETUP_STATE.values[field.key]=field.value||''",
+            "navigator.clipboard.writeText(text)",
+            "document.execCommand('copy')",
+            ".setup-readonly-value",
+            // Saving endpoints hands off to the page that adds the models themselves.
+            "id='setupNext'",
+            "dataset.testid='setup-next-hint'",
+            "function setupNextStep(next)",
+            "setupNextStep(data.next)",
+            "\"search\":\"Search\"",
+            "\"access\":\"Access control\"",
         ] {
             assert!(html.contains(marker), "setup page marker {marker} missing");
         }
@@ -15585,7 +16171,13 @@ connection: close
             );
         }
         let css = include_str!("web_css.txt");
-        for selector in [".setup-field{", ".setup-banner{", ".setup-live{"] {
+        for selector in [
+            ".setup-field{",
+            ".setup-banner{",
+            ".setup-live{",
+            ".setup-readonly-value{",
+            ".setup-next{",
+        ] {
             assert!(css.contains(selector), "setup css {selector} missing");
         }
     }
@@ -15614,6 +16206,7 @@ connection: close
                 chunk_count: 1,
                 created_at: 1,
                 updated_at: 1,
+                status: crate::api::document::enabled_status(),
             })
             .unwrap();
         let request = Request::builder()
@@ -15910,6 +16503,7 @@ connection: close
                 chunk_count: 0,
                 created_at: 1_700_000_000_000,
                 updated_at: 1_700_000_000_000,
+                status: crate::api::document::enabled_status(),
             })
             .unwrap();
         let query = |pairs: &[(&str, &str)]| {
@@ -16032,6 +16626,7 @@ connection: close
                     chunk_count: 0,
                     created_at: 1_700_000_000_000,
                     updated_at: 1_700_000_000_000,
+                    status: crate::api::document::enabled_status(),
                 })
                 .unwrap();
         }

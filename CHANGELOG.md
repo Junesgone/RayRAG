@@ -2,6 +2,99 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.52] — 2026-09-24（对标批次 v0.3.9d）
+
+### Fixed
+
+- **`RERANK_MODEL` 此前是静默失效的参数**：README 与部署文档都让用户设置它，代码却从未读取
+  （`llm.rs::rerank_model_for` 里写着 `let _ = model;`，`RemoteReranker` 的请求体也只有
+  `query`/`documents`/`top_k`）。结果是：用户改了参数没有任何提示，多模型端点（TEI 多模型、
+  vLLM、Xinference）直接报错，而错误信息无法让人联想到配置。现在 `RERANK_MODEL`
+  一路打通：`RerankerConfig.model`（含 `reranker.json` 持久化，`#[serde(default)]` 兼容旧文件）
+  → `RemoteReranker::with_model` → 请求体里的 `model` 字段；提供商实例的 rerank 模型也不再被丢弃。
+  **未设置时不发送该字段**，单模型端点（不认识未知 model 名的服务）照旧可用。
+- 回归 `the_request_names_the_model_only_when_one_is_configured` 用真实 HTTP mock 断言两种请求体，
+  并确认空白值不算模型。
+
+### Added
+
+- **首次登录引导页补齐剩余的可配置项**（`src/api/setup.rs` 字段表 + `web::setup_page`）：
+  - 模型组：`RERANK_API_BASE` / `RERANK_API_KEY` / `RERANK_MODEL`、
+    `RAYRAG_ASR_API_BASE` / `RAYRAG_ASR_API_KEY` / `RAYRAG_ASR_MODEL`；
+  - 新增 **检索** 组（面向中国大陆网络）：`SEARXNG_URL`、`TAVILY_API_KEY`、`BOCHA_API_KEY`
+    —— 这三个都是**每次调用读取**，因此标 `live` 并进 `applies_live()`；
+  - 新增 **访问控制** 组：`REGISTER_ENABLED`（1/0）、`DISABLE_PASSWORD_LOGIN`（0/1）、
+    `RAYRAG_CORS_ORIGIN`、`RAYRAG_MAX_UPLOAD_BYTES`；
+  - 分组标题中英化（模型 / 存储 / 资源 / 检索 / 访问控制），不再直接用英文分组键。
+- **容器内存上限按「可复制」呈现**：新增 `FieldKind::Readonly` 与 `api::setup::is_readonly`，
+  `RAYRAG_MEMORY_LIMIT` 只读展示（`RAYRAG_MEMORY_LIMIT=6g`，值来自进程环境，缺省用 compose 默认值），
+  带复制按钮（`navigator.clipboard`，纯 http 局域网来源下回退到选中文本 + `execCommand`，
+  再失败就提示手动 Ctrl+C），并说明它属于 `docker-compose.yml` 的 `mem_limit`；
+  **写入被端点拒绝**（`belongs to the container definition and cannot be set here`），
+  不会把一条没人读取的配置写进 env 文件。
+- **保存后交接到模型提供商页**：`POST /api/v1/setup/complete` 返回
+  `next:{needs_model_provider,url:'/user-setting/model'}`，页面在回执下方显示
+  「继续添加模型提供商」按钮；尚未配置模型端点时同时给出提示句。首页的引导横幅也补了
+  `Model providers` 入口，用户不必自己找路。
+- 新增回归 8 条：字段表覆盖新开关与分组（含「Select 必须有选项」的守卫）、只读字段不可写且标注
+  指向 compose、页面渲染只读行/复制按钮/交接按钮、rerank 请求体，以及本轮批量操作两条
+  （`bulk_document_operations_follow_the_upstream_contract` 覆盖三个端点的校验/部分失败/删除边界，
+  `dataset_files_bulk_bar_matches_upstream_operate_bar` 覆盖批量栏条目、对话框、三态全选与
+  「状态来自服务端」），以及 env 文件位置四条（项目根优先、显式变量优先、已加载文件优先、
+  绑定挂载时原地写回且不产生半截文件）。
+
+### Added
+
+- **数据集文件页的批量操作栏对齐上游**（`web::dataset_tab_page` 的 Files 标签页，参考
+  `pages/dataset/dataset/index.tsx` + `components/bulk-operate-bar.tsx`）：勾选任意行即出现
+  `role="menu"` 的批量栏，内容与上游一致 —— 已选数量（`Selected: N Files`，旁附清除图标）、
+  分隔线，以及 **启用 / 禁用 / 解析 / 取消 / 元数据 / 删除** 六个条目（RayRAG 另加**重命名**，
+  因为「批量重新命名」是用户明确要求的能力）。表格首列是复选框列：表头 `Select all`
+  带三态（全选/半选/未选），行复选框 `Select row`。
+  - **解析** 打开上游 `reparse-dialog.tsx` 的对话框：`Parse file` / `Are you sure to parse?`，
+    勾选项按已选文档的 chunk 总数显示 `Do you want to clear the existing N chunks?`
+    （无 chunk 时显示 `Clear existing chunks`），另有 `Apply global auto-metadata settings`。
+  - **删除** 打开上游 `confirm-delete-dialog.tsx` 的确认框（`Delete files` /
+    `Are you sure to delete them?` / `Selected N files`）；正在解析的文档按上游语义拒绝删除
+    并给出原因。
+  - **重命名** 对话框给出 查找 / 替换为 / 添加前缀 三个输入与逐条预览（未变化的行划掉），
+    确认后按上游 PATCH 契约逐个改名并汇总失败原因。
+  - 中英文案全部走 `t()` 表（新增 25 条，键名即上游 `en.ts` 原文）。
+- **三个上游批量端点**（`src/api/document.rs`，此前只有逐文档端点，批量栏要发 N 个请求）：
+  - `POST /api/v1/datasets/{id}/documents/batch-update-status`（`{doc_ids, status}`，
+    逐文档结果映射，部分失败返回 500 `Partial failure`）；
+  - `DELETE /api/v1/datasets/{id}/documents`（`{ids}` 或 `{delete_all}`，两者同时给出或都不给
+    都按上游原文报错；不属于该数据集的 id 直接拒绝而不是静默跳过）；
+  - `POST /api/v1/documents/ingest`（`{doc_ids, run:1|2, delete?, apply_kb?}`：`run=1` 入队解析、
+    `run=2` 取消并标记 `CANCELLED`；`delete` 即对话框里的「清空已有 chunk」）。
+- **文档启用/禁用改为服务端状态**（`DocRecord.status`，`#[serde(default)]` 兼容旧文件）：
+  此前这个开关只写在浏览器 `localStorage`，禁用一份文档对其它客户端、对检索毫无影响。
+  现在 `status` 随文档持久化，`GET /datasets/{id}/documents` 每行返回它，
+  **检索按上游语义只使用 `status == "1"` 的文档**（有禁用文档时才收窄查询，常见路径不变）。
+
+- **`.env` 默认落在项目根目录**（`src/api/setup.rs::project_root`/`resolve_env_file`）：引导页写入的
+  就是用户能找到、能编辑、能备份的那一个文件。解析顺序为 `RAYRAG_ENV_FILE` → 启动时实际读取的文件
+  → 项目根目录 `.env`（含 `docker-compose.yml`/`Cargo.toml`/`.env.example` 的目录，从工作目录、
+  可执行文件目录与构建目录逐级上溯）→ 状态目录旁的旧位置；已存在「状态目录旁 .env」的部署保持原样，
+  不会凭空多出第二个文件。回执里的路径也做了词法归一（`/app/web/.env` 而不是
+  `/app/web/static/../.env`）。
+- **容器内也能写宿主机的那一份**：`docker-compose.yml` 把 `./.env` 绑定挂载到 `/app/.env` 并显式设置
+  `RAYRAG_ENV_FILE=/app/.env`（`install.sh` 保证首次启动前该文件已存在）。绑定挂载的文件**不能用
+  rename 覆盖**（`Device or resource busy`），因此 `write_env_file` 在原子写失败时回退为「先写同目录
+  临时文件，再原地覆盖」，失败时原文件保持不变。
+- **引导页保存不再被只读项卡住**：页面不再回传只读字段（回传会被端点拒绝，实测把整次保存拦下）。
+- **`DISABLE_PASSWORD_LOGIN` 选项与部署一致**：此前只列 `0/1`，而 `docker-compose.yml` 的默认值是
+  `false`，于是下拉框显示为空、保存时校验失败（甚至可能把用户设置悄悄改成 `1`）。现列
+  `false/true`，并接受解析器认可的全部拼写（大小写不敏感 `true/false/1/0/yes/no`）；选项表里没有的
+  现值（例如手写的 `True`）会被追加进下拉框，保证「页面显示的就是保存回去的」。
+
+### Notes
+
+- 全量 `cargo test --locked --offline --lib` **1629 passed / 0 failed / 27 ignored**。
+- CDP 真点（`scripts/ui-traversal/setup-wizard-cdp.mjs`）：五组卡片齐全、只读行是 `<code>`
+  且无输入框、点复制有反馈、直接 POST 写 `RAYRAG_MEMORY_LIMIT` 被拒、保存回执区分
+  「立即生效 / 需重启」、交接按钮指向 `/user-setting/model`、重开页面值已持久化。
+
 ## [0.4.51] — 2026-09-24（对标批次 v0.3.9c）
 
 ### Added

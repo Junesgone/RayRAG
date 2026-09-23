@@ -35,6 +35,16 @@ pub struct DocRecord {
     pub chunk_count: usize,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Upstream `Document.status`: `"1"` when the document takes part in retrieval,
+    /// `"0"` when the operator disabled it. Files on disk written before this field
+    /// existed are enabled, which is what they were.
+    #[serde(default = "enabled_status")]
+    pub status: String,
+}
+
+/// Default document status: enabled (upstream stores `"1"`).
+pub fn enabled_status() -> String {
+    "1".to_string()
 }
 
 #[derive(Deserialize)]
@@ -117,6 +127,30 @@ impl DocStore {
         msg: &str,
     ) -> anyhow::Result<bool> {
         self.update_parse_result(id, run, progress, msg, None)
+    }
+
+    /// Set the retrieval status (`"1"` enabled, `"0"` disabled) of many documents.
+    ///
+    /// Returns the ids that changed, so the caller can report a truthful count instead
+    /// of assuming every requested document was updated.
+    pub fn set_status(&self, ids: &[String], status: &str) -> anyhow::Result<Vec<String>> {
+        if !matches!(status, "0" | "1") {
+            anyhow::bail!("Document status must be '0' or '1'");
+        }
+        self.mutate_if_changed(|docs| {
+            let mut changed = Vec::new();
+            for id in ids {
+                if let Some(doc) = docs.get_mut(id)
+                    && doc.status != status
+                {
+                    doc.status = status.to_string();
+                    doc.updated_at = crate::api::document::now_ms();
+                    changed.push(id.clone());
+                }
+            }
+            let dirty = !changed.is_empty();
+            Ok((changed, dirty))
+        })
     }
 
     /// Rename a document (display name only; storage name unchanged).
@@ -263,6 +297,9 @@ pub async fn list_docs(
                 "chunk_count": doc.chunk_count,
                 "created_at": doc.created_at,
                 "updated_at": doc.updated_at,
+                // Upstream `map_doc_keys_with_run_status` reports `status` on every row;
+                // the files page renders the enabled/disabled state from it.
+                "status": doc.status,
                 "meta_fields": meta_fields,
             })
         })
@@ -349,6 +386,332 @@ pub async fn reparse_doc(
         })),
         Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
     }
+}
+
+/// `POST /api/v1/datasets/{id}/documents/batch-update-status` — enable/disable many
+/// documents at once (upstream `document_api.py::batch_update_document_status`).
+///
+/// The status is stored with the document, not in the browser: a disabled document
+/// must stop taking part in retrieval for every client, which is what upstream means
+/// by the switch. The answer mirrors upstream's per-document result map, and a partial
+/// failure is reported as such instead of a blanket success.
+pub async fn batch_update_document_status(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if !kb_manageable(&state, &kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    let doc_ids: Vec<String> = body
+        .get("doc_ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if doc_ids.is_empty() {
+        return Json(serde_json::json!({
+            "code": 400,
+            "message": "'doc_ids' must be a non-empty list."
+        }));
+    }
+    let status = match body.get("status") {
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        Some(serde_json::Value::String(value)) => value.clone(),
+        _ => "-1".to_string(),
+    };
+    if !matches!(status.as_str(), "0" | "1") {
+        return Json(serde_json::json!({
+            "code": 400,
+            "message": format!("'status' must be either 0 or 1: {status}!")
+        }));
+    }
+    let mut result = serde_json::Map::new();
+    let mut has_error = false;
+    let mut accepted = Vec::new();
+    for doc_id in &doc_ids {
+        match state.docs.get(doc_id) {
+            Some(doc) if doc.kb_id == kb_id => accepted.push(doc_id.clone()),
+            Some(_) => {
+                result.insert(
+                    doc_id.clone(),
+                    serde_json::json!({ "error": "Document not found in this dataset." }),
+                );
+                has_error = true;
+            }
+            None => {
+                result.insert(
+                    doc_id.clone(),
+                    serde_json::json!({ "error": "Document not found" }),
+                );
+                has_error = true;
+            }
+        }
+    }
+    match state.docs.set_status(&accepted, &status) {
+        Ok(changed) => {
+            for doc_id in accepted {
+                result.insert(doc_id, serde_json::json!({ "status": status }));
+            }
+            tracing::info!(
+                kb_id = %kb_id,
+                status = %status,
+                requested = doc_ids.len(),
+                changed = changed.len(),
+                "Document status updated"
+            );
+        }
+        Err(error) => {
+            has_error = true;
+            for doc_id in accepted {
+                result.insert(
+                    doc_id,
+                    serde_json::json!({ "error": format!("Database error (Document update)! {error}") }),
+                );
+            }
+        }
+    }
+    if has_error {
+        return Json(serde_json::json!({
+            "code": 500,
+            "message": "Partial failure",
+            "data": result,
+        }));
+    }
+    Json(serde_json::json!({ "code": 0, "data": result }))
+}
+
+/// `DELETE /api/v1/datasets/{id}/documents` — remove many documents (upstream
+/// `document_api.py::delete_documents`).
+///
+/// Upstream accepts either `ids` or `delete_all` and refuses both at once; ids that do
+/// not belong to the dataset are refused rather than silently skipped.
+pub async fn delete_docs_bulk(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if !kb_manageable(&state, &kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    let delete_all = body
+        .get("delete_all")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let mut doc_ids: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if doc_ids.is_empty() && !delete_all {
+        return Json(serde_json::json!({
+            "code": 400,
+            "message": format!("should either provide doc ids or set delete_all(true), dataset: {kb_id}."),
+        }));
+    }
+    if !doc_ids.is_empty() && delete_all {
+        return Json(serde_json::json!({
+            "code": 400,
+            "message": format!("should not provide both doc ids and delete_all(true), dataset: {kb_id}."),
+        }));
+    }
+    let owned: std::collections::HashMap<String, DocRecord> = state
+        .docs
+        .list(&kb_id)
+        .into_iter()
+        .map(|doc| (doc.id.clone(), doc))
+        .collect();
+    if delete_all {
+        doc_ids = owned.keys().cloned().collect();
+    }
+    let invalid: Vec<&String> = doc_ids
+        .iter()
+        .filter(|doc_id| !owned.contains_key(*doc_id))
+        .collect();
+    if !invalid.is_empty() {
+        let list = invalid
+            .iter()
+            .map(|value| value.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Json(serde_json::json!({
+            "code": 400,
+            "message": format!(
+                "These documents do not belong to dataset {kb_id} or Document not found: {list}"
+            ),
+        }));
+    }
+    let mut successes = 0usize;
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for doc_id in &doc_ids {
+        let Some(doc) = owned.get(doc_id) else {
+            continue;
+        };
+        match crate::server::delete_document_data(&state, doc) {
+            Ok(()) => successes += 1,
+            Err(error) => errors
+                .push(serde_json::json!({ "document_id": doc_id, "error": error.to_string() })),
+        }
+    }
+    tracing::info!(kb_id = %kb_id, successes, failures = errors.len(), "Documents deleted");
+    if errors.is_empty() {
+        return Json(serde_json::json!({
+            "code": 0,
+            "data": { "success_count": successes },
+        }));
+    }
+    Json(serde_json::json!({
+        "code": 500,
+        "message": "Partial failure",
+        "data": { "success_count": successes, "errors": errors },
+    }))
+}
+
+/// `POST /api/v1/documents/ingest` — queue (or cancel) the parsing of many documents
+/// (upstream `document_api.py::ingest`).
+///
+/// `run: "1"` starts parsing, `run: "2"` cancels it. `delete` clears the chunks the
+/// document already has before re-parsing (upstream's `redo` checkbox) and `apply_kb`
+/// re-applies the dataset's automatic metadata settings.
+pub async fn ingest_documents(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let doc_ids: Vec<String> = body
+        .get("doc_ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if doc_ids.is_empty() {
+        return Json(serde_json::json!({ "code": 400, "message": "'doc_ids' is required" }));
+    }
+    let run = match body.get("run") {
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        Some(serde_json::Value::String(value)) => value.clone(),
+        _ => String::new(),
+    };
+    if !matches!(run.as_str(), "1" | "2") {
+        return Json(serde_json::json!({
+            "code": 400,
+            "message": format!("'run' must be either 0 or 1: {run}")
+        }));
+    }
+    let clear_chunks = body
+        .get("delete")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let mut accepted = Vec::new();
+    for doc_id in &doc_ids {
+        let Some(doc) = state.docs.get(doc_id) else {
+            return Json(serde_json::json!({
+                "code": 404,
+                "message": format!("Document not found: {doc_id}")
+            }));
+        };
+        if !kb_manageable(&state, &doc.kb_id, &auth) {
+            return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        }
+        accepted.push(doc);
+    }
+    if run == "2" {
+        let mut cancelled = 0usize;
+        for doc in &accepted {
+            match state.tasks.cancel_document(&doc.id) {
+                Ok(count) => cancelled += count,
+                Err(error) => {
+                    return Json(serde_json::json!({ "code": 500, "message": error.to_string() }));
+                }
+            }
+            let _ = state
+                .docs
+                .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled");
+        }
+        tracing::info!(
+            documents = accepted.len(),
+            cancelled,
+            "Document parsing cancelled"
+        );
+        return Json(serde_json::json!({
+            "code": 0,
+            "message": "Cancelled",
+            "data": { "doc_ids": accepted.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(), "cancelled": cancelled }
+        }));
+    }
+    let mut queued = Vec::new();
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for doc in accepted {
+        if clear_chunks {
+            // Upstream's `redo` checkbox: drop the chunks this document already
+            // contributed before parsing it again, so the new run cannot leave a
+            // mixture of two parses behind.
+            match crate::server::delete_document_data(&state, &doc) {
+                Ok(()) => {
+                    // The document row survives the chunk removal (its file is
+                    // re-parsed from disk), so it is re-inserted with an empty index.
+                    let _ = state.docs.set_chunk_count(&doc.id, 0);
+                }
+                Err(error) => {
+                    errors.push(
+                        serde_json::json!({ "document_id": doc.id, "error": error.to_string() }),
+                    );
+                    continue;
+                }
+            }
+        }
+        match state
+            .docs
+            .get(&doc.id)
+            .ok_or_else(|| anyhow::anyhow!("Document not found"))
+            .and_then(|doc| {
+                enqueue_document_processing(
+                    state.clone(),
+                    &auth.user_id,
+                    doc,
+                    crate::api::features::TASK_PRIORITY_HIGH,
+                )
+            }) {
+            Ok(task_id) => {
+                queued.push(serde_json::json!({ "document_id": doc.id, "task_id": task_id }))
+            }
+            Err(error) => errors
+                .push(serde_json::json!({ "document_id": doc.id, "error": error.to_string() })),
+        }
+    }
+    tracing::info!(
+        queued = queued.len(),
+        failures = errors.len(),
+        "Documents queued for parsing"
+    );
+    if errors.is_empty() {
+        return Json(serde_json::json!({ "code": 0, "data": queued }));
+    }
+    Json(serde_json::json!({
+        "code": 500,
+        "message": "Partial failure",
+        "data": { "queued": queued, "errors": errors },
+    }))
 }
 
 /// DELETE /api/v1/datasets/{kb_id}/documents/{doc_id} — delete doc
@@ -643,6 +1006,7 @@ mod store_tests {
             chunk_count: 0,
             created_at: 1,
             updated_at: 1,
+            status: enabled_status(),
         }
     }
 
