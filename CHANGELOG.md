@@ -27,10 +27,26 @@ All notable changes to RayRAG are documented in this file.
   生成的代码块改为上游那套两段式片段——外层 100×100 透明 iframe（`mode=master`）+ 页内脚本响应
   `CREATE_CHAT_WINDOW` / `TOGGLE_CHAT` / `SCROLL_PASSTHROUGH` 并管理 `chat-win` iframe。
 
+### Fixed
+
+- **第三方宿主里的悬浮组件不再因存储被拒而中断握手**：组件是被别的站点嵌进去的，宿主文档若是不透明源
+  （`about:blank` / `srcdoc` 外壳）或 iframe 带 `sandbox`（无 `allow-same-origin`），Chrome 会直接让
+  `window.localStorage` 抛 `SecurityError`。此前页面底座的 fetch 包装器、主题引导脚本都在顶层无保护地读它，
+  异常会中断整个内联脚本，导致组件自身启动脚本里那句 `fcwMasterBootstrap()` 根本没执行、宿主收不到
+  `CREATE_CHAT_WINDOW`。现在统一改走 `rayragStore()`（读 / 写 / 删都吞掉拒绝并退化为空存储），
+  `?auth=` 的 cookie 写入与 `history.replaceState` 也各自加保护，组件启动本身再包一层 try/catch——
+  存储不可用时气泡照常渲染、握手照常发出。另外 401 兜底不再把嵌入页面跳转到 `/login`。
+- `mode=master` 不再预取 `inputs`（上游 master 只渲染气泡，内容由 window iframe 负责），
+  省掉一次必然被 CORS 拒绝的请求，握手更快。
+
 ### Notes
 
 - 台账记录的有意偏差：上游片段里的来源校验写成 `location.origin.replace(/:\d+/, ':9222')`（开发端口泄漏），
   生产环境下会丢弃自己的 postMessage；RayRAG 改为校验真实 `window.location.origin`，使组件真正可用。
+- 台账记录的有意加固：上游 `floating-chat-widget.tsx` 同样直接使用 `localStorage`，在不透明源 / sandbox 宿主里
+  会整体崩掉；RayRAG 的 `rayragStore()` 让嵌入面在存储被拒时仍可用（行为差异仅限“存储不可用”这一种宿主）。
+- 端到端探针补强：宿主页改为**真实跨源页面**（探针自建 HTTP 服务，独立端口 = 独立源，`localStorage` 可用），
+  另加一条 `sandbox="allow-scripts"`（无存储）iframe 回归，断言这种最恶劣宿主里仍能完成握手。
 - 新增回归：`web::kb_ui_tests::chat_widget_page_matches_upstream_floating_widget`（20 个标记 + 三模式
   钩子 + 9 个设置参数 + 两个后端 + 中文面 + CSS），`agent_embed_modal_matches_upstream_embed_dialog` 增补
   13 个悬浮组件标记、6 条文案与 7 条片段断言。
