@@ -4285,6 +4285,29 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/providers/presets",
             get(crate::api::features::list_provider_presets),
         )
+        // The public model catalogue that fills in capabilities and pricing for a
+        // custom provider/model (`crate::model_catalog`). Authenticated like the
+        // provider pickers it serves; only the refresh is admin-only.
+        .route(
+            "/api/v1/model-catalog/status",
+            get(crate::api::model_catalog::catalog_status),
+        )
+        .route(
+            "/api/v1/model-catalog/providers",
+            get(crate::api::model_catalog::catalog_providers),
+        )
+        .route(
+            "/api/v1/model-catalog/lookup",
+            get(crate::api::model_catalog::catalog_lookup),
+        )
+        .route(
+            "/api/v1/model-catalog/search",
+            get(crate::api::model_catalog::catalog_search),
+        )
+        .route(
+            "/api/v1/model-catalog/refresh",
+            post(crate::api::model_catalog::catalog_refresh),
+        )
         .route(
             "/api/v1/providers/{id}",
             get(crate::api::features::get_provider)
@@ -5528,6 +5551,118 @@ mod tests {
         .unwrap();
         assert!(body.contains("data-testid='available-models-section'"));
         assert!(body.contains("data-testid='default-model-llm_id'"));
+    }
+
+    /// The public model catalogue answers the questions a custom provider dialog
+    /// would otherwise have to ask the operator: which provider is this endpoint,
+    /// what can the model do, how large is its context, what does it cost. The
+    /// lookup is served from the cached copy — a test seeds it, so nothing here
+    /// reaches the network.
+    #[tokio::test]
+    async fn model_catalogue_routes_answer_lookups_and_provider_directories() {
+        use crate::model_catalog::{CatalogModel, CatalogProvider, ModelCatalog};
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let catalog = ModelCatalog {
+            providers: vec![CatalogProvider {
+                id: "deepseek".to_string(),
+                name: "DeepSeek".to_string(),
+                website: "https://deepseek.com".to_string(),
+                api_base_url: "https://api.deepseek.com/v1".to_string(),
+                models: vec![
+                    CatalogModel {
+                        id: "deepseek-chat".to_string(),
+                        name: "DeepSeek-Chat".to_string(),
+                        context: Some(128_000),
+                        tool_call: true,
+                        input_price: Some(0.27),
+                        output_price: Some(1.1),
+                        input_modalities: vec!["text".to_string()],
+                        output_modalities: vec!["text".to_string()],
+                        ..CatalogModel::default()
+                    },
+                    CatalogModel {
+                        id: "deepseek-vl2".to_string(),
+                        name: "deepseek-vl2".to_string(),
+                        context: Some(32_000),
+                        input_modalities: vec!["text".to_string(), "image".to_string()],
+                        ..CatalogModel::default()
+                    },
+                ],
+            }],
+            fetched_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis() as u64)
+                .unwrap_or(1),
+            source: "test".to_string(),
+        };
+        crate::model_catalog::put(catalog, "test").await;
+
+        let get = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let lookup = router
+            .clone()
+            .oneshot(get(
+                "/api/v1/model-catalog/lookup?model=deepseek-chat&base_url=https://api.deepseek.com/v1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(lookup.status(), StatusCode::OK);
+        let payload = to_bytes(lookup.into_body(), 256 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["matches"][0]["model"]["name"], "DeepSeek-Chat");
+        assert_eq!(body["data"]["matches"][0]["provider_id"], "deepseek");
+        assert_eq!(body["data"]["matches"][0]["model"]["context"], 128_000);
+        assert_eq!(
+            body["data"]["matches"][0]["suggested_model_types"][0],
+            "chat"
+        );
+        // The base URL names the provider even before a model matches.
+        assert_eq!(body["data"]["provider"]["id"], "deepseek");
+        assert_eq!(body["data"]["catalog"]["providers"], 1);
+        assert_eq!(body["data"]["catalog"]["models"], 2);
+
+        // The directory resolves a provider from the endpoint alone — the dialog
+        // only ever has the base URL — and then lists that provider's models.
+        let directory = router
+            .clone()
+            .oneshot(get(
+                "/api/v1/model-catalog/providers?base_url=https://api.deepseek.com",
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(directory.into_body(), 256 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["data"]["providers"].as_array().map(Vec::len), Some(1));
+        assert_eq!(body["data"]["providers"][0]["name"], "DeepSeek");
+        assert_eq!(body["data"]["providers"][0]["models"], 2);
+        assert_eq!(body["data"]["models"].as_array().map(Vec::len), Some(2));
+
+        let missing = router
+            .clone()
+            .oneshot(get("/api/v1/model-catalog/lookup?model="))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        let payload = to_bytes(missing.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 400);
+
+        // An unknown name is an empty answer, not an error: the dialog keeps working.
+        let unknown = router
+            .oneshot(get("/api/v1/model-catalog/lookup?model=nope-not-a-model"))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::OK);
+        let payload = to_bytes(unknown.into_body(), 256 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["data"]["matches"].as_array().map(Vec::len), Some(0));
     }
 
     #[tokio::test]

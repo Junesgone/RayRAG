@@ -28,7 +28,7 @@ pub mod build_info {
     /// Crate version from `Cargo.toml`.
     pub const VERSION: &str = env!("CARGO_PKG_VERSION");
     /// RAGFlow parity slice currently landed in this build.
-    pub const PARITY_SLICE: &str = "v0.3.9b";
+    pub const PARITY_SLICE: &str = "v0.3.9c";
     /// Short git revision the binary was built from.
     pub const GIT_REV: &str = env!("RAYRAG_BUILD_GIT_REV");
     /// `clean` or `dirty` working-tree marker captured at build time.
@@ -94,10 +94,10 @@ pub mod github;
 pub mod google;
 pub mod google_scholar;
 pub mod graph_store;
-pub mod host_resources;
 pub mod graphrag;
 pub mod graphrag_enhanced;
 pub mod graphrag_index;
+pub mod host_resources;
 pub mod hypergraph;
 pub mod integration;
 pub mod jin10;
@@ -113,6 +113,7 @@ pub mod memory;
 pub mod merge;
 pub mod metadata_filter;
 pub mod metrics;
+pub mod model_catalog;
 pub mod model_meta;
 pub mod naive;
 pub mod naming;
@@ -140,11 +141,11 @@ pub mod resources;
 pub mod resume;
 pub mod runtime;
 pub mod sandbox;
-pub mod ssh_exec;
 pub mod search;
 pub mod searxng;
 pub mod server;
 pub mod settings;
+pub mod ssh_exec;
 pub mod storage;
 pub mod store;
 pub mod stores;

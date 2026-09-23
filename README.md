@@ -140,7 +140,28 @@ RayRAG ships no models and is not tied to any vendor.
 5. Back at the top of the page, **Set default models**: pick your new model as `LLM` and
    `Embedding` (`VLM`, `ASR`, `Rerank`, `TTS` are optional).
 
-### 3.2 Popular providers
+### 3.2 Not sure what a model can do? Let RayRAG look it up
+
+Custom models (gateways, self-hosted servers, a provider RayRAG has never heard of) ask you
+for facts you may not have at hand: does it support tool calls, how large is its context
+window, what does it cost per million tokens. RayRAG can look those up for you.
+
+1. In the model dialog, open **`List models` → `Add custom model`**.
+2. Type the model name (for example `deepseek-chat`) and press **`Look up model info`**.
+3. RayRAG consults the public model catalogue at
+   [models.agent-one.dev](https://models.agent-one.dev/list) and shows what it found:
+   the provider, the context window, capability tags (tool calls / reasoning / vision /
+   structured output), and the published price per million tokens in and out.
+4. The dialog fills in the fields you had left empty — model types, max tokens, tool-call
+   support. Anything you typed yourself is kept until you press **`Use these values`**.
+
+The same lookup is available when you add a whole provider: fill in the **API Base** in
+**`+ Add Provider`** and press **`Look up provider`** — RayRAG recognises the endpoint,
+fills in the provider id and name, and offers that provider's model names for the model box.
+The answer is cached for a day, so lookups are instant and keep working even when the
+catalogue is unreachable (you then simply see the last copy it had).
+
+### 3.3 Popular providers
 
 | Provider | Pick in RayRAG | Base-Url (usually prefilled) | Notes |
 |---|---|---|---|
@@ -155,7 +176,7 @@ RayRAG ships no models and is not tied to any vendor.
 | Tencent Hunyuan | `Tencent Hunyuan` | — | — |
 | Any OpenAI-compatible service | `OpenAI-API-Compatible` | your endpoint | gateways, proxies, self-hosted |
 
-### 3.3 Local models on your own GPU (free, data never leaves the machine)
+### 3.4 Local models on your own GPU (free, data never leaves the machine)
 
 | Runtime | Pick in RayRAG | Default endpoint |
 |---|---|---|
@@ -170,7 +191,7 @@ RayRAG ships no models and is not tied to any vendor.
 > `http://host.docker.internal:11434` (on Linux use the host's LAN IP, e.g.
 > `http://192.168.1.10:11434`).
 
-### 3.4 Through environment variables (good for fleets)
+### 3.5 Through environment variables (good for fleets)
 
 Edit `.env`, then `docker compose up -d`:
 

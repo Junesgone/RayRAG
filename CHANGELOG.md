@@ -2,6 +2,56 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.51] — 2026-09-24（对标批次 v0.3.9c）
+
+### Added
+
+- **公共模型目录接入**（`https://models.agent-one.dev/list`，新模块 `src/model_catalog.rs`）：
+  填自定义提供商/模型时不必再凭记忆回答「这个模型支持工具调用吗、上下文多大、多少钱一百万 token」。
+  该页面是 Next.js 应用，数据藏在 React Server Component 的
+  `self.__next_f.push([1, "…"])` 分片里，因此目录是从**页面载荷**里解析出来的：拼接分片 →
+  按括号配对切出 `"directory":{…}` 对象 → serde 反序列化（当前 75 个提供商；每个模型带
+  `features{attachment,reasoning,tool_call,structured_output}`、`pricing{input,output}`、
+  `limit{context}`、`modalities{input,output}`）。解析**严格失败**：形状变了就报
+  `catalogue page carried no RSC payload` / `catalogue payload had no 'directory' object`，
+  绝不静默返回空目录。
+  - **按需、有缓存的取用**：内存 → 磁盘（`<状态目录>/model_catalog.json`，临时文件 + rename 原子写）
+    → 网络，TTL 24 小时；刷新失败**保留旧副本**并记录原因，离线部署仍可查询。页面读取上限
+    `MAX_CATALOG_PAGE_BYTES` 32 MiB，走统一超时客户端与有界读取。
+  - **排序照顾「你正在配的那个端点」**：先给与所填 Base-URL 同 host 的提供商的精确命中，其次是该端点**自己提供的模型**
+    （按与输入名的公共前缀排序，近似拼错的名字排在字母序邻居之前），最后才是别的提供商的同名模型——
+    避免在 `api.deepseek.com` 上把 `302.AI` 的 `deepseek-chat` 当成 DeepSeek 的价格套上去。
+  - 端点：`GET /api/v1/model-catalog/status`（只报缓存，不触发网络）、
+    `GET /api/v1/model-catalog/providers?provider=|base_url=`、
+    `GET /api/v1/model-catalog/lookup?model=&base_url=`、
+    `GET /api/v1/model-catalog/search?q=&base_url=`、
+    `POST /api/v1/model-catalog/refresh`（管理员）。查不到是**空列表**而不是错误；目录不可达也返回
+    `code 0` + 原因，外部服务失联不会让对话框瘫痪。
+- **对话框里的真实查询按钮**（`web::providers_page`）：
+  - 自定义模型对话框新增 `Look up model info` / `查询模型信息`：用已填的模型名 + 当前 Base-URL 查询，
+    结果面板逐条给出模型名、提供商、上下文长度、能力标签、`$/M in · $/M out`、端点与官网；
+    **只填空着的字段**（模型类型、Max tokens、Tool call），要覆盖手填值必须点 `Use these values` /
+    `使用这些信息`；打开与关闭对话框都会清空上一次的结果。
+  - `+ Add Provider` 入口此前只有 `showAddProv()` 函数、页面没有按钮（不可达代码）；现补上入口与
+    `Look up provider` / `查询提供商`：填好 API Base 点一次即识别提供商、回填 ID 与名称，
+    并把目录中该提供商的模型名灌进 `apModels` 的候选列表。
+  - 目录相关 20 个文案键进入 `t()` 中英对照表（上下文长度 / 价格 / 工具调用 / 视觉 / 结构化输出 …）。
+
+### Fixed
+
+- **`json!` 宏递归上限**：把目录标签继续塞进原本那张 picker 标签表会触发
+  `recursion limit reached while expanding json_internal!`；目录文案改为独立表，再用
+  `as_object_mut().extend()` 合并（顺带说明为什么不能合成一张表）。
+
+### Notes
+
+- 新增回归 8 条：`model_catalog` 6 条（RSC 解析与能力/定价、Base-URL 优先与容忍匹配、
+  已知端点的自有模型回退与排序、失败信息、落盘往返与 TTL）、`server` 1 条
+  （lookup / provider 目录 / 空结果 / 缺参 400）、`web` 1 条（页面标记、中英文案与 CSS）。
+  全量 `cargo test --locked --offline --lib` **1621 passed / 0 failed / 27 ignored**。
+- 真点验证：`scripts/ui-traversal/model-catalog-lookup-cdp.mjs`（登录 → 目录状态 → lookup API →
+  真点按钮填字段 → 覆盖按钮 → 取消后清空 → Add Provider 识别提供商）。
+
 ## [0.4.50] — 2026-09-24（对标批次 v0.3.9b）
 
 ### Added
