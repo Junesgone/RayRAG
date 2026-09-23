@@ -3757,6 +3757,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::document::reparse_doc),
         )
         .route(
+            "/api/v1/documents/{doc_id}/preview",
+            get(crate::api::document::preview_doc),
+        )
+        .route(
             "/api/v1/datasets/{id}/documents/{did}/download",
             get(crate::api::document::download_doc),
         )
@@ -10642,7 +10646,82 @@ mod tests {
         );
     }
 
+    /// Upstream `useGetDocumentUrl`'s document branch: the previewer fetches
+    /// `GET /api/v1/documents/{id}/preview` and expects the raw bytes inline
+    /// (a download keeps `attachment` on the dataset route). The MIME type comes
+    /// from the stored name so pdf.js, images and text render in place.
     #[tokio::test]
+    async fn document_preview_serves_stored_bytes_inline() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Preview KB", "")
+            .unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "preview-doc".into(),
+            name: "positions.pdf".into(),
+            kb_id: kb.id.clone(),
+            size: 5,
+            storage_name: "preview-doc.pdf".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: String::new(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: "Indexed 1 chunks".into(),
+            chunk_count: 1,
+            created_at: 1,
+            updated_at: 1,
+        };
+        env.state.docs.insert(doc).unwrap();
+        std::fs::write(env.root.join("uploads/preview-doc.pdf"), b"%PDF-").unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/preview-doc/preview")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/pdf"
+        );
+        let disposition = response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.starts_with("inline"), "{disposition}");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"%PDF-");
+
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/nope/preview")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(missing.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 404);
+    }
+
     async fn explicit_reparse_queues_even_when_content_hash_is_unchanged() {
         let env = test_env();
         let kb = env

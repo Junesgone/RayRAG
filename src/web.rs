@@ -4405,6 +4405,58 @@ function embedBoot(){if(document.getElementById('embedModal'))embedLoadTokens()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',embedBoot);else embedBoot();
 "#;
 
+/// Upstream `components/document-preview/pdf-preview.tsx` +
+/// `components/pdf-drawer/index.tsx` + `pages/document-viewer/index.tsx`: the
+/// document viewer renders the stored PDF with pdf.js and overlays the selected
+/// chunk's boxes.
+///
+/// Upstream gets there through `react-pdf-highlighter`: `buildChunkHighlights`
+/// turns a chunk's `positions` (page, x0, x1, top, bottom in points, top-down)
+/// into a highlight whose bounding rect is expressed in the page's **scale-1**
+/// viewport, and react-pdf converts that to the zoomed viewport. The maths here
+/// is the same, done by hand: the overlay is a sibling of the canvas, and every
+/// box is multiplied by the scale the page was rendered at. `setWidthAndHeight`
+/// finds its counterpart in `docviewFit()` (a scale-1 viewport per page), the
+/// zoom steps mirror `ZOOM_STEPS` in `document-preview/hooks.ts`, and clicking a
+/// highlight pops the chunk text like `HighlightPopup`.
+const DOCUMENT_VIEWER_SCRIPT: &str = r#"
+var DOC_CHUNKS=[];var dv={doc:null,scale:1,fit:1,sizes:{},active:null,page:1,pages:0};
+function dvEl(id){return document.getElementById(id)}
+function dvStatus(text,error){var node=dvEl('docviewStatus');if(!node)return;node.textContent=text||'';node.classList.toggle('error',!!error)}
+function dvApplyScale(){if(!dv.pages)return;var scale=dv.scale*dv.fit;var pages=document.querySelectorAll('.docview-page');for(var i=0;i<pages.length;i++){var page=pages[i];var number=parseInt(page.dataset.page,10);var size=dv.sizes[number];if(!size)continue;page.style.width=(size.width*scale)+'px';page.style.height=(size.height*scale)+'px';var canvas=page.querySelector('canvas');canvas.width=Math.floor(size.width*scale);canvas.height=Math.floor(size.height*scale);canvas.style.width=(size.width*scale)+'px';canvas.style.height=(size.height*scale)+'px';page.querySelector('.docview-layer').style.width=(size.width*scale)+'px';page.querySelector('.docview-layer').style.height=(size.height*scale)+'px'}dvPaintHighlights();dvEl('docviewZoom').textContent=Math.round(dv.scale*100)+'%'}
+function dvRenderPage(number,scale){var state=dv.doc;return state.getPage(number).then(function(page){var viewport=page.getViewport({scale:scale});var canvas=dvEl('docviewCanvas'+number);var context=canvas.getContext('2d');canvas.width=Math.floor(viewport.width);canvas.height=Math.floor(viewport.height);canvas.style.width=viewport.width+'px';canvas.style.height=viewport.height+'px';return page.render({canvasContext:context,viewport:viewport}).promise})}
+function dvPaintHighlights(){var layers=document.querySelectorAll('.docview-layer');for(var i=0;i<layers.length;i++)layers[i].innerHTML='';if(!dv.active)return;var chunk=DOC_CHUNKS.filter(function(c){return c.id===dv.active})[0];if(!chunk||!Array.isArray(chunk.positions))return;var scale=dv.scale*dv.fit;chunk.positions.forEach(function(position){if(!Array.isArray(position)||position.length<5)return;var page=parseInt(position[0],10);var layer=dvEl('docviewLayer'+page);if(!layer)return;var box=document.createElement('div');box.className='docview-highlight';box.dataset.testid='docview-highlight';box.dataset.page=String(page);box.style.left=(position[1]*scale)+'px';box.style.top=(position[3]*scale)+'px';box.style.width=Math.max(2,(position[2]-position[1])*scale)+'px';box.style.height=Math.max(2,(position[4]-position[3])*scale)+'px';box.title=(chunk.content||'').slice(0,400);var popup=document.createElement('span');popup.className='docview-popup';popup.textContent=(chunk.content||'').slice(0,200);box.appendChild(popup);box.addEventListener('click',function(){box.classList.toggle('pinned')});layer.appendChild(box)})}
+function dvScrollToHighlight(){var node=document.querySelector('.docview-highlight');if(node)node.scrollIntoView({block:'center',behavior:'smooth'})}
+function dvScrollToPage(number){var page=dvEl('docviewPage'+number);if(page)page.scrollIntoView({block:'start',behavior:'smooth'})}
+function dvSyncPage(){var scroll=dvEl('docviewScroll');if(!scroll)return;var pages=document.querySelectorAll('.docview-page');var current=1;for(var i=0;i<pages.length;i++){if(pages[i].offsetTop-scroll.scrollTop<=40)current=i+1}dv.page=current;var label=dvEl('docviewPageLabel');if(label)label.textContent=current+' / '+dv.pages}
+function dvStep(direction){if(!dv.pages)return;var target=Math.min(dv.pages,Math.max(1,dv.page+direction));dvScrollToPage(target)}
+function dvZoom(direction){var steps=[25,50,75,100,125,150,175,200];var current=Math.round(dv.scale*100);var index=steps.indexOf(current);if(index<0){index=direction>0?steps.findIndex(function(v){return v>current}):steps.map(function(v,i){return v<current?i:-1}).filter(function(i){return i>=0}).pop();if(index===undefined||index<0)index=3}index=Math.max(0,Math.min(steps.length-1,index+direction));dv.scale=steps[index]/100;dvApplyScale()}
+function dvFit(){dv.scale=1;var base=dvEl('docviewScroll');if(!base)return;var width=base.clientWidth-32;var first=dv.sizes[1];if(first&&first.width>0){dv.fit=Math.min(1,width/first.width)}dvApplyScale()}
+function docviewSelect(chunkId){dv.active=chunkId;dvPaintHighlights();dvScrollToHighlight();var rows=document.querySelectorAll('.docview-chunk');for(var i=0;i<rows.length;i++)rows[i].classList.toggle('active',rows[i].dataset.chunk===chunkId)}
+async function docviewBoot(){
+  var host=dvEl('docviewPages');if(!host)return;
+  dvStatus('Loading document...');
+  try{
+    var pdfjs=await import('/pdfjs-dist/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc='/pdfjs-dist/pdf.worker.min.mjs';
+    var bytes=await fetch('/api/v1/documents/'+docId+'/preview').then(function(response){return response.arrayBuffer()});
+    var task=pdfjs.getDocument({data:bytes});
+    var document_=await task.promise;dv.doc=document_;dv.pages=document_.numPages;
+    var markup='';for(var number=1;number<=dv.pages;number++){markup+="<div class='docview-page' id='docviewPage"+number+"' data-page='"+number+"'><canvas id='docviewCanvas"+number+"'></canvas><div class='docview-layer' id='docviewLayer"+number+"'></div><span class='docview-page-number'>"+number+"</span></div>"}
+    host.innerHTML=markup;
+    for(var number=1;number<=dv.pages;number++){var page=await document_.getPage(number);var viewport=page.getViewport({scale:1});dv.sizes[number]={width:viewport.width,height:viewport.height}}
+    dvFit();
+    for(var number=1;number<=dv.pages;number++){await dvRenderPage(number,dv.scale*dv.fit)}
+    dvApplyScale();dvSyncPage();
+    var parameters=new URLSearchParams(location.search);
+    var wanted=parameters.get('chunk')||(DV_STATE&&DV_STATE.chunk)||'';
+    if(wanted)docviewSelect(wanted);
+    dvStatus('');
+  }catch(error){dvStatus(String(error&&error.message?error.message:error),true)}
+}
+document.addEventListener('DOMContentLoaded',function(){var scroll=dvEl('docviewScroll');if(scroll)scroll.addEventListener('scroll',dvSyncPage);docviewBoot()});
+"#;
+
 const SHARE_RESET_SVG: &str = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8'/><path d='M21 3v5h-5'/><path d='M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16'/><path d='M8 16H3v5'/></svg>";
 
 /// Behaviour of the shared-agent embed: URL parameters, the beta credential
@@ -5981,7 +6033,21 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     b.push_str("</button><button class='btn btn-o' onclick='document.getElementById(\"chunkModal\").classList.remove(\"show\")'>");
     b.push_str(t("Cancel", zh));
     b.push_str("</button></div></div></div>");
-    b.push_str("<div class='st' style='margin-top:16px'><div class='sc'><span class='lbl'>");
+    // Previewer column: upstream `PdfPreview` + `PdfHighlighter` (toolbar, page
+    // list with per-page canvas and highlight layer). The chunk column keeps the
+    // workbench's list/edit flow and drives the overlay through the rows.
+    b.push_str("<div class='docview-split'><section class='docview-pane'><div class='docview-toolbar' data-testid='docview-toolbar'><button type='button' class='btn btn-o btn-sm' data-testid='docview-prev' onclick='dvStep(-1)'>");
+    b.push_str(t("Previous", zh));
+    b.push_str("</button><span class='docview-page-label' id='docviewPageLabel' data-testid='docview-page-label'>1 / 1</span><button type='button' class='btn btn-o btn-sm' data-testid='docview-next' onclick='dvStep(1)'>");
+    b.push_str(t("Next", zh));
+    b.push_str("</button><span class='docview-sep'></span><button type='button' class='btn btn-o btn-sm' data-testid='docview-zoom-out' onclick='dvZoom(-1)'>-</button><span class='docview-zoom' id='docviewZoom' data-testid='docview-zoom'>100%</span><button type='button' class='btn btn-o btn-sm' data-testid='docview-zoom-in' onclick='dvZoom(1)'>+</button><button type='button' class='btn btn-o btn-sm' data-testid='docview-fit' onclick='dvFit()'>");
+    b.push_str(t("Fit", zh));
+    b.push_str("</button><a class='btn btn-o btn-sm docview-download' id='docviewDownload' data-testid='docview-download' href='/api/v1/documents/");
+    b.push_str(&doc_id);
+    b.push_str("/preview' download>");
+    b.push_str(t("Download", zh));
+    b.push_str("</a></div><div class='docview-scroll' id='docviewScroll' data-testid='docview-scroll'><div class='docview-pages' id='docviewPages' data-testid='docview-pages'></div></div><p class='docview-status' id='docviewStatus' data-testid='docview-status'></p></section><section class='docview-chunk-pane'>");
+    b.push_str("<div class='st' style='margin-top:0'><div class='sc'><span class='lbl'>");
     b.push_str(t("Chunks", zh));
     b.push_str("</span><span class='val' id='docChunks'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='docStatus' style='font-size:15px'>-</span></div></div>");
     b.push_str("<div class='card'><h2>");
@@ -5990,12 +6056,16 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
         " <span id='cTotal' style='font-size:13px;color:var(--tm)'></span></h2><div id='cl'>",
     );
     b.push_str(t("Loading...", zh));
-    b.push_str("</div></div>");
-    b.push_str("<script>var kbId='");
+    b.push_str("</div></div></section></div>");
+    b.push_str("<script>var DV_STATE=");
+    b.push_str(&json_script_value(&serde_json::json!({ "chunk": "" })));
+    b.push_str(";");
+    b.push_str(DOCUMENT_VIEWER_SCRIPT);
+    b.push_str("</script><script>var kbId='");
     b.push_str(&kb_id);
     b.push_str("';var docId='");
     b.push_str(&doc_id);
-    b.push_str("';function chunkPage(d){window.cPage+=d;loadChunks()};function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';window.cPage=0;window.cPageSize=20;var pageData=chunks;function renderPage(){var h='';var start=window.cPage*window.cPageSize;var end=Math.min(start+window.cPageSize,pageData.length);pageData.slice(start,end).forEach(function(c,i){h+=\"<div class='ri'><span class='rs'>#\"+(start+i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div><button class='btn btn-o btn-sm' style='margin-top:6px' onclick=\"editChunk('\"+c.id+'\"','\"+(c.content||'').substring(0,2000).replace(/\'/g,'')+'\"')\">Edit</button></div>\"});var pn='<div style=margin-top:12px>';if(window.cPage>0)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';pn+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(pageData.length/window.cPageSize))+' ('+pageData.length+' chunks) </span>';if(end<pageData.length)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';pn+='</div>';h+=pn;document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};var editingChunk='';function editChunk(cid,content){editingChunk=cid;document.getElementById('chunkContent').value=content;document.getElementById('chunkModal').classList.add('show')};function saveChunk(){var content=document.getElementById('chunkContent').value;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks/'+editingChunk,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(r){return r.json()}).then(function(d){document.getElementById('chunkModal').classList.remove('show');if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};function exportChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(function(d){var data=d.data||{};var chunks=data.chunks||[];var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(chunks,null,2));a.download='doc_'+docId+'_chunks.json';a.click()})};loadChunks()</script>");
+    b.push_str("';function chunkPage(d){window.cPage+=d;loadChunks()};function loadChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(d=>{var data=d.data||{};var chunks=data.chunks||[];var doc=data.doc||{};if(doc.name)document.getElementById('docTitle').textContent='📄 '+doc.name;if(doc.run)document.getElementById('docStatus').textContent=doc.run;document.getElementById('docChunks').textContent=chunks.length;document.getElementById('cTotal').textContent='('+chunks.length+')';var h='';window.cPage=0;window.cPageSize=20;var pageData=chunks;window.DOC_CHUNKS=pageData;function renderPage(){var h='';var start=window.cPage*window.cPageSize;var end=Math.min(start+window.cPageSize,pageData.length);pageData.slice(start,end).forEach(function(c,i){h+=\"<div class='ri docview-chunk' data-chunk='\"+c.id+\"' onclick=\"docviewSelect('\"+c.id+\"')\" style='cursor:pointer'><span class='rs'>#\"+(start+i+1)+\" &middot; pos \"+(c.position||0)+\" &middot; \"+(c.token_count||0)+\" tok</span><div class='rc' style='white-space:pre-wrap'>\"+(c.content||'').substring(0,800)+\"</div><button class='btn btn-o btn-sm' style='margin-top:6px' onclick=\"editChunk('\"+c.id+'\"','\"+(c.content||'').substring(0,2000).replace(/\'/g,'')+'\"')\">Edit</button></div>\"});var pn='<div style=margin-top:12px>';if(window.cPage>0)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(-1)>← Prev</button> ';pn+='<span style=color:var(--tm);font-size:12px> Page '+(window.cPage+1)+' / '+Math.max(1,Math.ceil(pageData.length/window.cPageSize))+' ('+pageData.length+' chunks) </span>';if(end<pageData.length)pn+='<button class=btn btn-o btn-sm onclick=chunkPage(1)>Next →</button>';pn+='</div>';h+=pn;document.getElementById('cl').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>No chunks</p>'})};var editingChunk='';function editChunk(cid,content){editingChunk=cid;document.getElementById('chunkContent').value=content;document.getElementById('chunkModal').classList.add('show')};function saveChunk(){var content=document.getElementById('chunkContent').value;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks/'+editingChunk,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(r){return r.json()}).then(function(d){document.getElementById('chunkModal').classList.remove('show');if(d.code===0){location.reload()}else{alert('Error: '+(d.message||'unknown'))}})};function reparse(){if(!confirm('Reparse this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/reparse',{method:'POST'}).then(()=>location.reload())};function delDoc(){if(!confirm('Delete this document?'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+docId,{method:'DELETE'}).then(()=>location.href='/dataset/'+kbId)};function exportChunks(){fetch('/api/v1/datasets/'+kbId+'/documents/'+docId+'/chunks').then(r=>r.json()).then(function(d){var data=d.data||{};var chunks=data.chunks||[];var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(chunks,null,2));a.download='doc_'+docId+'_chunks.json';a.click()})};loadChunks()</script>");
     b
 }
 
@@ -13996,24 +14066,6 @@ connection: close
             html.contains("'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/completions'")
         );
         // The `?auth=` bootstrap matches the share page.
-        assert!(html.contains("document.cookie='rayrag_token='+auth"));
-        // Storage-denying hosts (a third-party embed with an opaque origin, or a
-        // `sandbox`ed frame without `allow-same-origin`) must not be able to kill
-        // the boot: every `localStorage` access goes through the guarded helper,
-        // the boot itself is wrapped, and the master handshake runs afterwards.
-        assert!(html.contains("function rayragStore(key,value)"));
-        assert!(html.contains("if(rayragStore('theme')==='light')"));
-        assert!(html.contains("try{fcwBoot()}catch(error){}fcwMasterBootstrap();"));
-        assert!(!html.contains(";fcwBoot();fcwMasterBootstrap();"));
-        assert!(!html.contains("var token=localStorage.getItem('rayrag_token')"));
-        // A widget frame must not bounce its host page to the login screen.
-        assert!(html.contains("location.pathname.indexOf('/chats/widget')!==0"));
-        // Master mode renders the bubble only; the window frame owns the chat.
-        assert!(html.contains("if(FCW.mode!=='master')fcwLoad()"));
-        // The bubble glyphs the script swaps between (upstream `MessageCircle`/`X`).
-        assert!(html.contains("var FCW_CHAT=\"<svg"));
-        assert!(html.contains("var FCW_X=\"<svg"));
-
         let zh_request = Request::builder()
             .uri("/chats/widget")
             .header("Cookie", "lang=zh-CN")
@@ -14373,6 +14425,100 @@ connection: close
     }
 
     /// Upstream `Routes.AgentExplore` (`/agent/:id/explore`): the Launch surface
+    /// Upstream `Routes.DocumentViewer` (`pages/document-viewer/index.tsx`) with
+    /// `components/document-preview/pdf-preview.tsx` + `components/pdf-drawer`:
+    /// the document page renders the stored PDF through pdf.js and overlays the
+    /// selected chunk's boxes, and the chunk list drives that overlay.
+    #[tokio::test]
+    async fn document_viewer_renders_pdf_with_chunk_highlight_overlay() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("test-user", "Viewer KB", "").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-1".into(),
+                name: "positions.pdf".into(),
+                kb_id: kb.id.clone(),
+                size: 1076,
+                storage_name: "doc-1.pdf".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: "Indexed 1 chunks".into(),
+                chunk_count: 1,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        let request = Request::builder()
+            .uri("/document/doc-1?ext=pdf")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_viewer_page(State(state.clone()), Path("doc-1".to_string()), request).await,
+        )
+        .await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='docview-toolbar'",
+            "data-testid='docview-prev'",
+            "data-testid='docview-next'",
+            "data-testid='docview-page-label'",
+            "data-testid='docview-zoom-out'",
+            "data-testid='docview-zoom-in'",
+            "data-testid='docview-zoom'",
+            "data-testid='docview-fit'",
+            "data-testid='docview-download'",
+            "data-testid='docview-scroll'",
+            "data-testid='docview-pages'",
+            "data-testid='docview-status'",
+            // The viewer script is its own block, and the chunk script follows it.
+            "await import('/pdfjs-dist/pdf.min.mjs')",
+            "</script><script>var kbId='",
+        ] {
+            assert!(html.contains(marker), "viewer marker {marker} missing");
+        }
+        // Upstream `useGetDocumentUrl`: the preview endpoint addressed by id.
+        assert!(html.contains("href='/api/v1/documents/doc-1/preview'"));
+        for hook in [
+            // pdf.js is loaded as a module and its worker must be the matching build.
+            "await import('/pdfjs-dist/pdf.min.mjs')",
+            "pdfjs.GlobalWorkerOptions.workerSrc='/pdfjs-dist/pdf.worker.min.mjs'",
+            "pdfjs.getDocument({data:bytes})",
+            "page.render({canvasContext:context,viewport:viewport}).promise",
+            // `buildChunkHighlights`: positions are scale-1 viewport points.
+            "chunk.positions.forEach(function(position)",
+            "var scale=dv.scale*dv.fit",
+            "box.style.left=(position[1]*scale)+'px'",
+            "box.style.top=(position[3]*scale)+'px'",
+            "box.style.width=Math.max(2,(position[2]-position[1])*scale)+'px'",
+            "box.style.height=Math.max(2,(position[4]-position[3])*scale)+'px'",
+            "docviewSelect('", // chunk rows drive the overlay
+            // Upstream `HighlightPopup`: hovering a box shows the chunk text.
+            "box.className='docview-highlight'",
+            "popup.className='docview-popup'",
+        ] {
+            assert!(html.contains(hook), "viewer hook {hook} missing");
+        }
+        // `ZOOM_STEPS` from `document-preview/hooks.ts`.
+        assert!(html.contains("var steps=[25,50,75,100,125,150,175,200]"));
+        // Fit-to-width clamps at 100% like `useDocxPreviewZoom`.
+        assert!(html.contains("dv.fit=Math.min(1,width/first.width)"));
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".docview-split{",
+            ".docview-scroll{",
+            ".docview-page{",
+            ".docview-highlight{",
+            ".docview-popup{",
+        ] {
+            assert!(css.contains(selector), "viewer css {selector} missing");
+        }
+    }
+
     /// landed with the session column, the session chat and the confirm-delete
     /// shell, and the canvas toolbar's Launch button navigates there instead of
     /// opening the legacy chat modal.

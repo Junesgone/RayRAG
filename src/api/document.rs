@@ -414,6 +414,69 @@ pub async fn download_doc(
     }
 }
 
+/// `GET /api/v1/documents/{doc_id}/preview` — upstream
+/// `useGetDocumentUrl`'s document branch (`hooks/use-document-request.ts`):
+/// the raw bytes of a document, addressed by document id alone and served
+/// inline so the previewer can render it (a download keeps its `attachment`
+/// disposition on the dataset route).
+pub async fn preview_doc(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(doc_id): Path<String>,
+) -> axum::response::Response {
+    let Some(doc) = state.docs.get(&doc_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    };
+    if !kb_accessible(&state, &doc.kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+            .into_response();
+    }
+    let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
+    let physical = uploads.join(&doc.storage_name);
+    match tokio::fs::read(&physical).await {
+        Ok(bytes) => {
+            let content_type = mime_for_document(&doc.name);
+            let filename = doc.name.replace(['"', '\\', '/'], "_");
+            let disposition = format!("inline; filename=\"{filename}\"");
+            let headers = [
+                (axum::http::header::CONTENT_TYPE, content_type),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    disposition.as_str(),
+                ),
+            ];
+            (headers, bytes).into_response()
+        }
+        Err(_) => Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
+            .into_response(),
+    }
+}
+
+/// Content type for a stored document, by extension. The previewer renders PDFs
+/// through pdf.js, images and text natively, and everything else as a download.
+fn mime_for_document(name: &str) -> &'static str {
+    let extension = name
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "pdf" => "application/pdf",
+        "txt" | "md" | "mdx" | "markdown" => "text/plain; charset=utf-8",
+        "csv" => "text/csv; charset=utf-8",
+        "html" | "htm" => "text/html; charset=utf-8",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        _ => "application/octet-stream",
+    }
+}
+
 pub async fn delete_doc(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,

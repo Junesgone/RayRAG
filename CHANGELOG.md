@@ -2,6 +2,38 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.44] — 2026-09-23（对标批次 v0.3.8v）
+
+### Added
+
+- **文档预览器（PDF 渲染 + 切片高亮）**（上游 `pages/document-viewer/index.tsx` +
+  `components/document-preview/{index,pdf-preview,hooks}.tsx` + `components/pdf-drawer/index.tsx`）：文档页
+  `/document/{id}` 从「只有切片文本」升级成上游那套**真预览**——左侧 pdf.js 逐页渲染画布，选中切片后把
+  `positions` 逐框叠在页面上（悬停显示切片文本、点击固定），右侧仍是切片工作台，点行即定位。
+  - **高亮几何与上游同源**：`buildChunkHighlights` 把 `positions` 当作**scale=1 视口**里的点坐标
+    （`page, x0, x1, top, bottom`），react-pdf 再按缩放换算；RayRAG 用同样的换算手写叠加层
+    （`left/top/width/height = position × (scale × fit)`），因此 `pdf-preview.tsx` 的
+    `viewport.width/height`（`setWidthAndHeight`）在此对应 `dvFit()` 统计出的 scale-1 页宽。
+  - **工具条**：上一页/下一页 + `1 / N` 页码、缩小/放大（`document-preview/hooks.ts` 的
+    `ZOOM_STEPS = [25,50,75,100,125,150,175,200]`）、Fit（首屏按容器宽度自适应并像
+    `useDocxPreviewZoom` 一样**上限 100%**）、下载、状态行；滚动时页码自动跟随。
+  - **深链**：`?chunk=<id>` 直接定位并高亮该切片（对应上游 `PdfSheet` 从切片行打开预览的行为）。
+- **上游预览端点** `GET /api/v1/documents/{id}/preview`（`useGetDocumentUrl` 的 document 分支）：
+  仅凭文档 id 取原始字节，按扩展名给 MIME 并 `inline` 返回（数据集路由上的下载仍是 `attachment`）。
+- 静态资源：随仓库内置 **pdf.js 5.6.205**（Apache-2.0）`pdf.min.mjs` + 配对 `pdf.worker.min.mjs`
+  （替换此前孤立的 2022 版 worker，主库与 worker 必须同版本）。
+
+### Notes
+
+- 新增回归：`web::kb_ui_tests::document_viewer_renders_pdf_with_chunk_highlight_overlay`（12 个 DOM 标记
+  + 12 条脚本钩子 + 缩放步进表 + Fit 上限 + 5 条 CSS 选择器）、
+  `server::tests::document_preview_serves_stored_bytes_inline`（MIME、`inline` 处置、字节内容、未知文档
+  回 404 包体）。
+- 新增真点探针 `scripts/ui-traversal/document-viewer-cdp.mjs`：现场生成两页 PDF（坐标已知）→ 建库/上传/
+  解析 → 打开预览页 → 断言 pdf.js 渲染出两页非空画布、切片行的 `positions` 存在、点击后高亮框数量等于
+  `positions` 条数且 `left/top` 等于 `positions × scale`、弹层有文本、选中行被标记、放大后画布与高亮框同步
+  缩放、上下页翻页、`?chunk=` 深链直接高亮。
+- 挂账：docx/xlsx/ppt/图片等非 PDF 预览（上游各有独立预览器）、切片编辑后的增量重绘、PDF 文本层选择复制。
 ## [0.4.43] — 2026-09-23（对标批次 v0.3.8u）
 
 ### Added

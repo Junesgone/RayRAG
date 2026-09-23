@@ -827,3 +827,28 @@ the paired colour picker + hex input. */
 .agent-embed-color{gap:8px}
 .agent-embed-color input[type='color']{flex:0 0 64px;height:32px;padding:2px;border:1px solid var(--bd);border-radius:4px;background:transparent}
 .agent-embed-color input[type='text'],.agent-embed-color input:not([type]){flex:1;min-width:0}
+
+/* Document viewer (upstream `components/document-preview/pdf-preview.tsx` +
+   `components/pdf-drawer/index.tsx`): the rendered page list and the chunk
+   highlight overlay the viewer paints on top of each canvas. */
+.docview-split{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;margin-top:16px;align-items:start}
+.docview-pane{min-width:0}
+.docview-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--bd);border-radius:10px;background:var(--card,#1e1e2e)}
+.docview-page-label,.docview-zoom{font-size:12px;color:var(--tm);min-width:52px;text-align:center}
+.docview-sep{flex:1}
+.docview-download{text-decoration:none}
+.docview-scroll{position:relative;margin-top:10px;height:70vh;overflow:auto;border:1px solid var(--bd);border-radius:10px;background:rgba(0,0,0,.18);padding:16px}
+.docview-pages{display:flex;flex-direction:column;align-items:center;gap:16px}
+.docview-page{position:relative;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.35);flex:0 0 auto}
+.docview-page canvas{display:block}
+.docview-layer{position:absolute;left:0;top:0;pointer-events:none}
+.docview-page-number{position:absolute;right:6px;bottom:4px;font-size:11px;color:#6b7280}
+.docview-highlight{position:absolute;background:rgba(255,214,10,.35);border:1px solid rgba(255,170,0,.9);pointer-events:auto;cursor:pointer}
+.docview-highlight.pinned{background:rgba(56,189,248,.35);border-color:rgba(14,165,233,.95)}
+.docview-popup{display:none;position:absolute;left:0;top:-6px;transform:translateY(-100%);max-width:320px;padding:6px 8px;border-radius:6px;background:#111827;color:#f9fafb;font-size:11px;line-height:1.45;z-index:5;white-space:normal}
+.docview-highlight:hover .docview-popup,.docview-highlight.pinned .docview-popup{display:block}
+.docview-status{margin:8px 2px 0;font-size:12px;color:var(--tm)}
+.docview-status.error{color:var(--err,#f87171)}
+.docview-chunk-pane{min-width:0}
+.docview-chunk.active{outline:1px solid var(--p);outline-offset:1px}
+@media (max-width:1100px){.docview-split{grid-template-columns:minmax(0,1fr)}}
