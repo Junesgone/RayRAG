@@ -130,7 +130,12 @@ impl VisionClient {
 
         let resp = req.send().await?;
         let status = resp.status();
-        let json: Value = resp.json().await?;
+        let json: Value = crate::common::cmd_timeout::read_json_limited(
+            resp,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Vision API",
+        )
+        .await?;
 
         if !status.is_success() {
             let err_msg = json

@@ -2,6 +2,42 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.47] — 2026-09-24（对标批次 v0.3.8y）
+
+> 承接上一版的「不许再有失控内存」：这一版把**所有对外 HTTP 读取**和**索引提交流程**也纳入
+> 有界、按需的轨道，并让部署**按主机资源自动决定并发**。
+
+### Added
+
+- **主机资源自动判定与并发自适应**（`src/host_resources.rs`，新模块）：启动时读取 CPU 数与
+  `/proc/meminfo` 的 `MemAvailable`，据「半个 CPU 核数」与「可用内存的 3/4 ÷ 单文档最坏占用
+  （512 MiB）」取小值，钳制在 1..=8，作为文档入库并发（`RAYRAG_MAX_CONCURRENT_TASKS` 显式设置时
+  仍然优先）。启动日志打印判定结果，`GET /api/v1/system/status` 增加 `host` 段
+  （`cpus` / `available_memory_bytes` / `document_tasks`），控制台可以直接看到本机的实际取值。
+  小主机不再跑工作站默认值，大主机也不被固定值卡住。
+- **统一的外呼超时与包体上限**：`RAYRAG_MODEL_TIMEOUT`（模型类调用，默认 300 秒，钳制 ≤1800）与
+  `RAYRAG_HTTP_BODY_LIMIT_BYTES`（单次响应体，默认 32 MiB）；新增
+  `common::cmd_timeout::{read_body_limited,read_json_limited,read_text_limited}`，先按
+  `Content-Length` 预检、再按块累积并对总量封顶。
+
+### Fixed
+
+- **Embedding / 视觉 / OCR / 爬虫 / 存储读取不再无界**：这些客户端此前用 `reqwest::Client::new()`
+  （**完全没有超时**）并直接 `.json()` / `.text()` / `.bytes()` 把响应体整个缓存。现在统一走
+  模型超时客户端 + 有界读取：对端无论返回无限流、谎报长度还是分块传输，进程持有的内存都有上限。
+  `src/crawler.rs` 里那句「限制响应体大小（防 OOM）」过去只是注释，现在真的执行。
+- **一次文档提交不再克隆三份索引**：`persist_online_index` / `rollback_online_index` /
+  `persist_index_change` / `restore_index` 全部改为**借用**快照（新增 `SearchEngine::chunks()`），
+  只在真正回滚时才复制。此前每次提交都持有「前像 + 前像的克隆 + 当前全量克隆」三份含 embedding
+  的索引；语料越大，这个瞬时放大越明显。
+
+### Notes
+
+- 新增回归：`host_resources` 三条（`/proc/meminfo` 解析、按 CPU/内存推导并发并钳制、
+  本机探测）、`common::cmd_timeout_tests::bounded_reads_stop_at_the_limit_instead_of_following_the_peer`
+  （声明长度超限直接拒绝；**无长度无限流按累计量截断**；非 JSON 报错而不是 panic）。
+- 全量 `cargo test --locked --offline --lib` **1601 passed / 0 failed / 27 ignored**。
+
 ## [0.4.46] — 2026-09-23（对标批次 v0.3.8x）
 
 > 本版是一次**内存安全**修复：RayRAG 曾把整台机器的内存吃光导致主机卡死，这一版从启动路径、

@@ -162,7 +162,14 @@ impl StorageClient {
                 body.chars().take(200).collect::<String>()
             );
         }
-        Ok(response.bytes().await?.to_vec())
+        // Bounded read: a storage backend can stream an arbitrarily large object and
+        // this path must not translate that into process memory.
+        Ok(crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Storage",
+        )
+        .await?)
     }
 
     /// `DELETE /bucket/key` — mirrors RAGFlow `rm`.

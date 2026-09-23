@@ -581,23 +581,32 @@ impl OnlineVectorMirror {
     }
 }
 
+/// Commit the in-memory index: mirror it, then persist it.
+///
+/// `previous` is **borrowed**: the pre-image is only needed to roll the engine back
+/// when something fails, and the callers keep the pre-image for their own rollback
+/// anyway. Passing it by value forced every commit to clone the whole index (with
+/// embeddings) a second and third time.
 pub fn persist_online_index(
     engine: &mut SearchEngine,
     index_path: &str,
     mirror: &OnlineVectorMirror,
-    previous: Vec<IndexedChunk>,
+    previous: &[IndexedChunk],
 ) -> Result<()> {
-    let current = engine.to_vec();
-    search_mapping::validate_replacement_snapshot(&current)?;
-    if let Err(error) = mirror.sync_snapshot(&previous, &current) {
-        *engine = SearchEngine::from_chunks(previous);
+    // Borrow the committed index instead of cloning it: only the mirror diff needs
+    // the snapshot, and `previous` is already owned for the rollback path. Each
+    // commit used to hold three full copies of the index (previous pre-image, its
+    // clone, and this copy).
+    search_mapping::validate_replacement_snapshot(engine.chunks())?;
+    if let Err(error) = mirror.sync_snapshot(previous, engine.chunks()) {
+        *engine = SearchEngine::from_chunks(previous.to_vec());
         return Err(error);
     }
     if let Err(error) = engine.save(index_path) {
-        if let Err(rollback_error) = mirror.sync_snapshot(&current, &previous) {
+        if let Err(rollback_error) = mirror.sync_snapshot(engine.chunks(), previous) {
             tracing::error!(%rollback_error, "Failed to roll back zvec after JSON index failure");
         }
-        *engine = SearchEngine::from_chunks(previous);
+        *engine = SearchEngine::from_chunks(previous.to_vec());
         return Err(error);
     }
     Ok(())
@@ -607,14 +616,13 @@ pub fn rollback_online_index(
     engine: &mut SearchEngine,
     index_path: &str,
     mirror: &OnlineVectorMirror,
-    previous: Vec<IndexedChunk>,
+    previous: &[IndexedChunk],
     reason: &str,
 ) {
-    let current = engine.to_vec();
-    if let Err(error) = mirror.sync_snapshot(&current, &previous) {
+    if let Err(error) = mirror.sync_snapshot(engine.chunks(), previous) {
         tracing::error!(%error, %reason, "Failed to roll back zvec online index");
     }
-    *engine = SearchEngine::from_chunks(previous);
+    *engine = SearchEngine::from_chunks(previous.to_vec());
     if let Err(error) = engine.save(index_path) {
         tracing::error!(%error, %reason, "Failed to persist JSON index rollback");
     }

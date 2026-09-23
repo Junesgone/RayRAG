@@ -349,10 +349,18 @@ pub async fn system_status_detail(
                 "lease_expires_at": task.lease_expires_at,
             }));
     }
+    // The same detection the ingestion scheduler uses, so the console can show what
+    // the deployment decided for this host instead of a hard-coded expectation.
+    let host = crate::host_resources::HostResources::detect();
     Json(serde_json::json!({
         "code": 0,
         "data": {
             "doc_engine": doc_engine,
+            "host": {
+                "cpus": host.cpus,
+                "available_memory_bytes": host.available_memory_bytes,
+                "document_tasks": host.document_task_limit(),
+            },
             "storage": {
                 "storage": "local",
                 "status": "green",

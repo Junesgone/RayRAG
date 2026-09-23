@@ -738,9 +738,10 @@ pub mod time_utils {
         }
         // Date-only input.
         if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, "%Y-%m-%d")
-            && let Some(naive) = date.and_hms_opt(0, 0, 0) {
-                return naive.format(DEFAULT_TIME_FORMAT).to_string();
-            }
+            && let Some(naive) = date.and_hms_opt(0, 0, 0)
+        {
+            return naive.format(DEFAULT_TIME_FORMAT).to_string();
+        }
         time_str.to_string()
     }
 }
@@ -1140,9 +1141,7 @@ pub mod ssrf_guard {
         // non-empty authority ourselves.
         let rest = &url[colon + 1..];
         let rest = rest.strip_prefix("//").unwrap_or(rest);
-        let authority_end = rest
-            .find(['/', '?', '#'])
-            .unwrap_or(rest.len());
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
         if rest[..authority_end].is_empty() {
             return Err(SsrfError::MissingHost);
         }
@@ -1483,10 +1482,19 @@ pub mod connection_utils {
 ///   `.env` → 项目 `.env`），已设置的环境变量不被文件覆盖（真实环境优先）；
 /// - `http_client` 为统一 reqwest 客户端，所有外呼业务请求使用同一超时输入。
 pub mod cmd_timeout {
+    use futures_util::StreamExt as _;
     /// 默认命令超时：7200 秒（2 小时）
     pub const DEFAULT_SECS: u64 = 7200;
     /// 环境变量名（用户 env 环境文件配置项）
     pub const ENV: &str = "RAYRAG_CMD_TIMEOUT";
+    /// 模型调用默认超时（秒）
+    pub const DEFAULT_MODEL_SECS: u64 = 300;
+    /// 模型调用超时环境变量
+    pub const MODEL_ENV: &str = "RAYRAG_MODEL_TIMEOUT";
+    /// 单次响应体默认上限（32 MiB）
+    pub const DEFAULT_BODY_LIMIT: usize = 32 << 20;
+    /// 响应体上限环境变量
+    pub const BODY_LIMIT_ENV: &str = "RAYRAG_HTTP_BODY_LIMIT_BYTES";
 
     /// 当前命令超时秒数：`RAYRAG_CMD_TIMEOUT`，默认 7200，钳制在 1..=7200
     pub fn seconds() -> u64 {
@@ -1511,6 +1519,94 @@ pub mod cmd_timeout {
             .unwrap_or_else(|_| reqwest::Client::new())
     }
 
+    /// 模型调用超时（秒）：`RAYRAG_MODEL_TIMEOUT`，默认 300，钳制 1..=1800。
+    ///
+    /// Embedding / 视觉 / OCR / LLM 这类交互调用不该等到命令级上限（2 小时）才放弃：
+    /// 一个半死不活的对端会让请求一直挂着，缓冲区随响应一起长。
+    pub fn model_seconds() -> u64 {
+        std::env::var(MODEL_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_MODEL_SECS)
+            .clamp(1, 1800)
+    }
+
+    /// 模型调用用的 reqwest 客户端（连接 10s、总时长见 [`model_seconds`]）。
+    pub fn model_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(model_seconds()))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    }
+
+    /// 单次 HTTP 响应体的硬上限：`RAYRAG_HTTP_BODY_LIMIT_BYTES`，默认 32 MiB。
+    ///
+    /// 任何对端（模型服务、OCR、爬虫、连接器）都可能返回无限流或超大包体；先把
+    /// 上限摆在读取路径上，内存就不会跟着对端走。
+    pub fn body_limit_bytes() -> usize {
+        std::env::var(BODY_LIMIT_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|value| *value >= 1024)
+            .unwrap_or(DEFAULT_BODY_LIMIT)
+    }
+
+    /// 读取 HTTP 响应体，超过 `limit` 字节立即失败。
+    ///
+    /// `Content-Length` 先做一次预检，随后按块累积；无论对端怎么发（无限流、谎报长度、
+    /// 分块传输），进程持有的就是上限这么多内存。所有对外部服务的 `json()`/`text()`
+    /// 读取都应走这里，而不是把整个包体一次性缓存下来。
+    pub async fn read_body_limited(
+        response: reqwest::Response,
+        limit: usize,
+        what: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        if let Some(length) = response.content_length()
+            && length > limit as u64
+        {
+            anyhow::bail!("{what} response body of {length} bytes exceeds the {limit}-byte limit");
+        }
+        let mut body: Vec<u8> = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk =
+                chunk.map_err(|error| anyhow::anyhow!("{what} body read failed: {error}"))?;
+            let remaining = limit.saturating_sub(body.len());
+            if chunk.len() > remaining {
+                anyhow::bail!("{what} response body exceeds the {limit}-byte limit");
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    }
+
+    /// [`read_body_limited`] + JSON 反序列化。
+    pub async fn read_json_limited<T: serde::de::DeserializeOwned>(
+        response: reqwest::Response,
+        limit: usize,
+        what: &str,
+    ) -> anyhow::Result<T> {
+        let status = response.status();
+        let body = read_body_limited(response, limit, what).await?;
+        serde_json::from_slice(&body).map_err(|error| {
+            anyhow::anyhow!(
+                "{what} returned HTTP {status} with a body that is not JSON: {error} ({} bytes)",
+                body.len()
+            )
+        })
+    }
+
+    /// [`read_body_limited`] + UTF-8 解码（非法字节按替换字符处理，与 `reqwest::text` 一致）。
+    pub async fn read_text_limited(
+        response: reqwest::Response,
+        limit: usize,
+        what: &str,
+    ) -> anyhow::Result<String> {
+        let body = read_body_limited(response, limit, what).await?;
+        Ok(String::from_utf8_lossy(&body).into_owned())
+    }
+
     /// 加载用户 env 环境文件：`RAYRAG_ENV_FILE` → `./.env` → 项目 `.env`。
     /// 已存在于进程环境的变量不被覆盖（真实环境优先），`#` 注释行忽略。
     pub fn load_user_env_file() {
@@ -1519,7 +1615,11 @@ pub mod cmd_timeout {
             Some(".env".to_string()),
             Some(format!("{}/.env", env!("CARGO_MANIFEST_DIR"))),
         ];
-        let Some(path) = candidates.into_iter().flatten().find(|path| std::path::Path::new(path).is_file()) else {
+        let Some(path) = candidates
+            .into_iter()
+            .flatten()
+            .find(|path| std::path::Path::new(path).is_file())
+        else {
             return;
         };
         let Ok(content) = std::fs::read_to_string(&path) else {
@@ -1565,9 +1665,10 @@ pub mod versions {
     /// the crate manifest → `"unknown"` (Python falls back to `git describe`).
     pub fn get_ragflow_version() -> String {
         if let Ok(value) = std::env::var("RAGFLOW_VERSION")
-            && !value.is_empty() {
-                return value;
-            }
+            && !value.is_empty()
+        {
+            return value;
+        }
         let version_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("VERSION");
         if let Ok(content) = std::fs::read_to_string(version_path) {
             let version = content.trim();
@@ -1942,5 +2043,89 @@ mod tests {
         // SAFETY: single-threaded test; only this test reads the variable.
         unsafe { std::env::remove_var("RAGFLOW_VERSION") };
         assert_eq!(versions::get_ragflow_version(), "unknown");
+    }
+}
+
+#[cfg(test)]
+mod cmd_timeout_tests {
+    use super::cmd_timeout;
+    use axum::{Router, body::Body, http::StatusCode, response::Response, routing::get};
+
+    /// Plain body of `size` bytes.
+    async fn fixed() -> Vec<u8> {
+        vec![b'x'; 4096]
+    }
+
+    /// Chunked stream that never declares a length and keeps sending: the reader must
+    /// stop at the limit instead of following the peer into memory exhaustion.
+    async fn endless() -> Response {
+        let chunks = futures_util::stream::unfold(0usize, |sent| async move {
+            if sent > 64 {
+                return None;
+            }
+            Some((Ok::<_, std::io::Error>(vec![b'y'; 1024]), sent + 1))
+        });
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from_stream(chunks))
+            .unwrap()
+    }
+
+    async fn serve() -> String {
+        let app = Router::new()
+            .route("/fixed", get(fixed))
+            .route("/endless", get(endless));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn bounded_reads_stop_at_the_limit_instead_of_following_the_peer() {
+        let base = serve().await;
+        let client = reqwest::Client::new();
+
+        // Under the limit: the bytes arrive intact.
+        let response = client.get(format!("{base}/fixed")).send().await.unwrap();
+        let body = cmd_timeout::read_body_limited(response, 8192, "test")
+            .await
+            .unwrap();
+        assert_eq!(body.len(), 4096);
+
+        // A declared length above the limit is rejected before anything is buffered.
+        let response = client.get(format!("{base}/fixed")).send().await.unwrap();
+        let error = cmd_timeout::read_body_limited(response, 1024, "test")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exceeds"), "{error}");
+
+        // A streamed body without a length is stopped by the running total.
+        let response = client.get(format!("{base}/endless")).send().await.unwrap();
+        let error = cmd_timeout::read_body_limited(response, 4096, "test")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exceeds"), "{error}");
+
+        // The JSON helper reports a bounded, non-JSON body instead of panicking.
+        let response = client.get(format!("{base}/fixed")).send().await.unwrap();
+        let error = cmd_timeout::read_json_limited::<serde_json::Value>(response, 8192, "test")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not JSON"), "{error}");
+    }
+
+    #[test]
+    fn model_timeout_is_shorter_than_the_command_budget() {
+        // The model timeout is the interactive bound; the command budget stays the
+        // outer ceiling. Both are clamped, so a bad env value cannot disable them.
+        assert!(cmd_timeout::model_seconds() <= 1800);
+        assert!(cmd_timeout::seconds() <= cmd_timeout::DEFAULT_SECS);
+        assert!(cmd_timeout::body_limit_bytes() >= 1024);
     }
 }

@@ -253,6 +253,15 @@ impl SearchEngine {
         self.chunks.clone()
     }
 
+    /// Borrow all indexed chunks.
+    ///
+    /// The persistence path diffs two snapshots and writes them; it needs to *read*
+    /// the current index, not own a copy of it. Borrowing here removes one full clone
+    /// of the index (embeddings included) from every document commit.
+    pub fn chunks(&self) -> &[IndexedChunk] {
+        &self.chunks
+    }
+
     /// How many chunks each knowledge base owns, without copying any chunk.
     ///
     /// The native mirror uses this to decide whether a collection already agrees

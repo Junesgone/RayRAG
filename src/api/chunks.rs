@@ -441,7 +441,7 @@ fn commit_index_only(state: &AppState, chunks: Vec<IndexedChunk>) -> anyhow::Res
     let mut engine = state.engine.write().unwrap();
     let previous = engine.to_vec();
     *engine = SearchEngine::from_chunks(chunks);
-    crate::server::persist_index_change(state, &mut engine, previous)
+    crate::server::persist_index_change(state, &mut engine, &previous)
 }
 
 fn commit_chunk_count_change(
@@ -456,7 +456,7 @@ fn commit_chunk_count_change(
     let previous_doc_count = doc.chunk_count;
     let new_doc_count = (previous_doc_count as isize + delta).max(0) as usize;
     *engine = SearchEngine::from_chunks(chunks);
-    crate::server::persist_index_change(state, &mut engine, previous_index.clone())?;
+    crate::server::persist_index_change(state, &mut engine, &previous_index)?;
     if let Err(error) = state.docs.set_chunk_count(&doc.id, new_doc_count) {
         rollback_index(state, &mut engine, previous_index);
         return Err(error);
@@ -474,7 +474,7 @@ fn rollback_index(state: &AppState, engine: &mut SearchEngine, previous: Vec<Ind
         engine,
         &state.index_path,
         &state.vector_mirror,
-        previous,
+        &previous,
         "Chunk mutation rollback",
     );
 }

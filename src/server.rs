@@ -1940,18 +1940,18 @@ fn commit_indexed_document(
         let mut engine = state.engine.write().unwrap();
         let previous = engine.to_vec();
         engine.replace_document(&doc.id, indexed);
-        persist_index_change(state, &mut engine, previous.clone())?;
+        persist_index_change(state, &mut engine, &previous)?;
         previous
     };
 
     if let Err(error) = state.graphs.replace_document(&doc.id, graph_checkpoint) {
-        restore_index(state, previous_index, "Graph checkpoint update failed");
+        restore_index(state, &previous_index, "Graph checkpoint update failed");
         return Err(error.context("Failed to update GraphRAG artifacts after index commit"));
     }
 
     if let Err(error) = state.kbs.update_counts(&doc.kb_id, count_delta, 0) {
         state.graphs.replace_snapshot(previous_graphs).ok();
-        restore_index(state, previous_index, "KB count update failed");
+        restore_index(state, &previous_index, "KB count update failed");
         return Err(error.context("Failed to update KB counts after index commit"));
     }
     match state
@@ -1964,7 +1964,7 @@ fn commit_indexed_document(
             state.kbs.update_counts(&doc.kb_id, -count_delta, 0).ok();
             restore_index(
                 state,
-                previous_index,
+                &previous_index,
                 "Document metadata disappeared during commit",
             );
             anyhow::bail!("Document metadata disappeared during index commit");
@@ -1974,7 +1974,7 @@ fn commit_indexed_document(
             if let Err(rollback_error) = state.kbs.update_counts(&doc.kb_id, -count_delta, 0) {
                 tracing::error!(%rollback_error, doc_id = %doc.id, "Failed to roll back KB counts");
             }
-            restore_index(state, previous_index, "Document metadata update failed");
+            restore_index(state, &previous_index, "Document metadata update failed");
             return Err(error.context("Failed to mark document as indexed"));
         }
     }
@@ -2023,7 +2023,7 @@ fn build_raptor_chunks(
         .collect())
 }
 
-fn restore_index(state: &AppState, previous: Vec<crate::search::IndexedChunk>, reason: &str) {
+fn restore_index(state: &AppState, previous: &[crate::search::IndexedChunk], reason: &str) {
     let mut engine = state.engine.write().unwrap();
     crate::store::rollback_online_index(
         &mut engine,
@@ -2037,7 +2037,7 @@ fn restore_index(state: &AppState, previous: Vec<crate::search::IndexedChunk>, r
 pub(crate) fn persist_index_change(
     state: &AppState,
     engine: &mut crate::search::SearchEngine,
-    previous: Vec<crate::search::IndexedChunk>,
+    previous: &[crate::search::IndexedChunk],
 ) -> anyhow::Result<()> {
     crate::store::persist_online_index(engine, &state.index_path, &state.vector_mirror, previous)
         .map_err(|error| anyhow::anyhow!("Failed to commit online search index: {error}"))
@@ -2557,12 +2557,28 @@ fn start_document_task_dispatcher(state: Arc<AppState>) {
     });
 }
 
+/// How many documents may be ingested at once.
+///
+/// `RAYRAG_MAX_CONCURRENT_TASKS` wins when set; otherwise the value is derived from
+/// the host (CPU count and available memory, see [`crate::host_resources`]) so a
+/// small NAS does not run the workstation default and a large host is not throttled
+/// by it. `DEFAULT_MAX_CONCURRENT_DOCUMENT_TASKS` remains the fallback when the host
+/// cannot be measured.
 fn max_concurrent_document_tasks() -> usize {
-    std::env::var("RAYRAG_MAX_CONCURRENT_TASKS")
+    if let Some(explicit) = std::env::var("RAYRAG_MAX_CONCURRENT_TASKS")
         .ok()
-        .and_then(|value| value.parse().ok())
+        .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_DOCUMENT_TASKS)
+    {
+        return explicit;
+    }
+    let resources = crate::host_resources::HostResources::detect();
+    tracing::info!(
+        host = %resources.summary(),
+        document_tasks = resources.document_task_limit(),
+        "Host resources detected; ingestion concurrency derived from them"
+    );
+    resources.document_task_limit()
 }
 
 pub(crate) fn delete_document_data(
@@ -2576,11 +2592,11 @@ pub(crate) fn delete_document_data(
         let mut engine = state.engine.write().unwrap();
         let previous = engine.to_vec();
         let removed = engine.remove_document(&doc.id);
-        persist_index_change(state, &mut engine, previous.clone())?;
+        persist_index_change(state, &mut engine, &previous)?;
         (removed, previous)
     };
     if let Err(error) = state.graphs.replace_document(&doc.id, None) {
-        restore_index(state, previous_index, "Graph checkpoint deletion failed");
+        restore_index(state, &previous_index, "Graph checkpoint deletion failed");
         return Err(error.context("Failed to delete GraphRAG document checkpoint"));
     }
     if let Err(error) = state
@@ -2590,7 +2606,7 @@ pub(crate) fn delete_document_data(
         state.graphs.replace_snapshot(previous_graphs).ok();
         restore_index(
             state,
-            previous_index,
+            &previous_index,
             "KB count update failed during document deletion",
         );
         return Err(error.context("Failed to update KB counts during document deletion"));
@@ -2604,7 +2620,7 @@ pub(crate) fn delete_document_data(
             .ok();
         restore_index(
             state,
-            previous_index,
+            &previous_index,
             "Document metadata store deletion failed",
         );
         return Err(error.context("Failed to delete document-level metadata"));
@@ -2625,7 +2641,7 @@ pub(crate) fn delete_document_data(
                 .ok();
             restore_index(
                 state,
-                previous_index,
+                &previous_index,
                 "Document metadata was already missing",
             );
             anyhow::bail!("Document metadata was already deleted");
@@ -2645,7 +2661,7 @@ pub(crate) fn delete_document_data(
             {
                 tracing::error!(%rollback_error, doc_id = %doc.id, "Failed to roll back KB counts");
             }
-            restore_index(state, previous_index, "Document metadata deletion failed");
+            restore_index(state, &previous_index, "Document metadata deletion failed");
             return Err(error.context("Failed to delete document metadata"));
         }
     }

@@ -72,8 +72,14 @@ impl CrawlerClient {
             }
             _ => self.client.get(url).send().await?.error_for_status()?,
         };
-        // 限制响应体大小（对齐 crawl4ai 的默认抓取范围，防 OOM）
-        let body = raw.bytes().await?;
+        // 限制响应体大小（对齐 crawl4ai 的默认抓取范围，防 OOM）。这里真的执行上限：
+        // 之前只有注释，`bytes()` 会把整页（以及无限流）全缓存进内存。
+        let body = crate::common::cmd_timeout::read_body_limited(
+            raw,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Crawler",
+        )
+        .await?;
         let html = String::from_utf8_lossy(&body).into_owned();
 
         let extract_type = request.extract_type.trim().to_ascii_lowercase();

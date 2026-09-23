@@ -198,7 +198,7 @@ impl OcrClient {
             backend: OcrBackend::LegacyProxy {
                 base_url: base_url.trim_end_matches('/').to_owned(),
             },
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
         }
     }
 
@@ -207,7 +207,7 @@ impl OcrClient {
         config.validate()?;
         Ok(Self {
             backend: OcrBackend::PaddleOcr(config),
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
         })
     }
 
@@ -273,11 +273,22 @@ impl OcrClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            let body = crate::common::cmd_timeout::read_text_limited(
+                resp,
+                crate::common::cmd_timeout::body_limit_bytes(),
+                "OCR API",
+            )
+            .await
+            .unwrap_or_default();
             anyhow::bail!("OCR API error ({}): {}", status, body);
         }
 
-        let ocr_resp: OcrResponse = resp.json().await?;
+        let ocr_resp: OcrResponse = crate::common::cmd_timeout::read_json_limited(
+            resp,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "OCR API",
+        )
+        .await?;
         if ocr_resp.full_text.is_empty() {
             Ok(ocr_resp.texts.join("\n"))
         } else {
@@ -364,7 +375,13 @@ impl OcrClient {
             .await
             .map_err(|error| anyhow::anyhow!("[PaddleOCR] submit failed: {error}"))?;
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::common::cmd_timeout::read_text_limited(
+            response,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "PaddleOCR",
+        )
+        .await
+        .unwrap_or_default();
         if status != reqwest::StatusCode::OK {
             anyhow::bail!("[PaddleOCR] submit failed: HTTP {status} {body}");
         }
@@ -390,7 +407,13 @@ impl OcrClient {
                 .await
                 .map_err(|error| anyhow::anyhow!("[PaddleOCR] poll failed: {error}"))?;
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::common::cmd_timeout::read_text_limited(
+                response,
+                crate::common::cmd_timeout::body_limit_bytes(),
+                "PaddleOCR",
+            )
+            .await
+            .unwrap_or_default();
             if status != reqwest::StatusCode::OK {
                 anyhow::bail!("[PaddleOCR] poll failed: HTTP {status} {body}");
             }
@@ -435,7 +458,13 @@ impl OcrClient {
             .await
             .map_err(|error| anyhow::anyhow!("[PaddleOCR] failed to fetch result: {error}"))?;
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::common::cmd_timeout::read_text_limited(
+            response,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "PaddleOCR",
+        )
+        .await
+        .unwrap_or_default();
         if !status.is_success() {
             anyhow::bail!("[PaddleOCR] failed to fetch result: HTTP {status} {body}");
         }

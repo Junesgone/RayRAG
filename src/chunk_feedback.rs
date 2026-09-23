@@ -405,7 +405,7 @@ fn apply_deltas_and_save(
         }
     }
     if success_count > 0 {
-        crate::store::persist_online_index(engine, index_path, vector_mirror, previous)?;
+        crate::store::persist_online_index(engine, index_path, vector_mirror, &previous)?;
     }
     Ok((success_count, fail_count))
 }
@@ -460,7 +460,7 @@ fn rollback_index(
         engine,
         index_path,
         vector_mirror,
-        previous,
+        &previous,
         "Feedback index rollback",
     );
 }

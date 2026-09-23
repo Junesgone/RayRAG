@@ -40,7 +40,10 @@ struct EmbedData {
 impl OpenAIEmbedder {
     pub fn new(api_base: &str, api_key: &str, model: &str) -> Self {
         Self {
-            client: Client::new(),
+            // Model calls get a short, explicit timeout instead of the process-wide
+            // command budget: a stalled embedding server must not hold a request (and
+            // its buffer) for two hours.
+            client: crate::common::cmd_timeout::model_client(),
             api_base: api_base.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             model: model.to_string(),
@@ -97,7 +100,14 @@ impl Embedder for OpenAIEmbedder {
             ));
         }
 
-        let body: serde_json::Value = resp.json().await?;
+        // Bounded read: the endpoint decides how much it sends, the limit decides how
+        // much this process ever holds.
+        let body: serde_json::Value = crate::common::cmd_timeout::read_json_limited(
+            resp,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Embedding API",
+        )
+        .await?;
         let embeddings: Vec<Vec<f32>> =
             if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
                 // Standard OpenAI shape.
