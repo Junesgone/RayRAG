@@ -165,6 +165,15 @@ try {
     null,
     { timeout: 30000 },
   );
+  // The status line clears once every page has rendered; an error stays.
+  await page.waitForFunction(
+    () => {
+      const status = document.getElementById("docviewStatus");
+      return status && status.textContent === "";
+    },
+    null,
+    { timeout: 30000 },
+  );
   results.render = await page.evaluate(() => {
     const canvases = Array.from(document.querySelectorAll(".docview-page canvas"));
     return {
