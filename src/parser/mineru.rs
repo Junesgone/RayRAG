@@ -667,12 +667,28 @@ impl MinerUParser {
 
         // Extract with structure detection
         for (page_num, &page_id) in &doc.get_pages() {
-            if let Ok(content) = doc.get_and_decode_page_content(page_id) {
-                let page_text = super::pdf::content_to_text_page(&content);
-                if !page_text.trim().is_empty() {
-                    text.push_str(&format!("# Page {}\n", page_num));
-                    text.push_str(&detect_structure(&page_text));
-                    text.push('\n');
+            let decoded = super::pdf_stream::page_content_limited(
+                &doc,
+                page_id,
+                super::pdf_stream::stream_limit_bytes(),
+                &format!("PDF page {page_num} content"),
+            )
+            .and_then(|bytes| {
+                lopdf::content::Content::decode(&bytes)
+                    .map_err(|error| anyhow::anyhow!("PDF page {page_num}: {error}"))
+            });
+            match decoded {
+                Ok(content) => {
+                    let page_text = super::pdf::content_to_text_page(&content);
+                    if !page_text.trim().is_empty() {
+                        text.push_str(&format!("# Page {}\n", page_num));
+                        text.push_str(&detect_structure(&page_text));
+                        text.push('\n');
+                    }
+                }
+                // A capped refusal must be visible, not an empty page.
+                Err(error) => {
+                    tracing::warn!(%error, page = page_num, "Skipping PDF page content");
                 }
             }
         }

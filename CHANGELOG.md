@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.49] — 2026-09-24（对标批次 v0.3.9a）
+
+> 把上一版的「解压上限」补到 PDF：PDF 的流同样可以「几 KB 输入、几 GB 输出」，
+> 而 `lopdf` 的解压 API 是无上限的。
+
+### Fixed
+
+- **PDF 流解压上限（`src/parser/pdf_stream.rs`，新模块）**：`lopdf` 的
+  `decompressed_content()`（`get_page_content` / `get_and_decode_page_content` /
+  `get_plain_content` 背后）会把流展开成多大就缓冲多大 —— 一个 256 KiB 的 PDF 可以声明
+  256 MiB 的页面内容。新模块自带**有上限**的解码：`FlateDecode` 用
+  `ZlibDecoder::take(limit + 1)` 边解边停，`ASCIIHexDecode` / `ASCII85Decode` 同样封顶，
+  并实现 PNG/TIFF predictor（`DecodeParms`）重建；对无法在限额内解码的过滤器（LZW 等）
+  **明确报错**而不是交给无界解码器。上限 `RAYRAG_PDF_STREAM_LIMIT_BYTES`（默认 64 MiB）。
+  接入点：`pdf.rs`（文本路径与 OCR 探测）、`pdf_text.rs`（定位文本路径 + `/ToUnicode` CMap）、
+  `mineru.rs`、`docling.rs` —— 全仓已无 `get_and_decode_page_content` / `get_plain_content` 调用。
+- **被拒绝的页面必须看得见**：解析器对每一页的拒绝都打 `WARN`（带页码与原因）；若整篇
+  **一个字都没解出来且确有页面被拒**，解析直接失败并给出原因（
+  `PDF content could not be decoded: 1 page stream(s) exceeded the 64 MiB safety limit`），
+  而不是显示「DONE、0 chunks」把问题藏起来。
+- **补齐最后两处下载路径**：`data_source/blob.rs`、`data_source/gitlab.rs` 的整包下载接入连接器上限；
+  `llm.rs::raw_post_bytes`（TTS 音频）接入 API 包体上限。至此生产代码中已无无界的
+  `resp.bytes()` 读取（余下三处均在 `#[cfg(test)]` 的 mock 服务里）。
+
+### Notes
+
+- 新增回归 5 条（`parser::pdf_stream::tests`）：64 MiB 级 flate 炸弹被拒（压缩后 <200 KiB）、
+  普通 flate 流完整解出、无过滤器流直通、PNG predictor 行重建（含 Sub/Up/Average/Paeth 的
+  基础用例）、非常规过滤器给出明确报错。
+- **实测**：现场构造 256 KiB 的 PDF（页面流展开 256 MiB）——CLI 下给出
+  `Error: PDF content could not be decoded: 1 page stream(s) exceeded the 64 MiB safety limit`
+  且内存平稳；正常单页 PDF 仍正确解出 `normal pdf text`。
+- 全量 `cargo test --locked --offline --lib` **1609 passed / 0 failed / 27 ignored**。
+
 ## [0.4.48] — 2026-09-24（对标批次 v0.3.8z）
 
 > 继续「不许有任何一条无界的内存路径」：这一版堵住**外部对象下载**和**压缩文档解压**两类，

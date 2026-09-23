@@ -75,7 +75,14 @@ impl BlobConnector {
             .await
             .context("blob: request failed")?;
         let status = response.status();
-        let bytes = response.bytes().await?;
+        // Bounded read: the connector limit applies to downloaded documents so an
+        // oversized or endless upstream object cannot become process memory.
+        let bytes = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "blob",
+        )
+        .await?;
         if !status.is_success() {
             bail!(
                 "blob: upstream returned {}: {}",

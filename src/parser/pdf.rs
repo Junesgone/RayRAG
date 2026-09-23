@@ -108,6 +108,10 @@ impl PdfParser {
             return Ok(tagged);
         }
         let mut text = String::new();
+        // Pages whose stream was refused by the size cap. Reported at the end when
+        // they are the reason the document produced nothing: "DONE, 0 chunks" would
+        // otherwise hide a bomb (or a broken file) behind a successful status.
+        let mut refused_streams = 0usize;
 
         // Try OCR first if client is available
         let use_ocr = if let Some(ref ocr) = self.ocr {
@@ -122,8 +126,13 @@ impl PdfParser {
             if use_ocr && page_num % 3 == 0 {
                 // OCR every 3rd page to keep latency reasonable
                 if let Some(ref ocr) = self.ocr {
-                    // Extract page content as bytes for rendering
-                    if let Ok(_content) = doc.get_and_decode_page_content(page_id) {
+                    // Extract page content as bytes for rendering (capped decode).
+                    if let Ok(_content) = super::pdf_stream::page_content_limited(
+                        &doc,
+                        page_id,
+                        super::pdf_stream::stream_limit_bytes(),
+                        "PDF page content (OCR probe)",
+                    ) {
                         // Note: lopdf doesn't render pages to images natively.
                         // Full PDF→image OCR needs pdfium/poppler.
                         // For now, skip image-based OCR on PDF.
@@ -132,12 +141,37 @@ impl PdfParser {
                 }
             }
 
-            if let Ok(content) = doc.get_and_decode_page_content(page_id) {
-                text.push_str(&content_to_text(&content));
-                text.push('\n');
+            // Decoded with a size cap: `get_and_decode_page_content` inflates the page
+            // stream without a ceiling, so a few kilobytes of PDF can describe
+            // gigabytes of content.
+            match super::pdf_stream::page_content_limited(
+                &doc,
+                page_id,
+                super::pdf_stream::stream_limit_bytes(),
+                &format!("PDF page {page_num} content"),
+            )
+            .and_then(|bytes| {
+                lopdf::content::Content::decode(&bytes)
+                    .map_err(|error| anyhow::anyhow!("PDF page {page_num}: {error}"))
+            }) {
+                Ok(content) => {
+                    text.push_str(&content_to_text(&content));
+                    text.push('\n');
+                }
+                // A refusal must be visible: silence here would look like an empty page.
+                Err(error) => {
+                    refused_streams += 1;
+                    tracing::warn!(%error, page = page_num, "Skipping PDF page content");
+                }
             }
         }
 
+        if text.trim().is_empty() && refused_streams > 0 {
+            anyhow::bail!(
+                "PDF content could not be decoded: {refused_streams} page stream(s) exceeded the {} MiB safety limit",
+                super::pdf_stream::stream_limit_bytes() / (1024 * 1024)
+            );
+        }
         Ok(text)
     }
 

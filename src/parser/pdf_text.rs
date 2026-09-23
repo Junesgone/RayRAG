@@ -227,8 +227,23 @@ pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
             continue;
         };
         let fonts = page_fonts(doc, page_id);
-        let Ok(content) = doc.get_and_decode_page_content(page_id) else {
-            continue;
+        // Capped decode (see `pdf_stream`): an inflated page stream must not decide how
+        // much memory this process uses.
+        let content = match super::pdf_stream::page_content_limited(
+            doc,
+            page_id,
+            super::pdf_stream::stream_limit_bytes(),
+            &format!("PDF page {number} content"),
+        )
+        .and_then(|bytes| {
+            lopdf::content::Content::decode(&bytes)
+                .map_err(|error| anyhow::anyhow!("PDF page {number}: {error}"))
+        }) {
+            Ok(content) => content,
+            Err(error) => {
+                tracing::warn!(%error, page = number, "Skipping PDF page content");
+                continue;
+            }
         };
         let mut runs = Vec::new();
         let mut state = State::default();
@@ -862,7 +877,18 @@ fn font_metrics(doc: &Document, font: &Dictionary) -> FontMetrics {
         .ok()
         .and_then(|object| deref(doc, object))
         .and_then(|object| object.as_stream().ok())
-        .and_then(|stream| stream.get_plain_content().ok())
+        .and_then(|stream| {
+            super::pdf_stream::plain_content_limited(
+                stream,
+                super::pdf_stream::stream_limit_bytes(),
+                "PDF /ToUnicode CMap",
+            )
+            .map_err(|error| {
+                tracing::warn!(%error, "Skipping PDF /ToUnicode CMap");
+                error
+            })
+            .ok()
+        })
     {
         metrics.to_unicode = parse_to_unicode(&content);
     }

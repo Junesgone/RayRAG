@@ -15,6 +15,7 @@ pub mod mineru;
 pub mod opendataloader;
 pub mod paddleocr_layout;
 pub mod pdf;
+pub mod pdf_stream;
 pub mod pdf_text;
 pub mod pdfbox;
 pub mod ppt;

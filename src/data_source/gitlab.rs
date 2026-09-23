@@ -62,7 +62,13 @@ impl GitLabConnector {
         }
         let response = request.send().await.context("gitlab: request failed")?;
         let status = response.status();
-        let body = response.bytes().await?;
+        // Bounded read (see `blob`): downloaded documents obey the connector limit.
+        let body = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "gitlab",
+        )
+        .await?;
         if !status.is_success() {
             bail!(
                 "gitlab: upstream returned {}: {}",
