@@ -40,9 +40,9 @@ impl RAGFlowDocxParser {
         let mut zf = zip::ZipArchive::new(Cursor::new(data))
             .map_err(|e| anyhow::anyhow!("Invalid DOCX zip: {e}"))?;
 
-        let document_xml = read_zip_entry(&mut zf, "word/document.xml")
+        let document_xml = read_zip_entry(&mut zf, "word/document.xml")?
             .ok_or_else(|| anyhow::anyhow!("word/document.xml missing"))?;
-        let styles_xml = read_zip_entry(&mut zf, "word/styles.xml").unwrap_or_default();
+        let styles_xml = read_zip_entry(&mut zf, "word/styles.xml")?.unwrap_or_default();
         let style_names = parse_style_names(&styles_xml);
 
         let (paragraphs, tables) = parse_document_xml(&document_xml, &style_names);
@@ -303,9 +303,11 @@ fn parse_style_names(xml: &str) -> HashMap<String, String> {
             Ok(Event::End(e)) => {
                 if e.local_name().as_ref() == b"style"
                     && let Some((id, name)) = cur_style.take()
-                    && !id.is_empty() && !name.is_empty() {
-                        out.insert(id, name);
-                    }
+                    && !id.is_empty()
+                    && !name.is_empty()
+                {
+                    out.insert(id, name);
+                }
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -423,19 +425,29 @@ fn parse_document_xml(
 }
 
 /// Read a named zip entry as UTF-8 (index lookup avoids borrow conflicts).
-fn read_zip_entry(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<String> {
-    use std::io::Read;
+///
+/// The member is read through the shared size cap: a docx is an archive whose header
+/// can claim any size, and reading it unbounded is how a small file becomes a large
+/// allocation.
+fn read_zip_entry(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Option<String>> {
     for i in 0..zf.len() {
-        let mut f = zf.by_index(i).ok()?;
+        let Ok(mut f) = zf.by_index(i) else {
+            continue;
+        };
         if f.name() == name {
-            let mut buf = Vec::new();
-            if f.read_to_end(&mut buf).is_err() {
-                return None;
-            }
-            return Some(String::from_utf8_lossy(&buf).to_string());
+            let declared = f.size();
+            // A member that exists but is too large must not read as "missing": the
+            // operator needs to see that the safety cap refused it.
+            let bytes = crate::parser::read_member_limited(
+                &mut f,
+                declared,
+                crate::parser::MAX_ZIP_MEMBER_BYTES,
+                &format!("DOCX part '{name}'"),
+            )?;
+            return Ok(Some(String::from_utf8_lossy(&bytes).to_string()));
         }
     }
-    None
+    Ok(None)
 }
 
 /// Port of `DocxParser` — Parse adapter joining paragraphs and tables.
@@ -482,10 +494,11 @@ impl Parse for DocxParser {
         // `get_picture` — docx_parser.py:33-70: count embedded images so
         // downstream image-context steps know whether this document has any.
         if let Ok(images) = extract_images(data)
-            && !images.is_empty() {
-                doc.metadata
-                    .insert("image_count".to_string(), images.len().to_string());
-            }
+            && !images.is_empty()
+        {
+            doc.metadata
+                .insert("image_count".to_string(), images.len().to_string());
+        }
         Ok(doc)
     }
 }
@@ -508,9 +521,9 @@ pub fn extract_images(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
     let mut zf = zip::ZipArchive::new(Cursor::new(data))
         .map_err(|e| anyhow::anyhow!("Invalid DOCX zip: {e}"))?;
 
-    let document_xml = read_zip_entry(&mut zf, "word/document.xml")
+    let document_xml = read_zip_entry(&mut zf, "word/document.xml")?
         .ok_or_else(|| anyhow::anyhow!("word/document.xml missing"))?;
-    let rels_xml = read_zip_entry(&mut zf, "word/_rels/document.xml.rels").unwrap_or_default();
+    let rels_xml = read_zip_entry(&mut zf, "word/_rels/document.xml.rels")?.unwrap_or_default();
 
     // rId → relationship target.
     let mut rels: HashMap<String, String> = HashMap::new();
@@ -593,9 +606,14 @@ fn read_zip_entry_bytes(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> 
     let Ok(mut file) = zf.by_name(name) else {
         return None;
     };
-    let mut bytes = Vec::with_capacity(file.size() as usize);
-    file.read_to_end(&mut bytes).ok()?;
-    Some(bytes)
+    let declared = file.size();
+    crate::parser::read_member_limited(
+        &mut file,
+        declared,
+        crate::parser::MAX_ZIP_MEDIA_BYTES,
+        &format!("DOCX media '{name}'"),
+    )
+    .ok()
 }
 
 #[cfg(test)]

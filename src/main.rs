@@ -356,7 +356,7 @@ async fn main() -> anyhow::Result<()> {
                 std::env::var("RAYRAG_ADMIN_PASSWORD")
                     .expect("--password missing; set RAYRAG_ADMIN_PASSWORD env")
             });
-            let client = reqwest::Client::new();
+            let client = rayrag::common::cmd_timeout::model_client();
             // 登录拿 token
             let login: serde_json::Value = client
                 .post(format!("{api_base}/api/v1/auth/login"))

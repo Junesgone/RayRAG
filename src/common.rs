@@ -1495,6 +1495,10 @@ pub mod cmd_timeout {
     pub const DEFAULT_BODY_LIMIT: usize = 32 << 20;
     /// 响应体上限环境变量
     pub const BODY_LIMIT_ENV: &str = "RAYRAG_HTTP_BODY_LIMIT_BYTES";
+    /// 连接器下载默认上限（256 MiB）
+    pub const DEFAULT_CONNECTOR_BODY_LIMIT: usize = 256 << 20;
+    /// 连接器下载上限环境变量
+    pub const CONNECTOR_BODY_LIMIT_ENV: &str = "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES";
 
     /// 当前命令超时秒数：`RAYRAG_CMD_TIMEOUT`，默认 7200，钳制在 1..=7200
     pub fn seconds() -> u64 {
@@ -1538,6 +1542,20 @@ pub mod cmd_timeout {
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
+    }
+
+    /// 连接器（S3/WebDAV/HTTP 等）单次下载的硬上限：`RAYRAG_CONNECTOR_BODY_LIMIT_BYTES`，
+    /// 默认 256 MiB。
+    ///
+    /// 连接器下载的是**待解析的原始文档**，所以上限远比 API 响应宽松；但它仍然是一个
+    /// 有限值 —— 远端对象无论多大（或被篡改成无限流）都不会让进程无界增长，超过上限时
+    /// 明确报错而不是把主机吃光。
+    pub fn connector_body_limit_bytes() -> usize {
+        std::env::var(CONNECTOR_BODY_LIMIT_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|value| *value >= 1024 * 1024)
+            .unwrap_or(DEFAULT_CONNECTOR_BODY_LIMIT)
     }
 
     /// 单次 HTTP 响应体的硬上限：`RAYRAG_HTTP_BODY_LIMIT_BYTES`，默认 32 MiB。

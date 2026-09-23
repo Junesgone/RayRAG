@@ -163,13 +163,14 @@ impl BaiduTranslateClient {
         }
         let json: Value = serde_json::from_str(&body).context("parse Baidu translate VIP JSON")?;
         if let Some(code) = json.get("error_code").and_then(Value::as_str)
-            && code != "0" {
-                let msg = json
-                    .get("error_msg")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown error");
-                bail!("BaiduTranslate VIP error {code}: {msg}");
-            }
+            && code != "0"
+        {
+            let msg = json
+                .get("error_msg")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error");
+            bail!("BaiduTranslate VIP error {code}: {msg}");
+        }
         let results = json
             .get("trans_result")
             .and_then(Value::as_array)
@@ -315,7 +316,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = BaiduTranslateClient {
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
             appid: None,
             secret_key: None,
         };
@@ -353,7 +354,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = BaiduTranslateClient {
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
             appid: Some("test_appid".to_string()),
             secret_key: Some("test_secret".to_string()),
         };
@@ -382,7 +383,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = BaiduTranslateClient {
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
             appid: Some("test_appid".to_string()),
             secret_key: Some("test_secret".to_string()),
         };

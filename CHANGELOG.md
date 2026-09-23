@@ -2,6 +2,36 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.48] — 2026-09-24（对标批次 v0.3.8z）
+
+> 继续「不许有任何一条无界的内存路径」：这一版堵住**外部对象下载**和**压缩文档解压**两类，
+> 并把最后 14 处无超时的 HTTP 客户端全部收口。
+
+### Fixed
+
+- **Office/EPUB 压缩成员解压上限（zip bomb）**（`src/parser/mod.rs::read_member_limited`）：
+  docx/xlsx/pptx/epub 本质是 ZIP，成员头可以声明任意大小；`docx.rs` / `ppt.rs` / `epub.rs` /
+  `tcadp.rs` 之前用 `read_to_end` 无上限读取，`docx.rs` 甚至还按**声明大小** `Vec::with_capacity`
+  预留。现在统一走 `read_member_limited`：先按声明大小预检（文本 64 MiB / 媒体 128 MiB），再用
+  `take(limit + 1)` 兜住「声明撒谎」的情况，最后复核实际长度。`docx.rs` 的成员读取改为返回
+  `Result<Option<_>>`，把「存在但超限」与「不存在」区分开（不再报成 `word/document.xml missing`），
+  `ppt.rs` 的超限幻灯片同样**显式报错**而不是静默跳过。
+  **实测**：现场构造的 200 KiB docx（`word/document.xml` 解压后 200 MiB）现在立即返回
+  `DOCX part 'word/document.xml' declares 209715384 bytes, above the 64 MiB safety limit`；
+  正常 docx/xlsx/pptx/md 仍照常解析。
+- **连接器下载有上限**（`RAYRAG_CONNECTOR_BODY_LIMIT_BYTES`，默认 256 MiB）：S3/WebDAV/HTTP/RSS 等
+  9 处 `.bytes()` 全量下载（下游是待解析文档，所以上限比 API 响应宽松）改走有界读取，远端对象
+  再大也不会把进程撑爆，超限时明确报错。
+- **最后 14 处无超时客户端收口**：`llm_enhanced`、`translate`×3、`mcp_client`、`parser/somark`、
+  `connectors`、`channels`×3、`main.rs` 的裸 `reqwest::Client::new()` 全部改用带超时的共享客户端
+  （模型类 300s / 连接 10s）；全仓除 `common.rs` 内部的两处 builder 回退外，已无无超时客户端。
+
+### Notes
+
+- 新增回归 3 条（`parser::zip_member_limit_tests`）：声明超限**在读之前**被拒（不发生分配）、
+  声明撒谎时按实际累计量截断、限额内成员完整返回。
+- 全量 `cargo test --locked --offline --lib` **1604 passed / 0 failed / 27 ignored**。
+
 ## [0.4.47] — 2026-09-24（对标批次 v0.3.8y）
 
 > 承接上一版的「不许再有失控内存」：这一版把**所有对外 HTTP 读取**和**索引提交流程**也纳入

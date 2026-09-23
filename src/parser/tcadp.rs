@@ -312,8 +312,13 @@ fn extract_content_from_zip(zip_bytes: &[u8]) -> Result<Vec<serde_json::Value>> 
         if !(name.ends_with(".json") || name.ends_with(".md")) {
             continue;
         }
-        let mut buffer = Vec::new();
-        member.read_to_end(&mut buffer)?;
+        let declared = member.size();
+        let buffer = crate::parser::read_member_limited(
+            &mut member,
+            declared,
+            crate::parser::MAX_ZIP_MEMBER_BYTES,
+            &format!("TCADP member '{name}'"),
+        )?;
         if name.ends_with(".json") {
             let value: serde_json::Value = serde_json::from_slice(&buffer).map_err(|error| {
                 anyhow::anyhow!("[TCADP] JSON parse failed for {name}: {error}")

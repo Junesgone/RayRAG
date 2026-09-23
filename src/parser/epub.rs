@@ -7,10 +7,10 @@
 //! `META-INF/`) when the container/OPF is missing or malformed.
 
 use crate::parser::html::RAGFlowHtmlParser;
-use crate::parser::{new_document, Parse};
+use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use std::io::Cursor;
 
 /// OPF XML namespace (epub_parser.py:26).
@@ -53,11 +53,15 @@ impl RAGFlowEpubParser {
                     Err(_) => continue,
                 };
                 if f.name() == item_path {
-                    let mut buf = Vec::new();
-                    use std::io::Read;
-                    if f.read_to_end(&mut buf).is_err() {
-                        buf.clear();
-                    }
+                    // Capped read: an epub chapter is archive-controlled data.
+                    let declared = f.size();
+                    let buf = crate::parser::read_member_limited(
+                        &mut f,
+                        declared,
+                        crate::parser::MAX_ZIP_MEMBER_BYTES,
+                        &format!("EPUB item '{item_path}'"),
+                    )
+                    .unwrap_or_default();
                     found = Some(buf);
                     break;
                 }
@@ -147,10 +151,14 @@ fn read_entry(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Str
     for i in 0..zf.len() {
         let mut f = zf.by_index(i).ok()?;
         if f.name() == name {
-            let mut buf = Vec::new();
-            if f.read_to_end(&mut buf).is_err() {
-                return None;
-            }
+            let declared = f.size();
+            let buf = crate::parser::read_member_limited(
+                &mut f,
+                declared,
+                crate::parser::MAX_ZIP_MEMBER_BYTES,
+                &format!("EPUB entry '{name}'"),
+            )
+            .ok()?;
             found = Some(buf);
             break;
         }

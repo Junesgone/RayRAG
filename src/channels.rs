@@ -145,13 +145,13 @@ pub trait Channel: Send + Sync {
             && let Err(error) = tokio::task::spawn_blocking(move || handler(message))
                 .await
                 .map_err(|join| anyhow::anyhow!("handler task panicked: {join}"))
-            {
-                error!(
-                    "[{}:{}] handler error: {error:#}",
-                    self.channel_id(),
-                    self.account_id()
-                );
-            }
+        {
+            error!(
+                "[{}:{}] handler error: {error:#}",
+                self.channel_id(),
+                self.account_id()
+            );
+        }
     }
 
     /// Normalize a platform-specific raw inbound payload and dispatch it.
@@ -411,32 +411,37 @@ pub fn channels_config_from_env() -> serde_json::Value {
 
     // webhook channel: outbound callback url (+ optional bearer token).
     if let Ok(url) = std::env::var("RAYRAG_WEBHOOK_CALLBACK_URL")
-        && !url.trim().is_empty() {
-            let mut cfg = serde_json::Map::new();
-            cfg.insert("enabled".into(), serde_json::json!(true));
-            cfg.insert("callback_url".into(), serde_json::json!(url));
-            if let Ok(token) = std::env::var("RAYRAG_WEBHOOK_TOKEN")
-                && !token.is_empty() {
-                    cfg.insert("token".into(), serde_json::json!(token));
-                }
-            channels.insert("webhook".into(), serde_json::Value::Object(cfg));
+        && !url.trim().is_empty()
+    {
+        let mut cfg = serde_json::Map::new();
+        cfg.insert("enabled".into(), serde_json::json!(true));
+        cfg.insert("callback_url".into(), serde_json::json!(url));
+        if let Ok(token) = std::env::var("RAYRAG_WEBHOOK_TOKEN")
+            && !token.is_empty()
+        {
+            cfg.insert("token".into(), serde_json::json!(token));
         }
+        channels.insert("webhook".into(), serde_json::Value::Object(cfg));
+    }
 
     // feishu channel: app credentials (Boss environment's actual channel).
     let app_id = std::env::var("RAYRAG_FEISHU_APP_ID").ok();
     let app_secret = std::env::var("RAYRAG_FEISHU_APP_SECRET").ok();
     if let (Some(app_id), Some(app_secret)) = (app_id, app_secret)
-        && !app_id.trim().is_empty() && !app_secret.trim().is_empty() {
-            let mut cfg = serde_json::Map::new();
-            cfg.insert("enabled".into(), serde_json::json!(true));
-            cfg.insert("app_id".into(), serde_json::json!(app_id));
-            cfg.insert("app_secret".into(), serde_json::json!(app_secret));
-            if let Ok(domain) = std::env::var("RAYRAG_FEISHU_DOMAIN")
-                && !domain.is_empty() {
-                    cfg.insert("domain".into(), serde_json::json!(domain));
-                }
-            channels.insert("feishu".into(), serde_json::Value::Object(cfg));
+        && !app_id.trim().is_empty()
+        && !app_secret.trim().is_empty()
+    {
+        let mut cfg = serde_json::Map::new();
+        cfg.insert("enabled".into(), serde_json::json!(true));
+        cfg.insert("app_id".into(), serde_json::json!(app_id));
+        cfg.insert("app_secret".into(), serde_json::json!(app_secret));
+        if let Ok(domain) = std::env::var("RAYRAG_FEISHU_DOMAIN")
+            && !domain.is_empty()
+        {
+            cfg.insert("domain".into(), serde_json::json!(domain));
         }
+        channels.insert("feishu".into(), serde_json::Value::Object(cfg));
+    }
     serde_json::json!({ "channels": channels })
 }
 
@@ -489,7 +494,9 @@ impl WebhookChannel {
         if let Some(reply_to) = &message.reply_to_message_id {
             body["reply_to_message_id"] = serde_json::json!(reply_to);
         }
-        let mut request = reqwest::Client::new().post(&self.callback_url).json(&body);
+        let mut request = crate::common::cmd_timeout::model_client()
+            .post(&self.callback_url)
+            .json(&body);
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
@@ -611,11 +618,12 @@ impl FeishuChannel {
         {
             let cache = self.token_cache.lock().unwrap();
             if let Some((token, issued_at)) = &*cache
-                && issued_at.elapsed() < FEISHU_TOKEN_TTL {
-                    return Ok(token.clone());
-                }
+                && issued_at.elapsed() < FEISHU_TOKEN_TTL
+            {
+                return Ok(token.clone());
+            }
         }
-        let response: serde_json::Value = reqwest::Client::new()
+        let response: serde_json::Value = crate::common::cmd_timeout::model_client()
             .post(format!(
                 "{}/open-apis/auth/v3/tenant_access_token/internal",
                 self.base_url
@@ -660,7 +668,7 @@ impl FeishuChannel {
         message: &OutgoingMessage,
     ) -> anyhow::Result<()> {
         let token = self.tenant_access_token().await?;
-        let client = reqwest::Client::new();
+        let client = crate::common::cmd_timeout::model_client();
         let response: serde_json::Value = if let Some(reply_to) = &message.reply_to_message_id {
             client
                 .post(format!(

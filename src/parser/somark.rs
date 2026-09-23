@@ -449,7 +449,7 @@ impl SoMarkClient {
             .map_err(|error| anyhow::anyhow!("Invalid SoMark base URL: {error}"))?;
         Ok(Self {
             config,
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
         })
     }
 

@@ -267,11 +267,12 @@ fn collect_shapes(node: &XmlNode) -> Vec<Shape> {
 /// Position from `p:xfrm/a:off` (EMU). Missing → 0 (python-pptx None → 0).
 fn shape_position(node: &XmlNode) -> (i64, i64) {
     if let Some(xfrm) = node.first_child("xfrm")
-        && let Some(off) = xfrm.first_child("off") {
-            let x = off.attr("x").and_then(|v| v.parse().ok()).unwrap_or(0);
-            let y = off.attr("y").and_then(|v| v.parse().ok()).unwrap_or(0);
-            return (y, x);
-        }
+        && let Some(off) = xfrm.first_child("off")
+    {
+        let x = off.attr("x").and_then(|v| v.parse().ok()).unwrap_or(0);
+        let y = off.attr("y").and_then(|v| v.parse().ok()).unwrap_or(0);
+        return (y, x);
+    }
     (0, 0)
 }
 
@@ -307,10 +308,19 @@ pub fn slide_texts_paged(data: &[u8], from_page: usize, to_page: usize) -> Resul
             Ok(f) => f,
             Err(_) => continue,
         };
-        let mut xml_str = String::new();
-        if slide.read_to_string(&mut xml_str).is_err() {
-            continue;
-        }
+        // Capped read: a pptx member's declared size is attacker-controlled, and an
+        // unbounded read of it is a straight path to exhausting memory.
+        let declared = slide.size();
+        // A slide that is present but too large is an error, not a slide to skip
+        // silently: the deck would otherwise lose content with no explanation.
+        let bytes = crate::parser::read_member_limited(
+            &mut slide,
+            declared,
+            crate::parser::MAX_ZIP_MEMBER_BYTES,
+            &format!("PPTX slide '{slide_name}'"),
+        )?;
+        let xml_str = String::from_utf8(bytes)
+            .map_err(|error| anyhow::anyhow!("PPTX slide '{slide_name}' is not UTF-8: {error}"))?;
         let root = parse_xml(&xml_str)?;
         let mut shapes = collect_shapes(&root);
         shapes.sort_by_key(Shape::sort_key);

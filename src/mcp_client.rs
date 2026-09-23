@@ -416,7 +416,9 @@ impl McpClient {
         headers: &BTreeMap<String, String>,
         request: &JsonRpcRequest,
     ) -> anyhow::Result<JsonRpcResponse> {
-        let client = reqwest::Client::new();
+        // JSON-RPC is request/response: give it the model-call timeout instead of no
+        // timeout at all, so an unresponsive MCP server cannot pin a task forever.
+        let client = crate::common::cmd_timeout::model_client();
         let mut builder = client
             .post(url)
             .header("Accept", "application/json, text/event-stream")

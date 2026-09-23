@@ -288,7 +288,7 @@ impl StreamingLlmClient {
             api_base: api_base.trim_end_matches('/').into(),
             api_key: api_key.into(),
             model: model.into(),
-            client: reqwest::Client::new(),
+            client: crate::common::cmd_timeout::model_client(),
         }
     }
 

@@ -269,7 +269,12 @@ impl S3Connector {
                 query.push(("continuation-token", token));
             }
             let response = self.signed_request("GET", &path, &query).await?;
-            let body = response.bytes().await.context("s3: read list response")?;
+            let body = crate::common::cmd_timeout::read_body_limited(
+                response,
+                crate::common::cmd_timeout::connector_body_limit_bytes(),
+                "s3 list",
+            )
+            .await?;
             let text = String::from_utf8_lossy(&body).to_string();
             let parsed = parse_list_objects(&text)?;
             continuation = parsed.next_token;
@@ -1095,7 +1100,12 @@ impl Connector for WebDavConnector {
     async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
         let url = self.url_for(&file.path);
         let response = self.request(reqwest::Method::GET, &url).await?;
-        Ok(response.bytes().await?.to_vec())
+        crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "connector",
+        )
+        .await
     }
 
     fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
@@ -1176,46 +1186,44 @@ fn parse_propfind(xml: &str, _base_url: &str) -> Result<Vec<RemoteFile>> {
                 }
                 if name == "response"
                     && let Some(map) = current.take()
-                        && !in_collection
-                            && let Some(href) = map.get("href")
-                                && !href.ends_with('/') {
-                                    let raw_href = href.clone();
-                                    let name = map
-                                        .get("displayname")
-                                        .filter(|n| !n.is_empty())
-                                        .cloned()
-                                        .or_else(|| {
-                                            raw_href
-                                                .trim_end_matches('/')
-                                                .rsplit('/')
-                                                .next()
-                                                .map(|s| s.to_string())
-                                        })
-                                        .unwrap_or_else(|| raw_href.clone());
-                                    let size = map
-                                        .get("size")
-                                        .and_then(|s| s.parse::<u64>().ok())
-                                        .unwrap_or(0);
-                                    let ext = Path::new(&name)
-                                        .extension()
-                                        .map(|e| format!(".{}", e.to_string_lossy()))
-                                        .unwrap_or_default();
-                                    let mut metadata = HashMap::new();
-                                    metadata.insert("source".into(), "webdav".into());
-                                    files.push(RemoteFile {
-                                        id: format!("webdav:{raw_href}"),
-                                        name,
-                                        path: raw_href,
-                                        extension: ext,
-                                        size_bytes: size,
-                                        updated_at: map
-                                            .get("modified")
-                                            .cloned()
-                                            .unwrap_or_default(),
-                                        fingerprint: String::new(),
-                                        metadata,
-                                    });
-                                }
+                    && !in_collection
+                    && let Some(href) = map.get("href")
+                    && !href.ends_with('/')
+                {
+                    let raw_href = href.clone();
+                    let name = map
+                        .get("displayname")
+                        .filter(|n| !n.is_empty())
+                        .cloned()
+                        .or_else(|| {
+                            raw_href
+                                .trim_end_matches('/')
+                                .rsplit('/')
+                                .next()
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_else(|| raw_href.clone());
+                    let size = map
+                        .get("size")
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let ext = Path::new(&name)
+                        .extension()
+                        .map(|e| format!(".{}", e.to_string_lossy()))
+                        .unwrap_or_default();
+                    let mut metadata = HashMap::new();
+                    metadata.insert("source".into(), "webdav".into());
+                    files.push(RemoteFile {
+                        id: format!("webdav:{raw_href}"),
+                        name,
+                        path: raw_href,
+                        extension: ext,
+                        size_bytes: size,
+                        updated_at: map.get("modified").cloned().unwrap_or_default(),
+                        fingerprint: String::new(),
+                        metadata,
+                    });
+                }
                 text.clear();
             }
             Ok(Event::Eof) => break,
@@ -1309,7 +1317,13 @@ impl BlobAdapter {
             .await
             .context("blob: request failed")?;
         let status = response.status();
-        let bytes = response.bytes().await?;
+        let bytes = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "connector",
+        )
+        .await
+        .context("connector download failed")?;
         if !status.is_success() {
             bail!(
                 "blob: upstream returned {}: {}",
@@ -1711,7 +1725,13 @@ impl Connector for FeishuConnector {
                     .await
                     .context("feishu: media download failed")?;
                 let status = response.status();
-                let bytes = response.bytes().await?;
+                let bytes = crate::common::cmd_timeout::read_body_limited(
+                    response,
+                    crate::common::cmd_timeout::connector_body_limit_bytes(),
+                    "connector",
+                )
+                .await
+                .context("connector download failed")?;
                 if !status.is_success() {
                     bail!(
                         "feishu: media download returned {}: {}",
@@ -1810,7 +1830,13 @@ impl ConfluenceConnector {
             .await
             .context("confluence: request failed")?;
         let status = response.status();
-        let body = response.bytes().await?;
+        let body = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "connector",
+        )
+        .await
+        .context("connector download failed")?;
         if !status.is_success() {
             bail!(
                 "confluence: upstream returned {}: {}",
@@ -2044,7 +2070,13 @@ impl YuqueConnector {
             .await
             .with_context(|| format!("yuque: request failed: {url}"))?;
         let status = response.status();
-        let body = response.bytes().await?;
+        let body = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "connector",
+        )
+        .await
+        .context("connector download failed")?;
         if !status.is_success() {
             bail!(
                 "yuque: upstream returned {}: {}",
@@ -2321,7 +2353,13 @@ impl DingTalkConnector {
             .await
             .context("dingtalk: download request failed")?;
         let status = response.status();
-        let bytes = response.bytes().await?;
+        let bytes = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "connector",
+        )
+        .await
+        .context("connector download failed")?;
         if !status.is_success() {
             bail!(
                 "dingtalk: download upstream error ({}): {}",
@@ -2661,9 +2699,10 @@ impl DingTalkAiTableConnector {
         {
             let guard = self.token_cache.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(cached) = guard.as_ref()
-                && std::time::Instant::now() < cached.expires_at {
-                    return Ok(cached.token.clone());
-                }
+                && std::time::Instant::now() < cached.expires_at
+            {
+                return Ok(cached.token.clone());
+            }
         }
         let url = format!("{}/v1.0/oauth2/accessToken", self.base_url);
         let response = self
@@ -2861,12 +2900,14 @@ fn dingtalk_ai_table_record_name(
     if let Some(object) = fields.as_object() {
         for value in object.values() {
             if let serde_json::Value::String(text) = value
-                && !text.is_empty() && text.len() < 100 {
-                    return format!(
-                        "{sheet_name} - {}",
-                        text.chars().take(50).collect::<String>()
-                    );
-                }
+                && !text.is_empty()
+                && text.len() < 100
+            {
+                return format!(
+                    "{sheet_name} - {}",
+                    text.chars().take(50).collect::<String>()
+                );
+            }
         }
     }
     format!("{sheet_name} - Record {record_id}")
@@ -3457,7 +3498,13 @@ impl Connector for BoxConnector {
                 )
             );
         }
-        let bytes = response.bytes().await?;
+        let bytes = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "connector",
+        )
+        .await
+        .context("connector download failed")?;
         Ok(bytes.to_vec())
     }
 
@@ -3695,7 +3742,12 @@ impl RssConnector {
                 body.chars().take(300).collect::<String>()
             );
         }
-        let bytes = response.bytes().await.context("rss: read feed body")?;
+        let bytes = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "rss feed",
+        )
+        .await?;
         Ok(String::from_utf8_lossy(&bytes).to_string())
     }
 }
@@ -3859,13 +3911,14 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                             for attr in tag.attributes().flatten() {
                                 if attr.key.local_name().as_ref() == b"href"
                                     && let Some(entry) = current.as_mut()
-                                        && entry.link.is_empty() {
-                                            entry.link = attr
-                                                .decode_and_unescape_value(reader.decoder())
-                                                .unwrap_or_default()
-                                                .trim()
-                                                .to_string();
-                                        }
+                                    && entry.link.is_empty()
+                                {
+                                    entry.link = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .unwrap_or_default()
+                                        .trim()
+                                        .to_string();
+                                }
                             }
                             // RSS: `<link>http://…</link>` — capture text too.
                             field = Some(name.clone());
@@ -3881,13 +3934,14 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                     for attr in tag.attributes().flatten() {
                         if attr.key.local_name().as_ref() == b"href"
                             && let Some(entry) = current.as_mut()
-                                && entry.link.is_empty() {
-                                    entry.link = attr
-                                        .decode_and_unescape_value(reader.decoder())
-                                        .unwrap_or_default()
-                                        .trim()
-                                        .to_string();
-                                }
+                            && entry.link.is_empty()
+                        {
+                            entry.link = attr
+                                .decode_and_unescape_value(reader.decoder())
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
+                        }
                     }
                 }
             }
@@ -3912,9 +3966,10 @@ fn parse_feed(xml: &str) -> Result<Vec<RssEntry>> {
                 } else if current.is_some() && field.as_deref() == Some(name.as_slice()) {
                     let value = text.trim().to_string();
                     if !value.is_empty()
-                        && let Some(entry) = current.as_mut() {
-                            assign_field(entry, &name, value);
-                        }
+                        && let Some(entry) = current.as_mut()
+                    {
+                        assign_field(entry, &name, value);
+                    }
                     field = None;
                     text.clear();
                 }
@@ -4032,13 +4087,13 @@ fn strip_html(input: &str) -> String {
 /// extension.
 fn extension_from_link(link: &str) -> String {
     if let Ok(parsed) = url::Url::parse(link)
-        && let Some(ext) = Path::new(parsed.path()).extension() {
-            let ext = ext.to_string_lossy();
-            if !ext.is_empty() && ext.len() <= 12 && ext.chars().all(|c| c.is_ascii_alphanumeric())
-            {
-                return format!(".{ext}");
-            }
+        && let Some(ext) = Path::new(parsed.path()).extension()
+    {
+        let ext = ext.to_string_lossy();
+        if !ext.is_empty() && ext.len() <= 12 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return format!(".{ext}");
         }
+    }
     ".html".to_string()
 }
 
@@ -4258,9 +4313,11 @@ fn airtable_record_name(fields: &serde_json::Value, table_name: &str, row_n: usi
     if let Some(object) = fields.as_object() {
         for value in object.values() {
             if let serde_json::Value::String(text) = value
-                && !text.is_empty() && text.len() < 100 {
-                    return text.chars().take(50).collect::<String>();
-                }
+                && !text.is_empty()
+                && text.len() < 100
+            {
+                return text.chars().take(50).collect::<String>();
+            }
         }
     }
     format!("{table_name}-{row_n}")
@@ -6600,10 +6657,10 @@ pub fn sanitize_sql_query(raw: &str) -> String {
     ];
     if let Some((head, tail)) = query.split_once('\n')
         && !tail.trim().is_empty()
-            && fence_languages.contains(&head.trim().to_ascii_lowercase().as_str())
-        {
-            query = tail.trim().to_string();
-        }
+        && fence_languages.contains(&head.trim().to_ascii_lowercase().as_str())
+    {
+        query = tail.trim().to_string();
+    }
     query
 }
 
@@ -6660,7 +6717,7 @@ impl RdbmsConnector {
                 .filter(|c| !c.is_empty())
                 .map(str::to_string)
                 .collect(),
-            http_client: reqwest::Client::new(),
+            http_client: crate::common::cmd_timeout::model_client(),
         })
     }
 

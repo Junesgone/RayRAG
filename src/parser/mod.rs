@@ -25,7 +25,47 @@ pub mod txt;
 
 use crate::{Document, Result};
 use std::collections::HashMap;
+use std::io::Read;
 use uuid::Uuid;
+
+/// Largest decompressed member accepted from a ZIP-based document (docx/xlsx/pptx/
+/// epub) when the member is text or XML.
+///
+/// These formats are archives, and an archive declares how large each member is
+/// *before* it is read: a few kilobytes on disk can claim gigabytes. Reading with a
+/// cap (and refusing the declared size up front) keeps a malformed or hostile
+/// document from turning into process memory.
+pub const MAX_ZIP_MEMBER_BYTES: u64 = 64 << 20;
+
+/// Largest decompressed member accepted for embedded media (images, audio).
+pub const MAX_ZIP_MEDIA_BYTES: u64 = 128 << 20;
+
+/// Read one archive member, refusing anything above `limit`.
+///
+/// `Read::take` bounds the read even when the member's declared size lies, and the
+/// capacity is reserved from the *actual* size rather than the header's claim.
+pub fn read_member_limited<R: Read>(
+    reader: &mut R,
+    declared_size: u64,
+    limit: u64,
+    what: &str,
+) -> Result<Vec<u8>> {
+    if declared_size > limit {
+        anyhow::bail!(
+            "{what} declares {declared_size} bytes, above the {} MiB safety limit",
+            limit / (1024 * 1024)
+        );
+    }
+    let mut bytes = Vec::with_capacity(declared_size.min(limit) as usize);
+    reader.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        anyhow::bail!(
+            "{what} exceeds the {} MiB safety limit while decompressing",
+            limit / (1024 * 1024)
+        );
+    }
+    Ok(bytes)
+}
 
 /// Trait for all document parsers.
 pub trait Parse: Send + Sync {
@@ -102,5 +142,44 @@ pub fn mime_from_extension(name: &str) -> Option<&'static str> {
         "toml" => Some("application/toml"),
         "log" => Some("text/plain"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod zip_member_limit_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn oversized_members_are_refused_before_reading() {
+        // A member that *declares* more than the limit is rejected up front: the
+        // allocation never happens, which is the whole point (a few kilobytes on
+        // disk can claim gigabytes).
+        let mut reader = Cursor::new(vec![0u8; 32]);
+        let error = read_member_limited(&mut reader, 8 << 30, MAX_ZIP_MEMBER_BYTES, "test part")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("safety limit"), "{error}");
+        assert!(error.contains("declares"), "{error}");
+    }
+
+    #[test]
+    fn members_that_lie_about_their_size_are_still_bounded() {
+        // The header claims 1 byte, the stream keeps going: `take(limit + 1)` stops it
+        // and the post-check reports the overflow instead of returning a giant buffer.
+        let mut reader = Cursor::new(vec![b'x'; 4096]);
+        let error = read_member_limited(&mut reader, 1, 1024, "lying part")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("while decompressing"), "{error}");
+    }
+
+    #[test]
+    fn members_within_the_limit_are_returned_whole() {
+        let payload = vec![b'y'; 2048];
+        let mut reader = Cursor::new(payload.clone());
+        let bytes =
+            read_member_limited(&mut reader, payload.len() as u64, 4096, "small part").unwrap();
+        assert_eq!(bytes, payload);
     }
 }
