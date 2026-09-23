@@ -6151,10 +6151,6 @@ fn document_view_markup(kb_id: &str, doc_id: &str, zh: bool) -> String {
     b.push_str(&json_script_value(&serde_json::json!({ "chunk": "" })));
     b.push_str(";");
     b.push_str(DOCUMENT_VIEWER_SCRIPT);
-    b.push_str("</script><script>var kbId='");
-    b.push_str(&kb_id);
-    b.push_str("';var docId='");
-    b.push_str(&doc_id);
     b.push_str("</script><script>var kbId=");
     b.push_str(&json_script_value(&serde_json::json!(kb_id)));
     b.push_str(";var docId=");
@@ -14572,7 +14568,9 @@ connection: close
             "data-testid='docview-status'",
             // The viewer script is its own block, and the chunk script follows it.
             "await import('/pdfjs-dist/pdf.min.mjs')",
-            "</script><script>var kbId='",
+            "</script><script>var kbId=",
+            ";var docId=",
+            "var DOC_CHUNKS=[]",
         ] {
             assert!(html.contains(marker), "viewer marker {marker} missing");
         }
