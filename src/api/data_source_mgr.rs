@@ -502,23 +502,42 @@ pub async fn list_data_sources(
     Ok(Json(serde_json::json!({ "code": 0, "data": store.list() })))
 }
 
+/// The error shape the data-source endpoints answer with.
+///
+/// These handlers used to return plain `(status, string)`, so a browser reading the body
+/// as JSON hit a parse error instead of the message — the one thing an operator needs
+/// when a connector is refused. RAGFlow's own endpoints answer `{code, message}`.
+pub type DataSourceError = (StatusCode, Json<serde_json::Value>);
+
+/// Build a connector error with the RAGFlow body shape.
+pub fn data_source_error(status: StatusCode, message: impl Into<String>) -> DataSourceError {
+    let message = message.into();
+    (
+        status,
+        Json(serde_json::json!({ "code": status.as_u16(), "message": message })),
+    )
+}
+
 pub async fn create_data_source(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
     Json(body): Json<CreateDataSourceRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let store = state
         .data_sources
         .as_ref()
-        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?;
     let name = body.name.trim().to_string();
     let url = body.url.unwrap_or_default().trim().to_string();
     let target = body.target.unwrap_or_default().trim().to_string();
     if name.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "name is required".into()));
+        return Err(data_source_error(
+            StatusCode::BAD_REQUEST,
+            "name is required",
+        ));
     }
     // Supported kinds: gitlab (legacy) + connector registry kinds.
     if !is_supported_kind(&body.kind) {
-        return Err((
+        return Err(data_source_error(
             StatusCode::BAD_REQUEST,
             format!(
                 "unsupported data source type: {} (supported: {})",
@@ -549,16 +568,23 @@ pub async fn create_data_source(
         sync_logs: Vec::new(),
     };
     if let Some(config) = body.config {
+        // The connector constants validate across fields (`customValidate` upstream). The
+        // dialog runs the same rules, but a client that skips the JavaScript — or an API
+        // caller — must not be able to store a configuration the connector cannot use.
+        let failures = crate::data_source::form_fields::validate_config(&record.kind, &config);
+        if let Some((_, message)) = failures.first() {
+            return Err(data_source_error(StatusCode::BAD_REQUEST, message));
+        }
         apply_config_mapping(&mut record, &config);
     } else if record.url.is_empty() || record.target.is_empty() {
-        return Err((
+        return Err(data_source_error(
             StatusCode::BAD_REQUEST,
-            "name/url/target are required".into(),
+            "name/url/target are required",
         ));
     }
     store
         .insert(record.clone())
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        .map_err(|error| data_source_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     Ok(Json(
         serde_json::json!({ "code": 0, "data": record.redacted() }),
     ))
@@ -597,14 +623,14 @@ pub struct UpdateDataSourceRequest {
 pub async fn get_data_source(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let store = state
         .data_sources
         .as_ref()
-        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?;
     let record = store
         .get(&id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_FOUND, "data source not found"))?;
     let mut detail = record.detail_json();
     detail["sync_logs"] = serde_json::to_value(&record.sync_logs).unwrap_or_default();
     Ok(Json(serde_json::json!({ "code": 0, "data": detail })))
@@ -619,14 +645,14 @@ pub async fn update_data_source(
     Extension(auth): Extension<crate::server::AuthContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<UpdateDataSourceRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let store = state
         .data_sources
         .as_ref()
-        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?;
     let mut record = store
         .get(&id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_FOUND, "data source not found"))?;
     let credential_changed = body.url.is_some()
         || body.token.is_some()
         || body.target.is_some()
@@ -634,14 +660,20 @@ pub async fn update_data_source(
     if let Some(name) = body.name {
         let name = name.trim().to_string();
         if name.is_empty() {
-            return Err((StatusCode::BAD_REQUEST, "name is required".into()));
+            return Err(data_source_error(
+                StatusCode::BAD_REQUEST,
+                "name is required",
+            ));
         }
         record.name = name;
     }
     if let Some(url) = body.url {
         let url = url.trim().to_string();
         if url.is_empty() {
-            return Err((StatusCode::BAD_REQUEST, "url is required".into()));
+            return Err(data_source_error(
+                StatusCode::BAD_REQUEST,
+                "url is required",
+            ));
         }
         record.url = url;
     }
@@ -664,6 +696,10 @@ pub async fn update_data_source(
         record.timeout_secs = Some(value);
     }
     if let Some(config) = body.config {
+        let failures = crate::data_source::form_fields::validate_config(&record.kind, &config);
+        if let Some((_, message)) = failures.first() {
+            return Err(data_source_error(StatusCode::BAD_REQUEST, message));
+        }
         apply_config_mapping(&mut record, &config);
     }
     if credential_changed {
@@ -672,7 +708,7 @@ pub async fn update_data_source(
     let requested_status = match body.status.as_ref() {
         Some(value) => Some(
             normalize_status(value)
-                .ok_or((StatusCode::BAD_REQUEST, "invalid status".to_string()))?,
+                .ok_or(data_source_error(StatusCode::BAD_REQUEST, "invalid status"))?,
         ),
         None => None,
     };
@@ -683,7 +719,7 @@ pub async fn update_data_source(
     }
     store
         .insert(record.clone())
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        .map_err(|error| data_source_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     // RayRAG has no background connector scheduler: a reschedule/schedule
     // request runs the first sync eagerly and leaves the status `schedule` on
@@ -693,7 +729,7 @@ pub async fn update_data_source(
         let _ = perform_sync(&state, &auth, &id, None).await;
         let updated = store
             .get(&id)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+            .ok_or_else(|| data_source_error(StatusCode::NOT_FOUND, "data source not found"))?;
         let mut detail = updated.detail_json();
         detail["sync_logs"] = serde_json::to_value(&updated.sync_logs).unwrap_or_default();
         return Ok(Json(serde_json::json!({ "code": 0, "data": detail })));

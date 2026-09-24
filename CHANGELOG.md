@@ -2,6 +2,51 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.54] — 2026-09-24（对标批次 v0.3.9f）
+
+> 对标 `pages/user-setting/data-source/constant/{seafile,bitbucket,confluence,jira,s3}-constant.tsx`
+> 的 `customValidate` / `shouldRender` / `FormFieldType.Custom`：数据源对话框此前只做「必填」检查，
+> 上游那些**跨字段**规则、随选项变化的说明面板和悬停提示都没有落地。
+
+### Added
+
+- **悬停提示（3 类源共 3 处 + 全源通用）**：上游 `Tooltip` 是鼠标悬停/聚焦才出现的浮层；RayRAG 之前
+  把 tooltip 文案当常驻小字段落显示。现在每个带 tooltip 的字段渲染 `?` 触发器
+  （`.ds-tip-trigger`，`tabindex=0`、`aria-label`、`role=button`）与 `role="tooltip"` 浮层，
+  `mouseenter`/`focus` 显示、`mouseleave`/`blur`/`Escape` 隐藏；新增/详情两个对话框同一套实现。
+- **随选项变化的说明面板**（上游 `FormFieldType.Custom`）：
+  - SeaFile：`account` 显示「Syncs all libraries visible to the Account API Token below.」；
+    `library`/`directory` 显示「Provide one of these authentication methods: …」（标题 + 两条要点）；
+  - S3：`assume_role` + `bucket_type=s3` 显示「No credentials required. Uses the default environment role.」；
+  - Confluence：`index_mode=everything` 显示「This choice will index all pages the provided credentials
+    have access to.」；Bitbucket：`index_mode=workspace` 显示「This connector will index all repositories
+    in the workspace.」
+  面板文本随 schema 下发（首行为标题、其余为要点），并按 `shouldRender` 同样的条件显隐；面板不进入提交载荷。
+- **跨字段校验规则（`customValidate`）**：规则作为数据随 schema 下发，对话框与 API 用同一套：
+  - SeaFile：`account` 必须有账号 Token；`library`/`directory` 需要 **账号 Token 或库 Token 之一**、
+    必须有 Library ID；`directory` 还必须有目录路径；未选 scope 时按上游 `?? 'account'` 处理；
+  - S3：有 key 时（`bucket_type=s3`）地区必填、`s3_compatible` 或 `access_key` 模式必须给全 Access Key
+    ID 与 Secret、`iam_role` 模式必须给 Role ARN（**上游该字段的报错文案误写成 "AWS Secret Access Key
+    is required"（`s3-constant.tsx` 复制粘贴），RayRAG 改为点名 Role ARN**，并在台账注明不复刻该笔误）；
+  - Confluence：`page`/`space` 模式分别要求 Page ID / Space Key；Bitbucket：`repositories`/`projects`
+    模式分别要求 Repository Slugs / Projects；Jira：云端要邮箱 + API Token，Server 要用户名 + 密码。
+  规则的 `when` 支持「多值任一（`any_of`）」「非空其一（`any_filled`）」「未设置时的默认值（`default`）」
+  与「或条件组（`when_any`）」，正好覆盖上游 `||` / `&&` / `??` 的写法。
+- **API 侧同规则兜底**：`create/update` 数据源时先跑同一套规则，不通过就 400 并回上游原句；
+  绕过网页的调用方也无法存下一个连接器用不了的配置。
+- **错误体改成 RAGFlow 形状 `{code, message}`**：这两个端点此前返回纯文本，浏览器按 JSON 解析会报
+  「Unexpected token」——正是「出错却看不到提示」的那类问题；现改为 JSON（HTTP 状态码不变）。
+
+### Notes
+
+- 新增回归 4 条：SeaFile 各 scope 的规则（含「任一 Token」与默认 scope）、S3/Confluence/Bitbucket/Jira
+  的条件规则、说明面板的顺序与显隐、对话框渲染 + API 兜底（含 `{code, message}` 断言）。
+- 全量 `cargo test --locked --offline --lib` **1635 passed / 0 failed / 27 ignored**。
+- CDP 真点（`scripts/ui-traversal/data-source-form-cdp.mjs`，新脚本）：真点 SeaFile 卡片的 `+ Add` →
+  账号 scope 面板/字段/3 个提示触发器 → 悬停显示、移开隐藏、`role=tooltip` → 切 `library` 后换成
+  Token 面板并出现 Library Token / Library ID → 缺 Token 时用上游原句拦下且**未发出请求** →
+  绕过网页直接 POST 同样被 400 拒绝并回同一句 → 填全后保存成功、探针结束前删除。
+
 ## [0.4.53] — 2026-09-24（对标批次 v0.3.9e）
 
 ### Added
