@@ -250,6 +250,79 @@ try {
   step("saved configuration", saved);
   if (!saved.id) fail("the completed configuration must be stored");
 
+  // 7. S3: the region selector is a combobox (`allowCustomValue` upstream), so a region
+  //    newer than the embedded AWS list can be typed — and it must survive the round trip.
+  const customRegion = await page.evaluate(
+    async (name) => {
+      const card = document.querySelector("#dsAvailable .cc-available-card[data-type='s3']");
+      if (!card) return { error: "no S3 card" };
+      card.querySelector(".cc-add-btn").click();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const wrapFor = (label) =>
+        Array.from(document.querySelectorAll("#dsAddFields .provider-instance-field")).find(
+          (node) =>
+            (node.querySelector("span")?.firstChild?.textContent || "").startsWith(label),
+        );
+      document.getElementById("dsAddName").value = name;
+      const bucket = wrapFor("Bucket Name");
+      if (!bucket) return { error: "no bucket field" };
+      bucket.querySelector("input").value = "cdp-bucket";
+      bucket.querySelector("input").dispatchEvent(new Event("input", { bubbles: true }));
+      const regionWrap = wrapFor("Region");
+      const regionInput = regionWrap?.querySelector(".ds-custom-select");
+      if (!regionInput) return { error: "the region field is not a combobox" };
+      const role = regionInput.getAttribute("role");
+      const listId = regionInput.getAttribute("list");
+      const suggestions = document.getElementById(listId)?.options.length || 0;
+      regionInput.value = "ap-southeast-9";
+      regionInput.dispatchEvent(new Event("input", { bubbles: true }));
+      // A tooltip that arrived with this round: Prefix.
+      const prefixWrap = wrapFor("Prefix");
+      const trigger = prefixWrap?.querySelector(".ds-tip-trigger");
+      let tooltip = null;
+      if (trigger) {
+        trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+        tooltip = prefixWrap.querySelector(".ds-tip-popup")?.classList.contains("show");
+      }
+      document.getElementById("dsAddConfirm").click();
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const listed = await fetch("/api/v1/data_sources")
+        .then((response) => response.json())
+        .then((data) => (data.data || []).find((row) => row.name === name));
+      let stored = null;
+      if (listed) {
+        stored = await fetch(`/api/v1/data_sources/${listed.id}`)
+          .then((response) => response.json())
+          .then((data) => data.data?.config?.credentials?.region ?? null);
+      }
+      return {
+        role,
+        suggestions,
+        tooltip,
+        id: listed?.id || null,
+        stored,
+        // Why a save failed, if it did.
+        error: listed ? null : document.getElementById("dsAddError").textContent,
+        closed: !document.getElementById("dsAddModal").classList.contains("show"),
+      };
+    },
+    `cdp-s3-${STAMP}`,
+  );
+  results.customRegion = customRegion;
+  step("custom region", customRegion);
+  if (customRegion.error) fail(customRegion.error);
+  if (customRegion.role !== "combobox") fail("the region field must be a combobox");
+  if (!customRegion.suggestions) fail("the combobox must suggest the AWS regions");
+  if (!customRegion.tooltip) fail("the Prefix tooltip must appear on hover");
+  if (customRegion.stored !== "ap-southeast-9") {
+    fail("the typed region must be stored, not silently replaced: " + customRegion.stored);
+  }
+  await page.evaluate(
+    async (id) => fetch(`/api/v1/data_sources/${id}`, { method: "DELETE" }),
+    customRegion.id,
+  );
+  step("s3 source removed", true);
+
   const removed = await page.evaluate(
     async (id) =>
       fetch(`/api/v1/data_sources/${id}`, { method: "DELETE" }).then((response) =>

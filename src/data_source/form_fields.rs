@@ -198,6 +198,10 @@ pub struct FormFieldSpec {
     pub tooltip_en: Option<String>,
     #[serde(default)]
     pub tooltip_zh: Option<String>,
+    /// Upstream `allowCustomValue`: the select accepts a value outside its list (the S3
+    /// region selector, so a region newer than the embedded AWS list can still be typed).
+    #[serde(default)]
+    pub allow_custom: bool,
     /// Upstream `customValidate` rules for this source's form.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validate: Vec<FormValidation>,
@@ -646,9 +650,27 @@ mod tests {
         assert_eq!(failures.len(), 1, "{failures:?}");
         assert_eq!(failures[0].0, "config.credentials.aws_role_arn");
         assert!(failures[0].1.contains("Role ARN"));
-        // The default (plain s3, no credentials) needs nothing beyond the bucket.
+        // The default (plain s3, no credentials) needs nothing beyond the bucket — and an
+        // untouched Mode control behaves the same, because upstream reads
+        // `config.bucket_type || 's3'`.
         assert!(
             validate_config("S3", &json!({"bucket_name": "b", "bucket_type": "s3"})).is_empty()
+        );
+        assert!(
+            validate_config("S3", &json!({"bucket_name": "b"})).is_empty(),
+            "an unset bucket_type must behave as plain s3"
+        );
+        // …but a key without a region is still refused for plain S3.
+        assert_eq!(
+            validate_config(
+                "S3",
+                &json!({"bucket_name": "b", "credentials": {"aws_access_key_id": "AKIA",
+                                                            "aws_secret_access_key": "s"}})
+            )
+            .iter()
+            .map(|(_, message)| message.as_str())
+            .collect::<Vec<_>>(),
+            vec!["Region is required when using access key"]
         );
 
         // Confluence and Bitbucket follow their index mode.
@@ -698,6 +720,78 @@ mod tests {
 
     /// The informational panels upstream renders with `render()` travel as schema data:
     /// the page draws them, and they follow the same conditions as the fields around them.
+    /// Every tooltip an upstream connector declares must reach the dialog, and the S3
+    /// region selector must accept a region the embedded list does not know.
+    #[test]
+    fn connector_tooltips_and_the_custom_region_selector_match_upstream() {
+        let seafile = fields_for("SEAFILE");
+        for name in [
+            "config.seafile_url",
+            "config.sync_scope",
+            "config.credentials.seafile_token",
+            "config.credentials.repo_token",
+            "config.repo_id",
+            "config.sync_path",
+            "config.include_shared",
+            "config.batch_size",
+        ] {
+            let field = seafile
+                .iter()
+                .find(|field| field.name == name)
+                .unwrap_or_else(|| panic!("{name} missing"));
+            assert!(
+                field
+                    .tooltip_en
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty()),
+                "{name} must carry its upstream tooltip"
+            );
+        }
+        // The two SeaFile panels' explanatory sentences live in the tooltips too.
+        assert!(
+            seafile
+                .iter()
+                .find(|field| field.name == "config.repo_id")
+                .and_then(|field| field.tooltip_en.as_deref())
+                .is_some_and(|text| text.contains("browser address bar"))
+        );
+        let s3 = fields_for("S3");
+        for name in [
+            "config.prefix",
+            "config.credentials.aws_role_arn",
+            "config.credentials.addressing_style",
+            "config.credentials.endpoint_url",
+        ] {
+            let field = s3.iter().find(|field| field.name == name).unwrap();
+            assert!(
+                field
+                    .tooltip_en
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty()),
+                "{name} must carry its upstream tooltip"
+            );
+        }
+        let region = s3
+            .iter()
+            .find(|field| field.name == "config.credentials.region")
+            .unwrap();
+        assert!(
+            region.allow_custom,
+            "the region selector accepts a value outside the embedded AWS list"
+        );
+        assert_eq!(region.options.len(), AWS_REGIONS.len());
+        // Only that one field opts in.
+        for field in &s3 {
+            if field.name != "config.credentials.region" {
+                assert!(
+                    !field.allow_custom,
+                    "{} must stay a plain select",
+                    field.name
+                );
+            }
+        }
+    }
+
     #[test]
     fn informational_panels_are_ordered_and_conditional() {
         let seafile = fields_for("SEAFILE");

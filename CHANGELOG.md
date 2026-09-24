@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.55] — 2026-09-24（对标批次 v0.3.9g）
+
+> 承接上一版：把五个连接器常量（SeaFile / S3 / Bitbucket / Confluence / Jira）**逐字段**与上游重新核对
+> 一遍，补齐漏掉的 tooltip 与一个真实的交互缺口（`allowCustomValue`），并把台账里这 5 行标为 `aligned`。
+
+### Added
+
+- **S3 地区选择器支持自定义值**（上游 `allowCustomValue: true`）：此前是写死的 35 项 `<select>`，
+  AWS 新地区只能等 RayRAG 更新列表。现在渲染为 combobox（`role=combobox`、`aria-autocomplete=list`、
+  隐藏的 `<datalist>` 提供 35 条建议、输入即自由文本），输入的新地区**原样入库**（真点验证
+  `ap-southeast-9` 保存后读回仍是它）。新增与详情两个对话框都支持；schema 用 `allow_custom` 标记，
+  目前仅 S3 地区使用（回归断言「只有它开了这个开关」）。
+- **补齐 9 条缺失的 tooltip**：S3 的 `prefix` / `Role ARN` / `addressing_style` / `endpoint_url`，
+  SeaFile 的 `seafile_token` / `repo_token` / `repo_id` / `sync_path` / `include_shared`。
+  文案取自上游 `locales/en.ts`（这些连接器键上游没有 zh 词条，中文界面同样回退英文，与上游 i18next
+  `fallbackLng` 行为一致），以悬停浮层呈现。
+
+### Fixed
+
+- **Segmented 控件不再自动选中第一项**：上游的 `Segmented` 没有默认值时保持未选中，RayRAG 之前会
+  默认选中第一项——S3 的 `bucket_type` 首项是 `s3_compatible`，于是「没动过模式」的用户会被判成
+  S3 兼容模式并索要 Access Key。现与上游一致地留空，并且规则里按上游 `config.bucket_type || 's3'`
+  的写法把未选中视为普通 S3（新增回归覆盖「未选模式 = 普通 s3」与「有 key 无地区仍然被拒」）。
+
+### Notes
+
+- 台账：五个连接器常量由 `partial` 升为 `aligned`（partial 44 行 → 44-5，aligned 277 → 282），
+  `--write` 刷新元数据、`--check` 通过（unmapped=0）。
+- 新增回归 2 条（tooltip/自定义值开关、未选模式的 S3 语义）；全量 `cargo test --locked --offline --lib`
+  **1636 passed / 0 failed / 27 ignored**。
+- CDP 真点（`scripts/ui-traversal/data-source-form-cdp.mjs`，本版扩展）：SeaFile 全流程照旧；
+  新增 S3 段——真点 S3 卡片 → 地区字段是 `role=combobox` 且带 35 条建议 → 悬停 `Prefix` 提示浮层显示 →
+  手输 `ap-southeast-9` → 保存后从 API 读回仍是 `ap-southeast-9` → 探针结束前删除该数据源。
+
 ## [0.4.54] — 2026-09-24（对标批次 v0.3.9f）
 
 > 对标 `pages/user-setting/data-source/constant/{seafile,bitbucket,confluence,jira,s3}-constant.tsx`

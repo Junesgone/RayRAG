@@ -1716,7 +1716,8 @@
           "when": [
             {
               "field": "config.bucket_type",
-              "equals": "s3"
+              "equals": "s3",
+              "default": "s3"
             },
             {
               "field": "config.credentials.aws_access_key_id",
@@ -1730,13 +1731,15 @@
           "field": "config.credentials.region",
           "message_en": "Region is required when using access key"
         }
-      ]
+      ],
+      "allow_custom": true
     },
     {
       "label": "Prefix",
       "name": "config.prefix",
       "type": "Text",
-      "required": false
+      "required": false,
+      "tooltip_en": "Specify the folder path within your S3 bucket to fetch files from.\nExample: general/v2/"
     },
     {
       "label": "Mode",
@@ -1774,7 +1777,8 @@
       "show_when": [
         {
           "field": "config.bucket_type",
-          "equals": "s3"
+          "equals": "s3",
+          "default": "s3"
         }
       ]
     },
@@ -1789,7 +1793,8 @@
         },
         {
           "field": "config.bucket_type",
-          "equals": "s3_compatible"
+          "equals": "s3_compatible",
+          "default": "s3"
         }
       ],
       "validate": [
@@ -1805,7 +1810,8 @@
             [
               {
                 "field": "config.bucket_type",
-                "equals": "s3_compatible"
+                "equals": "s3_compatible",
+                "default": "s3"
               }
             ]
           ],
@@ -1826,7 +1832,8 @@
         },
         {
           "field": "config.bucket_type",
-          "equals": "s3_compatible"
+          "equals": "s3_compatible",
+          "default": "s3"
         }
       ],
       "validate": [
@@ -1842,7 +1849,8 @@
             [
               {
                 "field": "config.bucket_type",
-                "equals": "s3_compatible"
+                "equals": "s3_compatible",
+                "default": "s3"
               }
             ]
           ],
@@ -1866,7 +1874,8 @@
       "show_when_all": [
         {
           "field": "config.bucket_type",
-          "equals": "s3"
+          "equals": "s3",
+          "default": "s3"
         }
       ],
       "validate": [
@@ -1878,14 +1887,16 @@
             },
             {
               "field": "config.bucket_type",
-              "equals": "s3"
+              "equals": "s3",
+              "default": "s3"
             }
           ],
           "require": "nonempty",
           "field": "config.credentials.aws_role_arn",
           "message_en": "Role ARN is required when using an IAM role"
         }
-      ]
+      ],
+      "tooltip_en": "The role will be assumed by the runtime environment."
     },
     {
       "label": " ",
@@ -1899,7 +1910,8 @@
         },
         {
           "field": "config.bucket_type",
-          "equals": "s3"
+          "equals": "s3",
+          "default": "s3"
         }
       ]
     },
@@ -1922,9 +1934,11 @@
       "show_when": [
         {
           "field": "config.bucket_type",
-          "equals": "s3_compatible"
+          "equals": "s3_compatible",
+          "default": "s3"
         }
-      ]
+      ],
+      "tooltip_en": "Required for S3 compatible Storage Box. Specify the S3-compatible addressing style.\nExample: Virtual Hosted Style"
     },
     {
       "label": "Endpoint URL",
@@ -1935,9 +1949,11 @@
       "show_when": [
         {
           "field": "config.bucket_type",
-          "equals": "s3_compatible"
+          "equals": "s3_compatible",
+          "default": "s3"
         }
-      ]
+      ],
+      "tooltip_en": "Required for S3 compatible Storage Box. Specify the S3-compatible endpoint URL.\nExample: https://fsn1.your-objectstorage.com"
     }
   ],
   "SALESFORCE": [
@@ -2066,7 +2082,8 @@
           "field": "config.credentials.seafile_token",
           "message_en": "Account API Token is required for Entire Account scope"
         }
-      ]
+      ],
+      "tooltip_en": "Your account-level SeaFile API token. Grants access to all libraries visible to your account. Required when sync scope is \"Entire Account\". For \"Single Library\" or \"Specific Directory\" you can use this token or a Library API Token instead."
     },
     {
       "label": "Include Shared Libraries",
@@ -2079,7 +2096,8 @@
           "equals": "account"
         }
       ],
-      "default_value": "true"
+      "default_value": "true",
+      "tooltip_en": "When enabled, libraries that other users have shared with you are included in the synchronisation. When disabled, only libraries owned by your account are synchronised. Only applies when sync scope is \"Entire Account\"."
     },
     {
       "label": " ",
@@ -2132,7 +2150,8 @@
           ],
           "message_en": "Provide either an Account API Token or a Library Token"
         }
-      ]
+      ],
+      "tooltip_en": "A library-scoped API token that only grants access to one specific library. Can be used instead of the Account API Token for \"Single Library\" and \"Specific Directory\" sync scopes."
     },
     {
       "label": "Library ID",
@@ -2166,7 +2185,8 @@
           "field": "config.repo_id",
           "message_en": "Library ID is required"
         }
-      ]
+      ],
+      "tooltip_en": "The unique identifier (UUID) of the SeaFile library you want to synchronise. You can find it in your browser address bar when you open the library in the SeaFile web interface. Example: 7a9e1b3c-4d5f-6a7b-8c9d-0e1f2a3b4c5d. Required when sync scope is \"Single Library\" or \"Specific Directory\"."
     },
     {
       "label": "Directory Path",
@@ -2193,7 +2213,8 @@
           "field": "config.sync_path",
           "message_en": "Directory Path is required"
         }
-      ]
+      ],
+      "tooltip_en": "The absolute path of the folder to synchronise within the library specified by the Library ID above. Must start with a forward slash. All files and subfolders under this path will be included recursively. Example: /Documents/Reports. Important: The folder must exist inside the specified library. Paths outside the library are not supported. Only used when sync scope is \"Specific Directory\"."
     },
     {
       "label": "Batch Size",
