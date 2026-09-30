@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.56] — 2026-09-30（对标批次 v0.3.10a）
+
+> 本轮把对标基线从 RAGFlow **v0.26.4** 升级到 **v0.27.2**（tag 提交 `a024bea0cd93`），
+> 覆盖率门禁获得一次性基线迁移能力：旧台账 4441 行 → 新台账 5977 行。
+
+### Added
+
+- **对标基线升级到 RAGFlow v0.27.2**（固定提交 `a024bea0cd93f39e6652a42bf84dd20c55bc560b`）：
+  上游新增 1845 个文件、删除 309 个，4132 个既有文件中 2222 个内容发生变化。新台账
+  `docs/ragflow-v0.27.2-coverage.md`（v0.26.4 台账归档保留）。
+- **覆盖率门禁支持 `--migrate`**：按路径继承旧状态；内容变化且已审计的行标注
+  `[v0.27.2 content changed: re-audit]`（本轮 515 行）；上游新增文件按既有引用规则归档
+  （内部 Go / 测试 / 文档 / 仓库自动化，共 1353 个），其余 492 个产品文件标为 `unmapped`
+  等待逐文件审计；同时生成增量清单 `docs/ragflow-v0.27.2-delta.md`。
+- 重新生成逐文件工作清单（Python/TS/TSX 共 2722 个源文件）与文件指纹清单（5976 个文件）。
+
+### Notes
+
+- 门禁复核：`--check` 通过（5977 文件；`unmapped=492` 是下一阶段对标队列）；工具单测 6/6。
+- 全量 `cargo test --locked --offline --lib` **1636 passed / 0 failed / 27 ignored**。
+- 工作树内的 clippy 建议清理（needless borrow / `Ok(..?)` / 可折叠 if-let 等，15 个文件，
+  行为等价）已并入本轮验证；`cargo fmt` 干净。
+
 ## [0.4.55] — 2026-09-24（对标批次 v0.3.9g）
 
 > 承接上一版：把五个连接器常量（SeaFile / S3 / Bitbucket / Confluence / Jira）**逐字段**与上游重新核对

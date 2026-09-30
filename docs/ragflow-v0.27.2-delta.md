@@ -1,0 +1,1338 @@
+# RAGFlow v0.27.2 Baseline Delta (from RAGFlow v0.26.4)
+
+Generated once by `ragflow-coverage --migrate`; internal engineering material, excluded from the published snapshot.
+
+## Counts
+
+- Files in the RAGFlow v0.26.4 ledger: 4441
+- Files in the v0.27.2 tree: 5977
+- Added: 1845
+- Removed: 309
+- Content changed: 2222
+- Re-audit queue (audited rows changed upstream): 515
+
+## Re-audit queue
+
+- `Dockerfile` — previous status: `replaced`
+- `Dockerfile_deepdoc_oss` — previous status: `replaced`
+- `admin/client/parser.py` — previous status: `full`
+- `admin/client/ragflow_client.py` — previous status: `full`
+- `admin/server/admin_server.py` — previous status: `full`
+- `admin/server/auth.py` — previous status: `full`
+- `admin/server/config.py` — previous status: `full`
+- `admin/server/routes.py` — previous status: `full`
+- `admin/server/services.py` — previous status: `full`
+- `agent/canvas.py` — previous status: `full`
+- `agent/component/agent_with_tools.py` — previous status: `full`
+- `agent/component/base.py` — previous status: `full`
+- `agent/component/begin.py` — previous status: `full`
+- `agent/component/browser.py` — previous status: `full`
+- `agent/component/categorize.py` — previous status: `aligned`
+- `agent/component/docs_generator.py` — previous status: `full`
+- `agent/component/excel_processor.py` — previous status: `full`
+- `agent/component/fillup.py` — previous status: `full`
+- `agent/component/invoke.py` — previous status: `full`
+- `agent/component/iteration.py` — previous status: `full`
+- `agent/component/list_operations.py` — previous status: `aligned`
+- `agent/component/llm.py` — previous status: `full`
+- `agent/component/message.py` — previous status: `full`
+- `agent/component/string_transform.py` — previous status: `full`
+- `agent/component/variable_aggregator.py` — previous status: `aligned`
+- `agent/sandbox/client.py` — previous status: `full`
+- `agent/sandbox/executor_manager/api/handlers.py` — previous status: `full`
+- `agent/sandbox/executor_manager/api/routes.py` — previous status: `full`
+- `agent/sandbox/executor_manager/core/config.py` — previous status: `full`
+- `agent/sandbox/executor_manager/core/container.py` — previous status: `full`
+- `agent/sandbox/executor_manager/services/execution.py` — previous status: `full`
+- `agent/sandbox/executor_manager/services/limiter.py` — previous status: `full`
+- `agent/sandbox/providers/__init__.py` — previous status: `full`
+- `agent/sandbox/providers/base.py` — previous status: `full`
+- `agent/sandbox/providers/self_managed.py` — previous status: `full`
+- `agent/templates/advanced_ingestion_pipeline.json` — previous status: `full`
+- `agent/templates/cajal_scientific_paper_agent.json` — previous status: `full`
+- `agent/templates/chunk_summary.json` — previous status: `full`
+- `agent/templates/customer_feedback_dispatcher.json` — previous status: `full`
+- `agent/templates/deep_research.json` — previous status: `full`
+- `agent/templates/market_seo_article_writer.json` — previous status: `full`
+- `agent/templates/reflective_academic_paper_generator.json` — previous status: `full`
+- `agent/templates/seo_article_writer.json` — previous status: `full`
+- `agent/templates/smart_customer_service_specialist.json` — previous status: `full`
+- `agent/templates/stock_market_research_assistant.json` — previous status: `full`
+- `agent/templates/text2sql_data_expert.json` — previous status: `full`
+- `agent/templates/title_chunker.json` — previous status: `full`
+- `agent/templates/trip_planner.json` — previous status: `full`
+- `agent/templates/user_interaction.json` — previous status: `full`
+- `agent/templates/web_search_assistant.json` — previous status: `full`
+- `agent/templates/your_starter_dataset_chatbot.json` — previous status: `full`
+- `agent/tools/base.py` — previous status: `full`
+- `agent/tools/code_exec.py` — previous status: `full`
+- `agent/tools/deepl.py` — previous status: `full`
+- `agent/tools/duckduckgo.py` — previous status: `full`
+- `agent/tools/email.py` — previous status: `full`
+- `agent/tools/exesql.py` — previous status: `full`
+- `agent/tools/github.py` — previous status: `full`
+- `agent/tools/google.py` — previous status: `full`
+- `agent/tools/keenable.py` — previous status: `full`
+- `agent/tools/qweather.py` — previous status: `full`
+- `agent/tools/retrieval.py` — previous status: `full`
+- `api/apps/auth/README.md` — previous status: `aligned`
+- `api/apps/auth/oidc.py` — previous status: `aligned`
+- `api/apps/backward_compat.py` — previous status: `aligned`
+- `api/apps/restful_apis/_generation_params.py` — previous status: `aligned`
+- `api/apps/restful_apis/agent_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/bot_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/chat_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/chat_channel_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/chunk_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/compilation_template_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/compilation_template_group_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/connector_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/dataset_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/dify_retrieval_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/document_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/file2document_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/file_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/file_commit_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/mcp_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/memory_api.py` — previous status: `full`
+- `api/apps/restful_apis/models_api.py` — previous status: `full`
+- `api/apps/restful_apis/openai_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/provider_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/search_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/system_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/tenant_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/user_api.py` — previous status: `aligned`
+- `api/apps/restful_apis/utils/compilation_template_validation.py` — previous status: `aligned`
+- `api/apps/services/dataset_api_service.py` — previous status: `aligned`
+- `api/apps/services/document_api_service.py` — previous status: `aligned`
+- `api/apps/services/file_api_service.py` — previous status: `aligned`
+- `api/apps/services/memory_api_service.py` — previous status: `full`
+- `api/apps/services/models_api_service.py` — previous status: `full`
+- `api/apps/services/provider_api_service.py` — previous status: `aligned`
+- `api/channels/bootstrap.py` — previous status: `full`
+- `api/db/__init__.py` — previous status: `aligned`
+- `api/db/db_models.py` — previous status: `replaced`
+- `api/db/db_utils.py` — previous status: `replaced`
+- `api/db/init_data.py` — previous status: `full`
+- `api/db/init_data/compilation_templates/knowledge_graph.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/mind_map.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/page_index.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/session_essence.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/session_graph.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/timeline.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/tree.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki/brand.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki/engineering.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki/general.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki/market.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki/product.yaml` — previous status: `aligned`
+- `api/db/init_data/compilation_templates/wiki/user_interview.yaml` — previous status: `aligned`
+- `api/db/joint_services/memory_message_service.py` — previous status: `full`
+- `api/db/joint_services/tenant_model_service.py` — previous status: `full`
+- `api/db/joint_services/user_account_service.py` — previous status: `full`
+- `api/db/services/api_service.py` — previous status: `aligned`
+- `api/db/services/canvas_service.py` — previous status: `full`
+- `api/db/services/chat_channel_service.py` — previous status: `full`
+- `api/db/services/common_service.py` — previous status: `replaced`
+- `api/db/services/compilation_template_group_service.py` — previous status: `aligned`
+- `api/db/services/compilation_template_service.py` — previous status: `aligned`
+- `api/db/services/connector_service.py` — previous status: `full`
+- `api/db/services/conversation_service.py` — previous status: `aligned`
+- `api/db/services/dialog_service.py` — previous status: `full`
+- `api/db/services/doc_metadata_service.py` — previous status: `aligned`
+- `api/db/services/document_service.py` — previous status: `aligned`
+- `api/db/services/file_commit_service.py` — previous status: `replaced`
+- `api/db/services/file_service.py` — previous status: `aligned`
+- `api/db/services/knowledgebase_service.py` — previous status: `aligned`
+- `api/db/services/llm_service.py` — previous status: `aligned`
+- `api/db/services/memory_service.py` — previous status: `full`
+- `api/db/services/pipeline_operation_log_service.py` — previous status: `aligned`
+- `api/db/services/task_service.py` — previous status: `full`
+- `api/db/services/tenant_llm_service.py` — previous status: `aligned`
+- `api/db/services/tenant_model_service.py` — previous status: `aligned`
+- `api/db/services/user_canvas_version.py` — previous status: `aligned`
+- `api/db/services/user_service.py` — previous status: `aligned`
+- `api/ragflow_server.py` — previous status: `aligned`
+- `api/utils/api_utils.py` — previous status: `full`
+- `api/utils/common.py` — previous status: `full`
+- `api/utils/crypt.py` — previous status: `full`
+- `api/utils/file_response.py` — previous status: `full`
+- `api/utils/file_utils.py` — previous status: `full`
+- `api/utils/health_utils.py` — previous status: `full`
+- `api/utils/pagination_utils.py` — previous status: `full`
+- `api/utils/validation_utils.py` — previous status: `full`
+- `api/utils/web_utils.py` — previous status: `full`
+- `api/validation.py` — previous status: `full`
+- `build.sh` — previous status: `replaced`
+- `common/config_utils.py` — previous status: `full`
+- `common/constants.py` — previous status: `full`
+- `common/data_source/__init__.py` — previous status: `full`
+- `common/data_source/airtable_connector.py` — previous status: `full`
+- `common/data_source/asana_connector.py` — previous status: `full`
+- `common/data_source/azure_blob_connector.py` — previous status: `full`
+- `common/data_source/bigquery_connector.py` — previous status: `full`
+- `common/data_source/bitbucket/connector.py` — previous status: `full`
+- `common/data_source/blob_connector.py` — previous status: `full`
+- `common/data_source/box_connector.py` — previous status: `full`
+- `common/data_source/config.py` — previous status: `full`
+- `common/data_source/confluence_connector.py` — previous status: `full`
+- `common/data_source/connector_runner.py` — previous status: `full`
+- `common/data_source/dingtalk_ai_table_connector.py` — previous status: `full`
+- `common/data_source/discord_connector.py` — previous status: `full`
+- `common/data_source/dropbox_connector.py` — previous status: `full`
+- `common/data_source/github/connector.py` — previous status: `full`
+- `common/data_source/gitlab_connector.py` — previous status: `full`
+- `common/data_source/gmail_connector.py` — previous status: `full`
+- `common/data_source/google_drive/connector.py` — previous status: `full`
+- `common/data_source/html_utils.py` — previous status: `full`
+- `common/data_source/imap_connector.py` — previous status: `full`
+- `common/data_source/interfaces.py` — previous status: `full`
+- `common/data_source/jira/connector.py` — previous status: `full`
+- `common/data_source/moodle_connector.py` — previous status: `full`
+- `common/data_source/notion_connector.py` — previous status: `full`
+- `common/data_source/onedrive_connector.py` — previous status: `full`
+- `common/data_source/outlook_connector.py` — previous status: `full`
+- `common/data_source/rdbms_connector.py` — previous status: `full`
+- `common/data_source/rest_api_connector.py` — previous status: `full`
+- `common/data_source/rss_connector.py` — previous status: `full`
+- `common/data_source/salesforce_connector.py` — previous status: `full`
+- `common/data_source/seafile_connector.py` — previous status: `full`
+- `common/data_source/sharepoint_connector.py` — previous status: `full`
+- `common/data_source/slack_connector.py` — previous status: `full`
+- `common/data_source/teams_connector.py` — previous status: `full`
+- `common/data_source/webdav_connector.py` — previous status: `full`
+- `common/data_source/zendesk_connector.py` — previous status: `full`
+- `common/doc_store/doc_store_base.py` — previous status: `full`
+- `common/doc_store/es_conn_base.py` — previous status: `full`
+- `common/doc_store/es_conn_pool.py` — previous status: `full`
+- `common/doc_store/infinity_conn_base.py` — previous status: `full`
+- `common/doc_store/infinity_conn_pool.py` — previous status: `full`
+- `common/doc_store/ob_conn_pool.py` — previous status: `full`
+- `common/float_utils.py` — previous status: `full`
+- `common/llm_request_context.py` — previous status: `full`
+- `common/mcp_tool_call_conn.py` — previous status: `full`
+- `common/metadata_infinity_filter.py` — previous status: `full`
+- `common/metadata_utils.py` — previous status: `full`
+- `common/misc_utils.py` — previous status: `full`
+- `common/parser_config_utils.py` — previous status: `full`
+- `common/settings.py` — previous status: `full`
+- `common/time_utils.py` — previous status: `full`
+- `common/token_utils.py` — previous status: `full`
+- `conf/all_models.json` — previous status: `full`
+- `conf/infinity_mapping.json` — previous status: `full`
+- `conf/llm_factories.json` — previous status: `full`
+- `conf/models/302ai.json` — previous status: `full`
+- `conf/models/aliyun.json` — previous status: `full`
+- `conf/models/anthropic.json` — previous status: `full`
+- `conf/models/astraflow.json` — previous status: `full`
+- `conf/models/avian.json` — previous status: `full`
+- `conf/models/baichuan.json` — previous status: `full`
+- `conf/models/baidu.json` — previous status: `full`
+- `conf/models/bedrock.json` — previous status: `full`
+- `conf/models/cohere.json` — previous status: `full`
+- `conf/models/cometapi.json` — previous status: `full`
+- `conf/models/deepinfra.json` — previous status: `full`
+- `conf/models/deepseek.json` — previous status: `full`
+- `conf/models/fishaudio.json` — previous status: `full`
+- `conf/models/futurmix.json` — previous status: `full`
+- `conf/models/gitee.json` — previous status: `full`
+- `conf/models/google.json` — previous status: `full`
+- `conf/models/groq.json` — previous status: `full`
+- `conf/models/huaweicloud.json` — previous status: `full`
+- `conf/models/huggingface.json` — previous status: `full`
+- `conf/models/hunyuan.json` — previous status: `full`
+- `conf/models/jiekouai.json` — previous status: `full`
+- `conf/models/jina.json` — previous status: `full`
+- `conf/models/lmstudio.json` — previous status: `full`
+- `conf/models/localai.json` — previous status: `full`
+- `conf/models/longcat.json` — previous status: `full`
+- `conf/models/mineru.json` — previous status: `full`
+- `conf/models/mineru_local.json` — previous status: `full`
+- `conf/models/minimax.json` — previous status: `full`
+- `conf/models/mistral.json` — previous status: `full`
+- `conf/models/modelscope.json` — previous status: `full`
+- `conf/models/moonshot.json` — previous status: `full`
+- `conf/models/n1n.json` — previous status: `full`
+- `conf/models/novita.json` — previous status: `full`
+- `conf/models/nvidia.json` — previous status: `full`
+- `conf/models/ollama.json` — previous status: `full`
+- `conf/models/openai.json` — previous status: `full`
+- `conf/models/openrouter.json` — previous status: `full`
+- `conf/models/orcarouter.json` — previous status: `full`
+- `conf/models/paddleocr.json` — previous status: `full`
+- `conf/models/paddleocr_local.json` — previous status: `full`
+- `conf/models/perplexity.json` — previous status: `full`
+- `conf/models/ppio.json` — previous status: `full`
+- `conf/models/qiniu.json` — previous status: `full`
+- `conf/models/replicate.json` — previous status: `full`
+- `conf/models/siliconflow.json` — previous status: `full`
+- `conf/models/stepfun.json` — previous status: `full`
+- `conf/models/togetherai.json` — previous status: `full`
+- `conf/models/tokenhub.json` — previous status: `full`
+- `conf/models/tokenpony.json` — previous status: `full`
+- `conf/models/upstage.json` — previous status: `full`
+- `conf/models/vllm.json` — previous status: `full`
+- `conf/models/volcengine.json` — previous status: `full`
+- `conf/models/voyage.json` — previous status: `full`
+- `conf/models/xai.json` — previous status: `full`
+- `conf/models/xiaomi.json` — previous status: `full`
+- `conf/models/xinference.json` — previous status: `full`
+- `conf/models/xunfei.json` — previous status: `full`
+- `conf/models/zhipu-ai.json` — previous status: `full`
+- `conf/service_conf.yaml` — previous status: `full`
+- `conf/system_settings.json` — previous status: `aligned`
+- `deepdoc/parser/docling_parser.py` — previous status: `full`
+- `deepdoc/parser/excel_parser.py` — previous status: `aligned`
+- `deepdoc/parser/figure_parser.py` — previous status: `aligned`
+- `deepdoc/parser/html_parser.py` — previous status: `aligned`
+- `deepdoc/parser/json_parser.py` — previous status: `aligned`
+- `deepdoc/parser/markdown_parser.py` — previous status: `aligned`
+- `deepdoc/parser/mineru_parser.py` — previous status: `full`
+- `deepdoc/parser/opendataloader_parser.py` — previous status: `full`
+- `deepdoc/parser/paddleocr_parser.py` — previous status: `full`
+- `deepdoc/parser/pdf_parser.py` — previous status: `full`
+- `deepdoc/parser/somark_parser.py` — previous status: `full`
+- `deepdoc/parser/tcadp_parser.py` — previous status: `full`
+- `deepdoc/parser/txt_parser.py` — previous status: `aligned`
+- `deepdoc/parser/utils.py` — previous status: `full`
+- `deepdoc/vision/layout_recognizer.py` — previous status: `aligned`
+- `deepdoc/vision/ocr.py` — previous status: `aligned`
+- `deepdoc/vision/operators.py` — previous status: `aligned`
+- `deepdoc/vision/recognizer.py` — previous status: `aligned`
+- `docker/.env` — previous status: `replaced`
+- `docker/README.md` — previous status: `replaced`
+- `docker/docker-compose-CN-oc9.yml` — previous status: `replaced`
+- `docker/docker-compose-base.yml` — previous status: `replaced`
+- `docker/docker-compose-macos.yml` — previous status: `replaced`
+- `docker/docker-compose.yml` — previous status: `replaced`
+- `docker/entrypoint.sh` — previous status: `replaced`
+- `docker/infinity_conf.toml` — previous status: `replaced`
+- `docker/launch_backend_service.sh` — previous status: `replaced`
+- `docker/migration.sh` — previous status: `replaced`
+- `docker/nginx/ragflow.conf.golang` — previous status: `replaced`
+- `docker/nginx/ragflow.conf.hybrid` — previous status: `replaced`
+- `docker/nginx/ragflow.conf.python` — previous status: `replaced`
+- `docker/service_conf.yaml.template` — previous status: `replaced`
+- `go.mod` — previous status: `replaced`
+- `go.sum` — previous status: `replaced`
+- `helm/values.yaml` — previous status: `replaced`
+- `internal/agent/canvas/cancel.go` — previous status: `replaced`
+- `internal/agent/canvas/canvas.go` — previous status: `replaced`
+- `internal/agent/canvas/stream.go` — previous status: `replaced`
+- `internal/agent/component/data_operations.go` — previous status: `aligned`
+- `internal/agent/component/io/markdown_writer.go` — previous status: `aligned`
+- `internal/agent/component/io/txt_writer.go` — previous status: `aligned`
+- `internal/agent/component/list_operations.go` — previous status: `aligned`
+- `internal/agent/component/string_transform.go` — previous status: `aligned`
+- `internal/agent/component/switch.go` — previous status: `aligned`
+- `internal/agent/dsl/errors.go` — previous status: `replaced`
+- `internal/agent/dsl/extract.go` — previous status: `aligned`
+- `internal/agent/dsl/normalize.go` — previous status: `aligned`
+- `internal/agent/dsl/reset.go` — previous status: `aligned`
+- `internal/agent/runtime/component.go` — previous status: `replaced`
+- `internal/agent/runtime/context.go` — previous status: `replaced`
+- `internal/agent/runtime/helpers.go` — previous status: `aligned`
+- `internal/agent/runtime/state.go` — previous status: `replaced`
+- `internal/agent/runtime/template.go` — previous status: `aligned`
+- `internal/handler/chat_recommendation.go` — previous status: `aligned`
+- `internal/service/related_question.go` — previous status: `aligned`
+- `mcp/server/server.py` — previous status: `full`
+- `memory/services/messages.py` — previous status: `full`
+- `memory/utils/es_conn.py` — previous status: `full`
+- `memory/utils/infinity_conn.py` — previous status: `full`
+- `memory/utils/prompt_util.py` — previous status: `full`
+- `pyproject.toml` — previous status: `replaced`
+- `rag/advanced_rag/__init__.py` — previous status: `full`
+- `rag/advanced_rag/knowlege_compile/_common.py` — previous status: `full`
+- `rag/advanced_rag/knowlege_compile/dataset_nav.py` — previous status: `full`
+- `rag/advanced_rag/knowlege_compile/raptor.py` — previous status: `full`
+- `rag/advanced_rag/knowlege_compile/structure.py` — previous status: `full`
+- `rag/advanced_rag/knowlege_compile/wiki.py` — previous status: `full`
+- `rag/app/audio.py` — previous status: `full`
+- `rag/app/book.py` — previous status: `full`
+- `rag/app/email.py` — previous status: `full`
+- `rag/app/laws.py` — previous status: `full`
+- `rag/app/manual.py` — previous status: `full`
+- `rag/app/naive.py` — previous status: `full`
+- `rag/app/one.py` — previous status: `full`
+- `rag/app/paper.py` — previous status: `full`
+- `rag/app/picture.py` — previous status: `full`
+- `rag/app/presentation.py` — previous status: `aligned`
+- `rag/app/qa.py` — previous status: `full`
+- `rag/app/resume.py` — previous status: `aligned`
+- `rag/app/table.py` — previous status: `aligned`
+- `rag/app/tag.py` — previous status: `full`
+- `rag/benchmark.py` — previous status: `full`
+- `rag/flow/chunker/title_chunker/common.py` — previous status: `full`
+- `rag/flow/chunker/title_chunker/group_chunker.py` — previous status: `full`
+- `rag/flow/chunker/token_chunker.py` — previous status: `full`
+- `rag/flow/extractor/extractor.py` — previous status: `full`
+- `rag/flow/parser/parser.py` — previous status: `full`
+- `rag/flow/parser/pdf_chunk_metadata.py` — previous status: `full`
+- `rag/flow/parser/utils.py` — previous status: `full`
+- `rag/flow/pipeline.py` — previous status: `full`
+- `rag/flow/tokenizer/tokenizer.py` — previous status: `full`
+- `rag/graphrag/entity_resolution.py` — previous status: `full`
+- `rag/graphrag/general/smoke.py` — previous status: `full`
+- `rag/graphrag/light/smoke.py` — previous status: `full`
+- `rag/graphrag/search.py` — previous status: `full`
+- `rag/llm/__init__.py` — previous status: `full`
+- `rag/llm/chat_model.py` — previous status: `full`
+- `rag/llm/cv_model.py` — previous status: `full`
+- `rag/llm/embedding_model.py` — previous status: `full`
+- `rag/llm/key_utils.py` — previous status: `aligned`
+- `rag/llm/model_meta.py` — previous status: `full`
+- `rag/llm/ocr_model.py` — previous status: `full`
+- `rag/llm/rerank_model.py` — previous status: `full`
+- `rag/llm/sequence2txt_model.py` — previous status: `full`
+- `rag/llm/tool_decorator.py` — previous status: `full`
+- `rag/llm/tts_model.py` — previous status: `full`
+- `rag/nlp/__init__.py` — previous status: `full`
+- `rag/nlp/query.py` — previous status: `full`
+- `rag/nlp/search.py` — previous status: `full`
+- `rag/nlp/term_weight.py` — previous status: `full`
+- `rag/prompts/ask_summary.md` — previous status: `full`
+- `rag/prompts/cross_languages_sys_prompt.md` — previous status: `full`
+- `rag/prompts/generator.py` — previous status: `full`
+- `rag/prompts/vision_llm_figure_describe_prompt.md` — previous status: `full`
+- `rag/prompts/vision_llm_figure_describe_prompt_with_context.md` — previous status: `full`
+- `rag/svr/sync_data_source.py` — previous status: `full`
+- `rag/svr/task_executor.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/chunk_builder.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/chunk_post_processor.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/chunk_service.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/dataflow_service.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/dataset_skill_generator.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/dataset_wiki_generator.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/embedding_utils.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/raptor_service.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/task_context.py` — previous status: `full`
+- `rag/svr/task_executor_refactor/task_handler.py` — previous status: `full`
+- `rag/utils/azure_sas_conn.py` — previous status: `replaced`
+- `rag/utils/azure_spn_conn.py` — previous status: `replaced`
+- `rag/utils/es_conn.py` — previous status: `replaced`
+- `rag/utils/file_utils.py` — previous status: `replaced`
+- `rag/utils/infinity_conn.py` — previous status: `replaced`
+- `rag/utils/ob_conn.py` — previous status: `replaced`
+- `rag/utils/opensearch_conn.py` — previous status: `replaced`
+- `rag/utils/raptor_utils.py` — previous status: `replaced`
+- `rag/utils/redis_conn.py` — previous status: `replaced`
+- `rag/utils/s3_conn.py` — previous status: `replaced`
+- `rag/utils/table_es_metadata.py` — previous status: `replaced`
+- `rag/utils/tavily_conn.py` — previous status: `replaced`
+- `uv.lock` — previous status: `replaced`
+- `web/src/components/confirm-delete-dialog.tsx` — previous status: `aligned`
+- `web/src/components/model-tree-select.tsx` — previous status: `partial`
+- `web/src/components/tree-select.tsx` — previous status: `partial`
+- `web/src/layouts/components/global-navbar.tsx` — previous status: `aligned`
+- `web/src/pages/admin/sandbox-settings.tsx` — previous status: `partial`
+- `web/src/pages/admin/user-detail.tsx` — previous status: `partial`
+- `web/src/pages/admin/users.tsx` — previous status: `partial`
+- `web/src/pages/agents/agent-card.tsx` — previous status: `aligned`
+- `web/src/pages/agents/agent-log-page.tsx` — previous status: `aligned`
+- `web/src/pages/agents/agent-tag-editor.tsx` — previous status: `aligned`
+- `web/src/pages/agents/agent-templates.tsx` — previous status: `aligned`
+- `web/src/pages/agents/constant.ts` — previous status: `aligned`
+- `web/src/pages/agents/create-agent-dialog.tsx` — previous status: `aligned`
+- `web/src/pages/agents/create-agent-form.tsx` — previous status: `aligned`
+- `web/src/pages/agents/hooks/use-export-agent-log.ts` — previous status: `aligned`
+- `web/src/pages/agents/hooks/use-select-filters.ts` — previous status: `aligned`
+- `web/src/pages/agents/index.tsx` — previous status: `aligned`
+- `web/src/pages/agents/template-card.tsx` — previous status: `aligned`
+- `web/src/pages/agents/template-sidebar.tsx` — previous status: `aligned`
+- `web/src/pages/agents/upload-agent-dialog/upload-agent-form.tsx` — previous status: `aligned`
+- `web/src/pages/agents/use-import-json.ts` — previous status: `aligned`
+- `web/src/pages/dataset/testing/testing-form.tsx` — previous status: `partial`
+- `web/src/pages/datasets/dataset-creating-dialog.tsx` — previous status: `aligned`
+- `web/src/pages/datasets/hooks.ts` — previous status: `aligned`
+- `web/src/pages/datasets/index.tsx` — previous status: `aligned`
+- `web/src/pages/datasets/use-select-owners.ts` — previous status: `aligned`
+- `web/src/pages/files/action-cell.tsx` — previous status: `aligned`
+- `web/src/pages/files/create-folder-dialog/create-folder-form.tsx` — previous status: `aligned`
+- `web/src/pages/files/files-table.tsx` — previous status: `aligned`
+- `web/src/pages/files/hooks.ts` — previous status: `aligned`
+- `web/src/pages/files/index.tsx` — previous status: `aligned`
+- `web/src/pages/files/link-to-dataset-dialog.tsx` — previous status: `aligned`
+- `web/src/pages/files/move-dialog.tsx` — previous status: `aligned`
+- `web/src/pages/home/agent-list.tsx` — previous status: `aligned`
+- `web/src/pages/home/applications.tsx` — previous status: `aligned`
+- `web/src/pages/home/datasets.tsx` — previous status: `aligned`
+- `web/src/pages/login-next/index.tsx` — previous status: `partial`
+- `web/src/pages/memories/constants/index.tsx` — previous status: `aligned`
+- `web/src/pages/memories/hooks.ts` — previous status: `aligned`
+- `web/src/pages/memories/index.tsx` — previous status: `aligned`
+- `web/src/pages/memories/memory-card.tsx` — previous status: `aligned`
+- `web/src/pages/memory/memory-message/hook.ts` — previous status: `aligned`
+- `web/src/pages/memory/memory-message/message-table.tsx` — previous status: `aligned`
+- `web/src/pages/memory/memory-setting/advanced-settings-form.tsx` — previous status: `aligned`
+- `web/src/pages/memory/memory-setting/basic-form.tsx` — previous status: `aligned`
+- `web/src/pages/memory/memory-setting/index.tsx` — previous status: `aligned`
+- `web/src/pages/memory/memory-setting/memory-model-form.tsx` — previous status: `aligned`
+- `web/src/pages/memory/sidebar/index.tsx` — previous status: `aligned`
+- `web/src/pages/next-chats/index.tsx` — previous status: `aligned`
+- `web/src/pages/next-search/hooks.ts` — previous status: `partial`
+- `web/src/pages/next-search/search-setting.tsx` — previous status: `partial`
+- `web/src/pages/next-search/search-view.tsx` — previous status: `partial`
+- `web/src/pages/next-searches/index.tsx` — previous status: `aligned`
+- `web/src/pages/next-searches/search-card.tsx` — previous status: `aligned`
+- `web/src/pages/next-searches/search-dropdown.tsx` — previous status: `aligned`
+- `web/src/pages/skills/components/search-config-modal.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/chat-channel/add-channel-modal.tsx` — previous status: `full`
+- `web/src/pages/user-setting/chat-channel/component/added-channel-card.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/chat-channel/component/delete-channel-modal.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/chat-channel/constant/index.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/chat-channel/hooks.ts` — previous status: `aligned`
+- `web/src/pages/user-setting/chat-channel/index.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/add-datasource-modal.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/component/added-source-card.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/component/box-token-field.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/data-source/component/delete-source-modal.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/component/gmail-token-field.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/data-source/component/google-drive-token-field.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/constant/bitbucket-constant.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/constant/confluence-constant.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/constant/index.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/constant/jira-constant.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/constant/s3-constant.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/constant/seafile-constant.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/data-source-detail-page/index.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/data-source-detail-page/log-table.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/data-source/index.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/index.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/mcp/edit-mcp-dialog.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/edit-mcp-form.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/import-mcp-dialog/import-mcp-form.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/import-mcp-dialog/index.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/index.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/mcp-card.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/mcp-operation.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/tool-card.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/use-bulk-operate-mcp.tsx` — previous status: `full`
+- `web/src/pages/user-setting/mcp/use-edit-mcp.ts` — previous status: `full`
+- `web/src/pages/user-setting/mcp/use-export-mcp.ts` — previous status: `full`
+- `web/src/pages/user-setting/mcp/use-import-mcp.ts` — previous status: `full`
+- `web/src/pages/user-setting/profile/constants.ts` — previous status: `partial`
+- `web/src/pages/user-setting/profile/hooks/use-profile.ts` — previous status: `aligned`
+- `web/src/pages/user-setting/profile/index.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/setting-model/index.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/setting-model/langfuse/index.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-model/langfuse/langfuse-configuration-dialog.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-model/langfuse/langfuse-configuration-form.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-model/langfuse/use-save-langfuse-configuration.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-team/add-user-modal.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-team/hooks.ts` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-team/index.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-team/tenant-table.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/setting-team/user-table.tsx` — previous status: `aligned`
+- `web/src/pages/user-setting/sidebar/hooks.tsx` — previous status: `partial`
+- `web/src/pages/user-setting/sidebar/index.tsx` — previous status: `aligned`
+- `web/src/routes.tsx` — previous status: `partial`
+
+## Added paths — unmapped (492)
+
+- `Dockerfile_base`
+- `Dockerfile_ci`
+- `Dockerfile_go`
+- `agent/sandbox/executor_manager/pytest.ini`
+- `agent/sandbox/executor_manager/services/auth.py`
+- `agent/sandbox/executor_manager/services/preauth.py`
+- `agent/sandbox/providers/tenki.py`
+- `agent/sandbox/providers/ucloud_agent_sandbox.py`
+- `agent/templates/compiler.json`
+- `agent/tools/querit.py`
+- `agent/tools/sofya.py`
+- `agent/tools/youcom.py`
+- `api/apps/restful_apis/aimlapi_api.py`
+- `api/apps/services/structure_graph_common.py`
+- `api/channels/targets.py`
+- `api/db/gaussdb_error_utils.py`
+- `api/db/services/document_counter_service.py`
+- `api/utils/model_utils.py`
+- `common/aimlapi_utils.py`
+- `common/data_source/azure_devops/__init__.py`
+- `common/data_source/azure_devops/connector.py`
+- `common/data_source/azure_devops/utils.py`
+- `common/data_source/sitemap_connector.py`
+- `common/data_source/xquik_connector.py`
+- `common/doc_store/gaussdb_conn_base.py`
+- `common/doc_store/gaussdb_conn_pool.py`
+- `common/metadata_gaussdb_filter.py`
+- `conf/models/funasr.json`
+- `conf/models/greenpt.json`
+- `conf/models/hubris.json`
+- `conf/models/llmman.json`
+- `conf/models/monkeyocrv2.json`
+- `conf/models/mws.json`
+- `conf/models/openai-api-compatible.json`
+- `conf/models/ragcon.json`
+- `conf/models/synthorai.json`
+- `deepdoc/parser/mistral_parser.py`
+- `deepdoc/parser/monkeyocrv2_parser.py`
+- `docker/.env-go`
+- `docker/docker-compose-go.yml`
+- `docker/entrypoint-go.sh`
+- `docker/init-clickhouse.sql`
+- `example/http/document_example.sh`
+- `example/sdk/document_example.py`
+- `memory/utils/gaussdb_conn.py`
+- `rag/advanced_rag/agentic_rag.py`
+- `rag/advanced_rag/agentic_rag_graph.py`
+- `rag/advanced_rag/harness/__init__.py`
+- `rag/advanced_rag/harness/action_session.py`
+- `rag/advanced_rag/harness/arithmetic.py`
+- `rag/advanced_rag/harness/chunk_utils.py`
+- `rag/advanced_rag/harness/config.py`
+- `rag/advanced_rag/harness/grep_sed_narrow.py`
+- `rag/advanced_rag/harness/keywords.py`
+- `rag/advanced_rag/harness/memory.py`
+- `rag/advanced_rag/harness/orchestrator/__init__.py`
+- `rag/advanced_rag/harness/orchestrator/direct.py`
+- `rag/advanced_rag/harness/orchestrator/query_rewriter.py`
+- `rag/advanced_rag/harness/orchestrator/sufficient_context.py`
+- `rag/advanced_rag/harness/prompts/__init__.py`
+- `rag/advanced_rag/harness/prompts/report_prompt.py`
+- `rag/advanced_rag/harness/stats.py`
+- `rag/advanced_rag/harness/structure_qa.py`
+- `rag/advanced_rag/harness/tools/__init__.py`
+- `rag/advanced_rag/harness/tools/compiled_expansion.py`
+- `rag/advanced_rag/harness/tools/exploration.py`
+- `rag/advanced_rag/harness/tools/navigation.py`
+- `rag/advanced_rag/harness/tools/search.py`
+- `rag/advanced_rag/harness/tools/text_processing.py`
+- `rag/advanced_rag/knowlege_compile/runner.py`
+- `rag/advanced_rag/knowlege_compile/wiki_incremental.py`
+- `rag/advanced_rag/think_log.py`
+- `rag/flow/chunker/_sentence_boundary.py`
+- `rag/flow/compiler/__init__.py`
+- `rag/flow/compiler/compiler.py`
+- `rag/flow/compiler/schema.py`
+- `rag/llm/mws_utils.py`
+- `rag/nlp/delim.py`
+- `rag/svr/task_executor_refactor/dataset_structure_merger.py`
+- `rag/utils/gaussdb_conn.py`
+- `rag/utils/gaussdb_text_to_sql.py`
+- `rag/utils/querit_conn.py`
+- `rag/utils/serenedb_conn.py`
+- `rag/utils/serply_conn.py`
+- `rag/utils/url_utils.py`
+- `rag/utils/web_search_conn.py`
+- `rag/utils/youcom_conn.py`
+- `scripts/fetch_deepdoc_testdata.sh`
+- `tools/hooks/web_tools.sh`
+- `tools/render_diff/warp_align.py`
+- `tools/scripts/rename_models_providers.py`
+- `tools/scripts/run_migrations.sh`
+- `web/.oxfmtrc.json`
+- `web/.oxlintrc.json`
+- `web/__mocks__/layout-recognize-form-field.js`
+- `web/jest-esbuild-transformer.cjs`
+- `web/src/assets/querit.png`
+- `web/src/assets/serply.png`
+- `web/src/assets/svg/data-source/azure-devops.svg`
+- `web/src/assets/svg/llm/aimlapi.svg`
+- `web/src/assets/svg/llm/astraflow.svg`
+- `web/src/assets/svg/llm/baai.svg`
+- `web/src/assets/svg/llm/fastembed.svg`
+- `web/src/assets/svg/llm/funasr.svg`
+- `web/src/assets/svg/llm/futurmix.svg`
+- `web/src/assets/svg/llm/greenpt.svg`
+- `web/src/assets/svg/llm/grok.svg`
+- `web/src/assets/svg/llm/huaweicloud.svg`
+- `web/src/assets/svg/llm/mws.svg`
+- `web/src/assets/svg/llm/nomic-ai.svg`
+- `web/src/assets/svg/llm/orcarouter.svg`
+- `web/src/assets/svg/llm/qiniu.svg`
+- `web/src/assets/svg/llm/sentence-transformers.svg`
+- `web/src/assets/svg/llm/synthorai.svg`
+- `web/src/assets/svg/llm/tokenhub.svg`
+- `web/src/assets/svg/llm/xiaomi.svg`
+- `web/src/assets/svg/llm/youdao.svg`
+- `web/src/assets/svg/sofya.svg`
+- `web/src/assets/svg/youcom.svg`
+- `web/src/components/__tests__/collapse.test.tsx`
+- `web/src/components/__tests__/knowledge-base-item.test.tsx`
+- `web/src/components/__tests__/switch-fom-field.test.tsx`
+- `web/src/components/artifact-force-graph/index.tsx`
+- `web/src/components/artifact-force-graph/node-label.ts`
+- `web/src/components/artifact-force-graph/node-style.ts`
+- `web/src/components/artifact-force-graph/types.ts`
+- `web/src/components/artifact-force-graph/use-artifact-graph-data.ts`
+- `web/src/components/artifact-force-graph/use-center-gravity.ts`
+- `web/src/components/artifact-force-graph/use-container-dimensions.ts`
+- `web/src/components/artifact-force-graph/use-graph-highlight.ts`
+- `web/src/components/artifact-force-graph/utils.ts`
+- `web/src/components/builtin-pipeline-form-field.tsx`
+- `web/src/components/compilation-template-form-field.tsx`
+- `web/src/components/delimiter-preview.tsx`
+- `web/src/components/document-pipeline-dialog/index.tsx`
+- `web/src/components/document-pipeline-dialog/use-document-pipeline-form.ts`
+- `web/src/components/document-preview/epub-preview.tsx`
+- `web/src/components/document-preview/hooks.test.ts`
+- `web/src/components/document-preview/use-epub-book.ts`
+- `web/src/components/edit-tag/__tests__/index.test.tsx`
+- `web/src/components/expandable-search-input.tsx`
+- `web/src/components/generate-log-button.tsx`
+- `web/src/components/linkify-text.tsx`
+- `web/src/components/list-filter-bar/utils.ts`
+- `web/src/components/loading-dots/index.module.less`
+- `web/src/components/loading-dots/index.tsx`
+- `web/src/components/markdown-editor.tsx`
+- `web/src/components/next-message-item/__tests__/utils.test.ts`
+- `web/src/components/operator-icon.tsx`
+- `web/src/components/parse-type-form-field.tsx`
+- `web/src/components/pipeline-operator-tabs/index.tsx`
+- `web/src/components/pipeline-operator-tabs/parser-config-validation.ts`
+- `web/src/components/pipeline-operator-tabs/pipeline-operator-form.tsx`
+- `web/src/components/pipeline-operator-tabs/use-sync-external-form-errors.ts`
+- `web/src/components/rerank-candidates-count-item.tsx`
+- `web/src/components/reui/stepper.tsx`
+- `web/src/components/safe-img.tsx`
+- `web/src/components/search-highlight.tsx`
+- `web/src/components/structure-graph/adapters.test.ts`
+- `web/src/components/structure-graph/adapters.ts`
+- `web/src/components/structure-graph/mindmap-g6-graph/index.tsx`
+- `web/src/components/structure-graph/mindmap-g6-graph/types.ts`
+- `web/src/components/structure-graph/representation-renderer.tsx`
+- `web/src/components/structure-graph/timeline-x6-graph/hooks/use-x6-graph.ts`
+- `web/src/components/structure-graph/timeline-x6-graph/index.tsx`
+- `web/src/components/structure-graph/timeline-x6-graph/types.ts`
+- `web/src/components/truncated-text.tsx`
+- `web/src/components/ui/__tests__/multi-select.test.tsx`
+- `web/src/components/web-search-form-field.tsx`
+- `web/src/constants/compilation.ts`
+- `web/src/constants/list-deletion.ts`
+- `web/src/constants/markdown-rehype-plugins.ts`
+- `web/src/hooks/__tests__/use-add-provider-instance.test.tsx`
+- `web/src/hooks/__tests__/use-dataset-generate-status.test.tsx`
+- `web/src/hooks/__tests__/use-delete-file.test.tsx`
+- `web/src/hooks/__tests__/use-document-request-query-keys.test.ts`
+- `web/src/hooks/document-query-keys.ts`
+- `web/src/hooks/logic-hooks/use-clear-selection-on-page-change.ts`
+- `web/src/hooks/use-aimlapi-authorize.ts`
+- `web/src/hooks/use-auto-resize-textarea.ts`
+- `web/src/hooks/use-compilation-template-group-request.ts`
+- `web/src/hooks/use-compilation-template-request.ts`
+- `web/src/hooks/use-dataset-generate.ts`
+- `web/src/hooks/use-dataset-nav-request.ts`
+- `web/src/hooks/use-dataset-skill-request.ts`
+- `web/src/hooks/use-loading-pause.ts`
+- `web/src/hooks/use-pipeline-operator.ts`
+- `web/src/hooks/use-stale-dataset-validation.ts`
+- `web/src/interfaces/database/compilation-template.ts`
+- `web/src/interfaces/database/dataset-nav.ts`
+- `web/src/interfaces/database/dataset-skill.ts`
+- `web/src/interfaces/database/document-structure.ts`
+- `web/src/interfaces/request/compilation-template.ts`
+- `web/src/lib/editor/content-editable.tsx`
+- `web/src/lib/editor/editor-theme.css`
+- `web/src/lib/editor/editor-theme.ts`
+- `web/src/lib/editor/index.ts`
+- `web/src/lib/editor/lexical-editor.tsx`
+- `web/src/lib/editor/markdown/enhanced-markdown-export.ts`
+- `web/src/lib/editor/markdown/enhanced-markdown-import.ts`
+- `web/src/lib/editor/markdown/horizontal-rule-node.ts`
+- `web/src/lib/editor/markdown/horizontal-rule-transformer.ts`
+- `web/src/lib/editor/markdown/index.ts`
+- `web/src/lib/editor/markdown/list-transformers.ts`
+- `web/src/lib/editor/markdown/markdown-transformers.ts`
+- `web/src/lib/editor/mermaid-node.tsx`
+- `web/src/lib/editor/mermaid-transformer.ts`
+- `web/src/lib/editor/nodes.ts`
+- `web/src/lib/editor/plugins/floating-selection-toolbar.tsx`
+- `web/src/lib/editor/plugins/table-actions-plugin.tsx`
+- `web/src/lib/editor/plugins/table-row-size-guard.ts`
+- `web/src/lib/editor/plugins/table-transformer.ts`
+- `web/src/lib/editor/plugins/toolbar-plugin.tsx`
+- `web/src/lib/editor/plugins/wiki-link-click-plugin.tsx`
+- `web/src/lib/editor/raw-markdown-editor.tsx`
+- `web/src/pages/agent/canvas/node/compilation-node.tsx`
+- `web/src/pages/agent/chat/use-send-agent-message.test.tsx`
+- `web/src/pages/agent/form/agent-form/tool-popover/use-update-tools.test.tsx`
+- `web/src/pages/agent/form/compilation-form/index.tsx`
+- `web/src/pages/agent/form/extractor-form/go-form.tsx`
+- `web/src/pages/agent/form/extractor-form/python-form.tsx`
+- `web/src/pages/agent/form/extractor-form/use-tag-file-tree.ts`
+- `web/src/pages/agent/form/parser-form/dynamic-page-range.tsx`
+- `web/src/pages/agent/form/parser-form/utils.test.ts`
+- `web/src/pages/agent/form/querit-contents-form/index.tsx`
+- `web/src/pages/agent/form/querit-form/dynamic-list.tsx`
+- `web/src/pages/agent/form/querit-form/index.tsx`
+- `web/src/pages/agent/form/querit-form/use-values.ts`
+- `web/src/pages/agent/form/querit-form/use-watch-change.test.tsx`
+- `web/src/pages/agent/form/querit-form/use-watch-change.ts`
+- `web/src/pages/agent/form/querit-form/utils.test.ts`
+- `web/src/pages/agent/form/querit-form/utils.ts`
+- `web/src/pages/agent/form/sofya-form/index.tsx`
+- `web/src/pages/agent/form/tool-form/querit-form/index.tsx`
+- `web/src/pages/agent/form/tool-form/querit-form/use-watch-change.test.tsx`
+- `web/src/pages/agent/form/tool-form/querit-form/use-watch-change.ts`
+- `web/src/pages/agent/form/tool-form/querit-form/utils.test.ts`
+- `web/src/pages/agent/form/tool-form/querit-form/utils.ts`
+- `web/src/pages/agent/form/tool-form/sofya-form/index.tsx`
+- `web/src/pages/agent/form/tool-form/youcom-form/index.tsx`
+- `web/src/pages/agent/form/youcom-form/index.tsx`
+- `web/src/pages/agent/hooks/querit-agent-initial-values.ts`
+- `web/src/pages/agent/hooks/use-agent-tool-initial-values.test.ts`
+- `web/src/pages/agent/hooks/use-fetch-data.test.ts`
+- `web/src/pages/agent/hooks/use-form-change-callback.ts`
+- `web/src/pages/agent/hooks/use-save-graph.test.ts`
+- `web/src/pages/agent/log-sheet/tool-name.test.ts`
+- `web/src/pages/agent/log-sheet/tool-name.ts`
+- `web/src/pages/agent/utils.test.ts`
+- `web/src/pages/agent/utils/__tests__/dsl-bridge.test.ts`
+- `web/src/pages/agent/utils/__tests__/extractor-transform.test.ts`
+- `web/src/pages/agent/utils/agent-node-model.test.ts`
+- `web/src/pages/agent/utils/agent-node-model.ts`
+- `web/src/pages/agent/utils/clear-sensitive-fields.test.ts`
+- `web/src/pages/agent/utils/clear-sensitive-fields.ts`
+- `web/src/pages/agent/utils/debug-run-limits.test.ts`
+- `web/src/pages/agent/utils/debug-run-limits.ts`
+- `web/src/pages/agent/utils/download-dsl.ts`
+- `web/src/pages/agent/utils/find-invalid-retrieval.test.ts`
+- `web/src/pages/agent/utils/find-invalid-retrieval.ts`
+- `web/src/pages/agent/webhook-sheet/__tests__/status.test.ts`
+- `web/src/pages/agent/webhook-sheet/status.ts`
+- `web/src/pages/agents/compilation-template-card.tsx`
+- `web/src/pages/agents/compilation-template-dropdown.tsx`
+- `web/src/pages/agents/template-retrieval-binding.test.ts`
+- `web/src/pages/agents/template-retrieval-binding.ts`
+- `web/src/pages/chunk/parsed-result/add-knowledge/components/knowledge-chunk/components/document-view-switch/index.tsx`
+- `web/src/pages/chunk/representation/components/representation-select.tsx`
+- `web/src/pages/chunk/representation/hooks/use-graph-entity-search.test.ts`
+- `web/src/pages/chunk/representation/hooks/use-graph-entity-search.ts`
+- `web/src/pages/chunk/representation/hooks/use-selected-template.ts`
+- `web/src/pages/chunk/representation/index.tsx`
+- `web/src/pages/dataset/compilation/constants.ts`
+- `web/src/pages/dataset/compilation/create-directory-dialog/create-directory-form.tsx`
+- `web/src/pages/dataset/compilation/create-directory-dialog/index.tsx`
+- `web/src/pages/dataset/compilation/dataset-structure-view.tsx`
+- `web/src/pages/dataset/compilation/empty-state.tsx`
+- `web/src/pages/dataset/compilation/hooks/use-commit-artifact.ts`
+- `web/src/pages/dataset/compilation/hooks/use-compilation-artifact.ts`
+- `web/src/pages/dataset/compilation/hooks/use-compilation-nav.ts`
+- `web/src/pages/dataset/compilation/hooks/use-compilation-skill.ts`
+- `web/src/pages/dataset/compilation/hooks/use-create-directory.ts`
+- `web/src/pages/dataset/compilation/hooks/use-run-end-effect.ts`
+- `web/src/pages/dataset/compilation/hooks/use-wiki-detail-content.ts`
+- `web/src/pages/dataset/compilation/hooks/use-wiki-editor.ts`
+- `web/src/pages/dataset/compilation/hooks/use-wiki-link-navigation.ts`
+- `web/src/pages/dataset/compilation/hooks/use-wiki-version.ts`
+- `web/src/pages/dataset/compilation/index.tsx`
+- `web/src/pages/dataset/compilation/interface.ts`
+- `web/src/pages/dataset/compilation/llm-wiki-view.tsx`
+- `web/src/pages/dataset/compilation/loading-card.tsx`
+- `web/src/pages/dataset/compilation/nav-tree-left-panel.test.tsx`
+- `web/src/pages/dataset/compilation/nav-tree-left-panel.tsx`
+- `web/src/pages/dataset/compilation/nav-tree-view.tsx`
+- `web/src/pages/dataset/compilation/progress-log-panel.tsx`
+- `web/src/pages/dataset/compilation/progress-ring.tsx`
+- `web/src/pages/dataset/compilation/skills-left-panel.tsx`
+- `web/src/pages/dataset/compilation/skills-view.tsx`
+- `web/src/pages/dataset/compilation/update-button.tsx`
+- `web/src/pages/dataset/compilation/update-log-sheet.tsx`
+- `web/src/pages/dataset/compilation/update-run-progress.tsx`
+- `web/src/pages/dataset/compilation/utils/nav-tree.test.ts`
+- `web/src/pages/dataset/compilation/utils/nav-tree.ts`
+- `web/src/pages/dataset/compilation/utils/parse-progress-msg.ts`
+- `web/src/pages/dataset/compilation/utils/parse-wiki-diff.ts`
+- `web/src/pages/dataset/compilation/utils/parse-wiki-link.test.ts`
+- `web/src/pages/dataset/compilation/utils/parse-wiki-link.ts`
+- `web/src/pages/dataset/compilation/utils/skill-tree.ts`
+- `web/src/pages/dataset/compilation/version-history-item.tsx`
+- `web/src/pages/dataset/compilation/version-history-sheet.tsx`
+- `web/src/pages/dataset/compilation/wiki-commit-modal.tsx`
+- `web/src/pages/dataset/compilation/wiki-detail-content.tsx`
+- `web/src/pages/dataset/compilation/wiki-detail-editor-panel.tsx`
+- `web/src/pages/dataset/compilation/wiki-detail-header.tsx`
+- `web/src/pages/dataset/compilation/wiki-detail-toolbar.tsx`
+- `web/src/pages/dataset/compilation/wiki-generation-eligibility.test.ts`
+- `web/src/pages/dataset/compilation/wiki-generation-eligibility.ts`
+- `web/src/pages/dataset/compilation/wiki-left-panel/hooks/use-wiki-clear.ts`
+- `web/src/pages/dataset/compilation/wiki-left-panel/hooks/use-wiki-navigation.ts`
+- `web/src/pages/dataset/compilation/wiki-left-panel/hooks/use-wiki-update.ts`
+- `web/src/pages/dataset/compilation/wiki-left-panel/index.tsx`
+- `web/src/pages/dataset/compilation/wiki-left-panel/wiki-artifact-list.tsx`
+- `web/src/pages/dataset/compilation/wiki-left-panel/wiki-graph-panel.tsx`
+- `web/src/pages/dataset/compilation/wiki-left-panel/wiki-list-item.tsx`
+- `web/src/pages/dataset/compilation/wiki-left-panel/wiki-nav-bar.tsx`
+- `web/src/pages/dataset/compilation/wiki-left-panel/wiki-topic-list.tsx`
+- `web/src/pages/dataset/compilation/wiki-version-diff-panel.tsx`
+- `web/src/pages/dataset/components/metedata/hooks/__tests__/use-manage-values-modal.test.ts`
+- `web/src/pages/dataset/dataset/change-parser-dialog.tsx`
+- `web/src/pages/dataset/dataset/parsing-status-cell.test.tsx`
+- `web/src/pages/dataset/dataset/utils.test.ts`
+- `web/src/pages/dataset/setting/go/components/added-source-card.tsx`
+- `web/src/pages/dataset/setting/go/components/link-data-source-modal.tsx`
+- `web/src/pages/dataset/setting/go/components/link-data-source.tsx`
+- `web/src/pages/dataset/setting/go/embedding-model-form-field.tsx`
+- `web/src/pages/dataset/setting/go/form-schema.ts`
+- `web/src/pages/dataset/setting/go/general-form.tsx`
+- `web/src/pages/dataset/setting/go/hooks.test.tsx`
+- `web/src/pages/dataset/setting/go/hooks.ts`
+- `web/src/pages/dataset/setting/go/index.tsx`
+- `web/src/pages/dataset/setting/go/permission-form-field.tsx`
+- `web/src/pages/dataset/setting/go/use-reveal-submit-errors.ts`
+- `web/src/pages/dataset/setting/index.tsx`
+- `web/src/pages/dataset/setting/python/category-panel.tsx`
+- `web/src/pages/dataset/setting/python/chunk-method-form.tsx`
+- `web/src/pages/dataset/setting/python/chunk-method-learn-more.tsx`
+- `web/src/pages/dataset/setting/python/components/added-source-card.tsx`
+- `web/src/pages/dataset/setting/python/components/link-data-pipeline.tsx`
+- `web/src/pages/dataset/setting/python/components/link-data-pipline-modal.tsx`
+- `web/src/pages/dataset/setting/python/components/link-data-source-modal.tsx`
+- `web/src/pages/dataset/setting/python/components/link-data-source.tsx`
+- `web/src/pages/dataset/setting/python/components/tag-item.tsx`
+- `web/src/pages/dataset/setting/python/configuration-form-container.tsx`
+- `web/src/pages/dataset/setting/python/configuration/audio.tsx`
+- `web/src/pages/dataset/setting/python/configuration/book.tsx`
+- `web/src/pages/dataset/setting/python/configuration/common-item.tsx`
+- `web/src/pages/dataset/setting/python/configuration/email.tsx`
+- `web/src/pages/dataset/setting/python/configuration/knowledge-graph.tsx`
+- `web/src/pages/dataset/setting/python/configuration/laws.tsx`
+- `web/src/pages/dataset/setting/python/configuration/manual.tsx`
+- `web/src/pages/dataset/setting/python/configuration/naive.tsx`
+- `web/src/pages/dataset/setting/python/configuration/one.tsx`
+- `web/src/pages/dataset/setting/python/configuration/paper.tsx`
+- `web/src/pages/dataset/setting/python/configuration/picture.tsx`
+- `web/src/pages/dataset/setting/python/configuration/presentation.tsx`
+- `web/src/pages/dataset/setting/python/configuration/qa.tsx`
+- `web/src/pages/dataset/setting/python/configuration/resume.tsx`
+- `web/src/pages/dataset/setting/python/configuration/table.tsx`
+- `web/src/pages/dataset/setting/python/configuration/tag.tsx`
+- `web/src/pages/dataset/setting/python/form-schema.ts`
+- `web/src/pages/dataset/setting/python/general-form.tsx`
+- `web/src/pages/dataset/setting/python/hooks.ts`
+- `web/src/pages/dataset/setting/python/index.tsx`
+- `web/src/pages/dataset/setting/python/permission-form-field.tsx`
+- `web/src/pages/dataset/setting/python/saving-button.tsx`
+- `web/src/pages/dataset/setting/python/tag-table/index.tsx`
+- `web/src/pages/dataset/setting/python/tag-table/rename-dialog/index.tsx`
+- `web/src/pages/dataset/setting/python/tag-table/rename-dialog/rename-form.tsx`
+- `web/src/pages/dataset/setting/python/tag-tabs.tsx`
+- `web/src/pages/dataset/setting/python/tag-word-cloud.tsx`
+- `web/src/pages/dataset/setting/python/utils.ts`
+- `web/src/pages/login-next/index.test.tsx`
+- `web/src/pages/memory/memory-setting/memory-setting-context.tsx`
+- `web/src/pages/memory/memory-setting/memory-setting-hooks.ts`
+- `web/src/pages/next-chats/chat-stream/constants.ts`
+- `web/src/pages/next-chats/chat-stream/run-stream.ts`
+- `web/src/pages/next-chats/chat-stream/store.ts`
+- `web/src/pages/next-chats/chat-stream/utils.ts`
+- `web/src/pages/next-chats/chat/app-settings/use-reveal-submit-errors.test.tsx`
+- `web/src/pages/next-chats/chat/app-settings/use-reveal-submit-errors.ts`
+- `web/src/pages/next-chats/chat/app-settings/validate-chat-prompt.test.ts`
+- `web/src/pages/next-chats/chat/app-settings/validate-chat-prompt.ts`
+- `web/src/pages/next-chats/chat/chat-box/single-chat-box.test.tsx`
+- `web/src/pages/next-chats/chat/use-show-internet.test.ts`
+- `web/src/pages/next-chats/chat/web-search-api-key.ts`
+- `web/src/pages/next-chats/hooks/use-message-references.ts`
+- `web/src/pages/next-search/llm-setting-defaults.test.ts`
+- `web/src/pages/next-search/llm-setting-defaults.ts`
+- `web/src/pages/next-search/search-setting-hooks.ts`
+- `web/src/pages/user-setting/chat-channel/connect-target.test.ts`
+- `web/src/pages/user-setting/chat-channel/connect-target.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/add-field-modal.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/blueprint-section.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/field-card.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/json-preview-sheet.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/section-field-grid.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/template-configuration.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/template-preview-header.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/tree-template-fields.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/components/workflow-preview-sheet.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/constant.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-active-section-tab.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-add-field-form.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-available-kind-options.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-blueprint-selection.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-builtin-template.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-compilation-template-group-form.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-compilation-template-group-submit.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-edit-next-compilation-template-group.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-field-array-handlers.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-field-modal.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-kind-change.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-preview-sheets.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-section-data.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/index.tsx`
+- `web/src/pages/user-setting/compilation-templates/edit-next/schema.ts`
+- `web/src/pages/user-setting/compilation-templates/edit-next/utils.ts`
+- `web/src/pages/user-setting/data-source/constant/azure-devops-constant.tsx`
+- `web/src/pages/user-setting/data-source/constant/index.test.tsx`
+- `web/src/pages/user-setting/data-source/constant/sitemap-constant.tsx`
+- `web/src/pages/user-setting/data-source/hooks.test.ts`
+- `web/src/pages/user-setting/setting-model/constants.ts`
+- `web/src/pages/user-setting/setting-model/instance-card/add-custom-model-dialog.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/aimlapi-get-key-button.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/available-models.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/bedrock-instance-card.test.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/bedrock-instance-card.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/components/draft-mode-card.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/components/instance-name-section.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/components/saved-mode-card.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/hooks.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/interface.ts`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/components/model-row.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/components/model-type-badges.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/components/model-verify-button.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/components/tag-filter-button.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/hooks.test.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/hooks.ts`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/index.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/models-section/interface.ts`
+- `web/src/pages/user-setting/setting-model/instance-card/provider-instance-card.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/use-custom-model-fields.tsx`
+- `web/src/pages/user-setting/setting-model/instance-card/verify-button.tsx`
+- `web/src/pages/user-setting/setting-model/layout/provider-header-bar.tsx`
+- `web/src/pages/user-setting/setting-model/layout/sidebar.tsx`
+- `web/src/pages/user-setting/setting-model/layout/system-setting.tsx`
+- `web/src/pages/user-setting/setting-model/provider-schema/constants.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/generic-api-key-config.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/get-provider-config.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/index.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/local-llm-configs.test.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/local-llm-configs.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/provider-config-map.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/field-config/utils.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/hooks/index.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/hooks/use-list-models-options.tsx`
+- `web/src/pages/user-setting/setting-model/provider-schema/hooks/use-list-models-picker.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/hooks/use-provider-fields.tsx`
+- `web/src/pages/user-setting/setting-model/provider-schema/hooks/use-provider-modal-actions.ts`
+- `web/src/pages/user-setting/setting-model/provider-schema/types.ts`
+- `web/src/services/chat-completion-stream.ts`
+- `web/src/services/compilation-template-group-service.ts`
+- `web/src/services/compilation-template-service.ts`
+- `web/src/services/dataset-nav-service.ts`
+- `web/src/services/dataset-skill-service.ts`
+- `web/src/services/document-structure-service.ts`
+- `web/src/utils/__tests__/dataset-util.test.ts`
+- `web/src/utils/__tests__/date.test.ts`
+- `web/src/utils/__tests__/delimiter-preview.test.ts`
+- `web/src/utils/__tests__/file-util.test.ts`
+- `web/src/utils/__tests__/llm-util.test.ts`
+- `web/src/utils/__tests__/pipeline-operator.test.ts`
+- `web/src/utils/__tests__/simple-history-util.test.ts`
+- `web/src/utils/__tests__/source-locate.test.ts`
+- `web/src/utils/backend-runtime.ts`
+- `web/src/utils/backend-variant.tsx`
+- `web/src/utils/compilation-template-util.ts`
+- `web/src/utils/delimiter-preview.ts`
+- `web/src/utils/epub-util.ts`
+- `web/src/utils/list-deletion-util.ts`
+- `web/src/utils/pipeline-operator.ts`
+- `web/src/utils/source-locate.ts`
+
+## Removed paths
+
+- `.github/workflows/tests.yml`
+- `agent/templates/cv_analysis_and_candidate_evaluation.json`
+- `agent/templates/ingestion_pipeline_book.json`
+- `agent/templates/ingestion_pipeline_general.json`
+- `agent/templates/ingestion_pipeline_laws.json`
+- `agent/templates/ingestion_pipeline_manual.json`
+- `agent/templates/ingestion_pipeline_one.json`
+- `agent/templates/ingestion_pipeline_paper.json`
+- `agent/templates/ingestion_pipeline_resume.json`
+- `api/apps/llm_app.py`
+- `api/db/init_data/compilation_templates/empty.yaml`
+- `docs/administrator/admin/admin_ui.md`
+- `docs/develop/agent-go-port-design.md`
+- `docs/guides/agent/agent_component_reference/_category_.json`
+- `docs/guides/agent/agent_component_reference/agent.mdx`
+- `docs/guides/agent/agent_component_reference/await_response.mdx`
+- `docs/guides/agent/agent_component_reference/begin.md`
+- `docs/guides/agent/agent_component_reference/categorize.mdx`
+- `docs/guides/agent/agent_component_reference/chunker_title.md`
+- `docs/guides/agent/agent_component_reference/chunker_token.md`
+- `docs/guides/agent/agent_component_reference/code.mdx`
+- `docs/guides/agent/agent_component_reference/execute_sql.md`
+- `docs/guides/agent/agent_component_reference/http.md`
+- `docs/guides/agent/agent_component_reference/indexer.md`
+- `docs/guides/agent/agent_component_reference/iteration.mdx`
+- `docs/guides/agent/agent_component_reference/message.md`
+- `docs/guides/agent/agent_component_reference/parser.md`
+- `docs/guides/agent/agent_component_reference/retrieval.mdx`
+- `docs/guides/agent/agent_component_reference/switch.mdx`
+- `docs/guides/agent/agent_component_reference/text_processing.mdx`
+- `docs/guides/agent/agent_component_reference/transformer.md`
+- `docs/guides/agent/agent_introduction.md`
+- `docs/guides/agent/agent_quickstarts/_category_.json`
+- `docs/guides/agent/agent_quickstarts/build_ecommerce_customer_support_agent.md`
+- `docs/guides/agent/agent_quickstarts/ingestion_pipeline_quickstart.md`
+- `docs/guides/agent/agent_quickstarts/sandbox_quickstart.md`
+- `docs/guides/agent/best_practices/_category_.json`
+- `docs/guides/agent/best_practices/accelerate_agent_question_answering.md`
+- `docs/guides/agent/embed_agent_into_webpage.md`
+- `docs/guides/ai_search.md`
+- `docs/guides/chat/best_practices/_category_.json`
+- `docs/guides/chat/best_practices/accelerate_question_answering.mdx`
+- `docs/guides/chat/implement_deep_research.md`
+- `docs/guides/chat/set_chat_variables.md`
+- `docs/guides/chat/start_chat.md`
+- `docs/guides/dataset/add_data_source/_category_.json`
+- `docs/guides/dataset/add_data_source/add_bitbucket.md`
+- `docs/guides/dataset/add_data_source/add_confluence.md`
+- `docs/guides/dataset/add_data_source/add_discord.md`
+- `docs/guides/dataset/add_data_source/add_github_repo.md`
+- `docs/guides/dataset/add_data_source/add_google_drive.md`
+- `docs/guides/dataset/add_data_source/add_notion.md`
+- `docs/guides/dataset/add_data_source/add_rss.md`
+- `docs/guides/dataset/advanced/_category_.json`
+- `docs/guides/dataset/advanced/auto_metadata.md`
+- `docs/guides/dataset/advanced/autokeyword_autoquestion.mdx`
+- `docs/guides/dataset/advanced/construct_knowledge_graph.md`
+- `docs/guides/dataset/advanced/enable_raptor.md`
+- `docs/guides/dataset/advanced/extract_table_of_contents.md`
+- `docs/guides/dataset/configure_child_chunking_strategy.md`
+- `docs/guides/dataset/configure_knowledge_base.md`
+- `docs/guides/dataset/enable_excel2html.md`
+- `docs/guides/dataset/manage_metadata.md`
+- `docs/guides/dataset/run_retrieval_test.md`
+- `docs/guides/dataset/select_pdf_parser.md`
+- `docs/guides/dataset/set_context_window.md`
+- `docs/guides/dataset/set_metadata.md`
+- `docs/guides/dataset/set_page_rank.md`
+- `docs/guides/dataset/use_tag_sets.md`
+- `docs/guides/manage_files.md`
+- `docs/guides/memory/use_memory.md`
+- `docs/guides/team/join_or_leave_team.md`
+- `docs/guides/team/manage_team_members.md`
+- `docs/guides/team/share_agents.md`
+- `docs/guides/team/share_chat_assistant.md`
+- `docs/guides/team/share_knowledge_bases.md`
+- `docs/guides/team/share_memory.md`
+- `docs/guides/team/share_model.md`
+- `internal/admin/enterprise_handler.go`
+- `internal/admin/enterprise_service.go`
+- `internal/agent/canvas/node_body_per_class_timeout_integration_test.go`
+- `internal/agent/canvas/timeout.go`
+- `internal/agent/component/bgpt_component_test.go`
+- `internal/agent/component/message_chunked_test.go`
+- `internal/agent/dsl/testdata/resume.json`
+- `internal/agent/runtime/metrics.go`
+- `internal/agent/runtime/metrics_test.go`
+- `internal/agent/runtime/selector.go`
+- `internal/agent/runtime/selector_test.go`
+- `internal/common/numeric.go`
+- `internal/common/response.go`
+- `internal/common/system.go`
+- `internal/deepdoc/client.go`
+- `internal/deepdoc/client_test.go`
+- `internal/deepdoc/dla.go`
+- `internal/deepdoc/dla_test.go`
+- `internal/deepdoc/ocr.go`
+- `internal/deepdoc/parser/pdf/inference/client.go`
+- `internal/deepdoc/parser/pdf/inference/client_test.go`
+- `internal/deepdoc/parser/pdf/ocr_merge_test.go`
+- `internal/deepdoc/parser/pdf/ocr_recognize_batch_test.go`
+- `internal/deepdoc/parser/pdf/page_batch_test.go`
+- `internal/deepdoc/parser/pdf/table/table_parity_issues_test.go`
+- `internal/deepdoc/tsr.go`
+- `internal/entity/kb.go`
+- `internal/handler/admin_runtime.go`
+- `internal/handler/admin_runtime_test.go`
+- `internal/handler/oauth_login.go`
+- `internal/ingestion/component/slice3_test.go`
+- `internal/ingestion/ingestion_service.go`
+- `internal/ingestion/ingestion_service_test.go`
+- `internal/observability/otel/handler.go`
+- `internal/observability/otel/handler_test.go`
+- `internal/observability/otel/provider.go`
+- `internal/parser/chunk/chenk_type.go`
+- `internal/parser/parser/office_parsers_cgo_shared.go`
+- `internal/registry/cross_domain_test.go`
+- `internal/router/admin_routes.go`
+- `internal/router/admin_routes_test.go`
+- `internal/router/bot_routes.go`
+- `internal/service/dataset.go`
+- `internal/service/dataset_aggregate_tags_test.go`
+- `internal/service/dataset_delete_index_test.go`
+- `internal/service/dataset_document_metadata_config_test.go`
+- `internal/service/dataset_list_tags_test.go`
+- `internal/service/dataset_rename_tag_test.go`
+- `internal/service/dataset_search_test.go`
+- `internal/service/dataset_task_cleanup_test.go`
+- `internal/service/dataset_update_test.go`
+- `internal/service/document.go`
+- `internal/service/document_test.go`
+- `internal/service/document_upload_helpers.go`
+- `internal/service/file.go`
+- `internal/service/file2document.go`
+- `internal/service/file_commit.go`
+- `internal/service/file_test.go`
+- `internal/service/oauth_login.go`
+- `internal/utility/oauth/client.go`
+- `internal/utility/oauth/client_test.go`
+- `internal/utility/oauth/github.go`
+- `internal/utility/oauth/oidc.go`
+- `internal/utility/version.go`
+- `internal/utility/version_test.go`
+- `rag/advanced_rag/tree_structured_query_decomposition_retrieval.py`
+- `rag/svr/discord_svr.py`
+- `test/testcases/restful_api/test_llm_routes_unit.py`
+- `test/testcases/test_http_api/test_dataset_management/test_embedding.py`
+- `test/unit_test/rag/test_raptor_psi_tree_builder.py`
+- `web/.eslintrc.cjs`
+- `web/.prettierignore`
+- `web/.prettierrc`
+- `web/pnpm-lock.yaml`
+- `web/src/assets/filter.svg`
+- `web/src/assets/svg/akshare.svg`
+- `web/src/assets/svg/baidu-fanyi.svg`
+- `web/src/assets/svg/baidu.svg`
+- `web/src/assets/svg/chat-app-cube.svg`
+- `web/src/assets/svg/chat-channel/wexin.svg`
+- `web/src/assets/svg/chat-configuration-atom.svg`
+- `web/src/assets/svg/chat-star.svg`
+- `web/src/assets/svg/chunk-method/book-01.svg`
+- `web/src/assets/svg/chunk-method/book-02.svg`
+- `web/src/assets/svg/chunk-method/book-03.svg`
+- `web/src/assets/svg/chunk-method/book-04.svg`
+- `web/src/assets/svg/chunk-method/knowledge-graph-01.svg`
+- `web/src/assets/svg/chunk-method/knowledge-graph-02.svg`
+- `web/src/assets/svg/chunk-method/law-01.svg`
+- `web/src/assets/svg/chunk-method/law-02.svg`
+- `web/src/assets/svg/chunk-method/manual-01.svg`
+- `web/src/assets/svg/chunk-method/manual-02.svg`
+- `web/src/assets/svg/chunk-method/manual-03.svg`
+- `web/src/assets/svg/chunk-method/manual-04.svg`
+- `web/src/assets/svg/chunk-method/media-01.svg`
+- `web/src/assets/svg/chunk-method/media-02.svg`
+- `web/src/assets/svg/chunk-method/naive-01.svg`
+- `web/src/assets/svg/chunk-method/naive-02.svg`
+- `web/src/assets/svg/chunk-method/one-01.svg`
+- `web/src/assets/svg/chunk-method/one-02.svg`
+- `web/src/assets/svg/chunk-method/one-03.svg`
+- `web/src/assets/svg/chunk-method/one-04.svg`
+- `web/src/assets/svg/chunk-method/paper-01.svg`
+- `web/src/assets/svg/chunk-method/paper-02.svg`
+- `web/src/assets/svg/chunk-method/presentation-01.svg`
+- `web/src/assets/svg/chunk-method/presentation-02.svg`
+- `web/src/assets/svg/chunk-method/qa-01.svg`
+- `web/src/assets/svg/chunk-method/qa-02.svg`
+- `web/src/assets/svg/chunk-method/resume-01.svg`
+- `web/src/assets/svg/chunk-method/resume-02.svg`
+- `web/src/assets/svg/chunk-method/table-01.svg`
+- `web/src/assets/svg/chunk-method/table-02.svg`
+- `web/src/assets/svg/chunk-method/tag-01.svg`
+- `web/src/assets/svg/chunk-method/tag-02.svg`
+- `web/src/assets/svg/concentrator.svg`
+- `web/src/assets/svg/deepl.svg`
+- `web/src/assets/svg/disable.svg`
+- `web/src/assets/svg/exesql.svg`
+- `web/src/assets/svg/file-management.svg`
+- `web/src/assets/svg/invoke-ai.svg`
+- `web/src/assets/svg/jin10.svg`
+- `web/src/assets/svg/knowledge-base.svg`
+- `web/src/assets/svg/knowledge-configration.svg`
+- `web/src/assets/svg/knowledge-dataset.svg`
+- `web/src/assets/svg/knowledge-testing.svg`
+- `web/src/assets/svg/llm/jiekouai.svg`
+- `web/src/assets/svg/llm/wenxin.svg`
+- `web/src/assets/svg/login-avatars.svg`
+- `web/src/assets/svg/login-background.svg`
+- `web/src/assets/svg/login-star.svg`
+- `web/src/assets/svg/logo-with-text-white.svg`
+- `web/src/assets/svg/minio.svg`
+- `web/src/assets/svg/model-providers.svg`
+- `web/src/assets/svg/moon.svg`
+- `web/src/assets/svg/more-model.svg`
+- `web/src/assets/svg/more.svg`
+- `web/src/assets/svg/navigation-pointer.svg`
+- `web/src/assets/svg/next-login-bg.svg`
+- `web/src/assets/svg/note.svg`
+- `web/src/assets/svg/nothing.svg`
+- `web/src/assets/svg/paper-clip.svg`
+- `web/src/assets/svg/plus-circle-fill.svg`
+- `web/src/assets/svg/qweather.svg`
+- `web/src/assets/svg/redis.svg`
+- `web/src/assets/svg/refresh.svg`
+- `web/src/assets/svg/resize.svg`
+- `web/src/assets/svg/select-files-end.svg`
+- `web/src/assets/svg/select-files-start.svg`
+- `web/src/assets/svg/selected-files-collapse.svg`
+- `web/src/assets/svg/storage.svg`
+- `web/src/assets/svg/template.svg`
+- `web/src/assets/svg/tushare.svg`
+- `web/src/assets/yay.jpg`
+- `web/src/components/tavily-form-field.tsx`
+- `web/src/components/toc-enhance-form-field.tsx`
+- `web/src/components/use-knowledge-graph-item.tsx`
+- `web/src/hooks/tests/parser-config-utils.test.ts`
+- `web/src/hooks/use-dataflow-request.ts`
+- `web/src/pages/agent/chat/use-get-file-icon.tsx`
+- `web/src/pages/agent/explore/components/canvas-card.tsx`
+- `web/src/pages/agent/operator-icon.tsx`
+- `web/src/pages/agent/utils/tests/dsl-bridge.test.ts`
+- `web/src/pages/dataset/components/metedata/hooks/tests/use-manage-values-modal.test.ts`
+- `web/src/pages/dataset/dataset-setting/category-panel.tsx`
+- `web/src/pages/dataset/dataset-setting/chunk-method-form.tsx`
+- `web/src/pages/dataset/dataset-setting/chunk-method-learn-more.tsx`
+- `web/src/pages/dataset/dataset-setting/components/added-source-card.tsx`
+- `web/src/pages/dataset/dataset-setting/components/link-data-pipeline.tsx`
+- `web/src/pages/dataset/dataset-setting/components/link-data-pipline-modal.tsx`
+- `web/src/pages/dataset/dataset-setting/components/link-data-source-modal.tsx`
+- `web/src/pages/dataset/dataset-setting/components/link-data-source.tsx`
+- `web/src/pages/dataset/dataset-setting/components/tag-item.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration-form-container.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/audio.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/book.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/common-item.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/email.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/knowledge-graph.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/laws.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/manual.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/naive.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/one.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/paper.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/picture.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/presentation.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/qa.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/resume.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/table.tsx`
+- `web/src/pages/dataset/dataset-setting/configuration/tag.tsx`
+- `web/src/pages/dataset/dataset-setting/form-schema.ts`
+- `web/src/pages/dataset/dataset-setting/general-form.tsx`
+- `web/src/pages/dataset/dataset-setting/hooks.ts`
+- `web/src/pages/dataset/dataset-setting/index.tsx`
+- `web/src/pages/dataset/dataset-setting/permission-form-field.tsx`
+- `web/src/pages/dataset/dataset-setting/saving-button.tsx`
+- `web/src/pages/dataset/dataset-setting/tag-table/index.tsx`
+- `web/src/pages/dataset/dataset-setting/tag-table/rename-dialog/index.tsx`
+- `web/src/pages/dataset/dataset-setting/tag-table/rename-dialog/rename-form.tsx`
+- `web/src/pages/dataset/dataset-setting/tag-tabs.tsx`
+- `web/src/pages/dataset/dataset-setting/tag-word-cloud.tsx`
+- `web/src/pages/dataset/dataset-setting/utils.ts`
+- `web/src/pages/dataset/dataset/generate-button/generate.tsx`
+- `web/src/pages/dataset/dataset/generate-button/hook.ts`
+- `web/src/pages/dataset/knowledge-graph/constant.ts`
+- `web/src/pages/next-chats/chat/chat-box/use-set-default-model.ts`
+- `web/src/pages/user-setting/setting-model/components/llm-header.tsx`
+- `web/src/pages/user-setting/setting-model/components/system-setting.tsx`
+- `web/src/pages/user-setting/setting-model/components/un-add-model.tsx`
+- `web/src/pages/user-setting/setting-model/components/used-model.tsx`
+- `web/src/pages/user-setting/setting-model/constant.ts`
+- `web/src/pages/user-setting/setting-model/modal/bedrock-modal/index.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/components/add-custom-model-dialog.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/components/addable-toggle-list.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/components/use-custom-model-fields.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/constants.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/generic-api-key-config.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/get-provider-config.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/index.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/local-llm-configs.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/provider-config-map.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/field-config/utils.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/index.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-list-models-options.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-list-models-picker.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-provider-fields.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/hooks/use-provider-modal-actions.ts`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/index.tsx`
+- `web/src/pages/user-setting/setting-model/modal/provider-modal/types.ts`
+- `web/src/pages/user-setting/setting-model/modal/somark-modal/index.tsx`
+- `web/src/pages/user-setting/setting-model/modal/verify-button/index.tsx`
+- `web/src/utils/tests/chat.test.ts`
+

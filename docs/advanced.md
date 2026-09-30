@@ -4,16 +4,17 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本：**v0.3.4**，对齐切片 **v0.3.5v**（每次切片推进一个 RAGFlow 文件的逐行对齐，
+- 版本：**v0.4.56**，对齐切片 **v0.3.10a**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
   见 `CHANGELOG.md` 与 `运维记录.md`）。
 - 测试基线：`cargo test --locked --lib`（`postgres-backend` 与 `zvec-backend` 已是默认 feature，无需显式指定）
-  **1473 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
+  **1636 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
   凭据、公网或 MinIO 的 live 测试。
-- 覆盖台账（RAGFlow v0.26.4 固定快照 `cb93883f`，4441 个文件，
-  `docs/ragflow-v0.26.4-coverage.md`）：full **566** / aligned **275** /
-  replaced **101** / N/A **61** / partial **41** / reference **3397** /
-  unmapped **0**；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
-  可复核（`--write` 刷新 Summary）。
+- 覆盖台账（RAGFlow v0.27.2 固定快照 `a024bea0cd93`，5977 个文件，
+  `docs/ragflow-v0.27.2-coverage.md`）：full **559** / aligned **278** /
+  replaced **108** / N/A **61** / partial **27** / reference **4452** /
+  unmapped **492**（v0.26.4 → v0.27.2 基线迁移的待审计队列，详见
+  `docs/ragflow-v0.27.2-delta.md`）；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
+  可复核（`--write` 刷新 Summary，`--migrate` 迁移基线）。
 - 运行形态：纯 Linux（直接运行 `target/release/rayrag`）与纯 Docker
   （`docker compose up -d`）均为一等支持；向量后端 zvec，元数据 PostgreSQL 18.4，
   不使用 MySQL。
@@ -59,24 +60,27 @@ Document (.pdf/.docx/.txt/.md/.html)
 
 ## 与 RAGFlow 的对应关系
 
-完整逐文件清单见 `docs/ragflow-v0.26.4-coverage.md`。该矩阵固定对标 RAGFlow
-`v0.26.4` commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f`，记录每个文件的
+完整逐文件清单见 `docs/ragflow-v0.27.2-coverage.md`。该矩阵固定对标 RAGFlow
+`v0.27.2` commit `a024bea0cd93f39e6652a42bf84dd20c55bc560b`，记录每个文件的
 Git blob、RayRAG 对应实现及 `aligned/partial/replaced/reference/unmapped` 状态。当前仓库保留
-固定提交的 4441 文件快照；纯 Rust coverage 门禁会直接读取固定 Git tree，校验 commit、
+固定提交的 5977 文件快照；纯 Rust coverage 门禁会直接读取固定 Git tree，校验 commit、
 路径、blob、字节、文本行数、状态库存和摘要：
 
 ```bash
-cargo run --locked --bin ragflow-coverage -- --check /path/to/ragflow-v0.26.4
+cargo run --locked --bin ragflow-coverage -- --check /path/to/ragflow-v0.27.2
 # 有意修改状态后，以固定 Git blob 修复元数据并重算摘要：
-cargo run --locked --bin ragflow-coverage -- --write /path/to/ragflow-v0.26.4
+cargo run --locked --bin ragflow-coverage -- --write /path/to/ragflow-v0.27.2
+# 切换固定基线时，从上一份台账继承状态并生成增量清单：
+cargo run --locked --bin ragflow-coverage -- --migrate docs/ragflow-v0.26.4-coverage.md /path/to/ragflow-v0.27.2
 ```
 
 未知路径不会再被兜底伪装成 `reference`：生产运行时目录必须显式映射为
 `aligned/partial/replaced`，测试与 fixture 由独立规则标为 `reference`，其余路径进入
-`unmapped`。当前清单的 `unmapped=0` 因此代表固定树中的每个文件都有显式分类；
-`partial` 仍是后续逐文件、逐行审计的真实待办，而不是完成声明。矩阵当前库存（v0.3.3bz）：
-aligned 155 / full 553 / partial 55 / replaced 101 / N/A 61 / reference 3516 /
-unmapped 0，摘要表与清单逐行一致。用户设置已有固定七路由顺序、根跳转、
+`unmapped`。v0.26.4 台账的 `unmapped=0` 代表旧固定树中的每个文件都有显式分类；
+v0.27.2 基线迁移后，492 个上游新增产品文件仍为 `unmapped`，另有 515 行已审计内容发生变化并标注
+`[v0.27.2 content changed: re-audit]`——这两类与 `partial` 都是下一阶段逐文件、逐行审计的真实待办，
+而不是完成声明。矩阵当前库存（v0.3.10a）：aligned 278 / full 559 / partial 27 /
+replaced 108 / N/A 61 / reference 4452 / unmapped 492，摘要表与清单逐行一致。用户设置已有固定七路由顺序、根跳转、
 303/64 px 响应式侧栏、精确 active 项、头像入口、账号/版本/主题/登出项，且已真实
 Chrome 逐项点击；各子页的完整 CRUD、data-source detail route、精确图标与登出 token
 revoke 仍为 partial。Model providers 已覆盖固定 63-card Available 目录、默认
