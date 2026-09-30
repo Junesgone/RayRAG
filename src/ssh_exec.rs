@@ -281,10 +281,10 @@ pub async fn execute(config: &SshConfig, language: &str, code: &str) -> Result<S
         restrict_permissions(&path);
         password_file = Some(path);
     }
-    if let Some(known_hosts) = config.known_hosts.as_deref() {
-        if std::path::Path::new(known_hosts).is_file() {
-            known_hosts_file = Some(PathBuf::from(known_hosts));
-        }
+    if let Some(known_hosts) = config.known_hosts.as_deref()
+        && std::path::Path::new(known_hosts).is_file()
+    {
+        known_hosts_file = Some(PathBuf::from(known_hosts));
     }
 
     let mut program = "ssh".to_string();

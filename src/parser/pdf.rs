@@ -201,7 +201,7 @@ impl PdfParser {
 /// no-OCR path every awaited call resolves immediately, so a parked, unpolled
 /// future still yields its value. The helper keeps that path free of a nested
 /// runtime entirely.
-fn futures_lite_block_on<F: std::future::Future>(mut future: F) -> F::Output {
+fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
     use std::task::{Context, Poll, Waker};
     let waker = Waker::noop();
     let mut context = Context::from_waker(waker);

@@ -117,10 +117,10 @@ pub fn tagged_content(lines: &[PositionedLine]) -> String {
         .collect();
 
     let mean_height: Vec<f64> = (1..=page_count)
-        .map(|page| median_of(&mut boxes, page, |b| b.height()))
+        .map(|page| median_of(&boxes, page, |b| b.height()))
         .collect();
     let mean_width: Vec<f64> = (1..=page_count)
-        .map(|page| median_of(&mut boxes, page, |b| b.char_width()))
+        .map(|page| median_of(&boxes, page, |b| b.char_width()))
         .collect();
 
     crate::parser::pdfbox::concat_downward(&mut boxes);
@@ -377,10 +377,11 @@ impl PageGeometry {
                 let tolerance = (last.size * 0.4).clamp(2.0, 6.0);
                 (last.baseline - run.baseline).abs() <= tolerance
             });
-            if !same_line && !current.is_empty() {
-                if let Some(line) = self.merge_runs(page, std::mem::take(&mut current)) {
-                    lines.push(line);
-                }
+            if !same_line
+                && !current.is_empty()
+                && let Some(line) = self.merge_runs(page, std::mem::take(&mut current))
+            {
+                lines.push(line);
             }
             current.push(run);
         }
@@ -542,10 +543,7 @@ fn apply_operation(
         }
         "ET" => {}
         "Tf" => {
-            if let Ok(name) = operands[0.min(operands.len().saturating_sub(1))]
-                .clone()
-                .as_name_str()
-                .map(str::to_owned)
+            if let Ok(name) = operands[0].clone().as_name_str().map(str::to_owned)
                 && !operands.is_empty()
             {
                 state.text.font = name;
@@ -649,7 +647,7 @@ fn apply_operation(
 }
 
 fn show_text(
-    doc: &Document,
+    _doc: &Document,
     fonts: &HashMap<String, FontMetrics>,
     state: &mut State,
     runs: &mut Vec<Run>,

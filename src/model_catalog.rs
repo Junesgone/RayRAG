@@ -94,11 +94,8 @@ impl CatalogModel {
         if self.accepts_images() {
             parts.push("images".to_string());
         }
-        match (self.input_price, self.output_price) {
-            (Some(input), Some(output)) => {
-                parts.push(format!("${input}/M in · ${output}/M out"));
-            }
-            _ => {}
+        if let (Some(input), Some(output)) = (self.input_price, self.output_price) {
+            parts.push(format!("${input}/M in · ${output}/M out"));
         }
         parts.join(" · ")
     }

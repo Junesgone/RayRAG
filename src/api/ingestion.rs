@@ -24,7 +24,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
@@ -595,7 +594,7 @@ pub async fn rerun_agent(
         dsl = log.dsl.clone();
     }
     if let Err(error) = state.ingestion_logs.update_dsl(&log.id, dsl) {
-        return data_error(&error.to_string());
+        return data_error(error.to_string());
     }
     // Re-queue the document exactly like `/datasets/{kb}/documents/{doc}/reparse`.
     match crate::api::document::enqueue_document_processing(
@@ -607,7 +606,7 @@ pub async fn rerun_agent(
         Ok(task_id) => {
             Json(serde_json::json!({ "code": 0, "data": true, "task_id": task_id })).into_response()
         }
-        Err(error) => data_error(&error.to_string()),
+        Err(error) => data_error(error.to_string()),
     }
 }
 

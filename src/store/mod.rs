@@ -532,10 +532,7 @@ impl OnlineVectorMirror {
     /// the same content — the only chunks a commit has to copy for the native
     /// `upsert`.
     #[cfg(feature = "zvec-backend")]
-    fn changed_chunks<'a>(
-        previous: &[&IndexedChunk],
-        current: &[&'a IndexedChunk],
-    ) -> Vec<IndexedChunk> {
+    fn changed_chunks(previous: &[&IndexedChunk], current: &[&IndexedChunk]) -> Vec<IndexedChunk> {
         let before: HashMap<&str, &IndexedChunk> = previous
             .iter()
             .map(|chunk| (chunk.id.as_str(), *chunk))

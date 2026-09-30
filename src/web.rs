@@ -634,7 +634,7 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
         )
     };
     let language_name = if zh { "简体中文" } else { "English" };
-    let lc = if zh { "zh-CN" } else { "en" };
+    let _lc = if zh { "zh-CN" } else { "en" };
     let mut h = page_head(title, zh);
     // Upstream `layouts/components/header.tsx`: logo, the DesktopNavbar pill,
     // then the right cluster — Discord, GitHub, language DropdownMenu, help
@@ -661,9 +661,9 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
         h.push_str(href);
         h.push_str("' data-nav='");
         h.push_str(nav_key);
-        h.push_str("'");
+        h.push('\'');
         h.push_str(testid);
-        h.push_str(">");
+        h.push('>');
         h.push_str(label);
         h.push_str("</a>");
     }
@@ -2533,7 +2533,7 @@ pub async fn dataset_page(
     ] {
         b.push_str("<li><a href='/dataset/");
         b.push_str(tab);
-        b.push_str("/");
+        b.push('/');
         b.push_str(&id);
         b.push_str("' id='nav");
         b.push_str(&idx.to_string());
@@ -3082,7 +3082,7 @@ pub async fn dataset_page(
     b.push_str(&json_script_string(t("Please input", zh)));
     b.push_str(";var SEARCH_TEST_AUTO=");
     b.push_str(&json_script_string(t("Automatic", zh)));
-    b.push_str(";");
+    b.push(';');
     b.push_str(DEFAULT_MODEL_TREE_JS_HEAD);
     b.push_str(DEFAULT_MODEL_TREE_JS_BODY);
     b.push_str("async function saveModelDefault(type,nextValue){var field=modelField(type);if(!field)return;var trigger=document.getElementById(field.domId);if(!trigger)return;var state=defaultModelState(field);if(state.pending)return;var value=String(nextValue==null?'':nextValue).trim();if(value&&!defaultModelOption(field,value))return;var previous=trigger.dataset.savedValue||'';trigger.dataset.value=value;if(!value){trigger.dataset.savedValue='';renderDefaultModelTrigger(field);return}var parsed=parseDefaultModelValue(value);if(!parsed){trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field);return}trigger.dataset.savedValue=value;var typeMap={embd_id:'embedding'};var persistType=typeMap[type];if(!persistType){renderDefaultModelTrigger(field);return}state.pending=true;fetch('/api/v1/models/default',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_type:persistType,model_provider:parsed.model_provider,model_instance:parsed.model_instance,model_name:parsed.model_name})}).then(function(response){return response.json()}).then(function(data){state.pending=false;if(data&&data.code===0){renderDefaultModelTrigger(field)}else{trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)}}).catch(function(){state.pending=false;trigger.dataset.value=previous;trigger.dataset.savedValue=previous;renderDefaultModelTrigger(field)})}async function loadKbModelCatalog(){try{var response=await fetch('/api/v1/models');var data=await response.json();if(!response.ok||data.code!==0)return;DEFAULT_MODEL_CATALOG=(data.data||[]).map(normalizeDefaultModel).filter(function(model){return model.selector});MODEL_FIELDS.forEach(function(field){var state=defaultModelState(field);state.expanded.clear();expandDefaultModelTree(field);renderDefaultModelTrigger(field);renderDefaultModelTree(field)});normalizeDefaultModelStoredValues()}catch(error){}}loadKbModelCatalog();var avatarDataUrl='';
@@ -3161,7 +3161,7 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
         }))
         .expect("bulk operate labels serialize"),
     );
-    b.push_str(";");
+    b.push(';');
     b.push_str(BULK_OPERATE_JS);
     b.push_str("function updateBatchBar(){var boxes=Array.from(document.querySelectorAll('.docCk'));var checked=boxes.filter(function(x){return x.checked});var bar=document.getElementById('batchBar');if(bar){bar.hidden=!checked.length;var sc=document.getElementById('selCount');if(sc){sc.textContent=BULK_TEXT.selected+': '+checked.length+' '+BULK_TEXT.files}}var all=document.getElementById('docSelAll');if(all){all.checked=boxes.length>0&&checked.length===boxes.length;all.indeterminate=checked.length>0&&checked.length<boxes.length}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){x.checked=on});updateBatchBar()};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
     b.push_str("function selIds(){var ids=[];document.querySelectorAll('.docCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchParse(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('重新解析选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();schedulePoll();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){next()}).catch(function(){next()})}next()};");
@@ -5470,7 +5470,7 @@ fn document_preview_markup(
         "docId": doc_id,
         "resource": resource,
     })));
-    b.push_str(";");
+    b.push(';');
     b.push_str(DOCUMENT_PREVIEW_SCRIPT);
     b.push_str("</script>");
     b
@@ -5948,7 +5948,7 @@ pub async fn files_page(
     let download_label = if zh { "下载" } else { "Download" };
     let save_label = if zh { "保存" } else { "Save" };
     let cancel_label = if zh { "取消" } else { "Cancel" };
-    let close_label = if zh { "关闭" } else { "Close" };
+    let _close_label = if zh { "关闭" } else { "Close" };
     let total_label = if zh { "总共" } else { "Total" };
     let folder_label = if zh { "文件夹" } else { "Folder" };
     let folder_name_label = if zh { "名称" } else { "Name" };
@@ -7165,7 +7165,7 @@ fn pdf_viewer_markup(doc_id: &str, zh: bool) -> String {
     b.push_str("</button><span class='docview-sep'></span><button type='button' class='btn btn-o btn-sm' data-testid='docview-zoom-out' onclick='dvZoom(-1)'>-</button><span class='docview-zoom' id='docviewZoom' data-testid='docview-zoom'>100%</span><button type='button' class='btn btn-o btn-sm' data-testid='docview-zoom-in' onclick='dvZoom(1)'>+</button><button type='button' class='btn btn-o btn-sm' data-testid='docview-fit' onclick='dvFit()'>");
     b.push_str(t("Fit", zh));
     b.push_str("</button><a class='btn btn-o btn-sm docview-download' id='docviewDownload' data-testid='docview-download' href='/api/v1/documents/");
-    b.push_str(&doc_id);
+    b.push_str(doc_id);
     b.push_str("/preview' download>");
     b.push_str(t("Download", zh));
     b.push_str("</a></div><div class='docview-scroll' id='docviewScroll' data-testid='docview-scroll'><div class='docview-pages' id='docviewPages' data-testid='docview-pages'></div></div><p class='docview-status' id='docviewStatus' data-testid='docview-status'></p></section>");
@@ -7195,13 +7195,13 @@ fn document_workbench_scripts(kb_id: &str, doc_id: &str) -> String {
     let mut b = String::new();
     b.push_str("<script>var DV_STATE=");
     b.push_str(&json_script_value(&serde_json::json!({ "chunk": "" })));
-    b.push_str(";");
+    b.push(';');
     b.push_str(DOCUMENT_VIEWER_SCRIPT);
     b.push_str("</script><script>var kbId=");
     b.push_str(&json_script_value(&serde_json::json!(kb_id)));
     b.push_str(";var docId=");
     b.push_str(&json_script_value(&serde_json::json!(doc_id)));
-    b.push_str(";");
+    b.push(';');
     b.push_str(DOCUMENT_CHUNKS_SCRIPT);
     b.push_str("</script>");
     b
@@ -7442,7 +7442,7 @@ pub async fn setup_page(
         }))
         .expect("setup page text serializes"),
     );
-    b.push_str(";");
+    b.push(';');
     b.push_str(SETUP_PAGE_SCRIPT);
     b.push_str("</script>");
     Html(layout(t("Set up your deployment", zh), &b, zh))
@@ -8754,7 +8754,7 @@ document.getElementById('apModels').addEventListener('input',function(){apSearch
 </script>"##,
     );
     b.push_str(
-        &r#"<div class='modal-overlay' id='deleteModelInstanceModal' onclick='if(event.target===this)closeDeleteModelInstance()'><div class='modal confirm-delete-dialog' role='alertdialog' data-testid='confirm-delete-dialog' aria-modal='true' aria-labelledby='deleteModelInstanceTitle'><div class='confirm-delete-head'><h2 id='deleteModelInstanceTitle'></h2><button class='confirm-delete-close' type='button' aria-label='Close' data-testid='confirm-delete-dialog-close-btn' onclick='closeDeleteModelInstance()'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></button></div><p id='deleteModelInstanceText' class='confirm-delete-body'></p><p id='deleteModelInstanceStatus' class='added-model-dialog-status'></p><div class='added-model-dialog-actions'><button class='btn btn-o' type='button' id='deleteModelInstanceCancel' data-testid='confirm-delete-dialog-cancel-btn' onclick='closeDeleteModelInstance()'></button><button class='btn btn-d' id='deleteModelInstanceOk' type='button' data-testid='confirm-delete-dialog-confirm-btn' onclick='confirmDeleteModelInstance()'></button></div></div></div>
+        r#"<div class='modal-overlay' id='deleteModelInstanceModal' onclick='if(event.target===this)closeDeleteModelInstance()'><div class='modal confirm-delete-dialog' role='alertdialog' data-testid='confirm-delete-dialog' aria-modal='true' aria-labelledby='deleteModelInstanceTitle'><div class='confirm-delete-head'><h2 id='deleteModelInstanceTitle'></h2><button class='confirm-delete-close' type='button' aria-label='Close' data-testid='confirm-delete-dialog-close-btn' onclick='closeDeleteModelInstance()'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></button></div><p id='deleteModelInstanceText' class='confirm-delete-body'></p><p id='deleteModelInstanceStatus' class='added-model-dialog-status'></p><div class='added-model-dialog-actions'><button class='btn btn-o' type='button' id='deleteModelInstanceCancel' data-testid='confirm-delete-dialog-cancel-btn' onclick='closeDeleteModelInstance()'></button><button class='btn btn-d' id='deleteModelInstanceOk' type='button' data-testid='confirm-delete-dialog-confirm-btn' onclick='confirmDeleteModelInstance()'></button></div></div></div>
 <div class='modal-overlay' id='editInstanceModelModal' data-testid='edit-instance-model-dialog' onclick='if(event.target===this)closeEditInstanceModel()'><div class='modal provider-custom-model-modal' role='dialog' aria-modal='true' aria-labelledby='editInstanceModelTitle'><h2 id='editInstanceModelTitle'>Edit model</h2><label class='provider-instance-field'>Name<input id='editInstanceModelName' disabled></label><div class='provider-instance-field' id='eimTypesField'><span id='eimTypesLabel'>Model type</span><div class='pi-multiselect' id='eimTypes'><button type='button' class='pi-multiselect-trigger' id='eimTypesTrigger' data-testid='eim-types-trigger' aria-haspopup='listbox' aria-expanded='false' onclick='piMsToggleOpen(&quot;eimTypes&quot;,event)'><span class='pi-multiselect-values' id='eimTypesValues'><span class='pi-multiselect-placeholder' id='eimTypesPlaceholder'>Select value</span></span><span class='pi-multiselect-controls'><span class='pi-multiselect-clear' id='eimTypesClear' role='button' tabindex='0' aria-label='Clear' hidden onclick='piMsClear(&quot;eimTypes&quot;,event)'></span><span class='pi-multiselect-chevron' aria-hidden='true'>⌄</span></span></button><div class='pi-multiselect-popover' id='eimTypesPopover' hidden role='listbox' aria-multiselectable='true' aria-label='Model type'><div class='pi-multiselect-search'><span aria-hidden='true'>⌕</span><input id='eimTypesSearch' type='search' placeholder='Search...' aria-label='Search model types' oninput='piMsRender(&quot;eimTypes&quot;)'></div><div class='pi-multiselect-options' id='eimTypesOptions'></div><div class='pi-multiselect-footer'><button type='button' class='pi-multiselect-action' id='eimTypesClearAll' onclick='piMsClear(&quot;eimTypes&quot;)'>Clear</button><span class='pi-multiselect-sep' aria-hidden='true'></span><button type='button' class='pi-multiselect-action' id='eimTypesClose' onclick='piMsClose(&quot;eimTypes&quot;)'>Close</button></div></div></div></div><label class='provider-instance-field'>Max tokens<input id='editInstanceModelMaxTokens' type='number' disabled></label><p id='editInstanceModelStatus' class='provider-instance-error'></p><div class='provider-instance-actions'><button class='btn btn-o' type='button' id='editInstanceModelCancel' onclick='closeEditInstanceModel()'>Cancel</button><button class='btn btn-p' id='editInstanceModelOk' type='button' onclick='saveEditInstanceModel()'>Confirm</button></div></div></div><script>const ADDED_PROVIDER_DIRECTORY="#,
     );
     let added_provider_directory: Vec<_> = providers

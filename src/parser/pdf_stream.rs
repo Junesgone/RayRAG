@@ -117,8 +117,8 @@ fn apply_predictor(
         .and_then(|value| value.as_i64().ok())
         .unwrap_or(8)
         .clamp(1, 16) as usize;
-    let bytes_per_pixel = ((colors * bits) + 7) / 8;
-    let row_len = ((colors * bits * columns) + 7) / 8;
+    let bytes_per_pixel = (colors * bits).div_ceil(8);
+    let row_len = (colors * bits * columns).div_ceil(8);
     if row_len == 0 {
         return Ok(data);
     }

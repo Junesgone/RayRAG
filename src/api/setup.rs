@@ -1203,10 +1203,11 @@ fn validate(key: &str, value: &str) -> anyhow::Result<()> {
             anyhow::bail!("'{key}' must be one of {}", options.join(", "));
         }
     }
-    if key.ends_with("_BASE_URL") || key.ends_with("_API_BASE") {
-        if !value.starts_with("http://") && !value.starts_with("https://") {
-            anyhow::bail!("'{key}' must start with http:// or https://");
-        }
+    if (key.ends_with("_BASE_URL") || key.ends_with("_API_BASE"))
+        && !value.starts_with("http://")
+        && !value.starts_with("https://")
+    {
+        anyhow::bail!("'{key}' must start with http:// or https://");
     }
     Ok(())
 }

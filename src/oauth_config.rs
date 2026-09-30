@@ -191,10 +191,10 @@ pub fn parse(json: &str) -> Vec<OAuthChannel> {
 /// Channels configured through `RAYRAG_OAUTH_CONFIG` / `OAUTH`.
 pub fn from_env() -> Vec<OAuthChannel> {
     for key in ["RAYRAG_OAUTH_CONFIG", "OAUTH"] {
-        if let Ok(value) = std::env::var(key) {
-            if !value.trim().is_empty() {
-                return parse(&value);
-            }
+        if let Ok(value) = std::env::var(key)
+            && !value.trim().is_empty()
+        {
+            return parse(&value);
         }
     }
     Vec::new()
@@ -420,8 +420,8 @@ pub async fn fetch_user_info(
     if !status.is_success() {
         anyhow::bail!("Failed to fetch user info: HTTP {status}");
     }
-    if channel.kind.as_deref() == Some("github") || channel.channel == "github" {
-        if let Ok(emails) = client
+    if (channel.kind.as_deref() == Some("github") || channel.channel == "github")
+        && let Ok(emails) = client
             .get(format!("{userinfo_url}/emails"))
             .header(
                 reqwest::header::AUTHORIZATION,
@@ -429,22 +429,17 @@ pub async fn fetch_user_info(
             )
             .send()
             .await
-        {
-            if let Ok(list) = emails.json::<Value>().await {
-                if let Some(primary) = list.as_array().and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|entry| entry.get("primary").and_then(Value::as_bool) == Some(true))
-                        .or_else(|| entries.first())
-                }) {
-                    if let Some(email) = primary.get("email").and_then(Value::as_str) {
-                        if let Some(object) = payload.as_object_mut() {
-                            object.insert("email".to_string(), Value::String(email.to_string()));
-                        }
-                    }
-                }
-            }
-        }
+        && let Ok(list) = emails.json::<Value>().await
+        && let Some(primary) = list.as_array().and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry.get("primary").and_then(Value::as_bool) == Some(true))
+                .or_else(|| entries.first())
+        })
+        && let Some(email) = primary.get("email").and_then(Value::as_str)
+        && let Some(object) = payload.as_object_mut()
+    {
+        object.insert("email".to_string(), Value::String(email.to_string()));
     }
     Ok(normalize_user_info(&payload))
 }

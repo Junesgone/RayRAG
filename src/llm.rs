@@ -524,12 +524,12 @@ impl LlmClient {
             let text = resp.text().await.unwrap_or_default();
             anyhow::bail!("LLM API error ({}): {}", status, text);
         }
-        Ok(crate::common::cmd_timeout::read_body_limited(
+        crate::common::cmd_timeout::read_body_limited(
             resp,
             crate::common::cmd_timeout::body_limit_bytes(),
             "LLM",
         )
-        .await?)
+        .await
     }
 
     /// Backward-compatible content-only adapter.

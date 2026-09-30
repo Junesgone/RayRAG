@@ -13,7 +13,6 @@
 
 use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
-use std::io::Read;
 
 /// Minimal XML node tree used to walk slide markup.
 #[derive(Debug, Default, Clone)]

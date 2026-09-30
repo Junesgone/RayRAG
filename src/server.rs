@@ -262,12 +262,12 @@ async fn user_add(
                 },
             }))
             .into_response();
-            if let Some(token) = token {
-                if let Ok(value) = axum::http::HeaderValue::from_str(&token) {
-                    response
-                        .headers_mut()
-                        .insert(axum::http::header::AUTHORIZATION, value);
-                }
+            if let Some(token) = token
+                && let Ok(value) = axum::http::HeaderValue::from_str(&token)
+            {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::AUTHORIZATION, value);
             }
             response
         }
