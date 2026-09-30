@@ -544,9 +544,10 @@ pub fn filter_forpages(bxs: &mut Vec<PdfBox>, page_image_count: usize) {
         if regex::Regex::new(r"(··|··|··)")
             .map(|re| re.is_match(&b.text))
             .unwrap_or(false)
-            && let Some(slot) = page_dirty.get_mut(b.page_number.saturating_sub(1)) {
-                *slot += 1;
-            }
+            && let Some(slot) = page_dirty.get_mut(b.page_number.saturating_sub(1))
+        {
+            *slot += 1;
+        }
     }
     let dirty: std::collections::HashSet<usize> = page_dirty
         .iter()

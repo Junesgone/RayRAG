@@ -404,9 +404,10 @@ fn score_doc(row: &DocRow, embedding: &[f32], query: &SearchQuery) -> f32 {
     if let Some(rank_feature) = &query.rank_feature {
         for key in ["kb_id", "id"] {
             if let Some(value) = row.get(key).and_then(Value::as_str)
-                && let Some(boost) = rank_feature.get(value) {
-                    score += boost;
-                }
+                && let Some(boost) = rank_feature.get(value)
+            {
+                score += boost;
+            }
         }
     }
     score
@@ -1129,14 +1130,16 @@ impl DocStorePool {
     /// Get the shared connection, connecting on first use with bounded retries.
     pub fn get_conn(&self) -> crate::Result<Arc<dyn DocStore>> {
         if let Some(conn) = self.inner.read().unwrap().as_ref()
-            && conn.health().map(|h| h.status == "green").unwrap_or(false) {
-                return Ok(conn.clone());
-            }
+            && conn.health().map(|h| h.status == "green").unwrap_or(false)
+        {
+            return Ok(conn.clone());
+        }
         let mut guard = self.inner.write().unwrap();
         if let Some(conn) = guard.as_ref()
-            && conn.health().map(|h| h.status == "green").unwrap_or(false) {
-                return Ok(conn.clone());
-            }
+            && conn.health().map(|h| h.status == "green").unwrap_or(false)
+        {
+            return Ok(conn.clone());
+        }
         let mut last_error = None;
         for attempt in 0..ATTEMPT_TIME {
             match self.connect() {
@@ -1170,9 +1173,10 @@ impl DocStorePool {
         {
             let guard = self.inner.read().unwrap();
             if let Some(conn) = guard.as_ref()
-                && conn.health().map(|h| h.status == "green").unwrap_or(false) {
-                    return Ok(conn.clone());
-                }
+                && conn.health().map(|h| h.status == "green").unwrap_or(false)
+            {
+                return Ok(conn.clone());
+            }
         }
         self.inner.write().unwrap().take();
         self.get_conn()

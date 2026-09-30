@@ -159,9 +159,10 @@ pub fn merged_value(
             let r = (*min_row as usize).saturating_sub(1);
             let c = (*min_col as usize).saturating_sub(1);
             if let Some(row_cells) = grid.get(r)
-                && let Some(cell) = row_cells.get(c) {
-                    return cell.clone();
-                }
+                && let Some(cell) = row_cells.get(c)
+            {
+                return cell.clone();
+            }
             return None;
         }
     }

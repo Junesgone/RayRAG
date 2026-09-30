@@ -300,9 +300,10 @@ impl SynonymDict {
         }
         // WordNet-equivalent fallback for pure lowercase alpha tokens
         if key.chars().all(|c| c.is_ascii_lowercase())
-            && let Some(res) = self.synonyms.get(&key) {
-                return res.iter().take(topn).cloned().collect();
-            }
+            && let Some(res) = self.synonyms.get(&key)
+        {
+            return res.iter().take(topn).cloned().collect();
+        }
         Vec::new()
     }
 

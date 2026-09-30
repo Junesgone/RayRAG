@@ -105,9 +105,10 @@ impl PluginEnv {
         let mut vars = HashMap::new();
         for (key, value) in std::env::vars() {
             if let Some(prefix) = prefix
-                && !key.starts_with(prefix) {
-                    continue;
-                }
+                && !key.starts_with(prefix)
+            {
+                continue;
+            }
             vars.insert(key, value);
         }
         Self { vars }

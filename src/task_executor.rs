@@ -209,14 +209,13 @@ impl ProgressCallback {
         if prog < 0.0 {
             message = format!("[ERROR]{message}");
         }
-        if task.to_page > 0 && task.from_page < task.to_page as usize
-            && !message.is_empty() {
-                message = format!(
-                    "Page({}~{}): {message}",
-                    task.from_page + 1,
-                    task.to_page + 1
-                );
-            }
+        if task.to_page > 0 && task.from_page < task.to_page as usize && !message.is_empty() {
+            message = format!(
+                "Page({}~{}): {message}",
+                task.from_page + 1,
+                task.to_page + 1
+            );
+        }
         if !message.is_empty() {
             message = format!("{} {message}", hhmmss());
         }
@@ -697,10 +696,10 @@ pub async fn run_sync_task(
                 && existing_fingerprints
                     .get(&doc.id)
                     .is_some_and(|stored| stored == fp)
-                {
-                    summary.skipped += 1;
-                    continue;
-                }
+            {
+                summary.skipped += 1;
+                continue;
+            }
             if let Some(ts) = next_update.as_ref() {
                 if doc.doc_updated_at > *ts {
                     next_update = Some(doc.doc_updated_at.clone());
@@ -730,11 +729,10 @@ pub async fn run_sync_task(
     // only on incremental runs with the snapshot flag enabled.
     let expects_deleted_file_snapshot =
         !task.reindex && task.poll_range_start.is_some() && task.sync_deleted_files;
-    if expects_deleted_file_snapshot
-        && let Some(file_list) = &feed.file_list {
-            let snapshot: std::collections::HashSet<String> = file_list.iter().cloned().collect();
-            summary.deleted = known.iter().filter(|id| !snapshot.contains(*id)).count();
-        }
+    if expects_deleted_file_snapshot && let Some(file_list) = &feed.file_list {
+        let snapshot: std::collections::HashSet<String> = file_list.iter().cloned().collect();
+        summary.deleted = known.iter().filter(|id| !snapshot.contains(*id)).count();
+    }
 
     summary.total = summary.added + summary.updated + summary.deleted;
     summary.next_poll_range_start = next_update;

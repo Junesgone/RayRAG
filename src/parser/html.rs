@@ -189,9 +189,10 @@ impl RAGFlowHtmlParser {
 
             if block_id.is_some() {
                 if title_flag
-                    && let Some((_, prefix)) = TITLE_TAGS.iter().find(|(t, _)| *t == tag_name) {
-                        content = format!("{prefix} {content}");
-                    }
+                    && let Some((_, prefix)) = TITLE_TAGS.iter().find(|(t, _)| *t == tag_name)
+                {
+                    content = format!("{prefix} {content}");
+                }
                 if last_block_id != block_id {
                     if last_block_id.is_some() {
                         block_content.push(current_content.clone());
@@ -439,34 +440,35 @@ fn html_unescape(s: &str) -> String {
     let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] == b'&'
-            && let Some(end) = s[i..].find(';') {
-                let entity = &s[i + 1..i + end];
-                let decoded = match entity {
-                    "amp" => Some('&'),
-                    "lt" => Some('<'),
-                    "gt" => Some('>'),
-                    "quot" => Some('"'),
-                    "apos" => Some('\''),
-                    "nbsp" => Some('\u{00a0}'),
-                    _ => {
-                        if let Some(hex) = entity
-                            .strip_prefix("#x")
-                            .or_else(|| entity.strip_prefix("#X"))
-                        {
-                            u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
-                        } else if let Some(dec) = entity.strip_prefix('#') {
-                            dec.parse::<u32>().ok().and_then(char::from_u32)
-                        } else {
-                            None
-                        }
+            && let Some(end) = s[i..].find(';')
+        {
+            let entity = &s[i + 1..i + end];
+            let decoded = match entity {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some('\u{00a0}'),
+                _ => {
+                    if let Some(hex) = entity
+                        .strip_prefix("#x")
+                        .or_else(|| entity.strip_prefix("#X"))
+                    {
+                        u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
+                    } else if let Some(dec) = entity.strip_prefix('#') {
+                        dec.parse::<u32>().ok().and_then(char::from_u32)
+                    } else {
+                        None
                     }
-                };
-                if let Some(ch) = decoded {
-                    out.push(ch);
-                    i += end + 1;
-                    continue;
                 }
+            };
+            if let Some(ch) = decoded {
+                out.push(ch);
+                i += end + 1;
+                continue;
             }
+        }
         out.push(bytes[i] as char);
         i += 1;
     }

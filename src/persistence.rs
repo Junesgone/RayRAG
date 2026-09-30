@@ -619,10 +619,8 @@ mod tests {
 
     #[test]
     fn json_snapshot_round_trips_through_atomic_write() {
-        let root = std::env::temp_dir().join(format!(
-            "rayrag-persistence-json-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rayrag-persistence-json-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("table.json");
         let value = serde_json::json!({"dimensions": [1024, 1536], "kb": "kb-1"});

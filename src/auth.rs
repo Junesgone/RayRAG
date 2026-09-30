@@ -637,7 +637,10 @@ mod tests {
         let user = store
             .register("Ada", "Ada@Example.com", "correct horse battery staple")
             .unwrap();
-        assert_eq!(user.email, "ada@example.com", "writes normalise the address");
+        assert_eq!(
+            user.email, "ada@example.com",
+            "writes normalise the address"
+        );
 
         // Every spelling of the same mailbox reaches the same account.
         for typed in [

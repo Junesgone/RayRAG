@@ -1607,9 +1607,10 @@ impl RemoteSandboxConfig {
             config.endpoint = format!("http://{host}:{port}");
         }
         if let Ok(pool) = std::env::var("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE")
-            && let Ok(parsed) = pool.trim().parse() {
-                config.pool_size = parsed;
-            }
+            && let Ok(parsed) = pool.trim().parse()
+        {
+            config.pool_size = parsed;
+        }
         config
     }
 }
@@ -1637,12 +1638,10 @@ pub fn build_run_payload(code: &str, language: &str, arguments: &Map<String, Val
 }
 
 /// 自管理沙箱远程客户端（对齐 SelfManagedProvider）。
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RemoteSandboxClient {
     pub config: RemoteSandboxConfig,
 }
-
 
 impl RemoteSandboxClient {
     pub fn new(config: RemoteSandboxConfig) -> Self {

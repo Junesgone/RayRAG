@@ -203,9 +203,10 @@ pub fn tree_merge(
             }
         }
         if (section.1.contains("title") || section.1.contains("head"))
-            && !not_title(text.split('@').next().unwrap_or_default()) {
-                return (family_len as i64 + 1, text);
-            }
+            && !not_title(text.split('@').next().unwrap_or_default())
+        {
+            return (family_len as i64 + 1, text);
+        }
         (family_len as i64 + 2, text)
     };
 

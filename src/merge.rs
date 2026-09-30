@@ -199,12 +199,13 @@ pub async fn deduplicate_items(
         let mut merged_into: Option<usize> = None;
         for (idx, existing) in out.iter().enumerate() {
             if payloads_similar(existing, &incoming, threshold)
-                && let Some(mut merged) = merge_pair(existing, &incoming, client).await? {
-                    union_chunk_ids(&mut merged, existing);
-                    out[idx] = merged;
-                    merged_into = Some(idx);
-                    break;
-                }
+                && let Some(mut merged) = merge_pair(existing, &incoming, client).await?
+            {
+                union_chunk_ids(&mut merged, existing);
+                out[idx] = merged;
+                merged_into = Some(idx);
+                break;
+            }
         }
         if merged_into.is_none() {
             out.push(incoming);
@@ -232,9 +233,10 @@ fn union_chunk_ids(merged: &mut Value, existing: &Value) {
     if let Some(list) = existing.get("source_chunk_ids").and_then(Value::as_array) {
         for v in list {
             if let Some(s) = v.as_str()
-                && !ids.iter().any(|x| x == s) {
-                    ids.push(s.to_string());
-                }
+                && !ids.iter().any(|x| x == s)
+            {
+                ids.push(s.to_string());
+            }
         }
     }
     if let Some(map) = merged.as_object_mut() {

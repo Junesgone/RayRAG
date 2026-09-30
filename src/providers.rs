@@ -1291,9 +1291,10 @@ pub fn factory_full_models(provider_id: &str, provider_name: &str) -> Vec<Factor
     }
     let by_name = normalize_provider_name(provider_name);
     if !by_name.is_empty()
-        && let Some(models) = catalog.get(&by_name) {
-            return models.clone();
-        }
+        && let Some(models) = catalog.get(&by_name)
+    {
+        return models.clone();
+    }
     Vec::new()
 }
 

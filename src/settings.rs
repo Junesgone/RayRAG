@@ -193,10 +193,12 @@ pub fn resolve_per_model_config(
         .or_else(|| (!backup_base_url.is_empty()).then(|| backup_base_url.to_owned()));
 
     let mut name = name;
-    if !name.is_empty() && !name.contains('@')
-        && let Some(factory) = &factory {
-            name = format!("{name}@{factory}");
-        }
+    if !name.is_empty()
+        && !name.contains('@')
+        && let Some(factory) = &factory
+    {
+        name = format!("{name}@{factory}");
+    }
     ModelEntry {
         name,
         factory,
@@ -211,9 +213,10 @@ pub fn resolve_per_model_config(
 /// placeholder); otherwise `None` (the runtime then generates one).
 pub fn init_secret_key(env_key: Option<&str>, configured_key: Option<&str>) -> Option<String> {
     if let Some(key) = env_key
-        && key.len() >= 32 {
-            return Some(key.to_owned());
-        }
+        && key.len() >= 32
+    {
+        return Some(key.to_owned());
+    }
     let today = {
         let now = time::OffsetDateTime::now_utc();
         format!(
@@ -224,9 +227,11 @@ pub fn init_secret_key(env_key: Option<&str>, configured_key: Option<&str>) -> O
         )
     };
     if let Some(key) = configured_key
-        && key.len() >= 32 && key != today {
-            return Some(key.to_owned());
-        }
+        && key.len() >= 32
+        && key != today
+    {
+        return Some(key.to_owned());
+    }
     None
 }
 
@@ -697,10 +702,11 @@ impl ServiceConf {
                 .unwrap_or(conf.message_queue_type);
         }
         if let Some(file_syncer) = service_section(value, "file_syncer") {
-            conf.file_syncer.max_concurrent_syncs = u32_field(Some(file_syncer), "max_concurrent_syncs")
-                .unwrap_or(conf.file_syncer.max_concurrent_syncs);
-            conf.file_syncer.sync_interval =
-                u32_field(Some(file_syncer), "sync_interval").unwrap_or(conf.file_syncer.sync_interval);
+            conf.file_syncer.max_concurrent_syncs =
+                u32_field(Some(file_syncer), "max_concurrent_syncs")
+                    .unwrap_or(conf.file_syncer.max_concurrent_syncs);
+            conf.file_syncer.sync_interval = u32_field(Some(file_syncer), "sync_interval")
+                .unwrap_or(conf.file_syncer.sync_interval);
         }
         if let Some(llm) = service_section(value, "user_default_llm") {
             conf.user_default_llm.factory =
@@ -991,9 +997,10 @@ fn regex_matches(pattern: &str, field: &str) -> bool {
     // ^.*(_dt|_time|_at)$ — the ES `dt` template: any field ending in one of
     // the date suffixes.
     if let Some(rest) = body.strip_prefix(".*(")
-        && let Some(alts) = rest.strip_suffix(')') {
-            return alts.split('|').any(|suffix| field.ends_with(suffix));
-        }
+        && let Some(alts) = rest.strip_suffix(')')
+    {
+        return alts.split('|').any(|suffix| field.ends_with(suffix));
+    }
     body == field
 }
 

@@ -268,7 +268,6 @@ mod tests {
     }
 }
 
-
 /// Whole-document-as-one-chunk strategy — mirrors RAGFlow `rag/app/one.py`
 /// ("One file forms a chunk which maintains original text order").
 pub struct SingleChunker;

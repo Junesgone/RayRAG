@@ -604,14 +604,16 @@ pub fn merge_graph_entities(entities: &[Value]) -> Vec<Value> {
                     .unwrap_or(1);
             target["mention_count"] = json!(mc);
             if let Some(aliases) = target.get_mut("aliases").and_then(Value::as_array_mut)
-                && let Some(incoming) = entity.get("aliases").and_then(Value::as_array) {
-                    for a in incoming {
-                        if let Some(s) = a.as_str()
-                            && !aliases.iter().any(|x| x.as_str() == Some(s)) {
-                                aliases.push(json!(s));
-                            }
+                && let Some(incoming) = entity.get("aliases").and_then(Value::as_array)
+            {
+                for a in incoming {
+                    if let Some(s) = a.as_str()
+                        && !aliases.iter().any(|x| x.as_str() == Some(s))
+                    {
+                        aliases.push(json!(s));
                     }
                 }
+            }
             let t_desc = target
                 .get("discription")
                 .and_then(Value::as_str)
@@ -715,19 +717,21 @@ pub fn to_es_doc(
     let mut to_entity: Option<String> = None;
     if kind == "relation" {
         if let Some(sf) = src_field
-            && let Some(v) = payload.get(sf) {
-                let s = v.to_string().trim().to_string();
-                if !s.is_empty() {
-                    from_entity = Some(s);
-                }
+            && let Some(v) = payload.get(sf)
+        {
+            let s = v.to_string().trim().to_string();
+            if !s.is_empty() {
+                from_entity = Some(s);
             }
+        }
         if let Some(tf) = target_field
-            && let Some(v) = payload.get(tf) {
-                let s = v.to_string().trim().to_string();
-                if !s.is_empty() {
-                    to_entity = Some(s);
-                }
+            && let Some(v) = payload.get(tf)
+        {
+            let s = v.to_string().trim().to_string();
+            if !s.is_empty() {
+                to_entity = Some(s);
             }
+        }
     }
 
     CompiledRow {
@@ -1098,15 +1102,17 @@ pub fn exact_dedup_by_key(
         let mut mention_count = 0usize;
         for it in &group {
             if let Some(n) = it.get(name_key).and_then(Value::as_str)
-                && !n.is_empty() {
-                    aliases.insert(n.to_string());
-                }
+                && !n.is_empty()
+            {
+                aliases.insert(n.to_string());
+            }
             if let Some(a) = it.get("aliases").and_then(Value::as_array) {
                 for v in a {
                     if let Some(s) = v.as_str()
-                        && !s.is_empty() {
-                            aliases.insert(s.to_string());
-                        }
+                        && !s.is_empty()
+                    {
+                        aliases.insert(s.to_string());
+                    }
                 }
             }
             chunk_id_lists.push(
@@ -1132,17 +1138,19 @@ pub fn exact_dedup_by_key(
             "_norm": norm,
         });
         if let Some(tv) = &type_val
-            && let Some(tk) = type_key {
-                record[tk] = json!(tv);
-            }
+            && let Some(tk) = type_key
+        {
+            record[tk] = json!(tv);
+        }
         if let Some(agg) = aggregate_extra
             && let Some(extras) = agg(&group)
-                && extras.is_object()
-                    && let Some(map) = record.as_object_mut() {
-                        for (k, v) in extras.as_object().unwrap() {
-                            map.insert(k.clone(), v.clone());
-                        }
-                    }
+            && extras.is_object()
+            && let Some(map) = record.as_object_mut()
+        {
+            for (k, v) in extras.as_object().unwrap() {
+                map.insert(k.clone(), v.clone());
+            }
+        }
         canonical.push(record);
     }
     canonical
@@ -1280,9 +1288,10 @@ pub async fn bulk_dedup_items(
     for i in 0..n {
         for j in (i + 1)..n {
             if let Some(tk) = type_key
-                && canonical[i].get(tk) != canonical[j].get(tk) {
-                    continue;
-                }
+                && canonical[i].get(tk) != canonical[j].get(tk)
+            {
+                continue;
+            }
             let s = merge::cosine_similarity(&vectors[i], &vectors[j]);
             if s >= merge_threshold {
                 merge_root(&mut merged_into, i, j, &canonical);
@@ -1294,82 +1303,83 @@ pub async fn bulk_dedup_items(
     ambiguous_pairs.retain(|(i, j)| root(*i, &merged_into) != root(*j, &merged_into));
 
     if let Some(chat) = chat
-        && !ambiguous_pairs.is_empty() {
-            let mut k = 0usize;
-            while k < ambiguous_pairs.len() {
-                let end = (k + ambiguous_batch_size).min(ambiguous_pairs.len());
-                let batch: Vec<(usize, usize)> = ambiguous_pairs[k..end]
-                    .iter()
-                    .copied()
-                    .filter(|(i, j)| root(*i, &merged_into) != root(*j, &merged_into))
-                    .collect();
-                if !batch.is_empty() {
-                    let mut lines: Vec<String> = Vec::new();
-                    for (idx, (i, j)) in batch.iter().enumerate() {
-                        let a_type = type_key
-                            .and_then(|tk| canonical[*i].get(tk).and_then(Value::as_str))
-                            .map(|t| format!(" ({t})"))
-                            .unwrap_or_default();
-                        let b_type = type_key
-                            .and_then(|tk| canonical[*j].get(tk).and_then(Value::as_str))
-                            .map(|t| format!(" ({t})"))
-                            .unwrap_or_default();
-                        lines.push(format!(
-                            "{}. \"{}\"{a_type} vs \"{}\"{b_type}",
-                            idx + 1,
-                            canonical[*i]
-                                .get(name_key)
-                                .and_then(Value::as_str)
-                                .unwrap_or(""),
-                            canonical[*j]
-                                .get(name_key)
-                                .and_then(Value::as_str)
-                                .unwrap_or(""),
-                        ));
-                    }
-                    let user_prompt = format!(
-                        "For each pair below, determine if they refer to the same real-world entity.\n\
+        && !ambiguous_pairs.is_empty()
+    {
+        let mut k = 0usize;
+        while k < ambiguous_pairs.len() {
+            let end = (k + ambiguous_batch_size).min(ambiguous_pairs.len());
+            let batch: Vec<(usize, usize)> = ambiguous_pairs[k..end]
+                .iter()
+                .copied()
+                .filter(|(i, j)| root(*i, &merged_into) != root(*j, &merged_into))
+                .collect();
+            if !batch.is_empty() {
+                let mut lines: Vec<String> = Vec::new();
+                for (idx, (i, j)) in batch.iter().enumerate() {
+                    let a_type = type_key
+                        .and_then(|tk| canonical[*i].get(tk).and_then(Value::as_str))
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default();
+                    let b_type = type_key
+                        .and_then(|tk| canonical[*j].get(tk).and_then(Value::as_str))
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default();
+                    lines.push(format!(
+                        "{}. \"{}\"{a_type} vs \"{}\"{b_type}",
+                        idx + 1,
+                        canonical[*i]
+                            .get(name_key)
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                        canonical[*j]
+                            .get(name_key)
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                    ));
+                }
+                let user_prompt = format!(
+                    "For each pair below, determine if they refer to the same real-world entity.\n\
                          Return a JSON array of exactly {} booleans (true = same entity, false = different).\n\
                          Return ONLY the JSON array.\n\n{}",
-                        batch.len(),
-                        lines.join("\n"),
-                    );
-                    let system = DEFAULT_DISAMBIGUATE_SYSTEM;
-                    match crate::hypergraph::gen_json_with_temperature(
-                        chat,
-                        system,
-                        &user_prompt,
-                        Some(0.0),
-                    )
-                    .await
-                    {
-                        Ok(res) => {
-                            let decisions: Vec<Value> = match &res {
-                                Value::Array(items) => items.clone(),
-                                Value::Object(map) => map
-                                    .values()
-                                    .find(|v| v.is_array())
-                                    .and_then(Value::as_array)
-                                    .cloned()
-                                    .unwrap_or_default(),
-                                _ => Vec::new(),
-                            };
-                            for (idx, (i, j)) in batch.iter().enumerate() {
-                                let verdict =
-                                    decisions.get(idx).and_then(Value::as_bool).unwrap_or(false);
-                                if verdict {
-                                    merge_root(&mut merged_into, *i, *j, &canonical);
-                                }
+                    batch.len(),
+                    lines.join("\n"),
+                );
+                let system = DEFAULT_DISAMBIGUATE_SYSTEM;
+                match crate::hypergraph::gen_json_with_temperature(
+                    chat,
+                    system,
+                    &user_prompt,
+                    Some(0.0),
+                )
+                .await
+                {
+                    Ok(res) => {
+                        let decisions: Vec<Value> = match &res {
+                            Value::Array(items) => items.clone(),
+                            Value::Object(map) => map
+                                .values()
+                                .find(|v| v.is_array())
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_default(),
+                            _ => Vec::new(),
+                        };
+                        for (idx, (i, j)) in batch.iter().enumerate() {
+                            let verdict =
+                                decisions.get(idx).and_then(Value::as_bool).unwrap_or(false);
+                            if verdict {
+                                merge_root(&mut merged_into, *i, *j, &canonical);
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!("bulk_dedup: disambiguation call failed: {e}");
-                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("bulk_dedup: disambiguation call failed: {e}");
                     }
                 }
-                k = end;
             }
+            k = end;
         }
+    }
 
     let collapsed = apply_dedup_merges(&canonical, &merged_into, name_key);
     Ok(strip_norm(collapsed, strip_norm_key))
@@ -1730,29 +1740,35 @@ impl CompileFilter {
     fn matches(&self, row: &CompiledRow) -> bool {
         if !self.any_doc
             && let Some(d) = &self.doc_id
-                && &row.doc_id != d {
-                    return false;
-                }
+            && &row.doc_id != d
+        {
+            return false;
+        }
         if let Some(c) = &self.compile_kwd
-            && &row.compile_kwd != c {
-                return false;
-            }
+            && &row.compile_kwd != c
+        {
+            return false;
+        }
         if let Some(k) = &self.knowledge_graph_kwd
-            && &row.knowledge_graph_kwd != k {
-                return false;
-            }
+            && &row.knowledge_graph_kwd != k
+        {
+            return false;
+        }
         if let Some(f) = &self.from_entity_kwd
-            && row.from_entity_kwd.as_ref() != Some(f) {
-                return false;
-            }
+            && row.from_entity_kwd.as_ref() != Some(f)
+        {
+            return false;
+        }
         if let Some(t) = &self.to_entity_kwd
-            && row.to_entity_kwd.as_ref() != Some(t) {
-                return false;
-            }
+            && row.to_entity_kwd.as_ref() != Some(t)
+        {
+            return false;
+        }
         if let Some(tpl) = &self.compilation_template_id
-            && !row.compilation_template_ids.iter().any(|t| t == tpl) {
-                return false;
-            }
+            && !row.compilation_template_ids.iter().any(|t| t == tpl)
+        {
+            return false;
+        }
         true
     }
 }
@@ -2217,19 +2233,19 @@ pub fn rebuild_es_doc(
         compilation_template_id,
         compilation_template_kind,
     );
-    if preserve_id
-        && let Some(id) = base_doc.get("id").and_then(Value::as_str) {
-            new_doc.id = id.to_string();
-        }
+    if preserve_id && let Some(id) = base_doc.get("id").and_then(Value::as_str) {
+        new_doc.id = id.to_string();
+    }
     for kwd in ["from_entity_kwd", "to_entity_kwd"] {
         if let Some(v) = base_doc.get(kwd).and_then(Value::as_str)
-            && !v.is_empty() {
-                if kwd == "from_entity_kwd" {
-                    new_doc.from_entity_kwd = Some(v.to_string());
-                } else {
-                    new_doc.to_entity_kwd = Some(v.to_string());
-                }
+            && !v.is_empty()
+        {
+            if kwd == "from_entity_kwd" {
+                new_doc.from_entity_kwd = Some(v.to_string());
+            } else {
+                new_doc.to_entity_kwd = Some(v.to_string());
             }
+        }
     }
     new_doc
 }
@@ -2356,9 +2372,10 @@ pub async fn es_dedup_one(
     };
     let mut old_doc = old_doc;
     if old_doc.get("id").and_then(Value::as_str).is_none()
-        && let Some(map) = old_doc.as_object_mut() {
-            map.insert("id".into(), json!(doc.id));
-        }
+        && let Some(map) = old_doc.as_object_mut()
+    {
+        map.insert("id".into(), json!(doc.id));
+    }
     let old_payload = load_payload(&old_doc);
     let incoming_payload = load_payload(&serde_json::to_value(doc)?);
     let merged_payload = match merge::merge_pair(&old_payload, &incoming_payload, chat).await {
@@ -3177,9 +3194,11 @@ pub fn flat_uniq_list(items: &[Value], key: &str) -> Vec<String> {
             Some(Value::Array(arr)) => {
                 for v in arr {
                     if let Some(s) = v.as_str()
-                        && !s.is_empty() && seen.insert(s.to_string()) {
-                            out.push(s.to_string());
-                        }
+                        && !s.is_empty()
+                        && seen.insert(s.to_string())
+                    {
+                        out.push(s.to_string());
+                    }
                 }
             }
             _ => {}
@@ -3593,10 +3612,9 @@ fn balance_closers(input: &str) -> String {
             '"' => in_string = true,
             '{' => stack.push('}'),
             '[' => stack.push(']'),
-            '}' | ']'
-                if stack.last() == Some(&c) => {
-                    stack.pop();
-                }
+            '}' | ']' if stack.last() == Some(&c) => {
+                stack.pop();
+            }
             _ => {}
         }
     }
@@ -3654,9 +3672,10 @@ pub fn repair_json_text(reply: &str) -> Option<Value> {
     for (idx, _) in repaired.char_indices().rev() {
         let c = bytes[idx];
         if (c == b'}' || c == b']')
-            && let Ok(v) = serde_json::from_str::<Value>(&repaired[..=idx]) {
-                return Some(v);
-            }
+            && let Ok(v) = serde_json::from_str::<Value>(&repaired[..=idx])
+        {
+            return Some(v);
+        }
     }
     None
 }

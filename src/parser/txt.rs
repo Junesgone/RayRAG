@@ -41,9 +41,10 @@ fn unicode_escape_expand(s: &str) -> String {
                     }
                 }
                 if let Ok(cp) = u32::from_str_radix(&hex, 16)
-                    && let Some(ch) = char::from_u32(cp) {
-                        out.push(ch);
-                    }
+                    && let Some(ch) = char::from_u32(cp)
+                {
+                    out.push(ch);
+                }
             }
             Some(other) => {
                 out.push('\\');

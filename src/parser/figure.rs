@@ -514,9 +514,10 @@ fn parse_raster(
             tokio::runtime::Handle::current().block_on(client.ocr(data))
         });
         if let Ok(found) = result
-            && !found.is_empty() {
-                ocr_text = found;
-            }
+            && !found.is_empty()
+        {
+            ocr_text = found;
+        }
     }
 
     // picture.py gate: use OCR text directly when long enough, else ask the
