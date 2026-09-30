@@ -2,7 +2,7 @@
 
 RayRAG 的模型接入统一走 OpenAI 兼容协议：
 
-- **LLM / 视觉**：配置里 `model@provider`（如 `Qwen/Qwen2.5-VL-7B-Instruct@SILICONFLOW`），提供商目录在 `src/data/providers/llm_factories.json`（63 提供商 / 942 模型，含类型标签 `t`：chat / embedding / rerank / image2text / tts / speech2text）。
+- **LLM / 视觉**：配置里 `model@provider`（如 `Qwen/Qwen2.5-VL-7B-Instruct@SILICONFLOW`），提供商目录在 `src/data/providers/llm_factories.json`（73 提供商 / 1008 模型，含类型标签 `t`：chat / embedding / rerank / image2text / tts / speech2text）。
 - **Embedding**：环境变量 `EMBED_API_BASE` + `EMBED_API_KEY` + `EMBED_MODEL`（OpenAI 兼容 `/embeddings`）。
 - **Rerank**：环境变量 `RERANK_API_BASE` + `RERANK_API_KEY` + `RERANK_MODEL`（OpenAI 兼容 `/rerank`）。
 - 本机 GPU（llama.cpp 已实测 8/8）优先：

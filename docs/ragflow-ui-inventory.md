@@ -577,3 +577,16 @@ API；截图 `00-chat-channels.png` 至 `02-telegram-deleted.png`。
 ## 数据源 `/user-setting/data-source`（全量）
 - 左侧菜单：Data sources / Chat channels / Model providers / MCP / Team / Profile / API / v0.26.2 / Log out
 - 35 种 Available sources（各带描述 + `Add`）；已连接列表区显示已配置源（如 WebDAV 及其挂载点）
+
+## v0.27.2 遍历刷新（2026-10-01，真点 34/34 路由）
+
+- 工具：`scripts/ui-traversal/traverse.mjs`，fnOS Chrome/CDP `127.0.0.1:16002`，目标 `http://127.0.0.1:11526`。
+- 结果：34/34 路由 `ok=true`；全量地图 `docs/ui-traversal/ragflow-ui-map.json`（v0.27.2），
+  增量 `docs/ui-traversal/ragflow-ui-map-delta-v0.27.2.md`；截图 `docs/ui-traversal/shot-*.png` 已重拍。
+- v0.27 新增路由（旧地图没有）：`/home`、`/chats/share`、`/chats/widget`、`/search/share`、
+  `/agent`、`/agent/share`、`/compilation-templates/edit-next`、`/dataflow-result`。
+- 旧地图的参数化详情路由（dataset files/logs/configuration/retrieval/knowledge-graph、agent、memory）
+  本轮实例无数据，未遍历；下一轮用临时数据集补齐 `/dataset/{files,logs,configuration,retrieval,knowledge-graph}/{id}`、
+  `/search/{id}` 与 chunk 详情路由。
+- Model providers 页：RayRAG 侧卡片刻意与上游 v0.27.2 对齐（71 卡、顺序/标签/文档链接/行标签
+  经 `provider-catalog-diff.py` 核对 PASS）。

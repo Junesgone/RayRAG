@@ -25,10 +25,13 @@ Usage: python3 scripts/ui-traversal/provider-catalog-diff.py [--origin URL]
 """
 
 import argparse
+import http.client
 import json
+import os
 import re
 import sys
-import urllib.request
+
+from urllib.parse import urlsplit
 from pathlib import Path
 
 ORDER_MAP = {
@@ -66,13 +69,16 @@ SYSTEM_SETTING_LABELS = {
 
 def expected_providers(factories):
     def model_types(factory):
-        types = set()
+        # First-seen order, like the upstream API response: duplicates are removed
+        # without reordering, so the stable sort below keeps `image2text` before
+        # `vision` exactly as the rendered card does.
+        types = []
         for llm in factory.get("llm", []):
             raw = llm.get("model_type")
-            if isinstance(raw, list):
-                types.update(raw)
-            elif raw:
-                types.add(raw)
+            values = raw if isinstance(raw, list) else ([raw] if raw else [])
+            for value in values:
+                if value and value not in types:
+                    types.append(value)
         return types
 
     def rank(factory):
@@ -86,8 +92,8 @@ def expected_providers(factories):
         if factory["name"] in EXCLUDED:
             continue
         types = model_types(factory)
-        if factory["name"] in OCR_FACTORIES:
-            types.add("ocr")
+        if factory["name"] in OCR_FACTORIES and "ocr" not in types:
+            types.append("ocr")
         rows.append(
             (
                 factory["name"],
@@ -100,26 +106,53 @@ def expected_providers(factories):
 
 
 def fetch(url, lang):
-    request = urllib.request.Request(
-        url, headers={"Cookie": f"lang={'zh-CN' if lang == 'zh' else 'en'}"}
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        sys.exit(f"refusing non-http(s) origin: {url}")
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+    connection_class = (
+        http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read().decode("utf-8")
+    connection = connection_class(parts.hostname, parts.port, timeout=60)
+    try:
+        connection.request(
+            "GET", path, headers={"Cookie": f"lang={'zh-CN' if lang == 'zh' else 'en'}"}
+        )
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        status = response.status
+    except OSError as error:
+        sys.exit(f"cannot fetch {url}: {error}")
+    finally:
+        connection.close()
+    if status != 200:
+        sys.exit(f"unexpected HTTP {status} from {url}")
+    return body
+
+
+def load_reference(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as error:
+        sys.exit(f"cannot read {path}: {error}")
+    except json.JSONDecodeError as error:
+        sys.exit(f"invalid JSON in {path}: {error}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--origin", default="http://127.0.0.1:9390")
     parser.add_argument(
-        "--reference", default="/home/junesgone/.cache/ragflow-v0.26.4"
+        "--reference",
+        default=os.path.join(
+            os.environ.get("HOME", "."), ".cache", "ragflow-v0.27.2"
+        ),
     )
     args = parser.parse_args()
 
-    catalog = json.loads(
-        (Path(args.reference) / "conf" / "llm_factories.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    catalog = load_reference(Path(args.reference) / "conf" / "llm_factories.json")
     factories = catalog.get("factory_llm_infos", catalog)
     expected = expected_providers(factories)
 
@@ -154,7 +187,10 @@ def main():
         r"<article class='available-provider-card'.*?</article>", grid, re.S
     )
     for block in card_blocks:
-        name = re.search(r"data-provider='([^']+)'", block).group(1)
+        found = re.search(r"data-provider='([^']+)'", block)
+        if not found:
+            continue
+        name = found.group(1)
         has_link = "available-provider-doc" in block
         if has_link != (name in API_MAP_URL):
             failures.append(

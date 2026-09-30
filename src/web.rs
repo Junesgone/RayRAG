@@ -14083,8 +14083,8 @@ connection: close
         );
         assert_eq!(
             body.matches("data-testid='available-model-card'").count(),
-            63,
-            "fixed v0.26.4 exposes 63 Available provider cards"
+            71,
+            "fixed v0.27.2 exposes 71 Available provider cards"
         );
         assert_eq!(
             body.matches("data-show-base='true'").count(),

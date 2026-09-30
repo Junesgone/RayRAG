@@ -2,6 +2,37 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.57] — 2026-10-01（对标批次 v0.3.10b）
+
+> 本轮把模型提供商目录与 Available-models 网格同步到 RAGFlow v0.27.2，
+> 并在真浏览器里完成 v0.27.2 的 34 路由 UI 遍历。
+
+### Added
+
+- **模型提供商目录同步 v0.27.2**：`src/data/providers/llm_factories.json` 重新生成为
+  **73 提供商 / 1008 模型**；`src/api/tenant_models.rs` 内嵌的 `RAGFLOW_LLM_FACTORIES_JSON`
+  （Available 网格与工厂回退的数据源）重新生成为 **74 工厂 / 1009 行**。新增提供商：
+  FunASR、GreenPT、Hubris、MWS、Mistral OCR、Synthorai、aimlapi.com、llmman。
+- **同步工具 `scripts/sync-llm-factories.py`**：从固定参考树一次生成两份产物，
+  `--check` 可在 v0.26.4 快照上逐字段回归（两份产物都完全一致）；已有模型保留其类型，
+  新模型按"含 chat 取 chat、否则取首类型"补齐，多类型列表原样保留。
+
+### Fixed
+
+- Available-models 网格与上游 v0.27.2 的差异清零：**71 张卡片全部渲染**（此前缺 8 张），
+  卡片顺序、能力标签顺序、API key 文档链接、SystemSetting 行标签全部一致
+  （`provider-catalog-diff.py --reference ~/.cache/ragflow-v0.27.2`：**PASS**）。
+
+### Notes
+
+- v0.27.2 UI 遍历（真点，**34/34 路由**）刷新 `docs/ui-traversal/ragflow-ui-map.json`，
+  增量报告 `docs/ui-traversal/ragflow-ui-map-delta-v0.27.2.md`；v0.27 新增路由
+  `/home`、`/chats/share`、`/chats/widget`、`/search/share`、`/agent`、`/agent/share`、
+  `/compilation-templates/edit-next`、`/dataflow-result`。
+- 台账：59 行 `conf/models` 复核关闭（unmapped 492 → 483，full 559 → 568），`--check` 通过。
+- 全量 `cargo test --locked --offline --lib` **1636 passed / 0 failed / 27 ignored**；
+  `cargo fmt --check` 干净。
+
 ## [0.4.56] — 2026-09-30（对标批次 v0.3.10a）
 
 > 本轮把对标基线从 RAGFlow **v0.26.4** 升级到 **v0.27.2**（tag 提交 `a024bea0cd93`），

@@ -1204,15 +1204,15 @@ pub fn presets_for(kind: ProviderKind) -> Vec<&'static ProviderPreset> {
     presets
 }
 
-/// Count of catalog entries (63 RAGFlow factories + local engines).
+/// Count of preset provider entries (RAGFlow factories + local engines).
 pub const fn preset_count() -> usize {
     PROVIDER_PRESETS.len()
 }
 
 // ── Full factory model catalog (mirrors RAGFlow conf/llm_factories.json) ──
 //
-// The embedded catalog carries the *complete* per-factory model list (943
-// models across the 63 RAGFlow factories: chat / embedding / rerank /
+// The embedded catalog carries the *complete* per-factory model list (1,008
+// models across the 73 RAGFlow factories: chat / embedding / rerank /
 // image2text / speech2text / tts), generated from the upstream JSON so the
 // model-discovery layer can seed every model a factory offers — not just the
 // representative names in `ProviderPreset::models`.

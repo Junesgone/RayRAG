@@ -9,19 +9,27 @@ const BASE = process.env.RAGFLOW_UI || 'http://127.0.0.1:11526';
 const OUT_DIR = path.resolve(process.env.OUT_DIR || '/home/junesgone/.openclaw/workspace/RayRAG/docs/ui-traversal');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Routes to traverse (from web/src/routes.tsx, RAGFlow v0.26.4). Parameterized
-// detail routes use a real id when available; the list below is id-free routes
-// plus known detail pages discovered during traversal.
+// Routes to traverse (from web/src/routes.tsx, RAGFlow v0.27.2). Parameterized
+// detail routes are covered by filtered second passes with real ids.
 const ROUTES = [
   '/',
+  '/home',
   '/datasets',
   '/chats',
+  '/chats/share',
+  '/chats/widget',
   '/searches',
+  '/search/share',
   '/agents',
+  '/agent-list',
+  '/agent',
+  '/agent/share',
   '/agent-templates',
   '/memories',
   '/files',
   '/files/skills',
+  '/compilation-templates/edit-next',
+  '/dataflow-result',
   '/user-setting',
   '/user-setting/profile',
   '/user-setting/locale',
@@ -31,7 +39,6 @@ const ROUTES = [
   '/user-setting/mcp',
   '/user-setting/data-source',
   '/user-setting/chat-channel',
-  '/agent-list',
   '/admin',
   '/admin/services',
   '/admin/users',
@@ -39,15 +46,6 @@ const ROUTES = [
   '/admin/whitelist',
   '/admin/roles',
   '/admin/monitoring',
-  '/dataset/files/a710b71c52b611f193f62728e4a35a69',
-  '/dataset/logs/a710b71c52b611f193f62728e4a35a69',
-  '/dataset/configuration/a710b71c52b611f193f62728e4a35a69',
-  '/dataset/retrieval/a710b71c52b611f193f62728e4a35a69',
-  '/dataset/knowledge-graph/a710b71c52b611f193f62728e4a35a69',
-  '/agent/f9e7dc32973e11f197ff23af4dabe863',
-  '/agent/f9e7dc32973e11f197ff23af4dabe863/explore',
-  '/memory/memory-message/0ee40d8a52b711f193f62728e4a35a69',
-  '/memory/memory-setting/0ee40d8a52b711f193f62728e4a35a69',
 ];
 
 // Clicks with these labels are treated as potentially destructive and are only
