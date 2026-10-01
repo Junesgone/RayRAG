@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 636 | 301992 |
-| partial | 45 | 22672 |
+| full | 637 | 303959 |
+| partial | 44 | 20705 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3659,7 +3659,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/harness/tools/text_processing.py` | 467 | 17514 | `05898d272bf481f4` | full | `src/harness/tools/text_processing.rs` | v0.3.10aa：compact_keywords、句切分（HTML 块级标签栈 + markdown 表格原子化 + 数字保护句点）、词干匹配（上游回退词干器路径）、fact-dense 判定、narrow_content/highlight_keywords/narrow_by_keywords/narrow_or_keep 全量移植；4 项单测 |
 | `rag/advanced_rag/knowlege_compile/__init__.py` | 43 | 1327 | `2a848ac2f16734e1` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
 | `rag/advanced_rag/knowlege_compile/_common.py` | 1038 | 38483 | `9cd36157c46cd082` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：env_int/env_float、knowledge_compile_gen_conf、encode（EmbeddingBackend 契约）、make_input_budget、doc-store 包装（doc_storage_search/insert/delete/upsert_one）已入 src/structure_compile.rs（9 项单测）；_embedding_dedup/_resolve_ambiguous_pairs 已由本地 bulk_dedup_items 内联覆盖、_apply_dedup_merges 独立移植；_default_chunk_text/_default_label 等价内联于 build_chunk_batches。书面说明：ensure_llm_bundle 的元组防御解包在 Rust 类型系统下不适用，未移植。 |
-| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | 70842 | `e18c290ac09bc8d2` | partial | `src/advanced_rag.rs` | v0.3.10ah 进行中（凭证据）：part 3b-1 已移植（upsert_dataset_nav_doc 主流程+锁契约 NavKbLock、remove_dataset_nav_doc/_locked 级联、_cleanup_empty_cluster 递归、_maybe_split_cluster 两均值分裂与重挂接；16 测绿）。余：search_dataset_nav（混合检索：KNN+BM25 腿融合、scope 过滤、top_k 截断）及其余零碎——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | 70842 | `e18c290ac09bc8d2` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：dataset_nav.py（1967 行 / 42 定义）全量移植为 src/knowlege_dataset_nav.rs（常量/ID/摘要/存储包装/行构造/分词族/关键词与实体/条件与范围/文本与向量检索（含过滤回退扫描）/分层 find_best_cluster/LLM 合并与标题/图文本/upsert 主流程+锁契约/移除与清理级联/两均值分裂/扁平混合检索 search_dataset_nav/带束搜索 search_nav_tree_descent（词法种子、逐层融合、叶子门控、覆盖兜底）/融合与打分助手；18 测绿）。书面差异：KNN/束搜索顺序执行（并发由宿主）；行 id 用 xxh3（上游 xxh64）；锁经 NavKbLock 契约注入；remove_dataset_nav_doc_sync 不另设（Rust 原生 async）；MatchExpr::Dense 无 extra_options 槽位。 |
 | `rag/advanced_rag/knowlege_compile/mind_map_extractor.py` | 169 | 6258 | `79b0f639d17f5be6` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：mind_map_extractor.py 已移植为 src/mind_map.rs（MindMapResult/MindMapExtractor、分组预算、process_document 变量替换、_merge/_todict/_list_to_kv/_be_children/_key；6 项单测绿）。差异书面说明：Python 第三方 markdown_to_json.dictify 以「ATX 标题+缩进列表+段落」子集实现（文档注明）；chat 面注入（HarnessChat） |
 | `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | 22437 | `b9c33d7fbe4c6911` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：knowlege_compile/raptor.py（v0.27.2 的 1D 分水岭 RecursiveAbstractiveProcessing4TreeOrganizedRetrieval）已移植为 src/knowlege_raptor.rs：构造/取消检查、分水岭聚类（手写 np.percentile 线性插值、比率上限二次调阈）、clustering 密集重标、摘要（think/截断清理、标题首行、嵌入、错误预算与中止）、递归层构建（小层塌缩、退化聚类守卫）、层树物化；6 项单测绿。与旧 src/raptor.rs（上游 rag/raptor.py，1046 行，早已移植）为不同文件。书面差异：簇摘要顺序执行（Python 并发 gather）；缓存/chat_limiter/timeout 由宿主 RaptorBackend 承担；truncate 用 crate 分词器二分（上游 tiktoken）。 |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | 33439 | `2f4ad78607873601` | full | `src/structure_compile.rs` | v0.3.10ah 完成：runner.py 核心已移植入 src/structure_compile.rs（env 常量（LazyLock）、resolve_template_ids_from_groups、load_active_templates/split_tree_templates、page_index 摘要与 dataset-nav 前缀、批次并发核心（FuturesUnordered + 有序提交 + 预算分批 + merge 上限冲刷）、合成阶段（wiki PLAN/REFINE + compile_kwd 覆写）、dataset 图重建、timeline 清理；6 项 runner 单测、structure_compile 套件 42 绿）。书面差异：doc-storage 条件变量序列改为顺序 await（同一顺序保证）、批次迭代器以批次列表表达、LLMCallPool 为直通包装（并发由宿主负责）；宿主服务经 StructureCompileBackend 契约注入（v0.27.2 参数面逐字保留）。 |

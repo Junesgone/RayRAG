@@ -464,15 +464,28 @@ pub fn nav_entities_limited(summary: &str, max_entities: usize) -> Vec<String> {
 pub fn as_str_list(value: Option<&Value>) -> Vec<String> {
     match value {
         None | Some(Value::Null) => Vec::new(),
-        Some(Value::String(text)) => vec![text.clone()],
+        Some(Value::String(text)) if !text.is_empty() => vec![text.clone()],
+        Some(Value::String(_)) => Vec::new(),
         Some(Value::Array(items)) => items
             .iter()
-            .filter_map(|item| match item {
-                Value::String(text) => Some(text.clone()),
-                _ => None,
+            .filter(|item| value_truthy(item))
+            .map(|item| match item {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
             })
             .collect(),
-        Some(other) => vec![other.to_string()],
+        Some(_) => Vec::new(),
+    }
+}
+
+fn value_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().map(|n| n != 0.0).unwrap_or(true),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
     }
 }
 
@@ -1569,6 +1582,821 @@ pub async fn maybe_split_cluster(
     }
 }
 
+/// `_nav_text_score`: lexical coverage of the query terms over the node text.
+pub fn nav_text_score(query: &str, row: &Value) -> f64 {
+    let payload = row
+        .get("content_with_weight")
+        .and_then(Value::as_str)
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let keywords = as_str_list(payload.get("keywords"));
+    let entities = as_str_list(payload.get("entities"));
+    let graph_content = payload
+        .get("graph_content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut parts: Vec<String> = vec![
+        row.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        payload
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        graph_content,
+    ];
+    parts.extend(keywords);
+    parts.extend(entities);
+    let haystack = parts.join(" ").to_lowercase();
+    let token_re = regex::Regex::new(r"\w+").expect("word regex");
+    let lowered = query.to_lowercase();
+    let mut terms: Vec<String> = Vec::new();
+    for hit in token_re.find_iter(&lowered) {
+        let term = hit.as_str().to_string();
+        if !terms.iter().any(|existing| existing == &term) {
+            terms.push(term);
+        }
+    }
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let hits = terms
+        .iter()
+        .filter(|term| haystack.contains(term.as_str()))
+        .count();
+    hits as f64 / terms.len() as f64
+}
+
+/// `_hybrid_fuse`: fuse KNN and text rows into a scored, deduplicated,
+/// sorted list (adds `_score` / `_text_score` to the returned rows).
+pub fn hybrid_fuse(
+    vec: &[f32],
+    vf: &str,
+    query: &str,
+    knn_rows: &[Value],
+    text_rows: &[Value],
+    dense_w: f64,
+    top_k: usize,
+) -> Vec<Value> {
+    let text_w = 1.0 - dense_w;
+    let mut fused: Vec<(String, Value, f64, f64)> = Vec::new(); // (key, row, score, text_score)
+    for row in knn_rows {
+        let key_name = row
+            .get("name")
+            .or_else(|| row.get("doc_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if key_name.is_empty() {
+            continue;
+        }
+        let score = cosine_sim(vec, &vector_of(row.get(vf))) * dense_w;
+        fused.push((format!("knn:{key_name}"), row.clone(), score, 0.0));
+    }
+    for row in text_rows {
+        let key_name = row
+            .get("name")
+            .or_else(|| row.get("doc_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if key_name.is_empty() {
+            continue;
+        }
+        let ts = nav_text_score(query, row);
+        if ts <= 0.0 {
+            continue;
+        }
+        if let Some(entry) = fused
+            .iter_mut()
+            .find(|(key, _, _, _)| key == &format!("knn:{key_name}"))
+        {
+            entry.2 += text_w * ts;
+            entry.3 += ts;
+        } else {
+            fused.push((format!("text:{key_name}"), row.clone(), text_w * ts, ts));
+        }
+    }
+    let mut rows_with_scores: Vec<(Value, f64, f64)> = fused
+        .into_iter()
+        .filter(|(_, _, score, _)| *score > 0.0)
+        .map(|(_, row, score, text_score)| (row, score, text_score))
+        .collect();
+    rows_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows_with_scores.truncate(top_k);
+    rows_with_scores
+        .into_iter()
+        .map(|(mut row, score, text_score)| {
+            if let Some(map) = row.as_object_mut() {
+                map.insert("_score".to_string(), serde_json::json!(score));
+                map.insert("_text_score".to_string(), serde_json::json!(text_score));
+            }
+            row
+        })
+        .collect()
+}
+
+/// `_lexical_cluster_hits`: clusters whose summary carries a query term.
+#[allow(clippy::too_many_arguments)]
+pub fn lexical_cluster_hits(
+    store: &dyn crate::doc_store::DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    query: &str,
+    vec: &[f32],
+    vf: &str,
+    dense_w: f64,
+    fields: &[String],
+    allowed_docs: &std::collections::HashSet<String>,
+    limit: usize,
+) -> Vec<Value> {
+    let mut condition = serde_json::Map::new();
+    condition.insert("type_kwd".to_string(), serde_json::json!(["nav_cluster"]));
+    condition.insert("kb_id".to_string(), serde_json::json!([kb_id]));
+    if !allowed_docs.is_empty() {
+        let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+        sorted.sort();
+        condition.insert("doc_ids_kwd".to_string(), serde_json::json!(sorted));
+    }
+    let rows = store_text_search(
+        store,
+        tenant_id,
+        kb_id,
+        query,
+        fields,
+        limit,
+        COMPILE_KWD,
+        "",
+        Some(&Value::Object(condition)),
+    );
+    let mut hits: Vec<Value> = Vec::new();
+    for row in rows {
+        let scope = if allowed_docs.is_empty() {
+            None
+        } else {
+            Some(allowed_docs)
+        };
+        if !in_nav_scope(&row, scope) {
+            continue;
+        }
+        let text_score = nav_text_score(query, &row);
+        if text_score <= 0.0 {
+            continue;
+        }
+        let score =
+            dense_w * cosine_sim(vec, &vector_of(row.get(vf))) + (1.0 - dense_w) * text_score;
+        if score < NAV_TREE_MIN_SCORE {
+            continue;
+        }
+        if let Some(map) = row.clone().as_object_mut() {
+            map.insert("_score".to_string(), serde_json::json!(score));
+            map.insert("_text_score".to_string(), serde_json::json!(text_score));
+        }
+        let mut row = row;
+        if let Some(map) = row.as_object_mut() {
+            map.insert("_score".to_string(), serde_json::json!(score));
+            map.insert("_text_score".to_string(), serde_json::json!(text_score));
+        }
+        hits.push(row);
+    }
+    hits.sort_by(|a, b| {
+        let left = a.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+        let right = b.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+        right
+            .partial_cmp(&left)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    hits
+}
+
+fn scope_set(doc_scope: Option<&[String]>) -> std::collections::HashSet<String> {
+    doc_scope
+        .unwrap_or(&[])
+        .iter()
+        .map(|doc| doc.trim().to_string())
+        .filter(|doc| !doc.is_empty())
+        .collect()
+}
+
+/// `search_dataset_nav`: flat hybrid search over all nav nodes for one KB.
+#[allow(clippy::too_many_arguments)]
+pub async fn search_dataset_nav(
+    store: &dyn crate::doc_store::DocStore,
+    embed: Option<&dyn EmbeddingBackend>,
+    tenant_id: &str,
+    kb_id: &str,
+    query: &str,
+    top_k: Option<usize>,
+    type_kwd: &str,
+    compile_kwd: &str,
+    doc_scope: Option<&[String]>,
+) -> Vec<Value> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let allowed_docs = scope_set(doc_scope);
+    let mut condition = serde_json::Map::new();
+    condition.insert("compile_kwd".to_string(), serde_json::json!([compile_kwd]));
+    if !type_kwd.is_empty() {
+        condition.insert("type_kwd".to_string(), serde_json::json!([type_kwd]));
+    }
+    if !allowed_docs.is_empty() {
+        let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+        sorted.sort();
+        if type_kwd == "nav_doc" {
+            condition.insert("doc_id".to_string(), serde_json::json!(sorted));
+        } else if type_kwd == "nav_cluster" {
+            condition.insert("doc_ids_kwd".to_string(), serde_json::json!(sorted));
+        }
+    }
+    let dense_w = if embed.is_some() {
+        NAV_HYBRID_DENSE_W
+    } else {
+        0.0
+    };
+    let mut fused: Vec<(String, Value, f64, f64)> = Vec::new(); // (key, row, score, text_score)
+    if let Some(embed) = embed {
+        let vec = nav_embed(Some(embed), query).await;
+        if !vec.is_empty() {
+            let rows = store_knn(
+                store,
+                tenant_id,
+                kb_id,
+                &vec,
+                vec.len(),
+                &Value::Object(condition.clone()),
+                top_k.unwrap_or(10000),
+            );
+            let vf = vec_field(vec.len());
+            for row in rows {
+                let key_name = row
+                    .get("name")
+                    .or_else(|| row.get("doc_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if key_name.is_empty() {
+                    continue;
+                }
+                let score = dense_w * cosine_sim(&vec, &vector_of(row.get(&vf)));
+                match fused.iter_mut().find(|(key, _, _, _)| key == &key_name) {
+                    Some(entry) => entry.2 += score,
+                    None => fused.push((key_name, row.clone(), score, 0.0)),
+                }
+            }
+        }
+    }
+    let text_w = 1.0 - dense_w;
+    let text_filter = if allowed_docs.is_empty() {
+        None
+    } else if type_kwd == "nav_doc" {
+        let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+        sorted.sort();
+        Some(serde_json::json!({"doc_id": sorted}))
+    } else if type_kwd == "nav_cluster" {
+        let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+        sorted.sort();
+        Some(serde_json::json!({"doc_ids_kwd": sorted}))
+    } else {
+        None
+    };
+    let text_limit = if top_k.unwrap_or(0) > 0 {
+        (top_k.unwrap_or(0) * 3).max(20)
+    } else {
+        10000
+    };
+    let fields: Vec<String> = NAV_SEARCH_FIELDS
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let text_rows = store_text_search(
+        store,
+        tenant_id,
+        kb_id,
+        query,
+        &fields,
+        text_limit,
+        compile_kwd,
+        type_kwd,
+        text_filter.as_ref(),
+    );
+    for row in text_rows {
+        let key_name = row
+            .get("name")
+            .or_else(|| row.get("doc_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if key_name.is_empty() {
+            continue;
+        }
+        let ts = nav_text_score(query, &row);
+        if ts <= 0.0 {
+            continue;
+        }
+        match fused.iter_mut().find(|(key, _, _, _)| key == &key_name) {
+            Some(entry) => {
+                entry.2 += text_w * ts;
+                entry.3 += ts;
+            }
+            None => fused.push((key_name, row.clone(), text_w * ts, ts)),
+        }
+    }
+    let scope = if allowed_docs.is_empty() {
+        None
+    } else {
+        Some(&allowed_docs)
+    };
+    let mut rows_with_scores: Vec<(Value, f64)> = fused
+        .into_iter()
+        .filter(|(_, row, score, text_score)| {
+            *score > 0.0 && *text_score > 0.0 && in_nav_scope(row, scope)
+        })
+        .map(|(_, row, score, _)| (row, score))
+        .collect();
+    rows_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    if let Some(limit) = top_k {
+        rows_with_scores.truncate(limit);
+    }
+    let mut out: Vec<Value> = Vec::new();
+    for (row, score) in rows_with_scores {
+        let payload = row
+            .get("content_with_weight")
+            .and_then(Value::as_str)
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        let typ = payload
+            .get("type")
+            .and_then(Value::as_str)
+            .or_else(|| row.get("type_kwd").and_then(Value::as_str))
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if row.get("doc_ids_kwd").is_some() {
+                    "nav_cluster".to_string()
+                } else {
+                    "nav_doc".to_string()
+                }
+            });
+        let name = row
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let (doc_id, mut doc_ids, scoped_cluster) = if typ == "nav_cluster" {
+            let mut doc_ids = as_str_list(row.get("doc_ids_kwd"));
+            let scoped = !allowed_docs.is_empty();
+            if scoped {
+                doc_ids.retain(|doc| allowed_docs.contains(doc));
+            }
+            (None, doc_ids, scoped)
+        } else {
+            let doc_id = row
+                .get("doc_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| name.clone());
+            let doc_ids = if doc_id.is_empty() {
+                Vec::new()
+            } else {
+                vec![doc_id.clone()]
+            };
+            (Some(doc_id), doc_ids, false)
+        };
+        let doc_count = if typ == "nav_cluster" && scoped_cluster {
+            doc_ids.len()
+        } else {
+            row.get("doc_count_int")
+                .and_then(Value::as_i64)
+                .map(|value| value.max(0) as usize)
+                .unwrap_or(doc_ids.len())
+        };
+        doc_ids.shrink_to_fit();
+        out.push(serde_json::json!({
+            "type": typ,
+            "doc_id": doc_id,
+            "doc_ids": doc_ids,
+            "name": name,
+            "description": payload.get("description").and_then(Value::as_str).unwrap_or(""),
+            "keywords": as_str_list(payload.get("keywords")),
+            "entities": as_str_list(payload.get("entities")),
+            "graph_content": payload.get("graph_content").and_then(Value::as_str).unwrap_or(""),
+            "doc_title": payload.get("doc_title").and_then(Value::as_str).unwrap_or(""),
+            "source_type": payload.get("source_type").and_then(Value::as_str).unwrap_or(""),
+            "doc_count": doc_count,
+            "parent_kwd": as_str_list(row.get("parent_kwd")),
+            "score": score,
+        }));
+    }
+    out
+}
+
+/// `search_nav_tree_descent`: tree-structured hybrid descent (BFS with beam
+/// pruning), returning `{doc_id, score}` items.
+pub async fn search_nav_tree_descent(
+    store: &dyn crate::doc_store::DocStore,
+    embed: Option<&dyn EmbeddingBackend>,
+    tenant_id: &str,
+    kb_id: &str,
+    query: &str,
+    top_k: Option<usize>,
+    doc_scope: Option<&[String]>,
+) -> Vec<Value> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let allowed_docs = scope_set(doc_scope);
+    let Some(embed) = embed else {
+        let raw = search_dataset_nav(
+            store,
+            None,
+            tenant_id,
+            kb_id,
+            query,
+            top_k,
+            "nav_doc",
+            COMPILE_KWD,
+            doc_scope,
+        )
+        .await;
+        return raw
+            .into_iter()
+            .filter(|item| {
+                item.get("doc_id")
+                    .and_then(Value::as_str)
+                    .map(|id| !id.is_empty())
+                    .unwrap_or(false)
+            })
+            .map(|item| {
+                serde_json::json!({
+                    "doc_id": item.get("doc_id").and_then(Value::as_str).unwrap_or(""),
+                    "score": item.get("score").and_then(Value::as_f64).unwrap_or(0.0),
+                })
+            })
+            .collect();
+    };
+    let vec = nav_embed(Some(embed), query).await;
+    let vec_dim = vec.len();
+    if vec_dim == 0 {
+        return Vec::new();
+    }
+    let beam_width = 5usize;
+    let dense_w = NAV_HYBRID_DENSE_W;
+    let vf = vec_field(vec_dim);
+    let fields: Vec<String> = [
+        "content_with_weight",
+        "name",
+        "doc_id",
+        "compile_kwd",
+        "type_kwd",
+        "parent_kwd",
+        "depth_int",
+        "doc_count_int",
+        "doc_ids_kwd",
+        vf.as_str(),
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let mut collected: Vec<Value> = Vec::new();
+    let mut seen_docs: Vec<String> = Vec::new();
+    let mut seen_nodes: Vec<String> = Vec::new();
+    let root_cond = {
+        let mut condition = serde_json::Map::new();
+        condition.insert("kb_id".to_string(), serde_json::json!([kb_id]));
+        condition.insert("compile_kwd".to_string(), serde_json::json!([COMPILE_KWD]));
+        condition.insert("type_kwd".to_string(), serde_json::json!(["nav_cluster"]));
+        condition.insert("depth_int".to_string(), serde_json::json!([0]));
+        if !allowed_docs.is_empty() {
+            let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+            sorted.sort();
+            condition.insert("doc_ids_kwd".to_string(), serde_json::json!(sorted));
+        }
+        Value::Object(condition)
+    };
+    let root_scope = if allowed_docs.is_empty() {
+        None
+    } else {
+        Some(&allowed_docs)
+    };
+    let roots_knn: Vec<Value> = store_knn(
+        store,
+        tenant_id,
+        kb_id,
+        &vec,
+        vec_dim,
+        &root_cond,
+        beam_width * 3,
+    )
+    .into_iter()
+    .filter(|row| in_nav_scope(row, root_scope))
+    .collect();
+    let mut current_level: Vec<Value>;
+    if roots_knn.is_empty() {
+        let all_cond = {
+            let mut condition = serde_json::Map::new();
+            condition.insert("kb_id".to_string(), serde_json::json!([kb_id]));
+            condition.insert("compile_kwd".to_string(), serde_json::json!([COMPILE_KWD]));
+            condition.insert("type_kwd".to_string(), serde_json::json!(["nav_cluster"]));
+            if !allowed_docs.is_empty() {
+                let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+                sorted.sort();
+                condition.insert("doc_ids_kwd".to_string(), serde_json::json!(sorted));
+            }
+            Value::Object(condition)
+        };
+        let all_clusters: Vec<Value> =
+            store_search(store, tenant_id, kb_id, &all_cond, &fields, 10000)
+                .into_iter()
+                .filter(|row| in_nav_scope(row, root_scope))
+                .collect();
+        if all_clusters.is_empty() {
+            return Vec::new();
+        }
+        let min_depth = all_clusters
+            .iter()
+            .filter_map(|row| row.get("depth_int").and_then(Value::as_i64))
+            .min()
+            .unwrap_or(0);
+        let mut starters: Vec<Value> = all_clusters
+            .iter()
+            .filter(|row| row.get("depth_int").and_then(Value::as_i64) == Some(min_depth))
+            .cloned()
+            .collect();
+        starters.sort_by(|a, b| {
+            let left = cosine_sim(&vec, &vector_of(a.get(&vf)));
+            let right = cosine_sim(&vec, &vector_of(b.get(&vf)));
+            right
+                .partial_cmp(&left)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        current_level = starters.into_iter().take(beam_width).collect();
+        for row in current_level.iter_mut() {
+            let score = cosine_sim(&vec, &vector_of(row.get(&vf)));
+            if let Some(map) = row.as_object_mut() {
+                map.insert("_score".to_string(), serde_json::json!(score));
+            }
+        }
+    } else {
+        let mut roots = roots_knn;
+        for row in roots.iter_mut() {
+            let score = cosine_sim(&vec, &vector_of(row.get(&vf)));
+            if let Some(map) = row.as_object_mut() {
+                map.insert("_score".to_string(), serde_json::json!(score));
+            }
+        }
+        roots.sort_by(|a, b| {
+            let left = a.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+            let right = b.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+            right
+                .partial_cmp(&left)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        current_level = roots.into_iter().take(beam_width).collect();
+    }
+    if current_level.is_empty() {
+        return Vec::new();
+    }
+    let lexical_hits = lexical_cluster_hits(
+        store,
+        tenant_id,
+        kb_id,
+        query,
+        &vec,
+        &vf,
+        dense_w,
+        &fields,
+        &allowed_docs,
+        (top_k.unwrap_or(0) * 3).max(20),
+    );
+    for hit in lexical_hits.iter().take(beam_width) {
+        let name = hit.get("name").and_then(Value::as_str).unwrap_or("");
+        match current_level
+            .iter_mut()
+            .find(|row| row.get("name").and_then(Value::as_str) == Some(name))
+        {
+            Some(existing) => {
+                let existing_text = existing
+                    .get("_text_score")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                let hit_text = hit
+                    .get("_text_score")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                let existing_score = existing
+                    .get("_score")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                let hit_score = hit.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+                if let Some(map) = existing.as_object_mut() {
+                    map.insert(
+                        "_text_score".to_string(),
+                        serde_json::json!(existing_text.max(hit_text)),
+                    );
+                    map.insert(
+                        "_score".to_string(),
+                        serde_json::json!(existing_score.max(hit_score)),
+                    );
+                }
+            }
+            None => current_level.push(hit.clone()),
+        }
+    }
+    while !current_level.is_empty() && top_k.map(|limit| collected.len() < limit).unwrap_or(true) {
+        let mut next_level: Vec<Value> = Vec::new();
+        for node in &current_level {
+            let node_name = node
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if seen_nodes.iter().any(|seen| seen == &node_name) {
+                continue;
+            }
+            seen_nodes.push(node_name.clone());
+            let parent_score = node.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+            let lexical_support = node
+                .get("_lex")
+                .and_then(Value::as_f64)
+                .or_else(|| node.get("_text_score").and_then(Value::as_f64))
+                .unwrap_or(0.0);
+            let mut child_cond = serde_json::Map::new();
+            child_cond.insert("kb_id".to_string(), serde_json::json!([kb_id]));
+            child_cond.insert("compile_kwd".to_string(), serde_json::json!([COMPILE_KWD]));
+            child_cond.insert("parent_kwd".to_string(), serde_json::json!([node_name]));
+            let (children_knn, children_text) = if !allowed_docs.is_empty() {
+                let mut sorted: Vec<String> = allowed_docs.iter().cloned().collect();
+                sorted.sort();
+                let mut doc_cond = child_cond.clone();
+                doc_cond.insert("type_kwd".to_string(), serde_json::json!(["nav_doc"]));
+                doc_cond.insert("doc_id".to_string(), serde_json::json!(sorted));
+                let mut cluster_cond = child_cond.clone();
+                cluster_cond.insert("type_kwd".to_string(), serde_json::json!(["nav_cluster"]));
+                cluster_cond.insert("doc_ids_kwd".to_string(), serde_json::json!(sorted));
+                let mut knn = store_knn(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    &vec,
+                    vec_dim,
+                    &Value::Object(doc_cond.clone()),
+                    beam_width * 3,
+                );
+                knn.extend(store_knn(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    &vec,
+                    vec_dim,
+                    &Value::Object(cluster_cond.clone()),
+                    beam_width * 3,
+                ));
+                let knn: Vec<Value> = knn
+                    .into_iter()
+                    .filter(|row| in_nav_scope(row, root_scope))
+                    .collect();
+                let mut text = store_text_search(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    query,
+                    &fields,
+                    beam_width * 3,
+                    COMPILE_KWD,
+                    "",
+                    Some(
+                        &serde_json::json!({"parent_kwd": [node_name], "kb_id": [kb_id], "doc_id": sorted}),
+                    ),
+                );
+                text.extend(store_text_search(store, tenant_id, kb_id, query, &fields, beam_width * 3, COMPILE_KWD, "", Some(&serde_json::json!({"parent_kwd": [node_name], "kb_id": [kb_id], "doc_ids_kwd": sorted}))));
+                let text: Vec<Value> = text
+                    .into_iter()
+                    .filter(|row| in_nav_scope(row, root_scope))
+                    .collect();
+                (knn, text)
+            } else {
+                let knn = store_knn(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    &vec,
+                    vec_dim,
+                    &Value::Object(child_cond.clone()),
+                    beam_width * 3,
+                );
+                let text = store_text_search(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    query,
+                    &fields,
+                    beam_width * 3,
+                    COMPILE_KWD,
+                    "",
+                    Some(&serde_json::json!({"parent_kwd": [node_name], "kb_id": [kb_id]})),
+                );
+                (knn, text)
+            };
+            let candidates = hybrid_fuse(
+                &vec,
+                &vf,
+                query,
+                &children_knn,
+                &children_text,
+                dense_w,
+                beam_width,
+            );
+            for candidate in candidates {
+                if top_k.map(|limit| collected.len() >= limit).unwrap_or(false) {
+                    break;
+                }
+                let lexical = candidate
+                    .get("_text_score")
+                    .and_then(Value::as_f64)
+                    .filter(|value| *value > 0.0)
+                    .unwrap_or(if lexical_support > 0.0 {
+                        lexical_support
+                    } else {
+                        0.0
+                    });
+                if candidate.get("type_kwd").and_then(Value::as_str) == Some("nav_doc") {
+                    let doc_id = candidate
+                        .get("doc_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let score = candidate
+                        .get("_score")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(parent_score);
+                    if doc_id.is_empty() || seen_docs.iter().any(|seen| seen == &doc_id) {
+                        continue;
+                    }
+                    if !allowed_docs.is_empty() && !allowed_docs.contains(&doc_id) {
+                        continue;
+                    }
+                    if lexical <= 0.0 || score < NAV_TREE_MIN_SCORE {
+                        continue;
+                    }
+                    seen_docs.push(doc_id.clone());
+                    let rounded = (score * 10000.0).round() / 10000.0;
+                    collected.push(serde_json::json!({"doc_id": doc_id, "score": rounded}));
+                } else {
+                    let mut candidate = candidate;
+                    if let Some(map) = candidate.as_object_mut() {
+                        map.insert("_lex".to_string(), serde_json::json!(lexical));
+                    }
+                    next_level.push(candidate);
+                }
+            }
+            if top_k.map(|limit| collected.len() >= limit).unwrap_or(false) {
+                break;
+            }
+        }
+        if top_k.map(|limit| collected.len() >= limit).unwrap_or(false) {
+            break;
+        }
+        next_level.sort_by(|a, b| {
+            let left_lex = a.get("_lex").and_then(Value::as_f64).unwrap_or(0.0) > 0.0;
+            let right_lex = b.get("_lex").and_then(Value::as_f64).unwrap_or(0.0) > 0.0;
+            let left_score = a.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+            let right_score = b.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+            right_lex.cmp(&left_lex).then(
+                right_score
+                    .partial_cmp(&left_score)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+        current_level = next_level.into_iter().take(beam_width).collect();
+    }
+    if collected.is_empty() && !lexical_hits.is_empty() {
+        'outer: for node in &lexical_hits {
+            for did in as_str_list(node.get("doc_ids_kwd")) {
+                if top_k.map(|limit| collected.len() >= limit).unwrap_or(false) {
+                    break 'outer;
+                }
+                if seen_docs.iter().any(|seen| seen == &did) {
+                    continue;
+                }
+                if !allowed_docs.is_empty() && !allowed_docs.contains(&did) {
+                    continue;
+                }
+                seen_docs.push(did.clone());
+                let score = node.get("_score").and_then(Value::as_f64).unwrap_or(0.0);
+                let rounded = (score * 10000.0).round() / 10000.0;
+                collected.push(serde_json::json!({"doc_id": did, "score": rounded}));
+            }
+        }
+    }
+    collected
+}
+
 #[cfg(test)]
 mod dataset_nav_tests {
     use super::*;
@@ -2368,6 +3196,53 @@ mod dataset_nav_part3b_tests {
         assert!(
             deletes.contains(&nav_cluster_id("kb1", "Parent")),
             "parent became empty and was removed"
+        );
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part3c_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn text_score_counts_query_term_coverage() {
+        let row = json!({
+            "name": "Topic Node",
+            "content_with_weight": json!({
+                "description": "about paris",
+                "keywords": ["france"],
+                "entities": ["Paris"],
+            }).to_string(),
+        });
+        let score = nav_text_score("paris france", &row);
+        assert!((score - 1.0).abs() < 1e-9, "both terms hit");
+        let half = nav_text_score("paris missingterm", &row);
+        assert!((half - 0.5).abs() < 1e-9);
+        assert_eq!(nav_text_score("   ", &row), 0.0);
+    }
+
+    #[test]
+    fn hybrid_fuse_folds_legs_by_name() {
+        let vec = vec![1.0f32, 0.0];
+        let knn = vec![json!({"name": "A", "q_2_vec": [1.0, 0.0]})];
+        let text = vec![json!({
+            "name": "A",
+            "content_with_weight": json!({"description": "alpha"}).to_string(),
+        })];
+        let fused = hybrid_fuse(&vec, "q_2_vec", "alpha", &knn, &text, 0.5, 5);
+        assert_eq!(fused.len(), 1, "same name collapses into one row");
+        assert!(
+            fused[0]["_score"].as_f64().unwrap() > 0.5 + 0.25,
+            "both legs contributed"
+        );
+        assert!(fused[0]["_text_score"].as_f64().unwrap() > 0.0);
+
+        let knn_only = vec![json!({"name": "B", "q_2_vec": [1.0, 0.0]})];
+        let fused = hybrid_fuse(&vec, "q_2_vec", "zzz", &knn_only, &[], 0.5, 5);
+        assert_eq!(
+            fused[0]["_text_score"],
+            json!(0.0),
+            "pure vector hit records zero text score"
         );
     }
 }

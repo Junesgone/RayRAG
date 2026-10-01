@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：45（UI 残留 42 + 实施队列 3）
+- partial：44（UI 残留 42 + 实施队列 2）
 - re-audit：435（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,11 +28,10 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（3 项）
+### W-4 Agentic harness 移植（最大队列）（2 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 进行中（凭证据）：part 3b-1 已移植（upsert_dataset_nav_doc 主流程+锁契约 NavKbLock、remove_dataset_nav_doc/_locked 级联、_cleanup_empty_cluster 递归、_maybe_split_cluster 两均值分裂与重挂接；16 测绿）。余：search_dataset_nav（混合检索：KNN+BM25 腿融合、scope 过滤、top_k 截断）及其余零碎——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | `src/advanced_rag.rs` | v0.3.10ah 机器测绘（凭证据）：4154 行 / 68 定义，本地覆盖 4 项，**缺 64**（_chunk_hash、_wiki_compare_chunk_states、schema/模板渲染族、_wiki_merge_extracts、map 版本/持久化、chunk 状态扫描、plan/refine 主流程等）——计划移植为 src/knowlege_wiki.rs（HarnessChat/EmbeddingBackend/DocStore 契约）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | v0.3.10ah 机器测绘（凭证据）：5004 行 / 73 定义，本地覆盖 2 项，**缺 71**（_wiki_run_refine_tasks、失败记录族、canonical 实体族、_knn_search_canonical、_wiki_match_entities、页面图/outlinks 族、topics/concept 决策、增量 refine 主流程等）——计划移植为 src/knowlege_wiki_incremental.rs（并接线 runner 已留位的 wiki synth 契约）——worklist W-4（agentic harness） |
 
