@@ -4,7 +4,7 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本：**v0.4.78**，对齐切片 **v0.3.10w**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
+- 版本：**v0.4.79**，对齐切片 **v0.3.10x**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
   见 `CHANGELOG.md` 与 `运维记录.md`）。
 - 测试基线：`cargo test --locked --lib`（`postgres-backend` 与 `zvec-backend` 已是默认 feature，无需显式指定）
   **1636 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、

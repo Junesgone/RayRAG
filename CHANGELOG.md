@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.79] — 2026-10-01（对标批次 v0.3.10x）
+
+> W-5 收尾：结构图采样服务 + 数据集级结构图合并任务全量移植（纯 Rust）——worklist **W-5 队列清零**。
+
+- `src/api/structure_graph_common.rs`（上游 `api/apps/services/structure_graph_common.py`，598 行）：5 个采样常量、实体/关系字段表、`graph_search`、`project_entity`/`project_relation`（复用结构投影）、`dedup_entities`、`normalize_relation_endpoints`（歧义键丢弃）、`filter_entities_with_relations`、`row_has_enabled_source`（JSON 编码源列表与 doc_id 回退）、`build_bucket`（小桶全量；大桶 top-256 mention 采样 + 关系源出 + 目标实体）与 `keyword_subgraph`（精确名 → BM25 名称包含过滤 → KNN 单例回退；模板桶归并；树/分页祖先回溯；邻居实体；树内关系过滤）。
+- `src/dataset_structure_merger.rs`（上游 `rag/svr/task_executor_refactor/dataset_structure_merger.py`，1027 行）：256 哈希桶（500 条冲洗）、增量时间窗、`record_doc_deletion` + 两遍幽灵清理（共享行回写 `doc_ids_kwd`）、`consume_deletion_markers`、`merge_bucket`/`merge_relations`（分组、去重、最长描述/原名、mention 求和、分批嵌入）、`kg_build_meta` 构建时间戳、`run_structure_merge`（模板 kind 过滤、disabled→全量重建、进度/取消）。
+- 台账：两行 partial → full；worklist **W-5 → 0**（W-1/W-2/W-3/W-6 均 0，余 W-4 27 项 agentic harness）；`ragflow-coverage --check` 通过（5977 文件、unmapped=0）。
+- 单测：`structure_graph_common` 8 项 + `dataset_structure_merger` 7 项全绿；fmt/clippy 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.78] — 2026-10-01（对标批次 v0.3.10w）
 
 > W-5 续：RAGFlow v0.27.2 Compiler 流程包（`rag/flow/compiler/*`）移植 + `agent/templates/compiler.json` 判定（纯 Rust）。
