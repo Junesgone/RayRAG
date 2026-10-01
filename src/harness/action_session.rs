@@ -391,12 +391,6 @@ pub trait ActionSearchBackend: Send + Sync {
     async fn web_search(&self, query: &str) -> Result<Vec<Value>, String>;
 }
 
-struct SearchRun {
-    out: Vec<Value>,
-    ids: Vec<String>,
-    new_evidence: usize,
-}
-
 fn admit_candidates(
     kbinfos: &mut Kbinfos,
     kb_seen: &mut HashSet<String>,
@@ -578,11 +572,6 @@ pub async fn exec_list_chunks(
             new_evidence += 1;
         }
     }
-    let _ = SearchRun {
-        out: Vec::new(),
-        ids: Vec::new(),
-        new_evidence: 0,
-    };
     search_outcome(&out, &ids, new_evidence)
 }
 
@@ -1535,6 +1524,13 @@ pub trait ActionToolBackend: Send + Sync {
 }
 
 /// Everything one action-session turn needs from the host.
+///
+/// Three upstream helpers are Python host plumbing with no Rust counterpart,
+/// because these executors take their backends explicitly and hold no
+/// request-scoped globals: `_inject_nav_tools_ref` (navigation module
+/// `_tools_ref`), `_kb_ids` (`_get_kb_ids(tools)`; the search backend owns its
+/// kb scope) and `_seed_evidence` (`tools.kbinfos`; the pool is the explicit
+/// `Kbinfos` argument).
 pub struct ActionRuntime<'a> {
     pub search: &'a dyn ActionSearchBackend,
     pub tools: &'a dyn ActionToolBackend,
