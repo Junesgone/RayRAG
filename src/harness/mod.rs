@@ -16,6 +16,8 @@ pub mod chunk_utils;
 pub mod config;
 pub mod grep_sed_narrow;
 pub mod keywords;
+#[path = "../knowlege_raptor.rs"]
+pub mod knowlege_raptor;
 pub mod memory;
 #[path = "../mind_map.rs"]
 pub mod mind_map;

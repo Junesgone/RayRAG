@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：47（UI 残留 42 + 实施队列 5）
+- partial：46（UI 残留 42 + 实施队列 4）
 - re-audit：435（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,12 +28,11 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（5 项）
+### W-4 Agentic harness 移植（最大队列）（4 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 | `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
-| `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：RecursiveAbstractiveProcessing4TreeOrganizedRetrieval（500 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库 src/structure_compile.rs（头部注明源自 v0.26.4）、src/merge.rs、src/hypergraph.rs 已覆盖提取/合并/链校验/图重建核心（extract_hypergraph、compile_hypergraph、merge_compiled_structures、validate_and_correct_chain、rebuild_structure_graph_json）；v0.27.2 符号级缺口（全递归检索）：compile_structure_from_text 全多类入口、cleanup_timeline_isolated_entities、LLMCallPool、_common.env_* 调用面——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
