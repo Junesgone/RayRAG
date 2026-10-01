@@ -2054,7 +2054,7 @@ pub struct SessionState {
     pub outcomes: Vec<Value>,
     pub skipped_dup: usize,
     pub direction: String,
-    pub routed_docs: Vec<(String, String)>,
+    pub routed_docs: Vec<String>, // _routed_docs: navigate_tree routed doc ids
     pub nav_rule_id: String,
     pub seen_queries: Vec<String>,
 }
@@ -2835,6 +2835,360 @@ pub fn extract_relevant_evidence(kbinfos: &Kbinfos, direction: &str, max_chunks:
         })
         .collect();
     lines.join("\n")
+}
+
+/// Verbatim rag/prompts/action_run.md (as load_prompt returns it: stripped).
+pub const ACTION_RUN_PROMPT: &str = r#"You are a deep research assistant working INSIDE a bounded search tree.
+
+Input: the user message contains ONE research `Direction`, plus the current
+`State` (slot table with immutable ids and mutable candidate fields).
+
+Execute this single direction. Reply with EXACTLY ONE of the three below.
+
+The three differ in HOW they are delivered — read this carefully, because only
+the first one is a tool call:
+
+1) TOOL CALL MODE — a real tool call: call `retrieve` with 1-3 corpus queries.
+   Results arrive in the next turn.
+
+2) STATE PATCH MODE — NOT a tool call. Write this XML as plain TEXT in your
+   reply body (do not call any tool named "state"):
+<state>
+{"new_states": [
+  {"state": [{"id": <int>, "candidate": "<value>", "candidate_strength": <0..1>, "discovered_clues": ["..."]}, ...]},
+  ...more branches allowed...
+]}
+</state>
+Rules: patch ONLY existing ids; include ONLY changed variables; every change must trace to retrieved evidence; candidate_strength semantics: proven >0.9, strong 0.7-0.9, tentative 0.4-0.7, weak <0.4. An EMPTY branch list (`"new_states": []`) signals no progress — emit it rather than calling tools forever.
+
+3) FINAL ANSWER MODE — NOT a tool call either. Write this XML as plain TEXT in
+   your reply body (do not call any tool named "answer"). Use it only when ALL
+   slots can be filled consistently:
+<answer>
+{"answer": "<final answer text>", "new_state": [{"id": ..., "candidate": ..., "candidate_strength": ...}]}
+</answer>
+
+CRITICAL RULES
+- Think before choosing a mode, but output exactly ONE mode per response.
+- Strength >0.7 on the answer slot means you MUST emit final answer instead of another state patch.
+- ALWAYS end this action with a state patch: a patch with your updates, or `<state>{"new_states": []}</state>` if you found nothing new.
+- **Do NOT keep calling tools once the direction is reasonably exhausted.** If further searches return repetitive, irrelevant, or empty results, immediately return a state patch (with updates or empty). Extra redundant searches waste the session — stop after 1-2 useful tool calls per direction unless a NEW fact is actually emerging.
+- ACTION COMPLETION IS MANDATORY: when you have what you need (or hit a dead end), output the state patch now. Do not ask to continue searching.
+- Unverifiable candidates must be eliminated (set candidate null) with a clue documenting why.
+- Partial verification is OK: record a candidate at tentative strength (0.4-0.7) if you can't fully verify it yet, and move on.
+
+# TOOL PLAYBOOK
+
+You get tools only in medium / high (7 tools: `retrieve`, `search_chunks`, `list_chunks`, `navigate_tree`, `navigate_structure`, `calculate`, `web_search`) and ultra (those 7 + `graph_explore`). Low mode has NO tool loop — answer with plain retrieval. Every native tool call still REQUIRES the decision envelope from CRITICAL RULES (it is a mandatory tool parameter, not optional).
+
+## 1. Combination chains (call in this order)
+
+- **You already hold a `doc_id`** → `navigate_structure(doc_id, query)` to find the right passage, then `list_chunks(doc_id)` to read it. Do NOT call `navigate_tree` first.
+- **No `doc_id` yet, and the corpus is large** → `navigate_tree(query)` to route to candidate documents, take a `doc_id`, then `navigate_structure(doc_id, query)` → `list_chunks(doc_id)`.
+- **Exact term / short answer** → `retrieve(query[1-3])` first; if snippets are insufficient, `search_chunks(query[1-2])` (semantic, may find passages with NO shared surface words); if you need the full document, `list_chunks(doc_id)`.
+- **You must DERIVE a number** → first collect every needed number with any of the above, then `calculate(question, facts)` with the facts verbatim, and report the computed result as-is. If the answer is already one of the stated numbers, answer directly.
+- **Relational multi-hop (ultra only)** → get a start entity from `search_chunks` / `navigate_structure`, then `graph_explore(query, doc_scope)`.
+
+## 2. Convergence rules (hard, enforced by the runtime — follow them to avoid wasted turns)
+
+- Make at most **1-2 useful tool calls per direction**, then emit a state patch. Do not keep searching once the direction is reasonably exhausted.
+- Re-submitting the SAME intent with a paraphrase is intercepted as a near-duplicate and SKIPPED (you get a nudge, not new results). Change the angle or patch what you have.
+- If a compile-only tool (`navigate_tree` / `navigate_structure` / `graph_explore`) returns "no compiled structure", switch to `search_chunks` / `retrieve` / `list_chunks` **immediately**. A second such result disables that tool for the REST of the session — do not retry it.
+- `web_search` only appears when a web provider is configured; if it does, use it ONLY for world knowledge / time-sensitive facts that plausibly live outside the fixed corpus.
+- `list_chunks` accepts ONLY `doc_id` (no `chunk_ids` argument) — you cannot ask it to read specific chunks; it returns the whole document (capped).
+
+## 3. What a tool result means → your next action
+
+Each tool returns a status. Act on it:
+
+| Status | Meaning | Your next action |
+| --- | --- | --- |
+| `ok` | New evidence entered the shared pool | Fill slots / move to the next direction |
+| `miss` | This query matched nothing, but the tool itself is valid | Rephrase or switch tools — do NOT conclude the dataset lacks it |
+| `empty` (`no_structure`) | Dataset-level: no such compiled structure exists | Switch to `search_chunks` / `retrieve` / `list_chunks` now; retrying disables the tool |
+| `poor` | Output returned but too weak to use | Add evidence with another tool |
+| `redundant` | Every hit was already in your evidence | Stop re-searching; emit a `<state>` patch with what you have |
+| `error` | Infrastructure / provider failure | Switch tools; do not retry the same call |"#;
+
+/// Verbatim rag/prompts/action_initialize_state.md.
+pub const ACTION_INITIALIZE_STATE_PROMPT: &str = r#"You are a research strategist. Decompose the user's question into a table of FACT SLOTS that must be filled to answer it.
+
+The question may span MULTIPLE DATASETS and/or the open WEB. The available data sources are listed in the user message:
+
+- "Dataset '<name>'" — slots whose facts live in that corpus. If more than one dataset is listed, create at least one slot PER DATASET (its facts may need corpus-specific phrasing); cross-referencing between datasets is encouraged when the question spans them.
+- "Web" — when listed, the open web is a source: create a dedicated slot (type "web") for facts that are current-world knowledge, recent events, or simply not covered by the listed datasets.
+
+Output ONLY a JSON object:
+{
+  "slots": [
+    {"id": 0, "type": "<entity|person|date|duration|count|number|place|web|dataset>", "clues": ["<what identifies this slot from the question>", "..."], "source": "<dataset name or 'web'>"},
+    ...
+  ],
+  "first_queries": ["<concrete searchable query for the first retrieval round>", ...]
+}
+
+Rules:
+- 2-6 slots; each slot ONE fact (a name, a date, a count...), never a clause.
+- Order slots so the FIRST one holds the top-level requested fact; the later ones are its dependencies.
+- Cover EVERY listed source: one or more slots per dataset, plus a "web" slot when Web is available and the question touches world knowledge or recent events.
+- clues must be self-contained phrases usable as retrieval hints.
+- 1-4 first_queries: direct keyword-style searches against the listed sources.
+- No prose outside JSON."#;
+
+// ── Session entry + slot-table builder (upstream run_action_session / _init_chat / _init_retry_timeout / initialize_state) ──
+
+/// `_init_retry_timeout`: budget for the slot-table decomposition retry.
+///
+/// - floor: the first attempt's budget (never shrink below what already failed),
+/// - ceiling: 2x the first attempt, capped at a generous 90s absolute bound,
+/// - deadline: leave at least 5s of the round budget for the rest of the session.
+pub fn init_retry_timeout(first_tmo: f64, deadline_left: Option<f64>) -> f64 {
+    let ceiling = (2.0 * first_tmo).min(90.0);
+    match deadline_left {
+        None => ceiling,
+        Some(left) if left <= 0.0 => ceiling,
+        Some(left) => first_tmo.max(ceiling.min(left - 5.0)),
+    }
+}
+
+/// `_init_chat`: ONE bounded LLM turn for the slot-table decomposition
+/// ({system, user} messages; a timeout or error yields "").
+async fn init_chat(llm: &dyn ActionLlmBackend, system: &str, user: &str, timeout_s: f64) -> String {
+    let messages = vec![
+        serde_json::json!({"role": "system", "content": system}),
+        serde_json::json!({"role": "user", "content": user}),
+    ];
+    llm.complete_plain(&messages, timeout_s)
+        .await
+        .map(|reply| reply.content)
+        .unwrap_or_default()
+}
+
+/// `initialize_state`: decompose the question into a slot table + first queries.
+pub async fn initialize_state(
+    llm: &dyn ActionLlmBackend,
+    question: &str,
+    fanout_hint: &[String],
+    deadline_left: Option<f64>,
+) -> (SlotState, Vec<String>) {
+    let system = ACTION_INITIALIZE_STATE_PROMPT;
+    let mut user = format!("Question: {question}");
+    if !fanout_hint.is_empty() {
+        user.push_str("\n\nCandidate aspects already identified:\n");
+        user.push_str(
+            &fanout_hint
+                .iter()
+                .map(|hint| format!("- {hint}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    let tmo = INIT_TIMEOUT_S.min(deadline_left.unwrap_or(INIT_TIMEOUT_S));
+    let mut raw = init_chat(llm, system, &user, tmo).await;
+    let mut data = extract_json(&raw)
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let empty = data
+        .as_object()
+        .map(|object| object.is_empty())
+        .unwrap_or(true);
+    if empty {
+        // one quick retry with a longer budget (slow models time out at 45s).
+        let retry_tmo = init_retry_timeout(tmo, deadline_left);
+        raw = init_chat(llm, system, &user, retry_tmo).await;
+        data = extract_json(&raw)
+            .filter(Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({}));
+    }
+    let mut slots: Vec<Variable> = Vec::new();
+    if let Some(items) = data.get("slots").and_then(Value::as_array) {
+        for (index, slot) in items.iter().enumerate() {
+            if !slot.is_object() {
+                continue;
+            }
+            let id = slot
+                .get("id")
+                .and_then(|value| {
+                    value
+                        .as_i64()
+                        .or_else(|| value.as_f64().map(|number| number as i64))
+                })
+                .unwrap_or(index as i64);
+            let slot_type = slot
+                .get("type")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .unwrap_or("entity")
+                .to_string();
+            let clues: Vec<String> = slot
+                .get("clues")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .take(4)
+                        .map(|clue| {
+                            clue.as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| clue.to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            slots.push(Variable {
+                id,
+                r#type: slot_type,
+                question_clues: clues,
+                ..Variable::default()
+            });
+        }
+    }
+    let mut first_queries: Vec<String> = data
+        .get("first_queries")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(3)
+                .map(|query| {
+                    query
+                        .as_str()
+                        .map(|text| text.trim().to_string())
+                        .unwrap_or_else(|| query.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if slots.is_empty() {
+        // Decomposition failed (timeout/parse): build the table from planner
+        // fanouts so the first round still targets DISTINCT aspects.
+        let hint_slots: Vec<Variable> = fanout_hint
+            .iter()
+            .take(4)
+            .enumerate()
+            .map(|(index, hint)| Variable {
+                id: index as i64,
+                r#type: "aspect".to_string(),
+                question_clues: vec![hint.chars().take(120).collect()],
+                ..Variable::default()
+            })
+            .collect();
+        if !hint_slots.is_empty() {
+            slots = hint_slots;
+            if first_queries.is_empty() {
+                first_queries = fanout_hint.iter().take(3).cloned().collect();
+            }
+        } else {
+            slots = vec![Variable {
+                id: 0,
+                r#type: "answer".to_string(),
+                question_clues: vec![question.to_string()],
+                ..Variable::default()
+            }];
+            if first_queries.is_empty() {
+                first_queries = vec![question.to_string()];
+            }
+        }
+    } else if first_queries.is_empty() {
+        first_queries = vec![question.to_string()];
+    }
+    (SlotState::new(slots, 0), first_queries)
+}
+
+/// `run_action_session`: bounded graph-edge session pursuing ONE direction.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_action_session(
+    runtime: &ActionRuntime<'_>,
+    llm: Option<&dyn ActionLlmBackend>,
+    kbinfos: &mut Kbinfos,
+    direction: &str,
+    parent_state: &SlotState,
+    mode_tools: &std::collections::BTreeSet<String>,
+    mode: &str,
+    has_web: bool,
+    disabled: &HashSet<String>,
+    deadline_left: Option<f64>,
+    base_summary: &str,
+    shared_tool_cache: Option<std::collections::HashMap<String, ToolOutcome>>,
+    shared_search_queries: Option<Vec<String>>,
+) -> SessionResult {
+    let Some(llm) = llm else {
+        // Upstream: no usable model resolved -> the session reports nothing.
+        return SessionResult::default();
+    };
+    let mut seed_user = format!(
+        "Direction: {direction}\n\nState:\n{}",
+        parent_state.render_slots()
+    );
+    let existing = extract_relevant_evidence(kbinfos, direction, 4);
+    if !existing.is_empty() {
+        seed_user.push_str(
+            "\n\nALREADY RETRIEVED (do NOT re-retrieve these — use them to fill slots or identify gaps):\n",
+        );
+        seed_user.push_str(&existing);
+    }
+    if !base_summary.is_empty() {
+        seed_user.push_str(&format!("\n\nPrior round summary:\n{base_summary}"));
+    }
+    let budget_left = deadline_left.unwrap_or(ACTION_TIMEOUT_S);
+    let prefix_started = std::time::Instant::now();
+    let mut nav_ctx = NavContext {
+        direction: direction.to_string(),
+        ..NavContext::default()
+    };
+    // Walk the navigation ladder up to its first model-driven rung; the ladder
+    // is guaranteed in code, so the model cannot skip navigate_tree. Skipped
+    // entirely when NAV_RULES_ENABLED is off, which also leaves nav_rule_id
+    // empty so the in-session ladder never arms either.
+    let (prefix_msgs, prefix_ids, prefix_outcomes, pending_rule) = if NAV_RULES_ENABLED {
+        let available: HashSet<String> = active_tool_specs(mode_tools, has_web, disabled)
+            .into_iter()
+            .collect();
+        run_nav_prefix(
+            runtime,
+            kbinfos,
+            direction,
+            Some(budget_left),
+            &available,
+            Some(&mut nav_ctx),
+        )
+        .await
+    } else {
+        (Vec::new(), Vec::new(), Vec::new(), String::new())
+    };
+    let spent = prefix_started.elapsed().as_secs_f64();
+
+    let mut state = SessionState::new(
+        parent_state.clone(),
+        mode,
+        mode_tools.clone(),
+        has_web,
+        direction,
+    );
+    state
+        .messages
+        .push(serde_json::json!({"role": "system", "content": ACTION_RUN_PROMPT}));
+    state
+        .messages
+        .push(serde_json::json!({"role": "user", "content": seed_user}));
+    state.messages.extend(prefix_msgs);
+    state.retrieved_evidence_ids = prefix_ids;
+    state.deadline_left = Some((budget_left - spent).max(10.0));
+    state.tool_cache = shared_tool_cache.unwrap_or_default();
+    state.seen_queries = shared_search_queries.unwrap_or_default();
+    state.outcomes = prefix_outcomes;
+    state.routed_docs = nav_ctx.known_docs.clone();
+    state.nav_rule_id = pending_rule;
+    state.disabled = disabled.clone();
+    run_session_loop(runtime, llm, kbinfos, &mut state).await;
+    SessionResult {
+        messages: state.messages,
+        new_states: state.new_states,
+        found_answer: state.found_answer,
+        retrieved_evidence_ids: state.retrieved_evidence_ids,
+        terminal_type: state.terminal_type,
+        terminal_payload: state.terminal_payload,
+    }
 }
 
 #[cfg(test)]
@@ -3870,5 +4224,384 @@ mod nav_prefix_tests {
         );
         assert!(lines[1].starts_with("[c3] "));
         assert!(extract_relevant_evidence(&Kbinfos::default(), "alpha", 4).is_empty());
+    }
+}
+#[cfg(test)]
+mod session_entry_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    struct EntryMockSearch {
+        grep: Vec<Value>,
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for EntryMockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct EntryMockTools {
+        tree: NavResult,
+        structure: NavResult,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for EntryMockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.tree.clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.structure.clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            Some(json!({"expression": "1+1", "result": "2"}))
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct EntryMockLlm {
+        with_tools: Mutex<Vec<Option<LlmReply>>>,
+        plain: Mutex<Vec<Option<LlmReply>>>,
+        with_tools_calls: Mutex<Vec<(Vec<Value>, f64)>>,
+        plain_calls: Mutex<Vec<(Vec<Value>, f64)>>,
+    }
+
+    impl EntryMockLlm {
+        fn new(with_tools: Vec<Option<LlmReply>>, plain: Vec<Option<LlmReply>>) -> Self {
+            Self {
+                with_tools: Mutex::new(with_tools),
+                plain: Mutex::new(plain),
+                with_tools_calls: Mutex::new(Vec::new()),
+                plain_calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ActionLlmBackend for EntryMockLlm {
+        async fn complete_with_tools(
+            &self,
+            messages: &[Value],
+            _schemas: &[Value],
+            timeout_s: f64,
+        ) -> Option<LlmReply> {
+            self.with_tools_calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), timeout_s));
+            let mut queue = self.with_tools.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+        async fn complete_plain(&self, messages: &[Value], timeout_s: f64) -> Option<LlmReply> {
+            self.plain_calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), timeout_s));
+            let mut queue = self.plain.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+    }
+
+    fn content_reply(content: &str) -> LlmReply {
+        LlmReply {
+            content: content.to_string(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    fn call_reply(id: &str, name: &str, args: &Value) -> LlmReply {
+        LlmReply {
+            content: String::new(),
+            tool_calls: vec![json!({
+                "id": id,
+                "type": "function",
+                "function": {"name": name, "arguments": args.to_string()},
+            })],
+        }
+    }
+
+    fn fixture_chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    fn parent_fixture() -> SlotState {
+        SlotState::new(
+            vec![Variable {
+                id: 0,
+                r#type: "answer".to_string(),
+                question_clues: vec!["who?".to_string()],
+                ..Variable::default()
+            }],
+            0,
+        )
+    }
+
+    #[test]
+    fn init_retry_timeout_matrix() {
+        assert_eq!(init_retry_timeout(45.0, None), 90.0);
+        assert_eq!(init_retry_timeout(45.0, Some(100.0)), 90.0);
+        assert_eq!(init_retry_timeout(45.0, Some(60.0)), 55.0);
+        assert_eq!(
+            init_retry_timeout(45.0, Some(40.0)),
+            45.0,
+            "never below the first bound"
+        );
+        assert_eq!(init_retry_timeout(45.0, Some(3.0)), 45.0);
+        assert_eq!(init_retry_timeout(45.0, Some(0.0)), 90.0);
+    }
+
+    #[tokio::test]
+    async fn initialize_state_parses_llm_json() {
+        let fenced = "```json\n{\"slots\": [{\"id\": 0, \"type\": \"person\", \"clues\": [\"c1\", \"c2\", \"c3\", \"c4\", \"c5\"], \"source\": \"ds\"}], \"first_queries\": [\"q1\", \"q2\", \"q3\", \"q4\"]}\n```";
+        let llm = EntryMockLlm::new(vec![], vec![Some(content_reply(fenced))]);
+        let (root, queries) = initialize_state(&llm, "who?", &[], None).await;
+        assert_eq!(root.state.len(), 1);
+        assert_eq!(root.state[0].r#type, "person");
+        assert_eq!(
+            root.state[0].question_clues.len(),
+            4,
+            "clues are capped at 4"
+        );
+        assert_eq!(queries.len(), 3, "first_queries are capped at 3");
+        assert_eq!(queries[0], "q1");
+        let calls = llm.plain_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "a parsed table needs no retry");
+        assert_eq!(calls[0].1, INIT_TIMEOUT_S);
+        assert_eq!(calls[0].0[0]["role"], "system");
+        assert!(
+            calls[0].0[1]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Question: who?")
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_state_falls_back_to_fanouts() {
+        let llm = EntryMockLlm::new(vec![], vec![None, None]);
+        let hints = vec!["aspect one".to_string(), "aspect two".to_string()];
+        let (root, queries) = initialize_state(&llm, "who?", &hints, None).await;
+        assert_eq!(root.state.len(), 2);
+        assert!(root.state.iter().all(|slot| slot.r#type == "aspect"));
+        assert_eq!(root.state[0].question_clues, vec!["aspect one".to_string()]);
+        assert_eq!(queries, hints);
+        let calls = llm.plain_calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "one retry when the parse fails");
+        assert_eq!(calls[1].1, 90.0, "the retry gets the doubled budget");
+    }
+
+    #[tokio::test]
+    async fn initialize_state_answer_slot_fallback() {
+        let llm = EntryMockLlm::new(vec![], vec![None, None]);
+        let (root, queries) = initialize_state(&llm, "who exactly?", &[], None).await;
+        assert_eq!(root.state.len(), 1);
+        assert_eq!(root.state[0].r#type, "answer");
+        assert_eq!(
+            root.state[0].question_clues,
+            vec!["who exactly?".to_string()]
+        );
+        assert_eq!(queries, vec!["who exactly?".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn run_action_session_without_model_returns_empty() {
+        let search = EntryMockSearch { grep: Vec::new() };
+        let tools = EntryMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mode_tools: BTreeSet<String> = ["retrieve".to_string()].into_iter().collect();
+        let result = run_action_session(
+            &runtime,
+            None,
+            &mut kbinfos,
+            "who?",
+            &parent_fixture(),
+            &mode_tools,
+            "high",
+            false,
+            &HashSet::new(),
+            Some(60.0),
+            "",
+            None,
+            None,
+        )
+        .await;
+        assert!(result.messages.is_empty());
+        assert!(result.found_answer.is_none());
+        assert!(result.new_states.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_action_session_end_to_end_terminal() {
+        let search = EntryMockSearch { grep: Vec::new() };
+        let tools = EntryMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let llm = EntryMockLlm::new(
+            vec![
+                Some(call_reply(
+                    "c1",
+                    "calculate",
+                    &json!({"question": "1+1", "facts": ["1", "1"]}),
+                )),
+                Some(content_reply("<answer>{\"answer\": \"2\"}</answer>")),
+            ],
+            vec![],
+        );
+        let mut kbinfos = Kbinfos::default();
+        let mode_tools: BTreeSet<String> = ["calculate".to_string()].into_iter().collect();
+        let result = run_action_session(
+            &runtime,
+            Some(&llm),
+            &mut kbinfos,
+            "how much?",
+            &parent_fixture(),
+            &mode_tools,
+            "high",
+            false,
+            &HashSet::new(),
+            Some(60.0),
+            "",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(result.found_answer.as_deref(), Some("2"));
+        assert_eq!(result.messages.len(), 4);
+        assert_eq!(result.messages[0]["role"], "system");
+        assert_eq!(result.messages[0]["content"], ACTION_RUN_PROMPT);
+        assert!(
+            result.messages[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Direction: how much?")
+        );
+        assert_eq!(result.messages[2]["role"], "assistant");
+        assert_eq!(result.messages[3]["role"], "tool");
+        let calls = llm.with_tools_calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].1 >= 15.0 && calls[0].1 <= ACTION_TIMEOUT_S);
+    }
+
+    #[tokio::test]
+    async fn run_action_session_seeds_nav_prefix() {
+        let search = EntryMockSearch {
+            grep: vec![fixture_chunk("cA", "alpha text", "d1")],
+        };
+        let tools = EntryMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+                ..NavResult::default()
+            },
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: std::collections::HashMap::from([(
+                    "cA".to_string(),
+                    "Root > A".to_string(),
+                )]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let llm = EntryMockLlm::new(
+            vec![Some(content_reply(
+                "<answer>{\"answer\": \"done\"}</answer>",
+            ))],
+            vec![],
+        );
+        let mut kbinfos = Kbinfos::default();
+        let mode_tools: BTreeSet<String> = [
+            "navigate_tree".to_string(),
+            "navigate_structure".to_string(),
+            "retrieve".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let result = run_action_session(
+            &runtime,
+            Some(&llm),
+            &mut kbinfos,
+            "alpha topic",
+            &parent_fixture(),
+            &mode_tools,
+            "high",
+            false,
+            &HashSet::new(),
+            Some(60.0),
+            "",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(result.found_answer.as_deref(), Some("done"));
+        assert_eq!(result.messages.len(), 6, "system + seed + two nav pairs");
+        assert_eq!(result.messages[2]["tool_calls"][0]["id"], "nav_locate");
+        assert_eq!(result.messages[4]["tool_calls"][0]["id"], "nav_drill");
+        assert!(result.retrieved_evidence_ids.contains(&"cA".to_string()));
+        assert!(result.retrieved_evidence_ids.contains(&"d1".to_string()));
+        let calls = llm.with_tools_calls.lock().unwrap();
+        assert!(
+            calls[0].0[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Direction: alpha topic")
+        );
+    }
+
+    #[test]
+    fn prompt_consts_are_verbatim_and_trimmed() {
+        assert!(ACTION_RUN_PROMPT.starts_with("You are a deep research assistant"));
+        assert!(ACTION_RUN_PROMPT.contains("# TOOL PLAYBOOK"));
+        assert!(!ACTION_RUN_PROMPT.ends_with(char::is_whitespace));
+        assert!(ACTION_INITIALIZE_STATE_PROMPT.starts_with("You are a research strategist."));
+        assert!(ACTION_INITIALIZE_STATE_PROMPT.contains("first_queries"));
+        assert!(!ACTION_INITIALIZE_STATE_PROMPT.ends_with(char::is_whitespace));
     }
 }
