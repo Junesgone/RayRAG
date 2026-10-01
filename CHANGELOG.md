@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.76] — 2026-10-01（对标批次 v0.3.10u）
+
+> W-5 续：RAGFlow v0.27.2 的渠道智能体目标校验（`api/channels/targets.py`）移植（纯 Rust）。
+
+### Added
+
+- **渠道智能体目标校验**（`api/channels/targets.py` → `src/api/features.rs`）：`validate_agent_target` 在 `AgentStore` 上按 id 查找并校验 `canvas_category == "agent_canvas"`（否则 `not_found`），再经 `agent_accessible`（built_in / owner / team 成员 / 管理员空归属）判定租户可访问性（否则 `forbidden`），有效则返回 `None`。
+
+### Tests
+
+- 1 项单测覆盖缺失 id、类别不符、owner 放行、team 非成员 forbidden、成员放行；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.75] — 2026-10-01（对标批次 v0.3.10t）
 
 > W-5 续：RAGFlow v0.27.2 的共享句界定义（`rag/flow/chunker/_sentence_boundary.py`）移植（纯 Rust）。

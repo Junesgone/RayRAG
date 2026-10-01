@@ -8179,6 +8179,82 @@ fn agent_accessible(
         || (is_admin && agent.owner_id.is_empty())
 }
 
+/// `api/channels/targets.py::validate_agent_target` over the local store.
+///
+/// Returns `Some("not_found")` when the agent does not exist or is not an
+/// agent canvas, `Some("forbidden")` when the tenant cannot access it, and
+/// `None` when the selected agent may be targeted by the channel.
+pub fn validate_agent_target(
+    store: &AgentStore,
+    agent_id: &str,
+    tenant_id: &str,
+    is_tenant_member: &impl Fn(&str, &str) -> bool,
+) -> Option<&'static str> {
+    let Some(agent) = store.list().into_iter().find(|agent| agent.id == agent_id) else {
+        return Some("not_found");
+    };
+    if agent.canvas_category != "agent_canvas" {
+        return Some("not_found");
+    }
+    if !agent_accessible(&agent, tenant_id, false, is_tenant_member) {
+        return Some("forbidden");
+    }
+    None
+}
+
+#[cfg(test)]
+mod agent_target_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn request(name: &str, category: &str, permission: Option<&str>) -> AgentCreateRequest {
+        serde_json::from_value(json!({
+            "name": name,
+            "canvas_category": category,
+            "permission": permission,
+            "dsl": {}
+        }))
+        .expect("agent create request")
+    }
+
+    #[test]
+    fn validate_agent_target_matches_upstream_semantics() {
+        let store = AgentStore::in_memory();
+        let own = store
+            .create("user-a", request("Own", "agent_canvas", None))
+            .expect("create own agent");
+        let dataflow = store
+            .create("user-a", request("Flow", "dataflow_canvas", None))
+            .expect("create dataflow canvas");
+        let shared = store
+            .create("user-b", request("Shared", "agent_canvas", Some("team")))
+            .expect("create team agent");
+
+        let no_member = |_owner: &str, _user: &str| false;
+        assert_eq!(
+            validate_agent_target(&store, "missing", "user-a", &no_member),
+            Some("not_found")
+        );
+        assert_eq!(
+            validate_agent_target(&store, &dataflow.id, "user-a", &no_member),
+            Some("not_found")
+        );
+        assert_eq!(
+            validate_agent_target(&store, &own.id, "user-a", &no_member),
+            None
+        );
+        assert_eq!(
+            validate_agent_target(&store, &shared.id, "user-a", &no_member),
+            Some("forbidden")
+        );
+        let member = |_owner: &str, _user: &str| true;
+        assert_eq!(
+            validate_agent_target(&store, &shared.id, "user-a", &member),
+            None
+        );
+    }
+}
+
 fn validate_agents(agents: &[Agent]) -> anyhow::Result<()> {
     let mut ids = HashSet::new();
     for agent in agents {

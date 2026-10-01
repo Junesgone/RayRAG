@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 605 | 292984 |
-| partial | 77 | 32127 |
+| full | 606 | 293018 |
+| partial | 76 | 32093 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -621,7 +621,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `api/channels/line/channel.py` | 228 | 8155 | `d66a48590df84e86` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/qqbot/__init__.py` | 1 | 36 | `0b15b0677b598809` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/qqbot/channel.py` | 430 | 15927 | `ae351fe2cc9c5b15` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
-| `api/channels/targets.py` | 34 | 1226 | `f873eaeb45791985` | partial | `src/server.rs; src/agent_templates.rs` | （v0.3.10g 审计：渠道智能体目标校验；RayRAG 已有 agent_canvas 类别校验，渠道目标助手待对齐——worklist W-5（结构图/编译器/切分）） |
+| `api/channels/targets.py` | 34 | 1226 | `f873eaeb45791985` | full | `src/api/features.rs` | （v0.3.10u 移植：validate_agent_target——不存在或 canvas_category != agent_canvas → not_found；租户不可访问（agent_accessible：built_in/owner/team 成员/管理员空归属）→ forbidden；否则 None；1 项单测覆盖 not_found（缺失/类别不符）、owner 放行、team 非成员 forbidden、成员放行。） |
 | `api/channels/telegram/__init__.py` | 1 | 36 | `0b15b0677b598809` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/telegram/channel.py` | 118 | 3958 | `523f2c57241614f1` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
 | `api/channels/wecom/__init__.py` | 1 | 36 | `0b15b0677b598809` | full | `src/channels.rs; src/server.rs` | channel framework ported (Channel trait, Registry, webhook/feishu channels) |
