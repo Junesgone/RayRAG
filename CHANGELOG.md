@@ -2,6 +2,30 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.58] — 2026-10-01（对标批次 v0.3.10c）
+
+> 补齐 v0.27.2 唯一缺失的路由 `/compilation-templates/edit-next`（含 `/:id`），
+> 并在真浏览器里验证创建 / 编辑回填 / 删除清理全链路。
+
+### Added
+
+- **知识编译模板编辑页**（Rust SSR + `/api/v1/compilation_template_groups`）：无全局壳层的
+  Back + 标题头、名称 / 描述 / 模板类型（9 个内置 kind，artifacts 显示为 Wiki）/ 全局规则 /
+  「重新切分 Parser 输出」开关与重分片规则、Back/Save 页脚；切换模板类型时按内置模板
+  套用默认 config；`/:id` 编辑模式从 API 回填。
+- **`/agents` 入口区**：Knowledge compilation 区块列出模板分组卡片（点击进编辑、删除经确认），
+  「Add template」跳转编辑页。
+
+### Notes
+
+- 真浏览器（CDP，fnOS Chrome）探针 `scripts/ui-traversal/compilation-template-edit-cdp.mjs`：
+  登录 → 创建（kind/global_rules/rechunk/rechunk_rules 持久化）→ 编辑回填 → 删除清理 →
+  `/agents` 入口 Add/卡片/删除全链路 **PASS**。
+- 台账：edit-next 的 11 个核心文件由 `unmapped` 升为 `partial`（外壳/表单/保存/回填已实现，
+  Blueprint/分节字段/预览弹层/树模板等深层组件未复刻），unmapped 483 → 472、partial 27 → 38；
+  `--check` 通过。
+- 全量 `cargo test --locked --offline --lib` **1638 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净。
+
 ## [0.4.57] — 2026-10-01（对标批次 v0.3.10b）
 
 > 本轮把模型提供商目录与 Available-models 网格同步到 RAGFlow v0.27.2，

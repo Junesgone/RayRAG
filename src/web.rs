@@ -1395,7 +1395,6 @@ pub async fn kbs_page(
 /// RAGFlow-compatible KB detail alias: `/dataset/{tab}/{kb_id}` routes
 /// (files | retrieval | logs | configuration) render the unified detail page;
 /// the tab is pre-selected client-side from the URL path.
-
 /// `/dataset/{id}` → `/dataset/files/{id}` (upstream's `Routes.Dataset` is
 /// `/dataset/files`; the bare path is not a route of its own).
 pub async fn dataset_files_redirect(
@@ -3848,6 +3847,199 @@ pub async fn agent_detail_page(
 /// `canvas_type`) beside a `CardContainer` of `TemplateCard`s whose hover
 /// overlay carries `flow.useTemplate`; using a template opens the create-agent
 /// dialog and seeds the new agent with the template DSL.
+/// `/compilation-templates/edit-next` (create) and
+/// `/compilation-templates/edit-next/{id}` (edit).
+///
+/// Mirrors RAGFlow v0.27.2 `pages/user-setting/compilation-templates/edit-next/
+/// index.tsx` + `components/template-configuration.tsx`: a layout-less page with
+/// a Back + title header, the template form (name / description / kind /
+/// global rules / re-chunk parser output + rules) and the Back/Save footer,
+/// wired to the tenant `/api/v1/compilation_template_groups` CRUD.
+fn compilation_template_edit_body(zh: bool, id: Option<&str>) -> String {
+    let back = if zh { "返回" } else { "Back" };
+    let save = if zh { "保存" } else { "Save" };
+    let add_title = if zh { "添加模板" } else { "Add template" };
+    let edit_title = if zh { "编辑模板" } else { "Edit template" };
+    let name_label = if zh { "名称" } else { "Name" };
+    let name_placeholder = if zh {
+        "请输入名称"
+    } else {
+        "Please input name"
+    };
+    let description_label = if zh { "描述" } else { "Description" };
+    let description_placeholder = if zh {
+        "请输入描述"
+    } else {
+        "Enter description"
+    };
+    let template_label = if zh { "模板" } else { "Template" };
+    let select_placeholder = if zh { "请选择" } else { "Select value" };
+    let global_rules_label = if zh { "全局规则" } else { "Global rules" };
+    let global_rules_placeholder = if zh {
+        "请输入全局编译规则"
+    } else {
+        "Input global compilation rules"
+    };
+    let rechunk_label = if zh {
+        "重新切分 Parser 输出"
+    } else {
+        "Re-chunk parser output"
+    };
+    let rechunk_rules_label = if zh {
+        "重分片规则"
+    } else {
+        "Rechunking rules"
+    };
+    let rechunk_rules_placeholder = if zh {
+        "描述此知识编译任务下，LLM 应如何合并和划分源 Chunk。"
+    } else {
+        "Describe how the LLM should group source chunks for this compilation task."
+    };
+    let name_required = if zh {
+        "请输入模板名称"
+    } else {
+        "Please input template name"
+    };
+    let kind_required = if zh {
+        "请选择模板类型"
+    } else {
+        "Please select a kind"
+    };
+    let load_failed = if zh {
+        "加载失败："
+    } else {
+        "Load failed: "
+    };
+    let save_failed = if zh {
+        "保存失败："
+    } else {
+        "Save failed: "
+    };
+    let saving = if zh { "保存中…" } else { "Saving…" };
+    let id_js = match id {
+        Some(value) => serde_json::Value::String(value.to_string()).to_string(),
+        None => "null".to_string(),
+    };
+    let labels = serde_json::json!({
+        "back": back,
+        "save": save,
+        "addTitle": add_title,
+        "editTitle": edit_title,
+        "name": name_label,
+        "namePlaceholder": name_placeholder,
+        "nameRequired": name_required,
+        "description": description_label,
+        "descriptionPlaceholder": description_placeholder,
+        "template": template_label,
+        "selectPlaceholder": select_placeholder,
+        "kindRequired": kind_required,
+        "globalRules": global_rules_label,
+        "globalRulesPlaceholder": global_rules_placeholder,
+        "rechunk": rechunk_label,
+        "rechunkRules": rechunk_rules_label,
+        "rechunkRulesPlaceholder": rechunk_rules_placeholder,
+        "loadFailed": load_failed,
+        "saveFailed": save_failed,
+        "saving": saving,
+        "kindLabels": {
+            "wiki": "Wiki",
+            "artifacts": "Wiki",
+            "knowledge_graph": "Graph",
+            "page_index": "PageIndex",
+            "mind_map": "Mindmap",
+            "timeline": "Timeline",
+            "tree": "Tree",
+            "empty": "Empty",
+            "session_graph": "Session graph",
+            "session_essence": "Session essence",
+        },
+    });
+    let mut b = String::with_capacity(9216);
+    b.push_str("<style>.ct-edit-page{display:flex;flex-direction:column;min-height:calc(100vh - 48px);background:var(--bgc)}.ct-edit-header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}.ct-edit-header h2{margin:0;font-size:16px;font-weight:500;color:var(--t2)}.ct-edit-form{flex:1;display:flex;flex-direction:column;gap:18px;padding:20px;max-width:960px;width:100%;margin:0 auto}.ct-edit-form textarea,.ct-edit-form input[type=text]{width:100%}.ct-edit-form .ct-check{flex-direction:row;align-items:center;gap:8px}.ct-edit-footer{display:flex;justify-content:flex-end;gap:16px;padding:16px 20px;border-top:1px solid var(--bd)}.ct-message{margin:0 20px 16px;font-size:12px;color:var(--tm);min-height:16px}.ct-message.error{color:var(--d)}</style>");
+    b.push_str("<section class='ct-edit-page' data-testid='compilation-template-edit-page'><header class='ct-edit-header'><button type='button' class='btn btn-ghost ct-back' data-testid='compilation-template-back' aria-label='");
+    b.push_str(back);
+    b.push_str("' onclick='ctBack()'>&#8592;</button><h2 id='ctTitle'>");
+    b.push_str(if id.is_some() { edit_title } else { add_title });
+    b.push_str(
+        "</h2></header><form id='ctForm' class='ct-edit-form' onsubmit='event.preventDefault()'>",
+    );
+    b.push_str("<label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(name_label);
+    b.push_str("</span><input id='ctName' type='text' autocomplete='off' placeholder='");
+    b.push_str(name_placeholder);
+    b.push_str("'><span class='ds-field-error' id='ctNameError'></span></label>");
+    b.push_str("<label class='ds-field'><span class='ds-field-label'>");
+    b.push_str(description_label);
+    b.push_str("</span><textarea id='ctDescription' rows='2' placeholder='");
+    b.push_str(description_placeholder);
+    b.push_str("'></textarea></label>");
+    b.push_str("<label class='ds-field'><span class='ds-field-label required'>");
+    b.push_str(template_label);
+    b.push_str(
+        "</span><select id='ctKind' data-testid='compilation-template-kind'><option value=''>",
+    );
+    b.push_str(select_placeholder);
+    b.push_str("</option></select><span class='ds-field-error' id='ctKindError'></span></label>");
+    b.push_str("<label class='ds-field'><span class='ds-field-label'>");
+    b.push_str(global_rules_label);
+    b.push_str("</span><textarea id='ctGlobalRules' rows='8' placeholder='");
+    b.push_str(global_rules_placeholder);
+    b.push_str("'></textarea></label>");
+    b.push_str("<label class='ds-field ct-check' id='ctRechunkField'><input type='checkbox' id='ctRechunk'><span>");
+    b.push_str(rechunk_label);
+    b.push_str("</span></label>");
+    b.push_str(
+        "<label class='ds-field' id='ctRechunkRulesField' hidden><span class='ds-field-label'>",
+    );
+    b.push_str(rechunk_rules_label);
+    b.push_str("</span><textarea id='ctRechunkRules' rows='6' placeholder='");
+    b.push_str(rechunk_rules_placeholder);
+    b.push_str("'></textarea></label></form><footer class='ct-edit-footer'><button type='button' class='btn btn-o' data-testid='compilation-template-back-footer' onclick='ctBack()'>");
+    b.push_str(back);
+    b.push_str("</button><button type='button' class='btn btn-p' id='ctSaveButton' data-testid='compilation-template-save' onclick='ctSave()'>");
+    b.push_str(save);
+    b.push_str(
+        "</button></footer><p id='ctMessage' class='ct-message' role='status'></p></section>",
+    );
+    b.push_str("<script>const CT={id:");
+    b.push_str(&id_js);
+    b.push_str(",labels:");
+    b.push_str(&labels.to_string());
+    b.push_str("};");
+    b.push_str(CT_EDIT_JS);
+    b.push_str("</script>");
+    b
+}
+
+pub async fn compilation_template_edit_new_page(
+    State(_state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    Html(layout_plain(
+        if zh { "添加模板" } else { "Add template" },
+        &compilation_template_edit_body(zh, None),
+        zh,
+    ))
+}
+
+pub async fn compilation_template_edit_page(
+    State(_state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    Html(layout_plain(
+        if zh { "编辑模板" } else { "Edit template" },
+        &compilation_template_edit_body(zh, Some(id.as_str())),
+        zh,
+    ))
+}
+
+/// Client half of the compilation-template edit page. `CT` (id + labels) is
+/// injected right before this script by `compilation_template_edit_body`.
+const CT_EDIT_JS: &str = r#"function ctBack(){location.href='/agents'}function ctSetMessage(text,isError){var node=document.getElementById('ctMessage');if(!node)return;node.textContent=text||'';node.classList.toggle('error',!!isError)}function ctField(id){return document.getElementById(id)}function ctKindLabel(kind){return (CT.labels.kindLabels&&CT.labels.kindLabels[kind])||kind}async function ctLoadBuiltins(){try{var response=await fetch('/api/v1/compilation_templates/builtins');var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));CT.builtins=data.data||[];var kinds=[];CT.builtins.forEach(function(item){var kind=item.kind;if(kind&&kinds.indexOf(kind)<0)kinds.push(kind)});var select=ctField('ctKind');kinds.forEach(function(kind){var option=document.createElement('option');option.value=kind;option.textContent=ctKindLabel(kind);select.appendChild(option)})}catch(error){ctSetMessage(CT.labels.loadFailed+error.message,true)}}function ctApplyBuiltin(kind){var builtin=null;for(var i=0;i<CT.builtins.length;i+=1){if(CT.builtins[i].kind===kind){builtin=CT.builtins[i];break}}if(!builtin)return;var config=builtin.config||{};if(typeof config.global_rules==='string')ctField('ctGlobalRules').value=config.global_rules;ctField('ctRechunk').checked=config.rechunk===true;ctField('ctRechunkRules').value=typeof config.rechunk_rules==='string'?config.rechunk_rules:'';ctSyncKind()}function ctSyncKind(){var wiki=ctField('ctKind').value==='wiki';ctField('ctRechunkField').hidden=wiki;if(wiki)ctField('ctRechunk').checked=false;ctSyncRechunk()}function ctSyncRechunk(){ctField('ctRechunkRulesField').hidden=!ctField('ctRechunk').checked}async function ctLoad(){await ctLoadBuiltins();if(!CT.id){ctSyncKind();return}try{var response=await fetch('/api/v1/compilation_template_groups/'+encodeURIComponent(CT.id));var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));var group=data.data||{};var template=(group.templates&&group.templates[0])||{};var config=template.config||{};ctField('ctTitle').textContent=group.name||CT.labels.editTitle;ctField('ctName').value=template.name||'';ctField('ctDescription').value=template.description||'';ctField('ctKind').value=template.kind||'';ctField('ctGlobalRules').value=typeof config.global_rules==='string'?config.global_rules:'';ctField('ctRechunk').checked=config.rechunk===true;ctField('ctRechunkRules').value=typeof config.rechunk_rules==='string'?config.rechunk_rules:'';ctSyncKind()}catch(error){ctSetMessage(CT.labels.loadFailed+error.message,true)}}async function ctSave(){var name=ctField('ctName').value.trim();var kind=ctField('ctKind').value;ctField('ctNameError').textContent='';ctField('ctKindError').textContent='';if(!name){ctField('ctNameError').textContent=CT.labels.nameRequired;return}if(!kind){ctField('ctKindError').textContent=CT.labels.kindRequired;return}var description=ctField('ctDescription').value.trim();var payload={name:name,description:description,templates:[{name:name,description:description,kind:kind,config:{kind:kind,global_rules:ctField('ctGlobalRules').value,rechunk:ctField('ctRechunk').checked,rechunk_rules:ctField('ctRechunkRules').value}}]};var button=ctField('ctSaveButton');button.disabled=true;ctSetMessage(CT.labels.saving,false);try{var url=CT.id?'/api/v1/compilation_template_groups/'+encodeURIComponent(CT.id):'/api/v1/compilation_template_groups';var response=await fetch(url,{method:CT.id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));location.href='/agents'}catch(error){ctSetMessage(CT.labels.saveFailed+error.message,true);button.disabled=false}}document.getElementById('ctKind').addEventListener('change',function(){ctApplyBuiltin(this.value)});document.getElementById('ctRechunk').addEventListener('change',ctSyncRechunk);ctLoad();"#;
+
 pub async fn agent_templates_page(
     State(_state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -3932,6 +4124,45 @@ pub async fn agent_templates_page(
     ))
 }
 
+/// `/agents` entry for knowledge-compilation templates. Upstream renders the
+/// groups as cards inside the same grid (`CompilationTemplateCard`); RayRAG
+/// keeps them in a dedicated section until the interleaved card list lands.
+/// Add / open / delete all go through `/api/v1/compilation_template_groups`.
+fn compilation_templates_section(zh: bool) -> String {
+    let title = if zh {
+        "知识编译"
+    } else {
+        "Knowledge compilation"
+    };
+    let add = if zh { "添加模板" } else { "Add template" };
+    let empty = if zh {
+        "暂无模板。"
+    } else {
+        "No templates yet."
+    };
+    let delete_label = if zh { "删除" } else { "Delete" };
+    let confirm_prefix = if zh {
+        "删除模板分组 "
+    } else {
+        "Delete template group "
+    };
+    let mut s = String::with_capacity(4096);
+    s.push_str("<style>.agent-compilation-section{margin:24px 20px;border-top:1px solid var(--bd);padding-top:16px}.agent-compilation-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}.agent-compilation-head h2{margin:0;font-size:16px;flex:1}.acg-card{cursor:pointer}.acg-delete{border:0;background:transparent;color:var(--tm);cursor:pointer;font-size:12px;padding:4px 6px}.acg-delete:hover{color:var(--d)}</style>");
+    s.push_str("<section class='agent-compilation-section' data-testid='agent-compilation-section'><header class='agent-compilation-head'><h2>");
+    s.push_str(title);
+    s.push_str("</h2><button type='button' class='btn btn-p' data-testid='agent-compilation-add' onclick=\"location.href='/compilation-templates/edit-next'\">+ ");
+    s.push_str(add);
+    s.push_str("</button></header><div class='ds-card-grid' id='acgCards' data-testid='agent-compilation-cards'></div></section><script>");
+    s.push_str("const ACG={empty:");
+    s.push_str(&json_script_string(empty));
+    s.push_str(",del:");
+    s.push_str(&json_script_string(delete_label));
+    s.push_str(",confirmPrefix:");
+    s.push_str(&json_script_string(confirm_prefix));
+    s.push_str("};async function acgLoad(){var host=document.getElementById('acgCards');if(!host)return;var groups=[];try{var response=await fetch('/api/v1/compilation_template_groups');var data=await response.json();if(response.ok&&data.code===0)groups=(data.data&&data.data.groups)||[]}catch(error){}if(!groups.length){host.innerHTML=\"<p style='color:var(--tm);grid-column:1/-1'>\"+ACG.empty+'</p>';return}host.innerHTML=groups.map(function(group){var id=String(group.id||'');var name=String(group.name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');var desc=String(group.description||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');return \"<article class='ds-card acg-card' tabindex='0' role='button' data-testid='agent-compilation-card' data-id='\"+id+\"' onclick=\\\"location.href='/compilation-templates/edit-next/\"+id+\"'\\\"><span class='ds-card-avatar' aria-hidden='true'>\"+(name.charAt(0)||'T').toUpperCase()+\"</span><span class='ds-card-body'><span class='ds-card-title'>\"+name+\"</span><span class='ds-card-meta'>\"+desc+\"</span></span><button type='button' class='acg-delete' onclick=\\\"event.stopPropagation();acgDelete('\"+id+\"')\\\">\"+ACG.del+\"</button></article>\"}).join('')}async function acgDelete(id){var card=document.querySelector(\"[data-testid='agent-compilation-card'][data-id='\"+id+\"']\");var name=card?card.querySelector('.ds-card-title').textContent:'';if(!confirm(ACG.confirmPrefix+name+'?'))return;try{var response=await fetch('/api/v1/compilation_template_groups/'+encodeURIComponent(id),{method:'DELETE'});var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status))}catch(error){alert(String(error))}acgLoad()}acgLoad();</script>");
+    s
+}
+
 pub async fn agents_page(
     State(_state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -3982,7 +4213,7 @@ pub async fn agents_page(
         )),
         import_url: "/api/v1/agents",
         form_extra: String::new(),
-        page_script: String::new(),
+        page_script: compilation_templates_section(zh),
     };
     Html(render_app_list_page(&spec, zh))
 }
@@ -13972,6 +14203,62 @@ connection: close
                 "zh label payload missing: {marker}"
             );
         }
+    }
+
+    #[test]
+    fn agents_page_exposes_compilation_template_entry() {
+        let section = compilation_templates_section(false);
+        for marker in [
+            "data-testid='agent-compilation-section'",
+            "data-testid='agent-compilation-add'",
+            "data-testid='agent-compilation-card'",
+            "data-testid='agent-compilation-cards'",
+            "/compilation-templates/edit-next",
+            "/api/v1/compilation_template_groups",
+            "Knowledge compilation",
+        ] {
+            assert!(
+                section.contains(marker),
+                "missing agents compilation entry marker {marker}"
+            );
+        }
+        let zh = compilation_templates_section(true);
+        assert!(zh.contains("知识编译"));
+        assert!(zh.contains("添加模板"));
+    }
+
+    #[test]
+    fn compilation_template_edit_page_matches_upstream_shell() {
+        let body = compilation_template_edit_body(false, None);
+        for marker in [
+            "data-testid='compilation-template-edit-page'",
+            "data-testid='compilation-template-back'",
+            "data-testid='compilation-template-save'",
+            "id='ctName'",
+            "id='ctDescription'",
+            "id='ctKind'",
+            "id='ctGlobalRules'",
+            "id='ctRechunk'",
+            "id='ctRechunkRules'",
+            "Add template",
+            "Global rules",
+            "Re-chunk parser output",
+            "/api/v1/compilation_template_groups",
+            "/api/v1/compilation_templates/builtins",
+            "const CT={id:null",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing compilation edit marker {marker}"
+            );
+        }
+        let edit = compilation_template_edit_body(false, Some("group-123"));
+        assert!(edit.contains("const CT={id:\"group-123\""));
+        assert!(edit.contains("Edit template"));
+        let zh = compilation_template_edit_body(true, None);
+        assert!(zh.contains("添加模板"));
+        assert!(zh.contains("全局规则"));
+        assert!(zh.contains("重新切分 Parser 输出"));
     }
 
     #[tokio::test]

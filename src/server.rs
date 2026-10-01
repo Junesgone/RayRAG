@@ -3746,6 +3746,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/files/skills", get(crate::web::skills_page))
         .route("/explore", get(crate::web::agents_page))
         .route("/agent-templates", get(crate::web::agent_templates_page))
+        .route(
+            "/compilation-templates/edit-next",
+            get(crate::web::compilation_template_edit_new_page),
+        )
+        .route(
+            "/compilation-templates/edit-next/{id}",
+            get(crate::web::compilation_template_edit_page),
+        )
         .route("/agent-list", get(crate::web::agents_page))
         .route("/logout", get(crate::web::logout_page))
         .route(

@@ -19,11 +19,11 @@
 |---|---:|---:|
 | aligned | 278 | 68000 |
 | full | 568 | 282196 |
-| partial | 27 | 9883 |
+| partial | 38 | 11158 |
 | replaced | 108 | 41809 |
 | N/A | 61 | 10542 |
 | reference | 4452 | 1209152 |
-| unmapped | 483 | 79599 |
+| unmapped | 472 | 78324 |
 
 ## Removed upstream paths
 
@@ -6093,27 +6093,27 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `web/src/pages/user-setting/compilation-templates/edit-next/components/field-card.tsx` | 86 | 2621 | `e6a4216329226277` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/components/json-preview-sheet.tsx` | 78 | 2268 | `c17b9a37ca0e4730` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/components/section-field-grid.tsx` | 92 | 2940 | `663c38ec7a9fe0f9` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/components/template-configuration.tsx` | 301 | 10110 | `56f795fb37047913` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/user-setting/compilation-templates/edit-next/components/template-configuration.tsx` | 301 | 10110 | `56f795fb37047913` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
 | `web/src/pages/user-setting/compilation-templates/edit-next/components/template-preview-header.tsx` | 52 | 1679 | `b138dd141554ed9e` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/components/tree-template-fields.tsx` | 78 | 2719 | `6aa0451bd0492707` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/components/workflow-preview-sheet.tsx` | 72 | 2174 | `17ad71a29fe32d81` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/constant.ts` | 79 | 2387 | `e009d22c8c3de0e8` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/user-setting/compilation-templates/edit-next/constant.ts` | 79 | 2387 | `e009d22c8c3de0e8` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-active-section-tab.ts` | 29 | 1030 | `f25bd0b06439887c` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-add-field-form.ts` | 145 | 3779 | `36886bc005498eed` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-available-kind-options.ts` | 69 | 2302 | `d47df67b28752040` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-available-kind-options.ts` | 69 | 2302 | `d47df67b28752040` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-blueprint-selection.ts` | 154 | 4554 | `e389f6612036dfad` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-builtin-template.ts` | 48 | 1576 | `2f230f02fbde7ac3` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-compilation-template-group-form.ts` | 50 | 1599 | `4128a63c8c10f966` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-compilation-template-group-submit.ts` | 64 | 1935 | `7c055b6cd3910ae8` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-edit-next-compilation-template-group.ts` | 82 | 2619 | `3033d1ff82b03a55` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-builtin-template.ts` | 48 | 1576 | `2f230f02fbde7ac3` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
+| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-compilation-template-group-form.ts` | 50 | 1599 | `4128a63c8c10f966` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
+| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-compilation-template-group-submit.ts` | 64 | 1935 | `7c055b6cd3910ae8` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
+| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-edit-next-compilation-template-group.ts` | 82 | 2619 | `3033d1ff82b03a55` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-field-array-handlers.ts` | 55 | 1858 | `479927bf96c4ad0c` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-field-modal.ts` | 51 | 1506 | `6a35082f68af1cce` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-kind-change.ts` | 54 | 1637 | `8134abd6f8b41c19` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-kind-change.ts` | 54 | 1637 | `8134abd6f8b41c19` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-preview-sheets.ts` | 44 | 1355 | `fe1bac8ce7003ebb` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/user-setting/compilation-templates/edit-next/hooks/use-template-section-data.ts` | 62 | 2079 | `85c88c4c65bd9551` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/index.tsx` | 102 | 3648 | `c56398e92be8bfd7` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/schema.ts` | 86 | 2779 | `038d2bec3b1da30b` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/user-setting/compilation-templates/edit-next/utils.ts` | 340 | 10290 | `e6e832898fb28c24` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/user-setting/compilation-templates/edit-next/index.tsx` | 102 | 3648 | `c56398e92be8bfd7` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
+| `web/src/pages/user-setting/compilation-templates/edit-next/schema.ts` | 86 | 2779 | `038d2bec3b1da30b` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
+| `web/src/pages/user-setting/compilation-templates/edit-next/utils.ts` | 340 | 10290 | `e6e832898fb28c24` | partial | `src/web.rs; src/server.rs; src/api/compilation_templates.rs` | （v0.3.10c 复核：edit-next 的 Layout-less 外壳/Name/Description/模板类型/全局规则/重新切分与规则/Save-Back，以及创建、编辑回填已由 Rust SSR + /api/v1/compilation_template_groups 实现并经真浏览器探针验证；Blueprint/分节字段/预览弹层/树模板等深层组件未复刻） |
 | `web/src/pages/user-setting/components/user-setting-header/index.tsx` | 47 | 1485 | `de9f080854493f6f` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/constants.tsx` | 66 | 1980 | `2ba1b1d769eb1cfe` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/user-setting/data-source/add-datasource-modal.tsx` | 141 | 4115 | `f1a3dce0fc844a55` | aligned | `src/web.rs; src/api/data_source_mgr.rs; src/data_source/form_fields.rs` | Rust Add data source modal renders the selected source's schema-driven field set (title `Add data source: {name}`, required markers, options/defaults/show_when, Cancel/Confirm), validates required fields inline, and POSTs the nested upstream config; flat-fallback sources keep URL/Target/Token. CDP-verified 6 actions incl. S3 compatible-mode conditionals and both create shapes (v0.3.3cb) [v0.27.2 content changed: re-audit] |
