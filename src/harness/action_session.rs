@@ -1723,10 +1723,10 @@ pub async fn exec_graph_explore(
             .take(1500)
             .collect();
         snippet.push(serde_json::json!({"id": id, "content": content}));
-        if let Some(text) = id.as_str() {
-            if !text.is_empty() {
-                ids.push(text.to_string());
-            }
+        if let Some(text) = id.as_str()
+            && !text.is_empty()
+        {
+            ids.push(text.to_string());
         }
     }
     ToolOutcome {
@@ -1982,6 +1982,374 @@ pub async fn tool_node_policy(
     }
     result.disabled = disabled.clone();
     result
+}
+
+// ── Session node loop (upstream `_run_action_node` / `_finalize_node` /
+// `_route` / `_route_after_tool` / `_build_session_graph`) ──────────────────
+//
+// The LangGraph wiring is replaced by [`run_session_loop`], an explicit loop
+// with the same edges: `run_action → {tool | finalize | END | run_action}` and
+// `tool → {run_action | finalize}`.
+
+/// Per-mode action-session turn budget. Upstream `resolve_mode(...).action_max_turns`;
+/// `harness/config.py` sets 4 for ultra / high / medium at v0.27.2.
+pub const ACTION_MAX_TURNS: usize = 4;
+
+/// `_action_max_turns` (the caller resolves the provider's mode).
+pub fn action_max_turns(_mode: &str) -> usize {
+    ACTION_MAX_TURNS
+}
+
+/// Upstream's "neither a call nor a terminal block" user nudge (verbatim).
+pub const NUDGE_TEXT: &str = "Call the retrieve tool, or output a <state> patch, or emit <answer>.";
+
+/// Upstream's tool-budget salvage prompt (verbatim).
+pub const BUDGET_PROMPT: &str = "TOOL BUDGET EXHAUSTED. Based ONLY on the passages retrieved above, output now — no prose outside the block:\n<state>{\"new_states\": [{\"state\": [{\"id\": <slot_id>, \"candidate\": \"<value>\", \"candidate_strength\": <0..1>, \"discovered_clues\": [\"...\"]}]}]}</state>\nIf NOTHING was learned use: <state>{\"new_states\": []}</state>";
+
+/// One raw completion: content plus the model's native tool calls (OpenAI
+/// shape, passed through verbatim from the provider).
+#[derive(Clone, Debug, Default)]
+pub struct LlmReply {
+    pub content: String,
+    pub tool_calls: Vec<Value>,
+}
+
+/// `_acompletion` / `_llm_once_with_tools`: the provider-agnostic LLM contract.
+/// The implementation owns its transport; `timeout_s` is the caller's
+/// wall-clock bound, and a timeout or transport error must yield `None`.
+#[async_trait]
+pub trait ActionLlmBackend: Send + Sync {
+    /// One native-tool completion with THIS mode's tool surface (temperature 0.3).
+    async fn complete_with_tools(
+        &self,
+        messages: &[Value],
+        tool_schemas: &[Value],
+        timeout_s: f64,
+    ) -> Option<LlmReply>;
+
+    /// The tools-free salvage call used by the finalize node (temperature 0.3).
+    async fn complete_plain(&self, messages: &[Value], timeout_s: f64) -> Option<LlmReply>;
+}
+
+/// `_SessionState` (node-loop subset): everything the graph edges touch, plus
+/// the per-session tool-loop bookkeeping adopted from [`tool_node_policy`].
+pub struct SessionState {
+    pub messages: Vec<Value>,
+    pub parent_state: SlotState,
+    pub mode_tools: std::collections::BTreeSet<String>,
+    pub has_web: bool,
+    pub mode: String,
+    pub pending_calls: Vec<ToolCall>,
+    pub done: bool,
+    pub tool_cache: std::collections::HashMap<String, ToolOutcome>,
+    pub new_states: Vec<SlotState>,
+    pub found_answer: Option<String>,
+    pub terminal_type: Option<String>,
+    pub terminal_payload: Option<Value>,
+    pub retrieved_evidence_ids: Vec<String>,
+    pub attempts: usize,
+    pub deadline_left: Option<f64>,
+    pub strikes: std::collections::HashMap<String, usize>,
+    pub disabled: HashSet<String>,
+    pub outcomes: Vec<Value>,
+    pub skipped_dup: usize,
+    pub direction: String,
+    pub routed_docs: Vec<(String, String)>,
+    pub nav_rule_id: String,
+    pub seen_queries: Vec<String>,
+}
+
+impl SessionState {
+    /// A fresh session over `parent_state`.
+    pub fn new(
+        parent_state: SlotState,
+        mode: &str,
+        mode_tools: std::collections::BTreeSet<String>,
+        has_web: bool,
+        direction: &str,
+    ) -> Self {
+        Self {
+            messages: Vec::new(),
+            parent_state,
+            mode_tools,
+            has_web,
+            mode: mode.to_string(),
+            pending_calls: Vec::new(),
+            done: false,
+            tool_cache: std::collections::HashMap::new(),
+            new_states: Vec::new(),
+            found_answer: None,
+            terminal_type: None,
+            terminal_payload: None,
+            retrieved_evidence_ids: Vec::new(),
+            attempts: 0,
+            deadline_left: None,
+            strikes: std::collections::HashMap::new(),
+            disabled: HashSet::new(),
+            outcomes: Vec::new(),
+            skipped_dup: 0,
+            direction: direction.to_string(),
+            routed_docs: Vec::new(),
+            nav_rule_id: String::new(),
+            seen_queries: Vec::new(),
+        }
+    }
+
+    /// `_action_max_turns` for this session's mode.
+    pub fn max_turns(&self) -> usize {
+        action_max_turns(&self.mode)
+    }
+}
+
+/// `_run_action_node`: one native-tool LLM turn; route on tool_calls /
+/// terminal / nudge. A timeout or provider error converges the session empty.
+pub async fn run_action_node(llm: &dyn ActionLlmBackend, state: &mut SessionState) {
+    let wall = state
+        .deadline_left
+        .unwrap_or(ACTION_TIMEOUT_S)
+        .min(ACTION_TIMEOUT_S)
+        .max(15.0);
+    state.attempts += 1;
+    let specs = active_tool_specs(&state.mode_tools, state.has_web, &state.disabled);
+    let schemas = active_tool_schemas(&specs);
+    let reply = match llm
+        .complete_with_tools(&state.messages, &schemas, wall)
+        .await
+    {
+        Some(reply) => reply,
+        None => {
+            state.done = true;
+            return;
+        }
+    };
+    let calls = parse_tool_calls(&reply.tool_calls);
+    if !calls.is_empty() {
+        // Pass the model's native tool_calls through VERBATIM (normalized ids
+        // and args) so the protocol pairs them with the tool responses.
+        let tool_calls: Vec<Value> = calls
+            .iter()
+            .map(|call| {
+                serde_json::json!({
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": serde_json::to_string(&call.args)
+                            .unwrap_or_else(|_| "{}".to_string()),
+                    }
+                })
+            })
+            .collect();
+        state.messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": reply.content,
+            "tool_calls": tool_calls,
+        }));
+        state.pending_calls = calls;
+        return;
+    }
+    let (new_states, found_answer, terminal_type, terminal_payload) =
+        parse_terminal(&reply.content, &state.parent_state);
+    if found_answer.is_some() || !new_states.is_empty() {
+        state.new_states = new_states;
+        state.found_answer = found_answer;
+        state.terminal_type = terminal_type;
+        state.terminal_payload = terminal_payload;
+        state.pending_calls.clear();
+        state.done = true;
+        return;
+    }
+    // Neither a call nor a terminal block: nudge once per turn.
+    state
+        .messages
+        .push(serde_json::json!({"role": "assistant", "content": reply.content}));
+    state
+        .messages
+        .push(serde_json::json!({"role": "user", "content": NUDGE_TEXT}));
+    state.pending_calls.clear();
+}
+
+/// `_strip_unpaired_tool_calls`: drop `assistant.tool_calls` that never got a
+/// matching tool response so the provider history stays well-formed.
+pub fn strip_unpaired_tool_calls(messages: &[Value]) -> Vec<Value> {
+    let mut responded: HashSet<String> = HashSet::new();
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) == Some("tool") {
+            if let Some(id) = message.get("tool_call_id").and_then(Value::as_str) {
+                responded.insert(id.to_string());
+            }
+        }
+    }
+    let mut cleaned: Vec<Value> = Vec::with_capacity(messages.len());
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) == Some("assistant") {
+            if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+                if !calls.is_empty() {
+                    let paired = calls.iter().all(|call| {
+                        call.get("id")
+                            .and_then(Value::as_str)
+                            .map(|id| responded.contains(id))
+                            .unwrap_or(false)
+                    });
+                    if !paired {
+                        let mut clone = message.clone();
+                        if let Some(object) = clone.as_object_mut() {
+                            object.remove("tool_calls");
+                        }
+                        cleaned.push(clone);
+                        continue;
+                    }
+                }
+            }
+        }
+        cleaned.push(message.clone());
+    }
+    cleaned
+}
+
+/// `_finalize_node`: the tool budget is spent — ONE last call WITHOUT tools
+/// demanding the terminal JSON, then a deterministic loose-clue harvest.
+pub async fn finalize_node(llm: &dyn ActionLlmBackend, state: &mut SessionState) {
+    let parent = state.parent_state.clone();
+    let wall = state.deadline_left.unwrap_or(150.0).min(150.0).max(15.0);
+    let mut finalize_messages = strip_unpaired_tool_calls(&state.messages);
+    finalize_messages.push(serde_json::json!({"role": "user", "content": BUDGET_PROMPT}));
+    if let Some(reply) = llm.complete_plain(&finalize_messages, wall).await {
+        let (new_states, found_answer, terminal_type, terminal_payload) =
+            parse_terminal(&reply.content, &parent);
+        state.new_states = new_states;
+        state.found_answer = found_answer;
+        state.terminal_type = terminal_type;
+        state.terminal_payload = terminal_payload;
+    }
+    // Loose-clue harvest (deterministic, zero-LLM): even when every JSON
+    // protocol attempt failed, the last narration often carries facts worth
+    // keeping as breadcrumbs.
+    if state.new_states.is_empty() && state.found_answer.is_none() {
+        let mut loose_clues: Vec<String> = Vec::new();
+        for message in state.messages.iter().rev() {
+            if message.get("role").and_then(Value::as_str) != Some("assistant") {
+                continue;
+            }
+            let text = message
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if text.is_empty() {
+                continue;
+            }
+            if text.chars().count() >= 24 {
+                let narrative: String = text.chars().take(220).collect();
+                loose_clues = vec![format!("narrative: {narrative}")];
+            }
+            break;
+        }
+        if !loose_clues.is_empty() {
+            let unresolved = parent.unresolved();
+            let target_id = unresolved
+                .first()
+                .map(|variable| variable.id)
+                .or_else(|| parent.state.first().map(|variable| variable.id));
+            if let Some(target_id) = target_id {
+                if let Some(patched) = apply_patch(
+                    &parent,
+                    &[serde_json::json!({"id": target_id, "discovered_clues": loose_clues})],
+                ) {
+                    state.new_states = vec![patched];
+                }
+            }
+        }
+    }
+    state.pending_calls.clear();
+    state.done = true;
+}
+
+/// One edge decision of the session graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteDecision {
+    End,
+    Tool,
+    Finalize,
+    RunAction,
+}
+
+/// `_route`: after a run_action step.
+pub fn route(state: &SessionState) -> RouteDecision {
+    if state.done {
+        return RouteDecision::End;
+    }
+    // Run pending tool_calls FIRST, even at the turn budget: leaving an
+    // assistant.tool_calls message without its tool response makes the
+    // provider reject the next call. The tool node clears the pending list,
+    // then route_after_tool re-checks the budget.
+    if !state.pending_calls.is_empty() {
+        return RouteDecision::Tool;
+    }
+    if state.attempts >= state.max_turns() {
+        return RouteDecision::Finalize;
+    }
+    // No-progress convergence: >=2 near-duplicate retrievals skipped means
+    // further turns are unlikely to surface new evidence.
+    if state.skipped_dup >= 2 {
+        return RouteDecision::Finalize;
+    }
+    RouteDecision::RunAction
+}
+
+/// `_route_after_tool`: after executing a tool batch (the budget is checked
+/// AFTER the tool responses are appended, so a pending call always receives
+/// its matching response before the session converges).
+pub fn route_after_tool(state: &SessionState) -> RouteDecision {
+    if state.attempts >= state.max_turns() {
+        RouteDecision::Finalize
+    } else {
+        RouteDecision::RunAction
+    }
+}
+
+/// Explicit equivalent of `_build_session_graph().compile()`: the same edges
+/// with the same guards, running until a terminal state or the finalize node.
+pub async fn run_session_loop(
+    runtime: &ActionRuntime<'_>,
+    llm: &dyn ActionLlmBackend,
+    kbinfos: &mut Kbinfos,
+    state: &mut SessionState,
+) {
+    loop {
+        run_action_node(llm, state).await;
+        match route(state) {
+            RouteDecision::End => break,
+            RouteDecision::RunAction => continue,
+            RouteDecision::Finalize => {
+                finalize_node(llm, state).await;
+                break;
+            }
+            RouteDecision::Tool => {
+                let pending = std::mem::take(&mut state.pending_calls);
+                let result = tool_node_policy(
+                    runtime,
+                    kbinfos,
+                    &pending,
+                    &mut state.seen_queries,
+                    &mut state.tool_cache,
+                    &mut state.strikes,
+                    &mut state.disabled,
+                    &state.retrieved_evidence_ids,
+                )
+                .await;
+                state.messages.extend(result.tool_messages);
+                state.retrieved_evidence_ids = result.evidence_ids;
+                state.skipped_dup += result.skipped_dup;
+                state.outcomes.extend(result.outcomes);
+                if route_after_tool(state) == RouteDecision::Finalize {
+                    finalize_node(llm, state).await;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2329,5 +2697,392 @@ mod tests {
         assert_eq!(empty.status, OUTCOME_EMPTY);
         assert_eq!(empty.reason, "no_structure");
         assert_eq!(ToolOutcome::miss().status, OUTCOME_MISS);
+    }
+}
+#[cfg(test)]
+mod session_loop_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    struct MockSearch;
+
+    #[async_trait]
+    impl ActionSearchBackend for MockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockTools;
+
+    #[async_trait]
+    impl ActionToolBackend for MockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn calculate(&self, _q: &str, _facts: &[String]) -> Option<Value> {
+            Some(json!({"expression": "1+1", "result": "2"}))
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct MockLlm {
+        with_tools: Mutex<Vec<Option<LlmReply>>>,
+        plain: Mutex<Vec<Option<LlmReply>>>,
+        with_tools_calls: Mutex<Vec<(Vec<Value>, Vec<Value>, f64)>>,
+        plain_calls: Mutex<Vec<(Vec<Value>, f64)>>,
+    }
+
+    impl MockLlm {
+        fn new(with_tools: Vec<Option<LlmReply>>, plain: Vec<Option<LlmReply>>) -> Self {
+            Self {
+                with_tools: Mutex::new(with_tools),
+                plain: Mutex::new(plain),
+                with_tools_calls: Mutex::new(Vec::new()),
+                plain_calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ActionLlmBackend for MockLlm {
+        async fn complete_with_tools(
+            &self,
+            messages: &[Value],
+            tool_schemas: &[Value],
+            timeout_s: f64,
+        ) -> Option<LlmReply> {
+            self.with_tools_calls.lock().unwrap().push((
+                messages.to_vec(),
+                tool_schemas.to_vec(),
+                timeout_s,
+            ));
+            let mut queue = self.with_tools.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+        async fn complete_plain(&self, messages: &[Value], timeout_s: f64) -> Option<LlmReply> {
+            self.plain_calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), timeout_s));
+            let mut queue = self.plain.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+    }
+
+    fn content_reply(content: &str) -> LlmReply {
+        LlmReply {
+            content: content.to_string(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    fn call_reply(id: &str, name: &str, args: &Value) -> LlmReply {
+        LlmReply {
+            content: "working on it".to_string(),
+            tool_calls: vec![json!({
+                "id": id,
+                "type": "function",
+                "function": {"name": name, "arguments": args.to_string()},
+            })],
+        }
+    }
+
+    fn session_fixture() -> SessionState {
+        let mut session = SessionState::new(
+            SlotState::new(
+                vec![
+                    Variable {
+                        id: 0,
+                        r#type: "found".to_string(),
+                        candidate: Some("x".to_string()),
+                        ..Variable::default()
+                    },
+                    Variable {
+                        id: 1,
+                        r#type: "missing".to_string(),
+                        ..Variable::default()
+                    },
+                ],
+                0,
+            ),
+            "ultra",
+            BTreeSet::from([
+                "retrieve".to_string(),
+                "search_chunks".to_string(),
+                "calculate".to_string(),
+            ]),
+            false,
+            "who?",
+        );
+        session
+            .messages
+            .push(json!({"role": "user", "content": "who?"}));
+        session
+    }
+
+    #[tokio::test]
+    async fn run_action_node_terminal_converges() {
+        let llm = MockLlm::new(
+            vec![Some(content_reply(
+                "<answer>{\"answer\": \"forty-two\"}</answer>",
+            ))],
+            vec![],
+        );
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(state.done);
+        assert_eq!(state.found_answer.as_deref(), Some("forty-two"));
+        assert_eq!(state.attempts, 1);
+        assert_eq!(
+            state.messages.len(),
+            1,
+            "terminal turns append no assistant message"
+        );
+        let calls = llm.with_tools_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].2, ACTION_TIMEOUT_S);
+        assert!(!calls[0].1.is_empty(), "tool schemas must be advertised");
+    }
+
+    #[tokio::test]
+    async fn run_action_node_timeout_converges_empty() {
+        let llm = MockLlm::new(vec![None], vec![]);
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(state.done);
+        assert!(state.found_answer.is_none());
+        assert!(state.new_states.is_empty());
+        assert_eq!(state.attempts, 1);
+        assert_eq!(
+            state.messages.len(),
+            1,
+            "no message is appended on a timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_action_node_tool_call_message_shape() {
+        let args = json!({"query": ["alpha"]});
+        let llm = MockLlm::new(vec![Some(call_reply("c1", "search_chunks", &args))], vec![]);
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(!state.done);
+        assert_eq!(state.pending_calls.len(), 1);
+        assert_eq!(state.pending_calls[0].id, "c1");
+        assert_eq!(state.pending_calls[0].name, "search_chunks");
+        assert!(!state.pending_calls[0].unknown);
+        let message = &state.messages[1];
+        assert_eq!(message["role"], "assistant");
+        assert_eq!(message["content"], "working on it");
+        let call = &message["tool_calls"][0];
+        assert_eq!(call["id"], "c1");
+        assert_eq!(call["type"], "function");
+        assert_eq!(call["function"]["name"], "search_chunks");
+        let arguments: Value =
+            serde_json::from_str(call["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments, args);
+    }
+
+    #[tokio::test]
+    async fn run_action_node_nudges_without_terminal() {
+        let llm = MockLlm::new(vec![Some(content_reply("just thinking"))], vec![]);
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(!state.done);
+        assert!(state.pending_calls.is_empty());
+        assert_eq!(state.messages.len(), 3);
+        assert_eq!(state.messages[1]["role"], "assistant");
+        assert_eq!(state.messages[2]["role"], "user");
+        assert_eq!(state.messages[2]["content"], NUDGE_TEXT);
+    }
+
+    #[test]
+    fn strip_unpaired_tool_calls_matrix() {
+        let paired = json!({
+            "role": "assistant",
+            "content": "paired",
+            "tool_calls": [{"id": "c1"}],
+        });
+        let unpaired = json!({
+            "role": "assistant",
+            "content": "unpaired",
+            "tool_calls": [{"id": "c2"}],
+        });
+        let messages = vec![
+            json!({"role": "user", "content": "q"}),
+            paired.clone(),
+            json!({"role": "tool", "tool_call_id": "c1", "content": "ok"}),
+            unpaired.clone(),
+        ];
+        let cleaned = strip_unpaired_tool_calls(&messages);
+        assert_eq!(cleaned.len(), 4);
+        assert!(cleaned[1].get("tool_calls").is_some(), "paired stays");
+        assert!(cleaned[3].get("tool_calls").is_none(), "unpaired drops");
+        assert_eq!(cleaned[3]["content"], "unpaired", "content is kept");
+    }
+
+    #[tokio::test]
+    async fn finalize_prompts_strips_and_harvests() {
+        let llm = MockLlm::new(vec![], vec![Some(content_reply("no JSON at all"))]);
+        let mut state = session_fixture();
+        state.messages.push(json!({
+            "role": "assistant",
+            "content": "working on it",
+            "tool_calls": [{"id": "c9", "type": "function",
+                "function": {"name": "calculate", "arguments": "{}"}}],
+        }));
+        state.messages.push(json!({
+            "role": "assistant",
+            "content": "the corpus narration carries a promising clue indeed",
+        }));
+        finalize_node(&llm, &mut state).await;
+        assert!(state.done);
+        assert_eq!(
+            state.new_states.len(),
+            1,
+            "loose-clue harvest patches a slot"
+        );
+        let slot = state.new_states[0]
+            .state
+            .iter()
+            .find(|variable| variable.id == 1)
+            .unwrap();
+        assert!(slot.discovered_clues[0].starts_with("narrative: "));
+        let plain_calls = llm.plain_calls.lock().unwrap();
+        assert_eq!(plain_calls.len(), 1);
+        assert_eq!(plain_calls[0].1, 150.0);
+        let history = &plain_calls[0].0;
+        let last = history.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"], BUDGET_PROMPT);
+        let stripped = history
+            .iter()
+            .find(|message| message["content"] == "working on it")
+            .unwrap();
+        assert!(stripped.get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn route_matrix() {
+        let mut state = session_fixture();
+        assert_eq!(route(&state), RouteDecision::RunAction);
+        state.done = true;
+        assert_eq!(route(&state), RouteDecision::End);
+        state.done = false;
+        state.pending_calls.push(ToolCall {
+            id: "c1".to_string(),
+            name: "retrieve".to_string(),
+            args: json!({}),
+            unknown: false,
+        });
+        state.attempts = state.max_turns();
+        assert_eq!(
+            route(&state),
+            RouteDecision::Tool,
+            "pending beats the budget"
+        );
+        state.pending_calls.clear();
+        assert_eq!(route(&state), RouteDecision::Finalize);
+        state.attempts = 1;
+        state.skipped_dup = 2;
+        assert_eq!(route(&state), RouteDecision::Finalize);
+        state.skipped_dup = 0;
+        assert_eq!(route_after_tool(&state), RouteDecision::RunAction);
+        state.attempts = state.max_turns();
+        assert_eq!(route_after_tool(&state), RouteDecision::Finalize);
+    }
+
+    #[tokio::test]
+    async fn run_session_loop_tool_then_answer() {
+        let args = json!({"question": "1+1", "facts": ["1", "1"]});
+        let llm = MockLlm::new(
+            vec![
+                Some(call_reply("c1", "calculate", &args)),
+                Some(content_reply("<answer>{\"answer\": \"2\"}</answer>")),
+            ],
+            vec![],
+        );
+        let search = MockSearch;
+        let tools = MockTools;
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mut state = session_fixture();
+        run_session_loop(&runtime, &llm, &mut kbinfos, &mut state).await;
+        assert!(state.done);
+        assert_eq!(state.found_answer.as_deref(), Some("2"));
+        assert_eq!(state.attempts, 2);
+        assert_eq!(state.messages.len(), 3);
+        assert_eq!(state.messages[2]["role"], "tool");
+        assert_eq!(state.messages[2]["tool_call_id"], "c1");
+        assert_eq!(state.outcomes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_session_loop_budget_finalizes() {
+        let nudge = "thinking hard about the question without a terminal block";
+        let llm = MockLlm::new(
+            vec![
+                Some(content_reply(nudge)),
+                Some(content_reply(nudge)),
+                Some(content_reply(nudge)),
+                Some(content_reply(nudge)),
+            ],
+            vec![Some(content_reply("<state>{\"new_states\": []}</state>"))],
+        );
+        let search = MockSearch;
+        let tools = MockTools;
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mut state = session_fixture();
+        run_session_loop(&runtime, &llm, &mut kbinfos, &mut state).await;
+        assert!(state.done);
+        assert_eq!(state.attempts, ACTION_MAX_TURNS);
+        assert_eq!(llm.with_tools_calls.lock().unwrap().len(), 4);
+        assert_eq!(llm.plain_calls.lock().unwrap().len(), 1);
+        assert_eq!(
+            state.new_states.len(),
+            1,
+            "finalize harvest keeps breadcrumbs"
+        );
     }
 }
