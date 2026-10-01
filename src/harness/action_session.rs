@@ -1874,6 +1874,24 @@ pub struct ToolNodeResult {
     pub outcomes: Vec<Value>,
 }
 
+/// In-session ladder resume (`_tool_node`'s ladder block): after an executed
+/// call, if the session still rests on a nav rung whose `next` verdict for
+/// THIS call's status is non-empty, the remaining ladder runs in code so one
+/// weak step cascades through the cheaper, wider rungs instead of costing a
+/// model turn per fallback.
+pub struct LadderResume<'a> {
+    /// `_direction`: this slot's question — needed to re-run retrieval later.
+    pub direction: &'a str,
+    /// `_routed_docs`: navigate_tree's routed doc_ids (scope of later rungs).
+    pub routed_docs: &'a [String],
+    /// `deadline_left`, for the ladder budget.
+    pub deadline_left: Option<f64>,
+    /// `_nav_rule_id`: the rung control currently rests on (`""` = finished).
+    pub pending_rule: &'a mut String,
+    /// `_nav_tool_surface(tools)`: the session's callable tool names.
+    pub available: &'a HashSet<String>,
+}
+
 /// `_tool_node` policy loop: execute pending tool calls with the near-duplicate
 /// guard, unknown-tool correction, same-session cache, empty-strike disabling
 /// and explicit redundant notices.
@@ -1887,9 +1905,11 @@ pub async fn tool_node_policy(
     strikes: &mut std::collections::HashMap<String, usize>,
     disabled: &mut HashSet<String>,
     prior_evidence_ids: &[String],
+    ladder: Option<&mut LadderResume<'_>>,
 ) -> ToolNodeResult {
     let mut result = ToolNodeResult::default();
     result.evidence_ids = prior_evidence_ids.to_vec();
+    let mut ladder = ladder;
     for call in pending {
         let query = call
             .args
@@ -1968,6 +1988,7 @@ pub async fn tool_node_policy(
                 "note": "All hits from this call were ALREADY in the shared evidence pool; re-searching the same ground adds nothing. Patch the slot or issue a genuinely new angle."
             }));
         }
+        let call_status = outcome.status.clone();
         result.outcomes.push(serde_json::json!({
             "name": call.name,
             "status": outcome.status,
@@ -1979,6 +2000,44 @@ pub async fn tool_node_policy(
             "tool_call_id": call.id,
             "content": serde_json::json!({"passages": chunks}).to_string(),
         }));
+        // Continue the ladder in code when the session's rung came back weak:
+        // keep going on the rule's own verdict so one weak step can cascade
+        // through the remaining (cheaper, wider) rungs.
+        if let Some(ladder) = ladder.as_deref_mut() {
+            let resting = ladder.pending_rule.clone();
+            if !resting.is_empty() {
+                if let Some(rule) = nav_rule_by_id(&resting) {
+                    let next_rule = rule.next_rule(&call_status);
+                    if !next_rule.is_empty() {
+                        let mut ctx = NavContext {
+                            direction: ladder.direction.to_string(),
+                            known_docs: ladder.routed_docs.to_vec(),
+                            ..NavContext::default()
+                        };
+                        let mut ladder_messages: Vec<Value> = Vec::new();
+                        let ladder_budget = (ladder.deadline_left.unwrap_or(ACTION_TIMEOUT_S)
+                            * NAV_PREFIX_BUDGET_RATIO)
+                            .max(5.0);
+                        let stepped_to = run_nav_chain(
+                            runtime,
+                            kbinfos,
+                            &mut ctx,
+                            next_rule,
+                            ladder_budget,
+                            ladder.available,
+                            &mut ladder_messages,
+                            &mut result.evidence_ids,
+                            &mut result.outcomes,
+                            "ladder",
+                            MAX_TOOL_RESPONSE_CHARS * 4,
+                        )
+                        .await;
+                        *ladder.pending_rule = stepped_to;
+                        result.tool_messages.extend(ladder_messages);
+                    }
+                }
+            }
+        }
     }
     result.disabled = disabled.clone();
     result
@@ -2328,6 +2387,17 @@ pub async fn run_session_loop(
             }
             RouteDecision::Tool => {
                 let pending = std::mem::take(&mut state.pending_calls);
+                let available: HashSet<String> =
+                    active_tool_specs(&state.mode_tools, state.has_web, &state.disabled)
+                        .into_iter()
+                        .collect();
+                let mut ladder = LadderResume {
+                    direction: &state.direction,
+                    routed_docs: &state.routed_docs,
+                    deadline_left: state.deadline_left,
+                    pending_rule: &mut state.nav_rule_id,
+                    available: &available,
+                };
                 let result = tool_node_policy(
                     runtime,
                     kbinfos,
@@ -2337,6 +2407,7 @@ pub async fn run_session_loop(
                     &mut state.strikes,
                     &mut state.disabled,
                     &state.retrieved_evidence_ids,
+                    Some(&mut ladder),
                 )
                 .await;
                 state.messages.extend(result.tool_messages);
@@ -3391,6 +3462,7 @@ mod loop_tests {
             &mut strikes,
             &mut disabled,
             &[],
+            None,
         )
         .await;
         assert_eq!(first.skipped_dup, 0);
@@ -3404,6 +3476,7 @@ mod loop_tests {
             &mut strikes,
             &mut disabled,
             &[],
+            None,
         )
         .await;
         assert!(
@@ -3433,6 +3506,7 @@ mod loop_tests {
             &mut strikes2,
             &mut disabled2,
             &[],
+            None,
         )
         .await;
         assert!(
@@ -3451,6 +3525,7 @@ mod loop_tests {
             &mut strikes2,
             &mut disabled2,
             &[],
+            None,
         )
         .await;
         assert_eq!(mixed.skipped_dup, 1);
@@ -4603,5 +4678,233 @@ mod session_entry_tests {
         assert!(ACTION_INITIALIZE_STATE_PROMPT.starts_with("You are a research strategist."));
         assert!(ACTION_INITIALIZE_STATE_PROMPT.contains("first_queries"));
         assert!(!ACTION_INITIALIZE_STATE_PROMPT.ends_with(char::is_whitespace));
+    }
+}
+#[cfg(test)]
+mod ladder_resume_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    struct LadderMockSearch {
+        grep: Vec<Value>,
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for LadderMockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct LadderMockTools {
+        tree: NavResult,
+        structure: NavResult,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for LadderMockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.tree.clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.structure.clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    fn available_fixture() -> HashSet<String> {
+        ["navigate_tree", "retrieve", "navigate_structure"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ladder_resumes_after_weak_rung() {
+        let search = LadderMockSearch {
+            grep: vec![chunk("cA", "alpha text", "d1")],
+        };
+        let tools = LadderMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+                ..NavResult::default()
+            },
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: HashMap::from([("cA".to_string(), "Root > A".to_string())]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let pending = vec![ToolCall {
+            id: "c1".to_string(),
+            name: "navigate_tree".to_string(),
+            args: json!({"query": "alpha topic"}),
+            unknown: false,
+        }];
+        let mut seen_queries = Vec::new();
+        let mut cache = HashMap::new();
+        let mut strikes = HashMap::new();
+        let mut disabled = HashSet::new();
+        let available = available_fixture();
+        let mut pending_rule = "locate".to_string();
+        let mut ladder = LadderResume {
+            direction: "alpha topic",
+            routed_docs: &[],
+            deadline_left: Some(60.0),
+            pending_rule: &mut pending_rule,
+            available: &available,
+        };
+        let result = tool_node_policy(
+            &runtime,
+            &mut kbinfos,
+            &pending,
+            &mut seen_queries,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            Some(&mut ladder),
+        )
+        .await;
+        assert_eq!(pending_rule, "", "drill OK ends the ladder");
+        assert_eq!(result.tool_messages.len(), 3, "call + one ladder pair");
+        assert_eq!(
+            result.tool_messages[1]["tool_calls"][0]["id"],
+            "ladder_drill"
+        );
+        assert_eq!(
+            result.tool_messages[1]["tool_calls"][0]["function"]["name"],
+            "navigate_structure"
+        );
+        assert_eq!(result.tool_messages[2]["role"], "tool");
+        assert_eq!(result.outcomes.len(), 2, "call outcome + ladder outcome");
+        assert_eq!(result.outcomes[1]["name"], "navigate_structure");
+        assert!(result.evidence_ids.contains(&"cA".to_string()));
+    }
+
+    #[tokio::test]
+    async fn ladder_skipped_when_rung_finished() {
+        let search = LadderMockSearch { grep: Vec::new() };
+        let tools = LadderMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                ..NavResult::default()
+            },
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let pending = vec![ToolCall {
+            id: "c1".to_string(),
+            name: "navigate_tree".to_string(),
+            args: json!({"query": "alpha topic"}),
+            unknown: false,
+        }];
+        let mut seen_queries = Vec::new();
+        let mut cache = HashMap::new();
+        let mut strikes = HashMap::new();
+        let mut disabled = HashSet::new();
+        let available = available_fixture();
+        let mut pending_rule = "drill".to_string();
+        let mut ladder = LadderResume {
+            direction: "alpha topic",
+            routed_docs: &[],
+            deadline_left: Some(60.0),
+            pending_rule: &mut pending_rule,
+            available: &available,
+        };
+        let result = tool_node_policy(
+            &runtime,
+            &mut kbinfos,
+            &pending,
+            &mut seen_queries,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            Some(&mut ladder),
+        )
+        .await;
+        assert_eq!(
+            pending_rule, "drill",
+            "an OK verdict on drill ends the chain"
+        );
+        assert_eq!(result.tool_messages.len(), 1, "no ladder pair is appended");
+        assert_eq!(result.outcomes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn ladder_absent_by_default() {
+        let search = LadderMockSearch { grep: Vec::new() };
+        let tools = LadderMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let pending = vec![ToolCall {
+            id: "c1".to_string(),
+            name: "navigate_tree".to_string(),
+            args: json!({"query": "alpha topic"}),
+            unknown: false,
+        }];
+        let mut seen_queries = Vec::new();
+        let mut cache = HashMap::new();
+        let mut strikes = HashMap::new();
+        let mut disabled = HashSet::new();
+        let result = tool_node_policy(
+            &runtime,
+            &mut kbinfos,
+            &pending,
+            &mut seen_queries,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(result.tool_messages.len(), 1);
+        assert_eq!(result.outcomes.len(), 1);
     }
 }
