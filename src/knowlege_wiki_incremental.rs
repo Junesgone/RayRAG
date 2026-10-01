@@ -16,6 +16,7 @@
 //! - Rune budgets are counted in `char`s.
 use crate::doc_store::{DocRow, DocStore, SearchQuery};
 use crate::embed::Embedder;
+use crate::harness::knowlege_wiki::{load_active_map_state, load_map_extracts_for_state};
 use crate::harness::{HarnessChat, form_message, message_fit_in};
 use crate::structure_compile::{knowledge_compile_gen_conf, stable_row_id};
 use regex::Regex;
@@ -2535,5 +2536,622 @@ mod wiki_incremental_part4_tests {
         assert_eq!(pages.len(), 2);
         assert_eq!(pages["p1"]["id"], json!("p1"));
         assert_eq!(pages["p2"]["slug_kwd"], json!("entity/b"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 5 — graph page loading and link machinery (`_load_map_relations` ..
+// `_wiki_resolve_dead_slug`).
+//
+// Adaptation note: character-index semantics are preserved for link scans
+// (byte→char conversion); `name_slug` iteration is ordered (BTreeMap).
+// ---------------------------------------------------------------------------
+
+/// `_load_map_relations`: extracted (from, to, type) relations from MAP rows.
+pub fn load_map_relations(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    excluded_doc_ids: Option<&BTreeSet<String>>,
+    chunk_state: Option<&Map<String, Value>>,
+) -> Vec<Value> {
+    let state: Map<String, Value> = match chunk_state {
+        Some(state) => state.clone(),
+        None => load_active_map_state(store, tenant_id, kb_id).unwrap_or_default(),
+    };
+    let extracts = load_map_extracts_for_state(store, tenant_id, kb_id, &state, None);
+    let mut relations: Vec<Value> = Vec::new();
+    for extract in &extracts {
+        if let Some(excluded) = excluded_doc_ids {
+            if let Some(doc_id) = extract.get("doc_id").and_then(Value::as_str) {
+                if excluded.contains(doc_id) {
+                    continue;
+                }
+            }
+        }
+        if let Some(items) = extract.get("relations").and_then(Value::as_array) {
+            for relation in items {
+                let Some(source) = relation.get("from").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(target) = relation.get("to").and_then(Value::as_str) else {
+                    continue;
+                };
+                let relation_type = relation
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("related");
+                relations.push(json!({
+                    "from": source,
+                    "to": target,
+                    "type": relation_type,
+                }));
+            }
+        }
+    }
+    relations
+}
+
+fn row_scalar_string(row: &Value, field: &str) -> String {
+    match row.get(field) {
+        Some(Value::Array(items)) => items
+            .first()
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        Some(Value::String(text)) => text.clone(),
+        _ => String::new(),
+    }
+}
+
+/// `_wiki_load_pages_for_graph`: compiled pages in the canvas-graph shape.
+pub fn load_pages_for_graph(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    excluded_doc_ids: Option<&BTreeSet<String>>,
+    chunk_state: Option<&Map<String, Value>>,
+) -> Vec<Value> {
+    let select_fields: Vec<String> = [
+        "slug_kwd",
+        "title_kwd",
+        "page_type_kwd",
+        "summary_with_weight",
+        "md_with_weight",
+        "entity_names_kwd",
+        "outlinks_kwd",
+        "source_chunk_ids",
+        "source_doc_ids",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PAGE_COMPILE_KWD.to_string()),
+    );
+    let mut pages: Vec<Value> = Vec::new();
+    let mut offset = 0usize;
+    let page_size = 1000usize;
+    loop {
+        let rows = match inc_search_page(
+            store,
+            tenant_id,
+            kb_id,
+            &select_fields,
+            &condition,
+            offset,
+            page_size,
+        ) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::warn!(error = %err, kb = kb_id, "wiki: failed to load pages for graph");
+                return pages;
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        let page_len = rows.len();
+        for row in &rows {
+            let slug = row_scalar_string(row, "slug_kwd").trim().to_string();
+            if slug.is_empty() {
+                continue;
+            }
+            let mut outlinks = extract_outlinks_from_content(
+                row.get("md_with_weight")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                kb_id,
+            );
+            if outlinks.is_empty() {
+                outlinks = as_str_list(row.get("outlinks_kwd"));
+            }
+            let title = {
+                let value = row_scalar_string(row, "title_kwd");
+                if value.is_empty() {
+                    slug.clone()
+                } else {
+                    value
+                }
+            };
+            let page_type = {
+                let value = row_scalar_string(row, "page_type_kwd");
+                if value.is_empty() {
+                    "concept".to_string()
+                } else {
+                    value
+                }
+            };
+            pages.push(json!({
+                "slug": slug,
+                "title": title,
+                "summary": row.get("summary_with_weight").and_then(Value::as_str).unwrap_or(""),
+                "page_type": page_type,
+                "entity_names": as_str_list(row.get("entity_names_kwd")),
+                "outlinks": outlinks,
+                "source_chunk_ids": as_str_list(row.get("source_chunk_ids")),
+                "source_doc_ids": as_str_list(row.get("source_doc_ids")),
+            }));
+        }
+        if page_len < page_size {
+            break;
+        }
+        offset += page_size;
+    }
+
+    // Fallback edges from grounded MAP relations.
+    if !pages.is_empty() {
+        let mut name_to_slug: BTreeMap<String, String> = BTreeMap::new();
+        for page in &pages {
+            let slugs = page.get("slug").and_then(Value::as_str).unwrap_or("");
+            let mut names: Vec<String> =
+                vec![slugs.rsplit('/').next().unwrap_or(slugs).to_string()];
+            if let Some(title) = page.get("title").and_then(Value::as_str) {
+                names.push(title.to_string());
+            }
+            if let Some(entity_names) = page.get("entity_names").and_then(Value::as_array) {
+                names.extend(
+                    entity_names
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string),
+                );
+            }
+            for name in names {
+                let name = name.trim();
+                if !name.is_empty() {
+                    name_to_slug
+                        .entry(name.to_string())
+                        .or_insert_with(|| slugs.to_string());
+                }
+            }
+        }
+        let map_relations =
+            load_map_relations(store, tenant_id, kb_id, excluded_doc_ids, chunk_state);
+        let mut slug_index: BTreeMap<String, usize> = BTreeMap::new();
+        for (idx, page) in pages.iter().enumerate() {
+            if let Some(slug) = page.get("slug").and_then(Value::as_str) {
+                slug_index.insert(slug.to_string(), idx);
+            }
+        }
+        for relation in &map_relations {
+            let source_name = relation
+                .get("from")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let target_name = relation
+                .get("to")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let Some(source) = name_to_slug.get(source_name) else {
+                continue;
+            };
+            let Some(target) = name_to_slug.get(target_name) else {
+                continue;
+            };
+            if source == target {
+                continue;
+            }
+            let Some(idx) = slug_index.get(source) else {
+                continue;
+            };
+            if let Some(obj) = pages[*idx].as_object_mut() {
+                let outlinks = obj
+                    .entry("outlinks".to_string())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Some(items) = outlinks.as_array_mut() {
+                    if !items
+                        .iter()
+                        .any(|item| item.as_str() == Some(target.as_str()))
+                    {
+                        items.push(Value::String(target.clone()));
+                    }
+                }
+            }
+        }
+    }
+    pages
+}
+
+fn wikilink_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[\[([^\]]+)\]\]").expect("wikilink re"))
+}
+
+/// `_wiki_extract_outlinks_from_content`: unique internal link targets.
+pub fn extract_outlinks_from_content(content: &str, kb_id: &str) -> Vec<String> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut outlinks: Vec<String> = Vec::new();
+    for caps in wikilink_re().captures_iter(content) {
+        let link = caps
+            .get(1)
+            .map(|m| m.as_str().split('|').next().unwrap_or("").trim())
+            .unwrap_or("");
+        if !link.is_empty() && seen.insert(link.to_string()) {
+            outlinks.push(link.to_string());
+        }
+    }
+    if !kb_id.is_empty() {
+        let pattern = format!(r"\]\(artifact/{}/([^)]+)\)", regex::escape(kb_id));
+        if let Ok(re) = Regex::new(&pattern) {
+            for caps in re.captures_iter(content) {
+                let slug = caps
+                    .get(1)
+                    .map(|m| m.as_str().split('|').next().unwrap_or("").trim())
+                    .unwrap_or("");
+                if !slug.is_empty() && seen.insert(slug.to_string()) {
+                    outlinks.push(slug.to_string());
+                }
+            }
+        }
+    }
+    outlinks
+}
+
+fn protected_link_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"\[\[[^\]\n]+\]\]|\[[^\]\n]*\]\([^)\n]+\)").expect("protected link re")
+    })
+}
+
+fn byte_to_char_index(content: &str, byte_index: usize) -> usize {
+    content[..byte_index].chars().count()
+}
+
+/// `_wiki_find_unlinked_mention`: first occurrence outside link markup
+/// (character index, -1 when absent).
+pub fn find_unlinked_mention(content: &str, name: &str) -> i64 {
+    if content.is_empty() || name.is_empty() {
+        return -1;
+    }
+    let mut spans: Vec<(usize, usize)> = protected_link_re()
+        .find_iter(content)
+        .map(|m| {
+            (
+                byte_to_char_index(content, m.start()),
+                byte_to_char_index(content, m.end()),
+            )
+        })
+        .collect();
+    if let Some(raw_open_byte) = content.rfind("[[") {
+        let after_open = &content[raw_open_byte + 2..];
+        if after_open.find("]]").is_none() {
+            let open_char = byte_to_char_index(content, raw_open_byte);
+            spans.push((open_char, content.chars().count()));
+        }
+    }
+    let chars: Vec<char> = content.chars().collect();
+    let name_chars: Vec<char> = name.chars().collect();
+    let name_len = name_chars.len();
+    let mut start = 0usize;
+    while start + name_len <= chars.len() {
+        let idx = match (start..=chars.len() - name_len)
+            .find(|pos| chars[*pos..*pos + name_len] == name_chars[..])
+        {
+            Some(pos) => pos,
+            None => return -1,
+        };
+        let end = idx + name_len;
+        let overlaps = spans
+            .iter()
+            .any(|(protect_start, protect_end)| idx < *protect_end && end > *protect_start);
+        if !overlaps {
+            return idx as i64;
+        }
+        start = idx + 1;
+    }
+    -1
+}
+
+fn wiki_pipe_link_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[\[([^\[\]|]+?)\|([^\[\]]+?)\]\]").expect("pipe link re"))
+}
+
+fn wiki_simple_link_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[\[([^\[\]|]+?)\]\]").expect("simple link re"))
+}
+
+/// `_wiki_render_links`: `[[slug]]` / `[[slug|text]]` → navigable markdown.
+pub fn render_links(content: &str, kb_id: &str, valid_slugs: &BTreeSet<String>) -> String {
+    if content.is_empty() {
+        return content.to_string();
+    }
+    let kb = kb_id.to_string();
+    let rendered = wiki_pipe_link_re().replace_all(content, |caps: &regex::Captures| {
+        let slug = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        let text = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+        if !valid_slugs.contains(slug) {
+            return text.to_string();
+        }
+        format!("[{text}](artifact/{kb}/{slug})")
+    });
+    let rendered = wiki_simple_link_re().replace_all(&rendered, |caps: &regex::Captures| {
+        let slug = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        if !valid_slugs.contains(slug) {
+            return slug.to_string();
+        }
+        let label = if slug.contains('/') {
+            slug.rsplit('/').next().unwrap_or(slug)
+        } else {
+            slug
+        };
+        format!("[{label}](artifact/{kb}/{slug})")
+    });
+    rendered.to_string()
+}
+
+fn norm_dead_slug(text: &str) -> String {
+    let lowered = text.trim().to_lowercase();
+    let mut out = String::with_capacity(lowered.len());
+    let mut prev_dash = false;
+    for ch in lowered.chars() {
+        if ch == '-' || ch == '_' {
+            if !prev_dash {
+                out.push('-');
+            }
+            prev_dash = true;
+        } else {
+            out.push(ch);
+            prev_dash = false;
+        }
+    }
+    out
+}
+
+fn bigrams(text: &str) -> BTreeSet<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut set = BTreeSet::new();
+    if chars.len() >= 2 {
+        for pair in chars.windows(2) {
+            set.insert(pair.iter().collect());
+        }
+    }
+    set
+}
+
+/// `_wiki_resolve_dead_slug`: fuzzy resolution of a dead wikilink.
+pub fn resolve_dead_slug(
+    link: &str,
+    valid_ids: &BTreeSet<String>,
+    name_slug: &BTreeMap<String, String>,
+) -> Option<String> {
+    if link.is_empty() {
+        return None;
+    }
+    let plain = if link.contains('/') {
+        link.rsplit('/').next().unwrap_or(link)
+    } else {
+        link
+    };
+    let link_norm = norm_dead_slug(link);
+    let plain_norm = norm_dead_slug(plain);
+
+    if valid_ids.contains(link) {
+        return Some(link.to_string());
+    }
+    if valid_ids.contains(&link_norm) {
+        return Some(link_norm);
+    }
+    if let Some(value) = name_slug.get(plain) {
+        return Some(value.clone());
+    }
+    for (key, value) in name_slug {
+        if norm_dead_slug(key) == plain_norm {
+            return Some(value.clone());
+        }
+    }
+
+    let plain_tokens: BTreeSet<String> = plain_norm.split('-').map(str::to_string).collect();
+    let plain_bigrams = bigrams(&plain_norm);
+    let mut best: Option<(f64, String)> = None;
+    for (candidate_name, candidate_slug) in name_slug {
+        let candidate_norm = norm_dead_slug(candidate_name);
+        let candidate_tokens: BTreeSet<String> =
+            candidate_norm.split('-').map(str::to_string).collect();
+        if plain_tokens.is_disjoint(&candidate_tokens) {
+            continue;
+        }
+        let candidate_bigrams = bigrams(&candidate_norm);
+        let union: BTreeSet<&String> = plain_bigrams.union(&candidate_bigrams).collect();
+        if union.is_empty() {
+            continue;
+        }
+        let intersection = plain_bigrams.intersection(&candidate_bigrams).count();
+        let score = intersection as f64 / union.len() as f64;
+        if best
+            .as_ref()
+            .map(|(best_score, _)| score > *best_score)
+            .unwrap_or(true)
+        {
+            best = Some((score, candidate_slug.clone()));
+        }
+    }
+    match best {
+        Some((score, slug)) if score >= 0.5 => Some(slug),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod wiki_incremental_part5_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::knowlege_wiki::{build_resume_doc, commit_active_map_state};
+
+    #[test]
+    fn outlink_extraction_forms() {
+        let content = "See [[entity/alpha]] and [[concept/beta|Beta]] and [x](artifact/kb1/entity/gamma) and [[entity/alpha]] again";
+        let links = extract_outlinks_from_content(content, "kb1");
+        assert_eq!(
+            links,
+            vec![
+                "entity/alpha".to_string(),
+                "concept/beta".to_string(),
+                "entity/gamma".to_string()
+            ]
+        );
+        assert!(extract_outlinks_from_content("", "kb1").is_empty());
+    }
+
+    #[test]
+    fn unlinked_mention_skips_links() {
+        let content = "Intro [[entity/alpha]] then Alpha here and [[unclosed Alpha";
+        assert_eq!(find_unlinked_mention(content, "Alpha"), 28);
+        assert_eq!(find_unlinked_mention("only [[Alpha]] here", "Alpha"), -1);
+        assert_eq!(find_unlinked_mention("nothing", "Zeta"), -1);
+        assert_eq!(find_unlinked_mention("", "Zeta"), -1);
+    }
+
+    #[test]
+    fn render_links_gates_and_formats() {
+        let valid: BTreeSet<String> = ["entity/alpha".to_string()].into_iter().collect();
+        let rendered = render_links(
+            "[[entity/alpha]] [[entity/ghost]] [[entity/alpha|A]]",
+            "kb1",
+            &valid,
+        );
+        assert!(rendered.contains("[alpha](artifact/kb1/entity/alpha)"));
+        assert!(rendered.contains("entity/ghost"));
+        assert!(rendered.contains("[A](artifact/kb1/entity/alpha)"));
+    }
+
+    #[test]
+    fn dead_slug_resolution_layers() {
+        let valid: BTreeSet<String> = ["entity/smart-phone".to_string()].into_iter().collect();
+        let mut name_slug: BTreeMap<String, String> = BTreeMap::new();
+        name_slug.insert(
+            "Smartphone Industry".to_string(),
+            "concept/smartphone-industry".to_string(),
+        );
+        name_slug.insert("smart_phone".to_string(), "entity/smart-phone".to_string());
+        assert_eq!(
+            resolve_dead_slug("entity/smart-phone", &valid, &name_slug),
+            Some("entity/smart-phone".to_string())
+        );
+        assert_eq!(
+            resolve_dead_slug("entity/smart_phone", &valid, &name_slug),
+            Some("entity/smart-phone".to_string())
+        );
+        assert_eq!(
+            resolve_dead_slug("Smartphone Industry", &valid, &name_slug),
+            Some("concept/smartphone-industry".to_string())
+        );
+        assert_eq!(resolve_dead_slug("unrelated", &valid, &name_slug), None);
+    }
+
+    #[test]
+    fn pages_for_graph_content_and_relation_edges() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        // MAP rows with a grounded relation Alpha -> Beta.
+        let extract = json!({
+            "entities": [],
+            "concepts": [],
+            "claims": [],
+            "relations": [{"from": "Alpha", "to": "Beta", "type": "uses"}],
+            "topics": []
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        // wiki_page rows: alpha has a content link, beta has none.
+        let pages: Vec<DocRow> = vec![
+            json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/alpha", "title_kwd": "Alpha", "page_type_kwd": "entity", "md_with_weight": "see [[concept/beta]]", "entity_names_kwd": ["Alpha"]})
+                .as_object().cloned().unwrap(),
+            json!({"id": "p2", "compile_kwd": "wiki_page", "slug_kwd": "concept/beta", "title_kwd": "Beta", "page_type_kwd": "concept", "md_with_weight": "no links here", "entity_names_kwd": ["Beta"]})
+                .as_object().cloned().unwrap(),
+        ];
+        store.insert(&pages, &index, "kb1").unwrap();
+        let graph = load_pages_for_graph(&store, "t1", "kb1", None, None);
+        assert_eq!(graph.len(), 2);
+        let alpha = graph
+            .iter()
+            .find(|p| p["slug"] == json!("entity/alpha"))
+            .unwrap();
+        assert_eq!(alpha["outlinks"], json!(["concept/beta"]));
+        assert_eq!(alpha["title"], json!("Alpha"));
+        assert_eq!(alpha["page_type"], json!("entity"));
+        // Relation fallback only adds an edge when content produced none for
+        // that page; beta already has no link -> it gains the... wait, the
+        // relation source is Alpha (has content link) so no extra edge on beta.
+        let beta = graph
+            .iter()
+            .find(|p| p["slug"] == json!("concept/beta"))
+            .unwrap();
+        assert!(beta["outlinks"].as_array().unwrap().is_empty());
+        // Excluding the relation doc removes fallback edges entirely.
+        let mut excluded: BTreeSet<String> = BTreeSet::new();
+        excluded.insert("d1".to_string());
+        let graph2 = load_pages_for_graph(&store, "t1", "kb1", Some(&excluded), None);
+        let alpha2 = graph2
+            .iter()
+            .find(|p| p["slug"] == json!("entity/alpha"))
+            .unwrap();
+        assert_eq!(alpha2["outlinks"], json!(["concept/beta"]));
+    }
+
+    #[test]
+    fn pages_for_graph_relation_fallback_adds_missing_edge() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let extract = json!({
+            "entities": [], "concepts": [], "claims": [],
+            "relations": [{"from": "Beta", "to": "Alpha", "type": "used_by"}],
+            "topics": []
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        let pages: Vec<DocRow> = vec![
+            json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/alpha", "title_kwd": "Alpha", "page_type_kwd": "entity", "md_with_weight": "", "entity_names_kwd": ["Alpha"]})
+                .as_object().cloned().unwrap(),
+            json!({"id": "p2", "compile_kwd": "wiki_page", "slug_kwd": "concept/beta", "title_kwd": "Beta", "page_type_kwd": "concept", "md_with_weight": "", "entity_names_kwd": ["Beta"]})
+                .as_object().cloned().unwrap(),
+        ];
+        store.insert(&pages, &index, "kb1").unwrap();
+        let graph = load_pages_for_graph(&store, "t1", "kb1", None, None);
+        let beta = graph
+            .iter()
+            .find(|p| p["slug"] == json!("concept/beta"))
+            .unwrap();
+        assert_eq!(beta["outlinks"], json!(["entity/alpha"]));
     }
 }
