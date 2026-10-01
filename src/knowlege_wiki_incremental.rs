@@ -15,6 +15,7 @@
 //!   containment semantics, so chunk fetches use per-id `get()` calls.
 //! - Rune budgets are counted in `char`s.
 use crate::doc_store::{DocRow, DocStore, SearchQuery};
+use crate::embed::Embedder;
 use crate::harness::{HarnessChat, form_message, message_fit_in};
 use crate::structure_compile::{knowledge_compile_gen_conf, stable_row_id};
 use regex::Regex;
@@ -1695,5 +1696,844 @@ mod wiki_incremental_part3_tests {
         assert_eq!(beta["source_chunk_ids"], json!(["c2", "c4"]));
         assert_eq!(claim_index["Alpha"].as_array().unwrap().len(), 2);
         assert!(claim_index.get("Unknown").is_none());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 3b — entity matching (`_wiki_match_entities`, `_wiki_confirm_batch`,
+// `_search_existing_pages`).
+//
+// Adaptation note: the numpy blockwise matrix becomes a plain per-type Rust
+// double loop (same 0.75/0.90 thresholds and union-find semantics); embedding
+// or KNN failures skip that step with a warning (upstream raises); all
+// concurrency is sequential.
+// ---------------------------------------------------------------------------
+
+fn confirm_array_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?s)\[.*?\]").expect("confirm array regex"))
+}
+
+/// `_wiki_confirm_batch`: batch LLM confirm of same-entity pairs.
+pub async fn wiki_confirm_batch(
+    chat: &dyn HarnessChat,
+    candidates: &[(String, String)],
+) -> Vec<(String, String)> {
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let batch_size = 50usize;
+    let mut confirmed: Vec<(String, String)> = Vec::new();
+    for batch in candidates.chunks(batch_size) {
+        let mut prompt_lines: Vec<String> = Vec::new();
+        for (idx, (a, b)) in batch.iter().enumerate() {
+            prompt_lines.push(format!("{}. \"{a}\" vs \"{b}\"", idx + 1));
+        }
+        let prompt = format!(
+            "You are a KB dedup assistant. For each pair, determine if they refer to the SAME real-world entity.\nRespond with a JSON array of booleans in the same order:\n  [true, false, true, ...]\nwhere true = SAME entity, false = DIFFERENT.\n\n{}",
+            prompt_lines.join("\n")
+        );
+        let response = match chat_mdl_ask(chat, "You are a KB dedup assistant.", &prompt, 0.0).await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::warn!(error = %err, "wiki: LLM confirm batch failed");
+                continue;
+            }
+        };
+        let response = response.trim().to_string();
+        let Some(captured) = confirm_array_re().find(&response) else {
+            continue;
+        };
+        let Ok(Value::Array(booleans)) = serde_json::from_str::<Value>(captured.as_str()) else {
+            continue;
+        };
+        for (idx, is_same) in booleans.iter().enumerate() {
+            if json_truthy_int(is_same) && idx < batch.len() {
+                confirmed.push(batch[idx].clone());
+            }
+        }
+    }
+    confirmed
+}
+
+fn json_truthy_int(value: &Value) -> bool {
+    crate::harness::knowlege_wiki::json_truthy(value)
+}
+
+fn entry_field_i64(entry: &Value, field: &str) -> i64 {
+    entry
+        .get(field)
+        .map(|value| as_int(Some(value), 0))
+        .unwrap_or(0)
+}
+
+fn entry_field_names(entry: &Value, field: &str) -> Vec<String> {
+    entry
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn set_field_union(entry: &mut Value, field: &str, values: impl IntoIterator<Item = String>) {
+    let mut set: BTreeSet<String> = entry
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    for value in values {
+        if !value.is_empty() {
+            set.insert(value);
+        }
+    }
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert(
+            field.to_string(),
+            Value::Array(set.into_iter().map(Value::String).collect()),
+        );
+    }
+}
+
+/// `_wiki_match_entities`: raw entities → canonical entities.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_match_entities(
+    store: &dyn DocStore,
+    embd: Option<&dyn Embedder>,
+    chat: Option<&dyn HarnessChat>,
+    tenant_id: &str,
+    kb_id: &str,
+    raw_entities: &[Value],
+    existing_canonical: &Map<String, Value>,
+    incremental: bool,
+    progress: Option<&(dyn Fn(String) + Send + Sync)>,
+) -> (Map<String, Value>, Map<String, Value>) {
+    let report = |message: &str| {
+        tracing::info!(message = message, "wiki entity matching");
+        if let Some(progress) = progress {
+            progress(format!("Entity Matching: {message}"));
+        }
+    };
+
+    // Step 1 — exact match against the canonical index.
+    report(&format!(
+        "exact matching {} raw entries against {} canonical entries ...",
+        raw_entities.len(),
+        existing_canonical.len()
+    ));
+    let mut exact_flat: BTreeMap<String, String> = BTreeMap::new();
+    for (cname, centry) in existing_canonical {
+        let Some(aliases) = centry.get("aliases").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut names: Vec<String> = vec![cname.clone()];
+        names.extend(aliases.iter().filter_map(Value::as_str).map(str::to_string));
+        for alias in names {
+            exact_flat.insert(normalize_key(&alias), cname.clone());
+        }
+    }
+    let mut name_resolution: Map<String, Value> = Map::new();
+    let mut llm_merge_pairs: Vec<Value> = Vec::new();
+    let mut unmatched: Vec<Value> = Vec::new();
+    for entry in raw_entities {
+        let raw_name = entry.get("name").and_then(Value::as_str).unwrap_or("");
+        let norm = normalize_key(raw_name);
+        if let Some(canonical) = exact_flat.get(&norm) {
+            name_resolution.insert(raw_name.to_string(), Value::String(canonical.clone()));
+        } else {
+            unmatched.push(entry.clone());
+        }
+    }
+    report(&format!(
+        "exact matched {}; {} entries still need semantic matching.",
+        name_resolution.len(),
+        unmatched.len()
+    ));
+
+    // Step 2 — KNN match for unmatched entities.
+    if !unmatched.is_empty() && embd.is_some() && !existing_canonical.is_empty() {
+        let embd = embd.unwrap();
+        let texts: Vec<String> = unmatched.iter().map(entity_to_query_text).collect();
+        let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        report(&format!("KNN unmatched entities {} ...", text_refs.len()));
+        match embd.embed(&text_refs).await {
+            Ok(embeddings) if embeddings.len() == unmatched.len() => {
+                let mut still_unmatched: Vec<Value> = Vec::new();
+                let mut maybe_pairs: Vec<(Value, String)> = Vec::new();
+                for (entry, vec) in unmatched.iter().zip(embeddings.iter()) {
+                    let knn =
+                        knn_search_canonical(store, tenant_id, kb_id, vec, ENTITY_AMBIGUOUS_LOW);
+                    let (cname, score) = match knn {
+                        Some((name, score)) => (Some(name), score),
+                        None => (None, 0.0),
+                    };
+                    let entry_name = entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    if let Some(cname) = cname {
+                        if score >= ENTITY_MERGE_THRESHOLD {
+                            name_resolution.insert(entry_name, Value::String(cname));
+                        } else if score >= ENTITY_AMBIGUOUS_LOW {
+                            let entry_type = entry
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or("entity");
+                            if entry_type == "concept" {
+                                name_resolution.insert(entry_name, Value::String(cname));
+                            } else {
+                                maybe_pairs.push((entry.clone(), cname));
+                            }
+                        } else {
+                            still_unmatched.push(entry.clone());
+                        }
+                    } else {
+                        still_unmatched.push(entry.clone());
+                    }
+                }
+
+                if !maybe_pairs.is_empty() {
+                    if let Some(chat) = chat {
+                        let candidates: Vec<(String, String)> = maybe_pairs
+                            .iter()
+                            .map(|(entry, cname)| {
+                                (
+                                    entry
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    cname.clone(),
+                                )
+                            })
+                            .collect();
+                        let confirmed = wiki_confirm_batch(chat, &candidates).await;
+                        let mut confirmed_set: BTreeSet<String> = BTreeSet::new();
+                        for (raw_name, cname) in confirmed {
+                            name_resolution.insert(raw_name.clone(), Value::String(cname.clone()));
+                            confirmed_set.insert(raw_name.clone());
+                            llm_merge_pairs.push(json!({
+                                "from": raw_name,
+                                "into": cname,
+                                "scope": "existing_canonical",
+                            }));
+                        }
+                        for (entry, _cname) in maybe_pairs {
+                            let raw_name = entry
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            if !confirmed_set.contains(&raw_name) {
+                                still_unmatched.push(entry);
+                            }
+                        }
+                        unmatched = still_unmatched;
+                    } else {
+                        for (entry, _cname) in maybe_pairs {
+                            still_unmatched.push(entry);
+                        }
+                        unmatched = still_unmatched;
+                    }
+                } else {
+                    unmatched = still_unmatched;
+                }
+                report("KNN unmatched entities done.");
+            }
+            Ok(_) => {
+                tracing::warn!("wiki: KNN embedding count mismatch; skipping semantic match");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "wiki: KNN embedding failed; skipping semantic match");
+            }
+        }
+    }
+
+    // Step 3 — intra-build pairwise (first build only).
+    if !incremental && unmatched.len() > 1 && embd.is_some() {
+        let embd = embd.unwrap();
+        let texts: Vec<String> = unmatched.iter().map(entity_to_query_text).collect();
+        let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let embeddings = match embd.embed(&text_refs).await {
+            Ok(embeddings) if embeddings.len() == unmatched.len() => embeddings,
+            Ok(_) => {
+                tracing::warn!("wiki: pairwise embedding count mismatch; skipping semantic merge");
+                Vec::new()
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "wiki: pairwise embedding failed; skipping semantic merge");
+                Vec::new()
+            }
+        };
+        if !embeddings.is_empty() {
+            let dim = embeddings[0].len();
+            let shapes_ok = dim > 0 && embeddings.iter().all(|vector| vector.len() == dim);
+            if !shapes_ok {
+                tracing::warn!("wiki: invalid embedding matrix shape; skipping semantic merge");
+            } else {
+                let normalized: Vec<Vec<f32>> = embeddings
+                    .iter()
+                    .map(|vector| {
+                        let norm = (vector
+                            .iter()
+                            .map(|x| (*x as f64) * (*x as f64))
+                            .sum::<f64>())
+                        .sqrt();
+                        if norm > 0.0 {
+                            vector.iter().map(|x| (*x as f64 / norm) as f32).collect()
+                        } else {
+                            vector.clone()
+                        }
+                    })
+                    .collect();
+                let n = unmatched.len();
+                let mut merged_into: BTreeMap<usize, usize> = BTreeMap::new();
+                let root = |merged_into: &BTreeMap<usize, usize>, mut index: usize| -> usize {
+                    while let Some(next) = merged_into.get(&index) {
+                        index = *next;
+                    }
+                    index
+                };
+                let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+                for (idx, entry) in unmatched.iter().enumerate() {
+                    let entry_type = entry
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("entity")
+                        .to_string();
+                    groups.entry(entry_type).or_default().push(idx);
+                }
+                let mut auto_pairs: Vec<(usize, usize)> = Vec::new();
+                let mut ambiguous_pairs: Vec<(usize, usize)> = Vec::new();
+                for indices in groups.values() {
+                    for (left_pos, left) in indices.iter().enumerate() {
+                        for right in indices.iter().skip(left_pos + 1) {
+                            let score = crate::merge::cosine_similarity(
+                                &normalized[*left],
+                                &normalized[*right],
+                            ) as f64;
+                            if score >= ENTITY_MERGE_THRESHOLD {
+                                auto_pairs.push((*left, *right));
+                            } else if score >= ENTITY_AMBIGUOUS_LOW {
+                                ambiguous_pairs.push((*left, *right));
+                            }
+                        }
+                    }
+                }
+                for (left, right) in auto_pairs {
+                    let rl = root(&merged_into, left);
+                    let rr = root(&merged_into, right);
+                    if rl == rr {
+                        continue;
+                    }
+                    let left_count = entry_field_i64(&unmatched[rl], "claim_count");
+                    let right_count = entry_field_i64(&unmatched[rr], "claim_count");
+                    if left_count >= right_count {
+                        merged_into.insert(rr, rl);
+                    } else {
+                        merged_into.insert(rl, rr);
+                    }
+                }
+                let still_ambiguous: Vec<(usize, usize)> = ambiguous_pairs
+                    .into_iter()
+                    .filter(|(left, right)| root(&merged_into, *left) != root(&merged_into, *right))
+                    .collect();
+                if !still_ambiguous.is_empty() {
+                    if let Some(chat) = chat {
+                        let candidates: Vec<(String, String)> = still_ambiguous
+                            .iter()
+                            .map(|(left, right)| {
+                                (
+                                    unmatched[*left]
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    unmatched[*right]
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                )
+                            })
+                            .collect();
+                        let confirmed = wiki_confirm_batch(chat, &candidates).await;
+                        let confirmed_map: BTreeSet<(String, String)> = confirmed
+                            .into_iter()
+                            .map(|(a, b)| if a <= b { (a, b) } else { (b, a) })
+                            .collect();
+                        for (left, right) in &still_ambiguous {
+                            let left_name = unmatched[*left]
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let right_name = unmatched[*right]
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let key = if left_name <= right_name {
+                                (left_name.clone(), right_name.clone())
+                            } else {
+                                (right_name.clone(), left_name.clone())
+                            };
+                            if !confirmed_map.contains(&key) {
+                                continue;
+                            }
+                            let rl = root(&merged_into, *left);
+                            let rr = root(&merged_into, *right);
+                            if rl == rr {
+                                continue;
+                            }
+                            let left_count = entry_field_i64(&unmatched[rl], "claim_count");
+                            let right_count = entry_field_i64(&unmatched[rr], "claim_count");
+                            if left_count >= right_count {
+                                merged_into.insert(rr, rl);
+                                llm_merge_pairs.push(json!({
+                                    "from": unmatched[rr].get("name").cloned().unwrap_or(Value::Null),
+                                    "into": unmatched[rl].get("name").cloned().unwrap_or(Value::Null),
+                                    "scope": "intra_build",
+                                }));
+                            } else {
+                                merged_into.insert(rl, rr);
+                                llm_merge_pairs.push(json!({
+                                    "from": unmatched[rl].get("name").cloned().unwrap_or(Value::Null),
+                                    "into": unmatched[rr].get("name").cloned().unwrap_or(Value::Null),
+                                    "scope": "intra_build",
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                let mut merged_indices: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+                for index in 0..n {
+                    let pi = root(&merged_into, index);
+                    merged_indices.entry(pi).or_default().push(index);
+                }
+                let mut new_unmatched: Vec<Value> = Vec::new();
+                for (_, indices) in merged_indices {
+                    if indices.len() > 1 {
+                        let mut master = unmatched[indices[0]].clone();
+                        for index in &indices[1..] {
+                            let slave = &unmatched[*index];
+                            let master_count = entry_field_i64(&master, "claim_count")
+                                + entry_field_i64(slave, "claim_count");
+                            if let Some(obj) = master.as_object_mut() {
+                                obj.insert("claim_count".to_string(), json!(master_count));
+                            }
+                            let mut aliases: BTreeSet<String> =
+                                entry_field_names(&master, "aliases").into_iter().collect();
+                            aliases.extend(entry_field_names(slave, "aliases"));
+                            if let Some(slave_name) = slave.get("name").and_then(Value::as_str) {
+                                aliases.insert(slave_name.to_string());
+                            }
+                            if let Some(obj) = master.as_object_mut() {
+                                obj.insert(
+                                    "aliases".to_string(),
+                                    Value::Array(aliases.into_iter().map(Value::String).collect()),
+                                );
+                            }
+                            set_field_union(
+                                &mut master,
+                                "source_doc_ids",
+                                entry_field_names(slave, "source_doc_ids"),
+                            );
+                            set_field_union(
+                                &mut master,
+                                "source_chunk_ids",
+                                entry_field_names(slave, "source_chunk_ids"),
+                            );
+                            if let (Some(slave_name), Some(master_name)) = (
+                                slave.get("name").and_then(Value::as_str),
+                                master.get("name").and_then(Value::as_str),
+                            ) {
+                                name_resolution.insert(
+                                    slave_name.to_string(),
+                                    Value::String(master_name.to_string()),
+                                );
+                            }
+                        }
+                        new_unmatched.push(master);
+                    } else {
+                        new_unmatched.push(unmatched[indices[0]].clone());
+                    }
+                }
+                unmatched = new_unmatched;
+            }
+        }
+    }
+
+    // Step 4 — build the canonical map.
+    let mut canonical_map: Map<String, Value> = Map::new();
+    for entry in &unmatched {
+        let cname = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        canonical_map.insert(cname.clone(), entry.clone());
+        name_resolution
+            .entry(cname.clone())
+            .or_insert(Value::String(cname));
+    }
+    for (_, cname_value) in name_resolution.iter() {
+        let Some(cname) = cname_value.as_str() else {
+            continue;
+        };
+        if canonical_map.contains_key(cname) {
+            continue;
+        }
+        if let Some(existing) = existing_canonical.get(cname) {
+            let merged = json!({
+                "name": cname,
+                "type": existing.get("entity_type_kwd").and_then(Value::as_str).unwrap_or("entity"),
+                "aliases": existing.get("aliases").cloned().unwrap_or(Value::Array(Vec::new())),
+                "claim_count": existing.get("mention_count_int").map(|value| as_int(Some(value), 0)).unwrap_or(0),
+                "source_doc_ids": existing.get("source_doc_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+                "source_chunk_ids": existing.get("source_chunk_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+            });
+            canonical_map.insert(cname.to_string(), merged);
+        }
+    }
+
+    // Aggregate lightweight metadata across all raw entities.
+    for entry in raw_entities {
+        let raw_name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let cname = name_resolution
+            .get(&raw_name)
+            .and_then(Value::as_str)
+            .unwrap_or(raw_name.as_str())
+            .to_string();
+        let Some(cm) = canonical_map.get_mut(&cname) else {
+            continue;
+        };
+        let count = entry_field_i64(cm, "claim_count") + entry_field_i64(entry, "claim_count");
+        if let Some(obj) = cm.as_object_mut() {
+            obj.insert("claim_count".to_string(), json!(count));
+        }
+        set_field_union(
+            cm,
+            "source_doc_ids",
+            entry_field_names(entry, "source_doc_ids"),
+        );
+        set_field_union(
+            cm,
+            "source_chunk_ids",
+            entry_field_names(entry, "source_chunk_ids"),
+        );
+        let mut aliases: BTreeSet<String> = entry_field_names(cm, "aliases").into_iter().collect();
+        for alias in entry_field_names(entry, "aliases") {
+            if !alias.is_empty() {
+                aliases.insert(alias);
+            }
+        }
+        if raw_name != cname {
+            aliases.insert(raw_name);
+        }
+        aliases.remove(&cname);
+        if let Some(obj) = cm.as_object_mut() {
+            obj.insert(
+                "aliases".to_string(),
+                Value::Array(aliases.into_iter().map(Value::String).collect()),
+            );
+        }
+    }
+
+    let incremental_value = json!(incremental);
+    for merge in &llm_merge_pairs {
+        wiki_log_stats(
+            "MATCH",
+            "llm_merge",
+            &[
+                ("kb_id", json!(kb_id)),
+                ("incremental", incremental_value.clone()),
+                ("from", merge.get("from").cloned().unwrap_or(Value::Null)),
+                ("into", merge.get("into").cloned().unwrap_or(Value::Null)),
+                ("scope", merge.get("scope").cloned().unwrap_or(Value::Null)),
+            ],
+        );
+    }
+    wiki_log_stats(
+        "MATCH",
+        "llm_merge_summary",
+        &[
+            ("kb_id", json!(kb_id)),
+            ("incremental", incremental_value),
+            ("before", json!(raw_entities.len())),
+            ("after", json!(canonical_map.len())),
+            ("llm_merge_count", json!(llm_merge_pairs.len())),
+        ],
+    );
+
+    (canonical_map, name_resolution)
+}
+
+/// `_search_existing_pages`: all `wiki_page` rows keyed by storage row id.
+pub fn search_existing_pages(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    select_fields: &[String],
+) -> Map<String, Value> {
+    let mut results: Map<String, Value> = Map::new();
+    let mut offset = 0usize;
+    let page_size = 1000usize;
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PAGE_COMPILE_KWD.to_string()),
+    );
+    loop {
+        let query = SearchQuery {
+            select_fields: select_fields.to_vec(),
+            condition: condition.clone(),
+            match_expressions: Vec::new(),
+            offset,
+            limit: page_size,
+            index_names: vec![crate::harness::knowlege_dataset_nav::index_name(tenant_id)],
+            dataset_ids: vec![kb_id.to_string()],
+            ..Default::default()
+        };
+        let response = match store.search(&query) {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::warn!(error = %err, kb = kb_id, "wiki: failed to load existing pages");
+                return results;
+            }
+        };
+        let rows = store.get_fields(&response, select_fields);
+        let page_len = rows.len();
+        if page_len == 0 {
+            break;
+        }
+        for (row_id, mut row) in rows {
+            row.insert("id".to_string(), Value::String(row_id.clone()));
+            results.insert(row_id, Value::Object(row));
+        }
+        if page_len < page_size {
+            break;
+        }
+        offset += page_size;
+    }
+    results
+}
+
+#[cfg(test)]
+mod wiki_incremental_part4_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct MapEmb {
+        map: HashMap<String, Vec<f32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for MapEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|text| self.map.get(*text).cloned().unwrap_or_default())
+                .collect())
+        }
+    }
+
+    fn map_emb(pairs: &[(&str, [f32; 2])]) -> MapEmb {
+        MapEmb {
+            map: pairs
+                .iter()
+                .map(|(text, vec)| (text.to_string(), vec.to_vec()))
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn confirm_batch_parses_booleans() {
+        let chat = FakeChat {
+            reply: "Here you go: [true, false]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let candidates = vec![
+            ("Alpha".to_string(), "A Corp".to_string()),
+            ("Beta".to_string(), "B Corp".to_string()),
+        ];
+        let confirmed = wiki_confirm_batch(&chat, &candidates).await;
+        assert_eq!(confirmed, vec![("Alpha".to_string(), "A Corp".to_string())]);
+        let bad = FakeChat {
+            reply: "no json".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(wiki_confirm_batch(&bad, &candidates).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn match_entities_exact_and_intra_merge() {
+        let store = MemoryDocStore::new();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "Alpha".to_string(),
+            json!({"aliases": ["A"], "entity_type_kwd": "org", "mention_count_int": 2, "source_doc_ids": ["d9"], "source_chunk_ids": ["c9"]}),
+        );
+        let raw_exact = vec![
+            json!({"name": "A", "type": "org", "aliases": [], "claim_count": 1, "source_doc_ids": ["d1"], "source_chunk_ids": ["c1"]}),
+        ];
+        let (canonical, resolution) = wiki_match_entities(
+            &store, None, None, "t1", "kb1", &raw_exact, &existing, false, None,
+        )
+        .await;
+        assert_eq!(resolution["A"], json!("Alpha"));
+        assert_eq!(canonical["Alpha"]["claim_count"], json!(3));
+
+        let empty_existing: Map<String, Value> = Map::new();
+        let raw_pair = vec![
+            json!({"name": "Alpha2", "type": "org", "aliases": [], "claim_count": 5, "source_doc_ids": ["d2"], "source_chunk_ids": ["c2"]}),
+            json!({"name": "AlphaTwo", "type": "org", "aliases": ["AT"], "claim_count": 1, "source_doc_ids": ["d3"], "source_chunk_ids": ["c3"]}),
+        ];
+        let embd = map_emb(&[("Alpha2", [1.0, 0.0]), ("AlphaTwo AT", [0.999, 0.001])]);
+        let (canonical, resolution) = wiki_match_entities(
+            &store,
+            Some(&embd),
+            None,
+            "t1",
+            "kb1",
+            &raw_pair,
+            &empty_existing,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(resolution["AlphaTwo"], json!("Alpha2"));
+        let entry = canonical.get("Alpha2").expect("alpha2");
+        // Step 3 folded 5+1 into the master; Step 4 folds the raw counts
+        // again (upstream double-count semantics preserved).
+        assert_eq!(entry["claim_count"], json!(12));
+        assert_eq!(entry["source_doc_ids"], json!(["d2", "d3"]));
+        let aliases: Vec<String> = entry["aliases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        assert!(aliases.contains(&"AT".to_string()));
+        assert!(aliases.contains(&"AlphaTwo".to_string()));
+        assert!(!canonical.contains_key("AlphaTwo"));
+    }
+
+    #[tokio::test]
+    async fn match_entities_knn_existing_merge() {
+        let store = MemoryDocStore::new();
+        let doc = build_canonical_entity_doc(
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &[],
+            1,
+            Some(&[1.0, 0.0]),
+            None,
+        );
+        store
+            .insert(
+                &[doc.as_object().cloned().unwrap()],
+                &crate::harness::knowlege_dataset_nav::index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let existing = load_canonical_entities(&store, "t1", "kb1");
+        let raw = vec![
+            json!({"name": "Gamma", "type": "entity", "aliases": [], "claim_count": 1, "source_doc_ids": ["d1"], "source_chunk_ids": ["c1"]}),
+        ];
+        let embd = map_emb(&[("Gamma", [0.995, 0.005])]);
+        let (canonical, resolution) = wiki_match_entities(
+            &store,
+            Some(&embd),
+            None,
+            "t1",
+            "kb1",
+            &raw,
+            &existing,
+            true,
+            None,
+        )
+        .await;
+        assert_eq!(resolution["Gamma"], json!("Alpha"));
+        assert!(canonical.contains_key("Alpha"));
+        assert_eq!(canonical["Alpha"]["claim_count"], json!(2));
+    }
+
+    #[test]
+    fn existing_pages_keyed_by_row_id() {
+        let store = MemoryDocStore::new();
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/a"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "p2", "compile_kwd": "wiki_page", "slug_kwd": "entity/b"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let fields: Vec<String> = ["id", "slug_kwd"].iter().map(|f| f.to_string()).collect();
+        let pages = search_existing_pages(&store, "t1", "kb1", &fields);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages["p1"]["id"], json!("p1"));
+        assert_eq!(pages["p2"]["slug_kwd"], json!("entity/b"));
     }
 }
