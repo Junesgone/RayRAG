@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.69] — 2026-10-01（对标批次 v0.3.10n）
+
+> W-2 首批：RAGFlow v0.27.2 的 Xquik 数据源连接器移植（纯 Rust）。
+
+### Added
+
+- **Xquik 数据源连接器**（`common/data_source/xquik_connector.py` → `src/connectors.rs`）：`xquik` 注册表分支与 `DocumentSource::Xquik`；`GET /x/tweets/search`（`q`/`queryType`/`limit`/`sinceTime`/`untilTime`，`x-api-key` 头）；`$.tweets` 游标分页（`cursor`/`next_cursor`/`has_next_page`，`max_pages`/`page_size`/`batch_size`/`request_delay` 默认 10/100/32/0.5s，重复游标停止）；上游内容模板与 metadata 字段列表逐条保留；validation 模式 `limit=1` 单页。
+
+### Tests
+
+- 4 项 mock 单测（校验矩阵、游标分页与鉴权/参数断言、重复游标停止、HTTP 401 透出）；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.68] — 2026-10-01（对标批次 v0.3.10m）
 
 > W-1 清零：RAGFlow v0.27.2 的 MWS 助手与 AIMLAPI 设备授权端点移植（纯 Rust）。

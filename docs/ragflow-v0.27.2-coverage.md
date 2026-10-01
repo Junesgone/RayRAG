@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 594 | 289632 |
-| partial | 88 | 35479 |
+| full | 595 | 289786 |
+| partial | 87 | 35325 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -801,7 +801,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `common/data_source/teams_connector.py` | 308 | 12538 | `c31e03d31a0c2713` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/utils.py` | 1281 | 45180 | `ad4c43c6e4135723` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/webdav_connector.py` | 533 | 22852 | `eb31563a70d3b9c0` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
-| `common/data_source/xquik_connector.py` | 154 | 6038 | `9afb60673b920922` | partial | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Xquik 推文搜索数据源（v0.27.2 新增）；数据源框架就位，该源待接入——worklist W-2（数据源）） |
+| `common/data_source/xquik_connector.py` | 154 | 6038 | `9afb60673b920922` | full | `src/connectors.rs` | （v0.3.10n 移植：Xquik 推特搜索源——GET /x/tweets/search（q/queryType Latest|Top/limit/sinceTime/untilTime，x-api-key 头）；$.tweets 游标分页（cursor/next_cursor/has_next_page；max_pages 默认 10、page_size 100、batch_size 32、request_delay 0.5s；重复游标停止）；内容模板 Author/Published/URL/text 与上游 metadata 字段列表（含 author.*/计数/media[*].mediaUrl）逐条保留；校验消息逐条复制且 validation 模式 limit=1 单页；4 项 mock 单测（校验矩阵、游标分页+鉴权与参数、重复游标停止、HTTP 401 透出）；差异：文档 id 为 xquik:<id>（上游 hash128）、media 列表以 | 连接。） |
 | `common/data_source/zendesk_connector.py` | 594 | 22675 | `57e5e41ec4ced962` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/decorator.py` | 90 | 2863 | `6085498d31a3eec6` | full | `src/common.rs; src/api/common.rs` | common utils/constants/validation ported |
 | `common/doc_store/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/doc_store.rs` | DocStore trait + Memory/Postgres/Zvec backends + pool ported |

@@ -590,6 +590,7 @@ impl ConnectorRegistry {
             // Azure Blob Storage（RAGFlow 官方源名；与旧 "blob" 同一 SAS 适配器）。
             "azure_blob" => Ok(Box::new(BlobAdapter::new(options))),
             "rss" => Ok(Box::new(RssConnector::new(options)?)),
+            "xquik" => Ok(Box::new(XquikConnector::new(options)?)),
             "airtable" => Ok(Box::new(AirtableConnector::new(options)?)),
             // PostgreSQL 外部库直读（RAGFlow rdbms 源的 postgresql 分支）。
             "postgresql" => Ok(Box::new(RdbmsConnector::new(&options)?)),
@@ -3657,6 +3658,651 @@ impl RssEntry {
 }
 
 /// RSS/Atom feed connector — RAGFlow `RSSConnector`.
+use serde_json::Value;
+
+/// Xquik connector — RAGFlow v0.27.2 `common/data_source/xquik_connector.py`.
+///
+/// Searches X posts through Xquik and emits one document per post, mirroring
+/// the upstream `RestAPIConnector` setup:
+///
+/// * `GET {endpoint}` with `q`, `queryType` (Latest|Top), `limit` (=page_size)
+///   and, when configured, `sinceTime`/`untilTime`; the API key rides in the
+///   `x-api-key` header.
+/// * Items live at `$.tweets`; cursor pagination (`cursor` / `next_cursor` /
+///   `has_next_page`) is bounded by `max_pages` (default 10, page size 100,
+///   batch size 32) with a `request_delay` (default 0.5s) between pages, and
+///   a repeated cursor stops the loop (upstream guard).
+/// * Content template: `Author: @{author_username}\nPublished: {createdAt}\nURL: {url}\n\n{text}`;
+///   the upstream metadata field list is preserved verbatim.
+///
+/// Bounded divergences: document ids are `xquik:<post id>` instead of the
+/// upstream `hash128("rest_api:<id>")`, and `media[*].mediaUrl` values are
+/// joined with " | " because `RemoteFile.metadata` carries strings.
+#[derive(Debug)]
+pub struct XquikConnector {
+    client: reqwest::Client,
+    endpoint: String,
+    api_key: String,
+    query: String,
+    query_type: String,
+    page_size: usize,
+    max_pages: usize,
+    batch_size: usize,
+    request_delay: std::time::Duration,
+    since_time: Option<String>,
+    until_time: Option<String>,
+}
+
+pub const XQUIK_SEARCH_URL: &str = "https://xquik.com/api/v1/x/tweets/search";
+const XQUIK_DEFAULT_PAGE_SIZE: usize = 100;
+const XQUIK_DEFAULT_MAX_PAGES: usize = 10;
+const XQUIK_DEFAULT_BATCH_SIZE: usize = 32;
+const XQUIK_DEFAULT_REQUEST_DELAY: f64 = 0.5;
+
+fn xquik_positive_int(
+    value: Option<&str>,
+    default: usize,
+    field: &str,
+    maximum: Option<usize>,
+) -> Result<usize> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(default);
+    }
+    let parsed: i64 = value
+        .parse()
+        .map_err(|_| anyhow!("Xquik connector {field} must be a positive integer"))?;
+    if parsed <= 0 || maximum.is_some_and(|maximum| parsed as usize > maximum) {
+        let suffix = match maximum {
+            Some(maximum) => format!(" from 1 to {maximum}"),
+            None => " a positive integer".to_owned(),
+        };
+        bail!("Xquik connector {field} must be{suffix}");
+    }
+    Ok(parsed as usize)
+}
+
+fn xquik_non_negative_float(value: Option<&str>, default: f64, field: &str) -> Result<f64> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(default);
+    }
+    let parsed: f64 = value
+        .parse()
+        .map_err(|_| anyhow!("Xquik connector {field} must be a non-negative number"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        bail!("Xquik connector {field} must be a non-negative number");
+    }
+    Ok(parsed)
+}
+
+/// Dotted-path lookup (`author.username`).
+fn xquik_field<'a>(item: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = item;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn xquik_metadata_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Number(number) => Some(number.to_string()),
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+/// `media[*].mediaUrl` → every URL joined with " | ".
+fn xquik_media_urls(item: &Value) -> Option<String> {
+    let urls: Vec<String> = item
+        .get("media")
+        .and_then(Value::as_array)
+        .map(|media| {
+            media
+                .iter()
+                .filter_map(|entry| entry.get("mediaUrl").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if urls.is_empty() {
+        None
+    } else {
+        Some(urls.join(" | "))
+    }
+}
+
+impl XquikConnector {
+    /// Registry entry point. `options.url` overrides the fixed upstream
+    /// endpoint (the local HTTP mock uses this); `query`/`query_type`/… come
+    /// from `options.extra` (with `options.target` as the query fallback).
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        let extra = &options.extra;
+        let query = extra
+            .get("query")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let target = options.target.trim();
+                (!target.is_empty()).then(|| target.to_owned())
+            })
+            .ok_or_else(|| anyhow!("Xquik connector query is required"))?;
+        let query_type = extra
+            .get("query_type")
+            .map(|value| {
+                let trimmed = value.trim();
+                let mut chars = trimmed.chars();
+                match chars.next() {
+                    Some(first) => {
+                        first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                    }
+                    None => "Latest".to_owned(),
+                }
+            })
+            .unwrap_or_else(|| "Latest".to_owned());
+        if !matches!(query_type.as_str(), "Latest" | "Top") {
+            bail!("Xquik connector query_type must be Latest or Top");
+        }
+        let page_size = xquik_positive_int(
+            extra.get("page_size").map(String::as_str),
+            XQUIK_DEFAULT_PAGE_SIZE,
+            "page_size",
+            Some(10_000),
+        )?;
+        let max_pages = xquik_positive_int(
+            extra.get("max_pages").map(String::as_str),
+            XQUIK_DEFAULT_MAX_PAGES,
+            "max_pages",
+            Some(1_000),
+        )?;
+        let batch_size = xquik_positive_int(
+            extra.get("batch_size").map(String::as_str),
+            XQUIK_DEFAULT_BATCH_SIZE,
+            "batch_size",
+            None,
+        )?;
+        let request_delay = xquik_non_negative_float(
+            extra.get("request_delay").map(String::as_str),
+            XQUIK_DEFAULT_REQUEST_DELAY,
+            "request_delay",
+        )?;
+        let api_key = {
+            let token = options.token.trim();
+            if !token.is_empty() {
+                token.to_owned()
+            } else {
+                extra
+                    .get("xquik_api_key")
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!("Xquik connector requires 'xquik_api_key' in credentials")
+                    })?
+            }
+        };
+        let endpoint = {
+            let configured = options.url.trim();
+            if configured.is_empty() {
+                XQUIK_SEARCH_URL.to_owned()
+            } else {
+                configured.to_owned()
+            }
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            endpoint,
+            api_key,
+            query,
+            query_type,
+            page_size,
+            max_pages,
+            batch_size,
+            request_delay: std::time::Duration::from_secs_f64(request_delay),
+            since_time: extra
+                .get("since_time")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty()),
+            until_time: extra
+                .get("until_time")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty()),
+        })
+    }
+
+    fn render_content(&self, item: &Value) -> String {
+        let text = item.get("text").and_then(Value::as_str).unwrap_or_default();
+        let author = item
+            .get("author")
+            .and_then(|author| author.get("username"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let created_at = item
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let url = item.get("url").and_then(Value::as_str).unwrap_or_default();
+        format!("Author: @{author}\nPublished: {created_at}\nURL: {url}\n\n{text}")
+    }
+
+    fn item_to_remote_file(&self, item: &Value) -> Option<RemoteFile> {
+        let raw_id = item
+            .get("id")
+            .and_then(|value| match value {
+                Value::String(text) => Some(text.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                _ => None,
+            })
+            .filter(|id| !id.is_empty())?;
+        let content = self.render_content(item);
+        let created_at = item
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let url = item
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let semantic = item
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .replace('\n', " ")
+            .replace('\r', " ")
+            .trim()
+            .chars()
+            .take(100)
+            .collect::<String>();
+        let mut metadata = HashMap::new();
+        metadata.insert("content".to_owned(), content.clone());
+        metadata.insert("source".to_owned(), "xquik".to_owned());
+        for field in [
+            "id",
+            "createdAt",
+            "url",
+            "lang",
+            "author.id",
+            "author.username",
+            "author.name",
+            "author.verified",
+            "likeCount",
+            "replyCount",
+            "retweetCount",
+            "quoteCount",
+            "viewCount",
+            "bookmarkCount",
+        ] {
+            if let Some(value) = xquik_field(item, field).and_then(xquik_metadata_value) {
+                metadata.insert(field.to_owned(), value);
+            }
+        }
+        if let Some(media) = xquik_media_urls(item) {
+            metadata.insert("media[*].mediaUrl".to_owned(), media);
+        }
+        Some(RemoteFile {
+            id: format!("xquik:{raw_id}"),
+            name: if semantic.is_empty() {
+                format!("xquik:{raw_id}")
+            } else {
+                semantic
+            },
+            path: url,
+            extension: ".txt".to_owned(),
+            size_bytes: content.len() as u64,
+            updated_at: created_at,
+            fingerprint: String::new(),
+            metadata,
+        })
+    }
+
+    async fn fetch_page_with_limit(&self, cursor: Option<&str>, limit: usize) -> Result<Value> {
+        let mut params: Vec<(&str, String)> = vec![
+            ("q", self.query.clone()),
+            ("queryType", self.query_type.clone()),
+            ("limit", limit.to_string()),
+        ];
+        if let Some(cursor) = cursor.filter(|cursor| !cursor.is_empty()) {
+            params.push(("cursor", cursor.to_owned()));
+        }
+        if let Some(since) = self.since_time.as_deref() {
+            params.push(("sinceTime", since.to_owned()));
+        }
+        if let Some(until) = self.until_time.as_deref() {
+            params.push(("untilTime", until.to_owned()));
+        }
+        let response = self
+            .client
+            .get(&self.endpoint)
+            .header("x-api-key", &self.api_key)
+            .query(&params)
+            .send()
+            .await
+            .context("xquik: request failed")?;
+        let status = response.status();
+        let body = crate::common::cmd_timeout::read_body_limited(
+            response,
+            crate::common::cmd_timeout::connector_body_limit_bytes(),
+            "xquik",
+        )
+        .await?;
+        if !status.is_success() {
+            bail!(
+                "xquik: upstream returned {}: {}",
+                status.as_u16(),
+                String::from_utf8_lossy(&body)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            );
+        }
+        serde_json::from_slice(&body).context("xquik: invalid JSON response")
+    }
+
+    async fn fetch_page(&self, cursor: Option<&str>) -> Result<Value> {
+        self.fetch_page_with_limit(cursor, self.page_size).await
+    }
+}
+
+#[async_trait]
+impl Connector for XquikConnector {
+    fn kind(&self) -> &'static str {
+        "xquik"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        // Validation mode: one page, one item (upstream `build_connector`).
+        let payload = self.fetch_page_with_limit(None, 1).await?;
+        if payload.get("tweets").is_none() {
+            bail!("xquik: validation response is missing the tweets field");
+        }
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let mut files = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut seen_cursors = std::collections::HashSet::new();
+        let mut page_count = 0usize;
+        loop {
+            if page_count >= self.max_pages {
+                tracing::warn!(
+                    max_pages = self.max_pages,
+                    "xquik: reached max_pages, stopping"
+                );
+                break;
+            }
+            if page_count > 0 && !self.request_delay.is_zero() {
+                tokio::time::sleep(self.request_delay).await;
+            }
+            let payload = self.fetch_page(cursor.as_deref()).await?;
+            let items = payload
+                .get("tweets")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let has_next_page = payload.get("has_next_page").and_then(Value::as_bool);
+            if items.is_empty() && has_next_page != Some(true) {
+                break;
+            }
+            for item in &items {
+                if item.is_object()
+                    && let Some(file) = self.item_to_remote_file(item)
+                {
+                    files.push(file);
+                }
+            }
+            page_count += 1;
+            if has_next_page == Some(false) {
+                break;
+            }
+            let next_cursor = payload
+                .get("next_cursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .filter(|cursor| !cursor.is_empty());
+            let Some(next_cursor) = next_cursor else {
+                break;
+            };
+            if !seen_cursors.insert(next_cursor.clone()) {
+                tracing::warn!("xquik: repeated pagination cursor, stopping");
+                break;
+            }
+            cursor = Some(next_cursor);
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        Ok(file
+            .metadata
+            .get("content")
+            .cloned()
+            .unwrap_or_default()
+            .into_bytes())
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata: HashMap<String, String> = file
+            .metadata
+            .iter()
+            .filter(|(key, _)| key.as_str() != "content")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        metadata.insert("source".to_owned(), "xquik".to_owned());
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            source: DocumentSource::Xquik,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
+#[cfg(test)]
+mod xquik_tests {
+    use super::*;
+    use axum::{Json, Router, extract::Query, http::HeaderMap, routing::get};
+    use serde_json::json;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn options(endpoint: &str) -> SourceOptions {
+        let mut options = SourceOptions {
+            url: endpoint.to_owned(),
+            token: "sk-x".to_owned(),
+            ..SourceOptions::default()
+        };
+        options.extra.insert("query".to_owned(), "rust".to_owned());
+        options
+            .extra
+            .insert("request_delay".to_owned(), "0".to_owned());
+        options
+    }
+
+    #[test]
+    fn validation_matches_upstream_messages() {
+        let mut missing = SourceOptions {
+            token: "sk".to_owned(),
+            ..SourceOptions::default()
+        };
+        assert!(XquikConnector::new(missing.clone()).is_err());
+        missing.extra.insert("query".to_owned(), "q".to_owned());
+        let bad_type = {
+            let mut options = missing.clone();
+            options
+                .extra
+                .insert("query_type".to_owned(), "mixed".to_owned());
+            options
+        };
+        assert!(
+            XquikConnector::new(bad_type)
+                .unwrap_err()
+                .to_string()
+                .contains("query_type must be Latest or Top")
+        );
+        let bad_page = {
+            let mut options = missing.clone();
+            options.extra.insert("page_size".to_owned(), "0".to_owned());
+            options
+        };
+        assert!(XquikConnector::new(bad_page).is_err());
+        let bad_delay = {
+            let mut options = missing.clone();
+            options
+                .extra
+                .insert("request_delay".to_owned(), "-1".to_owned());
+            options
+        };
+        assert!(XquikConnector::new(bad_delay).is_err());
+        let no_key = {
+            let mut options = missing.clone();
+            options.token = String::new();
+            options
+        };
+        assert!(
+            XquikConnector::new(no_key)
+                .unwrap_err()
+                .to_string()
+                .contains("xquik_api_key")
+        );
+        // `Top` normalizes case-insensitively.
+        let mut ok = missing.clone();
+        ok.extra.insert("query_type".to_owned(), "top".to_owned());
+        assert!(XquikConnector::new(ok).is_ok());
+    }
+
+    async fn spawn_pages(
+        pages: Vec<Value>,
+    ) -> (String, Arc<StdMutexSeen>, tokio::task::JoinHandle<()>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let state = counter.clone();
+        let captured = seen.clone();
+        let app = Router::new().route(
+            "/search",
+            get(move |headers: HeaderMap, Query(params): Query<StdHashMap<String, String>>| {
+                let state = state.clone();
+                let captured = captured.clone();
+                let pages = pages.clone();
+                async move {
+                    let index = state.fetch_add(1, Ordering::SeqCst);
+                    captured.lock().unwrap().push(json!({
+                        "api_key": headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                        "params": params,
+                    }));
+                    let page = pages.get(index).cloned().unwrap_or(json!({"tweets": []}));
+                    Json(page)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}/search"), seen, server)
+    }
+
+    // Placeholder alias because `StdMutexSeen` is declared per test above.
+    type StdMutexSeen = std::sync::Mutex<Vec<Value>>;
+
+    fn tweet(id: &str, text: &str) -> Value {
+        json!({
+            "id": id,
+            "text": text,
+            "createdAt": "2026-01-02T03:04:05Z",
+            "url": format!("https://x.com/i/status/{id}"),
+            "lang": "en",
+            "author": {"id": "u1", "username": "alice", "name": "Alice", "verified": true},
+            "likeCount": 7,
+        })
+    }
+
+    #[tokio::test]
+    async fn paginates_with_cursor_auth_and_metadata() {
+        let pages = vec![
+            json!({"tweets": [tweet("1", "first")], "next_cursor": "c2", "has_next_page": true}),
+            json!({"tweets": [tweet("2", "second")], "next_cursor": Value::Null, "has_next_page": false}),
+        ];
+        let (endpoint, seen, server) = spawn_pages(pages).await;
+        let connector = XquikConnector::new(options(&endpoint)).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2);
+        assert_eq!(batch.docs[0].id, "xquik:1");
+        assert!(
+            batch.docs[0]
+                .blob
+                .contains("Author: @alice\nPublished: 2026-01-02T03:04:05Z")
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("likeCount"),
+            Some(&"7".to_owned())
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("author.username"),
+            Some(&"alice".to_owned())
+        );
+        assert_eq!(batch.docs[0].source, DocumentSource::Xquik);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0]["api_key"], "sk-x");
+        assert_eq!(seen[0]["params"]["q"], "rust");
+        assert_eq!(seen[0]["params"]["queryType"], "Latest");
+        assert_eq!(seen[0]["params"]["limit"], "100");
+        assert!(seen[0]["params"].get("cursor").is_none());
+        assert_eq!(seen[1]["params"]["cursor"], "c2");
+    }
+
+    #[tokio::test]
+    async fn repeated_cursor_stops_the_loop() {
+        let pages = vec![
+            json!({"tweets": [tweet("1", "first")], "next_cursor": "c2", "has_next_page": true}),
+            json!({"tweets": [tweet("2", "second")], "next_cursor": "c2", "has_next_page": true}),
+        ];
+        let (endpoint, seen, server) = spawn_pages(pages).await;
+        let connector = XquikConnector::new(options(&endpoint)).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2);
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn http_errors_surface_with_status() {
+        let app = Router::new().route(
+            "/search",
+            get(|| async { (axum::http::StatusCode::UNAUTHORIZED, "nope") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connector = XquikConnector::new(options(&format!("http://{address}/search"))).unwrap();
+        let error = connector.fetch_all(5).await.unwrap_err().to_string();
+        server.abort();
+        assert!(error.contains("401"), "{error}");
+    }
+}
+
 #[derive(Debug)]
 pub struct RssConnector {
     client: reqwest::Client,

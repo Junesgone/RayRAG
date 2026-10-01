@@ -34,6 +34,8 @@ pub enum DocumentSource {
     Box,
     /// Airtable base rows (RAGFlow `airtable_connector.py` parity).
     AirTable,
+    /// Xquik X/Twitter post search (RAGFlow `xquik_connector.py` parity).
+    Xquik,
 }
 
 impl DocumentSource {
@@ -51,6 +53,7 @@ impl DocumentSource {
             DocumentSource::Rss => "rss",
             DocumentSource::Box => "box",
             DocumentSource::AirTable => "airtable",
+            DocumentSource::Xquik => "xquik",
         }
     }
 
@@ -68,6 +71,7 @@ impl DocumentSource {
             "rss" => Some(DocumentSource::Rss),
             "box" => Some(DocumentSource::Box),
             "airtable" => Some(DocumentSource::AirTable),
+            "xquik" => Some(DocumentSource::Xquik),
             _ => None,
         }
     }
