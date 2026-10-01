@@ -4717,3 +4717,445 @@ mod wiki_part6b_tests {
         assert_eq!(cached2["pages"][0]["slug"], json!("entity/beta"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 7 — PLAN main entry (`wiki_plan_from_reduction`).
+//
+// Adaptation note: the disabled-doc set is host-injected (upstream resolves
+// it through DocumentService); callbacks are plain `Fn` calls.
+// ---------------------------------------------------------------------------
+
+/// `DEFAULT_WIKI_PLAN_RECONCILE_BATCH`.
+pub const DEFAULT_WIKI_PLAN_RECONCILE_BATCH: usize = 50;
+
+/// `wiki_plan_from_reduction`: KB-scoped PLAN phase.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_plan_from_reduction(
+    store: &dyn DocStore,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+    kb_name: Option<&str>,
+    kb_description: Option<&str>,
+    update_threshold: f64,
+    maybe_threshold: f64,
+    reconcile_batch_size: usize,
+    llm_timeout: i64,
+    force_rerun: bool,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+) -> Value {
+    let current_reduce_hash = load_reduce_input_hash(store, tenant_id, kb_id);
+    let plan_source_doc_ids = all_map_doc_ids(store, tenant_id, kb_id, disabled_doc_ids);
+
+    if !force_rerun {
+        if let Some((cached, stored_hash)) = load_plan_resume(store, tenant_id, kb_id) {
+            if !stored_hash.is_empty() && stored_hash == current_reduce_hash {
+                if let Some(callback) = callback {
+                    callback(1.0, "wiki PLAN: cache hit (REDUCE unchanged)");
+                }
+                return cached;
+            }
+        }
+    }
+
+    if let Some(callback) = callback {
+        callback(0.05, "wiki PLAN: loading REDUCE result");
+    }
+    let Some(reduced) = load_reduce_result(store, tenant_id, kb_id) else {
+        tracing::warn!(
+            kb = kb_id,
+            "wiki_plan: no wiki_reduce_result found — returning empty plan"
+        );
+        let empty = json!({
+            "pages": [],
+            "estimated_page_count": 0,
+            "compilation_notes": "no REDUCE result available",
+            "_status": "approved",
+            "_entities": [],
+            "_concepts": [],
+            "_claims": [],
+            "_relations": [],
+            "_topics": [],
+            "_reconciliation": {},
+        });
+        persist_plan(
+            store,
+            tenant_id,
+            kb_id,
+            &empty,
+            &current_reduce_hash,
+            &plan_source_doc_ids,
+        );
+        return empty;
+    };
+
+    let arr = |key: &str| -> Vec<Value> {
+        reduced
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let canonical_entities = arr("entities");
+    let canonical_concepts = arr("concepts");
+    let raw_claims = arr("claims");
+    let raw_relations = arr("relations");
+    let raw_topics = arr("topics");
+    let total_items = canonical_entities.len() + canonical_concepts.len();
+    tracing::info!(
+        kb = kb_id,
+        entities = canonical_entities.len(),
+        concepts = canonical_concepts.len(),
+        total = total_items,
+        "wiki_plan: reduction input"
+    );
+
+    if total_items == 0 {
+        let empty = json!({
+            "pages": [],
+            "estimated_page_count": 0,
+            "compilation_notes": "no canonical items",
+            "_status": "approved",
+            "_entities": canonical_entities,
+            "_concepts": canonical_concepts,
+            "_claims": raw_claims,
+            "_relations": raw_relations,
+            "_topics": raw_topics,
+            "_reconciliation": {},
+        });
+        persist_plan(
+            store,
+            tenant_id,
+            kb_id,
+            &empty,
+            &current_reduce_hash,
+            &plan_source_doc_ids,
+        );
+        return empty;
+    }
+
+    if let Some(callback) = callback {
+        callback(0.25, "wiki PLAN: KB reconciliation");
+    }
+    let mut reconciliation = reconcile_with_kb(
+        store,
+        embd,
+        tenant_id,
+        kb_id,
+        &canonical_entities,
+        &canonical_concepts,
+        update_threshold,
+        maybe_threshold,
+    )
+    .await;
+
+    if let Some(callback) = callback {
+        let n_maybe = reconciliation
+            .values()
+            .filter(|value| value.get("action").and_then(Value::as_str) == Some("MAYBE"))
+            .count();
+        callback(0.55, &format!("wiki PLAN: resolving {n_maybe} MAYBE items"));
+    }
+
+    resolve_maybe_items(chat, &mut reconciliation, reconcile_batch_size, llm_timeout).await;
+
+    if let Some(callback) = callback {
+        callback(0.75, "wiki PLAN: planning LLM call");
+    }
+
+    let target = target_page_count(total_items as i64);
+    let mut plan = wiki_planning_call(
+        chat,
+        &canonical_entities,
+        &canonical_concepts,
+        &raw_topics,
+        &reconciliation,
+        kb_name,
+        kb_description,
+        target,
+        llm_timeout,
+    )
+    .await;
+    if let Some(obj) = plan.as_object_mut() {
+        obj.insert("_status".to_string(), Value::String("approved".to_string()));
+        obj.insert(
+            "_entities".to_string(),
+            Value::Array(canonical_entities.clone()),
+        );
+        obj.insert(
+            "_concepts".to_string(),
+            Value::Array(canonical_concepts.clone()),
+        );
+        obj.insert("_claims".to_string(), Value::Array(raw_claims.clone()));
+        obj.insert(
+            "_relations".to_string(),
+            Value::Array(raw_relations.clone()),
+        );
+        obj.insert("_topics".to_string(), Value::Array(raw_topics.clone()));
+        obj.insert(
+            "_reconciliation".to_string(),
+            Value::Object(reconciliation.clone()),
+        );
+    }
+
+    if let Some(callback) = callback {
+        callback(0.9, "wiki PLAN: persisting plan");
+    }
+    persist_plan(
+        store,
+        tenant_id,
+        kb_id,
+        &plan,
+        &current_reduce_hash,
+        &plan_source_doc_ids,
+    );
+
+    let action_count = |action: &str| {
+        reconciliation
+            .values()
+            .filter(|value| value.get("action").and_then(Value::as_str) == Some(action))
+            .count()
+    };
+    let page_count = plan
+        .get("pages")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let updates = action_count("UPDATE");
+    let creates = action_count("CREATE");
+    tracing::info!(
+        kb = kb_id,
+        pages = page_count,
+        target = target,
+        updates = updates,
+        creates = creates,
+        "wiki_plan: done"
+    );
+
+    if let Some(callback) = callback {
+        callback(1.0, "wiki PLAN: done");
+    }
+    plan
+}
+
+#[cfg(test)]
+mod wiki_part7_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    const PLAN_REPLY: &str = r#"{
+        "pages": [
+            {"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1}
+        ],
+        "estimated_page_count": 1,
+        "compilation_notes": "n"
+    }"#;
+
+    #[tokio::test]
+    async fn plan_without_reduce_result_persists_empty() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            None,
+            None,
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(plan["pages"], json!([]));
+        assert_eq!(
+            plan["compilation_notes"],
+            json!("no REDUCE result available")
+        );
+        assert_eq!(plan["_status"], json!("approved"));
+        assert!(load_plan_resume(&store, "t1", "kb1").is_some());
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn plan_cache_hit_short_circuits() {
+        let store = MemoryDocStore::new();
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [], "concepts": []}),
+            "RH1",
+            &[],
+        );
+        persist_plan(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"pages": [{"slug": "entity/cached"}], "_status": "approved"}),
+            "RH1",
+            &[],
+        );
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = hit.clone();
+        let callback = move |progress: f64, message: &str| {
+            if progress >= 1.0 && message.contains("cache hit") {
+                seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            None,
+            None,
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            Some(&callback),
+        )
+        .await;
+        assert!(hit.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(plan["pages"][0]["slug"], json!("entity/cached"));
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn plan_full_flow_reconciles_and_persists() {
+        let store = MemoryDocStore::new();
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({
+                "entities": [{"name": "Alpha", "type": "org", "mention_count": 5, "chunk_ids": ["c1"]}],
+                "concepts": [{"term": "Beta", "mention_count": 2, "chunk_ids": ["c2"]}],
+                "claims": [],
+                "relations": [],
+                "topics": ["t"]
+            }),
+            "RH2",
+            &["d1".to_string()],
+        );
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            Some("KB"),
+            Some("desc"),
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(plan["_status"], json!("approved"));
+        assert_eq!(plan["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["_entities"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["_reconciliation"]["Alpha"]["action"], json!("CREATE"));
+        assert!(!chat.calls.lock().unwrap().is_empty());
+        let (_, stored_hash) = load_plan_resume(&store, "t1", "kb1").expect("plan");
+        assert_eq!(stored_hash, "RH2");
+    }
+
+    #[tokio::test]
+    async fn plan_zero_items_persists_short_circuit() {
+        let store = MemoryDocStore::new();
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [], "concepts": [], "topics": ["t"]}),
+            "RH3",
+            &[],
+        );
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            None,
+            None,
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(plan["compilation_notes"], json!("no canonical items"));
+        assert_eq!(plan["_topics"], json!(["t"]));
+        assert!(chat.calls.lock().unwrap().is_empty());
+        let (_, hash) = load_plan_resume(&store, "t1", "kb1").expect("plan");
+        assert_eq!(hash, "RH3");
+    }
+}
