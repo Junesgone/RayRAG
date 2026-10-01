@@ -16,15 +16,16 @@
 use super::knowlege_dataset_nav::index_name;
 use crate::doc_store::{DocRow, DocStore, SearchQuery};
 use crate::embed::Embedder;
-use crate::harness::HarnessChat;
+use crate::harness::{HarnessChat, form_message, message_fit_in};
 use crate::llm::LlmClient;
 use crate::structure_compile::{
     ChunkInput, PackedEntry, build_chunk_batches, bulk_dedup_items, cfg_get, env_int,
     exact_dedup_by_key, knowledge_compile_gen_conf, localize, parse_json_lenient, stable_row_id,
+    tokenize_for_search,
 };
 use regex::Regex;
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::OnceLock;
 use uuid::Uuid;
 
@@ -5885,5 +5886,669 @@ mod wiki_part9_tests {
             vec!["d1".to_string(), "d2".to_string()]
         );
         assert!(wiki_collect_doc_ids(&store, "t1", "kb1", &[]).is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 10 — page I/O and draft persistence (`_wiki_get_existing_page` ..
+// `_wiki_load_refine_resume`).
+//
+// Adaptation note: searchable draft rows use `tokenize_for_search`
+// space-joined token strings (upstream rag_tokenizer) and store the embedding
+// under both `embedding` and `q_<dim>_vec` so local backends can score them.
+// ---------------------------------------------------------------------------
+
+/// `_wiki_get_existing_page`.
+pub fn wiki_get_existing_page(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    slug: &str,
+) -> Option<Value> {
+    let fields: Vec<String> = ["id", "content_with_weight", "title_kwd", "page_type_kwd"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PAGE_COMPILE_KWD.to_string()),
+    );
+    condition.insert("slug_kwd".to_string(), Value::String(slug.to_string()));
+    let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(error = %err, slug = slug, "wiki_refine: failed to fetch existing page");
+            return None;
+        }
+    };
+    let row = rows.into_iter().next()?;
+    let rendered = row
+        .get("content_with_weight")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let row_id = row
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let title = row
+        .get("title_kwd")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let page_type = row
+        .get("page_type_kwd")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("concept")
+        .to_string();
+    Some(json!({
+        "id": row_id,
+        "content_md": rendered,
+        "content_md_raw": rendered,
+        "title": title,
+        "page_type": page_type,
+    }))
+}
+
+/// `_wiki_chat_text`: single chat call returning raw (think-stripped) text.
+pub async fn wiki_chat_text(
+    chat: &dyn HarnessChat,
+    system_prompt: &str,
+    user_prompt: &str,
+    temperature: f64,
+    llm_timeout: i64,
+) -> String {
+    let messages = form_message(system_prompt, user_prompt);
+    let (_, messages) = message_fit_in(messages, chat.max_length());
+    let gen_conf = knowledge_compile_gen_conf(
+        &chat.model_name(),
+        Some(&Map::from_iter([(
+            "temperature".to_string(),
+            json!(temperature),
+        )])),
+    );
+    let request_conf = Value::Object(gen_conf);
+    let system = messages
+        .first()
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or(system_prompt);
+    let history: Vec<Value> = messages.iter().skip(1).cloned().collect();
+    let timeout = std::time::Duration::from_secs(llm_timeout.max(0) as u64);
+    let outcome = tokio::time::timeout(timeout, chat.chat(system, &history, &request_conf)).await;
+    let raw = match outcome {
+        Err(_elapsed) => {
+            tracing::warn!(seconds = llm_timeout, "wiki_refine: chat call timed out");
+            return String::new();
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "wiki_refine: chat call failed");
+            return String::new();
+        }
+        Ok(Ok(raw)) => raw,
+    };
+    strip_think(&raw)
+}
+
+/// `_wiki_write_page_simple`: single writer LLM call → markdown content.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_write_page_simple(
+    chat: &dyn HarnessChat,
+    plan_item: &Value,
+    evidence: &[Value],
+    existing_md: Option<&str>,
+    source_context: &str,
+    all_plan_slugs: &[String],
+    llm_timeout: i64,
+    instruction: Option<&str>,
+    example: Option<&str>,
+) -> String {
+    let own_slug = plan_item
+        .get("slug")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let available: Vec<&String> = all_plan_slugs
+        .iter()
+        .filter(|slug| !slug.is_empty() && **slug != own_slug)
+        .collect();
+    let slugs_block = if available.is_empty() {
+        "(none — this is the only page)".to_string()
+    } else {
+        available
+            .iter()
+            .map(|slug| format!("- [[{slug}]]"))
+            .collect::<Vec<String>>()
+            .join("\n")
+    };
+    let existing_section = match existing_md {
+        Some(existing) if !existing.is_empty() => format!(
+            "## Existing page content (UPDATE — integrate new evidence into this)\n\n{existing}\n"
+        ),
+        _ => String::new(),
+    };
+
+    let action = plan_item
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("CREATE");
+    let title = plan_item
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or(own_slug.as_str());
+    let page_type = plan_item
+        .get("page_type")
+        .and_then(Value::as_str)
+        .unwrap_or("concept");
+    let evidence_count = evidence.len().to_string();
+    let evidence_blocks = format_evidence_blocks(evidence);
+    let user_prompt = render_template(
+        WIKI_REFINE_WRITER_USER_TEMPLATE,
+        &[
+            ("action", action),
+            ("slug", own_slug.as_str()),
+            ("title", title),
+            ("page_type", page_type),
+            ("all_plan_slugs", slugs_block.as_str()),
+            ("existing_section", existing_section.as_str()),
+            ("source_context", source_context),
+            ("evidence_count", evidence_count.as_str()),
+            ("evidence_blocks", evidence_blocks.as_str()),
+        ],
+    );
+    let system = build_refine_writer_system(instruction, example);
+    wiki_chat_text(chat, &system, &user_prompt, 0.15, llm_timeout).await
+}
+
+/// `_wiki_merge_page_content`: LLM-merge with shrink-check fallback.
+pub async fn wiki_merge_page_content(
+    chat: &dyn HarnessChat,
+    existing_md: &str,
+    new_md: &str,
+    slug: &str,
+    shrink_threshold: f64,
+    llm_timeout: i64,
+) -> String {
+    if existing_md.is_empty() || existing_md.trim().chars().count() < 50 {
+        return new_md.to_string();
+    }
+    if existing_md.trim() == new_md.trim() {
+        return new_md.to_string();
+    }
+    if new_md.is_empty() {
+        return existing_md.to_string();
+    }
+    let user_prompt = format!(
+        "Merge these two versions of wiki page `{slug}`:\n\n## EXISTING VERSION\n\n{existing_md}\n\n---\n\n## INCOMING VERSION\n\n{new_md}\n\n---\n\nProduce the merged page now. Return ONLY the markdown content."
+    );
+    let merged = wiki_chat_text(
+        chat,
+        WIKI_REFINE_MERGE_SYSTEM,
+        &user_prompt,
+        0.1,
+        llm_timeout,
+    )
+    .await;
+    if merged.is_empty() {
+        return new_md.to_string();
+    }
+    let max_input_len = existing_md.chars().count().max(new_md.chars().count());
+    let min_acceptable = (max_input_len as f64 * shrink_threshold) as usize;
+    if merged.chars().count() < min_acceptable {
+        tracing::warn!(
+            slug = slug,
+            merged = merged.chars().count(),
+            threshold = min_acceptable,
+            max_input = max_input_len,
+            "wiki_refine: merge rejected (shrink); falling back to new content"
+        );
+        return new_md.to_string();
+    }
+    merged
+}
+
+/// `_wiki_extract_summary`: first non-heading paragraph, char-capped.
+pub fn wiki_extract_summary(content_md: &str, max_chars: usize) -> String {
+    if content_md.trim().is_empty() {
+        return String::new();
+    }
+    let mut buf: Vec<String> = Vec::new();
+    for line in content_md.lines() {
+        let stripped = line.trim();
+        if stripped.is_empty() || stripped.starts_with('#') {
+            if !buf.is_empty() {
+                break;
+            }
+            continue;
+        }
+        buf.push(stripped.to_string());
+        if buf.join(" ").chars().count() >= max_chars {
+            break;
+        }
+    }
+    truncate_chars(&buf.join(" "), max_chars)
+}
+
+/// `_wiki_draft_row_id`.
+pub fn wiki_draft_row_id(kb_id: &str, slug: &str) -> String {
+    stable_row_id(&[
+        WIKI_DRAFT_COMPILE_KWD.to_string(),
+        kb_id.to_string(),
+        slug.to_string(),
+    ])
+}
+
+/// `_wiki_persist_draft`: upsert one resume-cache / searchable page row.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_persist_draft(
+    store: &dyn DocStore,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    page: &Value,
+    plan_input_hash: &str,
+) {
+    let Some(page_obj) = page.as_object() else {
+        return;
+    };
+    let slug = page_obj.get("slug").and_then(Value::as_str).unwrap_or("");
+    if slug.is_empty() {
+        return;
+    }
+    let mut row = Map::new();
+    row.insert(
+        "id".to_string(),
+        Value::String(wiki_draft_row_id(kb_id, slug)),
+    );
+    row.insert("doc_id".to_string(), Value::String(kb_id.to_string()));
+    row.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_DRAFT_COMPILE_KWD.to_string()),
+    );
+    row.insert("wiki_slug_kwd".to_string(), Value::String(slug.to_string()));
+    row.insert(
+        "source_id".to_string(),
+        Value::Array(vec![Value::String(kb_id.to_string())]),
+    );
+    let draft_doc_ids: Vec<Value> = page_obj
+        .get("source_doc_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.as_str().map(|text| !text.is_empty()).unwrap_or(false))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    row.insert("source_doc_ids".to_string(), Value::Array(draft_doc_ids));
+    row.insert(
+        "input_hash_kwd".to_string(),
+        Value::String(plan_input_hash.to_string()),
+    );
+    row.insert(
+        "content_with_weight".to_string(),
+        Value::String(page.to_string()),
+    );
+    row.insert("available_int".to_string(), json!(0));
+
+    if let Some(embd) = embd {
+        let title = page_obj
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .unwrap_or(slug)
+            .to_string();
+        let body = ["content_md_rendered", "content_md", "content_md_raw"]
+            .iter()
+            .find_map(|key| page_obj.get(*key).and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
+        let summary = page_obj
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let (body_ltks, body_sm_ltks) = tokenize_for_search(&body);
+        let (title_tks, _) = tokenize_for_search(&title);
+        row.insert("docnm_kwd".to_string(), Value::String(title.clone()));
+        row.insert("title_kwd".to_string(), Value::String(title.clone()));
+        row.insert("title_tks".to_string(), Value::String(title_tks.join(" ")));
+        row.insert(
+            "content_ltks".to_string(),
+            Value::String(body_ltks.join(" ")),
+        );
+        row.insert(
+            "content_sm_ltks".to_string(),
+            Value::String(body_sm_ltks.join(" ")),
+        );
+        let emb_text = if summary.is_empty() {
+            format!("{title}\n{body}")
+        } else {
+            summary.clone()
+        };
+        let emb_text = truncate_chars(emb_text.trim(), 2048);
+        let emb_text = if emb_text.is_empty() {
+            title.clone()
+        } else {
+            emb_text
+        };
+        match embd.embed(&[emb_text.as_str()]).await {
+            Ok(vectors) => {
+                if let Some(vector) = vectors.first().filter(|vector| !vector.is_empty()) {
+                    row.insert(format!("q_{}_vec", vector.len()), json!(vector));
+                    row.insert("embedding".to_string(), json!(vector));
+                    row.insert("available_int".to_string(), json!(1));
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, slug = slug, "wiki_refine: draft embedding failed; row stays non-searchable");
+            }
+        }
+    }
+
+    let mut delete_condition = Map::new();
+    delete_condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_DRAFT_COMPILE_KWD.to_string()),
+    );
+    delete_condition.insert("wiki_slug_kwd".to_string(), Value::String(slug.to_string()));
+    if let Err(err) = store.delete(&delete_condition, &index_name(tenant_id), kb_id) {
+        tracing::debug!(error = %err, "wiki_refine: prior draft delete failed; relying on id upsert");
+    }
+    if let Err(err) = store.insert(&[row], &index_name(tenant_id), kb_id) {
+        tracing::error!(error = %err, slug = slug, "wiki_refine: failed to persist draft");
+    }
+}
+
+/// `_wiki_load_refine_resume`: `{slug: (page, stored_plan_input_hash)}`.
+pub fn wiki_load_refine_resume(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> BTreeMap<String, (Value, String)> {
+    let fields: Vec<String> = [
+        "id",
+        "wiki_slug_kwd",
+        "content_with_weight",
+        "input_hash_kwd",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_DRAFT_COMPILE_KWD.to_string()),
+    );
+    let mut out: BTreeMap<String, (Value, String)> = BTreeMap::new();
+    let mut offset = 0usize;
+    loop {
+        let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, offset, 500) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!(error = %err, "wiki_refine: failed to page draft cache");
+                break;
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            let slug = row
+                .get("wiki_slug_kwd")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let content = row
+                .get("content_with_weight")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if slug.is_empty() || content.is_empty() {
+                continue;
+            }
+            let cached: Value = match serde_json::from_str(content) {
+                Ok(cached) => cached,
+                Err(_) => continue,
+            };
+            if !cached.is_object() {
+                continue;
+            }
+            let stored_hash = row
+                .get("input_hash_kwd")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            out.insert(slug.to_string(), (cached, stored_hash));
+        }
+        if rows.len() < 500 {
+            break;
+        }
+        offset += 500;
+    }
+    out
+}
+
+#[cfg(test)]
+mod wiki_part10_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.to_string(),
+                delay_ms: 0,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl crate::embed::Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn existing_page_fetch_and_defaults() {
+        let store = MemoryDocStore::new();
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "content_with_weight": "# Alpha\n\nBody"
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let page = wiki_get_existing_page(&store, "t1", "kb1", "entity/alpha").expect("page");
+        assert_eq!(page["id"], json!("p1"));
+        assert_eq!(page["content_md"], json!("# Alpha\n\nBody"));
+        assert_eq!(page["content_md_raw"], page["content_md"]);
+        assert_eq!(page["title"], json!("Alpha"));
+        assert_eq!(page["page_type"], json!("entity"));
+        assert!(wiki_get_existing_page(&store, "t1", "kb1", "entity/ghost").is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_text_strips_think_and_handles_timeout() {
+        let chat = FakeChat::new("scratch</think>final answer");
+        let text = wiki_chat_text(&chat, "sys", "user", 0.1, 30).await;
+        assert_eq!(text, "final answer");
+        let mut slow = FakeChat::new("late");
+        slow.delay_ms = 50;
+        assert_eq!(wiki_chat_text(&slow, "sys", "user", 0.1, 0).await, "");
+    }
+
+    #[tokio::test]
+    async fn write_page_prompt_shapes() {
+        let chat = FakeChat::new("content");
+        let plan_item = json!({"slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "action": "CREATE"});
+        let evidence = vec![json!({"subject": "Alpha", "statement": "s", "chunk_ids": ["c1"]})];
+        let slugs = vec!["entity/alpha".to_string(), "concept/beta".to_string()];
+        let content = wiki_write_page_simple(
+            &chat, &plan_item, &evidence, None, "SOURCE", &slugs, 30, None, None,
+        )
+        .await;
+        assert_eq!(content, "content");
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("- [[concept/beta]]"));
+        assert!(!prompt.contains("- [[entity/alpha]]"));
+        assert!(prompt.contains("CREATE the following wiki page"));
+        assert!(prompt.contains("Evidence checklist (1 items)"));
+        assert!(prompt.contains("[EXPLICIT] Alpha"));
+        assert!(!prompt.contains("Existing page content"));
+
+        let chat2 = FakeChat::new("content2");
+        wiki_write_page_simple(
+            &chat2,
+            &plan_item,
+            &[],
+            Some("OLD BODY"),
+            "SOURCE",
+            &[],
+            30,
+            Some("Be terse."),
+            None,
+        )
+        .await;
+        let prompt2 = chat2.calls.lock().unwrap()[0].clone();
+        assert!(prompt2.contains("Existing page content (UPDATE"));
+        assert!(prompt2.contains("OLD BODY"));
+        assert!(prompt2.contains("(none — this is the only page)"));
+    }
+
+    #[tokio::test]
+    async fn merge_short_circuits_and_shrink_guard() {
+        let chat = FakeChat::new("m");
+        assert_eq!(
+            wiki_merge_page_content(&chat, "short", "new body", "s", 0.7, 30).await,
+            "new body"
+        );
+        assert_eq!(
+            wiki_merge_page_content(&chat, "", "new body", "s", 0.7, 30).await,
+            "new body"
+        );
+        let long_existing = "x".repeat(200);
+        let same = long_existing.clone();
+        assert_eq!(
+            wiki_merge_page_content(&chat, &long_existing, &same, "s", 0.7, 30).await,
+            same
+        );
+        assert_eq!(
+            wiki_merge_page_content(&chat, &long_existing, "", "s", 0.7, 30).await,
+            long_existing
+        );
+        let long_new = "y".repeat(200);
+        let merged = wiki_merge_page_content(&chat, &long_existing, &long_new, "s", 0.7, 30).await;
+        assert_eq!(merged, long_new);
+        let healthy = FakeChat::new(&"z".repeat(300));
+        let good = wiki_merge_page_content(&healthy, &long_existing, &long_new, "s", 0.7, 30).await;
+        assert_eq!(good.chars().count(), 300);
+    }
+
+    #[test]
+    fn summary_extraction_shapes() {
+        assert_eq!(wiki_extract_summary("", 300), "");
+        assert_eq!(
+            wiki_extract_summary(
+                "# Heading\n\nFirst paragraph.\nSecond line.\n\nNext para",
+                300
+            ),
+            "First paragraph. Second line."
+        );
+        assert_eq!(wiki_extract_summary("abcdefghij", 5), "abcde");
+        assert_eq!(wiki_extract_summary("## Only headings\n### More", 300), "");
+    }
+
+    #[tokio::test]
+    async fn draft_persist_and_resume_roundtrip() {
+        let store = MemoryDocStore::new();
+        let page = json!({
+            "slug": "entity/alpha",
+            "title": "Alpha",
+            "content_md": "# Alpha\n\nBody text.",
+            "source_doc_ids": ["d1", "d2"]
+        });
+        wiki_persist_draft(&store, None, "t1", "kb1", &page, "H1").await;
+        let resume = wiki_load_refine_resume(&store, "t1", "kb1");
+        assert_eq!(resume.len(), 1);
+        let (cached, hash) = resume.get("entity/alpha").expect("draft");
+        assert_eq!(hash, "H1");
+        assert_eq!(cached["title"], json!("Alpha"));
+
+        let emb = TestEmb;
+        wiki_persist_draft(&store, Some(&emb), "t1", "kb1", &page, "H2").await;
+        let resume2 = wiki_load_refine_resume(&store, "t1", "kb1");
+        assert_eq!(resume2.len(), 1);
+        assert_eq!(resume2.get("entity/alpha").expect("draft2").1, "H2");
+        let mut condition = Map::new();
+        condition.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_DRAFT_COMPILE_KWD.to_string()),
+        );
+        let query = SearchQuery {
+            select_fields: vec!["id".to_string()],
+            condition,
+            match_expressions: Vec::new(),
+            offset: 0,
+            limit: 10,
+            index_names: vec![index_name("t1")],
+            dataset_ids: vec!["kb1".to_string()],
+            ..Default::default()
+        };
+        let response = store.search(&query).unwrap();
+        assert_eq!(response.total, 1);
+        let stored = response.docs.into_iter().next().unwrap();
+        assert_eq!(stored.get("available_int"), Some(&json!(1)));
+        assert!(stored.get("q_2_vec").is_some());
+        assert!(stored.get("embedding").is_some());
+        assert!(stored.get("title_tks").is_some());
     }
 }
