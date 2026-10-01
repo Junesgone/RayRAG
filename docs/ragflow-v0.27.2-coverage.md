@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 629 | 298438 |
-| partial | 52 | 26226 |
+| full | 631 | 299542 |
+| partial | 50 | 25122 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3646,7 +3646,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/harness/orchestrator/__init__.py` | 12 | 523 | `9066d26600b9edf4` | full | `src/harness/orchestrator/mod.rs` | v0.3.10y：策略包文档（direct/sufficient_context/query_rewriter 归属与 THINKING_MODES 关系）；策略实现随工具管线批次移植（各自行独立收敛） |
 | `rag/advanced_rag/harness/orchestrator/direct.py` | 60 | 2195 | `befe6fd499473c37` | full | `src/harness/orchestrator/direct.rs` | v0.3.10z：direct_search 全量移植（Kbinfos 合并/去重、_chunk_key 真值链与匿名回退、doc_aggs None 语义、entity 加权检索查询注入、empty_result 分支、direct 阶段作用域）；DirectTools 注入式 hybrid_search 回调；2 项单测 |
 | `rag/advanced_rag/harness/orchestrator/query_rewriter.py` | 98 | 3820 | `c186b323a556bc8b` | full | `src/harness/orchestrator/query_rewriter.rs` | v0.3.10z：sca_query_rewrite 模板原文 + gaps/bridge/research_context 渲染；gen_json 等价调用（system=渲染提示、user=Output:）；queries 解析（对象/字符串、去重、think/围栏清洗）；缺 chat/空 gaps/失败→空；rewrite 阶段作用域；2 项单测 |
-| `rag/advanced_rag/harness/orchestrator/sufficient_context.py` | 419 | 18055 | `5d68bcb2589d92b8` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：上下文充分性判定；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/orchestrator/sufficient_context.py` | 419 | 18055 | `5d68bcb2589d92b8` | full | `src/harness/orchestrator/sufficient_context.rs` | v0.3.10ab：SCA 统一审查全量移植——sca_select 提示词原文、claims 渲染（草稿 + 证据锚定 ≤300 字符、表格整文）、overall draft、coerce_dict 格式容错、sub_queries/claims 解析与 _global 兜底（顶层 missing → 草稿降级）、to_boost/to_grounded 适配器；4 项单测 |
 | `rag/advanced_rag/harness/prompts/__init__.py` | 1 | 48 | `2c759e9a863eaf4b` | full | `src/harness/mod.rs` | v0.3.10y：提示词包映射到 src/harness/{report_prompt,keywords,structure_qa}.rs 的提示词常量 |
 | `rag/advanced_rag/harness/prompts/report_prompt.py` | 33 | 1818 | `11a2ee0f908b348b` | full | `src/harness/report_prompt.rs` | v0.3.10y：FINAL_ANSWER_SYSTEM（{cite_rules} 填充入口）+ PARTIAL_ANSWER_PREAMBLE 原文移植；1 项单测 |
 | `rag/advanced_rag/harness/stats.py` | 448 | 19444 | `a777fdcbf2f08120` | full | `src/harness/stats.rs` | v0.3.10y：phase/in_phase 作用域（RAII PhaseScope + 同名重入遮蔽）、LLMUsageStats 全量计账（calls/failed/phase_time_ms/prompt+completion+total tokens/rounds/round-phase/round claims）、snapshot 规范顺序与回退排序、日志表渲染；3 项单测 |
@@ -3655,7 +3655,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | 16963 | `e252fc8bb7694a25` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：编译扩展工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/exploration.py` | 468 | 19641 | `88db170eea537faa` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：探索工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/navigation.py` | 1936 | 84658 | `cc44e3e3bc3c4197` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：导航工具（1936 行）；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/tools/search.py` | 685 | 28279 | `9965b027c0ddfbb0` | partial | `src/advanced_rag.rs; src/agent.rs; src/search.rs` | （v0.3.10g 审计：harness 搜索工具；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/tools/search.py` | 685 | 28279 | `9965b027c0ddfbb0` | full | `src/harness/tools/search.rs` | v0.3.10ab：检索腿与 grep 定位全量移植——设置解析（top_n/top_k/rerank 下限）、effective_query 400 字符、检索缓存键、注入式 HarnessRetriever（hybrid 权重 0.3 / vector 1.0 / BM25 0）+ 关键词窄化、grep 词抽取（10 上限）与查询转词、表块整体保留的 grep_search、list_chunks/load_specific_chunks/rank_chunks_by_terms、TOOL_NAME_BY_FUNC/COMPILED_TOOL_MODES；5 项单测 |
 | `rag/advanced_rag/harness/tools/text_processing.py` | 467 | 17514 | `05898d272bf481f4` | full | `src/harness/tools/text_processing.rs` | v0.3.10aa：compact_keywords、句切分（HTML 块级标签栈 + markdown 表格原子化 + 数字保护句点）、词干匹配（上游回退词干器路径）、fact-dense 判定、narrow_content/highlight_keywords/narrow_by_keywords/narrow_or_keep 全量移植；4 项单测 |
 | `rag/advanced_rag/knowlege_compile/__init__.py` | 43 | 1327 | `2a848ac2f16734e1` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
 | `rag/advanced_rag/knowlege_compile/_common.py` | 1038 | 38483 | `9cd36157c46cd082` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |

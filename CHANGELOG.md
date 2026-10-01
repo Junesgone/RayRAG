@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.83] — 2026-10-01（对标批次 v0.3.10ab）
+
+> W-4 续：agentic harness 检索腿与 SCA 统一审查移植（纯 Rust）。
+
+- `src/harness/tools/search.rs`（上游 `tools/search.py`，685 行）：设置解析（`top_n`/`top_k`/`rerank` 下限）、`effective_query` 400 字符、检索缓存键、注入式 `HarnessRetriever`（hybrid 权重 0.3 / vector 1.0 / BM25 0 三条腿）+ 关键词窄化、grep 词抽取（10 上限）与查询转词、表块整体保留的 `grep_search`、`list_chunks`/`load_specific_chunks`/`rank_chunks_by_terms`、`TOOL_NAME_BY_FUNC`/`COMPILED_TOOL_MODES`。
+- `src/harness/orchestrator/sufficient_context.rs`（上游 `orchestrator/sufficient_context.py`，419 行）：`sca_select` 提示词原文、claims 渲染（草稿 + 证据锚定 ≤300 字符、表格整文）、overall draft、`coerce_dict` 格式容错、`sub_queries`/`claims` 解析与 `_global` 兜底（顶层 missing → 草稿降级）、`to_boost`/`to_grounded` 适配器。
+- 台账 2 行 partial → full；worklist W-4 队列 10 → 8；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：新增 9 项（search 5 + sufficient_context 4）；fmt/clippy 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.82] — 2026-10-01（对标批次 v0.3.10aa）
 
 > W-4 续：agentic harness 确定性工具层移植（文本窄化 + 记忆检索 + 安全算术；纯 Rust）。

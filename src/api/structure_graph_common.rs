@@ -1,5 +1,7 @@
 //! Shared structure-graph subgraph sampling — RAGFlow v0.27.2
 //! `api/apps/services/structure_graph_common.py`.
+//! Graph row shapes live in `src/structure_compile.rs`; the two REST callers
+//! (document structure graph / dataset artifacts) pass their own scope.
 //!
 //! Both the per-document (`/datasets/<id>/documents/<doc>/structure/graph`) and
 //! the dataset-wide (`/datasets/<id>/artifacts/structure`) endpoints render

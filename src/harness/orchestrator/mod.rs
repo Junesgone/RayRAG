@@ -13,3 +13,4 @@
 //!
 pub mod direct;
 pub mod query_rewriter;
+pub mod sufficient_context;
