@@ -5954,6 +5954,584 @@ pub fn struct_entity_candidate_groups(
     result
 }
 
+// ── `structure.py` gaps C2a (v0.3.10ah) — doc-storage dedup judges ────────
+
+/// `ES_GROUP_MERGE_PROMPT` (verbatim).
+pub const ES_GROUP_MERGE_PROMPT: &str = r#"Existing item:
+{existing}
+
+Incoming items:
+{incoming}
+
+Decide which incoming items refer to the same logical entity or relation as
+the existing item. Merge all duplicated incoming items with the existing item.
+Incoming items that are not duplicates must remain separate. Do not invent
+data and do not merge unrelated incoming items with each other.
+
+Return ONLY JSON with this exact shape:
+{
+  "duplicate_indices": [<incoming index>, ...],
+  "merged": <merged JSON object when duplicate_indices is non-empty, otherwise null>
+}
+"#;
+
+/// `ES_GROUP_BATCH_MERGE_PROMPT` (verbatim).
+pub const ES_GROUP_BATCH_MERGE_PROMPT: &str = r#"You are judging multiple independent ES deduplication groups.
+
+For every group, compare every incoming item with that group's existing item.
+You must make a separate duplicated decision for every incoming item. Only
+incoming items marked duplicated=true may contribute to that group's merged
+payload. Incoming items marked duplicated=false must remain separate. Do not
+merge items from different groups and do not invent data.
+
+Return ONLY JSON with this exact shape:
+{
+  "groups": [
+    {
+      "group_id": "<group id>",
+      "decisions": [
+        {"incoming_index": 0, "duplicated": true},
+        {"incoming_index": 1, "duplicated": false}
+      ],
+      "merged": <merged JSON object when any item is duplicated, otherwise null>
+    }
+  ]
+}
+
+Groups:
+{groups}
+"#;
+
+/// `ES_GROUP_DECISION_BATCH_PROMPT` (verbatim).
+pub const ES_GROUP_DECISION_BATCH_PROMPT: &str = r#"You are judging multiple independent ES deduplication groups.
+
+For every incoming item, independently decide whether it is a duplicate of
+the existing item in the same group. Do not merge anything and do not judge
+items from different groups against each other.
+
+Return ONLY JSON with this exact shape:
+{
+  "groups": [
+    {
+      "group_id": "<group id>",
+      "decisions": [
+        {"incoming_index": 0, "duplicated": true},
+        {"incoming_index": 1, "duplicated": false}
+      ]
+    }
+  ]
+}
+
+Groups:
+{groups}
+"#;
+
+/// `_ES_DEDUP_KNN_CONCURRENCY`.
+pub const ES_DEDUP_KNN_CONCURRENCY: usize = 8;
+/// `_ES_DEDUP_LLM_CONCURRENCY`.
+pub const ES_DEDUP_LLM_CONCURRENCY: usize = 16;
+/// `_ES_DEDUP_LLM_BATCH_SIZE`.
+pub const ES_DEDUP_LLM_BATCH_SIZE: usize = 16;
+/// `_ES_DEDUP_EMBED_BATCH_SIZE`.
+pub const ES_DEDUP_EMBED_BATCH_SIZE: usize = 64;
+/// `_ES_DEDUP_INSERT_BATCH_SIZE`.
+pub const ES_DEDUP_INSERT_BATCH_SIZE: usize = 256;
+
+/// Chat-based `gen_json`: strip think blocks / fences, then parse (lenient
+/// fallback included). `None` when nothing parses.
+async fn struct_gen_json(
+    chat: &dyn crate::harness::HarnessChat,
+    system: &str,
+    user: &str,
+) -> Option<Value> {
+    let history = vec![serde_json::json!({"role": "user", "content": user})];
+    let raw = chat
+        .chat(system, &history, &serde_json::json!({"temperature": 0.0}))
+        .await
+        .ok()?;
+    let think = regex::Regex::new(r"(?s)^.*</think>").expect("think regex");
+    let stripped = think.replace(&raw, "").to_string();
+    let fence = regex::Regex::new(r"```(?:json)?\s*|\s*```").expect("fence regex");
+    let cleaned = fence.replace_all(&stripped, "").trim().to_string();
+    serde_json::from_str::<Value>(&cleaned)
+        .ok()
+        .or_else(|| parse_json_lenient(&cleaned))
+}
+
+fn struct_payload_of(doc: &Value) -> Option<Value> {
+    parse_content_payload(doc)
+}
+
+fn struct_store_query(
+    select_fields: &[String],
+    condition: &Value,
+    match_exprs: Vec<crate::doc_store::MatchExpr>,
+    index: &str,
+    kb_id: &str,
+    limit: usize,
+) -> crate::doc_store::SearchQuery {
+    let condition_map = condition.as_object().cloned().unwrap_or_default();
+    crate::doc_store::SearchQuery {
+        select_fields: select_fields.to_vec(),
+        condition: condition_map,
+        match_expressions: match_exprs,
+        offset: 0,
+        limit,
+        index_names: vec![index.to_string()],
+        dataset_ids: vec![kb_id.to_string()],
+        ..Default::default()
+    }
+}
+
+fn struct_first_row(
+    store: &dyn crate::doc_store::DocStore,
+    query: crate::doc_store::SearchQuery,
+    select_fields: &[String],
+) -> Option<Value> {
+    let response = store.search(&query).ok()?;
+    let fields = store.get_fields(&response, select_fields);
+    let (old_id, old_doc) = fields.into_iter().next()?;
+    let mut old_doc = old_doc;
+    old_doc
+        .entry("id".to_string())
+        .or_insert(Value::String(old_id));
+    Some(Value::Object(old_doc))
+}
+
+/// The select-field list shared by the dedup searches (verbatim).
+pub fn struct_dedup_select_fields() -> Vec<String> {
+    [
+        "id",
+        "content_with_weight",
+        "source_chunk_ids",
+        "knowledge_graph_kwd",
+        "compile_kwd",
+        "doc_id",
+        "docnm_kwd",
+        "from_entity_kwd",
+        "to_entity_kwd",
+        "compilation_template_ids",
+        "compilation_template_kind_kwd",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect()
+}
+
+fn struct_doc_vec_field(row: &Value) -> Option<(String, Vec<f32>)> {
+    let map = row.as_object()?;
+    for (key, val) in map {
+        if key.starts_with("q_") && key.ends_with("_vec") {
+            if let Some(items) = val.as_array() {
+                let vector: Vec<f32> = items
+                    .iter()
+                    .filter_map(|item| item.as_f64().map(|number| number as f32))
+                    .collect();
+                if !vector.is_empty() {
+                    return Some((key.clone(), vector));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `_struct_doc_storage_knn_candidate`: one KNN lookup (exact entity-name check
+/// first, then a dense cosine query). The upstream `extra_options {"similarity":
+/// …}` hint has no local `MatchExpr::Dense` slot (documented divergence).
+#[allow(clippy::too_many_arguments)]
+pub fn struct_doc_storage_knn_candidate(
+    store: &dyn crate::doc_store::DocStore,
+    doc: &Value,
+    tenant_id: &str,
+    kb_id: &str,
+    similarity_threshold: f32,
+    merge_scope_dataset: bool,
+) -> Option<Value> {
+    let _ = similarity_threshold;
+    let index = doc_store_index_name(tenant_id);
+    let select_fields = struct_dedup_select_fields();
+    if string_field(doc, "knowledge_graph_kwd") == "entity" {
+        let name = {
+            let explicit = string_field(doc, "name_kwd");
+            let resolved = if explicit.is_empty() {
+                crate::dataset_structure_merger::struct_entity_name(doc)
+            } else {
+                explicit
+            };
+            resolved.trim().to_lowercase()
+        };
+        if !name.is_empty() {
+            let mut exact_condition = struct_doc_storage_dedup_condition(doc, merge_scope_dataset);
+            if let Some(map) = exact_condition.as_object_mut() {
+                map.insert("name_kwd".to_string(), serde_json::json!([name]));
+            }
+            let query = struct_store_query(
+                &select_fields,
+                &exact_condition,
+                Vec::new(),
+                &index,
+                kb_id,
+                1,
+            );
+            if let Some(found) = struct_first_row(store, query, &select_fields) {
+                return Some(found);
+            }
+        }
+    }
+    let (vec_field, vector) = struct_doc_vec_field(doc)?;
+    let match_expr = crate::doc_store::MatchExpr::dense(&vec_field, vector, "cosine", 1);
+    let condition = struct_doc_storage_dedup_condition(doc, merge_scope_dataset);
+    let query = struct_store_query(
+        &select_fields,
+        &condition,
+        vec![match_expr],
+        &index,
+        kb_id,
+        1,
+    );
+    struct_first_row(store, query, &select_fields)
+}
+
+/// `_struct_judge_doc_storage_group_batch`: independent duplicate decisions for
+/// every incoming item (no merge generation). Returns `group_id -> duplicated
+/// incoming indices`.
+pub async fn struct_judge_doc_storage_group_batch(
+    chat: &dyn crate::harness::HarnessChat,
+    group_specs: &[Value],
+) -> std::collections::HashMap<String, std::collections::HashSet<i64>> {
+    let empty = |specs: &[Value]| {
+        specs
+            .iter()
+            .filter_map(|spec| {
+                spec.get("request_group_id")
+                    .and_then(Value::as_str)
+                    .map(|id| (id.to_string(), std::collections::HashSet::new()))
+            })
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+    let mut prompt_groups: Vec<Value> = Vec::new();
+    for spec in group_specs {
+        let old_doc = spec.get("old_doc").cloned().unwrap_or(Value::Null);
+        let incoming_docs = spec
+            .get("incoming_docs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let Some(existing_payload) = struct_payload_of(&old_doc) else {
+            continue;
+        };
+        let incoming_payloads: Vec<Value> =
+            incoming_docs.iter().filter_map(struct_payload_of).collect();
+        if incoming_payloads.len() != incoming_docs.len() {
+            continue;
+        }
+        prompt_groups.push(serde_json::json!({
+            "group_id": spec.get("request_group_id").cloned().unwrap_or(Value::Null),
+            "existing": existing_payload,
+            "incoming": incoming_payloads
+                .iter()
+                .enumerate()
+                .map(|(index, payload)| serde_json::json!({"index": index, "item": payload}))
+                .collect::<Vec<_>>(),
+        }));
+    }
+    if prompt_groups.is_empty() {
+        return empty(group_specs);
+    }
+    let groups_json = Value::Array(prompt_groups).to_string();
+    let user_prompt = ES_GROUP_DECISION_BATCH_PROMPT.replace("{groups}", &groups_json);
+    let prefix = ES_GROUP_DECISION_BATCH_PROMPT
+        .split("Groups:")
+        .next()
+        .unwrap_or("");
+    let system_prompt = format!("{}\n\n{prefix}", crate::merge::MERGE_SYSTEM_PROMPT);
+    let Some(res) = struct_gen_json(chat, &system_prompt, &user_prompt).await else {
+        return empty(group_specs);
+    };
+    let Some(raw_groups) = res.get("groups").and_then(Value::as_array) else {
+        return empty(group_specs);
+    };
+    let by_id: std::collections::HashMap<String, &Value> = group_specs
+        .iter()
+        .filter_map(|spec| {
+            spec.get("request_group_id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_string(), spec))
+        })
+        .collect();
+    let mut result: std::collections::HashMap<String, std::collections::HashSet<i64>> =
+        std::collections::HashMap::new();
+    for raw in raw_groups {
+        let Some(group_id) = raw.get("group_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(spec) = by_id.get(group_id) else {
+            continue;
+        };
+        let incoming_len = spec
+            .get("incoming_docs")
+            .and_then(Value::as_array)
+            .map(|items| items.len())
+            .unwrap_or(0);
+        let mut hits: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        if let Some(decisions) = raw.get("decisions").and_then(Value::as_array) {
+            for item in decisions {
+                let duplicated = item
+                    .get("duplicated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if duplicated {
+                    if let Some(index) = item.get("incoming_index").and_then(Value::as_i64) {
+                        if index >= 0 && (index as usize) < incoming_len {
+                            hits.insert(index);
+                        }
+                    }
+                }
+            }
+        }
+        result.insert(group_id.to_string(), hits);
+    }
+    for spec in group_specs {
+        if let Some(id) = spec.get("request_group_id").and_then(Value::as_str) {
+            result.entry(id.to_string()).or_default();
+        }
+    }
+    result
+}
+
+/// `_struct_merge_doc_storage_group_batch`: grouped duplicate decisions WITH
+/// merged payloads. Returns `old_id -> (separate docs, merged payload)`.
+pub async fn struct_merge_doc_storage_group_batch(
+    chat: &dyn crate::harness::HarnessChat,
+    group_specs: &[Value],
+) -> std::collections::HashMap<String, (Vec<Value>, Option<Value>)> {
+    let identity = |specs: &[Value]| {
+        specs
+            .iter()
+            .filter_map(|spec| {
+                let id = spec.get("old_id").and_then(Value::as_str)?;
+                let incoming = spec
+                    .get("incoming_docs")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                Some((id.to_string(), (incoming, None)))
+            })
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+    let mut prompt_groups: Vec<Value> = Vec::new();
+    for spec in group_specs {
+        let old_doc = spec.get("old_doc").cloned().unwrap_or(Value::Null);
+        let incoming_docs = spec
+            .get("incoming_docs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let Some(existing_payload) = struct_payload_of(&old_doc) else {
+            continue;
+        };
+        let incoming_payloads: Vec<Value> =
+            incoming_docs.iter().filter_map(struct_payload_of).collect();
+        if incoming_payloads.len() != incoming_docs.len() {
+            continue;
+        }
+        prompt_groups.push(serde_json::json!({
+            "group_id": spec.get("old_id").cloned().unwrap_or(Value::Null),
+            "existing": existing_payload,
+            "incoming": incoming_payloads
+                .iter()
+                .enumerate()
+                .map(|(index, payload)| serde_json::json!({"index": index, "item": payload}))
+                .collect::<Vec<_>>(),
+        }));
+    }
+    if prompt_groups.is_empty() {
+        return identity(group_specs);
+    }
+    let groups_json = Value::Array(prompt_groups).to_string();
+    let user_prompt = ES_GROUP_BATCH_MERGE_PROMPT.replace("{groups}", &groups_json);
+    let prefix = ES_GROUP_BATCH_MERGE_PROMPT
+        .split("Groups:")
+        .next()
+        .unwrap_or("");
+    let system_prompt = format!("{}\n\n{prefix}", crate::merge::MERGE_SYSTEM_PROMPT);
+    let Some(res) = struct_gen_json(chat, &system_prompt, &user_prompt).await else {
+        return identity(group_specs);
+    };
+    let Some(raw_groups) = res.get("groups").and_then(Value::as_array) else {
+        return identity(group_specs);
+    };
+    let by_id: std::collections::HashMap<String, &Value> = group_specs
+        .iter()
+        .filter_map(|spec| {
+            spec.get("old_id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_string(), spec))
+        })
+        .collect();
+    let mut result: std::collections::HashMap<String, (Vec<Value>, Option<Value>)> =
+        std::collections::HashMap::new();
+    for raw in raw_groups {
+        let Some(old_id) = raw.get("group_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(spec) = by_id.get(old_id) else {
+            continue;
+        };
+        let incoming_docs = spec
+            .get("incoming_docs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let merged = raw.get("merged").cloned().filter(Value::is_object);
+        let mut duplicate_indices: std::collections::HashSet<i64> =
+            std::collections::HashSet::new();
+        if let Some(decisions) = raw.get("decisions").and_then(Value::as_array) {
+            for item in decisions {
+                let duplicated = item
+                    .get("duplicated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if let Some(index) = item.get("incoming_index").and_then(Value::as_i64) {
+                    if duplicated && index >= 0 && (index as usize) < incoming_docs.len() {
+                        duplicate_indices.insert(index);
+                    }
+                }
+            }
+        }
+        if duplicate_indices.is_empty() || merged.is_none() {
+            result.insert(old_id.to_string(), (incoming_docs, None));
+            continue;
+        }
+        let separate: Vec<Value> = incoming_docs
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !duplicate_indices.contains(&(*index as i64)))
+            .map(|(_, doc)| doc.clone())
+            .collect();
+        result.insert(old_id.to_string(), (separate, merged));
+    }
+    for spec in group_specs {
+        if let Some(id) = spec.get("old_id").and_then(Value::as_str) {
+            result.entry(id.to_string()).or_insert_with(|| {
+                let incoming = spec
+                    .get("incoming_docs")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                (incoming, None)
+            });
+        }
+    }
+    result
+}
+
+/// `_struct_merge_pair` with the harness chat contract (shared merge prompts
+/// from `crate::merge`).
+pub async fn struct_merge_pair_chat(
+    chat: &dyn crate::harness::HarnessChat,
+    existing: &Value,
+    incoming: &Value,
+) -> Option<Value> {
+    let existing_payload = struct_payload_of(existing)?;
+    let incoming_payload = struct_payload_of(incoming)?;
+    let user_prompt = crate::merge::MERGE_USER_PROMPT
+        .replace("{item_existing}", &existing_payload.to_string())
+        .replace("{item_incoming}", &incoming_payload.to_string());
+    let system_prompt = format!(
+        "{}\n\n{}",
+        crate::merge::MERGE_SYSTEM_PROMPT,
+        crate::merge::MERGE_DECISION_INSTRUCTION
+    );
+    let res = struct_gen_json(chat, &system_prompt, &user_prompt).await?;
+    if !res
+        .get("duplicated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let merged = res.get("merged").cloned().unwrap_or(Value::Null);
+    if !merged.is_object() {
+        return None;
+    }
+    Some(crate::merge::apply_merge_invariants(existing, merged))
+}
+
+/// `_struct_merge_doc_storage_group`: one candidate group (the single-incoming
+/// case routes through the merge-pair prompt like upstream).
+pub async fn struct_merge_doc_storage_group(
+    chat: &dyn crate::harness::HarnessChat,
+    old_doc: &Value,
+    incoming_docs: &[Value],
+) -> (Vec<Value>, Option<Value>) {
+    if incoming_docs.len() == 1 {
+        let merged = struct_merge_pair_chat(chat, old_doc, &incoming_docs[0]).await;
+        return (
+            if merged.is_some() {
+                Vec::new()
+            } else {
+                incoming_docs.to_vec()
+            },
+            merged,
+        );
+    }
+    let Some(existing_payload) = struct_payload_of(old_doc) else {
+        return (incoming_docs.to_vec(), None);
+    };
+    let incoming_payloads: Vec<Value> =
+        incoming_docs.iter().filter_map(struct_payload_of).collect();
+    if incoming_payloads.len() != incoming_docs.len() {
+        return (incoming_docs.to_vec(), None);
+    }
+    let system_prompt = format!(
+        "{}\n\n{ES_GROUP_MERGE_PROMPT}",
+        crate::merge::MERGE_SYSTEM_PROMPT
+    );
+    let user_prompt = ES_GROUP_MERGE_PROMPT
+        .replace("{existing}", &existing_payload.to_string())
+        .replace(
+            "{incoming}",
+            &Value::Array(
+                incoming_payloads
+                    .iter()
+                    .enumerate()
+                    .map(|(index, payload)| serde_json::json!({"index": index, "item": payload}))
+                    .collect(),
+            )
+            .to_string(),
+        );
+    let Some(res) = struct_gen_json(chat, &system_prompt, &user_prompt).await else {
+        return (incoming_docs.to_vec(), None);
+    };
+    let Some(indices) = res.get("duplicate_indices").and_then(Value::as_array) else {
+        return (incoming_docs.to_vec(), None);
+    };
+    let merged = res.get("merged").cloned().unwrap_or(Value::Null);
+    if !merged.is_object() {
+        return (incoming_docs.to_vec(), None);
+    }
+    let mut duplicate_indices: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for index in indices {
+        if let Some(value) = index.as_i64() {
+            if value >= 0 && (value as usize) < incoming_docs.len() {
+                duplicate_indices.insert(value);
+            }
+        }
+    }
+    if duplicate_indices.is_empty() {
+        return (incoming_docs.to_vec(), None);
+    }
+    let separate: Vec<Value> = incoming_docs
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !duplicate_indices.contains(&(*index as i64)))
+        .map(|(_, doc)| doc.clone())
+        .collect();
+    (separate, Some(merged))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7824,5 +8402,132 @@ mod struct_c1_tests {
             2,
             "a doc without a vector never joins a component"
         );
+    }
+}
+#[cfg(test)]
+mod struct_c2a_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        reply: String,
+        seen_user: Mutex<String>,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            let user = history
+                .first()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            *self.seen_user.lock().unwrap() = user;
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    fn entity_doc(id: &str, name: &str) -> Value {
+        json!({
+            "id": id,
+            "doc_id": "d1",
+            "compile_kwd": "list",
+            "knowledge_graph_kwd": "entity",
+            "content_with_weight": json!({"name": name, "type": "fact", "description": "d"}).to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn judge_batch_returns_duplicate_sets() {
+        let chat = MockChat {
+            reply: json!({
+                "groups": [{
+                    "group_id": "g1",
+                    "decisions": [
+                        {"incoming_index": 0, "duplicated": true},
+                        {"incoming_index": 1, "duplicated": false},
+                        {"incoming_index": 99, "duplicated": true},
+                    ],
+                }],
+            })
+            .to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let specs = vec![json!({
+            "request_group_id": "g1",
+            "old_doc": entity_doc("e1", "Alpha"),
+            "incoming_docs": [entity_doc("e2", "Alpha"), entity_doc("e3", "Beta")],
+        })];
+        let result = struct_judge_doc_storage_group_batch(&chat, &specs).await;
+        let hits = result.get("g1").unwrap();
+        assert!(hits.contains(&0));
+        assert!(!hits.contains(&1));
+        assert_eq!(hits.len(), 1, "out-of-range index ignored");
+        assert!(chat.seen_user.lock().unwrap().contains("g1"),);
+    }
+
+    #[tokio::test]
+    async fn merge_group_batch_splits_separate_and_merged() {
+        let chat = MockChat {
+            reply: json!({
+                "groups": [{
+                    "group_id": "e1",
+                    "decisions": [
+                        {"incoming_index": 0, "duplicated": true},
+                        {"incoming_index": 1, "duplicated": false},
+                    ],
+                    "merged": {"name": "Alpha", "type": "title"},
+                }],
+            })
+            .to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let specs = vec![json!({
+            "old_id": "e1",
+            "old_doc": entity_doc("e1", "Alpha"),
+            "incoming_docs": [entity_doc("e2", "Alpha"), entity_doc("e3", "Beta")],
+        })];
+        let result = struct_merge_doc_storage_group_batch(&chat, &specs).await;
+        let (separate, merged) = result.get("e1").unwrap();
+        assert_eq!(separate.len(), 1);
+        assert_eq!(separate[0]["id"], json!("e3"));
+        assert_eq!(merged.as_ref().unwrap()["type"], json!("title"));
+    }
+
+    #[tokio::test]
+    async fn merge_group_single_uses_pair_prompt() {
+        let chat = MockChat {
+            reply: json!({"duplicated": true, "merged": {"name": "Alpha", "type": "title"}})
+                .to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let old = entity_doc("e1", "Alpha");
+        let incoming = vec![entity_doc("e2", "Alpha")];
+        let (separate, merged) = struct_merge_doc_storage_group(&chat, &old, &incoming).await;
+        assert!(separate.is_empty());
+        assert!(merged.is_some());
+        assert!(
+            chat.seen_user.lock().unwrap().contains("Item B"),
+            "the merge-pair prompt is used for single candidates"
+        );
+
+        let chat_no = MockChat {
+            reply: json!({"duplicated": false}).to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let (separate, merged) = struct_merge_doc_storage_group(&chat_no, &old, &incoming).await;
+        assert_eq!(separate.len(), 1);
+        assert!(merged.is_none());
     }
 }
