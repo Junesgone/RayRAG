@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.62] — 2026-10-01（对标批次 v0.3.10g）
+
+> RAGFlow v0.27.2 覆盖台账全量分类完成（5977 文件，unmapped=0）并建立对标收敛队列；本轮无功能性代码变更。
+
+### Changed
+
+- **v0.27.2 覆盖台账全量分类**：399 行机械归置（`web/src/**` React 源按既有规则记入参考材料、Go 模式 Docker 文件记入 replaced、样例/工具记入 reference）+ 68 行逐文件审计（GaussDB/SereneDB 存储适配 → replaced；模型类型映射 → aligned；59 项新提供商/解析器/harness 待接入项 → partial 并逐条注记）；`ragflow-coverage --check` 由 unmapped=467 收敛为 **unmapped=0**。
+- **对标收敛队列（发布快照剔除）**：新增内部分类清单与生成器，覆盖搜索提供商、数据源、OCR 解析器、agentic harness、结构图/编译器、沙箱六类队列，以及 UI 残留与上游变更复核队列；发布守卫同步更新。
+
 ## [0.4.61] — 2026-10-01（对标批次 v0.3.10f）
 
 > 建立参数/接口统一登记表与一致性门禁（用户长期要求项；登记表不发布）。

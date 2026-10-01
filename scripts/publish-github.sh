@@ -35,6 +35,7 @@ EXCLUDES=(
     "docs/ragflow-v0.26.4-coverage.md"
     "docs/ragflow-v0.27.2-coverage.md"
     "docs/ragflow-v0.27.2-delta.md"
+    "docs/ragflow-v0.27.2-worklist.md"
     "docs/ragflow-file-list.txt"
     "docs/ragflow-file-manifest.json"
     "docs/ragflow-ui-inventory.md"
@@ -139,6 +140,7 @@ if path.endswith(".md"):
         (r"`docs/ui-traversal/[^`]+`", "内部 UI 抓取产物"),
         (r"docs/ragflow-v0\.[0-9.]+-coverage\.md", "内部对标台账"),
         (r"docs/ragflow-v0\.[0-9.]+-delta\.md", "内部对标台账"),
+        (r"docs/ragflow-v0\.[0-9.]+-worklist\.md", "内部对标工作清单"),
         (r"docs/ragflow-file-(list\.txt|manifest\.json)", "内部文件清单"),
         (r"docs/ragflow-ui-inventory\.md", "内部界面盘点"),
         (r"docs/parameter-interface-registry\.md", "内部参数接口登记表"),
@@ -208,13 +210,13 @@ if [ -n "$guard_hits" ]; then
 fi
 
 while IFS= read -r file; do
-    if grep -nIE '运维记录|MAINTENANCE\.md|ragflow-v0\.[0-9.]+-coverage|ragflow-v0\.[0-9.]+-delta|ragflow-file-list|ragflow-ui-inventory|parameter-interface-registry|ui-traversal' "$file" \
+    if grep -nIE '运维记录|MAINTENANCE\.md|ragflow-v0\.[0-9.]+-coverage|ragflow-v0\.[0-9.]+-delta|ragflow-v0\.[0-9.]+-worklist|ragflow-file-list|ragflow-ui-inventory|parameter-interface-registry|ui-traversal' "$file" \
         | grep -q .; then
         echo "ERROR: internal-asset reference remains in the snapshot: $file" >&2
-        grep -nIE '运维记录|MAINTENANCE\.md|ragflow-v0\.[0-9.]+-coverage|ragflow-v0\.[0-9.]+-delta|ragflow-file-list|ragflow-ui-inventory|parameter-interface-registry|ui-traversal' "$file" >&2
+        grep -nIE '运维记录|MAINTENANCE\.md|ragflow-v0\.[0-9.]+-coverage|ragflow-v0\.[0-9.]+-delta|ragflow-v0\.[0-9.]+-worklist|ragflow-file-list|ragflow-ui-inventory|parameter-interface-registry|ui-traversal' "$file" >&2
         exit 1
     fi
-done < <(grep -rIln -E '运维记录|MAINTENANCE\.md|ragflow-v0\.[0-9.]+-coverage|ragflow-v0\.[0-9.]+-delta|ragflow-file-list|ragflow-ui-inventory|parameter-interface-registry|ui-traversal' "$WORK" \
+done < <(grep -rIln -E '运维记录|MAINTENANCE\.md|ragflow-v0\.[0-9.]+-coverage|ragflow-v0\.[0-9.]+-delta|ragflow-v0\.[0-9.]+-worklist|ragflow-file-list|ragflow-ui-inventory|parameter-interface-registry|ui-traversal' "$WORK" \
     | grep -vE '/(LICENSE|NOTICE)$' | grep -v '^$')
 if find "$WORK" -type f -size +20M | grep -q .; then
     echo "ERROR: large binary artifacts remain in the snapshot:" >&2

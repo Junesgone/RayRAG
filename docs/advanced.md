@@ -4,17 +4,16 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本：**v0.4.61**，对齐切片 **v0.3.10f**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
+- 版本：**v0.4.62**，对齐切片 **v0.3.10g**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
   见 `CHANGELOG.md` 与 `运维记录.md`）。
 - 测试基线：`cargo test --locked --lib`（`postgres-backend` 与 `zvec-backend` 已是默认 feature，无需显式指定）
   **1636 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
   凭据、公网或 MinIO 的 live 测试。
 - 覆盖台账（RAGFlow v0.27.2 固定快照 `a024bea0cd93`，5977 个文件，
-  `docs/ragflow-v0.27.2-coverage.md`）：full **581** / aligned **278** /
-  replaced **108** / N/A **61** / partial **42** / reference **4440** /
-  unmapped **467**（v0.26.4 → v0.27.2 基线迁移队列；模型提供商目录批次 59 行已复核关闭——
-  73 提供商 / 1008 模型紧凑目录 + 74 工厂 / 1009 行网格内嵌数据，卡片顺序/标签/文档链接与
-  上游 v0.27.2 一致；其余待审计清单见 `docs/ragflow-v0.27.2-delta.md`）；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
+  `docs/ragflow-v0.27.2-coverage.md`）：v0.3.10g 全量分类完成 —— full **581** / aligned **279** /
+  replaced **123** / N/A **61** / partial **101** / reference **4832** / unmapped **0**；
+  partial 逐条带书面注记（搜索提供商、数据源、OCR 解析器、agentic harness、结构图/编译器、沙箱
+  六类收敛队列，以及 UI 残留与上游变更复核队列）；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
   可复核（`--write` 刷新 Summary，`--migrate` 迁移基线）。
 - 运行形态：纯 Linux（直接运行 `target/release/rayrag`）与纯 Docker
   （`docker compose up -d`）均为一等支持；向量后端 zvec，元数据 PostgreSQL 18.4，
