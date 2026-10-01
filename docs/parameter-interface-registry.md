@@ -67,6 +67,7 @@
 | `SOMARK_POLL_REQUEST_TIMEOUT_SECONDS` | `30` |  |
 | `SOMARK_SUBMIT_BUDGET_SECONDS` | `600` |  |
 | `SOMARK_POLL_BUDGET_SECONDS` | `600` |  |
+| `MONKEYOCRV2_SERVER_URL` | `` | Optional MonkeyOCRv2 remote PDF parser. Leave empty to disable the provider. |
 | `RAYRAG_ADMIN_EMAIL` | `admin@rayrag.local` | 全新状态卷首次启动时必需；密码至少 12 个字符。 |
 | `RAYRAG_ADMIN_PASSWORD` | `replace-with-a-strong-admin-password` |  |
 | `RAYRAG_PASSWORD_PRIVATE_KEY_FILE` | `` | Optional RAGFlow-compatible password transport. Generate a deployment-only RSA PKCS#8/PKCS#1 key, mount it as a secret, and set the in-container path. Never reuse RAGFlow's repository-owned conf/private.pem. When unset, auth passwords are plain JSON and the deployment must terminate HTTPS upstream. |

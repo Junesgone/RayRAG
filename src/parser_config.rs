@@ -3,9 +3,10 @@
 
 /// Normalize a layout_recognize value (parser_config_utils.py:20-36).
 ///
-/// Strings ending with `@mineru` / `@paddleocr` / `@opendataloader` are
-/// split: the part before `@` becomes the parser model name and the
-/// recognizer is set to "MinerU" / "PaddleOCR" / "OpenDataLoader".
+/// Strings ending with `@mineru` / `@paddleocr` / `@opendataloader` /
+/// `@monkeyocrv2` are split: the part before `@` becomes the parser model
+/// name and the recognizer is set to "MinerU" / "PaddleOCR" /
+/// "OpenDataLoader" / "MonkeyOCRv2".
 /// Anything else passes through unchanged with a None model name.
 pub fn normalize_layout_recognizer(raw: Option<&str>) -> (Option<String>, Option<String>) {
     let Some(layout_recognizer_raw) = raw else {
@@ -33,6 +34,17 @@ pub fn normalize_layout_recognizer(raw: Option<&str>) -> (Option<String>, Option
                     .to_string(),
             ),
             "PaddleOCR",
+        )
+    } else if lowered.ends_with("@monkeyocrv2") {
+        (
+            Some(
+                layout_recognizer_raw
+                    .rsplit_once('@')
+                    .unwrap()
+                    .0
+                    .to_string(),
+            ),
+            "MonkeyOCRv2",
         )
     } else if lowered.ends_with("@opendataloader") {
         (
@@ -92,6 +104,13 @@ mod tests {
         let (layout, model) = normalize_layout_recognizer(Some("my-model@OpenDataLoader"));
         assert_eq!(layout.as_deref(), Some("OpenDataLoader"));
         assert_eq!(model.as_deref(), Some("my-model"));
+    }
+
+    #[test]
+    fn normalize_monkeyocrv2_suffix_splits_model_name() {
+        let (layout, model) = normalize_layout_recognizer(Some("MonkeyOCRv2@monkeyocrv2"));
+        assert_eq!(layout.as_deref(), Some("MonkeyOCRv2"));
+        assert_eq!(model.as_deref(), Some("MonkeyOCRv2"));
     }
 
     #[test]

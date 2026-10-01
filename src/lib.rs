@@ -28,7 +28,7 @@ pub mod build_info {
     /// Crate version from `Cargo.toml`.
     pub const VERSION: &str = env!("CARGO_PKG_VERSION");
     /// RAGFlow parity slice currently landed in this build.
-    pub const PARITY_SLICE: &str = "v0.3.10g";
+    pub const PARITY_SLICE: &str = "v0.3.10h";
     /// Short git revision the binary was built from.
     pub const GIT_REV: &str = env!("RAYRAG_BUILD_GIT_REV");
     /// `clean` or `dirty` working-tree marker captured at build time.
@@ -222,7 +222,7 @@ pub struct ParserConfig {
     pub image_context_size: usize,
     /// OCR language (default: "English")
     pub ocr_lang: String,
-    /// Layout recognizer, including provider-backed PaddleOCR/OpenDataLoader/MinerU/SoMark.
+    /// Layout recognizer, including provider-backed PaddleOCR/OpenDataLoader/MinerU/SoMark/MonkeyOCRv2.
     pub layout_recognize: String,
     /// OpenDataLoader's optional hybrid parser selector.
     #[serde(rename = "hybrid", alias = "opendataloader_hybrid")]
@@ -263,6 +263,10 @@ pub struct ParserConfig {
     pub somark_enable_image_understanding: Option<bool>,
     /// Optional per-parser SoMark header/footer retention switch.
     pub somark_keep_header_footer: Option<bool>,
+    /// Optional per-KB MonkeyOCRv2 service URL (upstream
+    /// `parser_config.monkeyocrv2_server_url`; falls back to the
+    /// `MONKEYOCRV2_SERVER_URL` environment variable).
+    pub monkeyocrv2_server_url: Option<String>,
     /// Enable metadata extraction
     pub enable_metadata: bool,
     /// Enable children chunks (parent-child hierarchy)
@@ -364,6 +368,7 @@ impl Default for ParserConfig {
             somark_enable_table_image: None,
             somark_enable_image_understanding: None,
             somark_keep_header_footer: None,
+            monkeyocrv2_server_url: None,
             enable_metadata: true,
             enable_children: true,
             raptor_enabled: false,

@@ -74,6 +74,7 @@ pub struct Pipeline {
     opendataloader: Option<crate::parser::opendataloader::OpenDataLoaderClient>,
     mineru: Option<crate::parser::mineru::MinerUClient>,
     somark: Option<crate::parser::somark::SoMarkClient>,
+    monkeyocrv2: Option<crate::parser::monkeyocrv2::MonkeyOcrV2Client>,
     stt: Option<crate::audio::AsrClient>,
     vision: Option<crate::vision::VisionClient>,
 }
@@ -91,6 +92,7 @@ impl Pipeline {
             opendataloader: None,
             mineru: None,
             somark: None,
+            monkeyocrv2: None,
             stt: None,
             vision: None,
         }
@@ -171,6 +173,21 @@ impl Pipeline {
         Ok(self)
     }
 
+    /// Set the remote PDF provider used by a MonkeyOCRv2 layout selector.
+    pub fn with_monkeyocrv2_client(
+        mut self,
+        client: crate::parser::monkeyocrv2::MonkeyOcrV2Client,
+    ) -> Self {
+        self.monkeyocrv2 = Some(client);
+        self
+    }
+
+    /// Resolve the optional MonkeyOCRv2 PDF provider from environment.
+    pub fn with_monkeyocrv2_from_env(mut self) -> Result<Self> {
+        self.monkeyocrv2 = crate::parser::monkeyocrv2::MonkeyOcrV2Client::from_env()?;
+        Ok(self)
+    }
+
     /// Resolve the optional ASR (speech-to-text) client from environment.
     pub fn with_asr_from_env(mut self) -> Result<Self> {
         self.stt = crate::audio::asr_from_env()?;
@@ -191,6 +208,7 @@ impl Pipeline {
             .with_opendataloader_from_env()?
             .with_mineru_from_env()?
             .with_somark_from_env()?
+            .with_monkeyocrv2_from_env()?
             .with_asr_from_env()
     }
 
@@ -360,6 +378,41 @@ impl Pipeline {
                 .parse_pdf(name, data, Some(&options))
                 .await
                 .map_err(|error| anyhow::anyhow!("SoMark parsing failed for {name}: {error}"))?;
+            let mut document = parser::new_document(name, output.content, mime, data.len());
+            document.metadata.insert(
+                crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
+                "true".to_string(),
+            );
+            return Ok(document);
+        }
+
+        if is_monkeyocrv2_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let override_url = self
+                .config
+                .monkeyocrv2_server_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let client = match (override_url, self.monkeyocrv2.as_ref()) {
+                (Some(url), _) => crate::parser::monkeyocrv2::MonkeyOcrV2Client::new(
+                    crate::parser::monkeyocrv2::MonkeyOcrV2Config::new(url)?,
+                )?,
+                (None, Some(client)) => client.clone(),
+                (None, None) => anyhow::bail!(
+                    "MonkeyOCRv2 layout requested but MONKEYOCRV2_SERVER_URL is not configured"
+                ),
+            };
+            if !client.check_installation().await? {
+                anyhow::bail!(
+                    "MonkeyOCRv2 service is not reachable at its configured /health endpoint"
+                );
+            }
+            let output = client
+                .parse_pdf(name, data, 0, 99999)
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!("MonkeyOCRv2 parsing failed for {name}: {error}")
+                })?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
                 crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
@@ -617,6 +670,11 @@ fn is_mineru_layout(layout_recognize: &str) -> bool {
 fn is_somark_layout(layout_recognize: &str) -> bool {
     let normalized = layout_recognize.trim().to_ascii_lowercase();
     normalized == "somark" || normalized.ends_with("@somark")
+}
+
+fn is_monkeyocrv2_layout(layout_recognize: &str) -> bool {
+    let normalized = layout_recognize.trim().to_ascii_lowercase();
+    normalized == "monkeyocrv2" || normalized.ends_with("@monkeyocrv2")
 }
 
 #[cfg(test)]
@@ -919,6 +977,79 @@ mod tests {
             !chunks[0]
                 .metadata
                 .contains_key(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_monkeyocrv2_is_used_by_the_pdf_pipeline() {
+        use std::io::Write;
+
+        let records = serde_json::json!({
+            "layouts": [{
+                "content": "MonkeyOCRv2 pipeline",
+                "label": "text",
+                "page_num": 1,
+                "bbox": [1, 2, 3, 4]
+            }]
+        });
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("doc/doc.json", options).unwrap();
+        writer.write_all(records.to_string().as_bytes()).unwrap();
+        let archive = writer.finish().unwrap().into_inner();
+
+        let app = Router::new()
+            .route("/health", axum::routing::get(|| async { StatusCode::OK }))
+            .route(
+                "/parse",
+                axum::routing::post(move || {
+                    let archive = archive.clone();
+                    async move {
+                        axum::response::Response::builder()
+                            .status(StatusCode::OK)
+                            .header(axum::http::header::CONTENT_TYPE, "application/zip")
+                            .body(axum::body::Body::from(archive))
+                            .unwrap()
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::parser::monkeyocrv2::MonkeyOcrV2Client::new(
+            crate::parser::monkeyocrv2::MonkeyOcrV2Config::new(&format!("http://{address}"))
+                .unwrap(),
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "monkeyocrv2-model@primary@MonkeyOCRv2".into(),
+            ..ParserConfig::default()
+        })
+        .with_monkeyocrv2_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\n mock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("MonkeyOCRv2 pipeline"));
+        assert!(document.content.contains("@@1\t1\t3\t2\t4##"));
+        assert_eq!(
+            document
+                .metadata
+                .get(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+                .map(String::as_str),
+            Some("true")
+        );
+        let mut chunks = pipeline.chunker.chunk(&document, &pipeline.config).unwrap();
+        Pipeline::annotate_chunks(&mut chunks, &pipeline.config);
+        assert_eq!(chunks.len(), 1);
+        assert!(!chunks[0].content.contains("@@"));
+        assert_eq!(
+            chunks[0].metadata.get("position_int").map(String::as_str),
+            Some("[[1,1,3,2,4]]")
         );
     }
 

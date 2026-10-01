@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.63] — 2026-10-01（对标批次 v0.3.10h）
+
+> W-3 首批：RAGFlow v0.27.2 的 MonkeyOCRv2 远端 PDF 解析器全量移植（纯 Rust）。
+
+### Added
+
+- **MonkeyOCRv2 远端解析器**（`deepdoc/parser/monkeyocrv2_parser.py` → `src/parser/monkeyocrv2.rs`）：`GET /health` 就绪探测（10 秒超时）；`POST /parse` 多部分上传（`start_page_id`/`end_page_id`）并按 512 MiB 上限流式读取 ZIP；布局记录转换（`{root}/{root}.json` → `jsons/*.json` → `all_results.json` 回退；图像按 basename 索引；1 万成员 / 2 GiB 解压安全上限）；输出沿用既有 `@@页	左	右	上	下##` 位置标签与 `<!--TABLE_START-->` / `<!--IMAGE_START-->` 标记，由现有分块与图像阶段消费。
+- **配置**：`layout_recognize` 支持 `MonkeyOCRv2` 与 `<model>@monkeyocrv2`（归一化）；服务地址取 `parser_config.monkeyocrv2_server_url`（按知识库覆盖），回退 `MONKEYOCRV2_SERVER_URL`；未配置或服务不可达时给出明确错误，不做静默降级。
+
+### Tests
+
+- 11 项新单测（含 mock `/health`+`/parse` 端到端与 pipeline `position_int` 断言）与 `@monkeyocrv2` 归一化测试；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.62] — 2026-10-01（对标批次 v0.3.10g）
 
 > RAGFlow v0.27.2 覆盖台账全量分类完成（5977 文件，unmapped=0）并建立对标收敛队列；本轮无功能性代码变更。
