@@ -15,15 +15,16 @@
 
 use std::collections::{HashMap, HashSet};
 
+use async_trait::async_trait;
 use regex::Regex;
 use serde_json::Value;
 
 use crate::harness::HarnessChat;
 use crate::harness::keywords::extract_weighted_keywords;
 use crate::harness::orchestrator::direct::Kbinfos;
+use crate::harness::tools::search::{SearchSettings, resolve_rerank_candidates, resolve_top_k};
 use crate::harness::tools::text_processing::compact_keywords;
 use crate::harness::{form_message, message_fit_in};
-use crate::prompts::RAGFLOW_CITATION_PROMPT;
 
 /// Tokens held back from the model's context when fitting retrieved evidence
 /// into the sufficiency / follow-up prompts.
@@ -100,10 +101,8 @@ pub fn cache_similar(
     if aw.is_empty() || bw.is_empty() {
         return false;
     }
-    if !an.is_empty() || !bn.is_empty() {
-        if an != bn {
-            return false;
-        }
+    if (!an.is_empty() || !bn.is_empty()) && an != bn {
+        return false;
     }
     let shared = aw.intersection(bw).count();
     if shared < RAG_CACHE_MIN_SHARED {
@@ -158,6 +157,8 @@ pub fn get_citation_guidelines(user_defined_prompts: &HashMap<String, String>) -
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct KbRef {
     pub id: String,
+    /// Upstream `kb.tenant_id` (used by the structured retrieve).
+    pub tenant_id: String,
     pub field_map: Option<serde_json::Map<String, Value>>,
 }
 
@@ -205,10 +206,10 @@ pub struct RagTools {
     pub original_user_question: String,
     pub thinking_mode: String,
     pub field_map: serde_json::Map<String, Value>,
-    /// Structured (SQL) KB ids (`parser_config.field_map` present).
-    pub sql_kbs: Vec<String>,
-    /// Unstructured KB ids.
-    pub kbs: Vec<String>,
+    /// Structured (SQL) KB descriptors (`parser_config.field_map` present).
+    pub sql_kbs: Vec<KbRef>,
+    /// Unstructured KB descriptors.
+    pub kbs: Vec<KbRef>,
     pub kb_ids: Vec<String>,
     pub web_search: Option<Value>,
     pub meta_data_filter: Option<Value>,
@@ -277,9 +278,9 @@ impl RagTools {
         for kb in &source {
             if let Some(map) = &kb.field_map {
                 tools.field_map.extend(map.clone());
-                tools.sql_kbs.push(kb.id.clone());
+                tools.sql_kbs.push(kb.clone());
             } else {
-                tools.kbs.push(kb.id.clone());
+                tools.kbs.push(kb.clone());
                 tools.kb_ids.push(kb.id.clone());
             }
         }
@@ -476,6 +477,402 @@ impl RagTools {
         };
         (question, compact_keywords(keywords.trim(), 15))
     }
+
+    /// `retrieve`: raw chunks from the unstructured KBs for one question.
+    /// Returns `{"chunks", "doc_aggs"}` — no citation stamping, no pool
+    /// accumulation (the graph owns merging so parallel retrieval is race-free).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn retrieve(
+        &self,
+        backend: &dyn RagRetrievalBackend,
+        question: &str,
+        keywords: Option<&Value>,
+        doc_scope: Option<&[String]>,
+        top_n: Option<usize>,
+        similarity_threshold: Option<f64>,
+        using_embedding: bool,
+    ) -> Value {
+        if self.kb_ids.is_empty() {
+            return empty_kbinfos();
+        }
+        let keyword_text = match keywords {
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| item.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            Some(Value::String(text)) => text.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        };
+        // Explicit argument wins, then the caller's configuration, then this
+        // method's own defaults (they differ from the search tools' on purpose).
+        let top_n = top_n.unwrap_or(self.top_n.unwrap_or(6));
+        let similarity_threshold =
+            similarity_threshold.unwrap_or(self.similarity_threshold.unwrap_or(0.2));
+        let mut doc_scope = self.scoped_doc_ids(doc_scope);
+        if matches!(&doc_scope, Some(scope) if scope.len() == 1 && scope[0] == "-999") {
+            return empty_kbinfos();
+        }
+        if let Some(scope) = &doc_scope {
+            let candidates: Vec<String> = scope.clone();
+            let known = backend.filter_known_doc_ids(&candidates);
+            let valid: Vec<String> = candidates
+                .iter()
+                .filter(|doc_id| known.contains(*doc_id))
+                .cloned()
+                .collect();
+            if !valid.is_empty() {
+                doc_scope = Some(valid);
+            } else {
+                if self.doc_scope.is_some() {
+                    return empty_kbinfos();
+                }
+                doc_scope = None;
+            }
+        }
+        let mut search_terms = keyword_text.trim().to_string();
+        let mut question_text = question.to_string();
+        if search_terms.is_empty() {
+            search_terms = question_text.clone();
+        } else {
+            question_text = format!("{question_text} {search_terms}");
+        }
+        let settings = SearchSettings {
+            top_n: self.top_n,
+            top_k: self.top_k,
+            rerank_candidates_count: self.rerank_candidates_count,
+            vector_similarity_weight: self.vector_similarity_weight,
+            similarity_threshold: self.similarity_threshold,
+        };
+        let vector_weight = if using_embedding {
+            self.vector_similarity_weight.unwrap_or(0.7)
+        } else {
+            0.0
+        };
+        let knn_top_k = resolve_top_k(&settings);
+        let rerank_candidates_count = resolve_rerank_candidates(&settings, top_n);
+        let request = RagRetrievalRequest {
+            question: question_text.clone(),
+            tenant_ids: self.tenant_ids.clone(),
+            kb_ids: self.kb_ids.clone(),
+            top_n,
+            similarity_threshold,
+            vector_similarity_weight: vector_weight,
+            knn_top_k,
+            rerank_candidates_count,
+            doc_ids: doc_scope,
+            rank_feature: backend.rank_feature(&question_text),
+            using_embedding,
+        };
+        let Some(kbinfos) = backend.retrieval(&request).await else {
+            return empty_kbinfos();
+        };
+        if !value_truthy(&kbinfos) {
+            return empty_kbinfos();
+        }
+        let chunks_in = kbinfos
+            .get("chunks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let chunks = backend.retrieval_by_children(&chunks_in, &self.tenant_ids);
+        let doc_aggs = kbinfos
+            .get("doc_aggs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        serde_json::json!({"chunks": chunks, "doc_aggs": doc_aggs})
+    }
+
+    /// `web_retrieve`: raw kbinfos shape from the public web.
+    pub async fn web_retrieve(&self, backend: &dyn RagRetrievalBackend, query: &str) -> Value {
+        if self.web_search.is_none() {
+            return empty_kbinfos();
+        }
+        let Some(web_res) = backend.web_retrieve_chunks(query).await else {
+            return empty_kbinfos();
+        };
+        let chunks = web_res
+            .get("chunks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let doc_aggs = web_res
+            .get("doc_aggs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        serde_json::json!({"chunks": chunks, "doc_aggs": doc_aggs})
+    }
+
+    /// `structured_retrieve`: query the tabular KBs by translating to SQL.
+    /// Returns `{"answer", "chunks", "doc_aggs"}`.
+    pub async fn structured_retrieve(
+        &self,
+        chat: &dyn HarnessChat,
+        backend: &dyn RagRetrievalBackend,
+        question: &str,
+    ) -> Value {
+        let empty = serde_json::json!({"answer": "", "chunks": [], "doc_aggs": []});
+        if !self.has_structured() {
+            return empty;
+        }
+        let sql_kb_ids: Vec<String> = self.sql_kbs.iter().map(|kb| kb.id.clone()).collect();
+        let tenant_id = self
+            .sql_kbs
+            .first()
+            .map(|kb| kb.tenant_id.clone())
+            .unwrap_or_default();
+        let doc_ids = self.scoped_doc_ids(None);
+        let Some(ans) = backend
+            .use_sql(
+                question,
+                &self.field_map,
+                &tenant_id,
+                chat,
+                &sql_kb_ids,
+                doc_ids,
+            )
+            .await
+        else {
+            return empty;
+        };
+        if !value_truthy(&ans) {
+            return empty;
+        }
+        let reference = ans
+            .get("reference")
+            .cloned()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({}));
+        let answer = ans
+            .get("answer")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let chunks = reference
+            .get("chunks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let doc_aggs = reference
+            .get("doc_aggs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        serde_json::json!({"answer": answer, "chunks": chunks, "doc_aggs": doc_aggs})
+    }
+
+    /// `_fit_evidence`: trim the evidence so question + evidence + the prompt
+    /// template stay inside the FIXED evidence budget.
+    pub fn fit_evidence(&self, question: &str, evidence_md: &str) -> String {
+        if evidence_md.is_empty() {
+            return evidence_md.to_string();
+        }
+        let (_, fitted) =
+            message_fit_in(form_message(question, evidence_md), EVIDENCE_BUDGET_TOKENS);
+        fitted
+            .last()
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or(evidence_md)
+            .to_string()
+    }
+
+    /// `judge_sufficiency`: judge whether the evidence answers the question and
+    /// pick the useful chunks (returns `{}` on failure).
+    pub async fn judge_sufficiency(
+        &self,
+        chat: &dyn HarnessChat,
+        question: &str,
+        evidence_md: &str,
+    ) -> Value {
+        let evidence = self.fit_evidence(question, evidence_md);
+        sufficiency_select(chat, question, &evidence).await
+    }
+
+    /// `gen_followups`: complementary (question, query) pairs for the gaps.
+    pub async fn gen_followups(
+        &self,
+        chat: &dyn HarnessChat,
+        question: &str,
+        query: &str,
+        missing: &[String],
+        evidence_md: &str,
+    ) -> Vec<Value> {
+        let evidence = self.fit_evidence(question, evidence_md);
+        let res = multi_queries_gen(
+            chat,
+            question,
+            if query.is_empty() { question } else { query },
+            missing,
+            &evidence,
+        )
+        .await;
+        res.get("questions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|candidate| {
+                candidate.is_object()
+                    && candidate
+                        .get("question")
+                        .and_then(Value::as_str)
+                        .map(|text| !text.trim().is_empty())
+                        .unwrap_or(false)
+            })
+            .collect()
+    }
+}
+
+/// One `retrieve` request against the host search service (upstream
+/// `settings.retriever.retrieval(...)`; the port fixes `page=1`, `aggs=True`
+/// and `highlight=True` exactly as the source does).
+#[derive(Debug, Clone)]
+pub struct RagRetrievalRequest {
+    pub question: String,
+    pub tenant_ids: Vec<String>,
+    pub kb_ids: Vec<String>,
+    pub top_n: usize,
+    pub similarity_threshold: f64,
+    pub vector_similarity_weight: f64,
+    pub knn_top_k: usize,
+    pub rerank_candidates_count: usize,
+    pub doc_ids: Option<Vec<String>>,
+    pub rank_feature: Value,
+    pub using_embedding: bool,
+}
+
+/// The retrieval / KB services `RAGTools` calls into (RAGFlow's
+/// `settings.retriever` + the peewee services + the web provider + `use_sql`).
+#[async_trait]
+pub trait RagRetrievalBackend: Send + Sync {
+    /// `settings.retriever.retrieval(...)`; `None` stands for an empty result.
+    async fn retrieval(&self, request: &RagRetrievalRequest) -> Option<Value>;
+    /// `settings.retriever.retrieval_by_children(chunks, tenant_ids)`.
+    fn retrieval_by_children(&self, chunks: &[Value], tenant_ids: &[String]) -> Vec<Value>;
+    /// `label_question(question, kbs)` — the rank feature.
+    fn rank_feature(&self, question: &str) -> Value;
+    /// `self._filter_known_doc_ids(candidates)` (DB lookup).
+    fn filter_known_doc_ids(&self, candidates: &[String]) -> HashSet<String>;
+    /// `thread_pool_exec(self.web_search.retrieve_chunks, query)`.
+    async fn web_retrieve_chunks(&self, query: &str) -> Option<Value>;
+    /// `use_sql(question, field_map, tenant_id, chat_mdl, quota=True, kb_ids=…, doc_ids=…)`.
+    async fn use_sql(
+        &self,
+        question: &str,
+        field_map: &serde_json::Map<String, Value>,
+        tenant_id: &str,
+        chat: &dyn HarnessChat,
+        kb_ids: &[String],
+        doc_ids: Option<Vec<String>>,
+    ) -> Option<Value>;
+}
+
+fn empty_kbinfos() -> Value {
+    serde_json::json!({"chunks": [], "doc_aggs": []})
+}
+
+fn value_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().map(|n| n != 0.0).unwrap_or(true),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
+/// `gen_json`: run the chat model and parse ONE JSON value out of its reply
+/// (think-block + fence stripping, one corrective retry — upstream
+/// `prompts.generator.gen_json`). Returns `{}` when both attempts fail.
+async fn gen_json(chat: &dyn HarnessChat, system: &str, user: &str) -> Value {
+    let (_, mut fitted) = message_fit_in(form_message(system, user), chat.max_length());
+    let mut ans = String::new();
+    let mut err = String::new();
+    for _ in 0..2 {
+        if !ans.is_empty()
+            && !err.is_empty()
+            && let Some(last) = fitted.last_mut()
+        {
+            let content = last
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            last["content"] = serde_json::json!(format!(
+                "{content}\nGenerated JSON is as following:\n{ans}\nBut exception while loading:\n{err}\nPlease reconsider and correct it."
+            ));
+        }
+        let system_content = fitted
+            .first()
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or(system)
+            .to_string();
+        let history: Vec<Value> = fitted.iter().skip(1).cloned().collect();
+        ans = chat
+            .chat(&system_content, &history, &serde_json::json!({}))
+            .await
+            .unwrap_or_default();
+        let cleaned = strip_gen_json_marks(&ans);
+        match serde_json::from_str::<Value>(&cleaned)
+            .ok()
+            .or_else(|| crate::structure_compile::repair_json_text(&cleaned))
+        {
+            Some(value) => return value,
+            None => {
+                err = "parse failed".to_string();
+            }
+        }
+    }
+    serde_json::json!({})
+}
+
+/// `re.sub(r"(^.*</think>|```json\n|```\n*$)", "", ans, flags=re.DOTALL)`.
+fn strip_gen_json_marks(text: &str) -> String {
+    let re = Regex::new(r"(?s)^.*</think>|```json\n|```\n*$").expect("gen_json regex");
+    re.replace_all(text, "").to_string()
+}
+
+/// `sufficiency_select`: render the template and parse the verdict JSON.
+async fn sufficiency_select(chat: &dyn HarnessChat, question: &str, ret_content: &str) -> Value {
+    let mut vars: HashMap<&str, &str> = HashMap::new();
+    vars.insert("question", question);
+    vars.insert("retrieved_docs", ret_content);
+    let system = crate::prompts::PromptLibrary::sufficiency_check().render(&vars);
+    let value = gen_json(chat, &system, "Output:\n").await;
+    if value.is_object() {
+        value
+    } else {
+        serde_json::json!({})
+    }
+}
+
+/// `multi_queries_gen`: render the template and parse the follow-up JSON.
+async fn multi_queries_gen(
+    chat: &dyn HarnessChat,
+    question: &str,
+    query: &str,
+    missing: &[String],
+    ret_content: &str,
+) -> Value {
+    let missing_info = missing.join("\n - ");
+    let mut vars: HashMap<&str, &str> = HashMap::new();
+    vars.insert("original_question", question);
+    vars.insert("original_query", query);
+    vars.insert("missing_info", &missing_info);
+    vars.insert("retrieved_docs", ret_content);
+    let system = crate::prompts::PromptLibrary::multi_queries_gen().render(&vars);
+    let value = gen_json(chat, &system, "Output:\n").await;
+    if value.is_object() {
+        value
+    } else {
+        serde_json::json!({})
+    }
 }
 
 fn capitalize(text: &str) -> String {
@@ -586,10 +983,12 @@ mod tests {
             kbs_by_ids: vec![
                 KbRef {
                     id: "kb1".to_string(),
+                    tenant_id: String::new(),
                     field_map: None,
                 },
                 KbRef {
                     id: "kb2".to_string(),
+                    tenant_id: String::new(),
                     field_map: Some(serde_json::Map::from_iter([(
                         "city".to_string(),
                         json!("text"),
@@ -599,7 +998,14 @@ mod tests {
             ..RagToolsConfig::default()
         });
         assert_eq!(tools.kb_ids, vec!["kb1".to_string()]);
-        assert_eq!(tools.sql_kbs, vec!["kb2".to_string()]);
+        assert_eq!(
+            tools
+                .sql_kbs
+                .iter()
+                .map(|kb| kb.id.clone())
+                .collect::<Vec<_>>(),
+            vec!["kb2".to_string()]
+        );
         assert_eq!(tools.field_map.get("city"), Some(&json!("text")));
         assert_eq!(
             tools.doc_scope,
@@ -705,6 +1111,7 @@ mod formalize_tests {
         RagTools::new(RagToolsConfig {
             kbs: vec![KbRef {
                 id: "kb1".to_string(),
+                tenant_id: String::new(),
                 field_map: None,
             }],
             chat_max_length: 4096,
@@ -789,5 +1196,262 @@ mod formalize_tests {
             chat.calls.lock().unwrap().is_empty(),
             "no LLM call for empty input"
         );
+    }
+}
+#[cfg(test)]
+mod retrieval_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MockBackend {
+        retrieval: Option<Value>,
+        calls: Mutex<Vec<RagRetrievalRequest>>,
+        known: HashSet<String>,
+        web: Option<Value>,
+        sql: Option<Value>,
+    }
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockBackend {
+        async fn retrieval(&self, request: &RagRetrievalRequest) -> Option<Value> {
+            self.calls.lock().unwrap().push(request.clone());
+            self.retrieval.clone()
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            let mut out: Vec<Value> = chunks.to_vec();
+            out.push(json!({"child": true}));
+            out
+        }
+        fn rank_feature(&self, question: &str) -> Value {
+            json!({"rf": question})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            self.known.clone()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            self.web.clone()
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            self.sql.clone()
+        }
+    }
+
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    fn tools_with_kb() -> RagTools {
+        RagTools::new(RagToolsConfig {
+            kbs: vec![KbRef {
+                id: "kb1".to_string(),
+                tenant_id: "t1".to_string(),
+                field_map: None,
+            }],
+            tenant_ids: vec!["t1".to_string()],
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn retrieve_returns_empty_without_kbs() {
+        let tools = RagTools::new(RagToolsConfig::default());
+        let backend = MockBackend::default();
+        let out = tools
+            .retrieve(&backend, "q", None, None, None, None, false)
+            .await;
+        assert_eq!(out, json!({"chunks": [], "doc_aggs": []}));
+        assert!(backend.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retrieve_passes_effective_request() {
+        let tools = tools_with_kb();
+        let backend = MockBackend {
+            retrieval: Some(json!({"chunks": [{"id": "c1"}], "doc_aggs": [{"d": 1}]})),
+            ..MockBackend::default()
+        };
+        let out = tools
+            .retrieve(&backend, "q", Some(&json!("kw")), None, None, None, false)
+            .await;
+        assert_eq!(
+            out["chunks"].as_array().unwrap().len(),
+            2,
+            "children merged"
+        );
+        assert_eq!(out["doc_aggs"], json!([{"d": 1}]));
+        let calls = backend.calls.lock().unwrap();
+        let request = &calls[0];
+        assert_eq!(request.top_n, 6, "method default");
+        assert_eq!(request.similarity_threshold, 0.2, "method default");
+        assert_eq!(request.vector_similarity_weight, 0.0, "no embedding -> 0");
+        assert_eq!(request.question, "q kw", "question gains the keywords");
+        assert_eq!(request.rank_feature, json!({"rf": "q kw"}));
+        assert_eq!(request.doc_ids, None);
+    }
+
+    #[tokio::test]
+    async fn retrieve_sentinel_scope_short_circuits() {
+        let mut tools = tools_with_kb();
+        tools.doc_scope = Some(vec!["-999".to_string()]);
+        let backend = MockBackend::default();
+        let out = tools
+            .retrieve(&backend, "q", None, None, None, None, false)
+            .await;
+        assert_eq!(out["chunks"], json!([]));
+        assert!(backend.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retrieve_unknown_docs_fall_back_or_block() {
+        let tools = tools_with_kb();
+        let backend = MockBackend::default();
+        let out = tools
+            .retrieve(
+                &backend,
+                "q",
+                None,
+                Some(&["missing".to_string()]),
+                None,
+                None,
+                false,
+            )
+            .await;
+        assert_eq!(out["chunks"], json!([]));
+        {
+            let calls = backend.calls.lock().unwrap();
+            assert_eq!(
+                calls[0].doc_ids, None,
+                "unknown ids fall back to unfiltered"
+            );
+        }
+
+        let mut bound = tools_with_kb();
+        bound.doc_scope = Some(vec!["d1".to_string()]);
+        let blocked = bound
+            .retrieve(
+                &backend,
+                "q",
+                None,
+                Some(&["missing".to_string()]),
+                None,
+                None,
+                false,
+            )
+            .await;
+        assert_eq!(blocked["chunks"], json!([]));
+        assert_eq!(backend.calls.lock().unwrap().len(), 1, "bound scope blocks");
+    }
+
+    #[tokio::test]
+    async fn web_and_structured_paths() {
+        let mut tools = tools_with_kb();
+        let backend = MockBackend {
+            web: Some(json!({"chunks": [{"w": 1}], "doc_aggs": []})),
+            ..MockBackend::default()
+        };
+        assert_eq!(tools.web_retrieve(&backend, "q").await["chunks"], json!([]));
+        tools.web_search = Some(json!({"provider": "mock"}));
+        assert_eq!(
+            tools.web_retrieve(&backend, "q").await["chunks"],
+            json!([{"w": 1}])
+        );
+
+        assert_eq!(
+            tools
+                .structured_retrieve(
+                    &MockChat {
+                        reply: String::new()
+                    },
+                    &backend,
+                    "q"
+                )
+                .await["answer"],
+            json!("")
+        );
+        let mut structured = tools_with_kb();
+        structured
+            .field_map
+            .insert("city".to_string(), json!("text"));
+        structured.sql_kbs = vec![KbRef {
+            id: "sql1".to_string(),
+            tenant_id: "t1".to_string(),
+            field_map: Some(serde_json::Map::new()),
+        }];
+        let sql_backend = MockBackend {
+            sql: Some(
+                json!({"answer": "42", "reference": {"chunks": [{"id": "c"}], "doc_aggs": []}}),
+            ),
+            ..MockBackend::default()
+        };
+        let out = structured
+            .structured_retrieve(
+                &MockChat {
+                    reply: String::new(),
+                },
+                &sql_backend,
+                "q",
+            )
+            .await;
+        assert_eq!(out["answer"], json!("42"));
+        assert_eq!(out["chunks"], json!([{"id": "c"}]));
+    }
+
+    #[test]
+    fn fit_evidence_bounds_long_text() {
+        let tools = tools_with_kb();
+        let short = "evidence";
+        assert_eq!(tools.fit_evidence("q", short), short);
+        let long = "x".repeat(100_000);
+        let fitted = tools.fit_evidence("q", &long);
+        assert!(fitted.chars().count() < long.chars().count());
+    }
+
+    #[tokio::test]
+    async fn judge_and_followups_parse_json() {
+        let tools = tools_with_kb();
+        let judge_chat = MockChat {
+            reply:
+                "<think>t</think>```json\n{\"is_sufficient\": true, \"useful_chunk_ids\": [1]}\n```"
+                    .to_string(),
+        };
+        let verdict = tools.judge_sufficiency(&judge_chat, "q", "evidence").await;
+        assert_eq!(verdict["is_sufficient"], json!(true));
+
+        let follow_chat = MockChat {
+            reply: "{\"questions\": [{\"question\": \"q1\", \"query\": \"x\"}, {\"question\": \"  \"}, 7]}"
+                .to_string(),
+        };
+        let followups = tools
+            .gen_followups(&follow_chat, "q", "", &[], "evidence")
+            .await;
+        assert_eq!(followups.len(), 1);
+        assert_eq!(followups[0]["question"], json!("q1"));
     }
 }
