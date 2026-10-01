@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 588 | 288400 |
-| partial | 94 | 36711 |
+| full | 589 | 288829 |
+| partial | 93 | 36282 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -548,7 +548,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `agent/tools/jin10.py` | 142 | 6569 | `d0629155c8edc5e3` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/keenable.py` | 194 | 7712 | `f2d7ed6f9abc2d82` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) [v0.27.2 content changed: re-audit] |
 | `agent/tools/pubmed.py` | 153 | 6317 | `c5bfbe3d0db9bbca` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `agent/tools/querit.py` | 429 | 17510 | `51822e79658f2b80` | partial | `src/agent.rs; src/tavily.rs` | （v0.3.10g 审计：Querit 智能体工具；RayRAG 智能体工具框架就位（tavily 等），该工具待接入——worklist W-1（搜索/提供商）） |
+| `agent/tools/querit.py` | 429 | 17510 | `51822e79658f2b80` | full | `src/querit.rs; src/agent.rs` | （v0.3.10k 移植：querit_search 与 querit_contents 两个画布工具——count（默认 10）/chunksPerDoc（默认 3，1..3）与 sites/timeRange/geo/languages 过滤器、{sys.query} 默认、1-10 个绝对 URL 抓取；重试契约（3 次尝试，{429,500,502,503,504} 与网络错误重试，非可重试与 JSON 解析失败立即抛）逐行对齐；校验消息逐条复制；key 取节点 api_key 或 QUERIT_API_KEY，错误文本脱敏；11 项 mock 单测；agent 接线含注册 schema、分发、超时 12s/70s、错误前缀 Querit/Querit contents。） |
 | `agent/tools/qweather.py` | 194 | 8171 | `fe7d2a7dded4d5bc` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) [v0.27.2 content changed: re-audit] |
 | `agent/tools/retrieval.py` | 317 | 13827 | `190d8f5f81eae168` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) [v0.27.2 content changed: re-audit] |
 | `agent/tools/searxng.py` | 153 | 5953 | `ef03375b3063e71b` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |

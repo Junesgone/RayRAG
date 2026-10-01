@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.66] — 2026-10-01（对标批次 v0.3.10k）
+
+> W-1 续：RAGFlow v0.27.2 的 Querit 智能体工具（querit_search / querit_contents）移植（纯 Rust）。
+
+### Added
+
+- **Querit 画布工具**（`agent/tools/querit.py` → `src/querit.rs` + `src/agent.rs` 接线）：`querit_search`（count/chunks_per_doc、sites/time_range/country/language 过滤器、`{sys.query}` 默认）与 `querit_contents`（1–10 个绝对 HTTP(S) URL、format/crawl_timeout/extras_meta）；三尝试重试契约（{429,500,502,503,504} 与网络错误重试、其他立即抛出）、上游校验消息逐条、API key 脱敏、组件超时 12s/70s，错误前缀 `Querit`/`Querit contents`。
+- **配置**：`QUERIT_API_KEY` 环境变量（节点 `api_key` 优先）。
+
+### Tests
+
+- 11 项 querit mock 单测（重试成功/穷尽/立即抛、载荷与过滤器、URL 归一化与校验、响应校验、脱敏、contents 请求）+ 工具注册与超时映射回归测试；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.65] — 2026-10-01（对标批次 v0.3.10j）
 
 > W-1 首批：RAGFlow v0.27.2 的 web_search 提供商层（Querit / Serply / You.com）与共享 URL 助手移植（纯 Rust）。

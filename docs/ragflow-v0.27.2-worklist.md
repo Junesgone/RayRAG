@@ -7,17 +7,16 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：94（UI 残留 42 + 实施队列 52）
+- partial：93（UI 残留 42 + 实施队列 51）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
 ## 实施队列
 
-### W-1 搜索/提供商接入（6 项）
+### W-1 搜索/提供商接入（5 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `agent/tools/querit.py` | 429 | `src/agent.rs; src/tavily.rs` | （v0.3.10g 审计：Querit 智能体工具；RayRAG 智能体工具框架就位（tavily 等），该工具待接入——worklist W-1（搜索/提供商）） |
 | `agent/tools/sofya.py` | 290 | `src/agent.rs; src/search.rs` | （v0.3.10g 审计：Sofya 智能体搜索工具；智能体工具框架就位，该工具待接入——worklist W-1（搜索/提供商）） |
 | `agent/tools/youcom.py` | 223 | `src/agent.rs; src/tavily.rs` | （v0.3.10g 审计：You.com 智能体工具；智能体工具框架就位，该工具待接入——worklist W-1（搜索/提供商）） |
 | `api/apps/restful_apis/aimlapi_api.py` | 198 | `src/api/oauth_web.rs; src/providers.rs` | （v0.3.10g 审计：AIMLAPI 设备码授权端点；RayRAG OAuth/提供商框架就位，AIMLAPI 设备流待接入——worklist W-1（搜索/提供商）） |

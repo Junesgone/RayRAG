@@ -35,6 +35,11 @@ use crate::google_scholar::{
 use crate::jin10::{Jin10Client, Jin10Provider, Jin10Request, Jin10Type};
 use crate::llm::{ChatMessage, ChunkReference, LlmClient, TokenUsage, ToolCall, ToolChatMessage};
 use crate::pubmed::{PubMedArticle, PubMedClient, PubMedProvider, PubMedSearchRequest};
+use crate::querit::{
+    QUERIT_DEFAULT_TIMEOUT_SECS, QueritClient, QueritContentsParams, QueritSearchParams,
+    build_contents_payload, build_search_payload, normalize_contents_urls, safe_error_message,
+    validate_contents_inputs, validate_contents_response, validate_search_inputs,
+};
 use crate::qweather::{QWeatherClient, QWeatherProvider, QWeatherRequest, QWeatherType};
 use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
@@ -3701,7 +3706,9 @@ fn resolve_component_timeout_with(
         "LLM" | "MESSAGE" | "AGENT" => Some(Duration::from_secs(600)),
         "RETRIEVAL" | "WIKIPEDIA" | "YAHOOFINANCE" => Some(Duration::from_secs(60)),
         "TAVILYSEARCH" | "TAVILY" | "DUCKDUCKGO" | "GOOGLE" | "ARXIV" | "GOOGLESCHOLAR"
-        | "GITHUB" | "SEARXNG" | "PUBMED" => Some(Duration::from_secs(12)),
+        | "GITHUB" | "SEARXNG" | "PUBMED" | "QUERITSEARCH" => Some(Duration::from_secs(12)),
+        // QueritContents crawls up to ten pages; the upstream decorator default is 70s.
+        "QUERITCONTENTS" => Some(Duration::from_secs(70)),
         "EXESQL" | "INVOKE" => Some(Duration::from_secs(3)),
         _ => None,
     } {
@@ -3920,6 +3927,79 @@ fn load_canvas_agent_tools(node: &CanvasNode) -> Result<Vec<CanvasAgentTool>> {
                         }),
                         serde_json::json!(["urls"]),
                     )
+                } else if component_name.eq_ignore_ascii_case("queritsearch") {
+                    validate_querit_search_params(&child)?;
+                    (
+                        "querit_search",
+                        "Search the live web with Querit and return the complete Querit API response.",
+                        serde_json::json!({
+                            "query": {
+                                "type": "string",
+                                "description": "The search query to execute with Querit.",
+                                "default": "{sys.query}"
+                            },
+                            "count": {
+                                "type": "integer",
+                                "description": "The maximum number of results to return. Defaults to 10."
+                            },
+                            "chunks_per_doc": {
+                                "type": "integer",
+                                "description": "The number of summary chunks per document. Supports values from 1 to 3."
+                            },
+                            "site_include": {
+                                "type": "array",
+                                "description": "Sites that search results must include.",
+                                "items": {"type": "string"}
+                            },
+                            "site_exclude": {
+                                "type": "array",
+                                "description": "Sites that search results must exclude.",
+                                "items": {"type": "string"}
+                            },
+                            "time_range": {
+                                "type": "string",
+                                "description": "A Querit time range such as d7, w1, m3, y1, or YYYY-MM-DDtoYYYY-MM-DD."
+                            },
+                            "country_include": {
+                                "type": "array",
+                                "description": "Return results associated with the specified countries.",
+                                "items": {"type": "string"}
+                            },
+                            "language_include": {
+                                "type": "array",
+                                "description": "Languages that search results must include.",
+                                "items": {"type": "string"}
+                            }
+                        }),
+                        serde_json::json!(["query"]),
+                    )
+                } else if component_name.eq_ignore_ascii_case("queritcontents") {
+                    validate_querit_contents_params(&child)?;
+                    (
+                        "querit_contents",
+                        "Crawl one or more web pages with Querit and return their contents.",
+                        serde_json::json!({
+                            "urls": {
+                                "type": "array",
+                                "description": "The absolute HTTP or HTTPS URLs to crawl. Supports 1 to 10 URLs.",
+                                "items": {"type": "string"}
+                            },
+                            "format": {
+                                "type": "string",
+                                "description": "Content format: text, markdown, or html. Defaults to markdown.",
+                                "enum": ["text", "markdown", "html"]
+                            },
+                            "crawl_timeout": {
+                                "type": "integer",
+                                "description": "Per-page crawl timeout in seconds. Must be between 1 and 60."
+                            },
+                            "extras_meta": {
+                                "type": "boolean",
+                                "description": "Whether to include page metadata in each result."
+                            }
+                        }),
+                        serde_json::json!(["urls"]),
+                    )
                 } else if component_name.eq_ignore_ascii_case("duckduckgo") {
                     validate_duckduckgo_params(&child)?;
                     (
@@ -4039,7 +4119,7 @@ fn load_canvas_agent_tools(node: &CanvasNode) -> Result<Vec<CanvasAgentTool>> {
                     )
                 } else {
                     bail!(
-                        "Canvas Agent '{}' tool '{}' is not implemented; this Rust slice supports Retrieval, TavilySearch, TavilyExtract, DuckDuckGo, Wikipedia, GoogleScholar, GitHub, YahooFinance, ArXiv and PubMed",
+                        "Canvas Agent '{}' tool '{}' is not implemented; this Rust slice supports Retrieval, TavilySearch, TavilyExtract, QueritSearch, QueritContents, DuckDuckGo, Wikipedia, GoogleScholar, GitHub, YahooFinance, ArXiv and PubMed",
                         node.id,
                         component_name
                     );
@@ -4545,6 +4625,16 @@ async fn execute_canvas_agent_tool_with_providers(
             validate_tavily_extract_params(&child)?;
             execute_agent_tavily_with_timeout(runtime, &child, providers.tavily).await?;
         }
+        "queritsearch" => {
+            validate_querit_search_params(&child)?;
+            execute_agent_querit_search_with_timeout(runtime, &child, &QueritClient::default())
+                .await?;
+        }
+        "queritcontents" => {
+            validate_querit_contents_params(&child)?;
+            execute_agent_querit_contents_with_timeout(runtime, &child, &QueritClient::default())
+                .await?;
+        }
         "duckduckgo" => {
             validate_duckduckgo_params(&child)?;
             execute_agent_duckduckgo_with_timeout(runtime, &child, providers.duckduckgo).await?;
@@ -4666,6 +4756,8 @@ async fn execute_canvas_agent_tool_with_providers(
             "jin10" => "Jin10",
             "qweather" => "QWeather",
             "searxng" => "SearXNG",
+            "queritsearch" => "Querit",
+            "queritcontents" => "Querit contents",
             _ => "Tavily",
         };
         return Ok(format!("{provider} error: {error}"));
@@ -9888,6 +9980,476 @@ fn set_duckduckgo_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: S
 }
 
 fn set_tavily_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
+    runtime.outputs.insert(
+        node.id.clone(),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
+    );
+}
+fn querit_api_key(node: &CanvasNode) -> Result<String> {
+    node.params
+        .get("api_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|api_key| !api_key.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            std::env::var("QUERIT_API_KEY")
+                .ok()
+                .map(|api_key| api_key.trim().to_owned())
+                .filter(|api_key| !api_key.is_empty())
+        })
+        .ok_or_else(|| {
+            anyhow!("Querit API key is required. Configure api_key or set QUERIT_API_KEY.")
+        })
+}
+
+fn querit_retry_delay(node: &CanvasNode) -> Result<Duration> {
+    let seconds = node
+        .params
+        .get("delay_after_error")
+        .and_then(Value::as_f64)
+        .unwrap_or(2.0);
+    if !seconds.is_finite() || seconds < 0.0 {
+        bail!(
+            "Querit component '{}' delay_after_error must be a non-negative finite number",
+            node.id
+        );
+    }
+    Ok(Duration::from_secs_f64(seconds))
+}
+
+fn validate_querit_search_params(node: &CanvasNode) -> Result<()> {
+    if node
+        .params
+        .get("query")
+        .is_some_and(|value| !value.is_string())
+    {
+        bail!("QueritSearch '{}' query must be a string", node.id);
+    }
+    if let Some(count) = node.params.get("count")
+        && count.as_i64().is_none_or(|count| count < 1)
+    {
+        bail!(
+            "QueritSearch '{}' count must be an integer greater than or equal to 1",
+            node.id
+        );
+    }
+    if let Some(chunks) = node.params.get("chunks_per_doc")
+        && chunks
+            .as_i64()
+            .is_none_or(|chunks| !(1..=3).contains(&chunks))
+    {
+        bail!(
+            "QueritSearch '{}' chunks_per_doc must be an integer from 1 to 3",
+            node.id
+        );
+    }
+    if let Some(time_range) = node.params.get("time_range") {
+        let Some(text) = time_range.as_str() else {
+            bail!("QueritSearch '{}' time_range must be a string", node.id);
+        };
+        let probe = QueritSearchParams {
+            time_range: text.to_owned(),
+            chunks_per_doc: None,
+            ..QueritSearchParams::default()
+        };
+        validate_search_inputs(&probe)
+            .map_err(|error| anyhow!("QueritSearch '{}': {error}", node.id))?;
+    }
+    for field in [
+        "site_include",
+        "site_exclude",
+        "country_include",
+        "language_include",
+    ] {
+        if let Some(value) = node.params.get(field)
+            && (!value.is_array()
+                || value
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| !item.is_string())))
+        {
+            bail!(
+                "QueritSearch '{}' {field} must be an array of strings",
+                node.id
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_querit_contents_params(node: &CanvasNode) -> Result<()> {
+    let urls = normalize_contents_urls(node.params.get("urls").unwrap_or(&Value::Null));
+    let format = match node.params.get("format") {
+        None | Some(Value::Null) => "markdown".to_owned(),
+        Some(Value::String(text)) => text.clone(),
+        Some(_) => bail!("QueritContents '{}' format must be a string", node.id),
+    };
+    let crawl_timeout = match node.params.get("crawl_timeout") {
+        None | Some(Value::Null) => 10,
+        Some(value) => value.as_i64().ok_or_else(|| {
+            anyhow!(
+                "QueritContents '{}' crawl_timeout must be an integer from 1 to 60",
+                node.id
+            )
+        })?,
+    };
+    let extras_meta = match node.params.get("extras_meta") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => bail!("QueritContents '{}' extras_meta must be a boolean", node.id),
+    };
+    let params = QueritContentsParams {
+        urls,
+        format,
+        crawl_timeout,
+        extras_meta,
+    };
+    validate_contents_inputs(&params)
+        .map_err(|error| anyhow!("QueritContents '{}': {error}", node.id))?;
+    Ok(())
+}
+
+async fn execute_agent_querit_search_with_timeout(
+    runtime: &mut CanvasRuntime,
+    child: &CanvasNode,
+    client: &QueritClient,
+) -> Result<()> {
+    let timeout = component_timeout(&child.component_name);
+    match crate::runtime::with_timeout(
+        timeout,
+        execute_querit_search_with_provider(runtime, child, client),
+    )
+    .await
+    {
+        Err(error)
+            if error
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_some() =>
+        {
+            set_querit_error(
+                runtime,
+                child,
+                format!("Querit timed out after {} seconds", timeout.as_secs()),
+            );
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+fn querit_text(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+    }
+}
+
+fn querit_search_outputs(results: &[Value], full_response: &Value) -> TavilySearchOutput {
+    let mut chunks = Vec::new();
+    let mut doc_aggs = Vec::new();
+    let mut references = Vec::new();
+    let mut formalized = Vec::new();
+    for result in results {
+        let content = querit_text(result.get("snippet"));
+        let content = tavily_data_image_regex().replace_all(&content, "");
+        let content: String = content.chars().take(10_000).collect();
+        if content.is_empty() {
+            continue;
+        }
+        let title = querit_text(result.get("title"));
+        let url = querit_text(result.get("url"));
+        let id = hash_str2int(&content, 100_000_000).to_string();
+        chunks.push(serde_json::json!({
+            "chunk_id": id,
+            "content": content,
+            "doc_id": id,
+            "docnm_kwd": title,
+            "similarity": 1,
+            "url": url
+        }));
+        doc_aggs.push(serde_json::json!({
+            "doc_name": title,
+            "doc_id": id,
+            "count": 1,
+            "url": url
+        }));
+        references.push(ChunkReference {
+            id: id.clone(),
+            kb_id: id.clone(),
+            content: content.clone(),
+            similarity: Some(1.0_f32),
+            vector_similarity: None,
+            term_similarity: None,
+        });
+        formalized.push(format!(
+            "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
+            hash_str2int(&id, 500),
+            title.replace('\n', " "),
+            url.replace('\n', " "),
+            content
+        ));
+    }
+    let outputs = Map::from_iter([
+        (
+            "formalized_content".into(),
+            Value::String(formalized.join("\n")),
+        ),
+        ("json".into(), full_response.clone()),
+        ("doc_aggs".into(), Value::Array(doc_aggs.clone())),
+    ]);
+    (outputs, references, chunks, doc_aggs)
+}
+
+async fn execute_querit_search_with_provider(
+    runtime: &mut CanvasRuntime,
+    node: &CanvasNode,
+    client: &QueritClient,
+) -> Result<()> {
+    let query = resolve_tavily_string(runtime, node, "query", "sys.query")?;
+    if query.is_empty() {
+        runtime.outputs.insert(
+            node.id.clone(),
+            Map::from_iter([
+                ("formalized_content".into(), Value::String(String::new())),
+                ("json".into(), Value::Object(Map::new())),
+            ]),
+        );
+        return Ok(());
+    }
+    let api_key = match querit_api_key(node) {
+        Ok(api_key) => api_key,
+        Err(error) => {
+            set_querit_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    let params = QueritSearchParams {
+        query,
+        count: node
+            .params
+            .get("count")
+            .and_then(Value::as_i64)
+            .unwrap_or(10),
+        chunks_per_doc: match node.params.get("chunks_per_doc") {
+            Some(value) => value.as_i64(),
+            None => Some(3),
+        },
+        site_include: resolve_tavily_string_list(runtime, node, "site_include")?,
+        site_exclude: resolve_tavily_string_list(runtime, node, "site_exclude")?,
+        time_range: node
+            .params
+            .get("time_range")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        country_include: resolve_tavily_string_list(runtime, node, "country_include")?,
+        language_include: resolve_tavily_string_list(runtime, node, "language_include")?,
+    };
+    if let Err(error) = validate_search_inputs(&params) {
+        set_querit_error(runtime, node, error.to_string());
+        return Ok(());
+    }
+    let delay = match querit_retry_delay(node) {
+        Ok(delay) => delay,
+        Err(error) => {
+            set_querit_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    if runtime.cancel_flag {
+        set_querit_error(runtime, node, "Task has been canceled".into());
+        return Ok(());
+    }
+    let payload = build_search_payload(&params);
+    match client.search(&api_key, &payload, delay).await {
+        Ok(response) => {
+            if !response.is_object() {
+                set_querit_error(
+                    runtime,
+                    node,
+                    "Querit API response must be a JSON object.".into(),
+                );
+                return Ok(());
+            }
+            match response.get("results") {
+                None | Some(Value::Null) => {
+                    runtime.outputs.insert(
+                        node.id.clone(),
+                        Map::from_iter([
+                            ("formalized_content".into(), Value::String(String::new())),
+                            ("json".into(), response),
+                        ]),
+                    );
+                }
+                Some(container) if !container.is_object() => {
+                    set_querit_error(
+                        runtime,
+                        node,
+                        "Querit API response field results must be an object.".into(),
+                    );
+                }
+                Some(container) => match container.get("result") {
+                    None | Some(Value::Null) => {
+                        runtime.outputs.insert(
+                            node.id.clone(),
+                            Map::from_iter([
+                                ("formalized_content".into(), Value::String(String::new())),
+                                ("json".into(), response),
+                            ]),
+                        );
+                    }
+                    Some(list) if !list.is_array() => {
+                        set_querit_error(
+                            runtime,
+                            node,
+                            "Querit API response field results.result must be an array.".into(),
+                        );
+                    }
+                    Some(list) => {
+                        let items: Vec<Value> = list
+                            .as_array()
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter(|item| item.is_object())
+                                    .cloned()
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let (outputs, references, chunks, doc_aggs) =
+                            querit_search_outputs(&items, &response);
+                        runtime
+                            .retrieval
+                            .insert("chunks".into(), Value::Array(chunks));
+                        runtime
+                            .retrieval
+                            .insert("doc_aggs".into(), Value::Array(doc_aggs));
+                        append_web_references(runtime, references);
+                        runtime.outputs.insert(node.id.clone(), outputs);
+                    }
+                },
+            }
+        }
+        Err(error) => set_querit_error(
+            runtime,
+            node,
+            safe_error_message(&error.to_string(), &api_key),
+        ),
+    }
+    Ok(())
+}
+
+async fn execute_agent_querit_contents_with_timeout(
+    runtime: &mut CanvasRuntime,
+    child: &CanvasNode,
+    client: &QueritClient,
+) -> Result<()> {
+    let timeout = component_timeout(&child.component_name);
+    match crate::runtime::with_timeout(
+        timeout,
+        execute_querit_contents_with_provider(runtime, child, client),
+    )
+    .await
+    {
+        Err(error)
+            if error
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_some() =>
+        {
+            set_querit_error(
+                runtime,
+                child,
+                format!(
+                    "Querit contents timed out after {} seconds",
+                    timeout.as_secs()
+                ),
+            );
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+async fn execute_querit_contents_with_provider(
+    runtime: &mut CanvasRuntime,
+    node: &CanvasNode,
+    client: &QueritClient,
+) -> Result<()> {
+    let urls = normalize_contents_urls(node.params.get("urls").unwrap_or(&Value::Null));
+    let format = node
+        .params
+        .get("format")
+        .and_then(Value::as_str)
+        .unwrap_or("markdown")
+        .to_owned();
+    let crawl_timeout = node
+        .params
+        .get("crawl_timeout")
+        .and_then(Value::as_i64)
+        .unwrap_or(10);
+    let extras_meta = node
+        .params
+        .get("extras_meta")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let api_key = match querit_api_key(node) {
+        Ok(api_key) => api_key,
+        Err(error) => {
+            set_querit_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    let params = QueritContentsParams {
+        urls,
+        format,
+        crawl_timeout,
+        extras_meta,
+    };
+    if let Err(error) = validate_contents_inputs(&params) {
+        set_querit_error(runtime, node, error.to_string());
+        return Ok(());
+    }
+    let delay = match querit_retry_delay(node) {
+        Ok(delay) => delay,
+        Err(error) => {
+            set_querit_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    if runtime.cancel_flag {
+        set_querit_error(runtime, node, "Task has been canceled".into());
+        return Ok(());
+    }
+    // `_request` timeout: max(DEFAULT_TIMEOUT, crawlTimeout + 5).
+    let request_timeout =
+        Duration::from_secs(QUERIT_DEFAULT_TIMEOUT_SECS.max(crawl_timeout.max(0) as u64 + 5));
+    let payload = build_contents_payload(&params);
+    match client
+        .contents(&api_key, &payload, request_timeout, delay)
+        .await
+    {
+        Ok(response) => match validate_contents_response(&response) {
+            Ok(()) => {
+                runtime
+                    .outputs
+                    .insert(node.id.clone(), Map::from_iter([("json".into(), response)]));
+            }
+            Err(error) => set_querit_error(runtime, node, error.to_string()),
+        },
+        Err(error) => set_querit_error(
+            runtime,
+            node,
+            safe_error_message(&error.to_string(), &api_key),
+        ),
+    }
+    Ok(())
+}
+
+fn set_querit_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
     runtime.outputs.insert(
         node.id.clone(),
         Map::from_iter([
