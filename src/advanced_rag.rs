@@ -8,6 +8,7 @@
 //! 3. Fusion: deduplicate + score-merge results across hops
 
 pub mod agentic_rag;
+pub mod agentic_rag_graph;
 
 use crate::Result;
 use crate::search::SearchEngine;
