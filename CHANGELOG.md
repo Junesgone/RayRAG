@@ -2,6 +2,28 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.60] — 2026-10-01（对标批次 v0.3.10e）
+
+> agent / ingestion pipeline 模板 fixture 同步到 RAGFlow v0.27.2（30 模板 / 15 条 dataflow 管线）。
+
+### Added
+
+- **模板同步工具** `scripts/sync-agent-templates.py`（`--check/--write`）：从固定参考树读取
+  `agent/templates/*.json` 与迁移后的 `internal/ingestion/pipeline/template/*.json`，一次生成
+  fixtures（上游 `dsl` 紧凑 JSON）、`meta.json`（en/zh 标题/描述/canvas 元数据）与
+  `src/agent_templates.rs` 的清单、`dataflow_canvas` 分类和计数。
+- **模板集合更新为 30 个**：新增 `cajal_scientific_paper_agent` 与 `audio/email/picture/presentation/qa/table`
+  管线模板；移除上游已删除的 `cv_analysis_and_candidate_evaluation` 与 `ingestion_pipeline_resume`；
+  共 15 条 `dataflow_canvas` 管线。
+- `compiler.json`（DSL-only，无 title/description）暂不进入模板列表，记录为随 Compiler 流程后续接入。
+
+### Notes
+
+- 台账：16 行 `agent/templates` 再审计关闭；12 个 `internal/ingestion/pipeline/template` 行由 `reference`
+  修正为 `full`（原 `internal/` 兜底规则误判）；full 569→581、reference 4452→4440，unmapped 467 不变，
+  `--check` 通过。
+- 全量 `cargo test --locked --offline --lib` **1638 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净。
+
 ## [0.4.59] — 2026-10-01（对标批次 v0.3.10d）
 
 > 详情路由真实遍历补齐 + v0.27.2 数据集 Artifacts 页签落地。

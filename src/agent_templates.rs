@@ -1,16 +1,22 @@
 //! Seeded RAGFlow agent workflow templates.
-//! Mirrors `/root/ragflow/agent/templates/*.json` (25 templates). Each entry is
+//! Mirrors `/root/ragflow/agent/templates/*.json` (30 templates). Each entry is
 //! `(slug, name, description, dsl_json)`; the DSL is embedded at compile time via
 //! `include_str!` from `src/api/fixtures/agent_templates/<slug>.json` so the raw
 //! JSON survives untouched (no escaping/truncation risk in Rust source).
 
-/// (slug, name, description, dsl_json) — 25 seeded RAGFlow workflow templates.
+/// (slug, name, description, dsl_json) — 30 seeded RAGFlow workflow templates.
 pub const AGENT_TEMPLATES: &[(&str, &str, &str, &str)] = &[
     (
         "advanced_ingestion_pipeline",
         "Advanced Ingestion Pipeline",
         "This template demonstrates how to use an LLM to generate summaries, keywords, Q&A, and metadata for each chunk to support diverse retrieval needs.",
         include_str!("api/fixtures/agent_templates/advanced_ingestion_pipeline.json"),
+    ),
+    (
+        "cajal_scientific_paper_agent",
+        "CAJAL scientific paper agent",
+        "A local-first scientific paper generation agent for RAGFlow. It is preconfigured for Agnuxo/CAJAL-4B-P2PCLAW through Ollama, retrieves knowledge-base evidence, and drafts citation-grounded LaTeX-ready academic sections.",
+        include_str!("api/fixtures/agent_templates/cajal_scientific_paper_agent.json"),
     ),
     (
         "chunk_summary",
@@ -25,12 +31,6 @@ pub const AGENT_TEMPLATES: &[(&str, &str, &str, &str)] = &[
         include_str!("api/fixtures/agent_templates/customer_feedback_dispatcher.json"),
     ),
     (
-        "cv_analysis_and_candidate_evaluation",
-        "CV Analysis and Candidate Evaluation",
-        "This is a workflow that helps companies evaluate resumes, HR uploads a job description first, then submits multiple resumes via the chat window for evaluation.",
-        include_str!("api/fixtures/agent_templates/cv_analysis_and_candidate_evaluation.json"),
-    ),
-    (
         "data_analysis_beginner_assistant",
         "Beginner's data analytics assistant",
         "A beginner-friendly data analysis assistant that guides you through exploring datasets step-by-step, automatically generating code and visualizations while explaining the logic behind each insight. ",
@@ -43,10 +43,22 @@ pub const AGENT_TEMPLATES: &[(&str, &str, &str, &str)] = &[
         include_str!("api/fixtures/agent_templates/deep_research.json"),
     ),
     (
+        "ingestion_pipeline_audio",
+        "Audio",
+        "This template transcribes audio files into text using a speech-to-text model. Supports .wav, .mp3, .aac, .flac, .ogg and other common audio formats.",
+        include_str!("api/fixtures/agent_templates/ingestion_pipeline_audio.json"),
+    ),
+    (
         "ingestion_pipeline_book",
         "Book",
         "This template segments parsed files by book structure. Best for books, long-form manuscripts, literary works, and other documents with defined chapters and sections.",
         include_str!("api/fixtures/agent_templates/ingestion_pipeline_book.json"),
+    ),
+    (
+        "ingestion_pipeline_email",
+        "Email",
+        "This template parses email files, extracting headers, body content, and attachments. Best for .eml and .msg files.",
+        include_str!("api/fixtures/agent_templates/ingestion_pipeline_email.json"),
     ),
     (
         "ingestion_pipeline_general",
@@ -79,10 +91,28 @@ pub const AGENT_TEMPLATES: &[(&str, &str, &str, &str)] = &[
         include_str!("api/fixtures/agent_templates/ingestion_pipeline_paper.json"),
     ),
     (
-        "ingestion_pipeline_resume",
-        "Resume",
-        "This template segments parsed files into resume-specific sections. Best for career-related documents with clearly defined categories such as experience, education, projects, and skills.",
-        include_str!("api/fixtures/agent_templates/ingestion_pipeline_resume.json"),
+        "ingestion_pipeline_picture",
+        "Picture",
+        "This template extracts text from images via OCR and describes video content using vision models. Supports .jpg, .png, .gif image formats and .mp4, .avi, .mkv video formats.",
+        include_str!("api/fixtures/agent_templates/ingestion_pipeline_picture.json"),
+    ),
+    (
+        "ingestion_pipeline_presentation",
+        "Presentation",
+        "This template segments parsed slide content. Best for presentation files such as PowerPoint slides, keynote files, and lecture materials organized slide by slide.",
+        include_str!("api/fixtures/agent_templates/ingestion_pipeline_presentation.json"),
+    ),
+    (
+        "ingestion_pipeline_qa",
+        "Q&A",
+        "This template segments parsed files by Q&A pairs. Best for documents structured as questions and answers, such as FAQ pages, interview transcripts, and knowledge bases organized in a question-answer format.",
+        include_str!("api/fixtures/agent_templates/ingestion_pipeline_qa.json"),
+    ),
+    (
+        "ingestion_pipeline_table",
+        "Table",
+        "This template extracts and segments tables from parsed documents. Best for spreadsheet files, financial reports, statistical documents, and any content organized in tabular format.",
+        include_str!("api/fixtures/agent_templates/ingestion_pipeline_table.json"),
     ),
     (
         "market_seo_article_writer",
@@ -168,13 +198,18 @@ pub fn template_canvas_category(slug: &str) -> &'static str {
     match slug {
         "advanced_ingestion_pipeline"
         | "chunk_summary"
+        | "ingestion_pipeline_audio"
         | "ingestion_pipeline_book"
+        | "ingestion_pipeline_email"
         | "ingestion_pipeline_general"
         | "ingestion_pipeline_laws"
         | "ingestion_pipeline_manual"
         | "ingestion_pipeline_one"
         | "ingestion_pipeline_paper"
-        | "ingestion_pipeline_resume"
+        | "ingestion_pipeline_picture"
+        | "ingestion_pipeline_presentation"
+        | "ingestion_pipeline_qa"
+        | "ingestion_pipeline_table"
         | "title_chunker" => "dataflow_canvas",
         _ => "agent_canvas",
     }
