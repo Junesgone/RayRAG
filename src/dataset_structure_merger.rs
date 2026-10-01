@@ -190,7 +190,7 @@ fn mention_count_of(row: &DocRow, payload: &Value) -> i64 {
 }
 
 /// Python `max(items, key=len)` keeps the first longest element on ties.
-fn longest_first<'a>(items: &'a [String]) -> Option<&'a String> {
+fn longest_first(items: &[String]) -> Option<&String> {
     let mut best: Option<&String> = None;
     let mut best_len = 0usize;
     for item in items {
@@ -1255,7 +1255,7 @@ pub async fn run_structure_merge(
         return;
     }
 
-    let mut template_meta: HashMap<String, (bool, Option<String>)> = HashMap::new();
+    let template_meta: HashMap<String, (bool, Option<String>)> = HashMap::new();
     let resolve_template = |template_id: &str| -> (bool, Option<String>) {
         if let Some(cached) = template_meta.get(template_id) {
             return cached.clone();
