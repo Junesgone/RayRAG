@@ -133,7 +133,7 @@ impl YouComClient {
         let mut last_error = String::from("unknown error");
         let attempts = attempts.max(1);
         for attempt in 0..attempts {
-            let mut request = if api_key.is_empty() {
+            let request = if api_key.is_empty() {
                 self.client.get(self.keyless_endpoint.clone())
             } else {
                 self.client

@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：81（UI 残留 42 + 实施队列 39）
+- partial：79（UI 残留 42 + 实施队列 37）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -75,12 +75,10 @@
 | `rag/nlp/delim.py` | 179 | `src/parser/` | （v0.3.10g 审计：parser_config.delimiter 统一解析；RayRAG 各解析器内联处理，统一化待对齐——worklist W-5（结构图/编译器/切分）） |
 | `rag/svr/task_executor_refactor/dataset_structure_merger.py` | 1027 | `src/graphrag_enhanced.rs; src/structure_compile.rs` | （v0.3.10g 审计：数据集级结构图合并任务（增量/分桶）；待移植——worklist W-5（结构图/编译器/切分）） |
 
-### W-6 沙箱提供商与鉴权（2 项）
+### W-6 沙箱提供商与鉴权（0 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `agent/sandbox/providers/tenki.py` | 521 | `src/sandbox.rs; src/code_exec.rs` | （v0.3.10g 审计：Tenki 沙箱提供商；RayRAG 沙箱提供商框架就位（aliyun 已移植），该提供商待接入——worklist W-6（沙箱提供商/鉴权）） |
-| `agent/sandbox/providers/ucloud_agent_sandbox.py` | 471 | `src/sandbox.rs; src/code_exec.rs` | （v0.3.10g 审计：UCloud 沙箱提供商；待接入——worklist W-6（沙箱提供商/鉴权）） |
 
 ## UI 对齐残留（42 项，任务-3 的 CDP 实点批次收敛）
 

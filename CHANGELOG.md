@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.73] — 2026-10-01（对标批次 v0.3.10r）
+
+> W-6 清零：RAGFlow v0.27.2 的 Tenki 与 UCloud Agent Sandbox 提供商契约移植（纯 Rust）。
+
+### Added
+
+- **Tenki 提供商契约**（`agent/sandbox/providers/tenki.py` → `src/sandbox.rs` + `src/api/sandbox_admin.rs`）：配置默认值与校验消息（api_key/timeout/max_lifetime/cpu_cores/memory_mb/disk_size_gb/max_output_bytes/max_artifacts/max_artifact_bytes）、语言归一化（python3→python、javascript→nodejs）、产物契约（8 扩展名/深度 16//home/tenki）、注册表条目与完整配置 schema。
+- **UCloud Agent Sandbox 提供商契约**（`ucloud_agent_sandbox.py` → 同上）：region cn-wlcb/template base/insecure_http 等配置、域推导（`<region>.sandbox.ucloudai.com`，domain 可覆盖）、js/node 语言别名、产物契约（/home/user）、注册表条目与 schema。
+- 沙箱注册表 5→7；有界差异：vendor SDK 执行为 Python-only，本块为契约级对齐（与 aliyun 先例一致）。
+
+### Tests
+
+- 3 项新单测（tenki 默认值/边界/校验、ucloud 默认值/校验/域推导、产物与 home 常量）+ 两处注册表断言更新；`cloud_provider` 3 passed、`sandbox_admin` 4 passed；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.72] — 2026-10-01（对标批次 v0.3.10q）
 
 > W-6 首批：RAGFlow v0.27.2 的执行器 /run 鉴权（auth.py）与预鉴权限流（preauth.py）移植（纯 Rust）。

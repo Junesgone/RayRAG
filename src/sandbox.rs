@@ -2047,6 +2047,362 @@ fn monotonic_seconds() -> f64 {
         .as_secs_f64()
 }
 
+// ───────────── 云端沙箱提供商契约（tenki.py / ucloud_agent_sandbox.py） ─────────────
+
+/// Upstream `ALLOWED_ARTIFACT_EXTENSIONS` shared by Tenki and UCloud.
+pub const CLOUD_SANDBOX_ARTIFACT_EXTENSIONS: [&str; 8] = [
+    ".csv", ".html", ".jpeg", ".jpg", ".json", ".pdf", ".png", ".svg",
+];
+/// Upstream `MAX_ARTIFACT_DEPTH` for artifact collection.
+pub const CLOUD_SANDBOX_MAX_ARTIFACT_DEPTH: usize = 16;
+/// Tenki runs as the unprivileged `tenki` user (`SANDBOX_HOME`).
+pub const TENKI_SANDBOX_HOME: &str = "/home/tenki";
+/// UCloud runs as `user` (`SANDBOX_HOME`).
+pub const UCLOUD_SANDBOX_HOME: &str = "/home/user";
+pub const UCLOUD_DEFAULT_REGION: &str = "cn-wlcb";
+pub const UCLOUD_DOMAIN_SUFFIX: &str = "sandbox.ucloudai.com";
+
+fn cloud_config_int(config: &Map<String, Value>, key: &str, default: i64) -> Result<i64, String> {
+    match config.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(value) => value
+            .as_i64()
+            .ok_or_else(|| format!("{key} must be an integer")),
+    }
+}
+
+/// Tenki provider configuration (upstream `TenkiProvider.initialize`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TenkiProviderConfig {
+    pub api_key: String,
+    pub base_url: String,
+    pub image: String,
+    pub allow_outbound: bool,
+    pub timeout: i64,
+    pub max_lifetime: i64,
+    pub cpu_cores: i64,
+    pub memory_mb: i64,
+    pub disk_size_gb: i64,
+    pub max_output_bytes: i64,
+    pub max_artifacts: i64,
+    pub max_artifact_bytes: i64,
+}
+
+impl Default for TenkiProviderConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: String::new(),
+            image: String::new(),
+            allow_outbound: false,
+            timeout: 30,
+            max_lifetime: 3600,
+            cpu_cores: 0,
+            memory_mb: 0,
+            disk_size_gb: 0,
+            max_output_bytes: 1024 * 1024,
+            max_artifacts: 20,
+            max_artifact_bytes: 10 * 1024 * 1024,
+        }
+    }
+}
+
+impl TenkiProviderConfig {
+    pub fn from_config(config: &Map<String, Value>) -> Result<Self, String> {
+        let string = |key: &str| {
+            config
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_owned()
+        };
+        let parsed = Self {
+            api_key: string("api_key"),
+            base_url: string("base_url"),
+            image: string("image"),
+            allow_outbound: config
+                .get("allow_outbound")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            timeout: cloud_config_int(config, "timeout", 30)?,
+            max_lifetime: cloud_config_int(config, "max_lifetime", 3600)?,
+            cpu_cores: cloud_config_int(config, "cpu_cores", 0)?,
+            memory_mb: cloud_config_int(config, "memory_mb", 0)?,
+            disk_size_gb: cloud_config_int(config, "disk_size_gb", 0)?,
+            max_output_bytes: cloud_config_int(config, "max_output_bytes", 1024 * 1024)?,
+            max_artifacts: cloud_config_int(config, "max_artifacts", 20)?,
+            max_artifact_bytes: cloud_config_int(config, "max_artifact_bytes", 10 * 1024 * 1024)?,
+        };
+        parsed.validate()?;
+        Ok(parsed)
+    }
+
+    /// Upstream `validate_config` (messages copied verbatim).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.api_key.trim().is_empty() {
+            return Err("Tenki API key is required".to_owned());
+        }
+        for (key, value) in [
+            ("timeout", self.timeout),
+            ("max_lifetime", self.max_lifetime),
+            ("max_output_bytes", self.max_output_bytes),
+            ("max_artifacts", self.max_artifacts),
+            ("max_artifact_bytes", self.max_artifact_bytes),
+        ] {
+            if key == "max_artifacts" {
+                if value < 0 {
+                    return Err("max_artifacts must be greater than or equal to 0".to_owned());
+                }
+            } else if value <= 0 {
+                return Err(format!("{key} must be greater than 0"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Upstream `_normalize_language` (python3 → python, javascript → nodejs).
+    pub fn normalize_language(language: &str) -> String {
+        let value = language.trim().to_ascii_lowercase();
+        let value = if value.is_empty() {
+            "python".to_owned()
+        } else {
+            value
+        };
+        match value.as_str() {
+            "python" | "python3" => "python".to_owned(),
+            "javascript" | "nodejs" => "nodejs".to_owned(),
+            other => other.to_owned(),
+        }
+    }
+}
+
+/// UCloud Agent Sandbox provider configuration
+/// (upstream `UCloudAgentSandboxProvider.initialize`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UCloudProviderConfig {
+    pub api_key: String,
+    pub region: String,
+    pub domain: String,
+    pub api_url: String,
+    pub template: String,
+    pub allow_internet_access: bool,
+    pub insecure_http: bool,
+    pub timeout: i64,
+    pub sandbox_timeout: i64,
+    pub max_output_bytes: i64,
+    pub max_artifacts: i64,
+    pub max_artifact_bytes: i64,
+}
+
+impl Default for UCloudProviderConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            region: UCLOUD_DEFAULT_REGION.to_owned(),
+            domain: String::new(),
+            api_url: String::new(),
+            template: "base".to_owned(),
+            allow_internet_access: false,
+            insecure_http: false,
+            timeout: 30,
+            sandbox_timeout: 300,
+            max_output_bytes: 1024 * 1024,
+            max_artifacts: 20,
+            max_artifact_bytes: 10 * 1024 * 1024,
+        }
+    }
+}
+
+impl UCloudProviderConfig {
+    pub fn from_config(config: &Map<String, Value>) -> Result<Self, String> {
+        let string = |key: &str, default: &str| {
+            config
+                .get(key)
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| default.to_owned())
+        };
+        let parsed = Self {
+            api_key: config
+                .get("api_key")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_owned(),
+            region: string("region", UCLOUD_DEFAULT_REGION),
+            domain: string("domain", ""),
+            api_url: string("api_url", ""),
+            template: string("template", "base"),
+            allow_internet_access: config
+                .get("allow_internet_access")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            insecure_http: config
+                .get("insecure_http")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            timeout: cloud_config_int(config, "timeout", 30)?,
+            sandbox_timeout: cloud_config_int(config, "sandbox_timeout", 300)?,
+            max_output_bytes: cloud_config_int(config, "max_output_bytes", 1024 * 1024)?,
+            max_artifacts: cloud_config_int(config, "max_artifacts", 20)?,
+            max_artifact_bytes: cloud_config_int(config, "max_artifact_bytes", 10 * 1024 * 1024)?,
+        };
+        parsed.validate()?;
+        Ok(parsed)
+    }
+
+    /// Upstream `validate_config`.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.api_key.trim().is_empty() {
+            return Err("UCloud Agent Sandbox API key is required".to_owned());
+        }
+        for (key, value) in [
+            ("timeout", self.timeout),
+            ("sandbox_timeout", self.sandbox_timeout),
+            ("max_output_bytes", self.max_output_bytes),
+            ("max_artifacts", self.max_artifacts),
+            ("max_artifact_bytes", self.max_artifact_bytes),
+        ] {
+            if value < 0 || (key != "max_artifacts" && value == 0) {
+                return Err(format!("{key} must be a positive integer"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Upstream `_normalize_language` (js/node aliases included).
+    pub fn normalize_language(language: &str) -> String {
+        let value = language.trim().to_ascii_lowercase();
+        let value = if value.is_empty() {
+            "python".to_owned()
+        } else {
+            value
+        };
+        match value.as_str() {
+            "python" | "python3" => "python".to_owned(),
+            "javascript" | "js" | "node" | "nodejs" => "nodejs".to_owned(),
+            other => other.to_owned(),
+        }
+    }
+
+    /// Sandbox domain derived from the region (`DOMAIN_SUFFIX` upstream).
+    pub fn derived_domain(&self) -> String {
+        if !self.domain.trim().is_empty() {
+            return self.domain.trim().to_owned();
+        }
+        format!("{}.{}", self.region.trim(), UCLOUD_DOMAIN_SUFFIX)
+    }
+}
+
+#[cfg(test)]
+mod cloud_provider_tests {
+    use super::*;
+
+    fn map(value: serde_json::Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn tenki_defaults_bounds_and_validation() {
+        let defaults = TenkiProviderConfig::default();
+        assert_eq!(defaults.timeout, 30);
+        assert_eq!(defaults.max_lifetime, 3600);
+        assert_eq!(defaults.max_artifacts, 20);
+        assert_eq!(defaults.max_artifact_bytes, 10 * 1024 * 1024);
+        assert!(!defaults.allow_outbound);
+        assert_eq!(
+            defaults.validate().unwrap_err(),
+            "Tenki API key is required"
+        );
+
+        let mut config = defaults.clone();
+        config.api_key = "tk_123".to_owned();
+        assert!(config.validate().is_ok());
+        config.max_artifacts = 0;
+        assert!(config.validate().is_ok(), "zero artifacts is allowed");
+        config.max_artifacts = -1;
+        assert_eq!(
+            config.validate().unwrap_err(),
+            "max_artifacts must be greater than or equal to 0"
+        );
+        config.max_artifacts = 20;
+        config.timeout = 0;
+        assert_eq!(
+            config.validate().unwrap_err(),
+            "timeout must be greater than 0"
+        );
+
+        let parsed = TenkiProviderConfig::from_config(&map(serde_json::json!({
+            "api_key": " tk ",
+            "timeout": 45,
+            "max_lifetime": 7200,
+            "max_output_bytes": 2048,
+            "max_artifacts": 5,
+            "max_artifact_bytes": 4096,
+            "allow_outbound": true
+        })))
+        .unwrap();
+        assert_eq!(parsed.api_key, "tk");
+        assert_eq!(parsed.timeout, 45);
+        assert!(parsed.allow_outbound);
+        assert!(
+            TenkiProviderConfig::from_config(&map(serde_json::json!({"timeout": "soon"}))).is_err()
+        );
+        assert_eq!(TenkiProviderConfig::normalize_language("Python3"), "python");
+        assert_eq!(
+            TenkiProviderConfig::normalize_language("javascript"),
+            "nodejs"
+        );
+        assert_eq!(TenkiProviderConfig::normalize_language("go"), "go");
+    }
+
+    #[test]
+    fn ucloud_defaults_validation_and_domain() {
+        let defaults = UCloudProviderConfig::default();
+        assert_eq!(defaults.region, "cn-wlcb");
+        assert_eq!(defaults.sandbox_timeout, 300);
+        assert_eq!(defaults.template, "base");
+        assert!(!defaults.allow_internet_access);
+        assert_eq!(defaults.derived_domain(), "cn-wlcb.sandbox.ucloudai.com");
+        assert!(defaults.validate().is_err());
+
+        let mut config = defaults.clone();
+        config.api_key = "uk_1".to_owned();
+        config.domain = " custom.example ".to_owned();
+        assert_eq!(config.derived_domain(), "custom.example");
+        assert!(config.validate().is_ok());
+        config.sandbox_timeout = 0;
+        assert!(config.validate().is_err());
+        config.sandbox_timeout = 300;
+        config.max_artifacts = 0;
+        assert!(config.validate().is_ok());
+
+        let parsed = UCloudProviderConfig::from_config(&map(serde_json::json!({
+            "api_key": "uk_2",
+            "region": "us-ca",
+            "timeout": "soon"
+        })));
+        assert!(parsed.is_err(), "non-integer timeout value must fail");
+        assert_eq!(UCloudProviderConfig::normalize_language("Node"), "nodejs");
+        assert_eq!(
+            UCloudProviderConfig::normalize_language("python3"),
+            "python"
+        );
+    }
+
+    #[test]
+    fn artifact_contract_matches_upstream() {
+        assert_eq!(CLOUD_SANDBOX_ARTIFACT_EXTENSIONS.len(), 8);
+        assert!(CLOUD_SANDBOX_ARTIFACT_EXTENSIONS.contains(&".csv"));
+        assert!(CLOUD_SANDBOX_ARTIFACT_EXTENSIONS.contains(&".svg"));
+        assert_eq!(CLOUD_SANDBOX_MAX_ARTIFACT_DEPTH, 16);
+        assert_eq!(TENKI_SANDBOX_HOME, "/home/tenki");
+        assert_eq!(UCLOUD_SANDBOX_HOME, "/home/user");
+    }
+}
+
 #[cfg(test)]
 mod sandbox_auth_tests {
     use super::*;

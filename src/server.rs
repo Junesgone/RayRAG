@@ -10252,7 +10252,9 @@ mod tests {
                 "self_managed",
                 "ssh",
                 "aliyun_codeinterpreter",
-                "e2b"
+                "e2b",
+                "tenki",
+                "ucloud_agent_sandbox"
             ]
         );
         assert_eq!(providers["data"][1]["name"], "Self-Managed");

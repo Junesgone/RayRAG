@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 /// Upstream `admin/server/services.py::SandboxMgr.PROVIDER_REGISTRY`, in
 /// registry order.
-pub const SANDBOX_PROVIDERS: [(&str, &str, &str, &[&str]); 5] = [
+pub const SANDBOX_PROVIDERS: [(&str, &str, &str, &[&str]); 7] = [
     (
         "local",
         "Local",
@@ -57,6 +57,18 @@ pub const SANDBOX_PROVIDERS: [(&str, &str, &str, &[&str]); 5] = [
         "E2B",
         "E2B Cloud - Code Execution Sandboxes",
         &["saas", "fast", "global"],
+    ),
+    (
+        "tenki",
+        "Tenki",
+        "Tenki - Disposable microVM code sandboxes",
+        &["saas", "cloud", "microvm", "isolated"],
+    ),
+    (
+        "ucloud_agent_sandbox",
+        "UCloud Agent Sandbox",
+        "UCloud Agent Sandbox - Disposable cloud sandboxes for agent code execution",
+        &["saas", "cloud", "isolated", "ucloud"],
     ),
 ];
 
@@ -571,6 +583,222 @@ pub fn sandbox_provider_schema(provider_id: &str) -> Option<Vec<SandboxField>> {
                 1,
                 30,
             ),
+        ],
+        "tenki" => vec![
+            SandboxField::string(
+                "api_key",
+                "API Key",
+                "Tenki API key. Create one at https://app.tenki.cloud under API Keys.",
+                None,
+            )
+            .required()
+            .placeholder("tk_...")
+            .secret()
+            .scope("runtime"),
+            SandboxField::string(
+                "base_url",
+                "API Endpoint",
+                "Override the Tenki API endpoint. Leave empty for the default.",
+                Some("https://api.tenki.cloud"),
+            )
+            .placeholder("https://api.tenki.cloud")
+            .scope("runtime"),
+            SandboxField::string(
+                "image",
+                "Sandbox Image",
+                "Base image for sandboxes. Empty uses the Tenki default image (includes python3 and node).",
+                None,
+            )
+            .scope("runtime"),
+            SandboxField {
+                field_type: "boolean",
+                default: Some(Value::Bool(false)),
+                ..SandboxField::string(
+                    "allow_outbound",
+                    "Allow Outbound Network",
+                    "Security-relevant. Disabled by default so sandboxed code has no network access.",
+                    None,
+                )
+            }
+            .scope("runtime"),
+            SandboxField::integer(
+                "timeout",
+                "Timeout (seconds)",
+                "Maximum execution time for a single run.",
+                Some(30),
+                1,
+                600,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_lifetime",
+                "Max Sandbox Lifetime (seconds)",
+                "Tenki reclaims a sandbox after this, guarding against leaks if the run is interrupted.",
+                Some(3600),
+                60,
+                86400,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "cpu_cores",
+                "vCPU Cores",
+                "vCPU per sandbox. 0 uses the Tenki default.",
+                Some(0),
+                0,
+                16,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "memory_mb",
+                "Memory (MB)",
+                "Memory per sandbox in MB. 0 uses the Tenki default.",
+                Some(0),
+                0,
+                65536,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "disk_size_gb",
+                "Disk Size (GB)",
+                "Disk size per sandbox in GB. 0 uses the Tenki default.",
+                Some(0),
+                0,
+                100,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_output_bytes",
+                "Max Output Bytes",
+                "Maximum combined stdout and stderr size.",
+                Some(1_048_576),
+                1024,
+                10_485_760,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_artifacts",
+                "Max Artifacts",
+                "Maximum number of artifact files collected from a run.",
+                Some(20),
+                0,
+                1000,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_artifact_bytes",
+                "Max Artifact Bytes",
+                "Maximum size of a single artifact file.",
+                Some(10_485_760),
+                1,
+                104_857_600,
+            )
+            .scope("runtime"),
+        ],
+        "ucloud_agent_sandbox" => vec![
+            SandboxField::string(
+                "api_key",
+                "API Key",
+                "UCloud Agent Sandbox API key.",
+                None,
+            )
+            .required()
+            .secret()
+            .scope("runtime"),
+            SandboxField::string(
+                "region",
+                "Region",
+                "UCloud Agent Sandbox region, for example cn-wlcb or us-ca.",
+                Some("cn-wlcb"),
+            )
+            .scope("runtime"),
+            SandboxField::string(
+                "domain",
+                "Domain",
+                "Override the sandbox domain. Leave empty to derive it from Region.",
+                None,
+            )
+            .scope("runtime"),
+            SandboxField::string(
+                "api_url",
+                "API URL",
+                "Override the UCloud Agent Sandbox control-plane API URL.",
+                None,
+            )
+            .scope("runtime"),
+            SandboxField::string(
+                "template",
+                "Template",
+                "Sandbox template. The base template includes Python and Node.js.",
+                Some("base"),
+            )
+            .scope("runtime"),
+            SandboxField {
+                field_type: "boolean",
+                default: Some(Value::Bool(false)),
+                ..SandboxField::string(
+                    "allow_internet_access",
+                    "Allow Internet Access",
+                    "Allow sandboxed code to access the internet. Disabled by default.",
+                    None,
+                )
+            }
+            .scope("runtime"),
+            SandboxField {
+                field_type: "boolean",
+                default: Some(Value::Bool(false)),
+                ..SandboxField::string(
+                    "insecure_http",
+                    "Use Insecure HTTP",
+                    "Use HTTP instead of HTTPS. Enable only for trusted private deployments.",
+                    None,
+                )
+            }
+            .scope("runtime"),
+            SandboxField::integer(
+                "timeout",
+                "Execution Timeout (seconds)",
+                "Maximum execution time for a single run.",
+                Some(30),
+                1,
+                600,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "sandbox_timeout",
+                "Sandbox Lifetime (seconds)",
+                "Sandbox lifetime before the cloud reclaims it.",
+                Some(300),
+                60,
+                86400,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_output_bytes",
+                "Max Output Bytes",
+                "Maximum combined stdout and stderr size.",
+                Some(1_048_576),
+                1024,
+                10_485_760,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_artifacts",
+                "Max Artifacts",
+                "Maximum number of artifact files collected from a run.",
+                Some(20),
+                0,
+                1000,
+            )
+            .scope("runtime"),
+            SandboxField::integer(
+                "max_artifact_bytes",
+                "Max Artifact Bytes",
+                "Maximum size of a single artifact file.",
+                Some(10_485_760),
+                1,
+                104_857_600,
+            )
+            .scope("runtime"),
         ],
         "e2b" => vec![
             SandboxField::string("api_key", "API Key", "E2B API key for authentication", None)
@@ -1138,7 +1366,9 @@ mod tests {
                 "self_managed",
                 "ssh",
                 "aliyun_codeinterpreter",
-                "e2b"
+                "e2b",
+                "tenki",
+                "ucloud_agent_sandbox"
             ]
         );
         assert_eq!(SANDBOX_PROVIDERS[1].1, "Self-Managed");

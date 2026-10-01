@@ -3933,11 +3933,11 @@ fn sitemap_parse_document(xml: &str) -> Result<SitemapDocument> {
                     if let Some(loc) = current_loc.take() {
                         page_urls.push((loc, current_lastmod.take()));
                     }
-                } else if name == b"sitemap" {
-                    if let Some(loc) = current_loc.take() {
-                        index_urls.push(loc);
-                        current_lastmod = None;
-                    }
+                } else if name == b"sitemap"
+                    && let Some(loc) = current_loc.take()
+                {
+                    index_urls.push(loc);
+                    current_lastmod = None;
                 }
             }
             Ok(Event::Eof) => break,

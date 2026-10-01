@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 601 | 291784 |
-| partial | 81 | 33327 |
+| full | 603 | 292776 |
+| partial | 79 | 32335 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -475,8 +475,8 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `agent/sandbox/providers/manager.py` | 78 | 2388 | `3a6fce5c25a2b907` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/providers/self_managed.py` | 421 | 16278 | `296e21757f4ce1ff` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) | v0.3.7r: `get_config_schema()` is mirrored by `src/api/sandbox_admin.rs`; the admin probe reuses `SandboxClient` (healthz + run). [v0.27.2 content changed: re-audit] |
 | `agent/sandbox/providers/ssh.py` | 686 | 26993 | `001c2943006d025e` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) | v0.3.7r: schema and configuration are mirrored by `src/api/sandbox_admin.rs`; SSH *execution* is not implemented in this build and the admin probe reports that. |
-| `agent/sandbox/providers/tenki.py` | 521 | 21207 | `d33b5c4c799a2bcc` | partial | `src/sandbox.rs; src/code_exec.rs` | （v0.3.10g 审计：Tenki 沙箱提供商；RayRAG 沙箱提供商框架就位（aliyun 已移植），该提供商待接入——worklist W-6（沙箱提供商/鉴权）） |
-| `agent/sandbox/providers/ucloud_agent_sandbox.py` | 471 | 20443 | `774c54876433746c` | partial | `src/sandbox.rs; src/code_exec.rs` | （v0.3.10g 审计：UCloud 沙箱提供商；待接入——worklist W-6（沙箱提供商/鉴权）） |
+| `agent/sandbox/providers/tenki.py` | 521 | 21207 | `d33b5c4c799a2bcc` | full | `src/sandbox.rs; src/api/sandbox_admin.rs` | （v0.3.10r 移植：TenkiProviderConfig（api_key/base_url/image/allow_outbound/timeout 30/max_lifetime 3600/cpu_cores/memory_mb/disk_size_gb/max_output_bytes 1MiB/max_artifacts 20/max_artifact_bytes 10MiB；validate_config 消息逐条复制）+ 语言归一化（python3→python、javascript→nodejs）+ 产物契约（8 扩展名/深度 16//home/tenki）+ 注册表条目（Tenki，tags saas/cloud/microvm/isolated）+ 完整配置 schema（字段/label/默认值/min/max/secret/scope）；有界差异：vendor SDK 执行为 Python-only，本块为契约级对齐（同 aliyun 先例）。） |
+| `agent/sandbox/providers/ucloud_agent_sandbox.py` | 471 | 20443 | `774c54876433746c` | full | `src/sandbox.rs; src/api/sandbox_admin.rs` | （v0.3.10r 移植：UCloudProviderConfig（api_key/region cn-wlcb/domain/api_url/template base/allow_internet_access/insecure_http/timeout 30/sandbox_timeout 300/max_output_bytes 1MiB/max_artifacts 20/max_artifact_bytes 10MiB；validate_config 语义 + 域推导 <region>.sandbox.ucloudai.com + domain 覆盖）+ 语言归一化（含 js/node 别名）+ 产物契约（/home/user）+ 注册表条目（UCloud Agent Sandbox，tags saas/cloud/isolated/ucloud）+ schema；有界差异：vendor SDK 执行为 Python-only，本块为契约级对齐。） |
 | `agent/sandbox/pyproject.toml` | 28 | 519 | `7fefa775ced9a142` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
 | `agent/sandbox/result_protocol.py` | 85 | 2928 | `385f6fb615d72bb1` | full | `src/sandbox.rs` | Rust local sandbox: wrapper + structured result protocol |
 | `agent/sandbox/sandbox_base_image/nodejs/Dockerfile` | 23 | 521 | `21432b818aacbcef` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
