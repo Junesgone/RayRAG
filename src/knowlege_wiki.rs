@@ -15,10 +15,12 @@
 //!   call.
 use super::knowlege_dataset_nav::index_name;
 use crate::doc_store::{DocRow, DocStore, SearchQuery};
+use crate::embed::Embedder;
 use crate::harness::HarnessChat;
+use crate::llm::LlmClient;
 use crate::structure_compile::{
-    ChunkInput, PackedEntry, build_chunk_batches, cfg_get, env_int, knowledge_compile_gen_conf,
-    localize, parse_json_lenient, stable_row_id,
+    ChunkInput, PackedEntry, build_chunk_batches, bulk_dedup_items, cfg_get, env_int,
+    exact_dedup_by_key, knowledge_compile_gen_conf, localize, parse_json_lenient, stable_row_id,
 };
 use regex::Regex;
 use serde_json::{Map, Value, json};
@@ -2918,5 +2920,361 @@ mod wiki_part4_tests {
             ..Default::default()
         };
         assert_eq!(store.search(&query).unwrap().total, 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 5 — REDUCE (dedup) main entry (`wiki_reduce_from_extracts`).
+//
+// Adaptation note: the host injects `chat` / `embd` (LlmClient / Embedder)
+// and the disabled-doc set; the shared `bulk_dedup_items` path carries the
+// exact → embedding → LLM pipeline. `llm_timeout` is kept for signature
+// parity but the shared dedup path has no timeout knob. On an entity-dedup
+// failure the port falls back to the exact-dedup result and warns (upstream
+// would raise).
+// ---------------------------------------------------------------------------
+
+/// `DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD`.
+pub const DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD: f32 = 0.95;
+/// `DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW`.
+pub const DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW: f32 = 0.75;
+/// `DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH`.
+pub const DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH: usize = 50;
+
+/// `DEFAULT_WIKI_REDUCE_TIMEOUT` (`_env_int("WIKI_REDUCE_TIMEOUT", 60, minimum=1)`).
+pub fn default_wiki_reduce_timeout() -> i64 {
+    env_int("WIKI_REDUCE_TIMEOUT", 60, Some(1)).max(1)
+}
+
+/// `WIKI_REDUCE_DISAMBIGUATE_SYSTEM`.
+pub const WIKI_REDUCE_DISAMBIGUATE_SYSTEM: &str =
+    "You are a named-entity resolution assistant. Return only JSON.";
+
+/// `wiki_reduce_from_extracts`: KB-scoped REDUCE (dedup) phase.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_reduce_from_extracts(
+    store: &dyn DocStore,
+    chat: Option<&LlmClient>,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+    merge_threshold: f32,
+    ambiguous_low: f32,
+    ambiguous_batch_size: usize,
+    llm_timeout: i64,
+    force_rerun: bool,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+) -> Value {
+    let _ = llm_timeout; // shared dedup path has no timeout knob
+    let current_input_hash = compute_map_input_hash(store, tenant_id, kb_id, disabled_doc_ids);
+    let reduce_source_doc_ids = all_map_doc_ids(store, tenant_id, kb_id, disabled_doc_ids);
+
+    if !force_rerun {
+        if let Some((cached, stored_hash)) = load_reduce_resume(store, tenant_id, kb_id) {
+            if !stored_hash.is_empty() && stored_hash == current_input_hash {
+                if let Some(callback) = callback {
+                    callback(1.0, "wiki REDUCE: cache hit (input unchanged)");
+                }
+                return cached;
+            }
+            // Cache present but stale (no hash, or hash mismatch): fall
+            // through to a full re-reduce and write a fresh stamp.
+        }
+    }
+
+    if let Some(callback) = callback {
+        callback(0.05, "wiki REDUCE: loading MAP extracts");
+    }
+    let raw = load_all_map_extracts(store, tenant_id, kb_id, disabled_doc_ids);
+    let arr = |key: &str| -> Vec<Value> {
+        raw.get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let raw_entities = arr("entities");
+    let raw_concepts = arr("concepts");
+    tracing::info!(
+        kb = kb_id,
+        entities = raw_entities.len(),
+        concepts = raw_concepts.len(),
+        claims = arr("claims").len(),
+        relations = arr("relations").len(),
+        "wiki_reduce: loaded raw items"
+    );
+
+    if raw_entities.is_empty() && raw_concepts.is_empty() {
+        // Nothing to reduce; persist an empty result so resume can short-circuit.
+        let empty = empty_extract();
+        persist_reduce(
+            store,
+            tenant_id,
+            kb_id,
+            &empty,
+            &current_input_hash,
+            &reduce_source_doc_ids,
+        );
+        return empty;
+    }
+
+    if let Some(callback) = callback {
+        callback(0.25, "wiki REDUCE: dedup (exact + embedding + LLM)");
+    }
+
+    // Entities: full three-phase dedup keyed by (normalized name, type).
+    let canonical_entities = match bulk_dedup_items(
+        raw_entities.clone(),
+        "name",
+        Some("type"),
+        chat,
+        embd,
+        merge_threshold,
+        ambiguous_low,
+        ambiguous_batch_size,
+        true,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            tracing::warn!(error = %err, "wiki_reduce: entity dedup failed; keeping exact-dedup result");
+            exact_dedup_by_key(&raw_entities, "name", Some("type"), None)
+        }
+    };
+
+    // Concepts: exact-dedup only; keep the longest definition_excerpt per group.
+    let concept_extras = |group: &[Value]| -> Option<Value> {
+        let mut best = String::new();
+        for item in group {
+            let definition = item
+                .get("definition_excerpt")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if definition.len() > best.len() {
+                best = definition.to_string();
+            }
+        }
+        Some(json!({"definition_excerpt": best}))
+    };
+    let canonical_concepts = exact_dedup_by_key(
+        &raw_concepts,
+        "term",
+        None,
+        Some(&concept_extras as &dyn Fn(&[Value]) -> Option<Value>),
+    );
+
+    tracing::info!(
+        entities = canonical_entities.len(),
+        concepts = canonical_concepts.len(),
+        "wiki_reduce: after dedup"
+    );
+
+    let reduced = json!({
+        "entities": canonical_entities,
+        "concepts": canonical_concepts,
+        "claims": arr("claims"),
+        "relations": arr("relations"),
+        "topics": arr("topics"),
+    });
+
+    if let Some(callback) = callback {
+        callback(0.9, "wiki REDUCE: persisting result");
+    }
+    persist_reduce(
+        store,
+        tenant_id,
+        kb_id,
+        &reduced,
+        &current_input_hash,
+        &reduce_source_doc_ids,
+    );
+
+    tracing::info!(
+        kb = kb_id,
+        entities = reduced["entities"].as_array().map(Vec::len).unwrap_or(0),
+        concepts = reduced["concepts"].as_array().map(Vec::len).unwrap_or(0),
+        claims = reduced["claims"].as_array().map(Vec::len).unwrap_or(0),
+        relations = reduced["relations"].as_array().map(Vec::len).unwrap_or(0),
+        topics = reduced["topics"].as_array().map(Vec::len).unwrap_or(0),
+        "wiki_reduce: done"
+    );
+
+    if let Some(callback) = callback {
+        callback(1.0, "wiki REDUCE: done");
+    }
+    reduced
+}
+
+#[cfg(test)]
+mod wiki_part5_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+
+    fn insert_docs(store: &MemoryDocStore, docs: &[Value]) {
+        let rows: Vec<DocRow> = docs
+            .iter()
+            .filter_map(|doc| doc.as_object().cloned())
+            .collect();
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    fn seed_rows(store: &MemoryDocStore) {
+        insert_docs(
+            store,
+            &[build_resume_doc(
+                "c1",
+                "d1",
+                &json!({
+                    "entities": [
+                        {"name": "Alpha", "type": "org", "chunk_ids": ["c1"]},
+                        {"name": "alpha!", "type": "org", "chunk_ids": ["c2"]}
+                    ],
+                    "concepts": [
+                        {"term": "Beta", "definition_excerpt": "short", "chunk_ids": ["c1"]},
+                        {"term": "beta", "definition_excerpt": "a much longer definition", "chunk_ids": ["c2"]}
+                    ],
+                    "claims": [{"statement": "s", "chunk_ids": ["c1"]}],
+                    "relations": [{"from": "Alpha", "to": "Beta", "type": "uses", "chunk_ids": ["c1"]}],
+                    "topics": ["t"]
+                }),
+                "h1",
+            )],
+        );
+    }
+
+    #[tokio::test]
+    async fn reduce_dedups_entities_and_concepts() {
+        let store = MemoryDocStore::new();
+        seed_rows(&store);
+        let disabled = BTreeSet::new();
+        let reduced = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        let entities = reduced["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], json!("Alpha"));
+        assert_eq!(entities[0]["mention_count"], json!(2));
+        let mut chunk_ids: Vec<String> = entities[0]["chunk_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|id| id.as_str().map(str::to_string))
+            .collect();
+        chunk_ids.sort();
+        assert_eq!(chunk_ids, vec!["c1".to_string(), "c2".to_string()]);
+        let concepts = reduced["concepts"].as_array().unwrap();
+        assert_eq!(concepts.len(), 1);
+        assert_eq!(concepts[0]["term"], json!("Beta"));
+        assert_eq!(
+            concepts[0]["definition_excerpt"],
+            json!("a much longer definition")
+        );
+        assert_eq!(reduced["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(reduced["relations"].as_array().unwrap().len(), 1);
+        assert_eq!(reduced["topics"], json!(["t"]));
+    }
+
+    #[tokio::test]
+    async fn reduce_cache_hit_and_force_rerun() {
+        let store = MemoryDocStore::new();
+        seed_rows(&store);
+        let disabled = BTreeSet::new();
+        let first = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        let (_, stored_hash) = load_reduce_resume(&store, "t1", "kb1").expect("resume");
+        assert_eq!(
+            stored_hash,
+            compute_map_input_hash(&store, "t1", "kb1", &disabled)
+        );
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = flag.clone();
+        let callback = move |progress: f64, message: &str| {
+            if progress >= 1.0 && message.contains("cache hit") {
+                seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        let second = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            Some(&callback),
+        )
+        .await;
+        assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(second["entities"], first["entities"]);
+        let forced = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            true,
+            None,
+        )
+        .await;
+        assert_eq!(forced["entities"], first["entities"]);
+    }
+
+    #[tokio::test]
+    async fn reduce_empty_persists_short_circuit() {
+        let store = MemoryDocStore::new();
+        let disabled = BTreeSet::new();
+        let reduced = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(reduced["entities"], json!([]));
+        let (cached, _) = load_reduce_resume(&store, "t1", "kb1").expect("resume");
+        assert_eq!(cached["concepts"], json!([]));
     }
 }
