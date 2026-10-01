@@ -3155,3 +3155,479 @@ mod wiki_incremental_part5_tests {
         assert_eq!(beta["outlinks"], json!(["entity/alpha"]));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 6 — topic aggregation and ranking (`_wiki_topics_for_docs` ..
+// `_wiki_decide_concept_pages`).
+//
+// Adaptation note: numpy normalization/dot products become plain Rust; the
+// no-vector paths mirror upstream (topics without vectors are skipped when
+// ranking).
+// ---------------------------------------------------------------------------
+
+fn fallback_topic_key() -> String {
+    normalize_key(WIKI_TOPIC_FALLBACK)
+}
+
+/// `_wiki_topics_for_docs`: deduped topics for a set of documents.
+pub fn wiki_topics_for_docs(
+    doc_ids: &[String],
+    doc_topics: Option<&Map<String, Value>>,
+    topic_pool: Option<&Map<String, Value>>,
+) -> Vec<String> {
+    let mut topics: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let fallback_key = fallback_topic_key();
+    for doc_id in doc_ids {
+        if let Some(values) = doc_topics
+            .and_then(|map| map.get(doc_id))
+            .and_then(Value::as_array)
+        {
+            for topic in values {
+                let Some(topic) = topic.as_str() else {
+                    continue;
+                };
+                let topic = topic.trim();
+                let key = normalize_key(topic);
+                if topic.is_empty() || key == fallback_key || seen.contains(&key) {
+                    continue;
+                }
+                seen.insert(key);
+                topics.push(topic.to_string());
+            }
+        }
+    }
+    if let Some(pool) = topic_pool {
+        for value in pool.values() {
+            let Some(topic) = value.as_str() else {
+                continue;
+            };
+            let key = normalize_key(topic);
+            if !topic.is_empty() && !seen.contains(&key) {
+                seen.insert(key);
+                topics.push(topic.to_string());
+            }
+        }
+    }
+    topics
+}
+
+/// `_wiki_prepare_topic_embeddings`: topic → embedding vector.
+pub async fn wiki_prepare_topic_embeddings(
+    embd: Option<&dyn Embedder>,
+    doc_topics: &Map<String, Value>,
+    extra_topics: Option<&[String]>,
+) -> Map<String, Value> {
+    let fallback_key = fallback_topic_key();
+    let mut topics: BTreeSet<String> = BTreeSet::new();
+    for values in doc_topics.values() {
+        if let Some(items) = values.as_array() {
+            for topic in items {
+                if let Some(topic) = topic.as_str() {
+                    let trimmed = topic.trim();
+                    if !trimmed.is_empty() && normalize_key(trimmed) != fallback_key {
+                        topics.insert(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let Some(extra) = extra_topics {
+        for topic in extra {
+            let trimmed = topic.trim();
+            if !trimmed.is_empty() && normalize_key(trimmed) != fallback_key {
+                topics.insert(trimmed.to_string());
+            }
+        }
+    }
+    let mut sorted: Vec<String> = topics.into_iter().collect();
+    sorted.sort_by_key(|value| (value.to_lowercase(), value.clone()));
+    let Some(embd) = embd else {
+        return Map::new();
+    };
+    if sorted.is_empty() {
+        return Map::new();
+    }
+    let refs: Vec<&str> = sorted.iter().map(String::as_str).collect();
+    let embeddings = match embd.embed(&refs).await {
+        Ok(embeddings) if embeddings.len() == sorted.len() => embeddings,
+        _ => return Map::new(),
+    };
+    let mut out: Map<String, Value> = Map::new();
+    for (topic, vector) in sorted.into_iter().zip(embeddings.into_iter()) {
+        out.insert(topic, json!(vector));
+    }
+    out
+}
+
+/// `_wiki_topic_query_text`.
+pub fn wiki_topic_query_text(
+    page_title: &str,
+    claims: Option<&[Value]>,
+    source_chunks: Option<&[Value]>,
+    existing_page: Option<&Value>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !page_title.is_empty() {
+        parts.push(format!("title={page_title}"));
+    }
+    if let Some(page) = existing_page {
+        let summary = page
+            .get("summary_with_weight")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !summary.is_empty() {
+            parts.push(format!("summary={summary}"));
+        }
+    }
+    let evidence: Vec<String> = claims
+        .unwrap_or(&[])
+        .iter()
+        .take(8)
+        .filter_map(|claim| {
+            ["statement", "text"]
+                .iter()
+                .find_map(|key| claim.get(*key))
+                .and_then(truthy_str)
+        })
+        .collect();
+    if !evidence.is_empty() {
+        parts.push(format!("evidence={}", evidence.join(" | ")));
+    }
+    let chunk_text: Vec<String> = source_chunks
+        .unwrap_or(&[])
+        .iter()
+        .take(4)
+        .filter_map(|chunk| {
+            ["text", "content_with_weight"]
+                .iter()
+                .find_map(|key| chunk.get(*key))
+                .and_then(truthy_str)
+                .map(|text| truncate_chars_p6(&text, 500))
+        })
+        .collect();
+    if !chunk_text.is_empty() {
+        parts.push(format!("source={}", chunk_text.join(" | ")));
+    }
+    parts.join("; ")
+}
+
+fn truncate_chars_p6(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
+fn vector_of_value(value: Option<&Value>) -> Vec<f32> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_f64().map(|number| number as f32))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `_wiki_rank_topic_candidates`: embedding recall + ordered TOP-50.
+pub async fn wiki_rank_topic_candidates(
+    embd: Option<&dyn Embedder>,
+    page_title: &str,
+    claims: Option<&[Value]>,
+    source_chunks: Option<&[Value]>,
+    existing_page: Option<&Value>,
+    topic_candidates: Option<&[String]>,
+    topic_embeddings: Option<&mut Map<String, Value>>,
+) -> Vec<String> {
+    let mut candidates: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for topic in topic_candidates.unwrap_or(&[]) {
+        let topic = topic.trim();
+        let key = normalize_key(topic);
+        if !topic.is_empty() && !seen.contains(&key) {
+            seen.insert(key);
+            candidates.push(topic.to_string());
+        }
+    }
+    if candidates.len() <= 1 || embd.is_none() {
+        return candidates
+            .into_iter()
+            .take(WIKI_PAGE_TOPIC_CANDIDATE_LIMIT)
+            .collect();
+    }
+    let embd = embd.unwrap();
+    let query_text = wiki_topic_query_text(page_title, claims, source_chunks, existing_page);
+    let query_vector = match embd.embed(&[query_text.as_str()]).await {
+        Ok(vectors) if !vectors.is_empty() => vectors.into_iter().next().unwrap_or_default(),
+        _ => {
+            return candidates
+                .into_iter()
+                .take(WIKI_PAGE_TOPIC_CANDIDATE_LIMIT)
+                .collect();
+        }
+    };
+    let query_norm = (query_vector
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>())
+    .sqrt();
+    if query_norm <= 0.0 {
+        return candidates
+            .into_iter()
+            .take(WIKI_PAGE_TOPIC_CANDIDATE_LIMIT)
+            .collect();
+    }
+    let query_normalized: Vec<f32> = query_vector
+        .iter()
+        .map(|x| (*x as f64 / query_norm) as f32)
+        .collect();
+
+    let mut local: Map<String, Value> = topic_embeddings
+        .as_ref()
+        .map(|map| (**map).clone())
+        .unwrap_or_default();
+    let missing: Vec<String> = candidates
+        .iter()
+        .filter(|topic| !local.contains_key(*topic))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        let refs: Vec<&str> = missing.iter().map(String::as_str).collect();
+        match embd.embed(&refs).await {
+            Ok(vectors) if vectors.len() == missing.len() => {
+                let pairs: Vec<(String, Value)> = missing
+                    .iter()
+                    .cloned()
+                    .zip(vectors.into_iter().map(|vector| json!(vector)))
+                    .collect();
+                for (topic, vector) in &pairs {
+                    local.insert(topic.clone(), vector.clone());
+                }
+                if let Some(caller) = topic_embeddings {
+                    for (topic, vector) in pairs {
+                        caller.insert(topic, vector);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut ranked: Vec<(f64, String)> = Vec::new();
+    for topic in &candidates {
+        let vector = vector_of_value(local.get(topic));
+        if vector.is_empty() {
+            continue;
+        }
+        let norm = (vector
+            .iter()
+            .map(|x| (*x as f64) * (*x as f64))
+            .sum::<f64>())
+        .sqrt();
+        let score = if norm > 0.0 {
+            query_normalized
+                .iter()
+                .zip(vector.iter())
+                .map(|(q, v)| (*q as f64) * (*v as f64 / norm))
+                .sum::<f64>()
+        } else {
+            -1.0
+        };
+        ranked.push((score, topic.clone()));
+    }
+    ranked.sort_by(|(left_score, left_topic), (right_score, right_topic)| {
+        right_score
+            .partial_cmp(left_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left_topic.cmp(right_topic))
+    });
+    ranked
+        .into_iter()
+        .take(WIKI_PAGE_TOPIC_CANDIDATE_LIMIT)
+        .map(|(_, topic)| topic)
+        .collect()
+}
+
+/// `_wiki_decide_concept_pages`: every concept becomes its own page.
+pub fn wiki_decide_concept_pages(all_concepts: &[Value]) -> Vec<Value> {
+    let mut pages: Vec<Value> = Vec::new();
+    for concept in all_concepts {
+        let term = concept.get("term").and_then(Value::as_str).unwrap_or("");
+        let claims: Vec<Value> = concept
+            .get("claims")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut source_docs: BTreeSet<String> = BTreeSet::new();
+        for claim in &claims {
+            if let Some(doc_id) = claim.get("source_doc_id").and_then(Value::as_str) {
+                if !doc_id.is_empty() {
+                    source_docs.insert(doc_id.to_string());
+                }
+            }
+        }
+        pages.push(json!({
+            "page_id": derive_page_id(term, "concept"),
+            "page_title": term,
+            "concept": concept,
+            "claims": claims,
+            "source_doc_ids": source_docs.into_iter().collect::<Vec<String>>(),
+        }));
+    }
+    pages
+}
+
+#[cfg(test)]
+mod wiki_incremental_part6_tests {
+    use super::*;
+    use crate::embed::Embedder;
+
+    struct MapEmb {
+        map: BTreeMap<String, Vec<f32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for MapEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|text| self.map.get(*text).cloned().unwrap_or_default())
+                .collect())
+        }
+    }
+
+    #[test]
+    fn topics_for_docs_dedup_and_pool() {
+        let mut doc_topics: Map<String, Value> = Map::new();
+        doc_topics.insert(
+            "d1".to_string(),
+            json!(["Alpha", " alpha ", "General", 5, ""]),
+        );
+        doc_topics.insert("d2".to_string(), json!(["Beta", "Alpha"]));
+        let mut pool: Map<String, Value> = Map::new();
+        pool.insert("t1".to_string(), json!("Gamma"));
+        pool.insert("t2".to_string(), json!("alpha"));
+        let topics = wiki_topics_for_docs(
+            &["d1".to_string(), "d2".to_string()],
+            Some(&doc_topics),
+            Some(&pool),
+        );
+        assert_eq!(
+            topics,
+            vec!["Alpha".to_string(), "Beta".to_string(), "Gamma".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_topic_embeddings_filters_and_sorts() {
+        let mut doc_topics: Map<String, Value> = Map::new();
+        doc_topics.insert("d1".to_string(), json!(["Beta", "alpha", "General"]));
+        doc_topics.insert("d2".to_string(), json!(["Gamma", " alpha "]));
+        let embd = MapEmb {
+            map: [
+                ("alpha".to_string(), vec![1.0, 0.0]),
+                ("Beta".to_string(), vec![0.0, 1.0]),
+                ("Gamma".to_string(), vec![0.5, 0.5]),
+                ("Delta".to_string(), vec![0.2, 0.8]),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let extra = vec!["Delta".to_string()];
+        let embeddings =
+            wiki_prepare_topic_embeddings(Some(&embd), &doc_topics, Some(&extra)).await;
+        assert_eq!(embeddings.len(), 4);
+        assert_eq!(embeddings["alpha"], json!([1.0, 0.0]));
+        assert!(!embeddings.contains_key("General"));
+        let delta = embeddings["Delta"].as_array().unwrap();
+        assert!((delta[0].as_f64().unwrap() - 0.2).abs() < 1e-6);
+        assert!((delta[1].as_f64().unwrap() - 0.8).abs() < 1e-6);
+        assert!(
+            wiki_prepare_topic_embeddings(None, &doc_topics, None)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn topic_query_text_composition() {
+        let claims = vec![
+            json!({"statement": "s1"}),
+            json!({"text": "s2"}),
+            json!({"nope": 1}),
+        ];
+        let chunks = vec![json!({"text": "chunk text"}), json!({"nope": 1})];
+        let existing = json!({"summary_with_weight": "sum"});
+        let text = wiki_topic_query_text("Alpha", Some(&claims), Some(&chunks), Some(&existing));
+        assert_eq!(
+            text,
+            "title=Alpha; summary=sum; evidence=s1 | s2; source=chunk text"
+        );
+        assert_eq!(wiki_topic_query_text("", None, None, None), "");
+    }
+
+    #[tokio::test]
+    async fn rank_topic_candidates_orders_by_similarity() {
+        let embd = MapEmb {
+            map: [
+                ("title=Alpha".to_string(), vec![1.0, 0.0]),
+                ("alpha".to_string(), vec![1.0, 0.0]),
+                ("beta".to_string(), vec![0.0, 1.0]),
+                ("gamma".to_string(), vec![0.7, 0.7]),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let candidates = vec![
+            "beta".to_string(),
+            "alpha".to_string(),
+            "alpha".to_string(),
+            "gamma".to_string(),
+        ];
+        let mut embeddings: Map<String, Value> = Map::new();
+        embeddings.insert("alpha".to_string(), json!([1.0, 0.0]));
+        let ranked = wiki_rank_topic_candidates(
+            Some(&embd),
+            "Alpha",
+            None,
+            None,
+            None,
+            Some(&candidates),
+            Some(&mut embeddings),
+        )
+        .await;
+        assert_eq!(
+            ranked,
+            vec!["alpha".to_string(), "gamma".to_string(), "beta".to_string()]
+        );
+        assert!(embeddings.contains_key("beta"));
+        assert!(embeddings.contains_key("gamma"));
+        let single = wiki_rank_topic_candidates(
+            Some(&embd),
+            "Alpha",
+            None,
+            None,
+            None,
+            Some(&["solo".to_string()]),
+            None,
+        )
+        .await;
+        assert_eq!(single, vec!["solo".to_string()]);
+    }
+
+    #[test]
+    fn decide_concept_pages_shape() {
+        let concepts = vec![json!({
+            "term": "Smartphone Industry",
+            "claims": [
+                {"statement": "s", "source_doc_id": "d1"},
+                {"statement": "s2", "source_doc_id": "d1"},
+                {"statement": "s3", "source_doc_id": "d2"}
+            ]
+        })];
+        let pages = wiki_decide_concept_pages(&concepts);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["page_id"], json!("concept/smartphone-industry"));
+        assert_eq!(pages[0]["page_title"], json!("Smartphone Industry"));
+        assert_eq!(pages[0]["source_doc_ids"], json!(["d1", "d2"]));
+    }
+}
