@@ -5159,3 +5159,317 @@ mod wiki_part7_tests {
         assert_eq!(hash, "RH3");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 8 — REFINE prompts and evidence helpers (`WIKI_REFINE_*` constants,
+// `_build_refine_writer_system` .. `_wiki_collect_evidence_chunk_ids`).
+//
+// Adaptation note: word-boundary matching uses Rust `regex` (\b, unicode)
+// with `regex::escape` + case-insensitive construction.
+// ---------------------------------------------------------------------------
+
+/// `WIKI_DRAFT_COMPILE_KWD`.
+pub const WIKI_DRAFT_COMPILE_KWD: &str = "wiki_page_draft";
+/// `DEFAULT_WIKI_REFINE_WORKERS` (`_env_int("WIKI_REFINE_WORKERS", 4, minimum=1)`).
+pub fn default_wiki_refine_workers() -> usize {
+    env_int("WIKI_REFINE_WORKERS", 4, Some(1)).max(1) as usize
+}
+/// `DEFAULT_WIKI_REFINE_TIMEOUT` (`_env_int("WIKI_REFINE_TIMEOUT", 300, minimum=1)`).
+pub fn default_wiki_refine_timeout() -> i64 {
+    env_int("WIKI_REFINE_TIMEOUT", 300, Some(1)).max(1)
+}
+/// `WIKI_REFINE_SOURCE_BUDGET_CHARS`.
+pub const WIKI_REFINE_SOURCE_BUDGET_CHARS: usize = 60_000;
+/// `WIKI_MERGE_BODY_SHRINK_THRESHOLD`.
+pub const WIKI_MERGE_BODY_SHRINK_THRESHOLD: f64 = 0.7;
+/// `WIKI_MERGE_TIMEOUT` (`_env_int("WIKI_MERGE_TIMEOUT", 600, minimum=1)`).
+pub fn wiki_merge_timeout() -> i64 {
+    env_int("WIKI_MERGE_TIMEOUT", 600, Some(1)).max(1)
+}
+
+/// `WIKI_TEMPLATE_EXAMPLE`.
+pub const WIKI_TEMPLATE_EXAMPLE: &str = "Each page must be a proper encyclopedic article, NOT a flat bullet list:\n1. Opening paragraph (2-4 sentences defining what this is). No heading.\n2. Sections with H2 headings, each starting with prose before sub-bullets.\n   Put every heading on its own line and separate every paragraph with a blank line.\n3. Bold key terms on first use; link them with [[ ]] wikilinks.\n4. Examples or implications where the source provides them.\n5. End with a \"## See also\" section listing wikilinks to highly related pages (less than 12).\n\nPage structure could be as following:\n(Not provided)";
+
+/// `WIKI_REFINE_WRITER_SYSTEM_TEMPLATE` — stored post-`.format` (single braces).
+pub const WIKI_REFINE_WRITER_SYSTEM_TEMPLATE: &str = "You are an enterprise knowledge compilation writer. Your job is to write a single, high-quality wiki page by reading the SOURCE TEXT provided and using the evidence checklist as guidance for what to cover.\n\n# Mindset: COMPILE, do NOT summarize\nYou are not writing an executive summary. You are extracting structured knowledge and rewriting it into a reusable wiki page. The output should contain MORE information density than a summary — organized differently, but not condensed. A summary loses specifics. A wiki page preserves them in a queryable structure.\n\n# What to KEEP from the source (do not lose these)\n- Specific numbers: thresholds, dosages, timeframes, dimensions, percentages.\n- Named regulations, laws, articles, code references.\n- Equipment names, model numbers, product specs.\n- Procedure steps in order, with actual actions.\n- Worked examples and exceptions.\n- Named parties, roles, contact paths, escalation chains.\n- Definitions verbatim or near-verbatim if the source is authoritative.\n- Cause-effect statements ('X causes Y because Z') — preserve all three parts.\n\n# What to DROP\n- Marketing language, mission statements, ceremonial filler.\n- Source-specific framing: 'This document explains…', 'In Section 3 below…'.\n- Repeated boilerplate, tables of contents, cover-page metadata.\n- Prose that just rephrases what was already said.\n\n# Language\nWrite in the SAME LANGUAGE as the source text. Never translate content.\n\n# Additional writing instructions — CRITICAL\n{template_instruction}\n\n# Page structure example — CRITICAL\n{template_example}\n\n# What NOT to do\n- Do NOT dump raw bullet points from the source as the entire content.\n- Do NOT omit the opening prose paragraph.\n- Do NOT include Citations / Footnotes sections.\n- Do NOT use [^N] footnote markers.\n- Do NOT translate the content language.\n\n# Wikilinks\n- Use [[slug]] or [[slug|display text]] to cross-link.\n- CRITICAL: You may ONLY link to slugs from the 'Available pages' list.\n  Do NOT invent or hallucinate slugs.\n\n# Minimum depth\n- concept/topic pages: at least 200 words of actual prose+structure.\n- entity pages: at least 100 words.\n";
+
+/// `_build_refine_writer_system`.
+pub fn build_refine_writer_system(instruction: Option<&str>, example: Option<&str>) -> String {
+    let instruction_body = instruction
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("Follow the page structure and writing requirements below.");
+    let example_body = example
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(WIKI_TEMPLATE_EXAMPLE);
+    render_template(
+        WIKI_REFINE_WRITER_SYSTEM_TEMPLATE,
+        &[
+            ("template_instruction", instruction_body),
+            ("template_example", example_body),
+        ],
+    )
+}
+
+/// `WIKI_REFINE_WRITER_SYSTEM` (default-filled).
+pub fn refine_writer_system() -> String {
+    build_refine_writer_system(None, None)
+}
+
+/// `WIKI_REFINE_WRITER_USER_TEMPLATE` — stored post-`.format` (single braces).
+pub const WIKI_REFINE_WRITER_USER_TEMPLATE: &str = "## Task\n{action} the following wiki page.\n\n## Page specification\n- Slug: {slug}\n- Title: {title}\n- Type: {page_type}\n\n## Available pages (ONLY use these slugs for [[wikilinks]])\n{all_plan_slugs}\n\n{existing_section}\n\n## Source document text\nRead this carefully. Extract all relevant facts for this page's topic.\n\n{source_context}\n\n## Evidence checklist ({evidence_count} items)\nThe following items were pre-extracted and should be covered in the page.\nUse them as a checklist — make sure you don't miss any of these facts.\nBut also look for additional relevant information in the source text above.\n\n{evidence_blocks}\n\n## Instructions\nWrite the complete wiki page in markdown based on the source text above.\nPut every heading on its own line and separate every paragraph with a blank line. Do not return the page as one line.\nCross-link to other pages using [[slug]] or [[slug|display text]] — ONLY\nuse slugs from the \"Available pages\" list. Do NOT invent new slugs.\nDo NOT include Citations or Footnotes sections.\nMUST be in the language as the same as the source document text is.\n\nReturn ONLY the markdown content, no other text.\n";
+
+/// `WIKI_REFINE_MERGE_SYSTEM`.
+pub const WIKI_REFINE_MERGE_SYSTEM: &str = "You are a wiki page merger. You receive two versions of the same wiki page:\n- EXISTING: the current version in the knowledge base.\n- INCOMING: a new version generated from a different source document.\n\nYour job is to produce a SINGLE unified page that preserves ALL factual content from BOTH versions. Rules:\n\n1. KEEP all facts, numbers, procedures, names from both versions.\n2. REMOVE exact duplicates — if both versions state the same fact, keep it once.\n3. ORGANIZE coherently — clear H2 sections, opening paragraph, ## See also.\n4. PRESERVE [[wikilinks]] from both versions.\n5. Write in the SAME LANGUAGE as the existing content.\n6. Do NOT summarize or condense — the merged page should be AT LEAST as long as the longer of the two inputs.\n7. Do NOT add any facts not present in either version.\n\nReturn ONLY the merged markdown content, no other text.";
+
+/// `_wiki_strip_think`.
+pub fn strip_think(raw: &str) -> String {
+    wiki_think_re().replace(raw, "").trim().to_string()
+}
+
+/// `_wiki_assemble_evidence`.
+pub fn assemble_evidence(
+    plan_item: &Value,
+    claims: &[Value],
+    entity_by_name: Option<&Map<String, Value>>,
+    concept_by_term: Option<&Map<String, Value>>,
+) -> Vec<Value> {
+    let raw_names: Vec<String> = plan_item
+        .get("entity_names")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if raw_names.is_empty() {
+        return Vec::new();
+    }
+    let names_lower: Vec<String> = raw_names.iter().map(|name| name.to_lowercase()).collect();
+    let patterns: Vec<Regex> = raw_names
+        .iter()
+        .map(|name| {
+            regex::RegexBuilder::new(&format!(r"\b{}\b", regex::escape(name)))
+                .case_insensitive(true)
+                .build()
+                .expect("evidence pattern")
+        })
+        .collect();
+
+    let mut evidence: Vec<Value> = Vec::new();
+    for claim in claims {
+        let Some(obj) = claim.as_object() else {
+            continue;
+        };
+        let subject_raw = obj
+            .get("subject")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if subject_raw.is_empty() {
+            continue;
+        }
+        let subject_lower = subject_raw.to_lowercase();
+        let matched = names_lower.contains(&subject_lower)
+            || patterns
+                .iter()
+                .any(|pattern| pattern.is_match(&subject_raw));
+        if !matched {
+            continue;
+        }
+        let chunk_ids: Vec<Value> = obj
+            .get("chunk_ids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item.as_str().map(|text| !text.is_empty()).unwrap_or(false))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        evidence.push(json!({
+            "statement": obj.get("statement").cloned().unwrap_or(Value::String(String::new())),
+            "subject": obj.get("subject").cloned().unwrap_or(Value::String(String::new())),
+            "confidence": obj.get("confidence").cloned().unwrap_or(Value::String("explicit".to_string())),
+            "chunk_ids": chunk_ids,
+        }));
+    }
+    if !evidence.is_empty() {
+        return evidence;
+    }
+
+    // Fallback: derive evidence from entity/concept chunk_ids.
+    if entity_by_name.is_none() && concept_by_term.is_none() {
+        return Vec::new();
+    }
+    let mut fallback_chunk_ids: Vec<String> = Vec::new();
+    let mut matched_names: Vec<String> = Vec::new();
+    for (name, name_lower) in raw_names.iter().zip(names_lower.iter()) {
+        let mut hit = entity_by_name.and_then(|map| map.get(name_lower));
+        if hit.is_none() {
+            hit = concept_by_term.and_then(|map| map.get(name_lower));
+        }
+        let Some(hit) = hit else { continue };
+        if hit.is_null() {
+            continue;
+        }
+        if let Some(items) = hit.get("chunk_ids").and_then(Value::as_array) {
+            for cid in items {
+                if let Some(text) = cid.as_str() {
+                    if !text.is_empty() && !fallback_chunk_ids.iter().any(|seen| seen == text) {
+                        fallback_chunk_ids.push(text.to_string());
+                    }
+                }
+            }
+        }
+        matched_names.push(name.clone());
+    }
+    if fallback_chunk_ids.is_empty() {
+        return Vec::new();
+    }
+    let subject = matched_names
+        .first()
+        .cloned()
+        .unwrap_or_else(|| raw_names[0].clone());
+    vec![json!({
+        "statement": "",
+        "subject": subject,
+        "confidence": "inferred",
+        "chunk_ids": fallback_chunk_ids,
+        "_synthetic": true,
+    })]
+}
+
+/// `_wiki_format_evidence_blocks`.
+pub fn format_evidence_blocks(evidence: &[Value]) -> String {
+    let real_evidence: Vec<&Value> = evidence
+        .iter()
+        .filter(|item| !item.get("_synthetic").map(json_truthy).unwrap_or(false))
+        .collect();
+    if real_evidence.is_empty() {
+        return "(no pre-extracted evidence — extract facts directly from the source document text above)".to_string();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for (idx, item) in real_evidence.iter().enumerate() {
+        let confidence = item
+            .get("confidence")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .unwrap_or("explicit")
+            .to_uppercase();
+        let subject = item.get("subject").and_then(Value::as_str).unwrap_or("");
+        let statement = item.get("statement").and_then(Value::as_str).unwrap_or("");
+        lines.push(format!(
+            "{}. [{confidence}] {subject}\n   {statement}",
+            idx + 1
+        ));
+    }
+    lines.join("\n\n")
+}
+
+/// `_wiki_collect_evidence_chunk_ids`.
+pub fn collect_evidence_chunk_ids(evidence: &[Value]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for item in evidence {
+        if let Some(items) = item.get("chunk_ids").and_then(Value::as_array) {
+            for cid in items {
+                if let Some(text) = cid.as_str() {
+                    if !text.is_empty() && !seen.iter().any(|existing| existing == text) {
+                        seen.push(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+    seen
+}
+
+#[cfg(test)]
+mod wiki_part8_tests {
+    use super::*;
+
+    #[test]
+    fn writer_system_defaults_and_overrides() {
+        let default = build_refine_writer_system(None, None);
+        assert!(default.contains("Follow the page structure and writing requirements below."));
+        assert!(default.contains("Page structure could be as following:"));
+        assert!(!default.contains("{template_instruction}"));
+        let custom = build_refine_writer_system(Some("  Be terse.  "), Some("Example body"));
+        assert!(custom.contains("Be terse."));
+        assert!(custom.contains("Example body"));
+        assert_eq!(refine_writer_system(), default);
+    }
+
+    #[test]
+    fn strip_think_removes_leading_block() {
+        assert_eq!(strip_think("abc"), "abc");
+        assert_eq!(strip_think("secret</think>answer"), "answer");
+        assert_eq!(strip_think("secret</think>  \n answer"), "answer");
+    }
+
+    #[test]
+    fn evidence_matching_exact_and_word_boundary() {
+        let plan_item = json!({"entity_names": ["Alpha Corp", "Beta"]});
+        let claims = vec![
+            json!({"statement": "s1", "subject": "alpha corp", "confidence": "explicit", "chunk_ids": ["c1", ""]}),
+            json!({"statement": "s2", "subject": "Alpha Corp Inc", "confidence": "inferred", "chunk_ids": ["c2"]}),
+            json!({"statement": "s3", "subject": "Gamma", "chunk_ids": ["c3"]}),
+            json!({"statement": "s4", "subject": ""}),
+        ];
+        let evidence = assemble_evidence(&plan_item, &claims, None, None);
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(evidence[0]["statement"], json!("s1"));
+        assert_eq!(evidence[0]["chunk_ids"], json!(["c1"]));
+        assert_eq!(evidence[0]["confidence"], json!("explicit"));
+        assert_eq!(evidence[1]["statement"], json!("s2"));
+    }
+
+    #[test]
+    fn evidence_fallback_synthesizes_stub() {
+        let plan_item = json!({"entity_names": ["Alpha"]});
+        let mut entities = Map::new();
+        entities.insert(
+            "alpha".to_string(),
+            json!({"name": "Alpha", "chunk_ids": ["c9", "c9", "c8"]}),
+        );
+        let evidence = assemble_evidence(&plan_item, &[], Some(&entities), None);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0]["_synthetic"], json!(true));
+        assert_eq!(evidence[0]["chunk_ids"], json!(["c9", "c8"]));
+        assert_eq!(evidence[0]["subject"], json!("Alpha"));
+        assert_eq!(evidence[0]["confidence"], json!("inferred"));
+        assert!(assemble_evidence(&plan_item, &[], None, None).is_empty());
+    }
+
+    #[test]
+    fn evidence_blocks_filter_format_and_collect() {
+        let evidence = vec![
+            json!({"statement": "one", "subject": "Alpha", "confidence": "explicit", "chunk_ids": ["c1", "c2"]}),
+            json!({"statement": "", "subject": "Alpha", "confidence": "inferred", "chunk_ids": ["c3"], "_synthetic": true}),
+            json!({"statement": "two", "subject": "Beta", "confidence": "inferred", "chunk_ids": ["c2", "c4"]}),
+        ];
+        let blocks = format_evidence_blocks(&evidence);
+        assert_eq!(
+            blocks,
+            "1. [EXPLICIT] Alpha\n   one\n\n2. [INFERRED] Beta\n   two"
+        );
+        assert_eq!(
+            collect_evidence_chunk_ids(&evidence),
+            vec!["c1", "c2", "c3", "c4"]
+        );
+        assert_eq!(
+            format_evidence_blocks(&[]),
+            "(no pre-extracted evidence — extract facts directly from the source document text above)"
+        );
+        let only_synthetic = vec![json!({"_synthetic": true, "chunk_ids": ["c1"]})];
+        assert!(format_evidence_blocks(&only_synthetic).starts_with("(no pre-extracted evidence"));
+    }
+}
