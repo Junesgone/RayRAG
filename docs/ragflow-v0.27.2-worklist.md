@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：47（UI 残留 42 + 实施队列 5）
+- partial：46（UI 残留 42 + 实施队列 4）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,13 +28,12 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（5 项）
+### W-4 Agentic harness 移植（最大队列）（4 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 | `rag/advanced_rag/agentic_rag.py` | 995 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：v0.27.2 Agentic-RAG 能力层（RAGTools 检索原语）；RayRAG 有多跳检索与画布智能体运行时，agentic 编排层待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/agentic_rag_graph.py` | 1766 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic-search 图编排（1766 行）；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/action_session.py` | 2142 | `src/advanced_rag.rs; src/agent.rs` | v0.3.10af 进行中（part 1-3b-2a 已移植：槽位模型 Variable/SlotState/SessionResult、ToolOutcome 契约、0.8 Jaccard 近重复拦截、admit_evidence（表块整文/1200 截断/60 上限早停）、执行器 exec_retrieve\|search_chunks\|web_search\|list_chunks\|navigate_tree\|navigate_structure\|calculate\|graph_explore 与 execute_tool 全分发（禁用短路）、终态解析 extract_tag/extract_json/apply_patch/parse_terminal、parse_tool_calls、8 个逐字 tool schema、tool_node_policy（近重复跳过/未知修正/缓存/EMPTY_STRIKES=2 禁用/redundant 注记）；16 测绿，提交 5f520cc）。剩余 part 3b-2b：_finalize_node/路由/显式会话循环 + 导航前缀（_NavRule/_run_drill_merge/_run_nav_chain/run_nav_prefix）+ initialize_state + run_action_session 入口 + 提示词逐字——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 

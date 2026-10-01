@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.88] — 2026-10-01（对标批次 v0.3.10af 正式）
+
+> W-4 收口：动作会话（`action_session.py`，2142 行）全文件 1:1 移植完成。0.4.87 的中间发布已含前四分区；本版补齐会话节点循环、导航前缀、会话内 ladder 续跑、槽位构建器与入口。
+
+- 会话节点循环：`ActionLlmBackend` 注入式契约（`complete_with_tools`/`complete_plain`；超时由调用方给定）；`run_action_node`（原生工具调用归一化透传 / 终态解析 / 每回合一次 nudge）、`finalize_node`（预算耗尽 salvage：去配对 `tool_calls` + 无工具补全 + 松散线索兜底 `narrative:`）、`route`/`route_after_tool`（pending 先于预算、attempts≥4、`skipped_dup≥2` 早收敛）与等价会话图的显式循环 `run_session_loop`。
+- 导航前缀：`NavRule`/`NavContext` + 三条逐字规则（locate → drill → global，状态路由表逐字）＋ `run_drill_merge`（全库检索 + `nav_hint` 软提升 + 各路由文档 `navigate_structure` 路径按 chunk_id 合并 + `nav_rank` 稳定重排）＋ `run_nav_chain`/`run_nav_prefix`（AUTO 执行、LLM 交还、预算 `max(5, 35%)`、单次上限 25s、提示截 600 字符）＋ `emit_nav_pair`（成对消息、payload 至多截到 800）＋ `extract_relevant_evidence`。
+- 会话内 ladder 续跑（`_tool_node` 的 ladder 块）：每个已执行调用后按 `nav_rule_id` 的 verdict 继续余下阶梯，`ladder_<rung>` 成对消息与 outcomes 追加。
+- 槽位构建器与入口：`initialize_state`（`slots`/`first_queries` 解析、clues≤4、queries≤3、fanout 兜底→answer 槽、`init_retry_timeout` floor/ceiling/deadline）、`run_action_session`（`action_run` 系统提示 + Direction/State/已检索/上轮摘要种子、导航前缀种入、共享 `tool_cache`/`search_queries`、deadline 扣减、返回 `SessionResult`）、`ACTION_RUN_PROMPT`/`ACTION_INITIALIZE_STATE_PROMPT` 逐字。
+- 架构性差异（已在 `ActionRuntime` 文档注明）：`_inject_nav_tools_ref`/`_kb_ids`/`_seed_evidence` 为 Python 宿主管线，Rust 侧由显式 backend/`Kbinfos` 参数替代。
+- 单测：action_session 42 项全绿；台账置 `full`；worklist W-4 5→4；`ragflow-coverage --check` 常绿（5977、unmapped=0）。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.87] — 2026-10-01（对标批次 v0.3.10af，进行中）
 
 > W-4 续：动作会话（`action_session.py`，2142 行）前四分区落地（纯 Rust）；文件级收尾（导航前缀/会话入口/提示词）随下一分区。
