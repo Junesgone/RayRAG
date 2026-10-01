@@ -3278,3 +3278,704 @@ mod wiki_part5_tests {
         assert_eq!(cached["concepts"], json!([]));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 6a — PLAN helpers: page-count heuristic, plan-line formatting,
+// KB reconciliation and MAYBE resolution (`_wiki_target_page_count` ..
+// `_wiki_resolve_maybe_items`).
+//
+// Adaptation note: the local dense match has no `extra_options` min-score
+// filter, so similarity is computed client-side from the returned row vector
+// and `sim <= 0` falls back to `maybe_threshold` (mirroring the upstream
+// `_score`-missing fallback).
+// ---------------------------------------------------------------------------
+
+/// `WIKI_PLAN_COMPILE_KWD`.
+pub const WIKI_PLAN_COMPILE_KWD: &str = "wiki_compilation_plan";
+/// `WIKI_PAGE_COMPILE_KWD`.
+pub const WIKI_PAGE_COMPILE_KWD: &str = "wiki_page";
+/// `DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD`.
+pub const DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD: f64 = 0.95;
+/// `DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD`.
+pub const DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD: f64 = 0.60;
+
+/// `DEFAULT_WIKI_PLAN_TIMEOUT` (`_env_int("WIKI_PLAN_TIMEOUT", 600, minimum=1)`).
+pub fn default_wiki_plan_timeout() -> i64 {
+    env_int("WIKI_PLAN_TIMEOUT", 600, Some(1)).max(1)
+}
+
+/// `WIKI_PLAN_RECONCILE_SYSTEM`.
+pub const WIKI_PLAN_RECONCILE_SYSTEM: &str = "You are a knowledge base assistant. Return only a JSON boolean array.Keep the user's original language (Chinese/English etc.) for generated data.";
+
+/// `_wiki_target_page_count`: `clamp(8, total // 3, 60)`.
+pub fn target_page_count(total_items: i64) -> usize {
+    if total_items <= 0 {
+        return 8;
+    }
+    (total_items / 3).clamp(8, 60) as usize
+}
+
+/// `_wiki_format_entity_for_plan`.
+pub fn format_entity_for_plan(entity: &Value, reconciliation: &Map<String, Value>) -> String {
+    let aliases = entity
+        .get("aliases")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(3)
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<&str>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let name = entity.get("name").and_then(Value::as_str).unwrap_or("");
+    let rec = reconciliation.get(name).cloned().unwrap_or(Value::Null);
+    let action = rec
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("CREATE");
+    let slug = rec.get("page_slug").and_then(Value::as_str).unwrap_or("");
+    let kb_info = format!("→ {action} {slug}");
+    let kb_info = kb_info.trim_end();
+    let mut line = format!(
+        "  - {name} ({}, {} mentions",
+        entity.get("type").and_then(Value::as_str).unwrap_or(""),
+        entity
+            .get("mention_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    );
+    if !aliases.is_empty() {
+        line += &format!(", aliases: {aliases}");
+    }
+    line += &format!(") {kb_info}");
+    line
+}
+
+/// `_wiki_format_concept_for_plan`.
+pub fn format_concept_for_plan(concept: &Value, reconciliation: &Map<String, Value>) -> String {
+    let term = concept.get("term").and_then(Value::as_str).unwrap_or("");
+    let rec = reconciliation.get(term).cloned().unwrap_or(Value::Null);
+    let action = rec
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("CREATE");
+    let slug = rec.get("page_slug").and_then(Value::as_str).unwrap_or("");
+    let kb_info = format!("→ {action} {slug}");
+    let kb_info = kb_info.trim_end();
+    format!(
+        "  - {term} ({} mentions) {kb_info}",
+        concept
+            .get("mention_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    )
+}
+
+fn create_reconciliation() -> Value {
+    json!({
+        "action": "CREATE",
+        "page_slug": null,
+        "page_title": null,
+        "page_id": null,
+        "similarity": 0.0,
+    })
+}
+
+fn truncate_chars(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
+/// `_wiki_reconcile_with_kb`: per-item KNN against `wiki_page` rows.
+pub async fn reconcile_with_kb(
+    store: &dyn DocStore,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    canonical_entities: &[Value],
+    canonical_concepts: &[Value],
+    update_threshold: f64,
+    maybe_threshold: f64,
+) -> Map<String, Value> {
+    let mut items: Vec<(String, String, String)> = Vec::new(); // (kind, key, text)
+    for entity in canonical_entities {
+        if let Some(name) = entity.get("name").and_then(Value::as_str) {
+            if !name.is_empty() {
+                items.push((
+                    "entity".to_string(),
+                    name.to_string(),
+                    truncate_chars(name, 4000),
+                ));
+            }
+        }
+    }
+    for concept in canonical_concepts {
+        if let Some(term) = concept.get("term").and_then(Value::as_str) {
+            if !term.is_empty() {
+                let definition = concept
+                    .get("definition_excerpt")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let text = if definition.is_empty() {
+                    term.to_string()
+                } else {
+                    format!("{term}: {}", truncate_chars(definition, 200))
+                };
+                items.push((
+                    "concept".to_string(),
+                    term.to_string(),
+                    truncate_chars(&text, 4000),
+                ));
+            }
+        }
+    }
+    let mut reconciliation: Map<String, Value> = Map::new();
+    if items.is_empty() {
+        return reconciliation;
+    }
+    let Some(embd) = embd else {
+        for (_, key, _) in &items {
+            reconciliation.insert(key.clone(), create_reconciliation());
+        }
+        return reconciliation;
+    };
+    let texts: Vec<&str> = items.iter().map(|(_, _, text)| text.as_str()).collect();
+    let vectors = match embd.embed(&texts).await {
+        Ok(vectors) => vectors,
+        Err(err) => {
+            tracing::error!(error = %err, "wiki_plan: reconciliation embedding failed — all items will be CREATE");
+            for (_, key, _) in &items {
+                reconciliation.insert(key.clone(), create_reconciliation());
+            }
+            return reconciliation;
+        }
+    };
+    if vectors.len() != items.len() {
+        tracing::error!(
+            expected = items.len(),
+            got = vectors.len(),
+            "wiki_plan: reconciliation embedding count mismatch; CREATE all"
+        );
+        for (_, key, _) in &items {
+            reconciliation.insert(key.clone(), create_reconciliation());
+        }
+        return reconciliation;
+    }
+
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PAGE_COMPILE_KWD.to_string()),
+    );
+    for ((_, key, _), vec) in items.iter().zip(vectors.iter()) {
+        if vec.is_empty() {
+            reconciliation.insert(key.clone(), create_reconciliation());
+            continue;
+        }
+        let vec_field = format!("q_{}_vec", vec.len());
+        let fields: Vec<String> = [
+            "id",
+            "slug_kwd",
+            "title_kwd",
+            "page_type_kwd",
+            "embedding",
+            vec_field.as_str(),
+        ]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+        let query = SearchQuery {
+            select_fields: fields.clone(),
+            condition: condition.clone(),
+            match_expressions: vec![crate::doc_store::MatchExpr::dense(
+                &vec_field,
+                vec.clone(),
+                "cosine",
+                1,
+            )],
+            offset: 0,
+            limit: 1,
+            index_names: vec![index_name(tenant_id)],
+            dataset_ids: vec![kb_id.to_string()],
+            ..Default::default()
+        };
+        let top = match store.search(&query) {
+            Ok(response) => store.get_fields(&response, &fields).into_iter().next(),
+            Err(err) => {
+                tracing::error!(error = %err, key = %key, "wiki_plan: KNN failed");
+                reconciliation.insert(key.clone(), create_reconciliation());
+                continue;
+            }
+        };
+        let Some((top_id, top_row)) = top else {
+            // Local backends drop zero-score dense hits, so rescan the page
+            // pool and pick the best row client-side (threshold-gated).
+            let query = SearchQuery {
+                select_fields: fields.clone(),
+                condition: condition.clone(),
+                match_expressions: Vec::new(),
+                offset: 0,
+                limit: 200,
+                index_names: vec![index_name(tenant_id)],
+                dataset_ids: vec![kb_id.to_string()],
+                ..Default::default()
+            };
+            let mut best: Option<(String, Value, f64)> = None;
+            if let Ok(response) = store.search(&query) {
+                for (row_id, row) in store.get_fields(&response, &fields) {
+                    let stored: Vec<f32> = row
+                        .get(&vec_field)
+                        .or_else(|| row.get("embedding"))
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_f64().map(|number| number as f32))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if stored.len() != vec.len() {
+                        continue;
+                    }
+                    let sim = crate::merge::cosine_similarity(vec, &stored) as f64;
+                    if best
+                        .as_ref()
+                        .map(|(_, _, best_sim)| sim > *best_sim)
+                        .unwrap_or(true)
+                    {
+                        best = Some((row_id, Value::Object(row), sim));
+                    }
+                }
+            }
+            let Some((row_id, row, sim)) = best.filter(|(_, _, sim)| *sim >= maybe_threshold)
+            else {
+                reconciliation.insert(key.clone(), create_reconciliation());
+                continue;
+            };
+            let slug = row.get("slug_kwd").cloned().unwrap_or(Value::Null);
+            let title = row.get("title_kwd").cloned().unwrap_or(Value::Null);
+            let action = if sim >= update_threshold {
+                "UPDATE"
+            } else {
+                "MAYBE"
+            };
+            reconciliation.insert(
+                key.clone(),
+                json!({
+                    "action": action,
+                    "page_slug": slug,
+                    "page_title": title,
+                    "page_id": row_id,
+                    "similarity": sim,
+                }),
+            );
+            continue;
+        };
+        let stored: Vec<f32> = top_row
+            .get(&vec_field)
+            .or_else(|| top_row.get("embedding"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_f64().map(|number| number as f32))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut sim = crate::merge::cosine_similarity(vec, &stored) as f64;
+        if sim <= 0.0 {
+            sim = maybe_threshold;
+        }
+        let slug = top_row.get("slug_kwd").cloned().unwrap_or(Value::Null);
+        let title = top_row.get("title_kwd").cloned().unwrap_or(Value::Null);
+        let action = if sim >= update_threshold {
+            "UPDATE"
+        } else {
+            "MAYBE"
+        };
+        reconciliation.insert(
+            key.clone(),
+            json!({
+                "action": action,
+                "page_slug": slug,
+                "page_title": title,
+                "page_id": top_id,
+                "similarity": sim,
+            }),
+        );
+    }
+    reconciliation
+}
+
+fn set_action(reconciliation: &mut Map<String, Value>, name: &str, action: &str) {
+    if let Some(entry) = reconciliation.get_mut(name).and_then(Value::as_object_mut) {
+        entry.insert("action".to_string(), Value::String(action.to_string()));
+    }
+}
+
+/// `_wiki_resolve_maybe_items`: flip MAYBE → UPDATE | CREATE in place.
+pub async fn resolve_maybe_items(
+    chat: &dyn HarnessChat,
+    reconciliation: &mut Map<String, Value>,
+    batch_size: usize,
+    llm_timeout: i64,
+) {
+    let maybe_items: Vec<String> = reconciliation
+        .iter()
+        .filter(|(_, value)| value.get("action").and_then(Value::as_str) == Some("MAYBE"))
+        .map(|(key, _)| key.clone())
+        .collect();
+    if maybe_items.is_empty() {
+        return;
+    }
+    let batch_size = batch_size.max(1);
+    for batch in maybe_items.chunks(batch_size) {
+        let mut lines: Vec<String> = Vec::new();
+        for (idx, name) in batch.iter().enumerate() {
+            let rec = reconciliation.get(name).cloned().unwrap_or(Value::Null);
+            let title = rec
+                .get("page_title")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .or_else(|| rec.get("page_slug").and_then(Value::as_str))
+                .unwrap_or("");
+            let slug = rec.get("page_slug").and_then(Value::as_str).unwrap_or("");
+            let sim = rec.get("similarity").and_then(Value::as_f64).unwrap_or(0.0);
+            lines.push(format!(
+                "{}. Entity: \"{name}\" — existing wiki page: \"{title}\" (slug: {slug}, similarity: {sim:.2})",
+                idx + 1
+            ));
+        }
+        let user_prompt = format!(
+            "For each pair below, decide whether the entity refers to the same real-world concept as the existing wiki page (true = UPDATE existing page, false = CREATE new page).\nReturn a JSON array of exactly {} booleans. Return ONLY the JSON array.\n\n{}",
+            batch.len(),
+            lines.join("\n")
+        );
+        let gen_conf = knowledge_compile_gen_conf(
+            &chat.model_name(),
+            Some(&Map::from_iter([("temperature".to_string(), json!(0.0))])),
+        );
+        let request_conf = Value::Object(gen_conf);
+        let timeout = std::time::Duration::from_secs(llm_timeout.max(0) as u64);
+        let outcome = tokio::time::timeout(
+            timeout,
+            wiki_gen_json(
+                chat,
+                WIKI_PLAN_RECONCILE_SYSTEM,
+                &user_prompt,
+                &request_conf,
+            ),
+        )
+        .await;
+        let res = match outcome {
+            Err(_elapsed) => {
+                tracing::warn!(
+                    pairs = batch.len(),
+                    "wiki_plan: MAYBE resolution timed out; defaulting CREATE"
+                );
+                None
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    pairs = batch.len(),
+                    "wiki_plan: MAYBE resolution failed; defaulting CREATE"
+                );
+                None
+            }
+            Ok(Some(value)) => Some(value),
+        };
+        let Some(res) = res else {
+            for name in batch {
+                set_action(reconciliation, name, "CREATE");
+            }
+            continue;
+        };
+        let mut decisions: Option<Vec<Value>> = None;
+        if let Value::Array(items) = &res {
+            decisions = Some(items.clone());
+        } else if let Value::Object(map) = &res {
+            for value in map.values() {
+                if let Value::Array(items) = value {
+                    decisions = Some(items.clone());
+                    break;
+                }
+            }
+        }
+        let Some(decisions) = decisions else {
+            tracing::warn!("wiki_plan: MAYBE LLM returned unexpected shape; CREATE all");
+            for name in batch {
+                set_action(reconciliation, name, "CREATE");
+            }
+            continue;
+        };
+        for (idx, name) in batch.iter().enumerate() {
+            let verdict = decisions.get(idx).map(json_truthy).unwrap_or(false);
+            set_action(
+                reconciliation,
+                name,
+                if verdict { "UPDATE" } else { "CREATE" },
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod wiki_part6_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeEmbedder {
+        map: HashMap<String, Vec<f32>>,
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for FakeEmbedder {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            if self.fail {
+                return Err(anyhow::anyhow!("embed boom"));
+            }
+            Ok(texts
+                .iter()
+                .map(|text| self.map.get(*text).cloned().unwrap_or_default())
+                .collect())
+        }
+    }
+
+    struct FakeChat {
+        reply: String,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.to_string(),
+                delay_ms: 0,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn embedder(map: &[(&str, [f32; 2])]) -> FakeEmbedder {
+        FakeEmbedder {
+            map: map
+                .iter()
+                .map(|(name, vec)| (name.to_string(), vec.to_vec()))
+                .collect(),
+            fail: false,
+        }
+    }
+
+    fn insert_page(store: &MemoryDocStore) {
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha Page",
+            "page_type_kwd": "entity",
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn target_page_count_bounds() {
+        assert_eq!(target_page_count(0), 8);
+        assert_eq!(target_page_count(9), 8);
+        assert_eq!(target_page_count(30), 10);
+        assert_eq!(target_page_count(1000), 60);
+    }
+
+    #[test]
+    fn plan_line_formatters() {
+        let mut reconciliation = Map::new();
+        reconciliation.insert(
+            "Alpha".to_string(),
+            json!({"action": "UPDATE", "page_slug": "entity/alpha"}),
+        );
+        let entity = json!({
+            "name": "Alpha",
+            "type": "org",
+            "mention_count": 3,
+            "aliases": ["A", "Alpha Inc", "ALPHA", "ignored"]
+        });
+        assert_eq!(
+            format_entity_for_plan(&entity, &reconciliation),
+            "  - Alpha (org, 3 mentions, aliases: A, Alpha Inc, ALPHA) → UPDATE entity/alpha"
+        );
+        let concept = json!({"term": "Beta", "mention_count": 2});
+        assert_eq!(
+            format_concept_for_plan(&concept, &reconciliation),
+            "  - Beta (2 mentions) → CREATE"
+        );
+        assert_eq!(
+            format_concept_for_plan(&concept, &reconciliation),
+            "  - Beta (2 mentions) → CREATE"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_classifies_updates_maybes_and_creates() {
+        let store = MemoryDocStore::new();
+        insert_page(&store);
+        let embd = embedder(&[
+            ("Alpha", [1.0, 0.0]),
+            ("Gamma", [0.0, 1.0]),
+            ("Delta", [0.8, 0.6]),
+        ]);
+        let entities = vec![
+            json!({"name": "Alpha", "type": "org"}),
+            json!({"name": "Gamma", "type": "org"}),
+            json!({"name": "Delta", "type": "org"}),
+        ];
+        let reconciliation = reconcile_with_kb(
+            &store,
+            Some(&embd),
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(reconciliation["Alpha"]["action"], json!("UPDATE"));
+        assert_eq!(reconciliation["Alpha"]["page_slug"], json!("entity/alpha"));
+        assert_eq!(reconciliation["Alpha"]["page_id"], json!("p1"));
+        assert!(reconciliation["Alpha"]["similarity"].as_f64().unwrap() > 0.99);
+        assert_eq!(reconciliation["Gamma"]["action"], json!("CREATE"));
+        assert_eq!(reconciliation["Gamma"]["page_slug"], Value::Null);
+        assert_eq!(reconciliation["Delta"]["action"], json!("MAYBE"));
+        let delta_sim = reconciliation["Delta"]["similarity"].as_f64().unwrap();
+        assert!(
+            delta_sim > DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD
+                && delta_sim < DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD
+        );
+
+        let empty_store = MemoryDocStore::new();
+        let fresh = reconcile_with_kb(
+            &empty_store,
+            Some(&embd),
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(fresh["Alpha"]["action"], json!("CREATE"));
+        assert_eq!(fresh["Alpha"]["page_slug"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn reconcile_embed_failure_creates_all() {
+        let store = MemoryDocStore::new();
+        insert_page(&store);
+        let failing = FakeEmbedder {
+            map: HashMap::new(),
+            fail: true,
+        };
+        let entities = vec![json!({"name": "Alpha", "type": "org"})];
+        let reconciliation = reconcile_with_kb(
+            &store,
+            Some(&failing),
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(reconciliation["Alpha"]["action"], json!("CREATE"));
+        let no_embedder = reconcile_with_kb(
+            &store,
+            None,
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(no_embedder["Alpha"]["action"], json!("CREATE"));
+    }
+
+    #[tokio::test]
+    async fn resolve_maybe_flips_and_defaults() {
+        let chat = FakeChat::new("[true, false]");
+        let mut reconciliation = Map::new();
+        reconciliation.insert(
+            "Alpha".to_string(),
+            json!({"action": "MAYBE", "page_slug": "entity/alpha", "page_title": "Alpha Page", "similarity": 0.7}),
+        );
+        reconciliation.insert(
+            "Beta".to_string(),
+            json!({"action": "MAYBE", "page_slug": "entity/beta", "page_title": "Beta Page", "similarity": 0.65}),
+        );
+        resolve_maybe_items(&chat, &mut reconciliation, 50, 30).await;
+        assert_eq!(reconciliation["Alpha"]["action"], json!("UPDATE"));
+        assert_eq!(reconciliation["Beta"]["action"], json!("CREATE"));
+        assert!(chat.calls.lock().unwrap()[0].contains("Entity: \"Alpha\""));
+
+        let malformed = FakeChat::new("not json at all");
+        let mut map2 = Map::new();
+        map2.insert(
+            "Gamma".to_string(),
+            json!({"action": "MAYBE", "similarity": 0.61}),
+        );
+        resolve_maybe_items(&malformed, &mut map2, 50, 30).await;
+        assert_eq!(map2["Gamma"]["action"], json!("CREATE"));
+
+        let mut slow = FakeChat::new("[true]");
+        slow.delay_ms = 50;
+        let mut map3 = Map::new();
+        map3.insert(
+            "Delta".to_string(),
+            json!({"action": "MAYBE", "similarity": 0.62}),
+        );
+        resolve_maybe_items(&slow, &mut map3, 50, 0).await;
+        assert_eq!(map3["Delta"]["action"], json!("CREATE"));
+    }
+}
