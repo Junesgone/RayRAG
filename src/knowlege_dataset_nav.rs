@@ -76,16 +76,16 @@ pub fn extract_root_summary_from_tree(tree: &Value) -> String {
     let Some(map) = tree.as_object() else {
         return String::new();
     };
-    if let Some(title) = map.get("title").and_then(Value::as_str) {
-        if !title.trim().is_empty() {
-            return title.trim().to_string();
-        }
+    if let Some(title) = map.get("title").and_then(Value::as_str)
+        && !title.trim().is_empty()
+    {
+        return title.trim().to_string();
     }
     for key in ["summary", "content_with_weight", "content"] {
-        if let Some(text) = map.get(key).and_then(Value::as_str) {
-            if !text.trim().is_empty() {
-                return text.trim().to_string();
-            }
+        if let Some(text) = map.get(key).and_then(Value::as_str)
+            && !text.trim().is_empty()
+        {
+            return text.trim().to_string();
         }
     }
     String::new()

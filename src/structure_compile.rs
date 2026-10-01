@@ -3733,15 +3733,15 @@ pub fn env_float(name: &str, default: f64, minimum: Option<f64>, maximum: Option
     if !value.is_finite() {
         value = default;
     }
-    if let Some(floor) = minimum {
-        if value < floor {
-            value = floor;
-        }
+    if let Some(floor) = minimum
+        && value < floor
+    {
+        value = floor;
     }
-    if let Some(cap) = maximum {
-        if value > cap {
-            value = cap;
-        }
+    if let Some(cap) = maximum
+        && value > cap
+    {
+        value = cap;
     }
     value
 }
@@ -4801,26 +4801,25 @@ pub async fn run_structure_compile_over_batches(
             chunks_by_id,
             progress: request.progress,
         };
-        if let Ok(info) = backend.merge_compiled_structures(flush_request).await {
-            if info.is_object() {
-                let agg = agg_infos
+        if let Ok(info) = backend.merge_compiled_structures(flush_request).await
+            && info.is_object()
+        {
+            let agg = agg_infos.entry(template_id.to_string()).or_default();
+            for key in ["inserted", "updated", "duplicates_dropped"] {
+                let current = agg.get(key).and_then(Value::as_i64).unwrap_or(0);
+                let delta = info.get(key).and_then(Value::as_i64).unwrap_or(0);
+                agg.insert(key.to_string(), json!(current + delta));
+            }
+            if let Some(kwds) = info.get("compile_kwds").and_then(Value::as_array) {
+                let entry = compile_kwds_by_tid
                     .entry(template_id.to_string())
-                    .or_insert_with(serde_json::Map::new);
-                for key in ["inserted", "updated", "duplicates_dropped"] {
-                    let current = agg.get(key).and_then(Value::as_i64).unwrap_or(0);
-                    let delta = info.get(key).and_then(Value::as_i64).unwrap_or(0);
-                    agg.insert(key.to_string(), json!(current + delta));
-                }
-                if let Some(kwds) = info.get("compile_kwds").and_then(Value::as_array) {
-                    let entry = compile_kwds_by_tid
-                        .entry(template_id.to_string())
-                        .or_insert_with(Vec::new);
-                    for kwd in kwds {
-                        if let Some(text) = kwd.as_str() {
-                            if !text.is_empty() && !entry.iter().any(|existing| existing == text) {
-                                entry.push(text.to_string());
-                            }
-                        }
+                    .or_default();
+                for kwd in kwds {
+                    if let Some(text) = kwd.as_str()
+                        && !text.is_empty()
+                        && !entry.iter().any(|existing| existing == text)
+                    {
+                        entry.push(text.to_string());
                     }
                 }
             }
@@ -4868,16 +4867,16 @@ pub async fn run_structure_compile_over_batches(
 
     for incoming_batch in &request.chunk_batches {
         for chunk in incoming_batch {
-            if let Some(cid) = chunk.get("id").and_then(Value::as_str) {
-                if !chunks_by_id.contains_key(cid) {
-                    let text = chunk
-                        .get("content_with_weight")
-                        .or_else(|| chunk.get("text"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    chunks_by_id.insert(cid.to_string(), text);
-                }
+            if let Some(cid) = chunk.get("id").and_then(Value::as_str)
+                && !chunks_by_id.contains_key(cid)
+            {
+                let text = chunk
+                    .get("content_with_weight")
+                    .or_else(|| chunk.get("text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                chunks_by_id.insert(cid.to_string(), text);
             }
         }
         for (template_id, parser_cfg) in &request.active_templates {
@@ -4926,10 +4925,9 @@ pub async fn run_structure_compile_over_batches(
                     while in_flight.len() + completed.len() >= *DOC_STRUCTURE_COMPILE_MAX_IN_FLIGHT
                     {
                         if let Some((sequence, no, len, template, result)) = in_flight.next().await
+                            && let Ok(docs) = result
                         {
-                            if let Ok(docs) = result {
-                                completed.insert(sequence, (no, len, template, docs));
-                            }
+                            completed.insert(sequence, (no, len, template, docs));
                         }
                         while let Some((no, len, template, docs)) =
                             completed.remove(&commit_sequence)
@@ -5038,10 +5036,10 @@ pub async fn run_structure_compile_over_batches(
         if cancel_check() {
             return Err(RunnerError::Cancelled);
         }
-        if let Some((sequence, no, len, template, result)) = in_flight.next().await {
-            if let Ok(docs) = result {
-                completed.insert(sequence, (no, len, template, docs));
-            }
+        if let Some((sequence, no, len, template, result)) = in_flight.next().await
+            && let Ok(docs) = result
+        {
+            completed.insert(sequence, (no, len, template, docs));
         }
         while let Some((no, len, template, docs)) = completed.remove(&commit_sequence) {
             let _ = len;
@@ -5453,21 +5451,21 @@ pub fn struct_merge_graph_relations(relations: &[Value]) -> Vec<Value> {
                 for source in [target.get("doc_ids_kwd"), relation.get("doc_ids_kwd")] {
                     if let Some(items) = source.and_then(Value::as_array) {
                         for item in items {
-                            if let Some(text) = item.as_str() {
-                                if !doc_ids.iter().any(|existing| existing == text) {
-                                    doc_ids.push(text.to_string());
-                                }
+                            if let Some(text) = item.as_str()
+                                && !doc_ids.iter().any(|existing| existing == text)
+                            {
+                                doc_ids.push(text.to_string());
                             }
                         }
                     }
                 }
-                if !doc_ids.is_empty() {
-                    if let Some(map) = target.as_object_mut() {
-                        map.insert(
-                            "doc_ids_kwd".to_string(),
-                            Value::Array(doc_ids.into_iter().map(Value::String).collect()),
-                        );
-                    }
+                if !doc_ids.is_empty()
+                    && let Some(map) = target.as_object_mut()
+                {
+                    map.insert(
+                        "doc_ids_kwd".to_string(),
+                        Value::Array(doc_ids.into_iter().map(Value::String).collect()),
+                    );
                 }
             }
         }
@@ -5532,10 +5530,10 @@ pub fn struct_union_chunk_ids(left: Option<&Value>, right: Option<&Value>) -> Ve
     for source in [left, right] {
         if let Some(items) = source.and_then(Value::as_array) {
             for item in items {
-                if let Some(text) = item.as_str() {
-                    if !out.iter().any(|existing| existing == text) {
-                        out.push(text.to_string());
-                    }
+                if let Some(text) = item.as_str()
+                    && !out.iter().any(|existing| existing == text)
+                {
+                    out.push(text.to_string());
                 }
             }
         }
@@ -5575,13 +5573,13 @@ pub fn struct_rebuild_doc_storage_doc(
     };
     let mut src_field: Option<&str> = None;
     let mut target_field: Option<&str> = None;
-    if kind == "relation" {
-        if let Some(existing) = parse_content_payload(base_doc) {
-            if existing.get("source").is_some() && existing.get("target").is_some() {
-                src_field = Some("source");
-                target_field = Some("target");
-            }
-        }
+    if kind == "relation"
+        && let Some(existing) = parse_content_payload(base_doc)
+        && existing.get("source").is_some()
+        && existing.get("target").is_some()
+    {
+        src_field = Some("source");
+        target_field = Some("target");
     }
     let template_id = doc_template_id(base_doc);
     let template_kind = base_doc
@@ -5898,7 +5896,7 @@ pub fn struct_entity_candidate_groups(
     let mut result: Vec<Vec<Value>> = Vec::new();
     for key in order {
         let bucket = buckets.remove(&key).unwrap_or_default();
-        let vectors: Vec<Option<Vec<f32>>> = bucket.iter().map(|doc| find_vec_field(doc)).collect();
+        let vectors: Vec<Option<Vec<f32>>> = bucket.iter().map(find_vec_field).collect();
         let valid: Vec<usize> = vectors
             .iter()
             .enumerate()
@@ -6121,15 +6119,16 @@ pub fn struct_dedup_select_fields() -> Vec<String> {
 fn struct_doc_vec_field(row: &Value) -> Option<(String, Vec<f32>)> {
     let map = row.as_object()?;
     for (key, val) in map {
-        if key.starts_with("q_") && key.ends_with("_vec") {
-            if let Some(items) = val.as_array() {
-                let vector: Vec<f32> = items
-                    .iter()
-                    .filter_map(|item| item.as_f64().map(|number| number as f32))
-                    .collect();
-                if !vector.is_empty() {
-                    return Some((key.clone(), vector));
-                }
+        if key.starts_with("q_")
+            && key.ends_with("_vec")
+            && let Some(items) = val.as_array()
+        {
+            let vector: Vec<f32> = items
+                .iter()
+                .filter_map(|item| item.as_f64().map(|number| number as f32))
+                .collect();
+            if !vector.is_empty() {
+                return Some((key.clone(), vector));
             }
         }
     }
@@ -6281,12 +6280,12 @@ pub async fn struct_judge_doc_storage_group_batch(
                     .get("duplicated")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                if duplicated {
-                    if let Some(index) = item.get("incoming_index").and_then(Value::as_i64) {
-                        if index >= 0 && (index as usize) < incoming_len {
-                            hits.insert(index);
-                        }
-                    }
+                if duplicated
+                    && let Some(index) = item.get("incoming_index").and_then(Value::as_i64)
+                    && index >= 0
+                    && (index as usize) < incoming_len
+                {
+                    hits.insert(index);
                 }
             }
         }
@@ -6393,10 +6392,12 @@ pub async fn struct_merge_doc_storage_group_batch(
                     .get("duplicated")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                if let Some(index) = item.get("incoming_index").and_then(Value::as_i64) {
-                    if duplicated && index >= 0 && (index as usize) < incoming_docs.len() {
-                        duplicate_indices.insert(index);
-                    }
+                if let Some(index) = item.get("incoming_index").and_then(Value::as_i64)
+                    && duplicated
+                    && index >= 0
+                    && (index as usize) < incoming_docs.len()
+                {
+                    duplicate_indices.insert(index);
                 }
             }
         }
@@ -6514,10 +6515,11 @@ pub async fn struct_merge_doc_storage_group(
     }
     let mut duplicate_indices: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for index in indices {
-        if let Some(value) = index.as_i64() {
-            if value >= 0 && (value as usize) < incoming_docs.len() {
-                duplicate_indices.insert(value);
-            }
+        if let Some(value) = index.as_i64()
+            && value >= 0
+            && (value as usize) < incoming_docs.len()
+        {
+            duplicate_indices.insert(value);
         }
     }
     if duplicate_indices.is_empty() {
@@ -6788,7 +6790,7 @@ pub async fn struct_doc_storage_dedup_batch(
     // embeddings before the writes.
     let mut merged_jobs: Vec<(String, usize, Value, Vec<String>)> = Vec::new();
     for (position, state) in states.iter_mut().enumerate() {
-        inserts.extend(state.separate.drain(..));
+        inserts.append(&mut state.separate);
         if state.merged.is_none() {
             continue;
         }
@@ -6853,11 +6855,10 @@ pub async fn struct_doc_storage_dedup_batch(
                 let row_id = string_field(row, "id");
                 if rebuilt_ids.contains(&row_id) {
                     updated += 1;
-                    if let Some(position) = old_ids.iter().position(|id| id == &row_id) {
-                        if string_field(&old_docs[position], "knowledge_graph_kwd") == "entity" {
-                            successful_entity_aliases
-                                .extend(states[position].entity_aliases.clone());
-                        }
+                    if let Some(position) = old_ids.iter().position(|id| id == &row_id)
+                        && string_field(&old_docs[position], "knowledge_graph_kwd") == "entity"
+                    {
+                        successful_entity_aliases.extend(states[position].entity_aliases.clone());
                     }
                 } else {
                     inserted += 1;

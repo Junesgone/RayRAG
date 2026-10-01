@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.91] — 2026-10-01（对标批次 v0.3.10ah，中间版）
+
+> 本中间版在 0.4.90 基础上又关闭一个 W-4 文件并推进第三个：`structure.py` 全文件收敛为 `full`；`dataset_nav.py` 完成前三批移植；台账对剩余三文件完成机器化缺口测绘（逐项书面说明）。
+
+- `structure.py` 收敛为 `full`（3430 行 / 61+4 定义）：在本地既有提取/合并/链校验之上补齐 24 项 v0.27.2 缺口——全量自适应 `LlmCallPool`+`ModelPoolState`+`PooledChatModel`（替换直通 stub）、别名解析与关系改写/重建、精确实体合并、doc-storage 去重条件/KNN 候选/组判定与合并批次（三条提示词逐字）/单组合并/批量编排 `dedup_batch`、`entity_candidate_groups`、`dataset_struct_graph_row_id`、`RechunkedDocs` 等；structure_compile 套件 **72 项单测绿**。书面差异：嵌套批次并发顺序化、行 id 替代 Python `id()`、`MatchExpr::Dense` 无 extra_options、`ensure_llm_bundle` 不适用。
+- `dataset_nav.py` 前三批（`src/knowlege_dataset_nav.rs`，13 项单测绿）：
+  - part 1：常量（阈值/扇出/锁/KNN/混合权重/停用词）、`nav_doc_id`/`nav_cluster_id`/`nav_lock_key`、`extract_root_summary_from_tree`、`index_name`/`vec_field`、`store_get`/`store_search`；
+  - part 2：`store_upsert`/`store_delete`、`vector_len`/`cosine_sim`、`make_nav_doc_row`/`make_nav_cluster_row`（摘要哈希命名与 `q_N_vec` 字段）、`tokenize`/`fine_tokenize`（crate 分词器承接 rag_tokenizer）、`nav_keywords`/`nav_entities`、`as_str_list`/`matches_condition`/`in_nav_scope`；
+  - part 3a：`store_text_search`/`store_knn`（过滤回退扫描）、分层 `find_best_cluster`、`llm_merge`/`llm_create_summary`/`clean_title`/`fallback_title`/`readable_cluster_name`、`build_nav_graph_text`。
+- 台账：`structure.py` → `full`；`dataset_nav.py`/`wiki.py`/`wiki_incremental.py` 保留 `partial` 并各附机器测绘说明（缺 39 / 64 / 71 项，含计划落点）——W-4 余 3。coverage --check 常绿（5977、unmapped=0）。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.90] — 2026-10-01（对标批次 v0.3.10ah，进行中）
 
 > W-4 续 + 台账证据化重定级：本轮完成 mind_map_extractor、_common、runner、knowlege_compile/raptor 四个文件/单元的 1:1 移植；全递归核查发现六个此前标记 `full` 的 knowlege_compile 条目存在 v0.27.2 符号缺口，已凭证据回退为 `partial` 并附缺口说明（W-4 队列 2→8，本轮消化 4 → 余 4）。

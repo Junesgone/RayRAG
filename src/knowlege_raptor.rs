@@ -404,28 +404,25 @@ Keep the summary concise and target approximately the configured token budget."
             .iter()
             .map(|index| chunks[*index].text.clone())
             .collect();
-        match self
+        if let Some((title, text, vector)) = self
             .summarize_texts(backend, &texts, callback, task_id)
             .await?
         {
-            Some((title, text, vector)) => {
-                let mut merged_ids: Vec<String> = Vec::new();
-                for index in indices {
-                    for source in &chunks[*index].source_chunk_ids {
-                        if !merged_ids.iter().any(|existing| existing == source) {
-                            merged_ids.push(source.clone());
-                        }
+            let mut merged_ids: Vec<String> = Vec::new();
+            for index in indices {
+                for source in &chunks[*index].source_chunk_ids {
+                    if !merged_ids.iter().any(|existing| existing == source) {
+                        merged_ids.push(source.clone());
                     }
                 }
-                parent_child_map.insert(chunks.len(), indices.to_vec());
-                chunks.push(RaptorChunk {
-                    text,
-                    vector,
-                    source_chunk_ids: merged_ids,
-                    title,
-                });
             }
-            None => {}
+            parent_child_map.insert(chunks.len(), indices.to_vec());
+            chunks.push(RaptorChunk {
+                text,
+                vector,
+                source_chunk_ids: merged_ids,
+                title,
+            });
         }
         Ok(())
     }
@@ -540,7 +537,7 @@ fn truncate_tokens(text: &str, max_tokens: usize) -> String {
     let mut low = 0usize;
     let mut high = chars.len();
     while low < high {
-        let mid = (low + high + 1) / 2;
+        let mid = (low + high).div_ceil(2);
         let candidate: String = chars[..mid].iter().collect();
         if crate::chunk::tokenizer::token_count(&candidate) <= max_tokens {
             low = mid;
