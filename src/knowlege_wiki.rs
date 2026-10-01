@@ -5473,3 +5473,417 @@ mod wiki_part8_tests {
         assert!(format_evidence_blocks(&only_synthetic).starts_with("(no pre-extracted evidence"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 9 — chunk loading, source-context assembly and wikilink rewriting
+// (`_wiki_load_chunks_by_id` .. `_wiki_collect_doc_ids`).
+//
+// Adaptation note: the batch `{"id": [ids]}` condition has containment
+// semantics in the local store (not ES terms), so chunk fetches use per-id
+// `get()` calls, which is also the upstream fallback path. `urlsplit` is a
+// hand-rolled parser (scheme/netloc/path with query stripped).
+// ---------------------------------------------------------------------------
+
+fn dedup_ids(chunk_ids: &[String]) -> Vec<String> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut unique: Vec<String> = Vec::new();
+    for cid in chunk_ids {
+        if cid.is_empty() || seen.contains(cid) {
+            continue;
+        }
+        seen.insert(cid.clone());
+        unique.push(cid.clone());
+    }
+    unique
+}
+
+/// `_wiki_load_chunks_by_id`: `{chunk_id: content_with_weight}`.
+pub fn load_chunks_by_id(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    chunk_ids: &[String],
+) -> Map<String, Value> {
+    let mut out: Map<String, Value> = Map::new();
+    let unique_ids = dedup_ids(chunk_ids);
+    if unique_ids.is_empty() {
+        return out;
+    }
+    let index = index_name(tenant_id);
+    for cid in &unique_ids {
+        let row = store.get(cid, &index, &[kb_id.to_string()]).ok().flatten();
+        if let Some(row) = row {
+            let content = row
+                .get("content_with_weight")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !content.is_empty() {
+                out.insert(cid.clone(), Value::String(content.to_string()));
+            }
+        }
+    }
+    let missing: Vec<&String> = unique_ids
+        .iter()
+        .filter(|cid| !out.contains_key(*cid))
+        .collect();
+    if !missing.is_empty() {
+        tracing::warn!(
+            missing = missing.len(),
+            total = unique_ids.len(),
+            kb = kb_id,
+            first = missing[0].as_str(),
+            "wiki_refine: chunk fetch missed id(s)"
+        );
+    }
+    out
+}
+
+/// `_wiki_build_source_context`: labelled, budget-limited source block.
+pub fn build_source_context(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    evidence: &[Value],
+    budget: usize,
+) -> String {
+    let chunk_ids = collect_evidence_chunk_ids(evidence);
+    if chunk_ids.is_empty() {
+        return "(no source chunks available)".to_string();
+    }
+    let chunk_map = load_chunks_by_id(store, tenant_id, kb_id, &chunk_ids);
+    if chunk_map.is_empty() {
+        return "(source chunks could not be loaded)".to_string();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    let mut truncated = 0usize;
+    for cid in &chunk_ids {
+        let Some(content) = chunk_map.get(cid).and_then(Value::as_str) else {
+            continue;
+        };
+        if content.is_empty() {
+            continue;
+        }
+        let block = format!("[CHUNK {cid}]\n{content}");
+        let block_chars = block.chars().count();
+        if total + block_chars + 2 > budget {
+            let remaining = budget.saturating_sub(total);
+            if remaining > 1000 {
+                parts.push(format!(
+                    "{}\n\n[…chunk truncated…]",
+                    truncate_chars(&block, remaining)
+                ));
+                total += remaining;
+            }
+            truncated += 1;
+            continue;
+        }
+        parts.push(block);
+        total += block_chars + 2;
+    }
+    if truncated > 0 {
+        parts.push(format!(
+            "\n\n[…{truncated} chunk(s) omitted to fit context budget…]"
+        ));
+    }
+    parts.join("\n\n")
+}
+
+fn wikilink_pipe_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[\[([^\[\]|]+?)\|([^\[\]]+?)\]\]").expect("wikilink pipe"))
+}
+
+fn wikilink_simple_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[\[([^\[\]|]+?)\]\]").expect("wikilink simple"))
+}
+
+fn wiki_markdown_link_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").expect("markdown link"))
+}
+
+fn split_url(href: &str) -> (String, String, String) {
+    let cleaned = href.split(['?', '#']).next().unwrap_or("");
+    if let Some(idx) = cleaned.find("://") {
+        let scheme = cleaned[..idx].to_string();
+        let rest = &cleaned[idx + 3..];
+        let (netloc, path) = match rest.find('/') {
+            Some(slash) => (rest[..slash].to_string(), rest[slash..].to_string()),
+            None => (rest.to_string(), String::new()),
+        };
+        (scheme, netloc, path)
+    } else {
+        (String::new(), String::new(), cleaned.to_string())
+    }
+}
+
+fn python_title(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_alpha = false;
+    for ch in text.chars() {
+        if ch.is_alphabetic() {
+            if prev_alpha {
+                out.extend(ch.to_lowercase());
+            } else {
+                out.extend(ch.to_uppercase());
+            }
+            prev_alpha = true;
+        } else {
+            out.push(ch);
+            prev_alpha = false;
+        }
+    }
+    out
+}
+
+/// `_wiki_transform_links`: `(rendered_md, unique_outlinks)`.
+pub fn transform_links(
+    content_md: &str,
+    kb_id: &str,
+    page_titles: Option<&Map<String, Value>>,
+    valid_slugs: Option<&BTreeSet<String>>,
+) -> (String, Vec<String>) {
+    let kb_id_str = kb_id.to_string();
+    let seen: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
+    let outlinks: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+
+    let track = |slug: &str| {
+        let trimmed = slug.trim();
+        if !trimmed.is_empty() && seen.borrow_mut().insert(trimmed.to_string()) {
+            outlinks.borrow_mut().push(trimmed.to_string());
+        }
+    };
+    let display_text = |label: &str, slug: &str| -> String {
+        let label = label.trim();
+        let short = slug.rsplit('/').next().unwrap_or(slug);
+        if label != slug && label != short {
+            return label.to_string();
+        }
+        if let Some(title) = page_titles
+            .and_then(|map| map.get(slug))
+            .and_then(Value::as_str)
+            .filter(|title| !title.is_empty())
+        {
+            return title.to_string();
+        }
+        let readable = short.replace('-', " ").replace('_', " ").trim().to_string();
+        let titled = python_title(&readable);
+        if titled.is_empty() {
+            label.to_string()
+        } else {
+            titled
+        }
+    };
+    let is_valid =
+        |slug: &str| -> bool { valid_slugs.map(|set| set.contains(slug)).unwrap_or(true) };
+    let wiki_slug = |href: &str| -> Option<String> {
+        let (scheme, netloc, path) = split_url(href);
+        let path = if !scheme.is_empty() || !netloc.is_empty() {
+            if netloc != "artifact" {
+                return None;
+            }
+            path
+        } else {
+            path
+        };
+        let mut parts: Vec<&str> = path.trim_matches('/').split('/').collect();
+        if parts.first() == Some(&"artifact") {
+            parts = parts[1..].to_vec();
+        }
+        if parts.len() < 2 || parts[0] != kb_id_str {
+            return None;
+        }
+        Some(parts[1..].join("/"))
+    };
+
+    let rewritten = wiki_markdown_link_re().replace_all(content_md, |caps: &regex::Captures| {
+        let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+        let href = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let label = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let Some(slug) = wiki_slug(href) else {
+            return whole.to_string();
+        };
+        if !is_valid(&slug) {
+            return display_text(label, &slug);
+        }
+        track(&slug);
+        format!(
+            "[{}](artifact/{}/{})",
+            display_text(label, &slug),
+            kb_id_str,
+            slug
+        )
+    });
+    let rewritten = wikilink_pipe_re().replace_all(&rewritten, |caps: &regex::Captures| {
+        let slug = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        let text = caps.get(2).map(|m| m.as_str()).unwrap_or("").trim();
+        if !is_valid(slug) {
+            return text.to_string();
+        }
+        track(slug);
+        format!("[{text}](artifact/{}/{})", kb_id_str, slug)
+    });
+    let rewritten = wikilink_simple_re().replace_all(&rewritten, |caps: &regex::Captures| {
+        let slug = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        if !is_valid(slug) {
+            return display_text(slug, slug);
+        }
+        track(slug);
+        format!(
+            "[{}](artifact/{}/{})",
+            display_text(slug, slug),
+            kb_id_str,
+            slug
+        )
+    });
+    let outlinks = outlinks.borrow().clone();
+    (rewritten.to_string(), outlinks)
+}
+
+/// `_wiki_collect_doc_ids`: unique `doc_id`s of the given chunks.
+pub fn wiki_collect_doc_ids(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    chunk_ids: &[String],
+) -> Vec<String> {
+    if chunk_ids.is_empty() {
+        return Vec::new();
+    }
+    let index = index_name(tenant_id);
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut rows_seen = 0usize;
+    for cid in chunk_ids {
+        if cid.is_empty() {
+            continue;
+        }
+        let row = store.get(cid, &index, &[kb_id.to_string()]).ok().flatten();
+        let Some(row) = row else { continue };
+        rows_seen += 1;
+        for doc_id in wiki_doc_ids(row.get("doc_id").unwrap_or(&Value::Null)) {
+            if seen.insert(doc_id.clone()) {
+                out.push(doc_id);
+            }
+        }
+    }
+    if !chunk_ids.is_empty() && out.is_empty() {
+        tracing::warn!(
+            chunks = chunk_ids.len(),
+            rows = rows_seen,
+            kb = kb_id,
+            first = chunk_ids[0].as_str(),
+            "wiki_refine: doc_id resolution returned 0"
+        );
+    }
+    out
+}
+
+#[cfg(test)]
+mod wiki_part9_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+
+    fn seed_chunks(store: &MemoryDocStore) {
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "hello"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "c2", "doc_id": ["d1", "d2"], "content_with_weight": "world"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    #[test]
+    fn load_chunks_dedups_and_skips_missing() {
+        let store = MemoryDocStore::new();
+        seed_chunks(&store);
+        let ids = vec![
+            "c1".to_string(),
+            "c1".to_string(),
+            "c2".to_string(),
+            "ghost".to_string(),
+        ];
+        let loaded = load_chunks_by_id(&store, "t1", "kb1", &ids);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded["c1"], json!("hello"));
+        assert_eq!(loaded["c2"], json!("world"));
+        assert!(load_chunks_by_id(&store, "t1", "kb1", &[]).is_empty());
+    }
+
+    #[test]
+    fn source_context_labels_and_truncates() {
+        let store = MemoryDocStore::new();
+        seed_chunks(&store);
+        let evidence = vec![json!({"subject": "Alpha", "chunk_ids": ["c1", "c2"]})];
+        let context = build_source_context(
+            &store,
+            "t1",
+            "kb1",
+            &evidence,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+        );
+        assert_eq!(context, "[CHUNK c1]\nhello\n\n[CHUNK c2]\nworld");
+        let tight = build_source_context(&store, "t1", "kb1", &evidence, 25);
+        assert!(tight.starts_with("[CHUNK c1]\nhello"));
+        assert!(tight.contains("omitted to fit context budget"));
+        assert_eq!(
+            build_source_context(&store, "t1", "kb1", &[], 100),
+            "(no source chunks available)"
+        );
+        let missing = vec![json!({"subject": "Alpha", "chunk_ids": ["ghost"]})];
+        assert_eq!(
+            build_source_context(&store, "t1", "kb1", &missing, 100),
+            "(source chunks could not be loaded)"
+        );
+    }
+
+    #[test]
+    fn transform_links_rewrites_and_filters() {
+        let valid = BTreeSet::from(["entity/alpha".to_string(), "concept/beta".to_string()]);
+        let mut titles = Map::new();
+        titles.insert(
+            "entity/alpha".to_string(),
+            Value::String("Alpha Page".to_string()),
+        );
+        let md = "See [[entity/alpha]] and [[concept/beta|the beta item]] and [[entity/ghost]]. Also [x](artifact/kb1/entity/alpha) and [y](artifact/kb1/entity/ghost) and [ext](https://example.com/z).";
+        let (rendered, outlinks) = transform_links(md, "kb1", Some(&titles), Some(&valid));
+        assert!(rendered.contains("[Alpha Page](artifact/kb1/entity/alpha)"));
+        assert!(rendered.contains("[the beta item](artifact/kb1/concept/beta)"));
+        assert!(rendered.contains("Ghost"));
+        assert!(!rendered.contains("[["));
+        assert!(rendered.contains("[x](artifact/kb1/entity/alpha)"));
+        assert!(rendered.contains("and y and"));
+        assert!(!rendered.contains("artifact/kb1/entity/ghost"));
+        assert!(rendered.contains("[ext](https://example.com/z)"));
+        assert_eq!(
+            outlinks,
+            vec!["entity/alpha".to_string(), "concept/beta".to_string()]
+        );
+        let (plain, plain_out) = transform_links("[[entity/alpha]]", "kb1", None, None);
+        assert_eq!(plain, "[Alpha](artifact/kb1/entity/alpha)");
+        assert_eq!(plain_out, vec!["entity/alpha".to_string()]);
+        let (repeat, repeat_out) =
+            transform_links("[[entity/alpha]] [[entity/alpha]]", "kb1", None, None);
+        assert_eq!(repeat.matches("artifact/kb1/entity/alpha").count(), 2);
+        assert_eq!(repeat_out.len(), 1);
+    }
+
+    #[test]
+    fn collect_doc_ids_dedups_and_tolerates_shapes() {
+        let store = MemoryDocStore::new();
+        seed_chunks(&store);
+        let ids = vec!["c1".to_string(), "c2".to_string(), "ghost".to_string()];
+        assert_eq!(
+            wiki_collect_doc_ids(&store, "t1", "kb1", &ids),
+            vec!["d1".to_string(), "d2".to_string()]
+        );
+        assert!(wiki_collect_doc_ids(&store, "t1", "kb1", &[]).is_empty());
+    }
+}
