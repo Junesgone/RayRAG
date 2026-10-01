@@ -787,3 +787,511 @@ mod wiki_incremental_part1_tests {
         assert!(wiki_load_refine_failures(&store, "t1", "kb1").is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 2 — canonical entity index CRUD (`_load_canonical_entities` ..
+// `_normalize_key`).
+//
+// Adaptation note: the `index_exist` pre-checks are dropped (local backends
+// only report an index after an explicit `create_idx`); KNN similarity is
+// computed client-side (`extra_options` min-score is not translated), which
+// matches the upstream `_score >= threshold` post-check. Entity embeddings
+// are dual-written to `q_<dim>_vec` and `embedding` so local scoring works.
+// ---------------------------------------------------------------------------
+
+/// `_load_canonical_entities`: `{entity_name: row}`.
+pub fn load_canonical_entities(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> Map<String, Value> {
+    let fields: Vec<String> = [
+        "entity_kwd",
+        "entity_type_kwd",
+        "aliases",
+        "source_doc_ids",
+        "source_chunk_ids",
+        "mention_count_int",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_CANONICAL_ENTITY_COMPILE_KWD.to_string()),
+    );
+    let mut results: Map<String, Value> = Map::new();
+    let mut offset = 0usize;
+    let page_size = 1000usize;
+    loop {
+        let rows = match inc_search_page(
+            store, tenant_id, kb_id, &fields, &condition, offset, page_size,
+        ) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::warn!(error = %err, kb = kb_id, "wiki: failed to load canonical entities");
+                return results;
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        let page_len = rows.len();
+        for mut row in rows {
+            let name = match row.get("entity_kwd") {
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<&str>>()
+                    .join(" "),
+                Some(Value::String(text)) => text.clone(),
+                _ => String::new(),
+            };
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(obj) = row.as_object_mut() {
+                for field in ["aliases", "source_doc_ids", "source_chunk_ids"] {
+                    if let Some(Value::String(text)) = obj.get(field) {
+                        let parsed = if text.is_empty() {
+                            Value::Array(Vec::new())
+                        } else {
+                            serde_json::from_str(text).unwrap_or(Value::Array(Vec::new()))
+                        };
+                        obj.insert(field.to_string(), parsed);
+                    }
+                }
+                let mention = obj
+                    .get("mention_count_int")
+                    .map(|value| match value {
+                        Value::String(text) if text.chars().all(|c| c.is_ascii_digit()) => {
+                            Value::Number(text.parse::<i64>().unwrap_or(0).into())
+                        }
+                        Value::String(_) => json!(0),
+                        other => other.clone(),
+                    })
+                    .unwrap_or(json!(0));
+                obj.insert("mention_count_int".to_string(), mention);
+                let entity_type = obj
+                    .get("entity_type_kwd")
+                    .map(|value| match value {
+                        Value::Array(items) => items
+                            .first()
+                            .cloned()
+                            .unwrap_or(Value::String(String::new())),
+                        other => other.clone(),
+                    })
+                    .map(|value| {
+                        let text = value.as_str().map(str::trim).unwrap_or("").to_string();
+                        if text.is_empty() {
+                            "entity".to_string()
+                        } else {
+                            text
+                        }
+                    })
+                    .unwrap_or_else(|| "entity".to_string());
+                obj.insert("entity_type_kwd".to_string(), Value::String(entity_type));
+            }
+            results.insert(name, row);
+        }
+        if page_len < page_size {
+            break;
+        }
+        offset += page_size;
+    }
+    results
+}
+
+/// `_build_canonical_entity_doc`: canonical row for insert or update.
+#[allow(clippy::too_many_arguments)]
+pub fn build_canonical_entity_doc(
+    kb_id: &str,
+    entity_name: &str,
+    entity_type: &str,
+    aliases: &[String],
+    source_doc_ids: &[String],
+    claim_count: i64,
+    embedding: Option<&[f32]>,
+    source_chunk_ids: Option<&[String]>,
+) -> Value {
+    let dim = embedding.map(|vector| vector.len()).unwrap_or(768);
+    let alias_set: BTreeSet<String> = aliases.iter().cloned().collect();
+    let doc_set: BTreeSet<String> = source_doc_ids.iter().cloned().collect();
+    let chunk_set: BTreeSet<String> = source_chunk_ids.unwrap_or(&[]).iter().cloned().collect();
+    let mut doc = Map::new();
+    doc.insert(
+        "id".to_string(),
+        Value::String(stable_row_id(&[
+            WIKI_CANONICAL_ENTITY_COMPILE_KWD.to_string(),
+            kb_id.to_string(),
+            entity_name.to_string(),
+        ])),
+    );
+    doc.insert(
+        "entity_kwd".to_string(),
+        Value::String(entity_name.to_string()),
+    );
+    doc.insert(
+        "entity_type_kwd".to_string(),
+        Value::String(entity_type.to_string()),
+    );
+    doc.insert(
+        "aliases".to_string(),
+        Value::String(Value::Array(alias_set.into_iter().map(Value::String).collect()).to_string()),
+    );
+    doc.insert(
+        "source_doc_ids".to_string(),
+        Value::Array(doc_set.into_iter().map(Value::String).collect()),
+    );
+    doc.insert(
+        "source_chunk_ids".to_string(),
+        Value::Array(chunk_set.into_iter().map(Value::String).collect()),
+    );
+    doc.insert("mention_count_int".to_string(), json!(claim_count));
+    doc.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_CANONICAL_ENTITY_COMPILE_KWD.to_string()),
+    );
+    doc.insert("kb_id".to_string(), Value::String(kb_id.to_string()));
+    if let Some(embedding) = embedding {
+        doc.insert(format!("q_{dim}_vec"), json!(embedding));
+        doc.insert("embedding".to_string(), json!(embedding));
+    }
+    Value::Object(doc)
+}
+
+fn canonical_condition(entity_name: &str) -> Map<String, Value> {
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_CANONICAL_ENTITY_COMPILE_KWD.to_string()),
+    );
+    condition.insert(
+        "entity_kwd".to_string(),
+        Value::String(entity_name.to_string()),
+    );
+    condition
+}
+
+/// `_save_canonical_entity`: insert or update by existence query.
+#[allow(clippy::too_many_arguments)]
+pub fn save_canonical_entity(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    entity_name: &str,
+    entity_type: &str,
+    aliases: &[String],
+    source_doc_ids: &[String],
+    claim_count: i64,
+    embedding: Option<&[f32]>,
+    source_chunk_ids: Option<&[String]>,
+) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let doc = build_canonical_entity_doc(
+        kb_id,
+        entity_name,
+        entity_type,
+        aliases,
+        source_doc_ids,
+        claim_count,
+        embedding,
+        source_chunk_ids,
+    );
+    let condition = canonical_condition(entity_name);
+    let fields: Vec<String> = vec!["entity_kwd".to_string()];
+    let exists = match inc_search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1) {
+        Ok(rows) => !rows.is_empty(),
+        Err(_) => false,
+    };
+    if exists {
+        let mut update_value = doc.as_object().cloned().unwrap_or_default();
+        update_value.remove("id");
+        if let Err(err) = store.update(&condition, &update_value, &index, kb_id) {
+            tracing::warn!(error = %err, entity = entity_name, "wiki: canonical update failed");
+        }
+    } else if let Some(row) = doc.as_object().cloned() {
+        if let Err(err) = store.insert(&[row], &index, kb_id) {
+            tracing::warn!(error = %err, entity = entity_name, "wiki: canonical insert failed");
+        }
+    }
+}
+
+/// `_update_canonical_entity`: update without an existence query.
+#[allow(clippy::too_many_arguments)]
+pub fn update_canonical_entity(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    entity_name: &str,
+    entity_type: &str,
+    aliases: &[String],
+    source_doc_ids: &[String],
+    claim_count: i64,
+    source_chunk_ids: Option<&[String]>,
+) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let doc = build_canonical_entity_doc(
+        kb_id,
+        entity_name,
+        entity_type,
+        aliases,
+        source_doc_ids,
+        claim_count,
+        None,
+        source_chunk_ids,
+    );
+    let mut update_value = doc.as_object().cloned().unwrap_or_default();
+    update_value.remove("id");
+    let condition = canonical_condition(entity_name);
+    if let Err(err) = store.update(&condition, &update_value, &index, kb_id) {
+        tracing::warn!(error = %err, entity = entity_name, "wiki: canonical update failed");
+    }
+}
+
+/// `_delete_canonical_entity`.
+pub fn delete_canonical_entity(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    entity_name: &str,
+) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let condition = canonical_condition(entity_name);
+    if let Err(err) = store.delete(&condition, &index, kb_id) {
+        tracing::warn!(error = %err, entity = entity_name, "wiki: canonical delete failed");
+    }
+}
+
+fn row_vector(row: &Value, vec_field: &str) -> Vec<f32> {
+    row.get(vec_field)
+        .or_else(|| row.get("embedding"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_f64().map(|number| number as f32))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `_knn_search_canonical`: `(entity_name, score)` or None.
+pub fn knn_search_canonical(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    embedding: &[f32],
+    threshold: f64,
+) -> Option<(String, f64)> {
+    if embedding.is_empty() {
+        return None;
+    }
+    let dim = embedding.len();
+    let vec_field = format!("q_{dim}_vec");
+    let fields: Vec<String> = ["entity_kwd", "embedding", vec_field.as_str()]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_CANONICAL_ENTITY_COMPILE_KWD.to_string()),
+    );
+    let query = SearchQuery {
+        select_fields: fields.clone(),
+        condition,
+        match_expressions: vec![crate::doc_store::MatchExpr::dense(
+            &vec_field,
+            embedding.to_vec(),
+            "cosine",
+            1,
+        )],
+        offset: 0,
+        limit: 1,
+        index_names: vec![crate::harness::knowlege_dataset_nav::index_name(tenant_id)],
+        dataset_ids: vec![kb_id.to_string()],
+        ..Default::default()
+    };
+    let response = match store.search(&query) {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::warn!(error = %err, "wiki: canonical KNN failed");
+            return None;
+        }
+    };
+    for (_, row) in store.get_fields(&response, &fields) {
+        let name = match row.get("entity_kwd") {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<&str>>()
+                .join(" "),
+            Some(Value::String(text)) => text.clone(),
+            _ => String::new(),
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let row_value = Value::Object(row);
+        let stored = row_vector(&row_value, &vec_field);
+        let score = crate::merge::cosine_similarity(embedding, &stored) as f64;
+        if score >= threshold {
+            return Some((name, score));
+        }
+        return None;
+    }
+    None
+}
+
+/// `_normalize_key`: lowercase, keep word chars + whitespace, strip.
+pub fn normalize_key(name: &str) -> String {
+    let lowered = name.to_lowercase();
+    let filtered: String = lowered
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || *ch == '_' || ch.is_whitespace())
+        .collect();
+    filtered.trim().to_string()
+}
+
+#[cfg(test)]
+mod wiki_incremental_part2_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+
+    #[test]
+    fn canonical_doc_shape() {
+        let doc = build_canonical_entity_doc(
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string(), "Alpha".to_string(), "A".to_string()],
+            &["d2".to_string(), "d1".to_string(), "d1".to_string()],
+            5,
+            Some(&[1.0, 0.0]),
+            Some(&["c2".to_string(), "c1".to_string()]),
+        );
+        assert_eq!(doc["entity_kwd"], json!("Alpha"));
+        assert_eq!(doc["entity_type_kwd"], json!("concept"));
+        let aliases: Value = serde_json::from_str(doc["aliases"].as_str().unwrap()).unwrap();
+        assert_eq!(aliases, json!(["A", "Alpha"]));
+        assert_eq!(doc["source_doc_ids"], json!(["d1", "d2"]));
+        assert_eq!(doc["source_chunk_ids"], json!(["c1", "c2"]));
+        assert_eq!(doc["mention_count_int"], json!(5));
+        assert_eq!(doc["q_2_vec"], json!([1.0, 0.0]));
+        assert_eq!(doc["embedding"], json!([1.0, 0.0]));
+        assert_eq!(doc["id"].as_str().unwrap().len(), 16);
+        let no_vec = build_canonical_entity_doc("kb1", "B", "entity", &[], &[], 0, None, None);
+        assert!(no_vec.get("q_2_vec").is_none());
+        assert_eq!(no_vec["mention_count_int"], json!(0));
+    }
+
+    #[test]
+    fn canonical_crud_roundtrip() {
+        let store = MemoryDocStore::new();
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string()],
+            &["d1".to_string()],
+            3,
+            Some(&[1.0, 0.0]),
+            Some(&["c1".to_string()]),
+        );
+        let loaded = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded["Alpha"]["aliases"], json!(["A"]));
+        assert_eq!(loaded["Alpha"]["mention_count_int"], json!(3));
+        assert_eq!(loaded["Alpha"]["entity_type_kwd"], json!("concept"));
+        assert_eq!(loaded["Alpha"]["source_chunk_ids"], json!(["c1"]));
+
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string(), "B".to_string()],
+            &["d1".to_string(), "d2".to_string()],
+            7,
+            None,
+            None,
+        );
+        let loaded = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded["Alpha"]["mention_count_int"], json!(7));
+        assert_eq!(loaded["Alpha"]["source_doc_ids"], json!(["d1", "d2"]));
+
+        update_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string()],
+            &["d9".to_string()],
+            9,
+            None,
+        );
+        let loaded = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(loaded["Alpha"]["mention_count_int"], json!(9));
+
+        delete_canonical_entity(&store, "t1", "kb1", "Alpha");
+        assert!(load_canonical_entities(&store, "t1", "kb1").is_empty());
+    }
+
+    #[test]
+    fn canonical_knn_threshold() {
+        let store = MemoryDocStore::new();
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &[],
+            1,
+            Some(&[1.0, 0.0]),
+            None,
+        );
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Beta",
+            "entity",
+            &[],
+            &[],
+            1,
+            Some(&[0.0, 1.0]),
+            None,
+        );
+        let (name, score) =
+            knn_search_canonical(&store, "t1", "kb1", &[0.9, 0.1], 0.5).expect("knn");
+        assert_eq!(name, "Alpha");
+        assert!(score > 0.99);
+        let (name2, score2) =
+            knn_search_canonical(&store, "t1", "kb1", &[0.0, 1.0], 0.5).expect("knn2");
+        assert_eq!(name2, "Beta");
+        assert!((score2 - 1.0).abs() < 1e-6);
+        assert!(knn_search_canonical(&store, "t1", "kb1", &[0.0, 1.0], 1.01).is_none());
+        assert!(knn_search_canonical(&store, "t1", "kb1", &[], 0.0).is_none());
+    }
+
+    #[test]
+    fn normalize_key_shapes() {
+        assert_eq!(normalize_key("Hello, World!"), "hello world");
+        assert_eq!(normalize_key("  Mixed_Case-42  "), "mixed_case42");
+        assert_eq!(normalize_key("智能手机 产业"), "智能手机 产业");
+        assert_eq!(normalize_key("a.b/c"), "abc");
+    }
+}
