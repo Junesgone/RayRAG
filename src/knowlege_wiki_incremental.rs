@@ -8530,3 +8530,734 @@ mod wiki_incremental_part13_tests {
         assert!(failures.contains_key("entity/alpha"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 12 — claim parsing, cohesion and unstable-page splitting plus the
+// Mode B plan-group store (`_wiki_parse_claims` .. `_wiki_load_plan_group_members`).
+//
+// Adaptation note: numpy matrix work becomes plain Rust; the semaphore fan-out
+// is sequential.
+// ---------------------------------------------------------------------------
+
+/// `_wiki_parse_claims`.
+pub fn wiki_parse_claims(raw_claims: Option<&Value>) -> Vec<Value> {
+    let resolved = match raw_claims {
+        Some(Value::String(text)) => {
+            if text.is_empty() {
+                Value::Array(Vec::new())
+            } else {
+                serde_json::from_str::<Value>(text).unwrap_or(Value::Array(Vec::new()))
+            }
+        }
+        Some(Value::Null) | None => Value::Array(Vec::new()),
+        Some(other) => other.clone(),
+    };
+    match resolved {
+        Value::Array(items) => items.into_iter().filter(Value::is_object).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `_wiki_claims_for_entity`: claims owned by one page member.
+pub fn wiki_claims_for_entity(page: &Value, entity_name: &str) -> Vec<Value> {
+    let claims = wiki_parse_claims(page.get("claims"));
+    let member_names = as_str_list(page.get("entity_names_kwd"));
+    if member_names.len() == 1 && normalize_key(&member_names[0]) == normalize_key(entity_name) {
+        return claims;
+    }
+    let target = normalize_key(entity_name);
+    claims
+        .into_iter()
+        .filter(|claim| {
+            let name = ["entity_name", "subject", "term"]
+                .iter()
+                .find_map(|key| claim.get(*key).and_then(Value::as_str))
+                .unwrap_or("");
+            normalize_key(name) == target
+        })
+        .collect()
+}
+
+/// `_wiki_embedding_cohesion`: mean cosine of rows vs the centroid.
+pub fn wiki_embedding_cohesion(matrix: &[Vec<f32>]) -> f64 {
+    if matrix.len() <= 1 {
+        return 1.0;
+    }
+    let dim = matrix.first().map(Vec::len).unwrap_or(0);
+    if dim == 0 {
+        return 1.0;
+    }
+    let mut centroid = vec![0.0f64; dim];
+    for row in matrix {
+        for (pos, value) in row.iter().enumerate() {
+            centroid[pos] += *value as f64;
+        }
+    }
+    let count = matrix.len() as f64;
+    for value in centroid.iter_mut() {
+        *value /= count;
+    }
+    let norm = (centroid.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    if norm <= 0.0 {
+        return 0.0;
+    }
+    let unit: Vec<f64> = centroid.iter().map(|x| x / norm).collect();
+    let mut total = 0.0f64;
+    for row in matrix {
+        total += row
+            .iter()
+            .zip(unit.iter())
+            .map(|(value, unit_value)| (*value as f64) * unit_value)
+            .sum::<f64>();
+    }
+    total / count
+}
+
+/// `_wiki_split_unstable_page_assignments`.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_split_unstable_page_assignments(
+    store: &dyn DocStore,
+    assignments: &Map<String, Value>,
+    existing_pages: &Map<String, Value>,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    kb_id: &str,
+) -> Map<String, Value> {
+    let _ = store;
+    if assignments.is_empty() {
+        return assignments.clone();
+    }
+
+    let mut candidates: BTreeMap<String, Value> = BTreeMap::new();
+    let mut all_members: Vec<Value> = Vec::new();
+    for (page_id, incoming_value) in assignments {
+        let existing = if !page_id.starts_with("_new_") {
+            existing_pages.get(page_id).cloned()
+        } else {
+            None
+        };
+        let Some(existing) = existing else { continue };
+        let incoming: Vec<Value> = incoming_value.as_array().cloned().unwrap_or_default();
+        let old_names = as_str_list(existing.get("entity_names_kwd"));
+        let mut deleted_names: BTreeSet<String> = BTreeSet::new();
+        for entity in &incoming {
+            if entity.get("action").and_then(Value::as_str) == Some("delete") {
+                if let Some(name) = entity.get("entity_name").and_then(Value::as_str) {
+                    deleted_names.insert(name.to_string());
+                }
+            }
+        }
+        let mut incoming_by_name: BTreeMap<String, Value> = BTreeMap::new();
+        for entity in &incoming {
+            if let Some(name) = entity.get("entity_name").and_then(Value::as_str) {
+                incoming_by_name.insert(name.to_string(), entity.clone());
+            }
+        }
+        let mut member_names: BTreeSet<String> = old_names.iter().cloned().collect();
+        member_names.extend(incoming_by_name.keys().cloned());
+        for deleted in &deleted_names {
+            member_names.remove(deleted);
+        }
+        if member_names.len() <= 1 {
+            continue;
+        }
+        let mut members: Vec<Value> = Vec::new();
+        for name in &member_names {
+            let incoming_entity = incoming_by_name
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let mut member_claims = wiki_claims_for_entity(&existing, name);
+            member_claims.extend(
+                incoming_entity
+                    .get("claims")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            members.push(json!({
+                "entity_name": name,
+                "entity_type": incoming_entity.get("entity_type").and_then(Value::as_str).unwrap_or("entity"),
+                "aliases": incoming_entity.get("aliases").cloned().unwrap_or(Value::Array(Vec::new())),
+                "claims": member_claims,
+                "retractions": incoming_entity.get("retractions").cloned().unwrap_or(Value::Array(Vec::new())),
+                "source_chunk_ids": incoming_entity.get("source_chunk_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+                "source_doc_ids": incoming_entity.get("source_doc_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+                "action": incoming_entity.get("action").and_then(Value::as_str).unwrap_or("update"),
+            }));
+        }
+        let start = all_members.len();
+        all_members.extend(members.iter().cloned());
+        let removed_retractions: Vec<Value> = incoming
+            .iter()
+            .filter(|entity| entity.get("action").and_then(Value::as_str) == Some("delete"))
+            .flat_map(|entity| {
+                entity
+                    .get("retractions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect();
+        candidates.insert(
+            page_id.clone(),
+            json!({
+                "existing": existing,
+                "old_names": old_names,
+                "members": members,
+                "removed_retractions": removed_retractions,
+                "vector_slice": [start, all_members.len()],
+            }),
+        );
+    }
+
+    let normalized_matrix: Vec<Vec<f32>> = if all_members.is_empty() {
+        Vec::new()
+    } else {
+        match embd {
+            Some(embd) => {
+                let texts: Vec<String> = all_members.iter().map(entity_to_query_text).collect();
+                let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+                match embd.embed(&refs).await {
+                    Ok(vectors) if vectors.len() == all_members.len() => {
+                        wiki_normalize_rows(&vectors)
+                    }
+                    _ => vec![Vec::new(); all_members.len()],
+                }
+            }
+            None => vec![Vec::new(); all_members.len()],
+        }
+    };
+
+    let mut reconsidered: BTreeMap<String, Option<Vec<Vec<Value>>>> = BTreeMap::new();
+    for (page_id, record) in &candidates {
+        let slice = record
+            .get("vector_slice")
+            .and_then(Value::as_array)
+            .map(|items| {
+                (
+                    items.first().and_then(Value::as_i64).unwrap_or(0) as usize,
+                    items.get(1).and_then(Value::as_i64).unwrap_or(0) as usize,
+                )
+            })
+            .unwrap_or((0, 0));
+        let member_matrix: Vec<Vec<f32>> =
+            if slice.1 > slice.0 && slice.1 <= normalized_matrix.len() {
+                normalized_matrix[slice.0..slice.1].to_vec()
+            } else {
+                Vec::new()
+            };
+        let old_name_set: BTreeSet<String> = record
+            .get("old_names")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let members: Vec<Value> = record
+            .get("members")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let old_member_indices: Vec<usize> = members
+            .iter()
+            .enumerate()
+            .filter(|(_, member)| {
+                member
+                    .get("entity_name")
+                    .and_then(Value::as_str)
+                    .map(|name| old_name_set.contains(name))
+                    .unwrap_or(false)
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        let combined_cohesion = wiki_embedding_cohesion(&member_matrix);
+        let old_cohesion = if old_member_indices.is_empty() {
+            1.0
+        } else {
+            let subset: Vec<Vec<f32>> = old_member_indices
+                .iter()
+                .filter_map(|idx| member_matrix.get(*idx).cloned())
+                .collect();
+            wiki_embedding_cohesion(&subset)
+        };
+        let over_capacity = members.len() > PAGE_CLUSTER_HARD_MAX_SIZE;
+        let degraded = old_member_indices.len() >= 2 && combined_cohesion < old_cohesion - 0.05;
+        if !over_capacity && !degraded {
+            reconsidered.insert(page_id.clone(), None);
+            continue;
+        }
+        let clusters = wiki_llm_group_entities(chat, &members, &member_matrix, kb_id).await;
+        reconsidered.insert(page_id.clone(), Some(clusters));
+    }
+
+    let mut result: Map<String, Value> = Map::new();
+    let mut used_page_ids: BTreeSet<String> = existing_pages.keys().cloned().collect();
+    for key in assignments.keys() {
+        if let Some(rest) = key.strip_prefix("_new_") {
+            used_page_ids.insert(rest.to_string());
+        }
+    }
+    for (page_id, incoming) in assignments {
+        let clusters = reconsidered.get(page_id).and_then(|entry| entry.clone());
+        let Some(clusters) = clusters.filter(|clusters| clusters.len() > 1) else {
+            result.insert(page_id.clone(), incoming.clone());
+            continue;
+        };
+        let record = candidates
+            .get(page_id)
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let existing = record.get("existing").cloned().unwrap_or_else(|| json!({}));
+        let removed_retractions: Vec<Value> = record
+            .get("removed_retractions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let page_title = existing
+            .get("title_kwd")
+            .map(|value| match value {
+                Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+                other => other.as_str().unwrap_or(""),
+            })
+            .unwrap_or("")
+            .to_string();
+        let retained_idx = {
+            let title_match = if page_title.is_empty() {
+                None
+            } else {
+                clusters.iter().position(|cluster| {
+                    cluster.iter().any(|member| {
+                        member.get("entity_name").and_then(Value::as_str)
+                            == Some(page_title.as_str())
+                    })
+                })
+            };
+            title_match.unwrap_or_else(|| {
+                let mut best_idx = 0usize;
+                let mut best_len = 0usize;
+                for (idx, cluster) in clusters.iter().enumerate() {
+                    if cluster.len() > best_len {
+                        best_len = cluster.len();
+                        best_idx = idx;
+                    }
+                }
+                best_idx
+            })
+        };
+        let mut moved_claims: Vec<Value> = Vec::new();
+        for (idx, cluster) in clusters.iter().enumerate() {
+            if idx == retained_idx {
+                continue;
+            }
+            for member in cluster {
+                if let Some(claims) = member.get("claims").and_then(Value::as_array) {
+                    moved_claims.extend(claims.iter().cloned());
+                }
+            }
+        }
+        let mut retained_cluster = clusters[retained_idx].clone();
+        if !retained_cluster.is_empty()
+            && (!moved_claims.is_empty() || !removed_retractions.is_empty())
+        {
+            if let Some(first) = retained_cluster.first_mut() {
+                let mut retractions: Vec<Value> = first
+                    .get("retractions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                retractions.extend(moved_claims.iter().cloned());
+                retractions.extend(removed_retractions.iter().cloned());
+                if let Some(obj) = first.as_object_mut() {
+                    obj.insert("retractions".to_string(), Value::Array(retractions));
+                }
+            }
+        }
+        result.insert(page_id.clone(), Value::Array(retained_cluster));
+
+        for (idx, cluster) in clusters.iter().enumerate() {
+            if idx == retained_idx {
+                continue;
+            }
+            if cluster.is_empty() {
+                continue;
+            }
+            let representative = cluster
+                .iter()
+                .min_by(|left, right| {
+                    let left_claims = left
+                        .get("claims")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    let right_claims = right
+                        .get("claims")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    right_claims
+                        .cmp(&left_claims)
+                        .then_with(|| {
+                            let left_name = left
+                                .get("entity_name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let right_name = right
+                                .get("entity_name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            left_name.to_lowercase().cmp(&right_name.to_lowercase())
+                        })
+                        .then_with(|| {
+                            let left_name = left
+                                .get("entity_name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let right_name = right
+                                .get("entity_name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            left_name.cmp(right_name)
+                        })
+                })
+                .cloned()
+                .unwrap_or_else(|| cluster[0].clone());
+            let mut ordered: Vec<Value> = vec![representative.clone()];
+            for entity in cluster {
+                if entity != &representative {
+                    ordered.push(entity.clone());
+                }
+            }
+            let prefix = page_id
+                .split_once('/')
+                .map(|(prefix, _)| prefix)
+                .unwrap_or("entity");
+            let representative_name = representative
+                .get("entity_name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let base_id = derive_page_id(representative_name, prefix);
+            let mut candidate_id = base_id.clone();
+            let mut suffix = 2usize;
+            while used_page_ids.contains(&candidate_id) {
+                candidate_id = format!("{base_id}-{suffix}");
+                suffix += 1;
+            }
+            used_page_ids.insert(candidate_id.clone());
+            for entity in ordered.iter_mut() {
+                if let Some(obj) = entity.as_object_mut() {
+                    obj.insert("action".to_string(), Value::String("create".to_string()));
+                    obj.insert("retractions".to_string(), Value::Array(Vec::new()));
+                }
+            }
+            result.insert(format!("_new_{candidate_id}"), Value::Array(ordered));
+        }
+    }
+    result
+}
+
+fn plan_group_condition(page_id: &str) -> Map<String, Value> {
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PLAN_GROUP_COMPILE_KWD.to_string()),
+    );
+    condition.insert("page_id".to_string(), Value::String(page_id.to_string()));
+    condition
+}
+
+/// `_wiki_update_plan_group`.
+pub fn wiki_update_plan_group(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    page_id: &str,
+    entity_names: &[String],
+    page_version: i64,
+) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let row_id = stable_row_id(&[
+        WIKI_PLAN_GROUP_COMPILE_KWD.to_string(),
+        kb_id.to_string(),
+        page_id.to_string(),
+    ]);
+    let mut doc = Map::new();
+    doc.insert("id".to_string(), Value::String(row_id));
+    doc.insert("kb_id".to_string(), Value::String(kb_id.to_string()));
+    doc.insert("page_id".to_string(), Value::String(page_id.to_string()));
+    doc.insert(
+        "entity_names".to_string(),
+        Value::String(
+            Value::Array(entity_names.iter().cloned().map(Value::String).collect()).to_string(),
+        ),
+    );
+    doc.insert("page_version_int".to_string(), json!(page_version));
+    doc.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PLAN_GROUP_COMPILE_KWD.to_string()),
+    );
+    let fields: Vec<String> = vec!["page_id".to_string()];
+    let condition = plan_group_condition(page_id);
+    let exists = inc_search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    if exists {
+        let mut update_value = doc.clone();
+        update_value.remove("id");
+        let mut update_condition = Map::new();
+        update_condition.insert("page_id".to_string(), Value::String(page_id.to_string()));
+        if let Err(err) = store.update(&update_condition, &update_value, &index, kb_id) {
+            tracing::warn!(error = %err, page = page_id, "wiki: plan_group update failed");
+        }
+    } else if let Err(err) = store.insert(&[doc], &index, kb_id) {
+        tracing::warn!(error = %err, page = page_id, "wiki: plan_group insert failed");
+    }
+}
+
+/// `_wiki_delete_plan_group`.
+pub fn wiki_delete_plan_group(store: &dyn DocStore, tenant_id: &str, kb_id: &str, page_id: &str) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let condition = plan_group_condition(page_id);
+    if let Err(err) = store.delete(&condition, &index, kb_id) {
+        tracing::warn!(error = %err, page = page_id, "wiki: plan_group delete failed");
+    }
+}
+
+/// `_wiki_load_plan_group_members`: `{page_id: [names]}`.
+pub fn wiki_load_plan_group_members(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> Map<String, Value> {
+    let fields: Vec<String> = ["page_id", "entity_names"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PLAN_GROUP_COMPILE_KWD.to_string()),
+    );
+    let mut result: Map<String, Value> = Map::new();
+    let mut offset = 0usize;
+    let page_size = 1000usize;
+    loop {
+        let rows = match inc_search_page(
+            store, tenant_id, kb_id, &fields, &condition, offset, page_size,
+        ) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::warn!(error = %err, kb = kb_id, "wiki: failed to load plan group members");
+                return result;
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        let row_count = rows.len();
+        for row in &rows {
+            let page_id = row
+                .get("page_id")
+                .map(|value| match value {
+                    Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+                    other => other.as_str().unwrap_or(""),
+                })
+                .unwrap_or("")
+                .to_string();
+            let raw_names = match row.get("entity_names") {
+                Some(Value::String(text)) if !text.is_empty() => {
+                    serde_json::from_str::<Value>(text).unwrap_or(Value::Array(Vec::new()))
+                }
+                Some(other) => other.clone(),
+                None => Value::Array(Vec::new()),
+            };
+            let mut names: BTreeSet<String> = BTreeSet::new();
+            if let Value::Array(items) = raw_names {
+                for name in items {
+                    if let Some(name) = name.as_str() {
+                        if !name.is_empty() {
+                            names.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+            if !page_id.is_empty() && !names.is_empty() {
+                result.insert(
+                    page_id,
+                    Value::Array(names.into_iter().map(Value::String).collect()),
+                );
+            }
+        }
+        if row_count < page_size {
+            break;
+        }
+        offset += page_size;
+    }
+    result
+}
+
+#[cfg(test)]
+mod wiki_incremental_part14_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn parse_claims_and_member_filtering() {
+        assert!(wiki_parse_claims(Some(&json!("not json"))).is_empty());
+        assert!(wiki_parse_claims(None).is_empty());
+        let parsed = wiki_parse_claims(Some(&json!("[{\"statement\": \"s\"}, 5]")));
+        assert_eq!(parsed.len(), 1);
+
+        let single = json!({
+            "claims": "[{\"statement\": \"s1\", \"subject\": \"Alpha\"}]",
+            "entity_names_kwd": ["Alpha"]
+        });
+        assert_eq!(wiki_claims_for_entity(&single, "alpha").len(), 1);
+        let multi = json!({
+            "claims": "[{\"statement\": \"s1\", \"subject\": \"Alpha\"}, {\"statement\": \"s2\", \"subject\": \"Beta\"}]",
+            "entity_names_kwd": ["Alpha", "Beta"]
+        });
+        let alpha_claims = wiki_claims_for_entity(&multi, "Alpha");
+        assert_eq!(alpha_claims.len(), 1);
+        assert_eq!(alpha_claims[0]["statement"], json!("s1"));
+        assert!(wiki_claims_for_entity(&multi, "Gamma").is_empty());
+    }
+
+    #[test]
+    fn cohesion_shapes() {
+        assert_eq!(wiki_embedding_cohesion(&[]), 1.0);
+        assert_eq!(wiki_embedding_cohesion(&[vec![1.0, 0.0]]), 1.0);
+        let identical = vec![vec![1.0f32, 0.0], vec![1.0, 0.0]];
+        assert!((wiki_embedding_cohesion(&identical) - 1.0).abs() < 1e-6);
+        let opposite = vec![vec![1.0f32, 0.0], vec![-1.0, 0.0]];
+        assert_eq!(wiki_embedding_cohesion(&opposite), 0.0);
+    }
+
+    #[tokio::test]
+    async fn split_over_capacity_page() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "[[0,1,2,3,4],[5,6,7,8,9]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = TestEmb;
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"], "claims": "[]"}),
+        );
+        let incoming: Vec<Value> = (0..10)
+            .map(|idx| {
+                json!({
+                    "entity_name": if idx == 0 { "Alpha".to_string() } else { format!("E{idx}") },
+                    "entity_type": "entity",
+                    "action": "update",
+                    "claims": [],
+                    "retractions": [],
+                    "source_chunk_ids": [],
+                    "source_doc_ids": []
+                })
+            })
+            .collect();
+        let mut assignments: Map<String, Value> = Map::new();
+        assignments.insert("entity/alpha".to_string(), Value::Array(incoming));
+        let split = wiki_split_unstable_page_assignments(
+            &store,
+            &assignments,
+            &existing,
+            &chat,
+            Some(&emb),
+            "kb1",
+        )
+        .await;
+        assert!(split.contains_key("entity/alpha"));
+        let new_keys: Vec<&String> = split
+            .keys()
+            .filter(|key| key.starts_with("_new_"))
+            .collect();
+        assert_eq!(new_keys.len(), 1);
+        let new_cluster = split[new_keys[0]].as_array().unwrap();
+        assert_eq!(new_cluster.len(), 5);
+        assert!(
+            new_cluster
+                .iter()
+                .all(|entity| entity["action"] == json!("create"))
+        );
+        let retained = split["entity/alpha"].as_array().unwrap();
+        assert_eq!(retained.len(), 5);
+    }
+
+    #[test]
+    fn plan_group_crud() {
+        let store = MemoryDocStore::new();
+        assert!(wiki_load_plan_group_members(&store, "t1", "kb1").is_empty());
+        wiki_update_plan_group(
+            &store,
+            "t1",
+            "kb1",
+            "entity/alpha",
+            &["Alpha".to_string(), "Beta".to_string()],
+            3,
+        );
+        let members = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members["entity/alpha"], json!(["Alpha", "Beta"]));
+        wiki_update_plan_group(
+            &store,
+            "t1",
+            "kb1",
+            "entity/alpha",
+            &["Alpha".to_string()],
+            4,
+        );
+        let members2 = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(members2.len(), 1);
+        assert_eq!(members2["entity/alpha"], json!(["Alpha"]));
+        wiki_delete_plan_group(&store, "t1", "kb1", "entity/alpha");
+        assert!(wiki_load_plan_group_members(&store, "t1", "kb1").is_empty());
+    }
+}
