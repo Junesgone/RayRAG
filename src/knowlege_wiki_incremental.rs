@@ -11010,3 +11010,466 @@ mod wiki_incremental_part16_tests {
         assert!(pages.contains_key("entity/alpha"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 15 — document deletion cleanup (`wiki_handle_document_deleted`).
+//
+// Adaptation note: sequential execution; the disabled-doc set is
+// host-injected for FINALIZE; the final FINALIZE call carries no chunk state
+// (it reloads the active MAP state internally).
+// ---------------------------------------------------------------------------
+
+fn scalar_string_or(value: Option<&Value>, fallback: &str) -> String {
+    match value {
+        Some(Value::Array(items)) => items
+            .first()
+            .and_then(Value::as_str)
+            .unwrap_or(fallback)
+            .to_string(),
+        Some(Value::String(text)) => text.clone(),
+        _ => fallback.to_string(),
+    }
+}
+
+/// `wiki_handle_document_deleted`: clean up pages + canonical entities.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_handle_document_deleted(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    mode: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+) -> Value {
+    let mut pages_modified = 0usize;
+    let mut pages_deleted = 0usize;
+    let mut errors: Vec<Value> = Vec::new();
+
+    let Some(dps) = wiki_load_doc_page_source(store, tenant_id, kb_id, doc_id) else {
+        return json!({
+            "pages_modified": 0,
+            "pages_deleted": 0,
+            "errors": [],
+        });
+    };
+
+    // Step 1: canonical entity index — drop the document reference.
+    let entity_names = as_str_list(dps.get("entity_names"));
+    if !entity_names.is_empty() {
+        let canonical_index = load_canonical_entities(store, tenant_id, kb_id);
+        for ename in &entity_names {
+            let Some(centry) = canonical_index.get(ename) else {
+                continue;
+            };
+            let mut src_ids: Vec<String> = as_str_list(centry.get("source_doc_ids"));
+            if let Some(pos) = src_ids.iter().position(|existing| existing == doc_id) {
+                src_ids.remove(pos);
+            }
+            if src_ids.is_empty() {
+                delete_canonical_entity(store, tenant_id, kb_id, ename);
+            } else {
+                let entity_type = centry
+                    .get("entity_type_kwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("entity")
+                    .to_string();
+                let aliases = as_str_list(centry.get("aliases"));
+                let default_count = src_ids.len() as i64;
+                let mention_count = as_int(centry.get("mention_count_int"), default_count);
+                let source_chunks = as_str_list(centry.get("source_chunk_ids"));
+                save_canonical_entity(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    ename,
+                    &entity_type,
+                    &aliases,
+                    &src_ids,
+                    mention_count,
+                    None,
+                    Some(&source_chunks),
+                );
+            }
+        }
+    }
+
+    let affected_page_ids = as_str_list(dps.get("page_ids"));
+    if affected_page_ids.is_empty() {
+        return json!({
+            "pages_modified": pages_modified,
+            "pages_deleted": pages_deleted,
+            "errors": errors,
+        });
+    }
+
+    // Step 2: update wiki pages.
+    let page_fields: Vec<String> = [
+        "slug_kwd",
+        "title_kwd",
+        "md_with_weight",
+        "claims",
+        "source_doc_ids",
+        "page_version_int",
+        "entity_names_kwd",
+        "page_type_kwd",
+        "topic_kwd",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let all_existing_pages = search_existing_pages(store, tenant_id, kb_id, &page_fields);
+    let all_page_ids: Vec<String> = all_existing_pages.keys().cloned().collect();
+
+    for page_id in &affected_page_ids {
+        let Some(existing) = all_existing_pages.get(page_id).cloned() else {
+            continue;
+        };
+        let mut source_doc_ids: Vec<String> = as_str_list(existing.get("source_doc_ids"));
+        if let Some(pos) = source_doc_ids
+            .iter()
+            .position(|existing| existing == doc_id)
+        {
+            source_doc_ids.remove(pos);
+        }
+        let default_type = if mode == "entity" {
+            "concept"
+        } else {
+            "entity"
+        };
+        let page_type = scalar_string_or(existing.get("page_type_kwd"), default_type);
+        let page_title = scalar_string_or(existing.get("title_kwd"), page_id);
+        let page_version = as_int(existing.get("page_version_int"), 0);
+
+        if source_doc_ids.is_empty() {
+            let _ = wiki_refine_page(RefinePageArgs {
+                store,
+                mode: "delete",
+                page_id,
+                page_title: &page_title,
+                existing_page: Some(&existing),
+                page_type_kwd: &page_type,
+                additions: None,
+                retractions: None,
+                source_chunks: Some(&[]),
+                claims: Some(&[]),
+                available_pages: Some(&[]),
+                contextual_hints: "",
+                chat,
+                embd,
+                tenant_id,
+                kb_id,
+                page_version,
+                entity_names: None,
+                page_embedding: None,
+                embed_routing_context: false,
+                source_doc_ids: None,
+                topic_candidates: None,
+                topic_selection_stats: None,
+                topic_embeddings: None,
+                topic_pool: None,
+                member_evidence: None,
+            })
+            .await;
+            pages_deleted += 1;
+        } else {
+            let existing_claims = wiki_parse_claims(existing.get("claims"));
+            let retractions: Vec<Value> = existing_claims
+                .iter()
+                .filter(|claim| claim.get("source_doc_id").and_then(Value::as_str) == Some(doc_id))
+                .cloned()
+                .collect();
+            let retained: Vec<Value> = existing_claims
+                .iter()
+                .filter(|claim| claim.get("source_doc_id").and_then(Value::as_str) != Some(doc_id))
+                .cloned()
+                .collect();
+            let contextual_hints =
+                wiki_build_contextual_hints(page_id, Some(&existing), &Map::new());
+            let _ = wiki_refine_page(RefinePageArgs {
+                store,
+                mode: "modify",
+                page_id,
+                page_title: &page_title,
+                existing_page: Some(&existing),
+                page_type_kwd: &page_type,
+                additions: Some(&[]),
+                retractions: Some(&retractions),
+                source_chunks: Some(&[]),
+                claims: Some(&retained),
+                available_pages: Some(&all_page_ids),
+                contextual_hints: &contextual_hints,
+                chat,
+                embd,
+                tenant_id,
+                kb_id,
+                page_version,
+                entity_names: None,
+                page_embedding: None,
+                embed_routing_context: false,
+                source_doc_ids: None,
+                topic_candidates: None,
+                topic_selection_stats: None,
+                topic_embeddings: None,
+                topic_pool: None,
+                member_evidence: None,
+            })
+            .await;
+            pages_modified += 1;
+        }
+
+        if mode == "topic" {
+            let fields: Vec<String> = ["entity_names"]
+                .iter()
+                .map(|field| field.to_string())
+                .collect();
+            let condition = plan_group_condition(page_id);
+            let rows = inc_search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1)
+                .unwrap_or_default();
+            if let Some(row) = rows.into_iter().next() {
+                let entity_names_parsed: Vec<String> = match row.get("entity_names") {
+                    Some(Value::String(text)) if !text.is_empty() => {
+                        match serde_json::from_str::<Value>(text) {
+                            Ok(Value::Array(items)) => items
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect(),
+                            _ => Vec::new(),
+                        }
+                    }
+                    Some(Value::Array(items)) => items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                wiki_update_plan_group(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    page_id,
+                    &entity_names_parsed,
+                    page_version,
+                );
+            }
+        }
+    }
+
+    wiki_delete_doc_page_source(store, tenant_id, kb_id, doc_id);
+
+    wiki_finalize(store, tenant_id, kb_id, disabled_doc_ids, None, None).await;
+
+    json!({
+        "pages_modified": pages_modified,
+        "pages_deleted": pages_deleted,
+        "errors": errors,
+    })
+}
+
+#[cfg(test)]
+mod wiki_incremental_part17_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn seed_page(store: &MemoryDocStore, source_docs: &[&str]) {
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let claims = json!([
+            {"statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]},
+            {"statement": "s2", "source_doc_id": "d2", "chunk_ids": ["c2"]}
+        ]);
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "md_with_weight": "OLD BODY",
+            "entity_names_kwd": ["Alpha"],
+            "source_doc_ids": source_docs,
+            "source_chunk_ids": ["c1", "c2"],
+            "page_version_int": 2,
+            "synthesis_version_int": 1,
+            "topic_kwd": "alpha",
+            "claims": claims.to_string()
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_source_record_returns_zero() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_handle_document_deleted(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &chat,
+            None,
+            "entity",
+            &BTreeSet::new(),
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(0));
+        assert_eq!(summary["pages_deleted"], json!(0));
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deletes_sole_source_page() {
+        let store = MemoryDocStore::new();
+        seed_page(&store, &["d1"]);
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &["d1".to_string()],
+            1,
+            None,
+            Some(&["c1".to_string()]),
+        );
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["entity/alpha".to_string()],
+            Some(&["Alpha".to_string()]),
+            None,
+            None,
+        );
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_handle_document_deleted(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &chat,
+            None,
+            "entity",
+            &BTreeSet::new(),
+        )
+        .await;
+        assert_eq!(summary["pages_deleted"], json!(1));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(pages.is_empty());
+        assert!(load_canonical_entities(&store, "t1", "kb1").is_empty());
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+    }
+
+    #[tokio::test]
+    async fn modifies_shared_page_and_plan_group() {
+        let store = MemoryDocStore::new();
+        seed_page(&store, &["d1", "d2"]);
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &["d1".to_string(), "d2".to_string()],
+            2,
+            None,
+            Some(&["c1".to_string(), "c2".to_string()]),
+        );
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["entity/alpha".to_string()],
+            Some(&["Alpha".to_string()]),
+            None,
+            None,
+        );
+        wiki_update_plan_group(
+            &store,
+            "t1",
+            "kb1",
+            "entity/alpha",
+            &["Alpha".to_string(), "Beta".to_string()],
+            2,
+        );
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Updated\n\nBody after delete.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_handle_document_deleted(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &chat,
+            None,
+            "topic",
+            &BTreeSet::new(),
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(1));
+        assert_eq!(summary["pages_deleted"], json!(0));
+        let pages = search_existing_pages(
+            &store,
+            "t1",
+            "kb1",
+            &["slug_kwd".to_string(), "md_with_weight".to_string()],
+        );
+        let alpha = pages.get("entity/alpha").cloned().expect("alpha");
+        assert!(
+            alpha["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Body after delete")
+        );
+        let canonical = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(canonical["Alpha"]["source_doc_ids"], json!(["d2"]));
+        assert_eq!(canonical["Alpha"]["mention_count_int"], json!(2));
+        let groups = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(groups["entity/alpha"], json!(["Alpha", "Beta"]));
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+    }
+}
