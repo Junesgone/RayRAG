@@ -1529,7 +1529,10 @@ pub fn render_slot_draft(
         }
         if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array) {
             if !ids.is_empty() {
-                parts.push(format!("evidence_ids={ids:?}"));
+                parts.push(format!(
+                    "evidence_ids={}",
+                    serde_json::to_string(ids).unwrap_or_default()
+                ));
             }
         }
         let suffix = if parts.is_empty() {
@@ -1580,7 +1583,10 @@ pub fn render_slot_draft(
                 }
                 if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array) {
                     if !ids.is_empty() {
-                        details.push(format!("evidence_ids={ids:?}"));
+                        details.push(format!(
+                            "evidence_ids={}",
+                            serde_json::to_string(ids).unwrap_or_default()
+                        ));
                     }
                 }
                 let suffix = if details.is_empty() {
@@ -2501,5 +2507,396 @@ mod fanout_tests {
         .await;
         assert_eq!(added, 1, "the already-seen exact hit is skipped");
         assert_eq!(seeded.chunks.len(), 2);
+    }
+}
+#[cfg(test)]
+mod graph_node_tests {
+    use super::*;
+    use crate::advanced_rag::agentic_rag::{KbRef, RagRetrievalBackend, RagToolsConfig};
+    use crate::harness::action_session::{
+        ActionLlmBackend, ActionSearchBackend, ActionToolBackend, LlmReply, Variable,
+    };
+    use crate::harness::chunk_utils;
+    use crate::harness::tools::navigation::NavResult;
+    use serde_json::json;
+
+    fn variable(id: i64, kind: &str, candidate: Option<&str>, strength: Option<f64>) -> Variable {
+        Variable {
+            id,
+            r#type: kind.to_string(),
+            question_clues: vec![format!("clue {id}")],
+            discovered_clues: vec![format!("found {id}")],
+            candidate: candidate.map(str::to_string),
+            candidate_strength: strength,
+        }
+    }
+
+    #[test]
+    fn render_slot_draft_shows_candidates_and_gaps() {
+        let table = SlotState::new(
+            vec![
+                variable(0, "person", Some("Ada"), Some(0.95)),
+                variable(1, "date", None, None),
+            ],
+            0,
+        );
+        let evidence = json!({"0": {"evidence_ids": ["c1"], "terminal_type": "state"}});
+        let draft = render_slot_draft(&table, Some("Ada"), Some(&evidence));
+        assert!(draft.contains("Candidate answer: Ada"));
+        assert!(draft.contains("- slot 0 [person]: Ada (strength=0.95) [terminal=state, evidence_ids=[\"c1\"]] — found 0"));
+        assert!(draft.contains("- slot 1 [date]: NOT RESOLVED (clue 1)"));
+        assert!(render_slot_draft(&SlotState::new(vec![], 0), None, None).is_empty());
+    }
+
+    #[test]
+    fn merge_slot_patch_prefers_the_stronger_candidate() {
+        let base = SlotState::new(vec![variable(0, "person", Some("Weak"), Some(0.3))], 0);
+        let stronger = SlotState::new(vec![variable(0, "person", Some("Strong"), Some(0.9))], 1);
+        let merged = merge_slot_patch(&base, &stronger).expect("changed");
+        assert_eq!(merged.state[0].candidate.as_deref(), Some("Strong"));
+        assert_eq!(merged.state[0].candidate_strength, Some(0.9));
+        assert!(
+            merged.state[0]
+                .discovered_clues
+                .contains(&"found 0".to_string())
+        );
+        assert_eq!(merged.depth, 1);
+
+        let weaker = SlotState::new(vec![variable(0, "person", Some("Meh"), Some(0.1))], 1);
+        assert!(
+            merge_slot_patch(&base, &weaker).is_none(),
+            "no change -> None"
+        );
+        let filled = SlotState::new(vec![variable(0, "person", Some("Filled"), None)], 1);
+        assert!(
+            merge_slot_patch(&base, &filled).is_none(),
+            "a None strength never upgrades a stronger base"
+        );
+    }
+
+    fn base_state() -> AgenticState {
+        let mut state = AgenticState::default();
+        state.question = "q".to_string();
+        state.deadline = Some(Instant::now() + std::time::Duration::from_secs(120));
+        state
+    }
+
+    #[test]
+    fn route_matrix() {
+        let config = GraphConfig {
+            enable_sca: true,
+            use_fanout: false,
+            sca_max_rounds: 3,
+            max_loops: 3,
+        };
+        let pool = Kbinfos::default();
+        let mut state = base_state();
+        state.verdict = json!({"status": "INSUFFICIENT"});
+        assert_eq!(route_sca(&state, &pool, &config), GraphRoute::QueryRewrite);
+        state.search_rounds = 3;
+        assert_eq!(
+            route_sca(&state, &pool, &config),
+            GraphRoute::FormalizeAnswer
+        );
+        state.search_rounds = 0;
+        state.no_progress = true;
+        assert_eq!(
+            route_sca(&state, &pool, &config),
+            GraphRoute::FormalizeAnswer
+        );
+        state.no_progress = false;
+        let mut full = Kbinfos::default();
+        for index in 0..SCA_VIEW_CAP {
+            full.chunks.push(json!({"chunk_id": format!("c{index}")}));
+        }
+        assert_eq!(
+            route_sca(&state, &full, &config),
+            GraphRoute::FormalizeAnswer
+        );
+        let no_sca = GraphConfig {
+            enable_sca: false,
+            ..config.clone()
+        };
+        assert_eq!(
+            route_sca(&state, &pool, &no_sca),
+            GraphRoute::FormalizeAnswer
+        );
+
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::RagAgent);
+        state.no_progress = true;
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::FormalizeAnswer);
+        state.no_progress = false;
+        state.search_rounds = 3;
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::FormalizeAnswer);
+        state.search_rounds = 0;
+        state.deadline = Some(Instant::now());
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::FormalizeAnswer);
+    }
+
+    // ── Mock runtime plumbing ─────────────────────────────────────────────
+
+    struct MockChat;
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockRetriever;
+
+    #[async_trait]
+    impl HarnessRetriever for MockRetriever {
+        async fn retrieval(&self, _request: RetrievalRequest) -> Result<Kbinfos, String> {
+            Ok(Kbinfos::default())
+        }
+    }
+
+    struct MockKbReads;
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockKbReads {
+        async fn retrieval(
+            &self,
+            _request: &crate::advanced_rag::agentic_rag::RagRetrievalRequest,
+        ) -> Option<Value> {
+            None
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            chunks.to_vec()
+        }
+        fn rank_feature(&self, _question: &str) -> Value {
+            json!({})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            HashSet::new()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            None
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            None
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            json!({})
+        }
+        fn doc_titles_for_kb(&self, _kb_id: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            None
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _max_count: usize,
+            _offset: usize,
+        ) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    struct MockActionSearch;
+
+    #[async_trait]
+    impl ActionSearchBackend for MockActionSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockActionTools;
+
+    #[async_trait]
+    impl ActionToolBackend for MockActionTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct MockActionLlm;
+
+    #[async_trait]
+    impl ActionLlmBackend for MockActionLlm {
+        async fn complete_with_tools(
+            &self,
+            _messages: &[Value],
+            _schemas: &[Value],
+            _timeout_s: f64,
+        ) -> Option<LlmReply> {
+            None
+        }
+        async fn complete_plain(&self, _messages: &[Value], _timeout_s: f64) -> Option<LlmReply> {
+            None
+        }
+    }
+
+    struct RuntimeFixture {
+        tools: RagTools,
+        retriever: MockRetriever,
+        kb_reads: MockKbReads,
+        chat: MockChat,
+        action_search: MockActionSearch,
+        action_tools: MockActionTools,
+        action_llm: MockActionLlm,
+    }
+
+    impl RuntimeFixture {
+        fn new() -> Self {
+            Self {
+                tools: RagTools::new(RagToolsConfig {
+                    kbs: vec![KbRef {
+                        id: "kb1".to_string(),
+                        tenant_id: "t1".to_string(),
+                        field_map: None,
+                    }],
+                    empty_response: "NO EVIDENCE".to_string(),
+                    thinking_mode: "high".to_string(),
+                    chat_max_length: 4096,
+                    ..RagToolsConfig::default()
+                }),
+                retriever: MockRetriever,
+                kb_reads: MockKbReads,
+                chat: MockChat,
+                action_search: MockActionSearch,
+                action_tools: MockActionTools,
+                action_llm: MockActionLlm,
+            }
+        }
+
+        fn runtime<'a>(&'a self, search: &'a SearchContext<'a>) -> AgenticRuntime<'a> {
+            AgenticRuntime {
+                tools: &self.tools,
+                search,
+                retrieval: &self.kb_reads,
+                chat: &self.chat,
+                action_search: &self.action_search,
+                action_tools: &self.action_tools,
+                action_llm: &self.action_llm,
+                direct: None,
+                stats: StatsHandle::new(),
+            }
+        }
+    }
+
+    fn search_ctx(retriever: &MockRetriever) -> SearchContext<'_> {
+        SearchContext {
+            kb_ids: vec!["kb1".to_string()],
+            sql_kb_ids: Vec::new(),
+            tenant_ids: vec!["t1".to_string()],
+            has_embed_model: false,
+            settings: SearchSettings {
+                top_n: None,
+                top_k: None,
+                rerank_candidates_count: None,
+                vector_similarity_weight: None,
+                similarity_threshold: None,
+            },
+            retriever,
+            scoped_doc_ids: None,
+            search_cache: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn agentic_graph_pipeline_reaches_empty_response() {
+        let fixture = RuntimeFixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let runtime = fixture.runtime(&ctx);
+        let mut kbinfos = Kbinfos::default();
+        let messages = vec![json!({"role": "user", "content": "Who?"})];
+        let config = GraphConfig {
+            enable_sca: false,
+            use_fanout: false,
+            sca_max_rounds: 3,
+            max_loops: 3,
+        };
+        let mut state = AgenticState {
+            messages: messages.clone(),
+            ..AgenticState::default()
+        };
+        let mut tokens: Vec<String> = Vec::new();
+        run_agentic_graph(
+            &runtime,
+            &mut kbinfos,
+            &mut state,
+            &mut tokens,
+            &json!({}),
+            &config,
+        )
+        .await;
+        assert_eq!(
+            state.question, "Who?",
+            "single-turn formalize keeps the question"
+        );
+        assert_eq!(state.verdict["status"], json!("INSUFFICIENT"));
+        assert_eq!(
+            tokens,
+            vec!["NO EVIDENCE".to_string()],
+            "empty response path"
+        );
+        assert!(kbinfos.chunks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn low_graph_pipeline_without_direct_tool() {
+        let fixture = RuntimeFixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let runtime = fixture.runtime(&ctx);
+        let mut kbinfos = Kbinfos::default();
+        let mut state = AgenticState {
+            messages: vec![json!({"role": "user", "content": "Who?"})],
+            ..AgenticState::default()
+        };
+        let mut tokens: Vec<String> = Vec::new();
+        run_low_graph(&runtime, &mut kbinfos, &mut state, &mut tokens, &json!({})).await;
+        assert!(state.empty_result);
+        assert_eq!(tokens, vec!["NO EVIDENCE".to_string()]);
     }
 }
