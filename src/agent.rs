@@ -42,6 +42,13 @@ use crate::querit::{
 };
 use crate::qweather::{QWeatherClient, QWeatherProvider, QWeatherRequest, QWeatherType};
 use crate::searxng::{SearxngClient, SearxngProvider, SearxngRequest};
+use crate::sofya::{
+    SOFYA_FRESHNESS_VALUES, SOFYA_MAX_RESULTS, SOFYA_SEARCH_DEPTHS, SOFYA_TOPICS, SofyaClient,
+    build_search_payload as sofya_payload, normalize_freshness as sofya_freshness,
+    normalize_search_depth as sofya_depth, normalize_topic as sofya_topic,
+    resolve_max_results as sofya_max_results, result_content as sofya_content,
+    results_from_response as sofya_results,
+};
 use crate::tavily::{TavilyClient, TavilyExtractRequest, TavilyProvider, TavilySearchRequest};
 use crate::tencent_finance::{TencentFinanceClient, TencentFinanceProvider, TencentFinanceRequest};
 use crate::translate::{BaiduTranslateClient, TranslateRequest};
@@ -51,6 +58,11 @@ use crate::wikipedia::{
     WikipediaSearchRequest,
 };
 use crate::yahoo_finance::{YahooFinanceClient, YahooFinanceProvider, YahooFinanceRequest};
+use crate::youcom::{
+    YOUCOM_FRESHNESS_VALUES, YouComClient, build_params as youcom_params,
+    merge_sections as youcom_merge, normalize_freshness as youcom_freshness,
+    result_content as youcom_content,
+};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use futures_util::stream::{self, StreamExt};
@@ -3706,7 +3718,9 @@ fn resolve_component_timeout_with(
         "LLM" | "MESSAGE" | "AGENT" => Some(Duration::from_secs(600)),
         "RETRIEVAL" | "WIKIPEDIA" | "YAHOOFINANCE" => Some(Duration::from_secs(60)),
         "TAVILYSEARCH" | "TAVILY" | "DUCKDUCKGO" | "GOOGLE" | "ARXIV" | "GOOGLESCHOLAR"
-        | "GITHUB" | "SEARXNG" | "PUBMED" | "QUERITSEARCH" => Some(Duration::from_secs(12)),
+        | "GITHUB" | "SEARXNG" | "PUBMED" | "QUERITSEARCH" | "SOFYASEARCH" | "YOUCOMSEARCH" => {
+            Some(Duration::from_secs(12))
+        }
         // QueritContents crawls up to ten pages; the upstream decorator default is 70s.
         "QUERITCONTENTS" => Some(Duration::from_secs(70)),
         "EXESQL" | "INVOKE" => Some(Duration::from_secs(3)),
@@ -4000,6 +4014,53 @@ fn load_canvas_agent_tools(node: &CanvasNode) -> Result<Vec<CanvasAgentTool>> {
                         }),
                         serde_json::json!(["urls"]),
                     )
+                } else if component_name.eq_ignore_ascii_case("sofyasearch") {
+                    validate_sofya_search_params(&child)?;
+                    (
+                        "sofya_search",
+                        "Sofya is a web search API for AI agents. It returns the content of the result pages, not just a snippet, so results carry usable context without a separate fetch. An API key is required.\nWhen searching:\n   - Use a focused query of the most important terms (and synonyms).\n   - Use the news topic for current events, and the general topic otherwise.\n   - Optionally restrict results by how recently they were published.",
+                        serde_json::json!({
+                            "query": {
+                                "type": "string",
+                                "description": "The search keywords to execute with Sofya. The keywords should be the most important words/terms(includes synonyms) from the original request.",
+                                "default": "{sys.query}"
+                            },
+                            "topic": {
+                                "type": "string",
+                                "description": "default:'general'. The category of the search. 'news' searches news sources and suits current events; 'general' is a broader web search.",
+                                "enum": ["general", "news"]
+                            },
+                            "freshness": {
+                                "type": "string",
+                                "description": "default:'any'. Restrict results by recency. One of 'day', 'week', 'month', 'year', or 'any' for no limit.",
+                                "enum": ["any", "day", "week", "month", "year"]
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Number of results to return, 1 to 20. Leave it out to use the Top N set on the node."
+                            }
+                        }),
+                        serde_json::json!(["query"]),
+                    )
+                } else if component_name.eq_ignore_ascii_case("youcomsearch") {
+                    validate_youcom_search_params(&child)?;
+                    (
+                        "youcom_search",
+                        "You.com runs its own web index and returns several extracted passages per result rather than a single snippet, so results carry usable context without a separate fetch. It works without an API key by default (keyless free tier).\nWhen searching:\n   - Use a focused query of the most important terms (and synonyms).\n   - Optionally restrict results by how recently they were published.",
+                        serde_json::json!({
+                            "query": {
+                                "type": "string",
+                                "description": "The search keywords to execute with You.com. The keywords should be the most important words/terms(includes synonyms) from the original request.",
+                                "default": "{sys.query}"
+                            },
+                            "freshness": {
+                                "type": "string",
+                                "description": "default:'any'. Restrict results by recency. One of 'day', 'week', 'month', 'year', or 'any' for no limit.",
+                                "enum": ["any", "day", "week", "month", "year"]
+                            }
+                        }),
+                        serde_json::json!(["query"]),
+                    )
                 } else if component_name.eq_ignore_ascii_case("duckduckgo") {
                     validate_duckduckgo_params(&child)?;
                     (
@@ -4119,7 +4180,7 @@ fn load_canvas_agent_tools(node: &CanvasNode) -> Result<Vec<CanvasAgentTool>> {
                     )
                 } else {
                     bail!(
-                        "Canvas Agent '{}' tool '{}' is not implemented; this Rust slice supports Retrieval, TavilySearch, TavilyExtract, QueritSearch, QueritContents, DuckDuckGo, Wikipedia, GoogleScholar, GitHub, YahooFinance, ArXiv and PubMed",
+                        "Canvas Agent '{}' tool '{}' is not implemented; this Rust slice supports Retrieval, TavilySearch, TavilyExtract, QueritSearch, QueritContents, SofyaSearch, YouComSearch, DuckDuckGo, Wikipedia, GoogleScholar, GitHub, YahooFinance, ArXiv and PubMed",
                         node.id,
                         component_name
                     );
@@ -4635,6 +4696,14 @@ async fn execute_canvas_agent_tool_with_providers(
             execute_agent_querit_contents_with_timeout(runtime, &child, &QueritClient::default())
                 .await?;
         }
+        "sofyasearch" => {
+            validate_sofya_search_params(&child)?;
+            execute_agent_sofya_with_timeout(runtime, &child, &SofyaClient::default()).await?;
+        }
+        "youcomsearch" => {
+            validate_youcom_search_params(&child)?;
+            execute_agent_youcom_with_timeout(runtime, &child, &YouComClient::default()).await?;
+        }
         "duckduckgo" => {
             validate_duckduckgo_params(&child)?;
             execute_agent_duckduckgo_with_timeout(runtime, &child, providers.duckduckgo).await?;
@@ -4758,6 +4827,8 @@ async fn execute_canvas_agent_tool_with_providers(
             "searxng" => "SearXNG",
             "queritsearch" => "Querit",
             "queritcontents" => "Querit contents",
+            "sofyasearch" => "Sofya",
+            "youcomsearch" => "You.com",
             _ => "Tavily",
         };
         return Ok(format!("{provider} error: {error}"));
@@ -10457,6 +10528,383 @@ fn set_querit_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: Strin
             ("formalized_content".into(), Value::String(error.clone())),
         ]),
     );
+}
+fn validate_sofya_search_params(node: &CanvasNode) -> Result<()> {
+    let api_key = node
+        .params
+        .get("api_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if api_key.is_empty() {
+        bail!("SofyaSearch '{}' api_key is required", node.id);
+    }
+    if node
+        .params
+        .get("query")
+        .is_some_and(|value| !value.is_string())
+    {
+        bail!("SofyaSearch '{}' query must be a string", node.id);
+    }
+    if let Some(topic) = node.params.get("topic").and_then(Value::as_str)
+        && !topic.trim().is_empty()
+        && !SOFYA_TOPICS.contains(&topic.trim().to_ascii_lowercase().as_str())
+    {
+        bail!(
+            "SofyaSearch '{}' topic is not supported, it should be in {SOFYA_TOPICS:?}",
+            node.id
+        );
+    }
+    if let Some(freshness) = node.params.get("freshness").and_then(Value::as_str)
+        && !freshness.trim().is_empty()
+        && !SOFYA_FRESHNESS_VALUES.contains(&freshness.trim().to_ascii_lowercase().as_str())
+    {
+        bail!(
+            "SofyaSearch '{}' freshness is not supported, it should be in {SOFYA_FRESHNESS_VALUES:?}",
+            node.id
+        );
+    }
+    if let Some(depth) = node.params.get("search_depth").and_then(Value::as_str)
+        && !SOFYA_SEARCH_DEPTHS.contains(&depth.trim().to_ascii_lowercase().as_str())
+    {
+        bail!(
+            "SofyaSearch '{}' search_depth must be basic or snippets",
+            node.id
+        );
+    }
+    if let Some(max_results) = node.params.get("max_results")
+        && max_results
+            .as_i64()
+            .is_none_or(|value| !(1..=SOFYA_MAX_RESULTS).contains(&value))
+    {
+        bail!(
+            "SofyaSearch '{}' max_results must be an integer from 1 to 20",
+            node.id
+        );
+    }
+    if let Some(top_n) = node.params.get("top_n")
+        && top_n.as_i64().is_none_or(|value| value < 1)
+    {
+        bail!("SofyaSearch '{}' top_n must be a positive integer", node.id);
+    }
+    Ok(())
+}
+
+fn validate_youcom_search_params(node: &CanvasNode) -> Result<()> {
+    // A key is optional: blank uses the keyless endpoint (free tier).
+    if node
+        .params
+        .get("query")
+        .is_some_and(|value| !value.is_string())
+    {
+        bail!("YouComSearch '{}' query must be a string", node.id);
+    }
+    if let Some(freshness) = node.params.get("freshness").and_then(Value::as_str)
+        && !freshness.trim().is_empty()
+        && !YOUCOM_FRESHNESS_VALUES.contains(&freshness.trim().to_ascii_lowercase().as_str())
+    {
+        bail!(
+            "YouComSearch '{}' freshness is not supported, it should be in {YOUCOM_FRESHNESS_VALUES:?}",
+            node.id
+        );
+    }
+    if let Some(top_n) = node.params.get("top_n")
+        && top_n.as_i64().is_none_or(|value| value < 1)
+    {
+        bail!(
+            "YouComSearch '{}' top_n must be a positive integer",
+            node.id
+        );
+    }
+    Ok(())
+}
+
+fn web_tool_retry_delay(node: &CanvasNode, label: &str) -> Result<Duration> {
+    let seconds = node
+        .params
+        .get("delay_after_error")
+        .and_then(Value::as_f64)
+        .unwrap_or(2.0);
+    if !seconds.is_finite() || seconds < 0.0 {
+        bail!(
+            "{label} component '{}' delay_after_error must be a non-negative finite number",
+            node.id
+        );
+    }
+    Ok(Duration::from_secs_f64(seconds))
+}
+
+/// Shared outputs builder for the web-search agent tools whose `json` output is
+/// simply the normalized result list (upstream `set_output("json", results)`).
+fn web_tool_outputs(
+    results: &[Value],
+    content_of: impl Fn(&Value) -> String,
+) -> TavilySearchOutput {
+    let mut chunks = Vec::new();
+    let mut doc_aggs = Vec::new();
+    let mut references = Vec::new();
+    let mut formalized = Vec::new();
+    for result in results {
+        let content = content_of(result);
+        let content = tavily_data_image_regex().replace_all(&content, "");
+        let content: String = content.chars().take(10_000).collect();
+        if content.is_empty() {
+            continue;
+        }
+        let title = querit_text(result.get("title"));
+        let url = querit_text(result.get("url"));
+        let id = hash_str2int(&content, 100_000_000).to_string();
+        chunks.push(serde_json::json!({
+            "chunk_id": id,
+            "content": content,
+            "doc_id": id,
+            "docnm_kwd": title,
+            "similarity": 1,
+            "url": url
+        }));
+        doc_aggs.push(serde_json::json!({
+            "doc_name": title,
+            "doc_id": id,
+            "count": 1,
+            "url": url
+        }));
+        references.push(ChunkReference {
+            id: id.clone(),
+            kb_id: id.clone(),
+            content: content.clone(),
+            similarity: Some(1.0_f32),
+            vector_similarity: None,
+            term_similarity: None,
+        });
+        formalized.push(format!(
+            "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
+            hash_str2int(&id, 500),
+            title.replace('\n', " "),
+            url.replace('\n', " "),
+            content
+        ));
+    }
+    let outputs = Map::from_iter([
+        (
+            "formalized_content".into(),
+            Value::String(formalized.join("\n")),
+        ),
+        ("json".into(), Value::Array(results.to_vec())),
+        ("doc_aggs".into(), Value::Array(doc_aggs.clone())),
+    ]);
+    (outputs, references, chunks, doc_aggs)
+}
+
+fn set_web_tool_error(runtime: &mut CanvasRuntime, node: &CanvasNode, error: String) {
+    runtime.outputs.insert(
+        node.id.clone(),
+        Map::from_iter([
+            ("_ERROR".into(), Value::String(error.clone())),
+            ("formalized_content".into(), Value::String(error.clone())),
+        ]),
+    );
+}
+
+async fn execute_agent_sofya_with_timeout(
+    runtime: &mut CanvasRuntime,
+    child: &CanvasNode,
+    client: &SofyaClient,
+) -> Result<()> {
+    let timeout = component_timeout(&child.component_name);
+    match crate::runtime::with_timeout(
+        timeout,
+        execute_sofya_search_with_provider(runtime, child, client),
+    )
+    .await
+    {
+        Err(error)
+            if error
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_some() =>
+        {
+            set_web_tool_error(
+                runtime,
+                child,
+                format!("Sofya timed out after {} seconds", timeout.as_secs()),
+            );
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+async fn execute_sofya_search_with_provider(
+    runtime: &mut CanvasRuntime,
+    node: &CanvasNode,
+    client: &SofyaClient,
+) -> Result<()> {
+    let query = resolve_tavily_string(runtime, node, "query", "sys.query")?;
+    if query.is_empty() {
+        runtime.outputs.insert(
+            node.id.clone(),
+            Map::from_iter([("formalized_content".into(), Value::String(String::new()))]),
+        );
+        return Ok(());
+    }
+    let api_key = node
+        .params
+        .get("api_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    if api_key.is_empty() {
+        set_web_tool_error(runtime, node, "Sofya API key is required.".into());
+        return Ok(());
+    }
+    let depth = sofya_depth(node.params.get("search_depth").and_then(Value::as_str));
+    let top_n = node
+        .params
+        .get("top_n")
+        .and_then(Value::as_i64)
+        .unwrap_or(10);
+    let max_results = sofya_max_results(
+        node.params.get("max_results").and_then(Value::as_i64),
+        Some(top_n),
+    );
+    let topic = match sofya_topic(node.params.get("topic").and_then(Value::as_str)) {
+        Ok(topic) => topic,
+        Err(error) => {
+            set_web_tool_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    let freshness = match sofya_freshness(node.params.get("freshness").and_then(Value::as_str)) {
+        Ok(freshness) => freshness,
+        Err(error) => {
+            set_web_tool_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    let attempts = tavily_attempts(node);
+    let delay = match web_tool_retry_delay(node, "Sofya") {
+        Ok(delay) => delay,
+        Err(error) => {
+            set_web_tool_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    if runtime.cancel_flag {
+        set_web_tool_error(runtime, node, "Task has been canceled".into());
+        return Ok(());
+    }
+    let payload = sofya_payload(&query, &depth, max_results, &topic, &freshness);
+    match client.search(&api_key, &payload, attempts, delay).await {
+        Ok(data) => {
+            let results = sofya_results(&data, max_results as usize);
+            let (outputs, references, chunks, doc_aggs) = web_tool_outputs(&results, sofya_content);
+            runtime
+                .retrieval
+                .insert("chunks".into(), Value::Array(chunks));
+            runtime
+                .retrieval
+                .insert("doc_aggs".into(), Value::Array(doc_aggs));
+            append_web_references(runtime, references);
+            runtime.outputs.insert(node.id.clone(), outputs);
+        }
+        Err(error) => set_web_tool_error(runtime, node, error.to_string()),
+    }
+    Ok(())
+}
+
+async fn execute_agent_youcom_with_timeout(
+    runtime: &mut CanvasRuntime,
+    child: &CanvasNode,
+    client: &YouComClient,
+) -> Result<()> {
+    let timeout = component_timeout(&child.component_name);
+    match crate::runtime::with_timeout(
+        timeout,
+        execute_youcom_search_with_provider(runtime, child, client),
+    )
+    .await
+    {
+        Err(error)
+            if error
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_some() =>
+        {
+            set_web_tool_error(
+                runtime,
+                child,
+                format!("You.com timed out after {} seconds", timeout.as_secs()),
+            );
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+async fn execute_youcom_search_with_provider(
+    runtime: &mut CanvasRuntime,
+    node: &CanvasNode,
+    client: &YouComClient,
+) -> Result<()> {
+    let query = resolve_tavily_string(runtime, node, "query", "sys.query")?;
+    if query.is_empty() {
+        runtime.outputs.insert(
+            node.id.clone(),
+            Map::from_iter([("formalized_content".into(), Value::String(String::new()))]),
+        );
+        return Ok(());
+    }
+    let api_key = node
+        .params
+        .get("api_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    let top_n = node
+        .params
+        .get("top_n")
+        .and_then(Value::as_i64)
+        .unwrap_or(10);
+    let freshness = match youcom_freshness(node.params.get("freshness").and_then(Value::as_str)) {
+        Ok(freshness) => freshness,
+        Err(error) => {
+            set_web_tool_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    let attempts = tavily_attempts(node);
+    let delay = match web_tool_retry_delay(node, "You.com") {
+        Ok(delay) => delay,
+        Err(error) => {
+            set_web_tool_error(runtime, node, error.to_string());
+            return Ok(());
+        }
+    };
+    if runtime.cancel_flag {
+        set_web_tool_error(runtime, node, "Task has been canceled".into());
+        return Ok(());
+    }
+    let params = youcom_params(&query, top_n, &freshness);
+    match client.search(&api_key, &params, attempts, delay).await {
+        Ok(data) => {
+            let results = youcom_merge(
+                data.get("results").unwrap_or(&Value::Null),
+                top_n.max(0) as usize,
+            );
+            let (outputs, references, chunks, doc_aggs) =
+                web_tool_outputs(&results, youcom_content);
+            runtime
+                .retrieval
+                .insert("chunks".into(), Value::Array(chunks));
+            runtime
+                .retrieval
+                .insert("doc_aggs".into(), Value::Array(doc_aggs));
+            append_web_references(runtime, references);
+            runtime.outputs.insert(node.id.clone(), outputs);
+        }
+        Err(error) => set_web_tool_error(runtime, node, error.to_string()),
+    }
+    Ok(())
 }
 
 fn hash_str2int(value: &str, modulus: u64) -> u64 {

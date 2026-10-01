@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.67] — 2026-10-01（对标批次 v0.3.10l）
+
+> W-1 续：RAGFlow v0.27.2 的 Sofya 与 You.com 智能体工具移植（纯 Rust）。
+
+### Added
+
+- **Sofya 画布工具**（`agent/tools/sofya.py` → `src/sofya.rs`）：`sofya_search` 的 topic/freshness/max_results 参数、`POST /v1/search`（Bearer + 固定 User-Agent）、`search_depth` 节点配置（未知回退默认并告警）、`content`→`description` 回退与空白归一、仅瞬态重试（{429,500,502,503,504} 与网络错误）。
+- **You.com 画布工具**（`agent/tools/youcom.py` → `src/youcom.rs`）：`youcom_search` 的 freshness 参数；keyless `/v1/agents/search` 与 keyed `/v1/search` 端点-头部联动（API key 可选）；`count` clamp 1–100；web+news 合并按 top_n 截断；snippets 拼接优先、description 回退；全错误重试语义。
+- 两者共享既有输出契约（`formalized_content`/`json`/`doc_aggs` + ChunkReference）与 12s 组件超时、错误前缀 `Sofya`/`You.com`。
+
+### Tests
+
+- sofya 4 项 + youcom 6 项 mock 单测（归一化、载荷、端点/头部选择、合并截断、重试与立即失败路径）；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.66] — 2026-10-01（对标批次 v0.3.10k）
 
 > W-1 续：RAGFlow v0.27.2 的 Querit 智能体工具（querit_search / querit_contents）移植（纯 Rust）。

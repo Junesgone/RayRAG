@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 589 | 288829 |
-| partial | 93 | 36282 |
+| full | 591 | 289342 |
+| partial | 91 | 35769 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -552,13 +552,13 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `agent/tools/qweather.py` | 194 | 8171 | `fe7d2a7dded4d5bc` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) [v0.27.2 content changed: re-audit] |
 | `agent/tools/retrieval.py` | 317 | 13827 | `190d8f5f81eae168` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) [v0.27.2 content changed: re-audit] |
 | `agent/tools/searxng.py` | 153 | 5953 | `ef03375b3063e71b` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `agent/tools/sofya.py` | 290 | 11189 | `e7b8a6417a861817` | partial | `src/agent.rs; src/search.rs` | （v0.3.10g 审计：Sofya 智能体搜索工具；智能体工具框架就位，该工具待接入——worklist W-1（搜索/提供商）） |
+| `agent/tools/sofya.py` | 290 | 11189 | `e7b8a6417a861817` | full | `src/sofya.rs; src/agent.rs` | （v0.3.10l 移植：sofya_search 画布工具——query/topic(general,news)/freshness(any,day,week,month,year)/max_results(1..20，缺省用节点 Top N)；POST /v1/search Bearer + 固定 User-Agent；search_depth basic/snippets（节点配置，未知回退默认并告警）；content 优先、description 回退、空白归一；重试仅瞬态（{429,500,502,503,504}+网络错误），非瞬态立即抛；组件超时 12s；4 项 mock 单测。） |
 | `agent/tools/tavily.py` | 236 | 10103 | `61eee6046f050a86` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/tushare.py` | 85 | 3196 | `c6cc326520afe541` | full | `src/tushare.rs; src/agent.rs; src/runtime.rs` | Rust TuShare: news API with source enum + keyword filter |
 | `agent/tools/wencai.py` | 116 | 5029 | `18b53e3b89d29aa5` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/wikipedia.py` | 193 | 6064 | `301a271376c8abc0` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
 | `agent/tools/yahoofinance.py` | 115 | 5047 | `69254b04fc111781` | full | `src/runtime.rs; src/agent.rs` | tool contracts verified/aligned (jin10/qweather/retrieval/wencai) |
-| `agent/tools/youcom.py` | 223 | 8555 | `9da316f6117f86c9` | partial | `src/agent.rs; src/tavily.rs` | （v0.3.10g 审计：You.com 智能体工具；智能体工具框架就位，该工具待接入——worklist W-1（搜索/提供商）） |
+| `agent/tools/youcom.py` | 223 | 8555 | `9da316f6117f86c9` | full | `src/youcom.rs; src/agent.rs` | （v0.3.10l 移植：youcom_search 画布工具——query/freshness；keyless /v1/agents/search 与 keyed /v1/search 端点-头部联动（key 可选），keyless 端点拒绝 X-API-Key；count clamp 1..100；web+news 合并按 top_n 截断；snippets 拼接优先、description 回退、空白归一；全错误重试语义（上游无瞬态过滤）；组件超时 12s；6 项 mock 单测。） |
 | `api/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | N/A | - | empty package marker (no code) |
 | `api/apps/__init__.py` | 425 | 15566 | `452375ef7b395c68` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs |
 | `api/apps/auth/README.md` | 76 | 2053 | `37df4e839197758a` | aligned | `src/server.rs; src/api/` | audited: REST endpoints in src/server.rs [v0.27.2 content changed: re-audit] |
