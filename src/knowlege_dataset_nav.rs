@@ -745,7 +745,7 @@ pub fn find_best_cluster(
             break;
         }
         best_name = child_name;
-        best_parent = best
+        best_parent = child
             .get("parent_kwd")
             .and_then(Value::as_str)
             .map(str::to_string)

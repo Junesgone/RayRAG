@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.92] — 2026-10-01（对标批次 v0.3.10ah，中间版）
+
+> dataset_nav.py（1967 行 / 42 定义）全量收敛为 `full`（`src/knowlege_dataset_nav.rs`，18 项单测绿）：命名/存储包装/行构造/分词与关键词/条件与范围/文本与向量检索（过滤回退扫描）/分层簇定位/LLM 合并与标题/图文本/upsert 主流程（锁契约注入）/移除与清理级联/两均值分裂/扁平混合检索 `search_dataset_nav`/带束树检索 `search_nav_tree_descent`（词法种子、逐层融合、叶子门控、覆盖兜底）。书面差异：KNN/束搜索顺序执行、行 id 用 xxh3（上游 xxh64）、`MatchExpr::Dense` 无 extra_options、无 sync wrapper。W-4 余 2（wiki.py、wiki_incremental.py）。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.91] — 2026-10-01（对标批次 v0.3.10ah，中间版）
 
 > 本中间版在 0.4.90 基础上又关闭一个 W-4 文件并推进第三个：`structure.py` 全文件收敛为 `full`；`dataset_nav.py` 完成前三批移植；台账对剩余三文件完成机器化缺口测绘（逐项书面说明）。
