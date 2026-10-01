@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.87] — 2026-10-01（对标批次 v0.3.10af，进行中）
+
+> W-4 续：动作会话（`action_session.py`，2142 行）前四分区落地（纯 Rust）；文件级收尾（导航前缀/会话入口/提示词）随下一分区。
+
+- `src/harness/action_session.rs`：
+  - 槽位模型 `Variable`/`SlotState`/`SessionResult`；`ToolOutcome` 状态契约（ok/empty/miss/poor/redundant/error 与 no_structure/no_doc/infra/bad_args 路由）；
+  - 近重复检索拦截（0.8 Jaccard；`_RETRIEVAL_TOOLS` 恰为 search_chunks/grep_chunks/grep_search，不含 retrieve——与上游一致）与证据准入（表块整文、正文 1200 截断、证据池 60 上限早停）；
+  - 执行器与分发：`exec_retrieve|search_chunks|web_search|list_chunks`（`ActionSearchBackend` 注入）与 `exec_navigate_tree|navigate_structure|calculate|graph_explore`（`ActionToolBackend` 注入）+ `execute_tool` 全分发（禁用短路/未知 bad_args）；
+  - 终态解析：`extract_tag`/`extract_json`/`apply_patch`（仅既有 id；strength 0..1 钳制；线索取尾 4 条各截 160 字符）/`parse_terminal`（state/answer 两态）与 `parse_tool_calls`（缺 id 合成 `call_N`、未知名保留 `unknown`）；
+  - 工具面：8 个逐字 spec schema + `tool_spec`/`active_tool_schemas`/`active_tool_specs`（模式工具面、无 web 提供方隐藏、禁用过滤）；
+  - `tool_node_policy`：近重复跳过并计数、未知工具修正提示、同会话缓存、EMPTY_STRIKES=2 禁用、redundant 显式注记、outcomes 记录。
+- 台账：`action_session.py` 记录分区进度（保持 partial）；worklist W-4=5；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：action_session 16 项全绿；fmt/check 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.86] — 2026-10-01（对标批次 v0.3.10ae）
 
 > W-4 续：编译产物扩展（零 LLM）全量移植——W-4 队列 6→5。
