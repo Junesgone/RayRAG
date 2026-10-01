@@ -1998,6 +1998,57 @@ mod tests {
         assert_eq!(PARAM_MAXDEPTH, 5);
     }
 
+    /// Gate for the internal parameter/interface registry: every `.env.example`
+    /// key must be documented there (and vice versa), so a parameter cannot be
+    /// added with a name that the registry — and therefore future code — does
+    /// not know about. Refresh with the registry generator script. The doc is
+    /// trimmed from published snapshots, so the gate skips when it is absent.
+    #[test]
+    fn env_example_and_interface_registry_stay_in_sync() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let example =
+            std::fs::read_to_string(root.join(".env.example")).expect(".env.example must exist");
+        let registry_path = root
+            .join("docs")
+            .join("parameter-interface")
+            .join("registry.md");
+        let Ok(registry) = std::fs::read_to_string(&registry_path) else {
+            // Internal-only asset (see the publish snapshot excludes); nothing
+            // to gate when it has been trimmed.
+            return;
+        };
+        let example_keys: std::collections::BTreeSet<String> = example
+            .lines()
+            .filter_map(|line| {
+                let (key, _) = line.trim().split_once('=')?;
+                let key = key.trim();
+                (!key.is_empty()
+                    && key
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                .then(|| key.to_string())
+            })
+            .collect();
+        let registry_keys: std::collections::BTreeSet<String> = registry
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("| `")?;
+                let (key, _) = rest.split_once("` |")?;
+                Some(key.to_string())
+            })
+            .collect();
+        let missing: Vec<_> = example_keys.difference(&registry_keys).cloned().collect();
+        let extra: Vec<_> = registry_keys.difference(&example_keys).cloned().collect();
+        assert!(
+            missing.is_empty(),
+            ".env.example keys missing from the registry: {missing:?}"
+        );
+        assert!(
+            extra.is_empty(),
+            "registry keys not present in .env.example: {extra:?}"
+        );
+    }
+
     #[test]
     fn env_values_override_defaults_with_python_type_conversion() {
         let settings = Settings::from_reader(reader(&[

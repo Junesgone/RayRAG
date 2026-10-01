@@ -2,6 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.61] — 2026-10-01（对标批次 v0.3.10f）
+
+> 建立参数/接口统一登记表与一致性门禁（用户长期要求项；登记表不发布）。
+
+### Added
+
+- **内部参数/接口登记表**（`docs/parameter-interface-registry.md`，发布时剔除并在 publish 脚本中加守卫）：
+  环境变量登记表（79 项，源自 `.env.example`）+ HTTP 接口登记表（310 条路由，从 `src/server.rs` 提取）
+  由 `scripts/gen-interface-registry.py --check/--write` 生成与校验；契约段固定模型选择器格式
+  （`model@provider@instance`）、`parser_config` camelCase、运行/切片状态枚举、`{code,message,data}`
+  错误契约与“不允许静默错误”规则，供后续编码查询。
+- **一致性门禁测试** `settings::tests::env_example_and_interface_registry_stay_in_sync`：
+  `.env.example` 与登记表 env 表必须互为子集，参数只出现在一处即测试失败。
+
+### Notes
+
+- 浏览器：fnOS Chrome/CDP 恢复尝试后仍为 `phase:blocked`（应用提示需在 App Center 停止再启动），
+  本轮 `/search/{id}` 与 chunk 详情真点遍历顺延；登记表轮不依赖浏览器。
+- 全量 `cargo test --locked --offline --lib` **1639 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净。
+
 ## [0.4.60] — 2026-10-01（对标批次 v0.3.10e）
 
 > agent / ingestion pipeline 模板 fixture 同步到 RAGFlow v0.27.2（30 模板 / 15 条 dataflow 管线）。
