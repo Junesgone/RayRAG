@@ -19,7 +19,9 @@ use async_trait::async_trait;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::common::misc_utils::hash_str2int;
 use crate::harness::HarnessChat;
+use crate::harness::chunk_utils;
 use crate::harness::keywords::extract_weighted_keywords;
 use crate::harness::orchestrator::direct::Kbinfos;
 use crate::harness::tools::search::{SearchSettings, resolve_rerank_candidates, resolve_top_k};
@@ -230,6 +232,8 @@ pub struct RagTools {
     pub consecutive_unanswerable: usize,
     /// Per-request search cache keyed by effective query + scope.
     pub search_cache: HashMap<String, Value>,
+    /// Memoised flattened doc metadata (`_metas_cache`).
+    pub metas_cache: Option<Value>,
 }
 
 impl RagTools {
@@ -265,6 +269,7 @@ impl RagTools {
             rag_verdict: None,
             consecutive_unanswerable: 0,
             search_cache: HashMap::new(),
+            metas_cache: None,
         };
         // `kb_ids` wins over `kbs` (upstream if/elif).
         if !tools.kb_ids.is_empty() || !config.kbs_by_ids.is_empty() {
@@ -725,6 +730,174 @@ impl RagTools {
             })
             .collect()
     }
+    /// `_get_cached_metas`: memoised flattened doc metadata for the bound KBs.
+    pub async fn get_cached_metas(&mut self, backend: &dyn RagRetrievalBackend) -> Value {
+        if let Some(cached) = &self.metas_cache {
+            return cached.clone();
+        }
+        if self.kb_ids.is_empty() {
+            self.metas_cache = Some(serde_json::json!({}));
+            return serde_json::json!({});
+        }
+        let metas = backend.flattened_meta_by_kbs(&self.kb_ids);
+        let value = if value_truthy(&metas) {
+            metas
+        } else {
+            serde_json::json!({})
+        };
+        self.metas_cache = Some(value.clone());
+        value
+    }
+
+    /// `_collect_doc_titles`: `(doc_id, title)` pairs, or `None` once the
+    /// `max_docs` cap is exceeded (upstream quirk).
+    pub fn collect_doc_titles(
+        &self,
+        backend: &dyn RagRetrievalBackend,
+        max_docs: usize,
+    ) -> Option<Vec<(String, String)>> {
+        let mut result: Vec<(String, String)> = Vec::new();
+        for kb_id in &self.kb_ids {
+            for (id, name) in backend.doc_titles_for_kb(kb_id) {
+                result.push((id, name));
+                if result.len() >= max_docs {
+                    return None;
+                }
+            }
+        }
+        Some(result)
+    }
+
+    /// `_filter_known_doc_ids`.
+    pub fn filter_known_doc_ids(
+        &self,
+        backend: &dyn RagRetrievalBackend,
+        candidates: &[String],
+    ) -> HashSet<String> {
+        if candidates.is_empty() || self.kb_ids.is_empty() {
+            return HashSet::new();
+        }
+        backend.filter_known_doc_ids(candidates)
+    }
+
+    /// `_resolve_doc_tenant`: `(kb_id, tenant_id)` for the document when it
+    /// sits in one of the bound (unstructured) KBs.
+    pub fn doc_tenant(
+        &self,
+        backend: &dyn RagRetrievalBackend,
+        doc_id: &str,
+    ) -> Option<(String, String)> {
+        let kb_id = backend.doc_kb_id(doc_id)?;
+        for kb in &self.kbs {
+            if kb.id == kb_id {
+                return Some((kb_id.clone(), kb.tenant_id.clone()));
+            }
+        }
+        None
+    }
+
+    /// `fetch_full_document`: a whole document's chunks in reading order (raw
+    /// kbinfos), capped by the model context budget. The paging loop breaks
+    /// OUTER once the token budget is hit (the bare inner break used to run all
+    /// ~79 pages).
+    pub async fn fetch_full_document(
+        &self,
+        backend: &dyn RagRetrievalBackend,
+        doc_id: &str,
+    ) -> Value {
+        let empty = empty_kbinfos();
+        if self.kb_ids.is_empty() {
+            return empty;
+        }
+        if let Some(scope) = &self.doc_scope {
+            if !scope.contains(&doc_id.to_string()) {
+                return empty;
+            }
+        }
+        let Some((kb_id, tenant_id)) = self.doc_tenant(backend, doc_id) else {
+            return empty;
+        };
+        let mut cks: Vec<Value> = Vec::new();
+        let mut tokens: usize = 0;
+        let mut offset: usize = 0;
+        while offset < 10000 {
+            let page = backend
+                .chunk_list(doc_id, &tenant_id, &kb_id, offset + 128, offset)
+                .await;
+            if page.is_empty() {
+                break;
+            }
+            let mut budget_hit = false;
+            for ck in &page {
+                let num =
+                    num_tokens_from_string(&chunk_utils::chunk_attr(ck, &["content_with_weight"]));
+                if tokens + num > self.chat_max_length {
+                    budget_hit = true;
+                    break;
+                }
+                tokens += num;
+                cks.push(ck.clone());
+            }
+            if budget_hit {
+                break;
+            }
+            offset += 128;
+        }
+        if cks.is_empty() {
+            return empty;
+        }
+        let doc_name = cks
+            .iter()
+            .find_map(|ck| {
+                let name = chunk_utils::chunk_attr(ck, &["docnm_kwd"]);
+                if name.is_empty() { None } else { Some(name) }
+            })
+            .unwrap_or_default();
+        let count = cks.len();
+        serde_json::json!({
+            "chunks": cks,
+            "doc_aggs": [{"doc_name": doc_name, "doc_id": doc_id, "count": count}],
+        })
+    }
+
+    /// `summarize_document` (the bound tool): the document's chunk blocks in
+    /// reading order, prefixed with the citation rules unless `do_refer` is off.
+    pub async fn summarize_document(
+        &mut self,
+        backend: &dyn RagRetrievalBackend,
+        doc_id: &str,
+    ) -> Vec<String> {
+        let kbinfos = self.fetch_full_document(backend, doc_id).await;
+        let chunks = kbinfos
+            .get("chunks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if chunks.is_empty() {
+            return Vec::new();
+        }
+        let start_idx = self.kbinfos.chunks.len();
+        self.kbinfos.chunks.extend(chunks);
+        if let Some(doc_aggs) = kbinfos.get("doc_aggs").and_then(Value::as_array) {
+            self.kbinfos.doc_aggs.extend(doc_aggs.iter().cloned());
+        }
+        let blocks = kb_prompt(&self.kbinfos, self.chat_max_length, false);
+        let tail: Vec<String> = if start_idx > 0 && start_idx <= blocks.len() {
+            blocks[start_idx..].to_vec()
+        } else {
+            blocks
+        };
+        if self.do_refer != Some(true) {
+            return tail;
+        }
+        let header = format!(
+            "# Citation rules\nApply the following rules VERBATIM to your final answer.\n\n{}\n\n----\n\n",
+            self.get_citation_guidelines().trim()
+        );
+        let mut out = vec![header];
+        out.extend(tail);
+        out
+    }
 }
 
 /// One `retrieve` request against the host search service (upstream
@@ -769,6 +942,97 @@ pub trait RagRetrievalBackend: Send + Sync {
         kb_ids: &[String],
         doc_ids: Option<Vec<String>>,
     ) -> Option<Value>;
+    /// `DocMetadataService.get_flatted_meta_by_kbs(kb_ids)`.
+    fn flattened_meta_by_kbs(&self, kb_ids: &[String]) -> Value;
+    /// `DocumentService.query(kb_id=kb_id)` -> `(doc_id, doc_name)` pairs.
+    fn doc_titles_for_kb(&self, kb_id: &str) -> Vec<(String, String)>;
+    /// `Document.select(kb_id).where(id == doc_id & kb_id in kb_ids)`.
+    fn doc_kb_id(&self, doc_id: &str) -> Option<String>;
+    /// `settings.retriever.chunk_list(doc_id, tenant_id, [kb_id],
+    /// max_count=…, offset=…, fields=[…], sort_by_position=True, retrieve_all=False)`.
+    async fn chunk_list(
+        &self,
+        doc_id: &str,
+        tenant_id: &str,
+        kb_id: &str,
+        max_count: usize,
+        offset: usize,
+    ) -> Vec<Value>;
+}
+
+/// `num_tokens_from_string` (upstream `common/token_utils.py`, tiktoken BPE);
+/// the crate-level estimator keeps the same "tokens in the text" contract.
+pub fn num_tokens_from_string(text: &str) -> usize {
+    crate::chunk::tokenizer::token_count(text)
+}
+
+/// `draw_node`: `"\n├── {k}: {line}"` with newline runs collapsed; an empty
+/// line renders nothing.
+fn draw_node(key: &str, line: &str) -> String {
+    if line.is_empty() {
+        return String::new();
+    }
+    let collapsed = Regex::new(r"\n+")
+        .expect("newline regex")
+        .replace_all(line, " ");
+    format!("\n├── {key}: {collapsed}")
+}
+
+/// `kb_prompt(kbinfos, max_tokens, hash_id=False)`: format the retrieved chunks
+/// as `ID: n` evidence blocks, honouring the token budget (upstream
+/// `prompts/generator.py`).
+pub fn kb_prompt(kbinfos: &Kbinfos, max_tokens: usize, hash_id: bool) -> Vec<String> {
+    let chunks: &[Value] = &kbinfos.chunks;
+    let knowledges: Vec<String> = chunks
+        .iter()
+        .map(|ck| chunk_utils::chunk_attr(ck, &["content", "content_with_weight"]))
+        .collect();
+    let mut used_token_count: usize = 0;
+    let mut selected: Vec<&Value> = Vec::new();
+    for (ck, content) in chunks.iter().zip(knowledges.iter()) {
+        if content.is_empty() {
+            continue;
+        }
+        let chunk_tokens = num_tokens_from_string(content);
+        if (max_tokens as f64) * 0.97 < (used_token_count + chunk_tokens) as f64 {
+            break;
+        }
+        used_token_count += chunk_tokens;
+        selected.push(ck);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (index, ck) in selected.iter().enumerate() {
+        let mut block = if hash_id {
+            let id = chunk_utils::chunk_attr(ck, &["id", "chunk_id"]);
+            format!("\nID: {}", hash_str2int(&id, 500))
+        } else {
+            format!("\nID: {index}")
+        };
+        block.push_str(&draw_node(
+            "Title",
+            &chunk_utils::chunk_attr(ck, &["docnm_kwd", "document_name"]),
+        ));
+        block.push_str(&draw_node(
+            "URL",
+            ck.get("url").and_then(Value::as_str).unwrap_or(""),
+        ));
+        if let Some(meta) = ck.get("document_metadata").and_then(Value::as_object) {
+            for (key, value) in meta {
+                let line = value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string());
+                block.push_str(&draw_node(key, &line));
+            }
+        }
+        block.push_str("\n└── Content:\n");
+        block.push_str(&chunk_utils::chunk_attr(
+            ck,
+            &["content", "content_with_weight"],
+        ));
+        out.push(block);
+    }
+    out
 }
 
 fn empty_kbinfos() -> Value {
@@ -1245,6 +1509,25 @@ mod retrieval_tests {
         ) -> Option<Value> {
             self.sql.clone()
         }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            json!({})
+        }
+        fn doc_titles_for_kb(&self, _kb_id: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            None
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _max_count: usize,
+            _offset: usize,
+        ) -> Vec<Value> {
+            Vec::new()
+        }
     }
 
     struct MockChat {
@@ -1453,5 +1736,274 @@ mod retrieval_tests {
             .await;
         assert_eq!(followups.len(), 1);
         assert_eq!(followups[0]["question"], json!("q1"));
+    }
+}
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MockDocs {
+        pages: Mutex<Vec<Vec<Value>>>,
+        chunk_calls: Mutex<Vec<(usize, usize)>>,
+        metas: Value,
+        meta_calls: Mutex<usize>,
+        docs: HashMap<String, Vec<(String, String)>>,
+        doc_kb: Option<String>,
+    }
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockDocs {
+        async fn retrieval(&self, _request: &RagRetrievalRequest) -> Option<Value> {
+            None
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            chunks.to_vec()
+        }
+        fn rank_feature(&self, _question: &str) -> Value {
+            json!({})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            HashSet::new()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            None
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            None
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            *self.meta_calls.lock().unwrap() += 1;
+            self.metas.clone()
+        }
+        fn doc_titles_for_kb(&self, kb_id: &str) -> Vec<(String, String)> {
+            self.docs.get(kb_id).cloned().unwrap_or_default()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            self.doc_kb.clone()
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            max_count: usize,
+            offset: usize,
+        ) -> Vec<Value> {
+            self.chunk_calls.lock().unwrap().push((max_count, offset));
+            let mut pages = self.pages.lock().unwrap();
+            if pages.is_empty() {
+                Vec::new()
+            } else {
+                pages.remove(0)
+            }
+        }
+    }
+
+    fn chunk(id: &str, content: &str, title: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "docnm_kwd": title})
+    }
+
+    fn tools_fixture() -> RagTools {
+        RagTools::new(RagToolsConfig {
+            kbs: vec![KbRef {
+                id: "kb1".to_string(),
+                tenant_id: "t1".to_string(),
+                field_map: None,
+            }],
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        })
+    }
+
+    #[test]
+    fn kb_prompt_renders_and_budgets() {
+        let mut kbinfos = Kbinfos::default();
+        kbinfos.chunks = vec![
+            chunk("c1", "alpha", "T1"),
+            chunk("c2", "", "T2"),
+            chunk("c3", "gamma", "T3"),
+        ];
+        let blocks = kb_prompt(&kbinfos, 10_000, false);
+        assert_eq!(blocks.len(), 2, "empty content is skipped");
+        assert!(blocks[0].starts_with("\nID: 0"));
+        assert!(blocks[0].contains("\n├── Title: T1"));
+        assert!(blocks[0].ends_with("\n└── Content:\nalpha"));
+        assert!(blocks[1].starts_with("\nID: 1"));
+
+        let starved = kb_prompt(&kbinfos, 0, false);
+        assert!(starved.is_empty(), "the token budget gates the blocks");
+
+        let hashed = kb_prompt(&kbinfos, 10_000, true);
+        let expected = crate::common::misc_utils::hash_str2int("c1", 500);
+        assert!(hashed[0].starts_with(&format!("\nID: {expected}")));
+    }
+
+    #[test]
+    fn kb_prompt_renders_metadata_and_collapses_newlines() {
+        let mut kbinfos = Kbinfos::default();
+        kbinfos.chunks = vec![json!({
+            "chunk_id": "c1",
+            "content_with_weight": "body",
+            "docnm_kwd": "A\nB",
+            "url": "http://x",
+            "document_metadata": {"city": "Paris"},
+        })];
+        let blocks = kb_prompt(&kbinfos, 10_000, false);
+        assert!(blocks[0].contains("\n├── Title: A B"), "newlines collapse");
+        assert!(blocks[0].contains("\n├── URL: http://x"));
+        assert!(blocks[0].contains("\n├── city: Paris"));
+    }
+
+    #[tokio::test]
+    async fn fetch_full_document_pages_and_budget() {
+        let tools = tools_fixture();
+        let backend = MockDocs {
+            pages: Mutex::new(vec![
+                vec![chunk("c1", "alpha", "Doc"), chunk("c2", "beta", "Doc")],
+                vec![chunk("c3", "gamma", "Doc")],
+            ]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let out = tools.fetch_full_document(&backend, "d1").await;
+        assert_eq!(out["chunks"].as_array().unwrap().len(), 3);
+        assert_eq!(out["doc_aggs"][0]["doc_name"], json!("Doc"));
+        assert_eq!(out["doc_aggs"][0]["count"], json!(3));
+        let calls = backend.chunk_calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "two pages fetched, third is empty");
+        assert_eq!(calls[0], (128, 0));
+        assert_eq!(calls[1], (256, 128));
+    }
+
+    #[tokio::test]
+    async fn fetch_full_document_stops_on_token_budget() {
+        let mut tools = tools_fixture();
+        tools.chat_max_length = 1;
+        let backend = MockDocs {
+            pages: Mutex::new(vec![vec![
+                chunk("c1", "alpha beta", "Doc"),
+                chunk("c2", "beta", "Doc"),
+            ]]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let out = tools.fetch_full_document(&backend, "d1").await;
+        assert_eq!(
+            out["chunks"].as_array().unwrap().len(),
+            0,
+            "first chunk already over budget"
+        );
+        assert_eq!(
+            backend.chunk_calls.lock().unwrap().len(),
+            1,
+            "outer paging stops"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_full_document_respects_scope_and_unknown_docs() {
+        let mut tools = tools_fixture();
+        tools.doc_scope = Some(vec!["d9".to_string()]);
+        let backend = MockDocs {
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let out = tools.fetch_full_document(&backend, "d1").await;
+        assert_eq!(out["chunks"], json!([]));
+        assert!(backend.chunk_calls.lock().unwrap().is_empty());
+
+        let unknown = tools_fixture();
+        let no_kb = MockDocs::default();
+        let out = unknown.fetch_full_document(&no_kb, "d1").await;
+        assert_eq!(out["chunks"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn summarize_document_composes_header_and_tail() {
+        let mut tools = tools_fixture();
+        tools.do_refer = Some(true);
+        tools.kbinfos.chunks.push(chunk("old", "old body", "Old"));
+        let backend = MockDocs {
+            pages: Mutex::new(vec![vec![chunk("c1", "new body", "New")]]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let blocks = tools.summarize_document(&backend, "d1").await;
+        assert_eq!(blocks.len(), 2, "header + one NEW block");
+        assert!(blocks[0].starts_with("# Citation rules"));
+        assert!(blocks[0].contains("illustrative only"));
+        assert!(blocks[1].contains("new body"));
+        assert_eq!(tools.kbinfos.chunks.len(), 2, "the pool keeps both chunks");
+
+        let mut plain = tools_fixture();
+        plain.do_refer = Some(false);
+        let backend = MockDocs {
+            pages: Mutex::new(vec![vec![chunk("c1", "body", "T")]]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let blocks = plain.summarize_document(&backend, "d1").await;
+        assert_eq!(blocks.len(), 1);
+        assert!(!blocks[0].starts_with("# Citation rules"));
+    }
+
+    #[tokio::test]
+    async fn doc_helpers_matrix() {
+        let tools = tools_fixture();
+        let backend = MockDocs {
+            metas: json!({"city": {"type": "text"}}),
+            docs: HashMap::from([(
+                "kb1".to_string(),
+                vec![
+                    ("d1".to_string(), "One".to_string()),
+                    ("d2".to_string(), "Two".to_string()),
+                ],
+            )]),
+            ..MockDocs::default()
+        };
+        let titles = tools.collect_doc_titles(&backend, 512).unwrap();
+        assert_eq!(titles.len(), 2);
+        assert!(tools.collect_doc_titles(&backend, 1).is_none(), "cap quirk");
+
+        assert!(tools.filter_known_doc_ids(&backend, &[]).is_empty());
+        assert!(
+            tools
+                .filter_known_doc_ids(&backend, &["d1".to_string()])
+                .is_empty(),
+            "the mock returns nothing; the empty-input path is the contract"
+        );
+    }
+
+    #[tokio::test]
+    async fn metas_cache_memoises() {
+        let mut tools = tools_fixture();
+        let backend = MockDocs {
+            metas: json!({"city": "x"}),
+            ..MockDocs::default()
+        };
+        let first = tools.get_cached_metas(&backend).await;
+        let second = tools.get_cached_metas(&backend).await;
+        assert_eq!(first, second);
+        assert_eq!(*backend.meta_calls.lock().unwrap(), 1, "one lookup only");
+
+        let mut kb_less = RagTools::new(RagToolsConfig::default());
+        assert_eq!(kb_less.get_cached_metas(&backend).await, json!({}));
+        assert_eq!(
+            *backend.meta_calls.lock().unwrap(),
+            1,
+            "no lookup without KBs"
+        );
     }
 }
