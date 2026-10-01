@@ -2327,8 +2327,12 @@ pub fn search_existing_pages(
             break;
         }
         for (row_id, mut row) in rows {
-            row.insert("id".to_string(), Value::String(row_id.clone()));
-            results.insert(row_id, Value::Object(row));
+            row.insert("id".to_string(), Value::String(row_id));
+            let row_value = Value::Object(row);
+            let slug = row_scalar_string(&row_value, "slug_kwd").trim().to_string();
+            if !slug.is_empty() {
+                results.insert(slug, row_value);
+            }
         }
         if page_len < page_size {
             break;
@@ -2512,7 +2516,7 @@ mod wiki_incremental_part4_tests {
     }
 
     #[test]
-    fn existing_pages_keyed_by_row_id() {
+    fn existing_pages_keyed_by_slug() {
         let store = MemoryDocStore::new();
         let rows: Vec<DocRow> = vec![
             json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/a"})
@@ -2534,8 +2538,8 @@ mod wiki_incremental_part4_tests {
         let fields: Vec<String> = ["id", "slug_kwd"].iter().map(|f| f.to_string()).collect();
         let pages = search_existing_pages(&store, "t1", "kb1", &fields);
         assert_eq!(pages.len(), 2);
-        assert_eq!(pages["p1"]["id"], json!("p1"));
-        assert_eq!(pages["p2"]["slug_kwd"], json!("entity/b"));
+        assert_eq!(pages["entity/a"]["id"], json!("p1"));
+        assert_eq!(pages["entity/b"]["slug_kwd"], json!("entity/b"));
     }
 }
 
@@ -7322,5 +7326,507 @@ mod wiki_incremental_part11_tests {
         )
         .await;
         assert_eq!(assignments["entity/alpha"].as_array().unwrap().len(), 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 10 — shared FINALIZE (`_wiki_finalize`).
+//
+// Adaptation note: `refresh_idx` has no local counterpart (skipped); the
+// disabled-document set is host-injected; page updates match by stable row id.
+// ---------------------------------------------------------------------------
+
+fn char_to_byte_index_p10(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
+fn replace_first(haystack: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+    match haystack.find(needle) {
+        Some(pos) => {
+            let mut out = String::with_capacity(haystack.len() + replacement.len());
+            out.push_str(&haystack[..pos]);
+            out.push_str(replacement);
+            out.push_str(&haystack[pos + needle.len()..]);
+            out
+        }
+        None => haystack.to_string(),
+    }
+}
+
+fn slug_suffix(value: &str) -> String {
+    if value.contains('/') {
+        value.rsplit('/').next().unwrap_or(value).to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn relation_entry(entity_name: &str, relation: &str) -> Value {
+    json!({"entity_name": entity_name, "relation": relation})
+}
+
+/// `_wiki_finalize`: dead-link cleanup + cross-reference update.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_finalize(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+    _page_ids: Option<&[String]>,
+    chunk_state: Option<&Map<String, Value>>,
+) {
+    let fields: Vec<String> = [
+        "slug_kwd",
+        "title_kwd",
+        "md_with_weight",
+        "outlinks_kwd",
+        "related_kb_pages_kwd",
+        "entity_names_kwd",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let all_pages = search_existing_pages(store, tenant_id, kb_id, &fields);
+    if all_pages.is_empty() {
+        return;
+    }
+    let valid_ids: BTreeSet<String> = all_pages.keys().cloned().collect();
+
+    let canonical_index = load_canonical_entities(store, tenant_id, kb_id);
+    let mut canonical_names: BTreeSet<String> = BTreeSet::new();
+    for (cname, entry) in &canonical_index {
+        canonical_names.insert(cname.clone());
+        for alias in entry
+            .get("aliases")
+            .and_then(Value::as_array)
+            .map(|items| items.to_vec())
+            .unwrap_or_default()
+        {
+            if let Some(alias) = alias.as_str() {
+                canonical_names.insert(alias.to_string());
+            }
+        }
+    }
+
+    let mut relation_map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut outlink_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    let mut name_slug: BTreeMap<String, String> = BTreeMap::new();
+    for (pid, page) in &all_pages {
+        let plain = slug_suffix(pid);
+        if !plain.is_empty() {
+            name_slug.insert(plain.clone(), pid.clone());
+        }
+        let title = page
+            .get("title_kwd")
+            .map(|value| match value {
+                Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+                other => other.as_str().unwrap_or(""),
+            })
+            .unwrap_or("");
+        if !title.is_empty() && title != plain {
+            name_slug.insert(title.to_string(), pid.clone());
+        }
+        for entity_name in as_str_list(page.get("entity_names_kwd")) {
+            if !entity_name.is_empty() && entity_name != plain {
+                name_slug.insert(entity_name, pid.clone());
+            }
+        }
+    }
+    let mut ordered_names: Vec<String> = name_slug.keys().cloned().collect();
+    ordered_names.sort_by(|left, right| {
+        right
+            .chars()
+            .count()
+            .cmp(&left.chars().count())
+            .then_with(|| left.cmp(right))
+    });
+
+    let map_relations =
+        load_map_relations(store, tenant_id, kb_id, Some(disabled_doc_ids), chunk_state);
+    let mut relation_edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for rel in &map_relations {
+        let from_name = rel.get("from").and_then(Value::as_str).unwrap_or("");
+        let to_name = rel.get("to").and_then(Value::as_str).unwrap_or("");
+        let from_pg = name_slug.get(from_name).cloned();
+        let to_pg = name_slug.get(to_name).cloned();
+        if let (Some(from_pg), Some(to_pg)) = (from_pg, to_pg) {
+            if from_pg != to_pg {
+                relation_edges
+                    .entry(from_pg.clone())
+                    .or_default()
+                    .insert(to_pg.clone());
+                relation_edges.entry(to_pg).or_default().insert(from_pg);
+            }
+        }
+    }
+
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let page_ids: Vec<String> = all_pages.keys().cloned().collect();
+    for pid in page_ids {
+        let Some(page) = all_pages.get(&pid) else {
+            continue;
+        };
+        let original = page
+            .get("md_with_weight")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let mut content = original.clone();
+
+        let matches: Vec<regex::Captures> = wikilink_re().captures_iter(&original).collect();
+        for caps in &matches {
+            let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            let link = caps
+                .get(1)
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let (target, display) = match link.split_once('|') {
+                Some((target, display)) => (target.trim().to_string(), display.trim().to_string()),
+                None => (link.clone(), String::new()),
+            };
+            if valid_ids.contains(&target) && target != pid {
+                let entity_name = if !display.is_empty() {
+                    display.clone()
+                } else {
+                    slug_suffix(&target)
+                };
+                relation_map
+                    .entry(pid.clone())
+                    .or_default()
+                    .push(relation_entry(&entity_name, "see_also"));
+                outlink_map.entry(pid.clone()).or_default().push(target);
+            } else if canonical_names.contains(&target) {
+                let replacement = if !display.is_empty() {
+                    display
+                } else {
+                    target.clone()
+                };
+                content = replace_first(&content, &whole, &replacement);
+            } else {
+                let resolved = resolve_dead_slug(&target, &valid_ids, &name_slug);
+                match resolved {
+                    Some(resolved) => {
+                        let resolved_link = if !display.is_empty() {
+                            format!("[[{resolved}|{display}]]")
+                        } else {
+                            format!("[[{resolved}]]")
+                        };
+                        content = replace_first(&content, &whole, &resolved_link);
+                        let entity_name = if !display.is_empty() {
+                            display.clone()
+                        } else {
+                            slug_suffix(&resolved)
+                        };
+                        relation_map
+                            .entry(pid.clone())
+                            .or_default()
+                            .push(relation_entry(&entity_name, "see_also"));
+                        let outlinks = outlink_map.entry(pid.clone()).or_default();
+                        if !outlinks.iter().any(|existing| existing == &resolved) {
+                            outlinks.push(resolved);
+                        }
+                    }
+                    None => {
+                        let replacement = if !display.is_empty() {
+                            display
+                        } else {
+                            target.clone()
+                        };
+                        content = replace_first(&content, &whole, &replacement);
+                    }
+                }
+            }
+        }
+
+        // AUTO-LINK first standalone mention of other pages' names.
+        let mut existing_links: BTreeSet<String> = wikilink_re()
+            .captures_iter(&content)
+            .filter_map(|caps| {
+                caps.get(1).map(|m| {
+                    m.as_str()
+                        .split('|')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                })
+            })
+            .collect();
+        if let Ok(artifact_re) =
+            Regex::new(&format!(r"\]\(artifact{}/([^)]+)\)", regex::escape(kb_id)))
+        {
+            for caps in artifact_re.captures_iter(&content) {
+                if let Some(group) = caps.get(1) {
+                    existing_links.insert(group.as_str().to_string());
+                }
+            }
+        }
+        for name in &ordered_names {
+            let Some(target) = name_slug.get(name).cloned() else {
+                continue;
+            };
+            if target == pid || existing_links.contains(&target) {
+                continue;
+            }
+            let idx = find_unlinked_mention(&content, name);
+            if idx < 0 {
+                continue;
+            }
+            let idx = idx as usize;
+            let name_len = name.chars().count();
+            let start_byte = char_to_byte_index_p10(&content, idx);
+            let end_byte = char_to_byte_index_p10(&content, idx + name_len);
+            content = format!(
+                "{}[[{}|{}]]{}",
+                &content[..start_byte],
+                target,
+                name,
+                &content[end_byte..]
+            );
+            existing_links.insert(target.clone());
+            let outlinks = outlink_map.entry(pid.clone()).or_default();
+            if !outlinks.iter().any(|existing| existing == &target) {
+                outlinks.push(target.clone());
+            }
+            relation_map
+                .entry(pid.clone())
+                .or_default()
+                .push(relation_entry(name, "see_also"));
+        }
+
+        // Merge semantic relation edges and inject the Related section.
+        let mut rel_targets: Vec<String> = Vec::new();
+        if let Some(targets) = relation_edges.get(&pid) {
+            for target in targets {
+                if target == &pid {
+                    continue;
+                }
+                let outlinks = outlink_map.entry(pid.clone()).or_default();
+                if !outlinks.iter().any(|existing| existing == target) {
+                    outlinks.push(target.clone());
+                    relation_map
+                        .entry(pid.clone())
+                        .or_default()
+                        .push(relation_entry(&slug_suffix(target), "related"));
+                }
+                if !existing_links.contains(target) {
+                    rel_targets.push(target.clone());
+                    existing_links.insert(target.clone());
+                }
+            }
+        }
+        if !rel_targets.is_empty() {
+            if !content.trim_end().ends_with("## 相关页面") {
+                content = format!("{}\n\n## 相关页面\n", content.trim_end());
+            }
+            content += &rel_targets
+                .iter()
+                .map(|target| format!("- [[{target}]]"))
+                .collect::<Vec<String>>()
+                .join("\n");
+            content.push('\n');
+        }
+
+        let mut rendered_content = content.clone();
+        if !rendered_content.is_empty() {
+            let mut link_targets: BTreeSet<String> = outlink_map.keys().cloned().collect();
+            for targets in outlink_map.values() {
+                link_targets.extend(targets.iter().cloned());
+            }
+            rendered_content = render_links(&rendered_content, kb_id, &link_targets);
+        }
+
+        let mut update = Map::new();
+        if rendered_content != original {
+            update.insert(
+                "md_with_weight".to_string(),
+                Value::String(rendered_content),
+            );
+        }
+        let relations = relation_map.get(&pid).cloned().unwrap_or_default();
+        if !relations.is_empty() {
+            let related: Vec<Value> = relations
+                .iter()
+                .take(20)
+                .map(|entry| {
+                    let name = entry
+                        .get("entity_name")
+                        .and_then(Value::as_str)
+                        .or_else(|| entry.get("slug").and_then(Value::as_str))
+                        .map(str::to_string)
+                        .unwrap_or_else(|| entry.to_string());
+                    Value::String(name)
+                })
+                .collect();
+            update.insert("related_kb_pages_kwd".to_string(), Value::Array(related));
+        } else if page
+            .get("related_kb_pages_kwd")
+            .map(crate::harness::knowlege_wiki::json_truthy)
+            .unwrap_or(false)
+        {
+            update.insert("related_kb_pages_kwd".to_string(), Value::Array(Vec::new()));
+        }
+        let outlinks = outlink_map.get(&pid).cloned().unwrap_or_default();
+        update.insert(
+            "outlinks_kwd".to_string(),
+            Value::Array(outlinks.iter().cloned().map(Value::String).collect()),
+        );
+        update.insert("outlinks_int".to_string(), json!(outlinks.len()));
+
+        let page_id_value = page.get("id").cloned().unwrap_or(Value::Null);
+        let mut condition = Map::new();
+        condition.insert("id".to_string(), page_id_value);
+        if let Err(err) = store.update(&condition, &update, &index, kb_id) {
+            tracing::warn!(error = %err, page = pid.as_str(), "wiki: finalize update failed");
+        }
+    }
+}
+
+#[cfg(test)]
+mod wiki_incremental_part12_tests {
+    use super::*;
+    use crate::doc_store::{DocStore, MemoryDocStore};
+    use crate::harness::knowlege_wiki::{build_resume_doc, commit_active_map_state};
+
+    fn page_row(id: &str, slug: &str, title: &str, md: &str, entity_names: &[&str]) -> DocRow {
+        json!({
+            "id": id,
+            "compile_kwd": "wiki_page",
+            "slug_kwd": slug,
+            "title_kwd": title,
+            "md_with_weight": md,
+            "entity_names_kwd": entity_names,
+            "source_chunk_ids": [],
+            "related_kb_pages_kwd": []
+        })
+        .as_object()
+        .cloned()
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn finalize_links_dead_and_autolink() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let rows = vec![
+            page_row(
+                "p1",
+                "entity/alpha",
+                "Alpha",
+                "Alpha links [[entity/beta]] and [[张伟]] and [[entity/zzz]].",
+                &["Alpha"],
+            ),
+            page_row("p2", "entity/beta", "Beta", "Beta page prose.", &["Beta"]),
+            page_row(
+                "p3",
+                "concept/gamma",
+                "Gamma",
+                "Gamma mentions Beta in prose.",
+                &["Gamma"],
+            ),
+        ];
+        store.insert(&rows, &index, "kb1").unwrap();
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "张伟",
+            "entity",
+            &[],
+            &[],
+            1,
+            None,
+            None,
+        );
+        let disabled: BTreeSet<String> = BTreeSet::new();
+        wiki_finalize(&store, "t1", "kb1", &disabled, None, None).await;
+
+        let full_fields: Vec<String> = [
+            "slug_kwd",
+            "md_with_weight",
+            "outlinks_kwd",
+            "outlinks_int",
+            "related_kb_pages_kwd",
+        ]
+        .iter()
+        .map(|f| f.to_string())
+        .collect();
+        let by_slug = search_existing_pages(&store, "t1", "kb1", &full_fields);
+        let find = |slug: &str| -> Value {
+            by_slug
+                .values()
+                .find(|page| page["slug_kwd"] == json!(slug))
+                .cloned()
+                .expect("page")
+        };
+        let alpha = find("entity/alpha");
+        let alpha_md = alpha["md_with_weight"].as_str().unwrap();
+        assert!(alpha_md.contains("artifact/kb1/entity/beta"));
+        assert!(!alpha_md.contains("[[entity/zzz]]"));
+        assert!(alpha_md.contains("entity/zzz"));
+        assert!(!alpha_md.contains("[[张伟]]"));
+        assert!(alpha_md.contains("张伟"));
+        let related = alpha["related_kb_pages_kwd"].as_array().unwrap();
+        assert!(related.iter().any(|value| value == &json!("beta")));
+        assert!(alpha["outlinks_int"].as_i64().unwrap() >= 1);
+
+        let gamma = find("concept/gamma");
+        let gamma_md = gamma["md_with_weight"].as_str().unwrap();
+        assert!(gamma_md.contains("artifact/kb1/entity/beta"));
+    }
+
+    #[tokio::test]
+    async fn finalize_applies_relation_edges_and_section() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let rows = vec![
+            page_row("p1", "entity/alpha", "Alpha", "Alpha body.", &["Alpha"]),
+            page_row("p3", "concept/gamma", "Gamma", "Gamma body.", &["Gamma"]),
+        ];
+        store.insert(&rows, &index, "kb1").unwrap();
+        let extract = json!({
+            "entities": [], "concepts": [], "claims": [],
+            "relations": [{"from": "Alpha", "to": "Gamma", "type": "uses"}],
+            "topics": []
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        let disabled: BTreeSet<String> = BTreeSet::new();
+        wiki_finalize(&store, "t1", "kb1", &disabled, None, None).await;
+        let fields: Vec<String> = ["slug_kwd", "md_with_weight", "outlinks_kwd"]
+            .iter()
+            .map(|f| f.to_string())
+            .collect();
+        let by_slug = search_existing_pages(&store, "t1", "kb1", &fields);
+        let gamma = by_slug
+            .values()
+            .find(|page| page["slug_kwd"] == json!("concept/gamma"))
+            .cloned()
+            .expect("gamma");
+        let gamma_md = gamma["md_with_weight"].as_str().unwrap();
+        assert!(gamma_md.contains("## 相关页面"));
+        assert!(gamma_md.contains("artifact/kb1/entity/alpha"));
+        let alpha = by_slug
+            .values()
+            .find(|page| page["slug_kwd"] == json!("entity/alpha"))
+            .cloned()
+            .expect("alpha");
+        let alpha_md = alpha["md_with_weight"].as_str().unwrap();
+        assert!(alpha_md.contains("## 相关页面"));
+        assert!(alpha_md.contains("artifact/kb1/concept/gamma"));
     }
 }
