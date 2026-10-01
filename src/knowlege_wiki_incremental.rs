@@ -3631,3 +3631,690 @@ mod wiki_incremental_part6_tests {
         assert_eq!(pages[0]["source_doc_ids"], json!(["d1", "d2"]));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 7 — per-entity REDUCE and doc-page-source tracking
+// (`_wiki_reduce_entity` .. `_wiki_delete_doc_page_source`).
+//
+// Adaptation note: the pure reduce functions are synchronous here (upstream
+// gathers coroutines without side effects); the doc-page-source update keeps
+// the stable row id as its update identity.
+// ---------------------------------------------------------------------------
+
+fn normalize_entity_type(entity_type: &Value) -> String {
+    let first = match entity_type {
+        Value::Array(items) => items
+            .first()
+            .cloned()
+            .unwrap_or(Value::String(String::new())),
+        other => other.clone(),
+    };
+    let text = first.as_str().map(str::trim).unwrap_or("").to_string();
+    if text.is_empty() {
+        "entity".to_string()
+    } else {
+        text
+    }
+}
+
+fn claim_text_of(claim: &Value) -> String {
+    ["statement", "text"]
+        .iter()
+        .find_map(|key| claim.get(*key))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn claim_doc_of(claim: &Value) -> Option<String> {
+    claim
+        .get("source_doc_id")
+        .and_then(Value::as_str)
+        .filter(|doc| !doc.is_empty())
+        .map(str::to_string)
+}
+
+/// `_wiki_reduce_entity`: additions/retractions vs the existing page.
+#[allow(clippy::too_many_arguments)]
+pub fn wiki_reduce_entity(
+    entity_name: &str,
+    new_claims: &[Value],
+    existing_page: Option<&Value>,
+    deleted_doc_ids: &BTreeSet<String>,
+    invalidated_chunk_ids: Option<&BTreeSet<String>>,
+    entity_type: &Value,
+    aliases: Option<&[String]>,
+    source_doc_ids: Option<&[String]>,
+    source_chunk_ids: Option<&[String]>,
+) -> Value {
+    let entity_type = normalize_entity_type(entity_type);
+    let aliases_value: Value = Value::Array(
+        aliases
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .map(Value::String)
+            .collect(),
+    );
+    let sorted_set = |values: &[String]| -> Vec<Value> {
+        let set: BTreeSet<String> = values.iter().cloned().collect();
+        set.into_iter().map(Value::String).collect()
+    };
+
+    let Some(existing_page) = existing_page else {
+        let has_chunk_evidence = source_chunk_ids.map(|ids| !ids.is_empty()).unwrap_or(false);
+        if new_claims.is_empty() && !has_chunk_evidence {
+            return json!({
+                "action": "noop",
+                "entity_name": entity_name,
+                "entity_type": entity_type,
+                "aliases": aliases_value,
+                "additions": [],
+                "retractions": [],
+                "retained_source_doc_ids": [],
+                "has_delta": false,
+            });
+        }
+        let mut retained_docs: BTreeSet<String> =
+            source_doc_ids.unwrap_or(&[]).iter().cloned().collect();
+        for claim in new_claims {
+            if let Some(doc) = claim_doc_of(claim) {
+                retained_docs.insert(doc);
+            }
+        }
+        return json!({
+            "action": "create",
+            "entity_name": entity_name,
+            "entity_type": entity_type,
+            "aliases": aliases_value,
+            "additions": new_claims,
+            "source_chunk_ids": sorted_set(source_chunk_ids.unwrap_or(&[])),
+            "retained_source_doc_ids": retained_docs.into_iter().collect::<Vec<String>>(),
+            "has_delta": true,
+        });
+    };
+
+    let existing_claims: Vec<Value> = match existing_page.get("claims") {
+        Some(Value::String(text)) if !text.is_empty() => serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default(),
+        Some(Value::Array(items)) => items.clone(),
+        _ => Vec::new(),
+    };
+    let existing_claims: Vec<Value> = existing_claims
+        .into_iter()
+        .filter(Value::is_object)
+        .collect();
+    let invalidated_empty: BTreeSet<String> = BTreeSet::new();
+    let invalidated = invalidated_chunk_ids.unwrap_or(&invalidated_empty);
+    let existing_chunk_ids: BTreeSet<String> = as_str_list(existing_page.get("source_chunk_ids"))
+        .into_iter()
+        .collect();
+    let all_page_evidence_invalidated = !existing_chunk_ids.is_empty()
+        && existing_chunk_ids
+            .iter()
+            .all(|chunk| invalidated.contains(chunk));
+
+    let is_retraction = |claim: &Value| -> bool {
+        let deleted = claim_doc_of(claim)
+            .map(|doc| deleted_doc_ids.contains(&doc))
+            .unwrap_or(false);
+        let claim_chunks = wiki_claim_chunk_ids(claim);
+        let invalidated_hit = claim_chunks.iter().any(|chunk| invalidated.contains(chunk));
+        let orphaned = all_page_evidence_invalidated && claim_chunks.is_empty();
+        deleted || invalidated_hit || orphaned
+    };
+    let retractions: Vec<Value> = existing_claims
+        .iter()
+        .filter(|claim| is_retraction(claim))
+        .cloned()
+        .collect();
+    let retained_claims: Vec<Value> = existing_claims
+        .iter()
+        .filter(|claim| !is_retraction(claim))
+        .cloned()
+        .collect();
+
+    let retained_texts: BTreeSet<String> = retained_claims.iter().map(claim_text_of).collect();
+    let additions: Vec<Value> = new_claims
+        .iter()
+        .filter(|claim| !retained_texts.contains(&claim_text_of(claim)))
+        .cloned()
+        .collect();
+
+    let mut all_doc_ids: BTreeSet<String> = BTreeSet::new();
+    for claim in &retained_claims {
+        if let Some(doc) = claim_doc_of(claim) {
+            all_doc_ids.insert(doc);
+        }
+    }
+    for claim in &additions {
+        if let Some(doc) = claim_doc_of(claim) {
+            all_doc_ids.insert(doc);
+        }
+    }
+    for doc in source_doc_ids.unwrap_or(&[]) {
+        if !deleted_doc_ids.contains(doc) {
+            all_doc_ids.insert(doc.clone());
+        }
+    }
+
+    let current_chunk_ids: BTreeSet<String> = match source_chunk_ids {
+        Some(ids) if !ids.is_empty() => ids.iter().cloned().collect(),
+        _ => existing_chunk_ids
+            .iter()
+            .filter(|chunk| !invalidated.contains(*chunk))
+            .cloned()
+            .collect(),
+    };
+    let evidence_changed = current_chunk_ids != existing_chunk_ids;
+    let current_chunk_values: Vec<Value> = current_chunk_ids
+        .iter()
+        .cloned()
+        .map(Value::String)
+        .collect();
+
+    if all_doc_ids.is_empty() {
+        return json!({
+            "action": "delete",
+            "entity_name": entity_name,
+            "entity_type": entity_type,
+            "aliases": aliases_value,
+            "retractions": existing_claims,
+            "source_chunk_ids": current_chunk_values,
+            "has_delta": true,
+        });
+    }
+    if !additions.is_empty() || !retractions.is_empty() || evidence_changed {
+        return json!({
+            "action": "update",
+            "entity_name": entity_name,
+            "entity_type": entity_type,
+            "aliases": aliases_value,
+            "additions": additions,
+            "retractions": retractions,
+            "source_chunk_ids": current_chunk_values,
+            "retained_source_doc_ids": all_doc_ids.into_iter().collect::<Vec<String>>(),
+            "has_delta": true,
+        });
+    }
+    json!({
+        "action": "noop",
+        "entity_name": entity_name,
+        "entity_type": entity_type,
+        "aliases": aliases_value,
+        "source_chunk_ids": current_chunk_values,
+        "retained_source_doc_ids": all_doc_ids.into_iter().collect::<Vec<String>>(),
+        "has_delta": false,
+    })
+}
+
+fn names_from_value(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `_wiki_reduce_batch`: per-entity REDUCE over affected canonical names.
+#[allow(clippy::too_many_arguments)]
+pub fn wiki_reduce_batch(
+    affected_names: &BTreeSet<String>,
+    existing_pages: &Map<String, Value>,
+    deleted_doc_ids: &BTreeSet<String>,
+    invalidated_chunk_ids: Option<&BTreeSet<String>>,
+    canonical_claims: Option<&Map<String, Value>>,
+    canonical_map: Option<&Map<String, Value>>,
+    name_resolution: Option<&Map<String, Value>>,
+    map_results: Option<&[Value]>,
+) -> Vec<Value> {
+    let mut name_to_page: BTreeMap<String, Value> = BTreeMap::new();
+    for (page_id, page) in existing_pages {
+        for name in as_str_list(page.get("entity_names_kwd")) {
+            name_to_page.insert(name, page.clone());
+        }
+        let slug = if page_id.contains('/') {
+            page_id.rsplit('/').next().unwrap_or(page_id).to_string()
+        } else {
+            page_id.clone()
+        };
+        name_to_page.entry(slug).or_insert_with(|| page.clone());
+    }
+
+    let mut claims_source: Map<String, Value> = match canonical_claims {
+        Some(claims) => claims.clone(),
+        None => {
+            let mut aggregated: Map<String, Value> = Map::new();
+            for mr in map_results.unwrap_or(&[]) {
+                if let Some(claims) = mr.get("claims").and_then(Value::as_array) {
+                    for claim in claims {
+                        let name = ["entity_name", "subject", "term"]
+                            .iter()
+                            .find_map(|key| claim.get(*key).and_then(Value::as_str))
+                            .unwrap_or("")
+                            .to_string();
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let resolved = name_resolution
+                            .and_then(|resolution| resolution.get(&name))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| name.clone());
+                        let bucket = aggregated
+                            .entry(resolved)
+                            .or_insert_with(|| Value::Array(Vec::new()));
+                        if let Some(items) = bucket.as_array_mut() {
+                            items.push(claim.clone());
+                        }
+                    }
+                }
+            }
+            aggregated
+        }
+    };
+    for name in affected_names {
+        claims_source
+            .entry(name.clone())
+            .or_insert_with(|| Value::Array(Vec::new()));
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+    for name in affected_names {
+        let claims = claims_source
+            .get(name)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let canonical = canonical_map.and_then(|map| map.get(name));
+        let entity_type = canonical
+            .and_then(|entry| entry.get("type"))
+            .cloned()
+            .unwrap_or(Value::String("entity".to_string()));
+        let aliases: Vec<String> = canonical
+            .map(|entry| names_from_value(entry.get("aliases")))
+            .unwrap_or_default();
+        let source_doc_ids: Vec<String> = canonical
+            .map(|entry| names_from_value(entry.get("source_doc_ids")))
+            .unwrap_or_default();
+        let source_chunk_ids: Vec<String> = canonical
+            .map(|entry| names_from_value(entry.get("source_chunk_ids")))
+            .unwrap_or_default();
+        let existing_page = name_to_page
+            .get(name)
+            .cloned()
+            .or_else(|| existing_pages.get(name).cloned());
+        let result = wiki_reduce_entity(
+            name,
+            &claims,
+            existing_page.as_ref(),
+            deleted_doc_ids,
+            invalidated_chunk_ids,
+            &entity_type,
+            Some(&aliases),
+            Some(&source_doc_ids),
+            Some(&source_chunk_ids),
+        );
+        if result
+            .get("has_delta")
+            .map(crate::harness::knowlege_wiki::json_truthy)
+            .unwrap_or(false)
+        {
+            results.push(result);
+        }
+    }
+    results
+}
+
+fn doc_page_source_condition(doc_id: &str) -> Map<String, Value> {
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_DOC_PAGE_SOURCE_COMPILE_KWD.to_string()),
+    );
+    condition.insert("doc_id".to_string(), Value::String(doc_id.to_string()));
+    condition
+}
+
+fn parse_json_or(value: Option<&Value>, fallback: Value) -> Value {
+    match value {
+        Some(Value::String(text)) if !text.is_empty() => {
+            serde_json::from_str(text).unwrap_or(fallback)
+        }
+        Some(other) => other.clone(),
+        None => fallback,
+    }
+}
+
+/// `_wiki_update_doc_page_source`.
+#[allow(clippy::too_many_arguments)]
+pub fn wiki_update_doc_page_source(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+    page_ids: &[String],
+    entity_names: Option<&[String]>,
+    chunk_hashes: Option<&Map<String, Value>>,
+    map_checksum: Option<&str>,
+) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let fields: Vec<String> = [
+        "id",
+        "page_ids",
+        "entity_names",
+        "source_chunk_hashes",
+        "map_checksum",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let condition = doc_page_source_condition(doc_id);
+    let existing_rows =
+        inc_search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1).unwrap_or_default();
+    let existing = existing_rows.into_iter().next();
+
+    let mut entity_names_value: Value = Value::Array(
+        entity_names
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .map(Value::String)
+            .collect(),
+    );
+    let mut chunk_hashes_value: Value = chunk_hashes
+        .map(|map| Value::Object(map.clone()))
+        .unwrap_or_else(|| json!({}));
+    let mut map_checksum_value = map_checksum.unwrap_or("").to_string();
+    if let Some(row) = &existing {
+        if entity_names.is_none() {
+            entity_names_value = parse_json_or(row.get("entity_names"), Value::Array(Vec::new()));
+        }
+        if chunk_hashes.is_none() {
+            let saved = row.get("source_chunk_hashes");
+            chunk_hashes_value = match saved {
+                Some(Value::String(text)) if !text.is_empty() => {
+                    serde_json::from_str(text).unwrap_or_else(|_| json!({}))
+                }
+                Some(other) => other.clone(),
+                None => json!({}),
+            };
+        }
+        if map_checksum.is_none() {
+            map_checksum_value = row
+                .get("map_checksum")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+        }
+    }
+
+    let row_id = stable_row_id(&[
+        WIKI_DOC_PAGE_SOURCE_COMPILE_KWD.to_string(),
+        kb_id.to_string(),
+        doc_id.to_string(),
+    ]);
+    let mut doc = Map::new();
+    doc.insert("id".to_string(), Value::String(row_id.clone()));
+    doc.insert("doc_id".to_string(), Value::String(doc_id.to_string()));
+    doc.insert("kb_id".to_string(), Value::String(kb_id.to_string()));
+    doc.insert(
+        "page_ids".to_string(),
+        Value::String(
+            Value::Array(page_ids.iter().cloned().map(Value::String).collect()).to_string(),
+        ),
+    );
+    doc.insert(
+        "entity_names".to_string(),
+        Value::String(entity_names_value.to_string()),
+    );
+    doc.insert(
+        "source_chunk_hashes".to_string(),
+        Value::String(chunk_hashes_value.to_string()),
+    );
+    doc.insert(
+        "map_checksum".to_string(),
+        Value::String(map_checksum_value),
+    );
+    doc.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_DOC_PAGE_SOURCE_COMPILE_KWD.to_string()),
+    );
+
+    if existing.is_some() {
+        let mut update_value = doc.clone();
+        update_value.remove("id");
+        let mut id_condition = Map::new();
+        id_condition.insert("id".to_string(), Value::String(row_id));
+        if let Err(err) = store.update(&id_condition, &update_value, &index, kb_id) {
+            tracing::warn!(error = %err, doc_id = doc_id, "wiki: doc_page_source update failed");
+        }
+    } else if let Err(err) = store.insert(&[doc], &index, kb_id) {
+        tracing::warn!(error = %err, doc_id = doc_id, "wiki: doc_page_source insert failed");
+    }
+}
+
+/// `_wiki_load_doc_page_source`.
+pub fn wiki_load_doc_page_source(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+) -> Option<Value> {
+    let fields: Vec<String> = [
+        "page_ids",
+        "entity_names",
+        "source_chunk_hashes",
+        "map_checksum",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let condition = doc_page_source_condition(doc_id);
+    let rows = inc_search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1).ok()?;
+    let row = rows.into_iter().next()?;
+    Some(json!({
+        "page_ids": parse_json_or(row.get("page_ids"), Value::Array(Vec::new())),
+        "entity_names": parse_json_or(row.get("entity_names"), Value::Array(Vec::new())),
+        "source_chunk_hashes": parse_json_or(row.get("source_chunk_hashes"), json!({})),
+        "map_checksum": row.get("map_checksum").and_then(Value::as_str).unwrap_or(""),
+    }))
+}
+
+/// `_wiki_delete_doc_page_source`.
+pub fn wiki_delete_doc_page_source(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+) {
+    let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+    let condition = doc_page_source_condition(doc_id);
+    if let Err(err) = store.delete(&condition, &index, kb_id) {
+        tracing::warn!(error = %err, doc_id = doc_id, "wiki: doc_page_source delete failed");
+    }
+}
+
+#[cfg(test)]
+mod wiki_incremental_part7_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+
+    fn claim(statement: &str, doc: &str, chunks: &[&str]) -> Value {
+        json!({"statement": statement, "source_doc_id": doc, "chunk_ids": chunks})
+    }
+
+    #[test]
+    fn reduce_entity_matrix() {
+        let empty = BTreeSet::new();
+        let noop = wiki_reduce_entity(
+            "Alpha",
+            &[],
+            None,
+            &empty,
+            None,
+            &json!("entity"),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(noop["action"], json!("noop"));
+        assert_eq!(noop["has_delta"], json!(false));
+
+        let claims = vec![claim("s1", "d1", &["c1"]), claim("s2", "d2", &["c2"])];
+        let created = wiki_reduce_entity(
+            "Alpha",
+            &claims,
+            None,
+            &empty,
+            None,
+            &json!("entity"),
+            Some(&["A".to_string()]),
+            Some(&["d1".to_string()]),
+            Some(&["c1".to_string(), "c1".to_string()]),
+        );
+        assert_eq!(created["action"], json!("create"));
+        assert_eq!(created["source_chunk_ids"], json!(["c1"]));
+        assert_eq!(created["retained_source_doc_ids"], json!(["d1", "d2"]));
+
+        let existing = json!({
+            "claims": serde_json::to_string(&vec![claim("s1", "d1", &["c1"]), claim("s2", "d2", &["c2"])]).unwrap(),
+            "source_chunk_ids": ["c1", "c2"]
+        });
+        let mut deleted = BTreeSet::new();
+        deleted.insert("d1".to_string());
+        let updated = wiki_reduce_entity(
+            "Alpha",
+            &[claim("s3", "d3", &["c3"])],
+            Some(&existing),
+            &deleted,
+            None,
+            &json!("entity"),
+            None,
+            Some(&["d1".to_string()]),
+            Some(&["c1".to_string(), "c2".to_string(), "c3".to_string()]),
+        );
+        assert_eq!(updated["action"], json!("update"));
+        assert_eq!(updated["retractions"].as_array().unwrap().len(), 1);
+        assert_eq!(updated["retained_source_doc_ids"], json!(["d2", "d3"]));
+
+        let mut deleted_all = BTreeSet::new();
+        deleted_all.insert("d1".to_string());
+        deleted_all.insert("d2".to_string());
+        let deleted_result = wiki_reduce_entity(
+            "Alpha",
+            &[],
+            Some(&existing),
+            &deleted_all,
+            None,
+            &json!("entity"),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(deleted_result["action"], json!("delete"));
+
+        let mut invalidated = BTreeSet::new();
+        invalidated.insert("c1".to_string());
+        invalidated.insert("c2".to_string());
+        let invalidated_result = wiki_reduce_entity(
+            "Alpha",
+            &[],
+            Some(&existing),
+            &empty,
+            Some(&invalidated),
+            &json!("entity"),
+            None,
+            None,
+            Some(&[]),
+        );
+        assert_eq!(invalidated_result["action"], json!("delete"));
+        assert_eq!(invalidated_result["source_chunk_ids"], json!([]));
+    }
+
+    #[test]
+    fn reduce_batch_uses_canonical_inputs() {
+        let mut canonical_claims: Map<String, Value> = Map::new();
+        canonical_claims.insert("Alpha".to_string(), json!([claim("s1", "d1", &["c1"])]));
+        let mut canonical_map: Map<String, Value> = Map::new();
+        canonical_map.insert(
+            "Alpha".to_string(),
+            json!({"type": "concept", "aliases": ["A"], "source_doc_ids": ["d1"], "source_chunk_ids": ["c1"]}),
+        );
+        let existing_pages: Map<String, Value> = Map::new();
+        let mut affected = BTreeSet::new();
+        affected.insert("Alpha".to_string());
+        affected.insert("Ghost".to_string());
+        let empty = BTreeSet::new();
+        let results = wiki_reduce_batch(
+            &affected,
+            &existing_pages,
+            &empty,
+            None,
+            Some(&canonical_claims),
+            Some(&canonical_map),
+            None,
+            None,
+        );
+        assert_eq!(results.len(), 1);
+        let alpha = results
+            .iter()
+            .find(|r| r["entity_name"] == json!("Alpha"))
+            .unwrap();
+        assert_eq!(alpha["action"], json!("create"));
+        assert_eq!(alpha["entity_type"], json!("concept"));
+        assert!(results.iter().all(|r| r["entity_name"] != json!("Ghost")));
+    }
+
+    #[test]
+    fn doc_page_source_roundtrip() {
+        let store = MemoryDocStore::new();
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+        let mut hashes: Map<String, Value> = Map::new();
+        hashes.insert("c1".to_string(), json!("h1"));
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["concept/alpha".to_string()],
+            Some(&["Alpha".to_string()]),
+            Some(&hashes),
+            Some("checksum-1"),
+        );
+        let loaded = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("record");
+        assert_eq!(loaded["page_ids"], json!(["concept/alpha"]));
+        assert_eq!(loaded["entity_names"], json!(["Alpha"]));
+        assert_eq!(loaded["source_chunk_hashes"], json!({"c1": "h1"}));
+        assert_eq!(loaded["map_checksum"], json!("checksum-1"));
+
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["concept/alpha".to_string(), "concept/beta".to_string()],
+            None,
+            None,
+            None,
+        );
+        let loaded2 = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("record2");
+        assert_eq!(
+            loaded2["page_ids"],
+            json!(["concept/alpha", "concept/beta"])
+        );
+        assert_eq!(loaded2["entity_names"], json!(["Alpha"]));
+        assert_eq!(loaded2["source_chunk_hashes"], json!({"c1": "h1"}));
+        assert_eq!(loaded2["map_checksum"], json!("checksum-1"));
+
+        wiki_delete_doc_page_source(&store, "t1", "kb1", "d1");
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+    }
+}
