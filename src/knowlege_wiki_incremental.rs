@@ -10146,3 +10146,867 @@ mod wiki_incremental_part15_tests {
         assert_eq!(chat.calls.lock().unwrap().len(), 2);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 14 — the public entry point (`wiki_compile_incremental`).
+//
+// Adaptation note: state loading, entity matching, canonical persistence,
+// REDUCE dispatch and the mode runs are the ported helpers; the disabled-doc
+// set is host-injected into FINALIZE.
+// ---------------------------------------------------------------------------
+
+fn chunk_id_set(chunk_delta: &Map<String, Value>, key: &str) -> BTreeSet<String> {
+    chunk_delta
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn summary_zero() -> Value {
+    json!({
+        "pages_created": 0,
+        "pages_modified": 0,
+        "pages_deleted": 0,
+        "errors": [],
+    })
+}
+
+/// `wiki_compile_incremental`: main entry for dual-mode wiki compilation.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_compile_incremental(
+    store: &dyn DocStore,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    mode: &str,
+    chunk_delta: &Map<String, Value>,
+    previous_chunk_state: &Map<String, Value>,
+    current_chunk_state: &Map<String, Value>,
+    incremental: bool,
+    deleted_doc_ids: Option<&BTreeSet<String>>,
+    disabled_doc_ids: &BTreeSet<String>,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+) -> Value {
+    let report = |message: &str| {
+        if let Some(callback) = callback {
+            callback(0.5, message);
+        }
+    };
+    let mut incremental = incremental;
+
+    let changed_chunks = chunk_id_set(chunk_delta, "changed_chunk_ids");
+    let deleted_chunks = chunk_id_set(chunk_delta, "deleted_chunk_ids");
+    let new_chunks = chunk_id_set(chunk_delta, "new_chunk_ids");
+    let mut invalidated_chunk_ids: BTreeSet<String> = changed_chunks.clone();
+    invalidated_chunk_ids.extend(deleted_chunks.iter().cloned());
+    let mut delta_current_chunk_ids: BTreeSet<String> = new_chunks.clone();
+    delta_current_chunk_ids.extend(changed_chunks.iter().cloned());
+
+    let map_results = crate::harness::knowlege_wiki::load_map_extracts_for_state(
+        store,
+        tenant_id,
+        kb_id,
+        current_chunk_state,
+        None,
+    );
+    let mut delta_after_results: Vec<Value> = Vec::new();
+    if !delta_current_chunk_ids.is_empty() {
+        delta_after_results = crate::harness::knowlege_wiki::load_map_extracts_for_state(
+            store,
+            tenant_id,
+            kb_id,
+            current_chunk_state,
+            Some(&delta_current_chunk_ids),
+        );
+    }
+    let mut delta_before_results: Vec<Value> = Vec::new();
+    if !invalidated_chunk_ids.is_empty() {
+        delta_before_results = crate::harness::knowlege_wiki::load_map_extracts_for_state(
+            store,
+            tenant_id,
+            kb_id,
+            previous_chunk_state,
+            Some(&invalidated_chunk_ids),
+        );
+    }
+    if map_results.is_empty() && delta_before_results.is_empty() {
+        report("No MAP results found. Skipping wiki compilation.");
+        return summary_zero();
+    }
+
+    // Correct the incremental flag for interrupted first builds.
+    if incremental && !wiki_has_any_pages(store, tenant_id, kb_id) {
+        report(
+            "No compiled wiki pages found; treating as first build (previous build was interrupted).",
+        );
+        incremental = false;
+    }
+
+    report("Entity Matching: deduplicating entities and concepts ...");
+    let (raw_entities, claim_index) = extract_raw_entities(&map_results);
+    let (before_raw_entities, _) = extract_raw_entities(&delta_before_results);
+    let before_raw_names: BTreeSet<String> = before_raw_entities
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(Value::as_str))
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    let (after_raw_entities, _) = extract_raw_entities(&delta_after_results);
+    let after_raw_names: BTreeSet<String> = after_raw_entities
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(Value::as_str))
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let mut doc_topics: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut raw_topic_count = 0usize;
+    let mut raw_relations: Vec<Value> = Vec::new();
+    for mr in &map_results {
+        let doc_id = mr
+            .get("doc_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if doc_id.is_empty() {
+            continue;
+        }
+        let mut seen_topics: BTreeSet<String> = BTreeSet::new();
+        if let Some(topics) = mr.get("topics").and_then(Value::as_array) {
+            for topic in topics {
+                if let Some(topic) = topic.as_str() {
+                    raw_topic_count += 1;
+                    let topic = topic.trim();
+                    let key = topic.to_lowercase();
+                    if !topic.is_empty() && seen_topics.insert(key) {
+                        doc_topics
+                            .entry(doc_id.clone())
+                            .or_default()
+                            .push(topic.to_string());
+                    }
+                }
+            }
+        }
+        if let Some(relations) = mr.get("relations").and_then(Value::as_array) {
+            for relation in relations {
+                let relation = match relation {
+                    Value::String(text) => {
+                        serde_json::from_str::<Value>(text).unwrap_or(Value::Null)
+                    }
+                    other => other.clone(),
+                };
+                let from = relation.get("from").and_then(Value::as_str).unwrap_or("");
+                let to = relation.get("to").and_then(Value::as_str).unwrap_or("");
+                if !from.is_empty() && !to.is_empty() {
+                    raw_relations.push(json!({
+                        "from": from,
+                        "to": to,
+                        "type": relation.get("type").and_then(Value::as_str).unwrap_or("related"),
+                    }));
+                }
+            }
+        }
+    }
+    let unique_topics: Vec<String> = {
+        let set: BTreeSet<String> = doc_topics
+            .values()
+            .flat_map(|topics| topics.iter().cloned())
+            .collect();
+        let mut sorted: Vec<String> = set.into_iter().collect();
+        sorted.sort_by_key(|value| (value.to_lowercase(), value.clone()));
+        sorted
+    };
+    wiki_log_stats(
+        "TOPIC",
+        "map_summary",
+        &[
+            ("document_count", json!(doc_topics.len())),
+            ("raw_count", json!(raw_topic_count)),
+            ("unique_count", json!(unique_topics.len())),
+            (
+                "topics",
+                Value::Array(unique_topics.iter().cloned().map(Value::String).collect()),
+            ),
+        ],
+    );
+
+    let canonical_entities = load_canonical_entities(store, tenant_id, kb_id);
+    let (canonical_map_matched, name_resolution) = wiki_match_entities(
+        store,
+        embd,
+        Some(chat),
+        tenant_id,
+        kb_id,
+        &raw_entities,
+        &canonical_entities,
+        incremental,
+        None,
+    )
+    .await;
+    let mut canonical_map = canonical_map_matched;
+
+    let mut canonical_resolution: BTreeMap<String, String> = BTreeMap::new();
+    for (raw_name, cname) in &name_resolution {
+        if let Some(cname) = cname.as_str() {
+            canonical_resolution.insert(raw_name.clone(), cname.to_string());
+        }
+    }
+    for (canonical_name, canonical_entry) in &canonical_entities {
+        canonical_resolution
+            .entry(canonical_name.clone())
+            .or_insert_with(|| canonical_name.clone());
+        for alias in as_str_list(canonical_entry.get("aliases")) {
+            canonical_resolution
+                .entry(alias)
+                .or_insert_with(|| canonical_name.clone());
+        }
+    }
+    let mut entity_relations: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut seen_relations: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for relation in &raw_relations {
+        let from = relation.get("from").and_then(Value::as_str).unwrap_or("");
+        let to = relation.get("to").and_then(Value::as_str).unwrap_or("");
+        let source = canonical_resolution
+            .get(from)
+            .cloned()
+            .unwrap_or_else(|| from.to_string());
+        let target = canonical_resolution
+            .get(to)
+            .cloned()
+            .unwrap_or_else(|| to.to_string());
+        let relation_type = relation
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("related")
+            .to_string();
+        if source.is_empty() || target.is_empty() || source == target {
+            continue;
+        }
+        for (owner, counterpart) in [(&source, &target), (&target, &source)] {
+            let key = (owner.clone(), counterpart.clone(), relation_type.clone());
+            if !seen_relations.insert(key) {
+                continue;
+            }
+            entity_relations
+                .entry(owner.clone())
+                .or_default()
+                .push(json!({"entity": counterpart, "type": relation_type}));
+        }
+    }
+
+    let mut current_evidence: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>, i64)> =
+        BTreeMap::new();
+    for entry in &raw_entities {
+        let raw_name = entry.get("name").and_then(Value::as_str).unwrap_or("");
+        let cname = name_resolution
+            .get(raw_name)
+            .and_then(Value::as_str)
+            .unwrap_or(raw_name)
+            .to_string();
+        let evidence = current_evidence
+            .entry(cname)
+            .or_insert_with(|| (BTreeSet::new(), BTreeSet::new(), 0));
+        for doc in as_str_list(entry.get("source_doc_ids")) {
+            evidence.0.insert(doc);
+        }
+        for chunk in as_str_list(entry.get("source_chunk_ids")) {
+            evidence.1.insert(chunk);
+        }
+        evidence.2 += as_int(entry.get("claim_count"), 0);
+    }
+    let canonical_names_vec: Vec<String> = canonical_map.keys().cloned().collect();
+    for cname in canonical_names_vec {
+        let Some((docs, chunks, claims)) = current_evidence.get(&cname).cloned() else {
+            continue;
+        };
+        if let Some(centry) = canonical_map.get_mut(&cname).and_then(Value::as_object_mut) {
+            centry.insert(
+                "source_doc_ids".to_string(),
+                Value::Array(docs.into_iter().map(Value::String).collect()),
+            );
+            centry.insert(
+                "source_chunk_ids".to_string(),
+                Value::Array(chunks.into_iter().map(Value::String).collect()),
+            );
+            centry.insert("claim_count".to_string(), json!(claims));
+        }
+    }
+
+    if canonical_map.is_empty() && before_raw_names.is_empty() {
+        report("Entity Matching: no canonical entities found. Skipping.");
+        return summary_zero();
+    }
+    report(&format!("Entity Matching: {}", name_resolution.len()));
+
+    let mut changed_items: Vec<(String, Value)> = Vec::new();
+    let mut new_items: Vec<(String, Value, String)> = Vec::new();
+    for (cname, centry) in &canonical_map {
+        match canonical_entities.get(cname) {
+            Some(existing) => {
+                let old_docs: BTreeSet<String> = as_str_list(existing.get("source_doc_ids"))
+                    .into_iter()
+                    .collect();
+                let new_docs: BTreeSet<String> = as_str_list(centry.get("source_doc_ids"))
+                    .into_iter()
+                    .collect();
+                let old_chunks: BTreeSet<String> = as_str_list(existing.get("source_chunk_ids"))
+                    .into_iter()
+                    .collect();
+                let new_chunks: BTreeSet<String> = as_str_list(centry.get("source_chunk_ids"))
+                    .into_iter()
+                    .collect();
+                let old_aliases: BTreeSet<String> =
+                    as_str_list(existing.get("aliases")).into_iter().collect();
+                let new_aliases: BTreeSet<String> =
+                    as_str_list(centry.get("aliases")).into_iter().collect();
+                let claim_count = as_int(centry.get("claim_count"), 0);
+                let mention_count = as_int(existing.get("mention_count_int"), 0);
+                if old_docs != new_docs
+                    || old_chunks != new_chunks
+                    || old_aliases != new_aliases
+                    || claim_count > mention_count
+                {
+                    changed_items.push((cname.clone(), centry.clone()));
+                }
+            }
+            None => {
+                new_items.push((cname.clone(), centry.clone(), entity_to_query_text(centry)));
+            }
+        }
+    }
+    for (cname, centry) in &changed_items {
+        let entity_type = centry
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("entity")
+            .to_string();
+        let aliases = as_str_list(centry.get("aliases"));
+        let source_docs = as_str_list(centry.get("source_doc_ids"));
+        let source_chunks = as_str_list(centry.get("source_chunk_ids"));
+        let claim_count = as_int(centry.get("claim_count"), 0);
+        update_canonical_entity(
+            store,
+            tenant_id,
+            kb_id,
+            cname,
+            &entity_type,
+            &aliases,
+            &source_docs,
+            claim_count,
+            Some(&source_chunks),
+        );
+    }
+    if !new_items.is_empty() {
+        let embeddings: Vec<Option<Vec<f32>>> = match embd {
+            Some(embd) => {
+                let texts: Vec<String> =
+                    new_items.iter().map(|(_, _, text)| text.clone()).collect();
+                let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+                match embd.embed(&refs).await {
+                    Ok(vectors) if vectors.len() == new_items.len() => {
+                        vectors.into_iter().map(Some).collect()
+                    }
+                    _ => vec![None; new_items.len()],
+                }
+            }
+            None => vec![None; new_items.len()],
+        };
+        let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+        let mut rows: Vec<DocRow> = Vec::new();
+        for ((cname, centry, _), embedding) in new_items.iter().zip(embeddings.iter()) {
+            let entity_type = centry
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("entity");
+            let aliases = as_str_list(centry.get("aliases"));
+            let source_docs = as_str_list(centry.get("source_doc_ids"));
+            let source_chunks = as_str_list(centry.get("source_chunk_ids"));
+            let claim_count = as_int(centry.get("claim_count"), 0);
+            let doc = build_canonical_entity_doc(
+                kb_id,
+                cname,
+                entity_type,
+                &aliases,
+                &source_docs,
+                claim_count,
+                embedding.as_deref(),
+                Some(&source_chunks),
+            );
+            if let Some(map) = doc.as_object().cloned() {
+                rows.push(map);
+            }
+        }
+        if !rows.is_empty() {
+            if let Err(err) = store.insert(&rows, &index, kb_id) {
+                tracing::warn!(error = %err, "wiki: canonical insert failed");
+            }
+        }
+    }
+
+    if !invalidated_chunk_ids.is_empty() {
+        for (cname, existing) in &canonical_entities {
+            if canonical_map.contains_key(cname) {
+                continue;
+            }
+            let old_chunks: BTreeSet<String> = as_str_list(existing.get("source_chunk_ids"))
+                .into_iter()
+                .collect();
+            if old_chunks.is_disjoint(&invalidated_chunk_ids) {
+                continue;
+            }
+            let remaining: BTreeSet<String> = old_chunks
+                .difference(&invalidated_chunk_ids)
+                .cloned()
+                .collect();
+            if remaining.is_empty() {
+                delete_canonical_entity(store, tenant_id, kb_id, cname);
+            } else {
+                let entity_type = existing
+                    .get("entity_type_kwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("entity")
+                    .to_string();
+                let aliases = as_str_list(existing.get("aliases"));
+                let source_docs = as_str_list(existing.get("source_doc_ids"));
+                let mention_count = as_int(existing.get("mention_count_int"), 0);
+                let remaining_vec: Vec<String> = remaining.into_iter().collect();
+                update_canonical_entity(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    cname,
+                    &entity_type,
+                    &aliases,
+                    &source_docs,
+                    mention_count,
+                    Some(&remaining_vec),
+                );
+            }
+        }
+    }
+
+    if let Some(deleted_doc_ids) = deleted_doc_ids {
+        let names: Vec<String> = canonical_map.keys().cloned().collect();
+        for cname in names {
+            let keep = {
+                let Some(entry) = canonical_map.get(&cname) else {
+                    continue;
+                };
+                let docs: Vec<String> = as_str_list(entry.get("source_doc_ids"))
+                    .into_iter()
+                    .filter(|doc| !deleted_doc_ids.contains(doc))
+                    .collect();
+                let claim_count = as_int(entry.get("claim_count"), 0);
+                if let Some(obj) = canonical_map.get_mut(&cname).and_then(Value::as_object_mut) {
+                    obj.insert(
+                        "source_doc_ids".to_string(),
+                        Value::Array(docs.iter().cloned().map(Value::String).collect()),
+                    );
+                }
+                !(docs.is_empty() && claim_count <= 0)
+            };
+            if !keep {
+                delete_canonical_entity(store, tenant_id, kb_id, &cname);
+                canonical_map.remove(&cname);
+            }
+        }
+    }
+
+    report("REDUCE: computing per-entity changes ...");
+    let canonical_names: BTreeSet<String> = canonical_map.keys().cloned().collect();
+    let mut affected_names: BTreeSet<String> = if incremental {
+        let mut existing_aliases: BTreeMap<String, String> = BTreeMap::new();
+        for (cname, centry) in &canonical_entities {
+            existing_aliases.insert(normalize_key(cname), cname.clone());
+            for alias in as_str_list(centry.get("aliases")) {
+                existing_aliases.insert(normalize_key(&alias), cname.clone());
+            }
+        }
+        let mut affected: BTreeSet<String> = BTreeSet::new();
+        for raw_name in before_raw_names.union(&after_raw_names) {
+            let resolved = name_resolution
+                .get(raw_name)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| existing_aliases.get(&normalize_key(raw_name)).cloned())
+                .unwrap_or_else(|| raw_name.clone());
+            if !resolved.is_empty() {
+                affected.insert(resolved);
+            }
+        }
+        affected
+    } else {
+        canonical_names.clone()
+    };
+    affected_names.remove(&String::new());
+
+    let page_fields: Vec<String> = [
+        "slug_kwd",
+        "title_kwd",
+        "md_with_weight",
+        "claims",
+        "source_chunk_ids",
+        "source_doc_ids",
+        "page_version_int",
+        "synthesis_version_int",
+        "entity_names_kwd",
+        "outlinks_kwd",
+        "related_kb_pages_kwd",
+        "page_type_kwd",
+        "topic_kwd",
+    ]
+    .iter()
+    .map(|field| field.to_string())
+    .collect();
+    let mut existing_pages = search_existing_pages(store, tenant_id, kb_id, &page_fields);
+    let fallback_key = normalize_key(WIKI_TOPIC_FALLBACK);
+    let mut topic_pool: Map<String, Value> = Map::new();
+    for page in existing_pages.values() {
+        for topic in as_str_list(page.get("topic_kwd")) {
+            if !topic.is_empty() && normalize_key(&topic) != fallback_key {
+                topic_pool.insert(normalize_key(&topic), Value::String(topic));
+            }
+        }
+    }
+    if mode == "topic" && !existing_pages.is_empty() {
+        let plan_members = wiki_load_plan_group_members(store, tenant_id, kb_id);
+        for (page_id, names) in &plan_members {
+            if let Some(names) = names.as_array().filter(|items| !items.is_empty()) {
+                if existing_pages.contains_key(page_id) {
+                    if let Some(obj) = existing_pages
+                        .get_mut(page_id)
+                        .and_then(Value::as_object_mut)
+                    {
+                        obj.insert("entity_names_kwd".to_string(), Value::Array(names.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    let refine_failures = wiki_load_refine_failures(store, tenant_id, kb_id);
+    let mut retry_names: BTreeSet<String> = BTreeSet::new();
+    for failure in refine_failures.values() {
+        for name in as_str_list(failure.get("entity_names")) {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                retry_names.insert(name);
+            }
+        }
+    }
+    if incremental {
+        affected_names.extend(retry_names);
+    }
+
+    let mut canonical_claims: Map<String, Value> = Map::new();
+    for (raw_name, claims) in &claim_index {
+        let cname = name_resolution
+            .get(raw_name)
+            .and_then(Value::as_str)
+            .unwrap_or(raw_name)
+            .to_string();
+        if affected_names.contains(&cname) {
+            let bucket = canonical_claims
+                .entry(cname)
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let (Some(items), Some(claims)) = (bucket.as_array_mut(), claims.as_array()) {
+                items.extend(claims.iter().cloned());
+            }
+        }
+    }
+    for name in &affected_names {
+        canonical_claims
+            .entry(name.clone())
+            .or_insert_with(|| Value::Array(Vec::new()));
+    }
+
+    let deleted_set: BTreeSet<String> = deleted_doc_ids.cloned().unwrap_or_default();
+    let deltas = wiki_reduce_batch(
+        &affected_names,
+        &existing_pages,
+        &deleted_set,
+        Some(&invalidated_chunk_ids),
+        Some(&canonical_claims),
+        Some(&canonical_map),
+        Some(&name_resolution),
+        None,
+    );
+    if deltas.is_empty() {
+        report("REDUCE: no changes detected.");
+        return summary_zero();
+    }
+
+    let mut doc_to_entities: Map<String, Value> = Map::new();
+    let mut entity_evidence: Map<String, Value> = Map::new();
+    for (cname, centry) in &canonical_map {
+        let docs = as_str_list(centry.get("source_doc_ids"));
+        let chunks = as_str_list(centry.get("source_chunk_ids"));
+        entity_evidence.insert(
+            cname.clone(),
+            json!({
+                "source_doc_ids": docs,
+                "source_chunk_ids": chunks,
+            }),
+        );
+        for did in docs {
+            let bucket = doc_to_entities
+                .entry(did)
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(items) = bucket.as_array_mut() {
+                items.push(Value::String(cname.clone()));
+            }
+        }
+    }
+
+    let topic_pool_values: Vec<String> = topic_pool
+        .values()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    let mut topic_embeddings = wiki_prepare_topic_embeddings(
+        embd,
+        &doc_topics
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    Value::Array(v.iter().cloned().map(Value::String).collect()),
+                )
+            })
+            .collect(),
+        Some(&topic_pool_values),
+    )
+    .await;
+
+    let summary = if mode == "topic" {
+        wiki_mode_b_run(
+            store,
+            &deltas,
+            &existing_pages,
+            chat,
+            embd,
+            tenant_id,
+            kb_id,
+            callback,
+            Some(&doc_to_entities),
+            Some(&entity_evidence),
+            Some(
+                &entity_relations
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::Array(v.clone())))
+                    .collect(),
+            ),
+            Some(
+                &doc_topics
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            Value::Array(v.iter().cloned().map(Value::String).collect()),
+                        )
+                    })
+                    .collect(),
+            ),
+            Some(&mut topic_embeddings),
+            Some(&mut topic_pool),
+        )
+        .await
+    } else {
+        wiki_mode_a_run(
+            store,
+            &deltas,
+            &existing_pages,
+            chat,
+            embd,
+            tenant_id,
+            kb_id,
+            incremental,
+            callback,
+            Some(&canonical_claims),
+            Some(&doc_to_entities),
+            Some(
+                &doc_topics
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            Value::Array(v.iter().cloned().map(Value::String).collect()),
+                        )
+                    })
+                    .collect(),
+            ),
+            Some(&mut topic_embeddings),
+            Some(&mut topic_pool),
+        )
+        .await
+    };
+
+    report("FINALIZE: updating cross-references ...");
+    wiki_finalize(
+        store,
+        tenant_id,
+        kb_id,
+        disabled_doc_ids,
+        None,
+        Some(current_chunk_state),
+    )
+    .await;
+
+    summary
+}
+
+#[cfg(test)]
+mod wiki_incremental_part16_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use crate::harness::knowlege_wiki::{build_resume_doc, commit_active_map_state};
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn seed_map(store: &MemoryDocStore, relation: bool) -> Map<String, Value> {
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let extract = json!({
+            "entities": [{"name": "Alpha", "type": "entity", "chunk_ids": ["c1"]}],
+            "concepts": [],
+            "claims": [{"entity_name": "Alpha", "statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]}],
+            "relations": if relation { json!([{"from": "Alpha", "to": "Alpha", "type": "self"}]) } else { json!([]) },
+            "topics": ["t1"]
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(store, "t1", "kb1", &state).unwrap();
+        state
+    }
+
+    #[tokio::test]
+    async fn main_entry_first_build_mode_a() {
+        let store = MemoryDocStore::new();
+        let state = seed_map(&store, false);
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Body\n\nGrounded text.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let chunk_delta: Map<String, Value> = Map::new();
+        let summary = wiki_compile_incremental(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            "entity",
+            &chunk_delta,
+            &Map::new(),
+            &state,
+            false,
+            None,
+            &BTreeSet::new(),
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(1));
+        assert_eq!(summary["errors"], json!([]));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(pages.contains_key("entity/alpha"));
+        let canonical = load_canonical_entities(&store, "t1", "kb1");
+        assert!(canonical.contains_key("Alpha"));
+        assert_eq!(canonical["Alpha"]["mention_count_int"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn main_entry_skips_when_no_map() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_compile_incremental(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            "entity",
+            &Map::new(),
+            &Map::new(),
+            &Map::new(),
+            false,
+            None,
+            &BTreeSet::new(),
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(0));
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn main_entry_incremental_falls_back_to_full_build() {
+        let store = MemoryDocStore::new();
+        let state = seed_map(&store, false);
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Body\n\nGrounded.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_compile_incremental(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            "entity",
+            &Map::new(),
+            &Map::new(),
+            &state,
+            true,
+            None,
+            &BTreeSet::new(),
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(1));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(pages.contains_key("entity/alpha"));
+    }
+}
