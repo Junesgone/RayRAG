@@ -1517,6 +1517,751 @@ mod spec_tests {
     }
 }
 
+// ── Tool loop (part 3b-2a): executors, dispatch, policy ─────────────────────
+
+use crate::harness::tools::navigation::NavResult;
+
+/// The compiled-structure / calculator backends the tool branches drive.
+#[async_trait]
+pub trait ActionToolBackend: Send + Sync {
+    /// `navigate_tree`.
+    async fn navigate_tree(&self, query: &str) -> NavResult;
+    /// `navigate_structure`.
+    async fn navigate_structure(&self, doc_id: &str, query: &str, kind: &str) -> NavResult;
+    /// `compute_from_facts` (None = nothing derivable).
+    async fn calculate(&self, question: &str, facts: &[String]) -> Option<Value>;
+    /// `graph_explore` → `{answer, chunks}` (`answer` may be empty).
+    async fn graph_explore(&self, query: &str, doc_scope: &[String]) -> Value;
+}
+
+/// Everything one action-session turn needs from the host.
+pub struct ActionRuntime<'a> {
+    pub search: &'a dyn ActionSearchBackend,
+    pub tools: &'a dyn ActionToolBackend,
+}
+
+fn nav_metrics(res: &NavResult) -> serde_json::Map<String, Value> {
+    let mut metrics = serde_json::Map::new();
+    metrics.insert("hits".to_string(), serde_json::json!(res.doc_ids.len()));
+    metrics.insert("entities".to_string(), serde_json::json!(res.entities));
+    metrics.insert("chunk_ptrs".to_string(), serde_json::json!(res.chunk_ptrs));
+    metrics.insert("top_score".to_string(), serde_json::json!(res.top_score));
+    metrics.insert(
+        "chunk_paths".to_string(),
+        serde_json::json!(res.chunk_paths),
+    );
+    metrics.insert(
+        "routed_docs".to_string(),
+        serde_json::json!(
+            res.routed_docs
+                .iter()
+                .map(|(doc, summary)| serde_json::json!([doc, summary]))
+                .collect::<Vec<_>>()
+        ),
+    );
+    metrics
+}
+
+/// `_exec_navigate_tree`: route documents through the compiled nav tree.
+pub async fn exec_navigate_tree(tools: &dyn ActionToolBackend, query: &str) -> ToolOutcome {
+    let res = tools.navigate_tree(query).await;
+    let metrics = nav_metrics(&res);
+    if !res.empty_reason.is_empty() {
+        return ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": "navigate_tree",
+                "note": "No compiled navigation tree reachable for this query. Switch to search_chunks / retrieve; a second such empty disables this tool for the session."
+            })],
+            evidence_ids: Vec::new(),
+            status: reason_status(&res.empty_reason).to_string(),
+            reason: res.empty_reason,
+            metrics,
+        };
+    }
+    ToolOutcome {
+        payload: vec![serde_json::json!({
+            "kind": "navigate_tree",
+            "doc_ids": res.doc_ids,
+            "content": res.text,
+        })],
+        evidence_ids: res.doc_ids.clone(),
+        status: OUTCOME_OK.to_string(),
+        reason: String::new(),
+        metrics,
+    }
+}
+
+/// `_exec_navigate_structure`: compiled outline of one document.
+pub async fn exec_navigate_structure(
+    tools: &dyn ActionToolBackend,
+    doc_id: &str,
+    query: &str,
+    kind: &str,
+) -> ToolOutcome {
+    let res = tools.navigate_structure(doc_id, query, kind).await;
+    let metrics = nav_metrics(&res);
+    if !res.empty_reason.is_empty() {
+        return ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": "navigate_structure",
+                "doc_id": doc_id,
+                "note": format!("No compiled structure of kind={kind:?} reachable for this document. Try another doc_id or kind, or use search_chunks / retrieve / list_chunks."),
+            })],
+            evidence_ids: Vec::new(),
+            status: reason_status(&res.empty_reason).to_string(),
+            reason: res.empty_reason,
+            metrics,
+        };
+    }
+    // Reached a structure but drilled to nothing usable: weak, not an error.
+    let status = if res.chunk_ptrs == 0 {
+        OUTCOME_POOR
+    } else {
+        OUTCOME_OK
+    };
+    let text: String = res.text.chars().take(8000).collect();
+    let mut evidence_ids = res.doc_ids.clone();
+    if evidence_ids.is_empty() && !doc_id.is_empty() {
+        evidence_ids.push(doc_id.to_string());
+    }
+    ToolOutcome {
+        payload: vec![serde_json::json!({
+            "kind": "navigate_structure",
+            "doc_id": doc_id,
+            "content": text,
+        })],
+        evidence_ids,
+        status: status.to_string(),
+        reason: String::new(),
+        metrics,
+    }
+}
+
+/// `_exec_calculate`: arithmetic terminal via `compute_from_facts`.
+pub async fn exec_calculate(
+    tools: &dyn ActionToolBackend,
+    question: &str,
+    facts: &[String],
+) -> ToolOutcome {
+    let result = tools.calculate(question, facts).await;
+    match result {
+        None => ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": "calculate",
+                "expression": Value::Null,
+                "note": "no numeric answer derivable from given facts; answer directly or retrieve more numbers."
+            })],
+            evidence_ids: Vec::new(),
+            status: OUTCOME_POOR.to_string(),
+            reason: "no_doc".to_string(),
+            metrics: serde_json::Map::new(),
+        },
+        Some(value) => ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": "calculate",
+                "expression": value.get("expression").cloned().unwrap_or(Value::Null),
+                "result": value.get("value").cloned().unwrap_or(Value::Null),
+            })],
+            evidence_ids: Vec::new(),
+            status: OUTCOME_OK.to_string(),
+            reason: String::new(),
+            metrics: serde_json::Map::new(),
+        },
+    }
+}
+
+/// `_exec_graph_explore`: relational knowledge-graph exploration.
+pub async fn exec_graph_explore(
+    tools: &dyn ActionToolBackend,
+    query: &str,
+    doc_scope: &[String],
+) -> ToolOutcome {
+    let res = tools.graph_explore(query, doc_scope).await;
+    let answer = res
+        .get("answer")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let chunks = res
+        .get("chunks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !answer.is_empty() {
+        return ToolOutcome {
+            payload: vec![serde_json::json!({"kind": "graph_explore", "answer": answer})],
+            evidence_ids: Vec::new(),
+            status: OUTCOME_OK.to_string(),
+            reason: String::new(),
+            metrics: [("hits".to_string(), serde_json::json!(0))]
+                .into_iter()
+                .collect(),
+        };
+    }
+    if chunks.is_empty() {
+        return ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": "graph_explore",
+                "note": "This dataset has NO compiled knowledge graph (or none in the given scope). graph_explore is unavailable; use search_chunks / navigate_structure / retrieve instead."
+            })],
+            evidence_ids: Vec::new(),
+            status: OUTCOME_EMPTY.to_string(),
+            reason: "no_structure".to_string(),
+            metrics: serde_json::Map::new(),
+        };
+    }
+    let mut snippet: Vec<Value> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    for chunk in chunks.iter().take(6) {
+        let id = chunk.get("id").cloned().unwrap_or(Value::Null);
+        let content: String = chunk
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .take(1500)
+            .collect();
+        snippet.push(serde_json::json!({"id": id, "content": content}));
+        if let Some(text) = id.as_str() {
+            if !text.is_empty() {
+                ids.push(text.to_string());
+            }
+        }
+    }
+    ToolOutcome {
+        payload: vec![serde_json::json!({"kind": "graph_explore", "chunks": snippet})],
+        evidence_ids: ids.clone(),
+        status: OUTCOME_OK.to_string(),
+        reason: String::new(),
+        metrics: [("hits".to_string(), serde_json::json!(ids.len()))]
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// `_disable_tool`: mark a compile-only tool unavailable for the rest of the
+/// session (the session state owns the set in Rust).
+pub fn disable_tool(disabled: &mut HashSet<String>, name: &str) {
+    if !TOOL_MAP_NAMES.contains(&name) {
+        return;
+    }
+    disabled.insert(name.to_string());
+}
+
+/// `execute_tool`: dispatch ONE native tool call by name.
+pub async fn execute_tool(
+    runtime: &ActionRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    disabled: &HashSet<String>,
+    name: &str,
+    args: &Value,
+) -> ToolOutcome {
+    // Short-circuit a tool already proven unavailable this session.
+    if disabled.contains(name) {
+        return ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": name,
+                "note": format!("{name} is unavailable in this dataset (no compiled structure of its kind). Use search_chunks / retrieve / list_chunks instead.")
+            })],
+            evidence_ids: Vec::new(),
+            status: OUTCOME_EMPTY.to_string(),
+            reason: "no_structure".to_string(),
+            metrics: serde_json::Map::new(),
+        };
+    }
+    match name {
+        "retrieve" => {
+            let scope: Vec<String> = args
+                .get("doc_scope")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            exec_retrieve(
+                runtime.search,
+                kbinfos,
+                &arg_query_list(args, 3),
+                if scope.is_empty() { None } else { Some(&scope) },
+                "",
+            )
+            .await
+        }
+        "search_chunks" => {
+            exec_search_chunks(runtime.search, kbinfos, &arg_query_list(args, 2), true).await
+        }
+        "list_chunks" => {
+            let doc_id = args
+                .get("doc_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            exec_list_chunks(runtime.search, kbinfos, &doc_id).await
+        }
+        "navigate_tree" => {
+            let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+            exec_navigate_tree(runtime.tools, query).await
+        }
+        "navigate_structure" => {
+            let doc_id = args.get("doc_id").and_then(Value::as_str).unwrap_or("");
+            let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+            let kind = args
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("catalog");
+            exec_navigate_structure(runtime.tools, doc_id, query, kind).await
+        }
+        "calculate" => {
+            let question = args.get("question").and_then(Value::as_str).unwrap_or("");
+            let facts: Vec<String> = args
+                .get("facts")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|item| match item {
+                            Value::String(text) => text.clone(),
+                            other => other.to_string(),
+                        })
+                        .filter(|text| !text.trim().is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            exec_calculate(runtime.tools, question, &facts).await
+        }
+        "graph_explore" => {
+            let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+            let scope: Vec<String> = args
+                .get("doc_scope")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            exec_graph_explore(runtime.tools, query, &scope).await
+        }
+        "web_search" => exec_web_search(runtime.search, kbinfos, &arg_query_list(args, 2)).await,
+        _ => ToolOutcome {
+            payload: Vec::new(),
+            evidence_ids: Vec::new(),
+            status: OUTCOME_ERROR.to_string(),
+            reason: "bad_args".to_string(),
+            metrics: serde_json::Map::new(),
+        },
+    }
+}
+
+/// Result of one `tool_node` pass.
+#[derive(Debug, Default)]
+pub struct ToolNodeResult {
+    pub tool_messages: Vec<Value>,
+    pub evidence_ids: Vec<String>,
+    pub skipped_dup: usize,
+    pub disabled: HashSet<String>,
+    pub outcomes: Vec<Value>,
+}
+
+/// `_tool_node` policy loop: execute pending tool calls with the near-duplicate
+/// guard, unknown-tool correction, same-session cache, empty-strike disabling
+/// and explicit redundant notices.
+#[allow(clippy::too_many_arguments)]
+pub async fn tool_node_policy(
+    runtime: &ActionRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    pending: &[ToolCall],
+    seen_queries: &mut Vec<String>,
+    tool_cache: &mut std::collections::HashMap<String, ToolOutcome>,
+    strikes: &mut std::collections::HashMap<String, usize>,
+    disabled: &mut HashSet<String>,
+    prior_evidence_ids: &[String],
+) -> ToolNodeResult {
+    let mut result = ToolNodeResult::default();
+    result.evidence_ids = prior_evidence_ids.to_vec();
+    for call in pending {
+        let query = call
+            .args
+            .get("query")
+            .map(|value| match value {
+                Value::String(text) => text.trim().to_string(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
+        // Near-duplicate retrieval suppression.
+        if RETRIEVAL_TOOLS.contains(&call.name.as_str())
+            && !query.is_empty()
+            && is_near_dup(&query, seen_queries)
+        {
+            result.skipped_dup += 1;
+            result.tool_messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": serde_json::json!({
+                    "passages": [{
+                        "kind": call.name,
+                        "note": "This query is a near-duplicate of an earlier retrieval and was skipped to avoid redundant searching. Patch the slot with what you have, or issue a genuinely NEW retrieval angle."
+                    }]
+                }).to_string(),
+            }));
+            continue;
+        }
+        // Unknown tool name: never execute; answer with a correction.
+        if call.unknown {
+            let hint = format!(
+                "'{}' is not a tool. State patches and final answers are plain TEXT in your reply body, wrapped in <state>...</state> or <answer>...</answer> XML tags — do not emit them as tool calls. Available tools: {}.",
+                call.name,
+                TOOL_MAP_NAMES.join(", ")
+            );
+            result.tool_messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": serde_json::json!({"passages": [{"kind": "error", "note": hint}]}).to_string(),
+            }));
+            continue;
+        }
+        // Same-session tool cache: avoid re-executing the same call.
+        let cache_key = format!(
+            "{}:{}",
+            call.name,
+            serde_json::to_string(&call.args).unwrap_or_default()
+        );
+        let outcome = match tool_cache.get(&cache_key) {
+            Some(cached) => cached.clone(),
+            None => {
+                let outcome =
+                    execute_tool(runtime, kbinfos, disabled, &call.name, &call.args).await;
+                tool_cache.insert(cache_key, outcome.clone());
+                outcome
+            }
+        };
+        if !query.is_empty() {
+            seen_queries.push(query);
+        }
+        result
+            .evidence_ids
+            .extend(outcome.evidence_ids.iter().cloned());
+        let mut chunks = outcome.payload.clone();
+        // Policy: act on WHAT happened.
+        if outcome.status == OUTCOME_OK {
+            strikes.remove(&call.name);
+        } else if outcome.status == OUTCOME_EMPTY && outcome.reason == "no_structure" {
+            let count = strikes.get(&call.name).copied().unwrap_or(0) + 1;
+            strikes.insert(call.name.clone(), count);
+            if count >= EMPTY_STRIKES {
+                disable_tool(disabled, &call.name);
+            }
+        } else if outcome.status == OUTCOME_REDUNDANT {
+            chunks.push(serde_json::json!({
+                "kind": call.name,
+                "note": "All hits from this call were ALREADY in the shared evidence pool; re-searching the same ground adds nothing. Patch the slot or issue a genuinely new angle."
+            }));
+        }
+        result.outcomes.push(serde_json::json!({
+            "name": call.name,
+            "status": outcome.status,
+            "reason": outcome.reason,
+            "metrics": outcome.metrics,
+        }));
+        result.tool_messages.push(serde_json::json!({
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": serde_json::json!({"passages": chunks}).to_string(),
+        }));
+    }
+    result.disabled = disabled.clone();
+    result
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    struct MockSearch;
+    #[async_trait]
+    impl ActionSearchBackend for MockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+    }
+
+    struct MockTools {
+        nav_result: std::sync::Mutex<NavResult>,
+        calc: bool,
+        graph: Value,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for MockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.nav_result.lock().unwrap().clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.nav_result.lock().unwrap().clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            if self.calc {
+                Some(json!({"expression": "1+1", "value": "2"}))
+            } else {
+                None
+            }
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            self.graph.clone()
+        }
+    }
+
+    fn runtime<'a>(search: &'a MockSearch, tools: &'a MockTools) -> ActionRuntime<'a> {
+        ActionRuntime { search, tools }
+    }
+
+    #[tokio::test]
+    async fn dispatch_and_disable_paths() {
+        let search = MockSearch;
+        let tools = MockTools {
+            nav_result: std::sync::Mutex::new(NavResult {
+                empty_reason: "no_structure".to_string(),
+                ..NavResult::default()
+            }),
+            calc: true,
+            graph: json!({"answer": "", "chunks": []}),
+        };
+        let rt = runtime(&search, &tools);
+        let mut kbinfos = Kbinfos::default();
+        let disabled: HashSet<String> = HashSet::new();
+
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "navigate_tree",
+            &json!({"query": "q"}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_EMPTY);
+        assert_eq!(outcome.reason, "no_structure");
+
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "calculate",
+            &json!({"question": "q", "facts": ["1", "1"]}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(outcome.payload[0]["result"], json!("2"));
+
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "graph_explore",
+            &json!({"query": "q"}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_EMPTY);
+        assert_eq!(outcome.reason, "no_structure");
+
+        let outcome = execute_tool(&rt, &mut kbinfos, &disabled, "bogus", &json!({})).await;
+        assert_eq!(outcome.status, OUTCOME_ERROR);
+        assert_eq!(outcome.reason, "bad_args");
+
+        // Disabled tools short-circuit with a note.
+        let mut blocked: HashSet<String> = HashSet::new();
+        blocked.insert("graph_explore".to_string());
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &blocked,
+            "graph_explore",
+            &json!({"query": "q"}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_EMPTY);
+        assert!(
+            outcome.payload[0]["note"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+
+        // calculate without a derivable answer is poor.
+        let tools = MockTools {
+            calc: false,
+            ..tools
+        };
+        let rt = runtime(&search, &tools);
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "calculate",
+            &json!({"question": "q", "facts": ["x"]}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_POOR);
+    }
+
+    #[tokio::test]
+    async fn tool_node_policy_covers_guards() {
+        let search = MockSearch;
+        let tools = MockTools {
+            nav_result: std::sync::Mutex::new(NavResult {
+                empty_reason: "no_structure".to_string(),
+                ..NavResult::default()
+            }),
+            calc: true,
+            graph: json!({"answer": "", "chunks": []}),
+        };
+        let rt = runtime(&search, &tools);
+        let mut kbinfos = Kbinfos::default();
+        let mut seen: Vec<String> = vec!["alpha creator OmiyaSoft".to_string()];
+        let mut cache = std::collections::HashMap::new();
+        let mut strikes = std::collections::HashMap::new();
+        let mut disabled: HashSet<String> = HashSet::new();
+        let pending = vec![
+            // Near-duplicate of an earlier retrieval -> skipped.
+            ToolCall {
+                id: "c1".into(),
+                name: "search_chunks".into(),
+                args: json!({"query": "OmiyaSoft alpha creator"}),
+                unknown: false,
+            },
+            // Unknown tool -> correction.
+            ToolCall {
+                id: "c2".into(),
+                name: "state".into(),
+                args: json!({}),
+                unknown: true,
+            },
+            // A working tool clears strikes.
+            ToolCall {
+                id: "c3".into(),
+                name: "navigate_tree".into(),
+                args: json!({"query": "q"}),
+                unknown: false,
+            },
+        ];
+        // First pass: two no_structure empties disable navigate_tree.
+        let first = tool_node_policy(
+            &rt,
+            &mut kbinfos,
+            &pending[2..],
+            &mut seen,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+        )
+        .await;
+        assert_eq!(first.skipped_dup, 0);
+        assert!(first.disabled.is_empty(), "one strike is not enough");
+        let second = tool_node_policy(
+            &rt,
+            &mut kbinfos,
+            &pending[2..],
+            &mut seen,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+        )
+        .await;
+        assert!(
+            second.disabled.contains("navigate_tree"),
+            "second strike disables"
+        );
+
+        let mut strikes2 = std::collections::HashMap::new();
+        strikes2.insert("navigate_tree".to_string(), 1);
+        let mut disabled2: HashSet<String> = HashSet::new();
+        let ok_nav = MockTools {
+            nav_result: std::sync::Mutex::new(NavResult {
+                doc_ids: vec!["d1".to_string()],
+                ..NavResult::default()
+            }),
+            calc: true,
+            graph: json!({"answer": "", "chunks": []}),
+        };
+        let rt2 = runtime(&search, &ok_nav);
+        cache.clear();
+        let third = tool_node_policy(
+            &rt2,
+            &mut kbinfos,
+            &pending[2..],
+            &mut seen,
+            &mut cache,
+            &mut strikes2,
+            &mut disabled2,
+            &[],
+        )
+        .await;
+        assert!(
+            strikes2.get("navigate_tree").is_none(),
+            "a real hit clears the strike record"
+        );
+        assert_eq!(third.evidence_ids, vec!["d1".to_string()]);
+
+        // Near-dup skip + unknown correction in one pass.
+        let mixed = tool_node_policy(
+            &rt2,
+            &mut kbinfos,
+            &pending[..2],
+            &mut seen,
+            &mut cache,
+            &mut strikes2,
+            &mut disabled2,
+            &[],
+        )
+        .await;
+        assert_eq!(mixed.skipped_dup, 1);
+        assert!(
+            mixed.tool_messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("near-duplicate")
+        );
+        assert!(
+            mixed.tool_messages[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("is not a tool")
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
