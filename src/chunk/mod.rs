@@ -2,6 +2,7 @@
 //!
 //! Splits parsed document text into embeddable chunks.
 
+pub mod delim;
 mod naive;
 mod position;
 mod title;

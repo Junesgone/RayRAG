@@ -22,12 +22,19 @@ impl ChunkStrategy for NaiveChunker {
         let position_aware = doc
             .metadata
             .contains_key(super::RAGFLOW_POSITION_TAGS_METADATA);
-        let sections: Vec<&str> = doc
-            .content
-            .split(&config.delimiter)
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let sections: Vec<&str> = match super::delim::delimiter_regex(&config.delimiter) {
+            Some(regex) => regex
+                .split(&doc.content)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect(),
+            None => doc
+                .content
+                .split(&config.delimiter)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect(),
+        };
 
         if sections.is_empty() {
             return Ok(vec![]);

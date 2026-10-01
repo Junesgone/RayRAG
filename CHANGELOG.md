@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.74] — 2026-10-01（对标批次 v0.3.10s）
+
+> W-5 首批：RAGFlow v0.27.2 的 canonical delimiter 解析（`rag/nlp/delim.py`）移植（纯 Rust）。
+
+### Added
+
+- **canonical delimiter 解析**（`rag/nlp/delim.py` → `src/chunk/delim.rs`）：`parse_delimiter_field`（反引号 token + 裸字符、插入序去重、稳定按**字符数**最长优先）、`compile_delimiter_pattern`（`regex::escape` 交替）、`has_wrapped_delimiter`、`normalize_text_newlines`（CRLF/CR→LF）与 `DEFAULT_DELIMITER` 常量；接入 naive 与 token 分块器的 split 路径（空字段保持原行为）。
+- **修复**：排序从 `String::len()`（UTF-8 字节长度）改为 `chars().count()`，避免中文标点（3 字节）错误地排在换行（1 字节）之前。
+
+### Tests
+
+- 4 项新单测（裸/包裹 token 最长优先、去重与换行归一、包裹检测与模式编译、默认常量 8 字符）；`cargo test --locked --lib chunk::delim` 4 passed，既有 chunk 测试无回归；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.73] — 2026-10-01（对标批次 v0.3.10r）
 
 > W-6 清零：RAGFlow v0.27.2 的 Tenki 与 UCloud Agent Sandbox 提供商契约移植（纯 Rust）。

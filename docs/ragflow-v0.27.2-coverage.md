@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 603 | 292776 |
-| partial | 79 | 32335 |
+| full | 604 | 292955 |
+| partial | 78 | 32156 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3761,7 +3761,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/llm/tool_decorator.py` | 326 | 13114 | `ca93d50867c1672f` | full | `src/llm.rs` | model factory (7 kinds) + chat/ocr/cv/seq2txt/tts abstractions ported [v0.27.2 content changed: re-audit] |
 | `rag/llm/tts_model.py` | 579 | 20868 | `d478205ff0712142` | full | `src/llm.rs` | model factory (7 kinds) + chat/ocr/cv/seq2txt/tts abstractions ported [v0.27.2 content changed: re-audit] |
 | `rag/nlp/__init__.py` | 1975 | 68344 | `bf1eaed5ed08b06d` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported [v0.27.2 content changed: re-audit] |
-| `rag/nlp/delim.py` | 179 | 6750 | `05f1dbe5b2396a8d` | partial | `src/parser/` | （v0.3.10g 审计：parser_config.delimiter 统一解析；RayRAG 各解析器内联处理，统一化待对齐——worklist W-5（结构图/编译器/切分）） |
+| `rag/nlp/delim.py` | 179 | 6750 | `05f1dbe5b2396a8d` | full | `src/chunk/delim.rs; src/chunk/naive.rs; src/chunk/token.rs` | （v0.3.10s 移植：canonical delimiter 解析——normalize_text_newlines（CRLF/CR→LF）、has_wrapped_delimiter、parse_delimiter_field（反引号 token + 裸字符、插入序去重、稳定按字符数最长优先；修复字节/字符长度差异）、compile_delimiter_pattern（regex::escape 交替）、DEFAULT_DELIMITER 常量；接入 naive/token 分块器 split 路径（空字段保持原行为）；4 项单测；差异：ParserConfig 默认值仍为 "\n"（上游 canonical 默认对齐待后续批次）。） |
 | `rag/nlp/query.py` | 231 | 9584 | `f992134c1a0e29ef` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported [v0.27.2 content changed: re-audit] |
 | `rag/nlp/rag_tokenizer.py` | 60 | 1751 | `2cbcdfa233911831` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported |
 | `rag/nlp/search.py` | 1022 | 45685 | `22baac4160d6eb59` | full | `src/nlp.rs` | tokenizer/cleaning/query-normalize/term-weight ported [v0.27.2 content changed: re-audit] |

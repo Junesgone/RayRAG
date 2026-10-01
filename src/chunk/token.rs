@@ -240,12 +240,19 @@ impl ChunkStrategy for TokenChunker {
                 }
                 out
             } else {
-                let sections: Vec<String> = doc
-                    .content
-                    .split(&config.delimiter)
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
+                let sections: Vec<String> = match super::delim::delimiter_regex(&config.delimiter) {
+                    Some(regex) => regex
+                        .split(&doc.content)
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                    None => doc
+                        .content
+                        .split(&config.delimiter)
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                };
                 if sections.is_empty() {
                     Vec::new()
                 } else {
