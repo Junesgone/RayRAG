@@ -6750,3 +6750,577 @@ mod wiki_incremental_part10_tests {
         assert!(wiki_cluster_entities(&ents, &embeddings[..2], Some(2)).is_err());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 9b — Mode B page router (`_wiki_page_router`).
+//
+// Adaptation note: the local dense search has no min-score filter, so scores
+// are computed client-side from the returned vectors; Python's `id(entity)`
+// embedding table becomes explicit `(entity, vector)` pairing; search fan-out
+// is sequential.
+// ---------------------------------------------------------------------------
+
+fn push_assignment(assignments: &mut Map<String, Value>, key: &str, entity: &Value) {
+    let bucket = assignments
+        .entry(key.to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(items) = bucket.as_array_mut() {
+        items.push(entity.clone());
+    }
+}
+
+/// `_wiki_page_router`: KNN candidates then LLM decisions.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_page_router(
+    store: &dyn DocStore,
+    affected_entities: &mut [Value],
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    existing_pages: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
+    let texts: Vec<String> = affected_entities.iter().map(entity_to_query_text).collect();
+    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let embeddings: Vec<Vec<f32>> = match embd {
+        Some(embd) => match embd.embed(&text_refs).await {
+            Ok(vectors) if vectors.len() == affected_entities.len() => vectors,
+            Ok(_) => {
+                tracing::warn!(
+                    "wiki: router embedding count mismatch; treating all entities as orphans"
+                );
+                vec![Vec::new(); affected_entities.len()]
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "wiki: router embedding failed; treating all entities as orphans");
+                vec![Vec::new(); affected_entities.len()]
+            }
+        },
+        None => vec![Vec::new(); affected_entities.len()],
+    };
+    for (entity, vec) in affected_entities.iter_mut().zip(embeddings.iter()) {
+        if let Some(obj) = entity.as_object_mut() {
+            obj.insert("_embedding".to_string(), json!(vec));
+        }
+    }
+
+    let mut assignments: Map<String, Value> = Map::new();
+    let mut orphans: Vec<(Value, Vec<f32>)> = Vec::new();
+    let existing: Map<String, Value> = existing_pages.cloned().unwrap_or_default();
+
+    let mut entity_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut chunk_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (page_id, page) in &existing {
+        for entity_name in as_str_list(page.get("entity_names_kwd")) {
+            entity_pages
+                .entry(normalize_key(&entity_name))
+                .or_default()
+                .insert(page_id.clone());
+        }
+        for chunk_id in as_str_list(page.get("source_chunk_ids")) {
+            chunk_pages
+                .entry(chunk_id)
+                .or_default()
+                .insert(page_id.clone());
+        }
+    }
+
+    if existing.is_empty() {
+        // First build: no page can accept a routed entity.
+        orphans = affected_entities
+            .iter()
+            .cloned()
+            .zip(embeddings.iter().cloned())
+            .collect();
+        wiki_log_stats(
+            "ROUTE",
+            "summary",
+            &[
+                ("affected", json!(affected_entities.len())),
+                ("llm_existing", json!(0)),
+                ("llm_new", json!(0)),
+                ("llm_missing", json!(0)),
+                ("new_confirmed_existing", json!(0)),
+                ("final_new", json!(orphans.len())),
+            ],
+        );
+    } else {
+        let index = crate::harness::knowlege_dataset_nav::index_name(tenant_id);
+        let mut route_items: Vec<(Value, Vec<Value>)> = Vec::new();
+        for (entity, vec) in affected_entities.iter().zip(embeddings.iter()) {
+            if entity.get("action").and_then(Value::as_str) == Some("delete") {
+                push_assignment(&mut assignments, "_deleted", entity);
+                continue;
+            }
+            let mut candidates: Vec<Value> = Vec::new();
+            if !vec.is_empty() {
+                let vec_field = format!("q_{}_vec", vec.len());
+                let fields: Vec<String> = [
+                    "slug_kwd",
+                    "title_kwd",
+                    "summary_with_weight",
+                    "entity_names_kwd",
+                    "embedding",
+                    vec_field.as_str(),
+                ]
+                .iter()
+                .map(|field| field.to_string())
+                .collect();
+                let mut condition = Map::new();
+                condition.insert(
+                    "compile_kwd".to_string(),
+                    Value::String(WIKI_PAGE_COMPILE_KWD.to_string()),
+                );
+                let query = SearchQuery {
+                    select_fields: fields.clone(),
+                    condition,
+                    match_expressions: vec![crate::doc_store::MatchExpr::dense(
+                        &vec_field,
+                        vec.clone(),
+                        "cosine",
+                        PAGE_ROUTER_TOP_K,
+                    )],
+                    offset: 0,
+                    limit: PAGE_ROUTER_TOP_K,
+                    index_names: vec![index.clone()],
+                    dataset_ids: vec![kb_id.to_string()],
+                    ..Default::default()
+                };
+                if let Ok(response) = store.search(&query) {
+                    for (_, row) in store.get_fields(&response, &fields) {
+                        let row_value = Value::Object(row);
+                        let page_id = row_scalar_string(&row_value, "slug_kwd").trim().to_string();
+                        if page_id.is_empty() {
+                            continue;
+                        }
+                        let stored: Vec<f32> = row_value
+                            .get(&vec_field)
+                            .or_else(|| row_value.get("embedding"))
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(|item| item.as_f64().map(|number| number as f32))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let score = crate::merge::cosine_similarity(vec, &stored) as f64;
+                        let page_source = existing.get(&page_id).unwrap_or(&row_value);
+                        let mut candidate = wiki_route_page_candidate(&page_id, page_source, score);
+                        if let Some(obj) = candidate.as_object_mut() {
+                            obj.insert(
+                                "signals".to_string(),
+                                Value::Array(vec![Value::String("embedding".to_string())]),
+                            );
+                        }
+                        candidates.push(candidate);
+                    }
+                }
+            }
+            let expanded = wiki_expand_route_candidates(
+                entity,
+                &candidates,
+                &existing,
+                &entity_pages,
+                &chunk_pages,
+                false,
+            );
+            if expanded.is_empty() {
+                orphans.push((entity.clone(), vec.clone()));
+                continue;
+            }
+            route_items.push((entity.clone(), expanded));
+        }
+
+        let decisions = wiki_llm_route_batches(chat, &route_items).await;
+        let first_new_count = decisions
+            .values()
+            .filter(|page_id| *page_id == "NEW")
+            .count();
+        let first_existing_count = decisions
+            .values()
+            .filter(|page_id| *page_id != "NEW")
+            .count();
+        let missing_count = route_items.len().saturating_sub(decisions.len());
+        let mut second_pass_items: Vec<(usize, Value, Vec<Value>)> = Vec::new();
+        let mut confirmed_existing_count = 0usize;
+        for (item_id, (entity, candidates)) in route_items.iter().enumerate() {
+            match decisions.get(&item_id) {
+                Some(page_id) if page_id != "NEW" => {
+                    push_assignment(&mut assignments, page_id, entity);
+                }
+                Some(_) => {
+                    let expanded = wiki_expand_route_candidates(
+                        entity,
+                        candidates,
+                        &existing,
+                        &entity_pages,
+                        &chunk_pages,
+                        true,
+                    );
+                    let original_ids: BTreeSet<String> = candidates
+                        .iter()
+                        .filter_map(|candidate| {
+                            candidate
+                                .get("page_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .collect();
+                    let added_ids: Vec<String> = expanded
+                        .iter()
+                        .filter_map(|candidate| {
+                            let page_id = candidate.get("page_id").and_then(Value::as_str)?;
+                            if original_ids.contains(page_id) {
+                                None
+                            } else {
+                                Some(page_id.to_string())
+                            }
+                        })
+                        .collect();
+                    let entity_name = ["entity_name", "term"]
+                        .iter()
+                        .find_map(|key| entity.get(*key).and_then(Value::as_str))
+                        .unwrap_or("");
+                    wiki_log_stats(
+                        "ROUTE",
+                        "new_confirmation_candidates",
+                        &[
+                            ("entity", json!(entity_name)),
+                            ("initial_candidate_count", json!(candidates.len())),
+                            ("added_candidate_count", json!(added_ids.len())),
+                            ("added_to_candidates", json!(!added_ids.is_empty())),
+                            (
+                                "added_page_ids",
+                                Value::Array(added_ids.into_iter().map(Value::String).collect()),
+                            ),
+                            ("confirmation_candidate_count", json!(expanded.len())),
+                        ],
+                    );
+                    second_pass_items.push((item_id, entity.clone(), expanded));
+                }
+                None => {
+                    let owner = candidates.iter().find(|candidate| {
+                        candidate
+                            .get("signals")
+                            .and_then(Value::as_array)
+                            .map(|signals| {
+                                signals
+                                    .iter()
+                                    .any(|signal| signal.as_str() == Some("current_owner"))
+                            })
+                            .unwrap_or(false)
+                    });
+                    match owner {
+                        Some(owner) => {
+                            if let Some(page_id) = owner.get("page_id").and_then(Value::as_str) {
+                                push_assignment(&mut assignments, page_id, entity);
+                            }
+                        }
+                        None => orphans.push((entity.clone(), Vec::new())),
+                    }
+                }
+            }
+        }
+
+        if !second_pass_items.is_empty() {
+            let confirmation_items: Vec<(Value, Vec<Value>)> = second_pass_items
+                .iter()
+                .map(|(_, entity, candidates)| (entity.clone(), candidates.clone()))
+                .collect();
+            let confirmations = wiki_llm_route_batches(chat, &confirmation_items).await;
+            for (confirmation_id, (_, entity, candidates)) in second_pass_items.iter().enumerate() {
+                let page_id = confirmations.get(&confirmation_id);
+                match page_id {
+                    Some(page_id) if page_id != "NEW" => {
+                        push_assignment(&mut assignments, page_id, entity);
+                        confirmed_existing_count += 1;
+                    }
+                    decided => {
+                        let owner = candidates.iter().find(|candidate| {
+                            candidate
+                                .get("signals")
+                                .and_then(Value::as_array)
+                                .map(|signals| {
+                                    signals
+                                        .iter()
+                                        .any(|signal| signal.as_str() == Some("current_owner"))
+                                })
+                                .unwrap_or(false)
+                        });
+                        match (owner, decided) {
+                            (Some(owner), None) => {
+                                if let Some(page_id) = owner.get("page_id").and_then(Value::as_str)
+                                {
+                                    push_assignment(&mut assignments, page_id, entity);
+                                }
+                            }
+                            _ => orphans.push((entity.clone(), Vec::new())),
+                        }
+                    }
+                }
+            }
+        }
+        wiki_log_stats(
+            "ROUTE",
+            "summary",
+            &[
+                ("affected", json!(affected_entities.len())),
+                ("llm_existing", json!(first_existing_count)),
+                ("llm_new", json!(first_new_count)),
+                ("llm_missing", json!(missing_count)),
+                ("new_confirmed_existing", json!(confirmed_existing_count)),
+                ("final_new", json!(orphans.len())),
+            ],
+        );
+    }
+
+    // Orphans: cluster by similarity and create grouped pages. Deleting
+    // entities must not create pages just to delete them again.
+    let mut orphan_entities: Vec<Value> = Vec::new();
+    let mut orphan_embeddings: Vec<Vec<f32>> = Vec::new();
+    for (entity, vec) in orphans {
+        if entity.get("action").and_then(Value::as_str) == Some("delete") {
+            continue;
+        }
+        orphan_entities.push(entity);
+        orphan_embeddings.push(vec);
+    }
+    if !orphan_entities.is_empty() {
+        let clusters =
+            wiki_llm_group_entities(chat, &orphan_entities, &orphan_embeddings, kb_id).await;
+        let mut used_page_ids: BTreeSet<String> = existing.keys().cloned().collect();
+        for key in assignments.keys() {
+            if let Some(rest) = key.strip_prefix("_new_") {
+                used_page_ids.insert(rest.to_string());
+            }
+        }
+        for cluster in clusters {
+            if cluster.is_empty() {
+                continue;
+            }
+            let evidence_and_name = |entity: &Value| -> (usize, String) {
+                let claims = entity
+                    .get("claims")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                let name = ["entity_name", "term"]
+                    .iter()
+                    .find_map(|key| entity.get(*key).and_then(Value::as_str))
+                    .unwrap_or("")
+                    .to_string();
+                (claims, name)
+            };
+            let representative = cluster
+                .iter()
+                .min_by(|left, right| {
+                    let (left_claims, left_name) = evidence_and_name(left);
+                    let (right_claims, right_name) = evidence_and_name(right);
+                    right_claims
+                        .cmp(&left_claims)
+                        .then_with(|| left_name.to_lowercase().cmp(&right_name.to_lowercase()))
+                        .then_with(|| left_name.cmp(&right_name))
+                })
+                .cloned()
+                .unwrap_or_else(|| cluster[0].clone());
+            let mut ordered: Vec<Value> = vec![representative.clone()];
+            for entity in &cluster {
+                if entity != &representative {
+                    ordered.push(entity.clone());
+                }
+            }
+            let names: Vec<String> = ordered
+                .iter()
+                .map(|entity| {
+                    ["entity_name", "term"]
+                        .iter()
+                        .find_map(|key| entity.get(*key).and_then(Value::as_str))
+                        .unwrap_or("")
+                        .to_string()
+                })
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            let base_page_id = derive_page_id(&names[0], "entity");
+            if base_page_id.is_empty() {
+                continue;
+            }
+            let mut page_id = base_page_id.clone();
+            let mut suffix = 2usize;
+            while used_page_ids.contains(&page_id) {
+                page_id = format!("{base_page_id}-{suffix}");
+                suffix += 1;
+            }
+            used_page_ids.insert(page_id.clone());
+            assignments.insert(format!("_new_{page_id}"), Value::Array(ordered));
+        }
+    }
+
+    assignments
+}
+
+#[cfg(test)]
+mod wiki_incremental_part11_tests {
+    use super::*;
+    use crate::doc_store::{DocStore, MemoryDocStore};
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct MapEmb {
+        vector: Vec<f32>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for MapEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| self.vector.clone()).collect())
+        }
+    }
+
+    fn entity(name: &str) -> Value {
+        json!({"entity_name": name, "claims": [], "source_chunk_ids": [], "action": "create"})
+    }
+
+    #[tokio::test]
+    async fn first_build_clusters_all_orphans() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "[[0, 1, 2]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = MapEmb {
+            vector: vec![1.0, 0.0],
+        };
+        let mut entities = vec![entity("Alpha"), entity("Beta"), entity("Gamma")];
+        let assignments =
+            wiki_page_router(&store, &mut entities, &chat, Some(&emb), "t1", "kb1", None).await;
+        let new_keys: Vec<&String> = assignments
+            .keys()
+            .filter(|key| key.starts_with("_new_"))
+            .collect();
+        assert_eq!(new_keys.len(), 1);
+        let group = assignments[new_keys[0]].as_array().unwrap();
+        assert_eq!(group.len(), 3);
+        assert_eq!(new_keys[0], &"_new_entity/alpha".to_string());
+        assert_eq!(entities[0]["_embedding"], json!([1.0, 0.0]));
+    }
+
+    #[tokio::test]
+    async fn routes_to_existing_page_via_llm() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "summary_with_weight": "about alpha",
+            "entity_names_kwd": ["Alpha"],
+            "source_chunk_ids": ["c1"],
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"], "source_chunk_ids": ["c1"], "summary_with_weight": "about alpha"}),
+        );
+        let chat = FakeChat {
+            reply: "[{\"id\": 0, \"page\": \"entity/alpha\"}]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = MapEmb {
+            vector: vec![1.0, 0.0],
+        };
+        let mut entities = vec![entity("Alpha")];
+        let assignments = wiki_page_router(
+            &store,
+            &mut entities,
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            Some(&existing),
+        )
+        .await;
+        let assigned = assignments["entity/alpha"].as_array().unwrap();
+        assert_eq!(assigned.len(), 1);
+        assert!(assignments.keys().all(|key| !key.starts_with("_new_")));
+    }
+
+    #[tokio::test]
+    async fn missing_decision_falls_back_to_current_owner() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "entity_names_kwd": ["Alpha"],
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"]}),
+        );
+        let chat = FakeChat {
+            reply: "no json here".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = MapEmb {
+            vector: vec![1.0, 0.0],
+        };
+        let mut entities = vec![entity("Alpha")];
+        let assignments = wiki_page_router(
+            &store,
+            &mut entities,
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            Some(&existing),
+        )
+        .await;
+        assert_eq!(assignments["entity/alpha"].as_array().unwrap().len(), 1);
+    }
+}
