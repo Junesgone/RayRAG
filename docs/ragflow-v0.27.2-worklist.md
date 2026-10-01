@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：69（UI 残留 42 + 实施队列 27）
+- partial：58（UI 残留 42 + 实施队列 16）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,29 +28,19 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（27 项）
+### W-4 Agentic harness 移植（最大队列）（16 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 | `rag/advanced_rag/agentic_rag.py` | 995 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：v0.27.2 Agentic-RAG 能力层（RAGTools 检索原语）；RayRAG 有多跳检索与画布智能体运行时，agentic 编排层待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/agentic_rag_graph.py` | 1766 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic-search 图编排（1766 行）；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/__init__.py` | 1 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic harness 包；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/action_session.py` | 2142 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：动作会话执行器（2142 行）；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/arithmetic.py` | 420 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：算式求值工具；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/chunk_utils.py` | 55 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：harness 分块工具；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/config.py` | 133 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：harness 配置；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/grep_sed_narrow.py` | 449 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：窄域 grep/sed 文本检索；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/keywords.py` | 169 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：加权关键词抽取；RayRAG 关键词工具部分就位，抽取语义待对齐——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/memory.py` | 390 | `src/advanced_rag.rs; src/agent.rs; src/memory.rs` | （v0.3.10g 审计：harness 会话记忆；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/orchestrator/__init__.py` | 12 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：orchestrator 包；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/direct.py` | 60 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：直接回答编排；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/query_rewriter.py` | 98 | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：查询改写编排；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/sufficient_context.py` | 419 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：上下文充分性判定；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/prompts/__init__.py` | 1 | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：harness 提示词包；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/prompts/report_prompt.py` | 33 | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：报告提示词；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/stats.py` | 448 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：LLM 用量统计（CountingChatModel）；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/structure_qa.py` | 102 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：结构化 QA；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/tools/__init__.py` | 20 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：harness 工具包；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：编译扩展工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/exploration.py` | 468 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：探索工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/navigation.py` | 1936 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：导航工具（1936 行）；待移植——worklist W-4（agentic harness）） |
@@ -58,7 +48,6 @@
 | `rag/advanced_rag/harness/tools/text_processing.py` | 467 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：文本处理工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/think_log.py` | 95 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：思考日志；待移植——worklist W-4（agentic harness）） |
 
 ### W-5 结构图/编译器/切分（0 项）
 

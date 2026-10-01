@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 612 | 295485 |
-| partial | 69 | 29179 |
+| full | 623 | 296554 |
+| partial | 58 | 28110 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3635,23 +3635,23 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/__init__.py` | 27 | 896 | `e20b0c948c9e3b28` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
 | `rag/advanced_rag/agentic_rag.py` | 995 | 47613 | `79cf1082fdf0edf0` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：v0.27.2 Agentic-RAG 能力层（RAGTools 检索原语）；RayRAG 有多跳检索与画布智能体运行时，agentic 编排层待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/agentic_rag_graph.py` | 1766 | 81982 | `ac263070413cf54e` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic-search 图编排（1766 行）；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/__init__.py` | 1 | 48 | `af1a61737d2f2076` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic harness 包；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/__init__.py` | 1 | 48 | `af1a61737d2f2076` | full | `src/harness/mod.rs` | v0.3.10y：包文档 + 9 子模块注册（chunk_utils/config/keywords/stats/structure_qa/report_prompt/think_log/orchestrator/tools）；共享 HarnessChat 契约与 form_message/message_fit_in 提示装配（含单测） |
 | `rag/advanced_rag/harness/action_session.py` | 2142 | 99017 | `eb37234b1e91366e` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：动作会话执行器（2142 行）；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/arithmetic.py` | 420 | 19598 | `96043fd9115601c9` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：算式求值工具；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/chunk_utils.py` | 55 | 1821 | `a2a919e63c4c41de` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：harness 分块工具；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/config.py` | 133 | 4828 | `4d906a7e857642f1` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：harness 配置；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/chunk_utils.py` | 55 | 1821 | `a2a919e63c4c41de` | full | `src/harness/chunk_utils.rs` | v0.3.10y：xml_escape/chunk_text/chunk_attr 与 doc_id/dataset_id/doc_title/chunk_id 别名访问器 + snippet 全量移植（Python 真值与 None/空串语义区分）；2 项单测 |
+| `rag/advanced_rag/harness/config.py` | 133 | 4828 | `4d906a7e857642f1` | full | `src/harness/config.rs` | v0.3.10y：ModeSpec/THINKING_MODES（low/medium/high/ultra）/NAIVE/get_mode/resolve_mode 全量移植；未知标签回退 naive；工具集合与轮数常量 1:1；1 项单测覆盖 |
 | `rag/advanced_rag/harness/grep_sed_narrow.py` | 449 | 15617 | `410eb83f469caecf` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：窄域 grep/sed 文本检索；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/keywords.py` | 169 | 8962 | `a866779629022144` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：加权关键词抽取；RayRAG 关键词工具部分就位，抽取语义待对齐——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/keywords.py` | 169 | 8962 | `a866779629022144` | full | `src/harness/keywords.rs` | v0.3.10y：四面向抽取（KEYWORDS_SYSTEM 原文）、跨面向单集合去重、entity 与 qualifier ×3 加权、400 字符上限、think/围栏清洗、LLM 失败回退 (question, question)；2 项单测 |
 | `rag/advanced_rag/harness/memory.py` | 390 | 13832 | `46ded2be869204cd` | partial | `src/advanced_rag.rs; src/agent.rs; src/memory.rs` | （v0.3.10g 审计：harness 会话记忆；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/orchestrator/__init__.py` | 12 | 523 | `9066d26600b9edf4` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：orchestrator 包；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/orchestrator/__init__.py` | 12 | 523 | `9066d26600b9edf4` | full | `src/harness/orchestrator/mod.rs` | v0.3.10y：策略包文档（direct/sufficient_context/query_rewriter 归属与 THINKING_MODES 关系）；策略实现随工具管线批次移植（各自行独立收敛） |
 | `rag/advanced_rag/harness/orchestrator/direct.py` | 60 | 2195 | `befe6fd499473c37` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：直接回答编排；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/query_rewriter.py` | 98 | 3820 | `c186b323a556bc8b` | partial | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：查询改写编排；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/sufficient_context.py` | 419 | 18055 | `5d68bcb2589d92b8` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：上下文充分性判定；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/prompts/__init__.py` | 1 | 48 | `2c759e9a863eaf4b` | partial | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：harness 提示词包；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/prompts/report_prompt.py` | 33 | 1818 | `11a2ee0f908b348b` | partial | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：报告提示词；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/stats.py` | 448 | 19444 | `a777fdcbf2f08120` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：LLM 用量统计（CountingChatModel）；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/structure_qa.py` | 102 | 4547 | `999ba01a711eca29` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：结构化 QA；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/tools/__init__.py` | 20 | 1051 | `79321f0e1f699d2b` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：harness 工具包；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/prompts/__init__.py` | 1 | 48 | `2c759e9a863eaf4b` | full | `src/harness/mod.rs` | v0.3.10y：提示词包映射到 src/harness/{report_prompt,keywords,structure_qa}.rs 的提示词常量 |
+| `rag/advanced_rag/harness/prompts/report_prompt.py` | 33 | 1818 | `11a2ee0f908b348b` | full | `src/harness/report_prompt.rs` | v0.3.10y：FINAL_ANSWER_SYSTEM（{cite_rules} 填充入口）+ PARTIAL_ANSWER_PREAMBLE 原文移植；1 项单测 |
+| `rag/advanced_rag/harness/stats.py` | 448 | 19444 | `a777fdcbf2f08120` | full | `src/harness/stats.rs` | v0.3.10y：phase/in_phase 作用域（RAII PhaseScope + 同名重入遮蔽）、LLMUsageStats 全量计账（calls/failed/phase_time_ms/prompt+completion+total tokens/rounds/round-phase/round claims）、snapshot 规范顺序与回退排序、日志表渲染；3 项单测 |
+| `rag/advanced_rag/harness/structure_qa.py` | 102 | 4547 | `999ba01a711eca29` | full | `src/harness/structure_qa.rs` | v0.3.10y：outline 渲染（300/300 上限、空白折叠、默认 other/related）、NAV_SYSTEM 与 user prompt（capitalize）、verdict 解析（充分性门控 answer、relevant_entities 始终透传）；2 项单测 |
+| `rag/advanced_rag/harness/tools/__init__.py` | 20 | 1051 | `79321f0e1f699d2b` | full | `src/harness/tools/mod.rs` | v0.3.10y：工具包文档（search/navigation/exploration 归属、上游已移除 TOOL_REGISTRY 的说明）；实现随动作会话批次移植（各自行独立收敛） |
 | `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | 16963 | `e252fc8bb7694a25` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：编译扩展工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/exploration.py` | 468 | 19641 | `88db170eea537faa` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：探索工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/navigation.py` | 1936 | 84658 | `cc44e3e3bc3c4197` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：导航工具（1936 行）；待移植——worklist W-4（agentic harness）） |
@@ -3666,7 +3666,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | 138491 | `638f99c699a3abd9` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
 | `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | 158984 | `b6b277555fa49c9d` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | 212591 | `02392f68b6702c5c` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/think_log.py` | 95 | 3556 | `b4e8660ef9d3dfcb` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：思考日志；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/think_log.py` | 95 | 3556 | `b4e8660ef9d3dfcb` | full | `src/harness/think_log.rs` | v0.3.10y：作用域前缀过滤（3 命名空间 + 括号标签行）、<br> 框定、请求级 sink（set/reset/forward；per-request 隔离由调用方上下文承载）；1 项单测 |
 | `rag/app/__init__.py` | 15 | 622 | `177b91dd0511cf12` | full | `src/app_parsers.rs` | QA mode dispatch (naive/advanced/graph) ported v0.3.3aq: parser_for_method dispatch wired into pipeline.parse_document (chunk_method selects domain parser; production live, previously dead code). |
 | `rag/app/audio.py` | 64 | 2589 | `1081093ebb2de070` | full | `src/app_parsers.rs` | QA mode dispatch (naive/advanced/graph) ported v0.3.3aq: parser_for_method dispatch wired into pipeline.parse_document (chunk_method selects domain parser; production live, previously dead code). [v0.27.2 content changed: re-audit] |
 | `rag/app/book.py` | 209 | 9424 | `4f8be76c53738ff8` | full | `src/app_parsers.rs` | QA mode dispatch (naive/advanced/graph) ported v0.3.3aq: parser_for_method dispatch wired into pipeline.parse_document (chunk_method selects domain parser; production live, previously dead code). [v0.27.2 content changed: re-audit] |

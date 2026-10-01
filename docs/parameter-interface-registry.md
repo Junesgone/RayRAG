@@ -445,6 +445,7 @@
 | Compiler 参数（流程组件） | `compilation_template_group_id`（单数优先）与 `compilation_template_group_ids`（传统复数回退）；`check()` 归一化为列表，空组报 `Compilation Template Group does not support empty value.` | `{"compilation_template_group_id":"g1"}` |
 | Compiler 上游载荷 | `CompilerFromUpstream`：serde 别名 `_created_time`/`_elapsed_time`/`json`/`markdown`/`text`/`html`，`output_format ∈ {json,markdown,text,html,chunks}`，未知字段拒绝（↔ 上游 `extra="forbid"`） | `{"name":"doc.md","output_format":"markdown","markdown":"# a"}` |
 | Compiler 切分常量 | `PARSER_TEXT_CHUNK_TOKEN_SIZE=1024` / `PARSER_CANDIDATE_TOKEN_SIZE=128` / `PARSER_MIN_COARSE_CHUNK_TOKEN_SIZE=256` / `PARSER_MIN_SPLIT_CHARACTERS=24`（与上游 1:1） | `slumber_candidates(text, level, Some(1024))` |
+| agentic harness | 思考模式 `low`/`medium`/`high`/`ultra`（+`naive` 回退）；工具面 `retrieve`/`search_chunks`/`list_chunks`/`navigate_tree`/`navigate_structure`/`calculate`/`web_search`（`ultra` 另含 `graph_explore`）；关键词四面向 `entity`/`aliases`/`fact_type`/`qualifiers`（entity 与 qualifier ×3 加权、400 字符上限） | `get_mode("ultra")`：sca_max_rounds=5、turns=6 |
 | 结构图合并任务 | 任务类型 `structure_graph`/`structure_mindmap`/`timeline`/`session_graph`/`session_essence`/`structure`；行约定 `scope_kwd=doc|dataset`、`knowledge_graph_kwd ∈ {entity,relation}`、删除标记 `doc_deleted`（`deleted_doc_id`）、构建元数据 `kg_build_meta`（`build_timestamp_flt`）；常量 256 桶 / 500 冲洗 / 1000 页 / 32 嵌入批 | `is_structure_merge_task("structure_graph")` |
 
 ## 4. 变更流程

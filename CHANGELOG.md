@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.80] — 2026-10-01（对标批次 v0.3.10y）
+
+> W-4 起步：RAGFlow v0.27.2 agentic harness 基础层移植（`src/harness/`，纯 Rust）。
+
+- `src/harness/`：`HarnessChat` 契约 + `form_message`/`message_fit_in` 提示装配；chunk 字段访问器（`chunk_utils`）；思考模式表 `low/medium/high/ultra` + `naive` 回退（`config`）；四面向关键词加权抽取（`keywords`，`KEYWORDS_SYSTEM` 原文 + entity/qualifier ×3 + 400 字符上限）；LLM 用量计账（`stats`：phase 作用域、round/round-phase、tokens、日志表）；结构 outline QA（`structure_qa`）；报告提示词（`report_prompt`）；think 日志桥（`think_log`）；orchestrator/tools 包布局文档。
+- 台账 11 行 partial → full；worklist W-4 队列 27 → 16；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：`cargo test --lib harness::` 13 项全绿；fmt/clippy 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.79] — 2026-10-01（对标批次 v0.3.10x）
 
 > W-5 收尾：结构图采样服务 + 数据集级结构图合并任务全量移植（纯 Rust）——worklist **W-5 队列清零**。
