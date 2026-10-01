@@ -142,6 +142,381 @@ pub fn store_search(
         .map(Value::Object)
         .collect()
 }
+/// `_store_upsert`: update by id when present, else insert.
+pub fn store_upsert(
+    store: &dyn crate::doc_store::DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc: &Value,
+) {
+    let index = index_name(tenant_id);
+    let row_id = doc.get("id").and_then(Value::as_str).unwrap_or("");
+    let existing = store
+        .get(row_id, &index, &[kb_id.to_string()])
+        .ok()
+        .flatten();
+    if existing.is_some() {
+        let mut upd = doc.as_object().cloned().unwrap_or_default();
+        upd.remove("id");
+        let condition: crate::doc_store::FilterCondition =
+            [("id".to_string(), Value::String(row_id.to_string()))]
+                .into_iter()
+                .collect();
+        let _ = store.update(&condition, &upd, &index, kb_id);
+    } else {
+        if let Some(map) = doc.as_object().cloned() {
+            let _ = store.insert(&[map], &index, kb_id);
+        }
+    }
+}
+
+/// `_store_delete`: delete one row by id (best-effort).
+pub fn store_delete(
+    store: &dyn crate::doc_store::DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    row_id: &str,
+) {
+    let index = index_name(tenant_id);
+    let condition: crate::doc_store::FilterCondition =
+        [("id".to_string(), serde_json::json!([row_id]))]
+            .into_iter()
+            .collect();
+    let _ = store.delete(&condition, &index, kb_id);
+}
+
+/// `_vector_len`.
+pub fn vector_len(vec: Option<&Value>) -> usize {
+    vec.and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0)
+}
+
+/// `_cosine_sim`: cosine similarity (0.0 on shape/zero mismatch).
+pub fn cosine_sim(a: &[f32], b: &[f32]) -> f64 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0f64;
+    let mut na = 0.0f64;
+    let mut nb = 0.0f64;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += (*x as f64) * (*y as f64);
+        na += (*x as f64) * (*x as f64);
+        nb += (*y as f64) * (*y as f64);
+    }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+/// `_tokenize` (coarse): `rag_tokenizer.tokenize` via the crate's search
+/// tokenizer (space-joined).
+pub fn tokenize(text: &str) -> String {
+    crate::structure_compile::tokenize_for_search(text)
+        .0
+        .join(" ")
+}
+
+/// `_fine_tokenize`: `rag_tokenizer.fine_grained_tokenize` over the coarse
+/// tokens (the crate tokenizer derives both passes from one call).
+pub fn fine_tokenize(coarse: &str) -> String {
+    crate::structure_compile::tokenize_for_search(coarse)
+        .1
+        .join(" ")
+}
+
+fn nav_summary_hash(summary: &str) -> String {
+    let digest = xxhash_rust::xxh3::xxh3_64(summary.as_bytes());
+    let hex = format!("{digest:016x}");
+    hex.chars().take(12).collect()
+}
+
+/// `_make_nav_doc_row`: one document leaf row.
+pub fn make_nav_doc_row(
+    kb_id: &str,
+    doc_id: &str,
+    summary: &str,
+    parent_kwd: &str,
+    depth_int: i64,
+    embedding: &[f32],
+    graph_content: &str,
+) -> Value {
+    let kw_text = if graph_content.is_empty() {
+        summary
+    } else {
+        graph_content
+    };
+    let mut payload = serde_json::Map::new();
+    payload.insert("type".to_string(), Value::String("nav_doc".to_string()));
+    payload.insert(
+        "description".to_string(),
+        Value::String(summary.to_string()),
+    );
+    payload.insert(
+        "keywords".to_string(),
+        serde_json::json!(nav_keywords(kw_text)),
+    );
+    payload.insert(
+        "entities".to_string(),
+        serde_json::json!(nav_entities(kw_text)),
+    );
+    if !graph_content.is_empty() {
+        payload.insert(
+            "graph_content".to_string(),
+            Value::String(graph_content.to_string()),
+        );
+    }
+    let ltks = tokenize(kw_text);
+    let mut row = serde_json::Map::new();
+    row.insert("id".to_string(), Value::String(nav_doc_id(doc_id)));
+    row.insert("kb_id".to_string(), Value::String(kb_id.to_string()));
+    row.insert("doc_id".to_string(), Value::String(doc_id.to_string()));
+    row.insert(
+        "compile_kwd".to_string(),
+        Value::String(COMPILE_KWD.to_string()),
+    );
+    row.insert(
+        "knowledge_graph_kwd".to_string(),
+        Value::String("entity".to_string()),
+    );
+    row.insert("type_kwd".to_string(), Value::String("nav_doc".to_string()));
+    row.insert(
+        "name".to_string(),
+        Value::String(format!("{parent_kwd}_{}", nav_summary_hash(summary))),
+    );
+    row.insert(
+        "parent_kwd".to_string(),
+        Value::String(parent_kwd.to_string()),
+    );
+    row.insert("depth_int".to_string(), serde_json::json!(depth_int));
+    row.insert("available_int".to_string(), serde_json::json!(0));
+    row.insert(
+        "content_with_weight".to_string(),
+        Value::String(Value::Object(payload).to_string()),
+    );
+    row.insert("content_ltks".to_string(), Value::String(ltks.clone()));
+    row.insert(
+        "content_sm_ltks".to_string(),
+        Value::String(fine_tokenize(&ltks)),
+    );
+    if !embedding.is_empty() {
+        row.insert(vec_field(embedding.len()), serde_json::json!(embedding));
+    }
+    Value::Object(row)
+}
+
+/// `_make_nav_cluster_row`: one internal tree node row.
+pub fn make_nav_cluster_row(
+    kb_id: &str,
+    name: &str,
+    description: &str,
+    parent_kwd: &str,
+    depth_int: i64,
+    doc_ids: &[String],
+    embedding: &[f32],
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("type".to_string(), Value::String("nav_cluster".to_string()));
+    payload.insert(
+        "description".to_string(),
+        Value::String(description.to_string()),
+    );
+    payload.insert(
+        "keywords".to_string(),
+        serde_json::json!(nav_keywords(description)),
+    );
+    payload.insert(
+        "entities".to_string(),
+        serde_json::json!(nav_entities(description)),
+    );
+    let ltks = tokenize(description);
+    let mut row = serde_json::Map::new();
+    row.insert("id".to_string(), Value::String(nav_cluster_id(kb_id, name)));
+    row.insert("kb_id".to_string(), Value::String(kb_id.to_string()));
+    row.insert("doc_id".to_string(), Value::String(kb_id.to_string()));
+    row.insert(
+        "compile_kwd".to_string(),
+        Value::String(COMPILE_KWD.to_string()),
+    );
+    row.insert(
+        "knowledge_graph_kwd".to_string(),
+        Value::String("entity".to_string()),
+    );
+    row.insert(
+        "type_kwd".to_string(),
+        Value::String("nav_cluster".to_string()),
+    );
+    row.insert("name".to_string(), Value::String(name.to_string()));
+    row.insert(
+        "parent_kwd".to_string(),
+        Value::String(parent_kwd.to_string()),
+    );
+    row.insert("depth_int".to_string(), serde_json::json!(depth_int));
+    row.insert("doc_ids_kwd".to_string(), serde_json::json!(doc_ids));
+    row.insert(
+        "doc_count_int".to_string(),
+        serde_json::json!(doc_ids.len()),
+    );
+    row.insert("available_int".to_string(), serde_json::json!(0));
+    row.insert(
+        "content_with_weight".to_string(),
+        Value::String(Value::Object(payload).to_string()),
+    );
+    row.insert("content_ltks".to_string(), Value::String(ltks.clone()));
+    row.insert(
+        "content_sm_ltks".to_string(),
+        Value::String(fine_tokenize(&ltks)),
+    );
+    if !embedding.is_empty() {
+        row.insert(vec_field(embedding.len()), serde_json::json!(embedding));
+    }
+    Value::Object(row)
+}
+
+/// `_nav_keywords`: routing tag-words from a summary (zero-LLM).
+pub fn nav_keywords(summary: &str) -> Vec<String> {
+    nav_keywords_limited(summary, 6)
+}
+
+/// `_nav_keywords(summary, max_kwds)`.
+pub fn nav_keywords_limited(summary: &str, max_kwds: usize) -> Vec<String> {
+    let tokens: Vec<String> = tokenize(summary)
+        .split_whitespace()
+        .map(|token| token.to_string())
+        .collect();
+    let mut seen: Vec<String> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    for token in tokens {
+        let token = token.trim().to_string();
+        let lower = token.to_lowercase();
+        if token.chars().count() < 2
+            || token.chars().all(|c| c.is_ascii_digit())
+            || NAV_STOP_WORDS.contains(&lower.as_str())
+            || seen.iter().any(|existing| existing == &lower)
+        {
+            continue;
+        }
+        seen.push(lower);
+        out.push(token);
+        if out.len() >= max_kwds {
+            break;
+        }
+    }
+    out
+}
+
+/// `_nav_entities`: likely named entities from a summary (zero-LLM heuristic:
+/// English capitalized sequences first, then tokenizer-based for CJK).
+pub fn nav_entities(summary: &str) -> Vec<String> {
+    nav_entities_limited(summary, 6)
+}
+
+/// `_nav_entities(summary, max_entities)`.
+pub fn nav_entities_limited(summary: &str, max_entities: usize) -> Vec<String> {
+    let text = summary;
+    let mut entities: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    let capitalize =
+        regex::Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b").expect("entity regex");
+    for hit in capitalize.captures_iter(text) {
+        let ent = hit[1].trim().to_string();
+        let key = ent.to_lowercase();
+        if !NAV_STOP_WORDS.contains(&key.as_str()) && !seen.iter().any(|existing| existing == &key)
+        {
+            seen.push(key);
+            entities.push(ent);
+            if entities.len() >= max_entities {
+                return entities;
+            }
+        }
+    }
+    for token in tokenize(text).split_whitespace() {
+        let token = token.trim().to_string();
+        if token.chars().count() < 3 || token.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if token.is_ascii()
+            && token
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_lowercase())
+                .unwrap_or(false)
+        {
+            continue;
+        }
+        let key = token.to_lowercase();
+        if NAV_STOP_WORDS.contains(&key.as_str()) || seen.iter().any(|existing| existing == &key) {
+            continue;
+        }
+        seen.push(key);
+        entities.push(token);
+        if entities.len() >= max_entities {
+            break;
+        }
+    }
+    entities
+}
+
+/// `_as_str_list`.
+pub fn as_str_list(value: Option<&Value>) -> Vec<String> {
+    match value {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::String(text)) => vec![text.clone()],
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect(),
+        Some(other) => vec![other.to_string()],
+    }
+}
+
+/// `_matches_condition`: simple equality filters used by dataset navigation.
+pub fn matches_condition(row: &Value, condition: &Value) -> bool {
+    let Some(condition_map) = condition.as_object() else {
+        return true;
+    };
+    for (field, expected) in condition_map {
+        let expected_values = as_str_list(Some(expected));
+        if expected_values.is_empty() || field == "kb_id" {
+            continue;
+        }
+        let actual_values = as_str_list(row.get(field));
+        let matched = actual_values
+            .iter()
+            .any(|actual| expected_values.iter().any(|item| actual == item));
+        if !matched {
+            return false;
+        }
+    }
+    true
+}
+
+/// `_in_nav_scope`: whether a nav row belongs to the given document scope.
+pub fn in_nav_scope(row: &Value, allowed_docs: Option<&std::collections::HashSet<String>>) -> bool {
+    let Some(allowed) = allowed_docs else {
+        return true;
+    };
+    if allowed.is_empty() {
+        return true;
+    }
+    let doc_ids = as_str_list(row.get("doc_ids_kwd"));
+    if !doc_ids.is_empty() {
+        return doc_ids.iter().any(|doc| allowed.contains(doc));
+    }
+    let doc_id = row
+        .get("doc_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    allowed.contains(&doc_id)
+}
+
 #[cfg(test)]
 mod dataset_nav_tests {
     use super::*;
@@ -274,5 +649,97 @@ mod dataset_nav_tests {
         assert_eq!(rows[0]["name"], json!("A"));
         assert!(store_get(&store, "t1", "kb1", "r1").is_none());
         assert_eq!(*store.gets.lock().unwrap(), 1, "get was attempted");
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part2_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn vector_and_cosine_math() {
+        assert_eq!(vector_len(Some(&json!([1.0, 2.0]))), 2);
+        assert_eq!(vector_len(None), 0);
+        assert_eq!(vector_len(Some(&json!(5))), 0);
+        let sim = cosine_sim(&[1.0, 0.0], &[1.0, 0.0]);
+        assert!((sim - 1.0).abs() < 1e-9);
+        assert_eq!(cosine_sim(&[1.0], &[1.0, 0.0]), 0.0, "shape mismatch");
+        assert_eq!(cosine_sim(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn nav_rows_have_expected_shape() {
+        let row = make_nav_doc_row("kb1", "d1", "Alpha doc", "root", 1, &[0.1, 0.2], "");
+        assert_eq!(row["type_kwd"], json!("nav_doc"));
+        assert_eq!(row["compile_kwd"], json!("dataset_nav"));
+        assert_eq!(row["available_int"], json!(0));
+        assert!(row["name"].as_str().unwrap().starts_with("root_"));
+        assert!(row.get("q_2_vec").is_some());
+        let payload: Value =
+            serde_json::from_str(row["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["type"], json!("nav_doc"));
+        assert!(payload.get("graph_content").is_none());
+
+        let cluster = make_nav_cluster_row(
+            "kb1",
+            "Topic",
+            "About Topic",
+            "root",
+            0,
+            &["d1".to_string(), "d2".to_string()],
+            &[],
+        );
+        assert_eq!(cluster["type_kwd"], json!("nav_cluster"));
+        assert_eq!(cluster["doc_count_int"], json!(2));
+        assert_eq!(cluster["doc_ids_kwd"], json!(["d1", "d2"]));
+        assert!(
+            cluster.get("q_2_vec").is_none(),
+            "no embedding -> no vec field"
+        );
+    }
+
+    #[test]
+    fn graph_content_replaces_keyword_source() {
+        let row = make_nav_doc_row("kb1", "d1", "summary", "root", 1, &[], "Graph Alpha Beta");
+        let payload: Value =
+            serde_json::from_str(row["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["graph_content"], json!("Graph Alpha Beta"));
+    }
+
+    #[test]
+    fn keywords_and_entities_are_deduped_and_capped() {
+        let keywords = nav_keywords_limited("Alpha Beta Gamma Delta Epsilon Zeta Eta", 3);
+        assert_eq!(keywords.len(), 3);
+        let entities = nav_entities_limited("New York City and Machine Learning work", 2);
+        assert_eq!(entities.len(), 2);
+        assert!(entities.contains(&"New York City".to_string()));
+    }
+
+    #[test]
+    fn condition_and_scope_matrix() {
+        let row = json!({"doc_id": "d1", "type_kwd": "nav_doc", "kb_id": "kb1"});
+        assert!(matches_condition(
+            &row,
+            &json!({"type_kwd": "nav_doc", "kb_id": "kb9"})
+        ));
+        assert!(!matches_condition(
+            &row,
+            &json!({"type_kwd": "nav_cluster"})
+        ));
+        assert!(
+            matches_condition(&row, &json!({"type_kwd": []})),
+            "empty filter passes"
+        );
+
+        let cluster = json!({"doc_id": "kb1", "doc_ids_kwd": ["d1", "d2"]});
+        let mut allowed = std::collections::HashSet::new();
+        allowed.insert("d1".to_string());
+        assert!(in_nav_scope(&cluster, Some(&allowed)));
+        let mut allowed_other = std::collections::HashSet::new();
+        allowed_other.insert("d9".to_string());
+        assert!(!in_nav_scope(&cluster, Some(&allowed_other)));
+        assert!(in_nav_scope(&row, Some(&allowed)));
+        assert!(!in_nav_scope(&row, Some(&allowed_other)));
+        assert!(in_nav_scope(&row, None), "no scope allows everything");
     }
 }
