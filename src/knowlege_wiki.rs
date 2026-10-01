@@ -2465,3 +2465,458 @@ mod wiki_part3_tests {
         assert!(!prompt.contains("hello"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 4 — KB-wide MAP aggregation, input-hash fingerprint and the REDUCE
+// resume cache (`_wiki_load_all_map_extracts` .. `_wiki_persist_reduce`).
+//
+// Adaptation note: upstream resolves disabled documents through
+// `DocumentService`; the host injects the disabled-id set here instead.
+// The MAP input fingerprint uses xxh3-64 (repo-wide hash divergence).
+// ---------------------------------------------------------------------------
+
+/// `WIKI_REDUCE_COMPILE_KWD`.
+pub const WIKI_REDUCE_COMPILE_KWD: &str = "wiki_reduce_result";
+
+/// `_wiki_load_all_map_extracts`: merge every `wiki_map_extract` row of the
+/// KB into one extract-shaped dict (disabled documents excluded).
+pub fn load_all_map_extracts(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+) -> Value {
+    let fields: Vec<String> = ["id", "content_with_weight", "doc_id"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_MAP_COMPILE_KWD.to_string()),
+    );
+    let mut merged = empty_extract();
+    let mut seen_topics: BTreeSet<String> = BTreeSet::new();
+    let mut offset = 0usize;
+    loop {
+        let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, offset, 1000) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!(error = %err, "wiki_reduce: failed to page wiki_map_extract rows");
+                break;
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            if !wiki_doc_ids(row.get("doc_id").unwrap_or(&Value::Null))
+                .is_disjoint(disabled_doc_ids)
+            {
+                continue;
+            }
+            let content = row
+                .get("content_with_weight")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if content.is_empty() {
+                continue;
+            }
+            let payload: Value = match serde_json::from_str(content) {
+                Ok(payload) => payload,
+                Err(_) => {
+                    tracing::debug!("wiki_reduce: skipping unparseable extract row");
+                    continue;
+                }
+            };
+            if !payload.is_object() {
+                continue;
+            }
+            for key in EXTRACT_LIST_KEYS {
+                if let Some(Value::Array(items)) = payload.get(key) {
+                    if let Some(target) = merged.get_mut(key).and_then(Value::as_array_mut) {
+                        target.extend(items.iter().filter(|item| item.is_object()).cloned());
+                    }
+                }
+            }
+            if let Some(Value::Array(topics)) = payload.get("topics") {
+                for topic in topics {
+                    if let Some(text) = topic.as_str() {
+                        if !text.is_empty() && seen_topics.insert(text.to_string()) {
+                            if let Some(target) =
+                                merged.get_mut("topics").and_then(Value::as_array_mut)
+                            {
+                                target.push(topic.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if rows.len() < 1000 {
+            break;
+        }
+        offset += 1000;
+    }
+    merged
+}
+
+/// `_wiki_all_map_doc_ids`: distinct `doc_id` across every MAP row.
+pub fn all_map_doc_ids(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+) -> Vec<String> {
+    let fields: Vec<String> = ["id", "doc_id"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_MAP_COMPILE_KWD.to_string()),
+    );
+    let mut doc_ids: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut offset = 0usize;
+    loop {
+        let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, offset, 1000) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    kb = kb_id,
+                    offset,
+                    "wiki: failed to scan MAP doc ids"
+                );
+                break;
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            for doc_id in wiki_doc_ids(row.get("doc_id").unwrap_or(&Value::Null)) {
+                if !disabled_doc_ids.contains(&doc_id) && seen.insert(doc_id.clone()) {
+                    doc_ids.push(doc_id);
+                }
+            }
+        }
+        if rows.len() < 1000 {
+            break;
+        }
+        offset += 1000;
+    }
+    doc_ids
+}
+
+/// `_wiki_compute_map_input_hash`: fingerprint of the current MAP rows.
+/// A partial scan returns `""` so REDUCE / PLAN fall through to a full run.
+pub fn compute_map_input_hash(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    disabled_doc_ids: &BTreeSet<String>,
+) -> String {
+    let fields: Vec<String> = ["id", "doc_id", "source_chunk_ids", "chunk_hash_kwd"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_MAP_COMPILE_KWD.to_string()),
+    );
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut offset = 0usize;
+    loop {
+        let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, offset, 128) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    kb = kb_id,
+                    offset,
+                    "wiki: failed to compute MAP input hash"
+                );
+                return String::new();
+            }
+        };
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            if !wiki_doc_ids(row.get("doc_id").unwrap_or(&Value::Null))
+                .is_disjoint(disabled_doc_ids)
+            {
+                continue;
+            }
+            let chunk_hash = row
+                .get("chunk_hash_kwd")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if let Some(Value::Array(source)) = row.get("source_chunk_ids") {
+                for cid in source {
+                    if let Some(text) = cid.as_str() {
+                        if !text.is_empty() {
+                            pairs.push((text.to_string(), chunk_hash.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        if rows.len() < 128 {
+            break;
+        }
+        offset += 128;
+    }
+    pairs.sort();
+    let body = pairs
+        .iter()
+        .map(|(cid, hash)| format!("{cid}:{hash}"))
+        .collect::<Vec<String>>()
+        .join("|")
+        + "|"
+        + WIKI_PIPELINE_REV;
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(body.as_bytes()))
+}
+
+/// `_wiki_load_reduce_resume`: `(cached_result, stored_input_hash)` or None.
+pub fn load_reduce_resume(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> Option<(Value, String)> {
+    let fields: Vec<String> = ["id", "content_with_weight", "input_hash_kwd"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_REDUCE_COMPILE_KWD.to_string()),
+    );
+    let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(error = %err, "wiki_reduce: failed to load resume cache");
+            return None;
+        }
+    };
+    let row = rows.into_iter().next()?;
+    let content = row
+        .get("content_with_weight")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if content.is_empty() {
+        return None;
+    }
+    let cached: Value = match serde_json::from_str(content) {
+        Ok(cached) => cached,
+        Err(_) => {
+            tracing::debug!("wiki_reduce: cached result unparseable; ignoring");
+            return None;
+        }
+    };
+    if !cached.is_object() {
+        return None;
+    }
+    let stored_hash = row
+        .get("input_hash_kwd")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some((cached, stored_hash))
+}
+
+/// `_wiki_persist_reduce`: upsert the single KB-scoped REDUCE result row.
+pub fn persist_reduce(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    reduced: &Value,
+    input_hash: &str,
+    source_doc_ids: &[String],
+) {
+    let kb_id_str = kb_id.to_string();
+    let row_id = stable_row_id(&[WIKI_REDUCE_COMPILE_KWD.to_string(), kb_id_str.clone()]);
+    let mut doc = Map::new();
+    doc.insert("id".to_string(), Value::String(row_id));
+    doc.insert("doc_id".to_string(), Value::String(kb_id_str.clone()));
+    doc.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_REDUCE_COMPILE_KWD.to_string()),
+    );
+    doc.insert(
+        "source_id".to_string(),
+        Value::Array(vec![Value::String(kb_id_str)]),
+    );
+    doc.insert(
+        "source_doc_ids".to_string(),
+        Value::Array(
+            source_doc_ids
+                .iter()
+                .map(|doc_id| Value::String(doc_id.clone()))
+                .collect(),
+        ),
+    );
+    doc.insert(
+        "input_hash_kwd".to_string(),
+        Value::String(input_hash.to_string()),
+    );
+    doc.insert(
+        "content_with_weight".to_string(),
+        Value::String(reduced.to_string()),
+    );
+    doc.insert("available_int".to_string(), json!(0));
+
+    let mut delete_condition = Map::new();
+    delete_condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_REDUCE_COMPILE_KWD.to_string()),
+    );
+    if let Err(err) = store.delete(&delete_condition, &index_name(tenant_id), kb_id) {
+        tracing::debug!(
+            error = %err,
+            "wiki_reduce: prior result delete failed; will overwrite by id"
+        );
+    }
+    if let Err(err) = store.insert(&[doc], &index_name(tenant_id), kb_id) {
+        tracing::error!(error = %err, "wiki_reduce: failed to persist result row");
+    }
+}
+
+#[cfg(test)]
+mod wiki_part4_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+
+    fn insert_docs(store: &MemoryDocStore, docs: &[Value]) {
+        let rows: Vec<DocRow> = docs
+            .iter()
+            .filter_map(|doc| doc.as_object().cloned())
+            .collect();
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    #[test]
+    fn load_all_merges_and_skips_disabled() {
+        let store = MemoryDocStore::new();
+        insert_docs(
+            &store,
+            &[
+                build_resume_doc(
+                    "c1",
+                    "d1",
+                    &json!({"entities": [{"name": "A"}], "topics": ["t1"]}),
+                    "h1",
+                ),
+                build_resume_doc(
+                    "c2",
+                    "d2",
+                    &json!({"entities": [{"name": "B"}], "claims": [{"statement": "s"}], "topics": ["t1", "t2"]}),
+                    "h2",
+                ),
+                build_resume_doc(
+                    "c3",
+                    "d3",
+                    &json!({"entities": [{"name": "C"}], "topics": ["t9"]}),
+                    "h3",
+                ),
+            ],
+        );
+        let disabled = BTreeSet::from(["d3".to_string()]);
+        let merged = load_all_map_extracts(&store, "t1", "kb1", &disabled);
+        assert_eq!(merged["entities"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(merged["topics"], json!(["t1", "t2"]));
+    }
+
+    #[test]
+    fn all_doc_ids_dedups_and_excludes_disabled() {
+        let store = MemoryDocStore::new();
+        insert_docs(
+            &store,
+            &[
+                build_resume_doc("c1", "d1", &empty_extract(), "h1"),
+                build_resume_doc("c2", "d1", &empty_extract(), "h2"),
+                build_resume_doc("c3", "d2", &empty_extract(), "h3"),
+                build_resume_doc("c4", "d3", &empty_extract(), "h4"),
+            ],
+        );
+        let disabled = BTreeSet::from(["d3".to_string()]);
+        let mut ids = all_map_doc_ids(&store, "t1", "kb1", &disabled);
+        ids.sort();
+        assert_eq!(ids, vec!["d1".to_string(), "d2".to_string()]);
+    }
+
+    #[test]
+    fn input_hash_stable_and_row_sensitive() {
+        let store = MemoryDocStore::new();
+        let disabled = BTreeSet::new();
+        let empty = compute_map_input_hash(&store, "t1", "kb1", &disabled);
+        let expected = format!(
+            "{:016x}",
+            xxhash_rust::xxh3::xxh3_64(format!("|{}", WIKI_PIPELINE_REV).as_bytes())
+        );
+        assert_eq!(empty, expected);
+        insert_docs(
+            &store,
+            &[build_resume_doc("c1", "d1", &empty_extract(), "h1")],
+        );
+        let one = compute_map_input_hash(&store, "t1", "kb1", &disabled);
+        assert_ne!(one, empty);
+        assert_eq!(one, compute_map_input_hash(&store, "t1", "kb1", &disabled));
+        insert_docs(
+            &store,
+            &[build_resume_doc("c2", "d1", &empty_extract(), "h2")],
+        );
+        assert_ne!(compute_map_input_hash(&store, "t1", "kb1", &disabled), one);
+    }
+
+    #[test]
+    fn reduce_resume_roundtrip_and_single_row() {
+        let store = MemoryDocStore::new();
+        assert!(load_reduce_resume(&store, "t1", "kb1").is_none());
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [{"name": "A"}]}),
+            "IH1",
+            &["d1".to_string(), "d2".to_string()],
+        );
+        let (cached, hash) = load_reduce_resume(&store, "t1", "kb1").expect("resume");
+        assert_eq!(hash, "IH1");
+        assert_eq!(cached["entities"][0]["name"], json!("A"));
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [{"name": "B"}]}),
+            "IH2",
+            &["d1".to_string()],
+        );
+        let (cached2, hash2) = load_reduce_resume(&store, "t1", "kb1").expect("resume2");
+        assert_eq!(hash2, "IH2");
+        assert_eq!(cached2["entities"][0]["name"], json!("B"));
+        let mut condition = Map::new();
+        condition.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_REDUCE_COMPILE_KWD.to_string()),
+        );
+        let query = SearchQuery {
+            select_fields: vec!["id".to_string()],
+            condition,
+            match_expressions: Vec::new(),
+            offset: 0,
+            limit: 10,
+            index_names: vec![index_name("t1")],
+            dataset_ids: vec!["kb1".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(store.search(&query).unwrap().total, 1);
+    }
+}
