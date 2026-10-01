@@ -4318,3 +4318,569 @@ mod wiki_incremental_part7_tests {
         assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 8a — Mode A prompt builders (`_build_source_chunks_block` ..
+// `_wiki_entity_planning_text`).
+//
+// Adaptation note: prompts are assembled from literal line blocks so the
+// templates need no brace escaping; the 50/30-item caps mirror upstream.
+// ---------------------------------------------------------------------------
+
+/// `_build_source_chunks_block`: verbatim source block for writer prompts.
+pub fn build_source_chunks_block(source_chunks: &[Value], max_budget: usize) -> String {
+    if source_chunks.is_empty() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for chunk in source_chunks {
+        let cid = ["id", "chunk_id"]
+            .iter()
+            .find_map(|key| chunk.get(*key))
+            .and_then(|value| match value {
+                Value::String(text) if !text.is_empty() => Some(text.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                _ => None,
+            });
+        let text = ["content_with_weight", "text"]
+            .iter()
+            .find_map(|key| chunk.get(*key))
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty());
+        let (Some(cid), Some(text)) = (cid, text) else {
+            continue;
+        };
+        let block = if chunk
+            .get("_verbatim")
+            .map(crate::harness::knowlege_wiki::json_truthy)
+            .unwrap_or(false)
+        {
+            format!("[SOURCE {cid}]\n{text}")
+        } else {
+            format!("[CHUNK {cid}]\n{text}")
+        };
+        if total + block.chars().count() + 2 > max_budget {
+            break;
+        }
+        parts.push(block.clone());
+        total += block.chars().count() + 2;
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    if total >= max_budget {
+        parts.push("[…further source chunks omitted to fit context budget…]".to_string());
+    }
+    parts.join("\n\n")
+}
+
+fn bullet_lines(values: &[String], limit: usize) -> String {
+    values
+        .iter()
+        .take(limit)
+        .map(|value| format!("- {value}"))
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+fn claims_bullet_text(claims: &[Value]) -> String {
+    claims
+        .iter()
+        .map(|claim| format!("- {}", claim_text_of(claim)))
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+/// `_build_mode_a_generate_prompt`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_mode_a_generate_prompt(
+    page_id: &str,
+    page_title: &str,
+    claims: Option<&[Value]>,
+    source_chunks: Option<&[Value]>,
+    available_pages: Option<&[String]>,
+    contextual_hints: &str,
+    topic_candidates: Option<&[String]>,
+    member_evidence: Option<&[Value]>,
+) -> String {
+    let chunks_text =
+        build_source_chunks_block(source_chunks.unwrap_or(&[]), WIKI_SOURCE_BUDGET_CHARS);
+    let claims = claims.unwrap_or(&[]);
+    let claims_text = if claims.is_empty() {
+        "(no claims)".to_string()
+    } else {
+        claims_bullet_text(claims)
+    };
+    let member_text = build_member_evidence_block(member_evidence);
+    let topics_block = bullet_lines(
+        topic_candidates.unwrap_or(&[]),
+        WIKI_PAGE_TOPIC_CANDIDATE_LIMIT,
+    );
+    let topics_block = if topics_block.is_empty() {
+        "(none; create a short canonical topic from the page evidence)".to_string()
+    } else {
+        topics_block
+    };
+    let pages_block = bullet_lines(available_pages.unwrap_or(&[]), 50);
+    let pages_block = if pages_block.is_empty() {
+        "(none)".to_string()
+    } else {
+        pages_block
+    };
+    let member_text = if member_text.is_empty() {
+        "(single member page)".to_string()
+    } else {
+        member_text
+    };
+    let chunks_text = if chunks_text.is_empty() {
+        "(no source chunks available)".to_string()
+    } else {
+        chunks_text
+    };
+    format!(
+        "## Concept Page Identity\n- Page ID: {page_id}\n- Title: {page_title}\n\n## Required Page Members\n{member_text}\n\n## Source Chunks (verbatim source text — ground every fact in these)\n{chunks_text}\n\n## Extracted Claims (checklist)\n{claims_text}\n\n## Candidate Topics\n{topics_block}\n\n## Available Pages for [[wikilinks]]\n{pages_block}\n\n{contextual_hints}\n"
+    )
+}
+
+/// `_build_mode_a_modify_prompt`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_mode_a_modify_prompt(
+    page_id: &str,
+    page_title: &str,
+    existing_page: Option<&Value>,
+    additions: Option<&[Value]>,
+    retractions: Option<&[Value]>,
+    claims: Option<&[Value]>,
+    source_chunks: Option<&[Value]>,
+    available_pages: Option<&[String]>,
+    contextual_hints: &str,
+    topic_candidates: Option<&[String]>,
+    force_full: bool,
+    member_evidence: Option<&[Value]>,
+) -> String {
+    let existing_content = existing_page
+        .and_then(|page| page.get("md_with_weight"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let existing_topic = existing_page
+        .and_then(|page| page.get("topic_kwd"))
+        .map(|value| match value {
+            Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+            other => other.as_str().unwrap_or(""),
+        })
+        .unwrap_or("")
+        .to_string();
+    let topic_block = bullet_lines(
+        topic_candidates.unwrap_or(&[]),
+        WIKI_PAGE_TOPIC_CANDIDATE_LIMIT,
+    );
+    let topic_block = if topic_block.is_empty() {
+        "(none; retain the current topic when it still fits, otherwise create a short canonical topic from the page evidence)".to_string()
+    } else {
+        topic_block
+    };
+    let member_text = build_member_evidence_block(member_evidence);
+    let member_text = if member_text.is_empty() {
+        "(single member page)".to_string()
+    } else {
+        member_text
+    };
+
+    if !force_full {
+        let additions = additions.unwrap_or(&[]);
+        let additions_text = if additions.is_empty() {
+            "(none)".to_string()
+        } else {
+            claims_bullet_text(additions)
+        };
+        let retractions = retractions.unwrap_or(&[]);
+        let retractions_text = if retractions.is_empty() {
+            "(none)".to_string()
+        } else {
+            claims_bullet_text(retractions)
+        };
+        let chunks_text =
+            build_source_chunks_block(source_chunks.unwrap_or(&[]), WIKI_SOURCE_BUDGET_CHARS);
+        let pages_block = bullet_lines(available_pages.unwrap_or(&[]), 30);
+        let pages_block = if pages_block.is_empty() {
+            "(none)".to_string()
+        } else {
+            pages_block
+        };
+        let current = if existing_content.is_empty() {
+            "(empty)".to_string()
+        } else {
+            truncate_chars_p8(&existing_content, 10000)
+        };
+        let current_topic = if existing_topic.is_empty() {
+            "(none)".to_string()
+        } else {
+            existing_topic.clone()
+        };
+        return format!(
+            "## Page Identity\n- Page ID: {page_id}\n- Title: {page_title}\n\n## Required Page Members\n{member_text}\n\n## Current Page\n{current}\n\n## Current Topic\n{current_topic}\n\n## Candidate Topics\n{topic_block}\n\n## New Claims to Add\n{additions_text}\n\n## Claims to Retract\n{retractions_text}\n\n## Source Chunks for New Information (verbatim source text — ground every fact in these)\n{chunks_text}\n\n## Available Pages for [[wikilinks]]\n{pages_block}\n\n{contextual_hints}\n"
+        );
+    }
+
+    let chunks_text = build_source_chunks_block(source_chunks.unwrap_or(&[]), 120_000);
+    let chunks_text = if chunks_text.is_empty() {
+        "(none)".to_string()
+    } else {
+        chunks_text
+    };
+    let claims_text = claims_bullet_text(claims.unwrap_or(&[]));
+    let claims_text = if claims_text.is_empty() {
+        "(none)".to_string()
+    } else {
+        claims_text
+    };
+    let current_topic = if existing_topic.is_empty() {
+        "(none)".to_string()
+    } else {
+        existing_topic.clone()
+    };
+    let pages_block = bullet_lines(available_pages.unwrap_or(&[]), 50);
+    let pages_block = if pages_block.is_empty() {
+        "(none)".to_string()
+    } else {
+        pages_block
+    };
+    format!(
+        "## Page Identity\n- Page ID: {page_id}\n- Title: {page_title}\n\n## Required Page Members\n{member_text}\n\n## All Source Chunks (for full re-synthesis — verbatim source text)\n{chunks_text}\n\n## All Claims\n{claims_text}\n\n## Current Topic\n{current_topic}\n\n## Candidate Topics\n{topic_block}\n\n## Available Pages for [[wikilinks]]\n{pages_block}\n\n{contextual_hints}\n"
+    )
+}
+
+fn truncate_chars_p8(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
+/// `_build_member_evidence_block`.
+pub fn build_member_evidence_block(member_evidence: Option<&[Value]>) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    for member in member_evidence.unwrap_or(&[]) {
+        let name = member
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        let claims: Vec<Value> = member
+            .get("claims")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let claims_text: String = {
+            let lines: Vec<String> = claims
+                .iter()
+                .filter(|claim| claim.is_object() && !claim_text_of(claim).is_empty())
+                .map(|claim| format!("- {}", claim_text_of(claim)))
+                .collect();
+            if lines.is_empty() {
+                "(no extracted claims; use the member's source evidence)".to_string()
+            } else {
+                lines.join("\n")
+            }
+        };
+        let chunk_ids = member
+            .get("source_chunk_ids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|cid| match cid {
+                        Value::String(text) if !text.is_empty() => Some(text.clone()),
+                        Value::Number(number) => Some(number.to_string()),
+                        _ => None,
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let chunk_ids = if chunk_ids.is_empty() {
+            "(none)".to_string()
+        } else {
+            chunk_ids
+        };
+        blocks.push(format!(
+            "### Member: {name}\nClaims:\n{claims_text}\nSource chunk IDs: {chunk_ids}"
+        ));
+    }
+    blocks.join("\n\n")
+}
+
+/// `_WIKI_MODE_A_GENERATE_SYSTEM`.
+pub const WIKI_MODE_A_GENERATE_SYSTEM: &str = "You are a wiki COMPILER. Generate a new wiki page for the given concept using the provided source chunks and extracted claims.\n\n## LANGUAGE\nWrite the ENTIRE page in the SAME LANGUAGE as the source chunks. If the source chunks are written in Chinese, write the page in Chinese. Do not switch to English, and do not translate entity names (keep them verbatim: e.g. keep \"张伟\", do not write \"Zhang Wei\").\n\n## RULES\n1. CONCEPT PAGE: This is a single-concept wiki page. Organize by THEME, not by entity.\n2. CROSS-DOCUMENT SYNTHESIS: Weave information from multiple sources into coherent paragraphs. Compare evidence, explain contradictions.\n3. OPENING PARAGRAPH: 2-4 sentences defining the concept. Mention key entities. No heading.\n4. SECTIONS: H2 headings, prose first, then sub-points if needed.\n   Markdown formatting is mandatory: put every heading on its own line and separate every paragraph with a blank line.\n5. WIKILINKS: Use ONLY the exact page IDs listed in \"Available Pages for [[wikilinks]]\" (they already carry the entity/ or concept/ prefix). Insert [[EXACT_PAGE_ID]] on first mention of a related concept/entity. NEVER invent a link target, NEVER drop the prefix, NEVER write English names.\n6. DICTIONARY PREVENTION: Do NOT group content by source document. Do NOT create one section per entity. Do NOT write flat bullet lists.\n7. MEMBER COVERAGE: If \"Required Page Members\" lists multiple members, the page MUST contain grounded factual content about EVERY listed member. Do not silently omit or replace any member. If the members are unrelated, keep them in clearly separated subsections while preserving all supported facts.\n\n## SOURCE GROUNDING (COMPILER, not writer)\n- The \"Source Chunks\" section contains VERBATIM source text. Stay close to the source wording — reuse the source's own sentences and facts where possible.\n- Every newly added factual claim, entity, or numerical value MUST be directly supported by the provided source chunks. Do NOT invent facts, figures, dates, or relationships not present in the sources.\n- Do NOT add rhetorical filler (e.g. \"旨在帮助…\", \"designed to…\", \"aims to provide…\") unless it appears verbatim in a source.\n- If the sources disagree, present both views and add a \"## Contradictions\" section rather than silently picking one.\n\n## OUTPUT\nReturn ONLY the complete markdown page.\nFirst line: SUMMARY: {one-sentence description, 15-40 words}\nSecond line: TITLE: {a concise title covering all required page members}\nThird line: TOPIC: {the best short canonical topic for this page}\nThen the page content.\n\nTITLE is the human-readable page title, not the page ID. When multiple\nmembers are merged, synthesize a title covering the combined subject. For a\nsingle-member page, keep the supplied title unchanged.\n\nChoose TOPIC by understanding the page subject and evidence. Prefer a fitting\nitem from Candidate Topics. If none fits, create a concise topic in the source\nlanguage. Do not choose by superficial character or word overlap.\n";
+
+/// `_WIKI_MODE_A_MODIFY_SYSTEM`.
+pub const WIKI_MODE_A_MODIFY_SYSTEM: &str = "You are a wiki editor. Update the existing page by integrating new information and removing retracted content.\n\n## LANGUAGE\nWrite the ENTIRE page in the SAME LANGUAGE as the source chunks. If the source chunks are written in Chinese, write the page in Chinese. Do not switch to English, and do not translate entity names (keep them verbatim: e.g. keep \"张伟\", do not write \"Zhang Wei\").\n\n## RULES\n1. CONCEPT PAGE: This is a single-concept wiki page. Organize by THEME, not by entity.\n2. CROSS-DOCUMENT SYNTHESIS: Connect new claims to existing content. Weave them into the SAME paragraphs.\n3. OPENING PARAGRAPH: Should reflect the FULL updated picture.\n4. WIKILINKS: Keep existing and add new [[page_id]] links where appropriate. Use ONLY the exact page IDs listed in \"Available Pages for [[wikilinks]]\" (they already carry the entity/ or concept/ prefix). NEVER invent a link target, NEVER drop the prefix, NEVER write English names.\n5. For FULL RE-SYNTHESIS: Use all source chunks + all claims to rewrite from scratch.\n6. For INCREMENTAL MODIFY: Integrate additions, remove retracted content, keep unchanged content.\n7. MARKDOWN FORMATTING: Put every heading on its own line and separate every paragraph with a blank line. Do not return the whole page as one line.\n8. MEMBER COVERAGE: If \"Required Page Members\" lists multiple members, the updated page MUST retain grounded factual content about EVERY listed member. Do not silently omit any member.\n\n## DICTIONARY PREVENTION\n- Do NOT group content by source document.\n- Do NOT simply append new claims at the end.\n- Do NOT create one section per entity.\n\n## SOURCE GROUNDING (COMPILER, not writer)\n- The \"Source Chunks\" section contains VERBATIM source text. Stay close to the source wording — reuse the source's own sentences and facts where possible.\n- Every newly added factual claim, entity, or numerical value MUST be directly supported by the provided source chunks. Do NOT invent facts, figures, dates, or relationships not present in the sources.\n- Do NOT add rhetorical filler (e.g. \"旨在帮助…\", \"designed to…\", \"aims to provide…\") unless it appears verbatim in a source.\n- If new sources contradict existing page content, present both views and add a \"## Contradictions / Updates\" section rather than silently overwriting.\n\n## OUTPUT\nReturn ONLY the complete updated markdown page.\nFirst line: SUMMARY: {one-sentence description of what changed, 15-40 words}\nSecond line: TITLE: {a concise title covering all required page members}\nThird line: TOPIC: {the best short canonical topic for the complete updated page}\nThen the updated page content.\n\nTITLE is the human-readable page title, not the page ID. When multiple\nmembers are merged, rewrite the title to cover the complete updated subject.\nFor a single-member page, keep the supplied title unchanged.\n\nChoose TOPIC by understanding the complete page subject and evidence. Prefer a\nfitting item from Candidate Topics; retain Current Topic when it remains the\nbest fit. If neither fits, create a concise topic in the source language. Do\nnot choose by superficial character or word overlap.\n";
+
+/// `_wiki_build_contextual_hints`.
+pub fn wiki_build_contextual_hints(
+    _page_id: &str,
+    existing_page: Option<&Value>,
+    all_relations: &Map<String, Value>,
+) -> String {
+    let mut related: Vec<Value> = Vec::new();
+    if let Some(page) = existing_page {
+        if let Some(value) = page.get("related_kb_pages_kwd") {
+            let parsed = match value {
+                Value::String(text) if !text.is_empty() => serde_json::from_str::<Value>(text)
+                    .ok()
+                    .filter(Value::is_array)
+                    .unwrap_or_else(|| Value::Array(vec![value.clone()])),
+                Value::Array(_) => value.clone(),
+                _ => Value::Null,
+            };
+            if let Value::Array(items) = parsed {
+                related = items;
+            }
+        }
+    }
+    if related.is_empty() {
+        if let Some(page) = existing_page {
+            for name in as_str_list(page.get("entity_names_kwd")) {
+                if let Some(items) = all_relations.get(&name).and_then(Value::as_array) {
+                    related.extend(items.iter().cloned());
+                }
+            }
+        }
+    }
+    if related.is_empty() {
+        return String::new();
+    }
+
+    let mut lines: Vec<String> = vec![
+        "## Context: Related Entities & Concepts".to_string(),
+        "Reference them in the opening paragraph and relevant sections:".to_string(),
+    ];
+    for item in related.iter().take(10) {
+        let (entity_name, relation) = if item.is_object() {
+            let name = ["entity_name", "name", "slug"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string();
+            let relation = ["relation", "type"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .unwrap_or("related")
+                .to_string();
+            (name, relation)
+        } else {
+            (
+                item.as_str().unwrap_or("").trim().to_string(),
+                "related".to_string(),
+            )
+        };
+        if entity_name.is_empty() {
+            continue;
+        }
+        lines.push(format!("- [[{entity_name}]] — {relation}"));
+    }
+    lines.join("\n")
+}
+
+/// `_wiki_entity_planning_text`.
+pub fn wiki_entity_planning_text(entity: &Value, max_claims: usize) -> String {
+    let name = ["entity_name", "name", "term"]
+        .iter()
+        .find_map(|key| entity.get(*key).and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mut aliases_list = as_str_list(entity.get("aliases"));
+    aliases_list.truncate(5);
+    let aliases = aliases_list.join(", ");
+    let description = ["definition_excerpt", "description"]
+        .iter()
+        .find_map(|key| entity.get(*key).and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mut claims: Vec<String> = Vec::new();
+    if let Some(items) = entity.get("claims").and_then(Value::as_array) {
+        for claim in items.iter().take(max_claims) {
+            let statement = ["statement", "text"]
+                .iter()
+                .find_map(|key| claim.get(*key).and_then(Value::as_str));
+            if let Some(statement) = statement {
+                claims.push(statement.to_string());
+            }
+        }
+    }
+    let mut parts: Vec<String> = vec![format!("name={name}")];
+    if !aliases.is_empty() {
+        parts.push(format!("aliases={aliases}"));
+    }
+    if !description.is_empty() {
+        parts.push(format!("description={description}"));
+    }
+    if !claims.is_empty() {
+        parts.push(format!("evidence={}", claims.join(" | ")));
+    }
+    let mut relations: Vec<String> = Vec::new();
+    if let Some(items) = entity.get("relations").and_then(Value::as_array) {
+        for relation in items.iter().take(8) {
+            if !relation.is_object() {
+                continue;
+            }
+            let counterpart = ["entity", "counterpart"]
+                .iter()
+                .find_map(|key| relation.get(*key).and_then(Value::as_str));
+            let relation_type = relation
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("related");
+            if let Some(counterpart) = counterpart {
+                relations.push(format!("{relation_type}: {counterpart}"));
+            }
+        }
+    }
+    if !relations.is_empty() {
+        parts.push(format!("relations={}", relations.join(" | ")));
+    }
+    parts.join("; ")
+}
+
+#[cfg(test)]
+mod wiki_incremental_part8_tests {
+    use super::*;
+
+    #[test]
+    fn source_block_labels_and_budget() {
+        let chunks = vec![
+            json!({"id": "c1", "text": "plain text", "_verbatim": true}),
+            json!({"id": "c2", "content_with_weight": "condensed"}),
+            json!({"id": "", "text": "skip"}),
+            json!({"id": "c3", "text": ""}),
+        ];
+        let block = build_source_chunks_block(&chunks, WIKI_SOURCE_BUDGET_CHARS);
+        assert!(block.contains("[SOURCE c1]\nplain text"));
+        assert!(block.contains("[CHUNK c2]\ncondensed"));
+        assert!(!block.contains("skip"));
+        let tight = build_source_chunks_block(&chunks, 25);
+        assert!(tight.contains("[SOURCE c1]"));
+        assert!(!tight.contains("c2"));
+        assert!(build_source_chunks_block(&[], 100).is_empty());
+    }
+
+    #[test]
+    fn generate_prompt_sections() {
+        let claims = vec![json!({"statement": "s1"}), json!({"text": "s2"})];
+        let chunks = vec![json!({"id": "c1", "text": "body"})];
+        let pages = vec!["entity/a".to_string(), "concept/b".to_string()];
+        let topics = vec!["alpha".to_string()];
+        let prompt = build_mode_a_generate_prompt(
+            "concept/x",
+            "X",
+            Some(&claims),
+            Some(&chunks),
+            Some(&pages),
+            "HINTS",
+            Some(&topics),
+            None,
+        );
+        assert!(prompt.contains("- Page ID: concept/x"));
+        assert!(prompt.contains("## Required Page Members\n(single member page)"));
+        assert!(prompt.contains("[CHUNK c1]\nbody"));
+        assert!(prompt.contains("- s1\n- s2"));
+        assert!(prompt.contains("- alpha"));
+        assert!(prompt.contains("- entity/a\n- concept/b"));
+        assert!(prompt.ends_with("HINTS\n"));
+        let minimal = build_mode_a_generate_prompt("p", "T", None, None, None, "", None, None);
+        assert!(minimal.contains("(no claims)"));
+        assert!(minimal.contains("(no source chunks available)"));
+        assert!(minimal.contains("(none; create a short canonical topic"));
+        assert!(minimal.contains("\n(none)\n"));
+    }
+
+    #[test]
+    fn modify_prompt_modes() {
+        let existing = json!({"md_with_weight": "OLD", "topic_kwd": ["alpha"]});
+        let additions = vec![json!({"statement": "new"})];
+        let retractions = vec![json!({"statement": "old"})];
+        let incremental = build_mode_a_modify_prompt(
+            "concept/x",
+            "X",
+            Some(&existing),
+            Some(&additions),
+            Some(&retractions),
+            None,
+            None,
+            None,
+            "",
+            None,
+            false,
+            None,
+        );
+        assert!(incremental.contains("## Current Page\nOLD"));
+        assert!(incremental.contains("## Current Topic\nalpha"));
+        assert!(incremental.contains("## New Claims to Add\n- new"));
+        assert!(incremental.contains("## Claims to Retract\n- old"));
+        let full = build_mode_a_modify_prompt(
+            "concept/x",
+            "X",
+            Some(&existing),
+            None,
+            None,
+            Some(&[json!({"statement": "all"})]),
+            None,
+            None,
+            "",
+            None,
+            true,
+            None,
+        );
+        assert!(full.contains("## All Source Chunks (for full re-synthesis"));
+        assert!(full.contains("## All Claims\n- all"));
+        assert!(!full.contains("## New Claims to Add"));
+    }
+
+    #[test]
+    fn member_evidence_and_hints() {
+        let members = vec![
+            json!({"name": "Alpha", "claims": [{"statement": "s"}], "source_chunk_ids": ["c1", "c2"]}),
+            json!({"name": "", "claims": []}),
+            json!({"name": "Beta"}),
+        ];
+        let block = build_member_evidence_block(Some(&members));
+        assert!(block.contains("### Member: Alpha\nClaims:\n- s\nSource chunk IDs: c1, c2"));
+        assert!(block.contains("### Member: Beta\nClaims:\n(no extracted claims; use the member's source evidence)\nSource chunk IDs: (none)"));
+        assert!(build_member_evidence_block(None).is_empty());
+
+        let existing = json!({"related_kb_pages_kwd": "[{\"entity_name\": \"Gamma\", \"relation\": \"uses\"}]"});
+        let relations: Map<String, Value> = Map::new();
+        let hints = wiki_build_contextual_hints("concept/x", Some(&existing), &relations);
+        assert!(hints.contains("- [[Gamma]] — uses"));
+        let existing2 = json!({"entity_names_kwd": ["alpha"]});
+        let mut relations2: Map<String, Value> = Map::new();
+        relations2.insert(
+            "alpha".to_string(),
+            json!([{"entity_name": "Delta", "relation": "part_of"}]),
+        );
+        let hints2 = wiki_build_contextual_hints("concept/x", Some(&existing2), &relations2);
+        assert!(hints2.contains("- [[Delta]] — part_of"));
+        assert!(wiki_build_contextual_hints("p", None, &Map::new()).is_empty());
+    }
+
+    #[test]
+    fn entity_planning_text_composition() {
+        let entity = json!({
+            "entity_name": "Alpha",
+            "aliases": ["A", "B", "C", "D", "E", "F"],
+            "definition_excerpt": "def",
+            "claims": [{"statement": "s1"}, {"text": "s2"}, {"statement": "s3"}, {"statement": "s4"}],
+            "relations": [{"entity": "Beta", "type": "uses"}, {"nope": 1}, {"counterpart": "Gamma"}]
+        });
+        let text = wiki_entity_planning_text(&entity, 3);
+        assert_eq!(
+            text,
+            "name=Alpha; aliases=A, B, C, D, E; description=def; evidence=s1 | s2 | s3; relations=uses: Beta | related: Gamma"
+        );
+        assert_eq!(wiki_entity_planning_text(&json!({}), 3), "name=");
+    }
+}
