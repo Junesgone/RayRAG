@@ -1295,3 +1295,405 @@ mod wiki_incremental_part2_tests {
         assert_eq!(normalize_key("a.b/c"), "abc");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 3a — lightweight raw-entity extraction (`_as_str_list` ..
+// `_extract_raw_entities`).
+//
+// Adaptation note: internal sets become BTreeSets and are emitted as sorted
+// lists (upstream Python sets are unordered); string entities/concepts/
+// claims are parsed as JSON when possible.
+// ---------------------------------------------------------------------------
+
+/// `_as_str_list`: coerce a stored field (JSON string / list / None) to strings.
+pub fn as_str_list(raw: Option<&Value>) -> Vec<String> {
+    match raw {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::String(text)) => {
+            if text.is_empty() {
+                Vec::new()
+            } else {
+                match serde_json::from_str::<Value>(text) {
+                    Ok(parsed) => as_str_list(Some(&parsed)),
+                    Err(_) => vec![text.clone()],
+                }
+            }
+        }
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter(|item| !item.is_null())
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| item.to_string())
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `_as_int`: coerce numeric doc-store fields (some backends return strings).
+pub fn as_int(raw: Option<&Value>, default: i64) -> i64 {
+    match raw {
+        Some(Value::Number(number)) => number
+            .as_i64()
+            .or_else(|| number.as_f64().map(|float| float as i64))
+            .unwrap_or(default),
+        Some(Value::String(text)) => text.trim().parse::<i64>().unwrap_or(default),
+        Some(Value::Bool(flag)) => {
+            if *flag {
+                1
+            } else {
+                0
+            }
+        }
+        _ => default,
+    }
+}
+
+/// `_wiki_claim_chunk_ids`: chunk id(s) a MAP item is attributed to.
+pub fn wiki_claim_chunk_ids(claim: &Value) -> Vec<String> {
+    let Some(obj) = claim.as_object() else {
+        return Vec::new();
+    };
+    let ids = obj.get("chunk_ids");
+    if let Some(Value::String(text)) = ids {
+        if !text.is_empty() {
+            return vec![text.clone()];
+        }
+        return Vec::new();
+    }
+    if let Some(Value::Array(items)) = ids {
+        return items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    match obj.get("source_chunk_id").and_then(Value::as_str) {
+        Some(text) if !text.is_empty() => vec![text.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+/// `_wiki_dedupe_claims`.
+pub fn wiki_dedupe_claims(claims: &[Value]) -> Vec<Value> {
+    let mut result: Vec<Value> = Vec::new();
+    let mut seen: BTreeSet<(String, String, Vec<String>)> = BTreeSet::new();
+    for claim in claims {
+        let Some(obj) = claim.as_object() else {
+            continue;
+        };
+        let statement = obj
+            .get("statement")
+            .or_else(|| obj.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let doc = obj
+            .get("source_doc_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let mut chunks = wiki_claim_chunk_ids(claim);
+        chunks.sort();
+        let key = (statement, doc, chunks);
+        if seen.insert(key) {
+            result.push(claim.clone());
+        }
+    }
+    result
+}
+
+fn parse_json_object(value: &Value) -> Option<Value> {
+    match value {
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .filter(Value::is_object),
+        Value::Object(_) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn set_union_field(
+    entry: &mut Map<String, Value>,
+    field: &str,
+    values: impl IntoIterator<Item = String>,
+) {
+    let mut set: BTreeSet<String> = entry
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    for value in values {
+        if !value.is_empty() {
+            set.insert(value);
+        }
+    }
+    entry.insert(
+        field.to_string(),
+        Value::Array(set.into_iter().map(Value::String).collect()),
+    );
+}
+
+/// `_extract_raw_entities`: (lightweight entities, claim index).
+pub fn extract_raw_entities(map_results: &[Value]) -> (Vec<Value>, Map<String, Value>) {
+    let mut raw: Map<String, Value> = Map::new();
+    let mut claim_index: Map<String, Value> = Map::new();
+
+    let ensure_entry =
+        |raw: &mut Map<String, Value>, name: &str, entity_type: &str, aliases: Vec<String>| {
+            if !raw.contains_key(name) {
+                let mut entry = Map::new();
+                entry.insert("name".to_string(), Value::String(name.to_string()));
+                entry.insert("type".to_string(), Value::String(entity_type.to_string()));
+                entry.insert(
+                    "aliases".to_string(),
+                    Value::Array(aliases.into_iter().map(Value::String).collect()),
+                );
+                entry.insert("claim_count".to_string(), json!(0));
+                entry.insert("source_doc_ids".to_string(), Value::Array(Vec::new()));
+                entry.insert("source_chunk_ids".to_string(), Value::Array(Vec::new()));
+                raw.insert(name.to_string(), Value::Object(entry));
+            }
+        };
+
+    for mr in map_results {
+        let doc_id = mr
+            .get("doc_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+
+        if let Some(entities) = mr.get("entities").and_then(Value::as_array) {
+            for ent in entities {
+                let Some(ent) = parse_json_object(ent) else {
+                    continue;
+                };
+                let name = ent
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let entity_type = ent
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("entity")
+                    .to_string();
+                let aliases: Vec<String> = ent
+                    .get("aliases")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                ensure_entry(&mut raw, &name, &entity_type, aliases);
+                if let Some(entry) = raw.get_mut(&name).and_then(Value::as_object_mut) {
+                    set_union_field(entry, "source_doc_ids", vec![doc_id.clone()]);
+                    set_union_field(entry, "source_chunk_ids", wiki_claim_chunk_ids(&ent));
+                }
+            }
+        }
+
+        if let Some(concepts) = mr.get("concepts").and_then(Value::as_array) {
+            for concept in concepts {
+                let Some(concept) = parse_json_object(concept) else {
+                    continue;
+                };
+                let term = concept
+                    .get("term")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if term.is_empty() {
+                    continue;
+                }
+                ensure_entry(&mut raw, &term, "concept", vec![term.clone()]);
+                if let Some(entry) = raw.get_mut(&term).and_then(Value::as_object_mut) {
+                    set_union_field(entry, "source_doc_ids", vec![doc_id.clone()]);
+                    set_union_field(entry, "source_chunk_ids", wiki_claim_chunk_ids(&concept));
+                }
+            }
+        }
+
+        if let Some(claims) = mr.get("claims").and_then(Value::as_array) {
+            for claim in claims {
+                let Some(claim) = parse_json_object(claim) else {
+                    continue;
+                };
+                let subject = ["entity_name", "subject", "term"]
+                    .iter()
+                    .find_map(|key| claim.get(*key).and_then(Value::as_str))
+                    .unwrap_or("")
+                    .to_string();
+                if subject.is_empty() {
+                    continue;
+                }
+                if let Some(entry) = raw.get_mut(&subject).and_then(Value::as_object_mut) {
+                    let count = entry
+                        .get("claim_count")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0);
+                    entry.insert("claim_count".to_string(), json!(count + 1));
+                    set_union_field(entry, "source_chunk_ids", wiki_claim_chunk_ids(&claim));
+                    let bucket = claim_index
+                        .entry(subject.clone())
+                        .or_insert_with(|| Value::Array(Vec::new()));
+                    if let Some(items) = bucket.as_array_mut() {
+                        items.push(claim);
+                    }
+                }
+            }
+        }
+
+        if let Some(relations) = mr.get("relations").and_then(Value::as_array) {
+            for relation in relations {
+                let Some(relation) = parse_json_object(relation) else {
+                    continue;
+                };
+                let relation_chunks = wiki_claim_chunk_ids(&relation);
+                for endpoint in [
+                    relation.get("from").and_then(Value::as_str),
+                    relation.get("to").and_then(Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if let Some(entry) = raw.get_mut(endpoint).and_then(Value::as_object_mut) {
+                        set_union_field(entry, "source_chunk_ids", relation_chunks.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let result: Vec<Value> = raw
+        .into_values()
+        .map(|mut entry| {
+            if let Some(obj) = entry.as_object_mut() {
+                for field in ["source_doc_ids", "source_chunk_ids"] {
+                    if let Some(Value::Array(items)) = obj.get(field) {
+                        let mut sorted: Vec<String> = items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect();
+                        sorted.sort();
+                        obj.insert(
+                            field.to_string(),
+                            Value::Array(sorted.into_iter().map(Value::String).collect()),
+                        );
+                    }
+                }
+            }
+            entry
+        })
+        .collect();
+    (result, claim_index)
+}
+
+#[cfg(test)]
+mod wiki_incremental_part3_tests {
+    use super::*;
+
+    #[test]
+    fn as_str_list_and_as_int_shapes() {
+        assert_eq!(
+            as_str_list(Some(&json!(["a", null, 2]))),
+            vec!["a".to_string(), "2".to_string()]
+        );
+        assert_eq!(as_str_list(Some(&json!("a"))), vec!["a".to_string()]);
+        assert_eq!(
+            as_str_list(Some(&json!("[\"x\",\"y\"]"))),
+            vec!["x".to_string(), "y".to_string()]
+        );
+        assert_eq!(
+            as_str_list(Some(&json!("not json"))),
+            vec!["not json".to_string()]
+        );
+        assert!(as_str_list(None).is_empty());
+        assert_eq!(as_int(Some(&json!(5)), 0), 5);
+        assert_eq!(as_int(Some(&json!(5.9)), 0), 5);
+        assert_eq!(as_int(Some(&json!("7")), 0), 7);
+        assert_eq!(as_int(Some(&json!(true)), 0), 1);
+        assert_eq!(as_int(Some(&json!("x")), 9), 9);
+    }
+
+    #[test]
+    fn claim_chunk_ids_and_dedupe() {
+        assert_eq!(
+            wiki_claim_chunk_ids(&json!({"chunk_ids": ["c1", "c2"]})),
+            vec!["c1".to_string(), "c2".to_string()]
+        );
+        assert_eq!(
+            wiki_claim_chunk_ids(&json!({"chunk_ids": "c3"})),
+            vec!["c3".to_string()]
+        );
+        assert_eq!(
+            wiki_claim_chunk_ids(&json!({"source_chunk_id": "c9"})),
+            vec!["c9".to_string()]
+        );
+        assert!(wiki_claim_chunk_ids(&json!({"chunk_ids": [""]})).is_empty());
+        let claims = vec![
+            json!({"statement": "s", "source_doc_id": "d1", "chunk_ids": ["c2", "c1"]}),
+            json!({"statement": "s", "source_doc_id": "d1", "chunk_ids": ["c1", "c2"]}),
+            json!({"statement": "s", "source_doc_id": "d2", "chunk_ids": ["c1"]}),
+            json!({"text": "t", "chunk_ids": ["c1"]}),
+        ];
+        assert_eq!(wiki_dedupe_claims(&claims).len(), 3);
+    }
+
+    #[test]
+    fn extract_raw_entities_aggregates_metadata() {
+        let map_results = vec![
+            json!({
+                "doc_id": "d1",
+                "entities": [{"name": "Alpha", "type": "org", "aliases": ["A"], "chunk_ids": ["c1"]}],
+                "concepts": [{"term": "Beta", "chunk_ids": ["c2"]}],
+                "claims": [{"subject": "Alpha", "statement": "s1", "chunk_ids": ["c3"]}, {"subject": "Unknown", "statement": "drop"}],
+                "relations": [{"from": "Alpha", "to": "Beta", "type": "uses", "chunk_ids": ["c4"]}]
+            }),
+            json!({
+                "doc_id": "d2",
+                "entities": [{"name": "Alpha", "chunk_ids": ["c5"]}],
+                "concepts": [],
+                "claims": [{"subject": "Alpha", "statement": "s1", "chunk_ids": ["c3"]}],
+                "relations": []
+            }),
+        ];
+        let (entities, claim_index) = extract_raw_entities(&map_results);
+        assert_eq!(entities.len(), 2);
+        let alpha = entities
+            .iter()
+            .find(|e| e["name"] == json!("Alpha"))
+            .expect("alpha");
+        assert_eq!(alpha["type"], json!("org"));
+        assert_eq!(alpha["claim_count"], json!(2));
+        assert_eq!(alpha["source_doc_ids"], json!(["d1", "d2"]));
+        assert_eq!(alpha["source_chunk_ids"], json!(["c1", "c3", "c4", "c5"]));
+        assert_eq!(alpha["aliases"], json!(["A"]));
+        let beta = entities
+            .iter()
+            .find(|e| e["name"] == json!("Beta"))
+            .expect("beta");
+        assert_eq!(beta["type"], json!("concept"));
+        assert_eq!(beta["aliases"], json!(["Beta"]));
+        assert_eq!(beta["source_chunk_ids"], json!(["c2", "c4"]));
+        assert_eq!(claim_index["Alpha"].as_array().unwrap().len(), 2);
+        assert!(claim_index.get("Unknown").is_none());
+    }
+}
