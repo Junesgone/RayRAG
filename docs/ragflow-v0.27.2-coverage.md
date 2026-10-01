@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 637 | 307363 |
-| partial | 44 | 17301 |
+| full | 631 | 296105 |
+| partial | 50 | 28559 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3658,13 +3658,13 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/harness/tools/search.py` | 685 | 28279 | `9965b027c0ddfbb0` | full | `src/harness/tools/search.rs` | v0.3.10ab：检索腿与 grep 定位全量移植——设置解析（top_n/top_k/rerank 下限）、effective_query 400 字符、检索缓存键、注入式 HarnessRetriever（hybrid 权重 0.3 / vector 1.0 / BM25 0）+ 关键词窄化、grep 词抽取（10 上限）与查询转词、表块整体保留的 grep_search、list_chunks/load_specific_chunks/rank_chunks_by_terms、TOOL_NAME_BY_FUNC/COMPILED_TOOL_MODES；5 项单测 |
 | `rag/advanced_rag/harness/tools/text_processing.py` | 467 | 17514 | `05898d272bf481f4` | full | `src/harness/tools/text_processing.rs` | v0.3.10aa：compact_keywords、句切分（HTML 块级标签栈 + markdown 表格原子化 + 数字保护句点）、词干匹配（上游回退词干器路径）、fact-dense 判定、narrow_content/highlight_keywords/narrow_by_keywords/narrow_or_keep 全量移植；4 项单测 |
 | `rag/advanced_rag/knowlege_compile/__init__.py` | 43 | 1327 | `2a848ac2f16734e1` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
-| `rag/advanced_rag/knowlege_compile/_common.py` | 1038 | 38483 | `9cd36157c46cd082` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
-| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | 70842 | `e18c290ac09bc8d2` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
-| `rag/advanced_rag/knowlege_compile/mind_map_extractor.py` | 169 | 6258 | `79b0f639d17f5be6` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported |
-| `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | 22437 | `b9c33d7fbe4c6911` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
+| `rag/advanced_rag/knowlege_compile/_common.py` | 1038 | 38483 | `9cd36157c46cd082` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：stable_row_id / tokenize_for_search / union_ordered 已在 src/structure_compile.rs；缺口：env_int/env_float、knowledge_compile_gen_conf、encode、make_input_budget 等（1038 行/24 定义，逐项核对后进行中）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | 70842 | `e18c290ac09bc8d2` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/mind_map_extractor.py` | 169 | 6258 | `79b0f639d17f5be6` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：MindMapResult / MindMapExtractor（169 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | 22437 | `b9c33d7fbe4c6911` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：RecursiveAbstractiveProcessing4TreeOrganizedRetrieval（500 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | 33439 | `2f4ad78607873601` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | 138491 | `638f99c699a3abd9` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
-| `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | 158984 | `b6b277555fa49c9d` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
+| `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | 138491 | `638f99c699a3abd9` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库 src/structure_compile.rs（头部注明源自 v0.26.4）、src/merge.rs、src/hypergraph.rs 已覆盖提取/合并/链校验/图重建核心（extract_hypergraph、compile_hypergraph、merge_compiled_structures、validate_and_correct_chain、rebuild_structure_graph_json）；v0.27.2 符号级缺口（全递归检索）：compile_structure_from_text 全多类入口、cleanup_timeline_isolated_entities、LLMCallPool、_common.env_* 调用面——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | 158984 | `b6b277555fa49c9d` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | 212591 | `02392f68b6702c5c` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/think_log.py` | 95 | 3556 | `b4e8660ef9d3dfcb` | full | `src/harness/think_log.rs` | v0.3.10y：作用域前缀过滤（3 命名空间 + 括号标签行）、<br> 框定、请求级 sink（set/reset/forward；per-request 隔离由调用方上下文承载）；1 项单测 |
 | `rag/app/__init__.py` | 15 | 622 | `177b91dd0511cf12` | full | `src/app_parsers.rs` | QA mode dispatch (naive/advanced/graph) ported v0.3.3aq: parser_for_method dispatch wired into pipeline.parse_document (chunk_method selects domain parser; production live, previously dead code). |

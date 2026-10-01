@@ -7,8 +7,8 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：44（UI 残留 42 + 实施队列 2）
-- re-audit：440（上游内容变更、需复核对齐的已审计行）
+- partial：50（UI 残留 42 + 实施队列 8）
+- re-audit：435（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
 ## 实施队列
@@ -28,11 +28,17 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（2 项）
+### W-4 Agentic harness 移植（最大队列）（8 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
+| `rag/advanced_rag/knowlege_compile/_common.py` | 1038 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：stable_row_id / tokenize_for_search / union_ordered 已在 src/structure_compile.rs；缺口：env_int/env_float、knowledge_compile_gen_conf、encode、make_input_budget 等（1038 行/24 定义，逐项核对后进行中）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/mind_map_extractor.py` | 169 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：MindMapResult / MindMapExtractor（169 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：RecursiveAbstractiveProcessing4TreeOrganizedRetrieval（500 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库 src/structure_compile.rs（头部注明源自 v0.26.4）、src/merge.rs、src/hypergraph.rs 已覆盖提取/合并/链校验/图重建核心（extract_hypergraph、compile_hypergraph、merge_compiled_structures、validate_and_correct_chain、rebuild_structure_graph_json）；v0.27.2 符号级缺口（全递归检索）：compile_structure_from_text 全多类入口、cleanup_timeline_isolated_entities、LLMCallPool、_common.env_* 调用面——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 
 ### W-5 结构图/编译器/切分（0 项）
@@ -92,7 +98,7 @@
 | `web/src/pages/user-setting/sidebar/hooks.tsx` | 47 | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) [v0.27.2 content changed: re-audit] |
 | `web/src/routes.tsx` | 466 | `src/server.rs; src/web.rs` | Rust registers the `/dataset/{files\|retrieval\|logs\|configuration\|knowledge-graph}/{id}` detail routes; `/dataset/{id}` answers a 307 redirect into `/dataset/files/{id}` (upstream `Routes.Dataset = /dataset/files`) and `/kbs/{id}` keeps the legacy 3-tab shell. The dataset sidebar mirrors `pages/dataset/sidebar/index.tsx`: five real route links in source order with the `knowledgeDetails.*` labels (Files / Retrieval testing / Logs / Configuration / Knowledge graph), the active entry marked client-side from the URL path and the panel selected on load; the parse-log table was merged into the Logs panel so the entry count matches upstream. Remaining gaps: `/dataset/testing`, `/dataset/knowledge-graph` and `/dataset/configuration` are the same Rust shell with a preselected panel rather than separate page bundles (v0.3.5g). v0.3.5x added a machine audit of the whole upstream route table (52 paths against the deployed instance) and closed six: `/login-next` (upstream serves `/login` and `/login-next` from the same page), the canonical singular `/agent/:id` and `/search/:id` detail paths (RayRAG keeps `/agents/{id}` and `/searches/{id}` as compatible aliases), upstream's standalone `/document/:id` viewer (resolved through the document record, real 404 for unknown ids) and the public `/search/share` embed (`?tenantId=` app resolution plus the `visible_avatar` owner row, sharing the `/search` markup through `search_page_markup`). v0.3.8n closed `/agent/:id/explore` (plus the `/agents/:id/explore` alias): the Launch surface renders upstream's PageHeader breadcrumb, the 296px session column and the SessionChat column, and the toolbar Launch button navigates there like `navigateToAgentExplore`. Still open from the same table: the `/admin` subtree (`/admin` is upstream's admin *login*, plus `/admin/services`, `/admin/users`, `/admin/users/:id`, `/admin/sandbox-settings` and the enterprise-only whitelist/roles/monitoring — all registered by RayRAG, per-file residuals tracked on their own rows), the `/chunk` subtree (`/chunk`, `/chunk/parsed/chunks`, `/chunk/chunk/:id`, `/chunk/result/:id`), v0.3.8o closed `/agent/share` (the embeddable chat with the `APIToken.beta` credential, `/api/v1/system/tokens` and the `agentbots` inputs/completions endpoints; the beta-only `logs/<message_id>` trace and the floating-widget embed remain open). v0.3.8p closed `/dataflow-result` (the ingestion-log viewer with the timeline, the step result panel, the chunk result bar, the rerun flow and the dataset-row `View result` entry, backed by the new ingestion endpoints). Still open from the same table: `/agent/:id/explore`, `/agent/share` and `/dataflow-result` are registered, while the beta-only `agentbots/logs/<message_id>` trace, the floating-widget embed and the enterprise-only `/admin` whitelist/roles/monitoring entries remain [v0.27.2 content changed: re-audit] |
 
-## 复核对账队列（re-audit，440 项）
+## 复核对账队列（re-audit，435 项）
 
 上游 v0.27.2 相对 v0.26.4 变更过的已审计行；逐行复核后移除 `[v0.27.2 content changed: re-audit]` 标记并更新注记。
 
@@ -354,11 +360,6 @@
 | `memory/utils/prompt_util.py` | full | `src/memory.rs; src/api/features.rs` |
 | `pyproject.toml` | replaced | `Cargo.toml; Cargo.lock` |
 | `rag/advanced_rag/__init__.py` | full | `src/advanced_rag.rs` |
-| `rag/advanced_rag/knowlege_compile/_common.py` | full | `src/advanced_rag.rs` |
-| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | full | `src/advanced_rag.rs` |
-| `rag/advanced_rag/knowlege_compile/raptor.py` | full | `src/advanced_rag.rs` |
-| `rag/advanced_rag/knowlege_compile/structure.py` | full | `src/advanced_rag.rs` |
-| `rag/advanced_rag/knowlege_compile/wiki.py` | full | `src/advanced_rag.rs` |
 | `rag/app/audio.py` | full | `src/app_parsers.rs` |
 | `rag/app/book.py` | full | `src/app_parsers.rs` |
 | `rag/app/email.py` | full | `src/app_parsers.rs` |
