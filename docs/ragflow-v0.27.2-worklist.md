@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：49（UI 残留 42 + 实施队列 7）
+- partial：48（UI 残留 42 + 实施队列 6）
 - re-audit：435（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,11 +28,10 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（7 项）
+### W-4 Agentic harness 移植（最大队列）（6 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `rag/advanced_rag/knowlege_compile/_common.py` | 1038 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：stable_row_id / tokenize_for_search / union_ordered 已在 src/structure_compile.rs；缺口：env_int/env_float、knowledge_compile_gen_conf、encode、make_input_budget 等（1038 行/24 定义，逐项核对后进行中）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：RecursiveAbstractiveProcessing4TreeOrganizedRetrieval（500 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
