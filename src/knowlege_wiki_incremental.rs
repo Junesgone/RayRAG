@@ -7830,3 +7830,703 @@ mod wiki_incremental_part12_tests {
         assert!(alpha_md.contains("artifact/kb1/concept/gamma"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 11 — Mode A run (`_wiki_mode_a_run`).
+//
+// Adaptation note: the refine fan-out is sequential with the same ~20-slot
+// progress cadence; `page_deltas` uses an ordered map for deterministic
+// iteration.
+// ---------------------------------------------------------------------------
+
+struct ModeAPageDelta {
+    page_id: String,
+    page_title: String,
+    existing_page: Option<Value>,
+    additions: Vec<Value>,
+    retractions: Vec<Value>,
+    claims: Vec<Value>,
+    source_chunks: Vec<Value>,
+    source_doc_ids: BTreeSet<String>,
+    action: String,
+}
+
+fn delta_claim_text(claim: &Value) -> String {
+    ["statement", "text"]
+        .iter()
+        .find_map(|key| claim.get(*key))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// `_wiki_mode_a_run`: every canonical entity/concept compiles to one page.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_mode_a_run(
+    store: &dyn DocStore,
+    deltas: &[Value],
+    existing_pages: &Map<String, Value>,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    incremental: bool,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+    canonical_claims: Option<&Map<String, Value>>,
+    doc_to_entities: Option<&Map<String, Value>>,
+    doc_topics: Option<&Map<String, Value>>,
+    topic_embeddings: Option<&mut Map<String, Value>>,
+    topic_pool: Option<&mut Map<String, Value>>,
+) -> Value {
+    let report = |message: &str| {
+        if let Some(callback) = callback {
+            callback(0.7, &format!("wiki REFINE A: {message}"));
+        }
+    };
+    let mut pages_created = 0usize;
+    let mut pages_modified = 0usize;
+    let mut pages_deleted = 0usize;
+    let mut errors: Vec<Value> = Vec::new();
+
+    let mut name_to_page: BTreeMap<String, String> = BTreeMap::new();
+    for (pid, page) in existing_pages {
+        for name in as_str_list(page.get("entity_names_kwd")) {
+            name_to_page.insert(name, pid.clone());
+        }
+    }
+
+    let mut page_deltas: BTreeMap<String, ModeAPageDelta> = BTreeMap::new();
+    for delta in deltas {
+        let name = delta
+            .get("entity_name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let entity_type = normalize_entity_type(
+            delta
+                .get("entity_type")
+                .unwrap_or(&Value::String(String::new())),
+        );
+        let prefix = if entity_type == "concept" {
+            "concept"
+        } else {
+            "entity"
+        };
+        let page_id = name_to_page
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| derive_page_id(name, prefix));
+        let entry = page_deltas
+            .entry(page_id.clone())
+            .or_insert_with(|| ModeAPageDelta {
+                page_id: page_id.clone(),
+                page_title: name.to_string(),
+                existing_page: existing_pages.get(&page_id).cloned(),
+                additions: Vec::new(),
+                retractions: Vec::new(),
+                claims: Vec::new(),
+                source_chunks: Vec::new(),
+                source_doc_ids: BTreeSet::new(),
+                action: "noop".to_string(),
+            });
+        if let Some(additions) = delta.get("additions").and_then(Value::as_array) {
+            entry.additions.extend(additions.iter().cloned());
+        }
+        if let Some(retractions) = delta.get("retractions").and_then(Value::as_array) {
+            entry.retractions.extend(retractions.iter().cloned());
+        }
+        let mut delta_claims: Vec<Value> = delta
+            .get("claims")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        delta_claims.extend(
+            delta
+                .get("additions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let delta_claims = wiki_dedupe_claims(&delta_claims);
+        entry.claims.extend(delta_claims.iter().cloned());
+        for doc in delta
+            .get("retained_source_doc_ids")
+            .and_then(Value::as_array)
+            .map(|items| items.to_vec())
+            .unwrap_or_default()
+        {
+            if let Some(doc) = doc.as_str() {
+                if !doc.is_empty() {
+                    entry.source_doc_ids.insert(doc.to_string());
+                }
+            }
+        }
+        for cid in as_str_list(delta.get("source_chunk_ids")) {
+            entry.source_chunks.push(json!({"id": cid, "text": ""}));
+        }
+        for claim in &delta_claims {
+            for cid in wiki_claim_chunk_ids(claim) {
+                entry.source_chunks.push(json!({
+                    "id": cid,
+                    "text": delta_claim_text(claim),
+                    "source_doc_id": claim.get("source_doc_id").cloned().unwrap_or(Value::Null),
+                }));
+            }
+        }
+        let action = delta.get("action").and_then(Value::as_str).unwrap_or("");
+        if action == "delete" {
+            entry.action = "delete".to_string();
+        } else if entry.action != "delete" {
+            entry.action = action.to_string();
+        }
+    }
+
+    if let Some(canonical_claims) = canonical_claims {
+        let mut chunk_claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for claims in canonical_claims.values() {
+            if let Some(claims) = claims.as_array() {
+                for claim in claims {
+                    for cid in wiki_claim_chunk_ids(claim) {
+                        chunk_claims
+                            .entry(cid)
+                            .or_default()
+                            .push(delta_claim_text(claim));
+                    }
+                }
+            }
+        }
+        for entry in page_deltas.values_mut() {
+            let page_chunk_ids: BTreeSet<String> = entry
+                .source_chunks
+                .iter()
+                .filter_map(|chunk| chunk.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            if page_chunk_ids.is_empty() {
+                continue;
+            }
+            for cid in page_chunk_ids {
+                if let Some(texts) = chunk_claims.get(&cid) {
+                    if let Some(first) = texts.first() {
+                        entry
+                            .source_chunks
+                            .push(json!({"id": cid, "text": first.clone()}));
+                    }
+                }
+            }
+        }
+    }
+
+    if !incremental && existing_pages.is_empty() {
+        let concept_entries: Vec<&ModeAPageDelta> = page_deltas
+            .values()
+            .filter(|entry| entry.page_id.starts_with("concept/"))
+            .collect();
+        if !concept_entries.is_empty() {
+            let concepts: Vec<Value> = concept_entries
+                .iter()
+                .map(|entry| {
+                    let source_docs: BTreeSet<String> = entry
+                        .claims
+                        .iter()
+                        .filter_map(|claim| claim.get("source_doc_id").and_then(Value::as_str))
+                        .map(str::to_string)
+                        .collect();
+                    json!({
+                        "term": entry.page_title,
+                        "claims": entry.claims,
+                        "source_doc_ids": source_docs.into_iter().collect::<Vec<String>>(),
+                    })
+                })
+                .collect();
+            let deep_ids: BTreeSet<String> = wiki_decide_concept_pages(&concepts)
+                .iter()
+                .filter_map(|page| {
+                    page.get("page_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect();
+            page_deltas.retain(|pid, _| !pid.starts_with("concept/") || deep_ids.contains(pid));
+        }
+        if page_deltas.is_empty() {
+            report("No pages to compile. Skipping.");
+            return json!({
+                "pages_created": 0,
+                "pages_modified": 0,
+                "pages_deleted": 0,
+                "errors": [],
+            });
+        }
+    }
+
+    let all_page_ids: Vec<String> = existing_pages.keys().cloned().collect();
+    let mut doc_updates: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut topic_selection_stats: Map<String, Value> = Map::new();
+    topic_selection_stats.insert("selected".to_string(), json!(0));
+    topic_selection_stats.insert("new".to_string(), json!(0));
+    topic_selection_stats.insert("new_added".to_string(), json!(0));
+    let mut topic_embeddings = topic_embeddings;
+    let mut topic_pool = topic_pool;
+
+    let total = page_deltas.len();
+    if total > 0 {
+        report(&format!("{total} pages ..."));
+    }
+    let report_every =
+        1.max((total + WIKI_REFINE_PROGRESS_UPDATES - 1) / WIKI_REFINE_PROGRESS_UPDATES);
+    let mut completed = 0usize;
+    let entries: Vec<ModeAPageDelta> = page_deltas.into_values().collect();
+    for entry in entries {
+        let pid = entry.page_id.clone();
+        let page_type = if pid.starts_with("concept/") {
+            "concept"
+        } else {
+            "entity"
+        };
+        let existing_value = entry.existing_page.clone();
+        let page_version = existing_value
+            .as_ref()
+            .map(|page| as_int(page.get("page_version_int"), 0))
+            .unwrap_or(0);
+
+        if entry.action == "delete" {
+            let _ = wiki_refine_page(RefinePageArgs {
+                store,
+                mode: "delete",
+                page_id: &pid,
+                page_title: &entry.page_title,
+                existing_page: existing_value.as_ref(),
+                page_type_kwd: page_type,
+                additions: None,
+                retractions: None,
+                source_chunks: Some(&[]),
+                claims: Some(&[]),
+                available_pages: Some(&all_page_ids),
+                contextual_hints: "",
+                chat,
+                embd,
+                tenant_id,
+                kb_id,
+                page_version,
+                entity_names: None,
+                page_embedding: None,
+                embed_routing_context: false,
+                source_doc_ids: None,
+                topic_candidates: None,
+                topic_selection_stats: None,
+                topic_embeddings: None,
+                topic_pool: None,
+                member_evidence: None,
+            })
+            .await;
+            pages_deleted += 1;
+            wiki_clear_refine_failure(store, tenant_id, kb_id, &pid);
+            completed += 1;
+            if completed % report_every == 0 || completed == total {
+                report(&format!("{completed}/{total} pages completed."));
+            }
+            continue;
+        }
+
+        let next_version = page_version + 1;
+        let new_doc_ids: BTreeSet<String> = entry
+            .additions
+            .iter()
+            .filter_map(|claim| claim.get("source_doc_id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        let refine_mode = match existing_value.as_ref() {
+            Some(existing) if should_re_synthesize(existing, &new_doc_ids, next_version) => {
+                "re-synthesize"
+            }
+            Some(_) => "modify",
+            None => "generate",
+        };
+        let source_docs: Vec<String> = entry.source_doc_ids.iter().cloned().collect();
+        let topic_candidates =
+            wiki_topics_for_docs(&source_docs, doc_topics, topic_pool.as_deref());
+        let result = wiki_refine_page(RefinePageArgs {
+            store,
+            mode: refine_mode,
+            page_id: &pid,
+            page_title: &entry.page_title,
+            existing_page: existing_value.as_ref(),
+            page_type_kwd: page_type,
+            additions: Some(&entry.additions),
+            retractions: Some(&entry.retractions),
+            source_chunks: Some(&entry.source_chunks),
+            claims: Some(&entry.claims),
+            available_pages: Some(&all_page_ids),
+            contextual_hints: "",
+            chat,
+            embd,
+            tenant_id,
+            kb_id,
+            page_version,
+            entity_names: None,
+            page_embedding: None,
+            embed_routing_context: false,
+            source_doc_ids: Some(&source_docs),
+            topic_candidates: Some(&topic_candidates),
+            topic_selection_stats: Some(&mut topic_selection_stats),
+            topic_embeddings: topic_embeddings.as_deref_mut(),
+            topic_pool: topic_pool.as_deref_mut(),
+            member_evidence: None,
+        })
+        .await;
+        match result {
+            Some(_page) => {
+                wiki_clear_refine_failure(store, tenant_id, kb_id, &pid);
+                if refine_mode == "generate" {
+                    pages_created += 1;
+                } else {
+                    pages_modified += 1;
+                }
+                for did in &source_docs {
+                    doc_updates
+                        .entry(did.clone())
+                        .or_default()
+                        .push(pid.clone());
+                }
+            }
+            None => {
+                let mut names: Vec<String> = existing_value
+                    .as_ref()
+                    .map(|page| as_str_list(page.get("entity_names_kwd")))
+                    .unwrap_or_default();
+                if names.is_empty() {
+                    names.push(entry.page_title.clone());
+                }
+                wiki_record_refine_failure(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    &pid,
+                    &names,
+                    &format!("REFINE returned no page content for {pid}"),
+                );
+                errors.push(Value::String(format!("REFINE_FAILED:{pid}")));
+            }
+        }
+        completed += 1;
+        if completed % report_every == 0 || completed == total {
+            report(&format!("{completed}/{total} pages completed."));
+        }
+    }
+
+    wiki_log_stats(
+        "TOPIC",
+        "selection_summary",
+        &[
+            ("mode", json!("A")),
+            (
+                "selected",
+                topic_selection_stats
+                    .get("selected")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            ),
+            (
+                "new",
+                topic_selection_stats
+                    .get("new")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            ),
+            (
+                "new_added",
+                topic_selection_stats
+                    .get("new_added")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            ),
+        ],
+    );
+
+    for (did, pids) in &doc_updates {
+        let existing_dps =
+            wiki_load_doc_page_source(store, tenant_id, kb_id, did).unwrap_or_else(|| json!({}));
+        let mut existing_pids: Vec<String> = as_str_list(existing_dps.get("page_ids"));
+        for pid in pids {
+            if !existing_pids.iter().any(|existing| existing == pid) {
+                existing_pids.push(pid.clone());
+            }
+        }
+        let mut doc_entity_names: Vec<String> = doc_to_entities
+            .and_then(|map| map.get(did))
+            .map(|value| as_str_list(Some(value)))
+            .unwrap_or_default();
+        if doc_entity_names.is_empty() {
+            doc_entity_names = as_str_list(existing_dps.get("entity_names"));
+        }
+        let chunk_hashes: Map<String, Value> = existing_dps
+            .get("source_chunk_hashes")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let map_checksum = existing_dps
+            .get("map_checksum")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        wiki_update_doc_page_source(
+            store,
+            tenant_id,
+            kb_id,
+            did,
+            &existing_pids,
+            if doc_entity_names.is_empty() {
+                None
+            } else {
+                Some(&doc_entity_names)
+            },
+            Some(&chunk_hashes),
+            Some(&map_checksum),
+        );
+    }
+
+    report(&format!(
+        "done: +{pages_created} ~{pages_modified} -{pages_deleted}"
+    ));
+    json!({
+        "pages_created": pages_created,
+        "pages_modified": pages_modified,
+        "pages_deleted": pages_deleted,
+        "errors": errors,
+    })
+}
+
+#[cfg(test)]
+mod wiki_incremental_part13_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    fn delta_create(name: &str, entity_type: &str) -> Value {
+        json!({
+            "action": "create",
+            "entity_name": name,
+            "entity_type": entity_type,
+            "additions": [{"statement": "s", "source_doc_id": "d1", "chunk_ids": ["c1"]}],
+            "retractions": [],
+            "claims": [],
+            "source_chunk_ids": ["c1"],
+            "retained_source_doc_ids": ["d1"]
+        })
+    }
+
+    #[tokio::test]
+    async fn mode_a_creates_pages_and_tracks_docs() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "alpha source"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index, "kb1").unwrap();
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Body\n\nGrounded.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = TestEmb;
+        let mut stats: Map<String, Value> = Map::new();
+        stats.insert("selected".to_string(), json!(0));
+        stats.insert("new".to_string(), json!(0));
+        stats.insert("new_added".to_string(), json!(0));
+        let deltas = vec![
+            delta_create("Alpha", "entity"),
+            delta_create("Beta", "concept"),
+        ];
+        let summary = wiki_mode_a_run(
+            &store,
+            &deltas,
+            &Map::new(),
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(2));
+        assert_eq!(summary["pages_modified"], json!(0));
+        assert_eq!(summary["pages_deleted"], json!(0));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert_eq!(pages.len(), 2);
+        assert!(pages.contains_key("entity/alpha"));
+        assert!(pages.contains_key("concept/beta"));
+        // Incremental Mode A persists wiki_page rows directly (no drafts).
+        let drafts = crate::harness::knowlege_wiki::wiki_load_refine_resume(&store, "t1", "kb1");
+        assert!(drafts.is_empty());
+        let dps = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("doc source");
+        let page_ids: Vec<String> = as_str_list(dps.get("page_ids"));
+        assert!(page_ids.contains(&"entity/alpha".to_string()));
+        assert!(page_ids.contains(&"concept/beta".to_string()));
+    }
+
+    #[tokio::test]
+    async fn mode_a_modifies_and_deletes_existing() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "md_with_weight": "OLD BODY",
+            "entity_names_kwd": ["Alpha"],
+            "page_version_int": 3,
+            "synthesis_version_int": 1,
+            "topic_kwd": "alpha"
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"], "page_version_int": 3, "synthesis_version_int": 1, "topic_kwd": "alpha", "md_with_weight": "OLD BODY", "claims": "[]"}),
+        );
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Updated\n\nFresh body.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let mut delta = delta_create("Alpha", "entity");
+        delta["action"] = json!("update");
+        let summary = wiki_mode_a_run(
+            &store,
+            &[delta.clone()],
+            &existing,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(1));
+        let pages = search_existing_pages(
+            &store,
+            "t1",
+            "kb1",
+            &["slug_kwd".to_string(), "md_with_weight".to_string()],
+        );
+        let alpha = pages.get("entity/alpha").cloned().expect("alpha");
+        assert!(
+            alpha["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Fresh body")
+        );
+
+        let mut delete_delta = delta_create("Alpha", "entity");
+        delete_delta["action"] = json!("delete");
+        let summary2 = wiki_mode_a_run(
+            &store,
+            &[delete_delta],
+            &existing,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary2["pages_deleted"], json!(1));
+        let remaining = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(!remaining.contains_key("entity/alpha"));
+    }
+
+    #[tokio::test]
+    async fn mode_a_records_refine_failure() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_mode_a_run(
+            &store,
+            &[delta_create("Alpha", "entity")],
+            &Map::new(),
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(0));
+        let errors = summary["errors"].as_array().unwrap();
+        assert!(errors.contains(&json!("REFINE_FAILED:entity/alpha")));
+        let failures = wiki_load_refine_failures(&store, "t1", "kb1");
+        assert_eq!(failures.len(), 1);
+        assert!(failures.contains_key("entity/alpha"));
+    }
+}
