@@ -5050,6 +5050,354 @@ pub fn struct_merge_graph_relations(relations: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+// ── `structure.py` gaps B1 (v0.3.10ah) ─────────────────────────────────────
+
+/// `_struct_resolve_entity_alias`: follow alias chains (cycle-guarded).
+pub fn struct_resolve_entity_alias(
+    name: &str,
+    aliases: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut current = name.trim().to_string();
+    let mut seen: Vec<String> = Vec::new();
+    while aliases.contains_key(&current) && !seen.iter().any(|entry| entry == &current) {
+        seen.push(current.clone());
+        current = aliases[&current].clone();
+    }
+    current
+}
+
+/// `_struct_rewrite_relation_payload`: rewrite `(source|src|from)` and
+/// `(target|tgt|to)` fields through the alias map. Returns whether anything
+/// changed.
+pub fn struct_rewrite_relation_payload(
+    payload: &mut Value,
+    aliases: &std::collections::HashMap<String, String>,
+) -> bool {
+    let mut changed = false;
+    for fields in [["source", "src", "from"], ["target", "tgt", "to"]] {
+        for field in fields {
+            let Some(current) = payload.get(field) else {
+                continue;
+            };
+            if current.is_null() {
+                continue;
+            }
+            let old = match current {
+                Value::String(text) => text.trim().to_string(),
+                other => other.to_string().trim().to_string(),
+            };
+            let new = struct_resolve_entity_alias(&old, aliases);
+            if new != old {
+                if let Some(map) = payload.as_object_mut() {
+                    map.insert(field.to_string(), Value::String(new));
+                }
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// `_struct_union_chunk_ids`.
+pub fn struct_union_chunk_ids(left: Option<&Value>, right: Option<&Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for source in [left, right] {
+        if let Some(items) = source.and_then(Value::as_array) {
+            for item in items {
+                if let Some(text) = item.as_str() {
+                    if !out.iter().any(|existing| existing == text) {
+                        out.push(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn parse_content_payload(doc: &Value) -> Option<Value> {
+    let raw = doc.get("content_with_weight").and_then(Value::as_str)?;
+    let parsed: Value = serde_json::from_str(raw).ok()?;
+    parsed.is_object().then_some(parsed)
+}
+
+fn string_field(doc: &Value, key: &str) -> String {
+    doc.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// `_struct_rebuild_doc_storage_doc`: rebuild a store row from a merged payload
+/// via [`to_es_doc`], then overlay the identity fields from `base_doc`.
+pub fn struct_rebuild_doc_storage_doc(
+    payload: &Value,
+    base_doc: &Value,
+    vec: Vec<f32>,
+    chunk_ids: &[String],
+    preserve_id: bool,
+) -> CompiledRow {
+    let kind = {
+        let value = string_field(base_doc, "knowledge_graph_kwd");
+        if value.is_empty() {
+            "entity".to_string()
+        } else {
+            value
+        }
+    };
+    let mut src_field: Option<&str> = None;
+    let mut target_field: Option<&str> = None;
+    if kind == "relation" {
+        if let Some(existing) = parse_content_payload(base_doc) {
+            if existing.get("source").is_some() && existing.get("target").is_some() {
+                src_field = Some("source");
+                target_field = Some("target");
+            }
+        }
+    }
+    let template_id = doc_template_id(base_doc);
+    let template_kind = base_doc
+        .get("compilation_template_kind_kwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let doc_name = string_field(base_doc, "docnm_kwd");
+    let mut new_doc = to_es_doc(
+        payload,
+        &string_field(base_doc, "compile_kwd"),
+        &string_field(base_doc, "doc_id"),
+        chunk_ids,
+        vec,
+        &kind,
+        src_field,
+        target_field,
+        template_id.as_deref(),
+        template_kind.as_deref(),
+    );
+    let _ = doc_name;
+    if preserve_id {
+        let id = string_field(base_doc, "id");
+        if !id.is_empty() {
+            new_doc.id = id;
+        }
+    }
+    for key in ["from_entity_kwd", "to_entity_kwd"] {
+        let value = string_field(base_doc, key);
+        if !value.is_empty() {
+            if key == "from_entity_kwd" {
+                new_doc.from_entity_kwd = Some(value);
+            } else {
+                new_doc.to_entity_kwd = Some(value);
+            }
+        }
+    }
+    new_doc
+}
+
+/// `_struct_reembed_payload`: re-encode a merged payload's description.
+pub async fn struct_reembed_payload(
+    payload: &Value,
+    embed: &dyn EmbeddingBackend,
+) -> Option<Vec<f32>> {
+    let text = payload_description(payload);
+    let vectors = encode(embed, &[text]).await.ok()?;
+    vectors.into_iter().next()
+}
+
+/// `_struct_doc_storage_dedup_condition`: the merge-candidate filter.
+pub fn struct_doc_storage_dedup_condition(doc: &Value, merge_scope_dataset: bool) -> Value {
+    let mut condition = serde_json::Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        serde_json::json!([string_field(doc, "compile_kwd")]),
+    );
+    if !merge_scope_dataset {
+        condition.insert(
+            "doc_id".to_string(),
+            serde_json::json!([string_field(doc, "doc_id")]),
+        );
+    }
+    for key in ["knowledge_graph_kwd", "from_entity_kwd", "to_entity_kwd"] {
+        let value = string_field(doc, key);
+        if !value.is_empty() {
+            condition.insert(key.to_string(), serde_json::json!([value]));
+        }
+    }
+    if let Some(template_id) = doc_template_id(doc) {
+        condition.insert(
+            "compilation_template_ids".to_string(),
+            serde_json::json!([template_id]),
+        );
+    }
+    Value::Object(condition)
+}
+
+/// `_struct_rewrite_relation_doc`.
+pub async fn struct_rewrite_relation_doc(
+    doc: &Value,
+    aliases: &std::collections::HashMap<String, String>,
+    embed: &dyn EmbeddingBackend,
+) -> Value {
+    if string_field(doc, "knowledge_graph_kwd") != "relation" || aliases.is_empty() {
+        return doc.clone();
+    }
+    let Some(mut payload) = parse_content_payload(doc) else {
+        return doc.clone();
+    };
+    if !struct_rewrite_relation_payload(&mut payload, aliases) {
+        return doc.clone();
+    }
+    let vectors = match encode(embed, &[payload_description(&payload)]).await {
+        Ok(vectors) => vectors,
+        Err(_) => return doc.clone(),
+    };
+    let Some(vector) = vectors.into_iter().next() else {
+        return doc.clone();
+    };
+    let mut base = doc.clone();
+    if let Some(map) = base.as_object_mut() {
+        map.insert(
+            "content_with_weight".to_string(),
+            Value::String(payload.to_string()),
+        );
+        map.insert(
+            "from_entity_kwd".to_string(),
+            Value::String(struct_resolve_entity_alias(
+                &string_field(doc, "from_entity_kwd"),
+                aliases,
+            )),
+        );
+        map.insert(
+            "to_entity_kwd".to_string(),
+            Value::String(struct_resolve_entity_alias(
+                &string_field(doc, "to_entity_kwd"),
+                aliases,
+            )),
+        );
+    }
+    let chunk_ids = struct_union_chunk_ids(doc.get("source_chunk_ids"), None);
+    let rebuilt = struct_rebuild_doc_storage_doc(&payload, &base, vector, &chunk_ids, true);
+    serde_json::to_value(&rebuilt).unwrap_or(Value::Null)
+}
+
+/// `_struct_merge_exact_entity_payload`: merge same-name entity payloads
+/// without vector similarity.
+pub fn struct_merge_exact_entity_payload(existing: &Value, incoming: &Value) -> Option<Value> {
+    let left = parse_content_payload(existing)?;
+    let right = parse_content_payload(incoming)?;
+    let mut merged = left.clone();
+    if let (Some(target), Some(source)) = (merged.as_object_mut(), right.as_object()) {
+        for (key, value) in source {
+            let empty = match target.get(key) {
+                None | Some(Value::Null) => true,
+                Some(Value::String(text)) => text.is_empty(),
+                Some(Value::Array(items)) => items.is_empty(),
+                _ => false,
+            };
+            if empty {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    let left_type = left
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let right_type = right
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    for preferred in ["title", "fact", "conclusion"] {
+        if left_type == preferred || right_type == preferred {
+            if let Some(map) = merged.as_object_mut() {
+                map.insert("type".to_string(), Value::String(preferred.to_string()));
+            }
+            break;
+        }
+    }
+    let left_desc = left
+        .get("description")
+        .map(str_of_value)
+        .unwrap_or_default();
+    let right_desc = right
+        .get("description")
+        .map(str_of_value)
+        .unwrap_or_default();
+    let description = if right_desc.chars().count() > left_desc.chars().count() {
+        right_desc
+    } else {
+        left_desc
+    };
+    let chunk_ids =
+        struct_union_chunk_ids(left.get("source_chunk_ids"), right.get("source_chunk_ids"));
+    if let Some(map) = merged.as_object_mut() {
+        map.insert("description".to_string(), Value::String(description));
+        map.insert(
+            "source_chunk_ids".to_string(),
+            Value::Array(chunk_ids.into_iter().map(Value::String).collect()),
+        );
+    }
+    Some(merged)
+}
+
+fn str_of_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// `_struct_merge_exact_named_entities`: collapse same-name entities before
+/// similarity-based dedup. Returns `(docs, dropped)`.
+pub async fn struct_merge_exact_named_entities(
+    docs: &[Value],
+    embed: &dyn EmbeddingBackend,
+) -> (Vec<Value>, usize) {
+    let mut kept: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut unchanged: Vec<Value> = Vec::new();
+    let mut dropped = 0usize;
+    for doc in docs {
+        let name = crate::dataset_structure_merger::struct_entity_name(doc)
+            .trim()
+            .to_lowercase();
+        if name.is_empty() {
+            unchanged.push(doc.clone());
+            continue;
+        }
+        let Some(existing) = kept.get(&name).cloned() else {
+            kept.insert(name.clone(), doc.clone());
+            order.push(name);
+            continue;
+        };
+        let Some(payload) = struct_merge_exact_entity_payload(&existing, doc) else {
+            unchanged.push(doc.clone());
+            continue;
+        };
+        let Some(vector) = struct_reembed_payload(&payload, embed).await else {
+            unchanged.push(doc.clone());
+            continue;
+        };
+        let chunk_ids = struct_union_chunk_ids(
+            existing.get("source_chunk_ids"),
+            doc.get("source_chunk_ids"),
+        );
+        let rebuilt = struct_rebuild_doc_storage_doc(&payload, &existing, vector, &chunk_ids, true);
+        kept.insert(name, serde_json::to_value(&rebuilt).unwrap_or(Value::Null));
+        dropped += 1;
+    }
+    let mut out: Vec<Value> = order
+        .into_iter()
+        .filter_map(|name| kept.remove(&name))
+        .collect();
+    out.extend(unchanged);
+    (out, dropped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6423,5 +6771,200 @@ mod struct_gap_tests {
         assert!(docs.rechunked_chunks.is_empty());
         let empty = RechunkedDocs::default();
         assert!(empty.docs.is_empty());
+    }
+}
+#[cfg(test)]
+mod struct_b1_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts
+                .iter()
+                .map(|text| vec![text.chars().count() as f32])
+                .collect())
+        }
+    }
+
+    fn relation_doc() -> Value {
+        json!({
+            "id": "r1",
+            "knowledge_graph_kwd": "relation",
+            "compile_kwd": "list",
+            "doc_id": "d1",
+            "docnm_kwd": "Doc",
+            "from_entity_kwd": "OldFrom",
+            "to_entity_kwd": "To",
+            "source_chunk_ids": ["c1", "c2"],
+            "content_with_weight": json!({"source": "OldFrom", "target": "To", "type": "owns"}).to_string(),
+        })
+    }
+
+    #[test]
+    fn alias_chains_are_cycle_guarded() {
+        let mut aliases = HashMap::new();
+        aliases.insert("A".to_string(), "B".to_string());
+        aliases.insert("B".to_string(), "C".to_string());
+        assert_eq!(struct_resolve_entity_alias(" A ", &aliases), "C");
+        assert_eq!(struct_resolve_entity_alias("X", &aliases), "X");
+        aliases.insert("C".to_string(), "A".to_string());
+        assert_eq!(
+            struct_resolve_entity_alias("A", &aliases),
+            "A",
+            "loop stops before re-entering A"
+        );
+    }
+
+    #[test]
+    fn rewrite_relation_payload_field_groups() {
+        let mut aliases = HashMap::new();
+        aliases.insert("OldFrom".to_string(), "NewFrom".to_string());
+        let mut payload = json!({"source": "OldFrom", "target": "To", "from": null});
+        assert!(struct_rewrite_relation_payload(&mut payload, &aliases));
+        assert_eq!(payload["source"], json!("NewFrom"));
+        assert_eq!(payload["target"], json!("To"));
+        assert!(
+            !struct_rewrite_relation_payload(&mut payload, &aliases),
+            "second pass is a no-op"
+        );
+    }
+
+    #[test]
+    fn dedup_condition_scopes() {
+        let doc = json!({
+            "compile_kwd": "list",
+            "doc_id": "d1",
+            "knowledge_graph_kwd": "entity",
+            "compilation_template_ids": ["t1"],
+        });
+        let doc_scope = struct_doc_storage_dedup_condition(&doc, false);
+        assert_eq!(doc_scope["compile_kwd"], json!(["list"]));
+        assert_eq!(doc_scope["doc_id"], json!(["d1"]));
+        assert_eq!(doc_scope["compilation_template_ids"], json!(["t1"]));
+        let dataset_scope = struct_doc_storage_dedup_condition(&doc, true);
+        assert!(
+            dataset_scope.get("doc_id").is_none(),
+            "dataset scope ignores doc_id"
+        );
+    }
+
+    #[test]
+    fn exact_entity_merge_fills_and_unions() {
+        let existing = json!({
+            "compile_kwd": "list",
+            "content_with_weight": json!({
+                "name": "Alpha",
+                "type": "fact",
+                "description": "short",
+                "source_chunk_ids": ["c1"],
+            }).to_string(),
+        });
+        let incoming = json!({
+            "compile_kwd": "list",
+            "content_with_weight": json!({
+                "name": "Alpha",
+                "type": "title",
+                "description": "a much longer description",
+                "aliases": ["A"],
+                "source_chunk_ids": ["c1", "c2"],
+            }).to_string(),
+        });
+        let merged = struct_merge_exact_entity_payload(&existing, &incoming).unwrap();
+        assert_eq!(merged["type"], json!("title"), "preferred type wins");
+        assert_eq!(merged["description"], json!("a much longer description"));
+        assert_eq!(merged["aliases"], json!(["A"]), "missing keys filled");
+        assert_eq!(
+            merged["source_chunk_ids"],
+            json!(["c1", "c2"]),
+            "union preserves order"
+        );
+    }
+
+    #[test]
+    fn rebuild_overlays_identity_fields() {
+        let base = relation_doc();
+        let payload = json!({"source": "NewFrom", "target": "To", "type": "owns"});
+        let row = struct_rebuild_doc_storage_doc(
+            &payload,
+            &base,
+            vec![1.0, 2.0],
+            &["c1".to_string()],
+            true,
+        );
+        assert_eq!(row.id, "r1", "preserved id");
+        assert_eq!(row.from_entity_kwd.as_deref(), Some("OldFrom"));
+        assert_eq!(row.to_entity_kwd.as_deref(), Some("To"));
+        assert_eq!(row.knowledge_graph_kwd, "relation");
+    }
+
+    #[tokio::test]
+    async fn rewrite_relation_doc_end_to_end() {
+        let mut aliases = HashMap::new();
+        aliases.insert("OldFrom".to_string(), "NewFrom".to_string());
+        let rewritten = struct_rewrite_relation_doc(&relation_doc(), &aliases, &MockEmbed).await;
+        let payload: Value =
+            serde_json::from_str(rewritten["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["source"], json!("NewFrom"));
+        assert_eq!(rewritten["from_entity_kwd"], json!("NewFrom"));
+        assert_eq!(rewritten["id"], json!("r1"));
+
+        let untouched =
+            struct_rewrite_relation_doc(&relation_doc(), &HashMap::new(), &MockEmbed).await;
+        assert_eq!(
+            untouched,
+            relation_doc(),
+            "empty alias map returns the doc as-is"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_exact_named_entities_collapses_duplicates() {
+        let docs = vec![
+            json!({
+                "id": "e1",
+                "knowledge_graph_kwd": "entity",
+                "compile_kwd": "list",
+                "doc_id": "d1",
+                "source_chunk_ids": ["c1"],
+                "content_with_weight": json!({"name": "Alpha", "description": "first", "type": "fact"}).to_string(),
+            }),
+            json!({
+                "id": "e2",
+                "knowledge_graph_kwd": "entity",
+                "compile_kwd": "list",
+                "doc_id": "d1",
+                "source_chunk_ids": ["c2"],
+                "content_with_weight": json!({"name": " alpha ", "description": "a longer second description", "type": "title"}).to_string(),
+            }),
+            json!({
+                "id": "e3",
+                "knowledge_graph_kwd": "entity",
+                "compile_kwd": "list",
+                "content_with_weight": json!({"description": "no name here"}).to_string(),
+            }),
+        ];
+        let (out, dropped) = struct_merge_exact_named_entities(&docs, &MockEmbed).await;
+        assert_eq!(dropped, 1);
+        assert_eq!(out.len(), 2, "one collapsed entity + the unnamed doc");
+        let merged: Value =
+            serde_json::from_str(out[0]["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(merged["type"], json!("title"));
+        assert_eq!(
+            merged["source_chunk_ids"],
+            json!([]),
+            "payload-level ids stay empty (the envelope carries them)"
+        );
+        assert_eq!(
+            out[0]["source_chunk_ids"],
+            json!(["c1", "c2"]),
+            "the rebuilt row unions the envelope chunk ids"
+        );
+        assert_eq!(out[0]["id"], json!("e1"), "base id preserved");
     }
 }
