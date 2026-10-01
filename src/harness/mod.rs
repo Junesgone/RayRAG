@@ -22,6 +22,8 @@ pub mod knowlege_dataset_nav;
 pub mod knowlege_raptor;
 #[path = "../knowlege_wiki.rs"]
 pub mod knowlege_wiki;
+#[path = "../knowlege_wiki_incremental.rs"]
+pub mod knowlege_wiki_incremental;
 pub mod memory;
 #[path = "../mind_map.rs"]
 pub mod mind_map;
