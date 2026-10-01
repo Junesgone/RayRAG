@@ -7,6 +7,8 @@
 //! 2. Multi-hop: retrieve for each sub-query, cascade results
 //! 3. Fusion: deduplicate + score-merge results across hops
 
+pub mod agentic_rag;
+
 use crate::Result;
 use crate::search::SearchEngine;
 use crate::search::SearchResult;
