@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 635 | 298562 |
-| partial | 46 | 26102 |
+| full | 636 | 301992 |
+| partial | 45 | 22672 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3663,7 +3663,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/knowlege_compile/mind_map_extractor.py` | 169 | 6258 | `79b0f639d17f5be6` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：mind_map_extractor.py 已移植为 src/mind_map.rs（MindMapResult/MindMapExtractor、分组预算、process_document 变量替换、_merge/_todict/_list_to_kv/_be_children/_key；6 项单测绿）。差异书面说明：Python 第三方 markdown_to_json.dictify 以「ATX 标题+缩进列表+段落」子集实现（文档注明）；chat 面注入（HarnessChat） |
 | `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | 22437 | `b9c33d7fbe4c6911` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：knowlege_compile/raptor.py（v0.27.2 的 1D 分水岭 RecursiveAbstractiveProcessing4TreeOrganizedRetrieval）已移植为 src/knowlege_raptor.rs：构造/取消检查、分水岭聚类（手写 np.percentile 线性插值、比率上限二次调阈）、clustering 密集重标、摘要（think/截断清理、标题首行、嵌入、错误预算与中止）、递归层构建（小层塌缩、退化聚类守卫）、层树物化；6 项单测绿。与旧 src/raptor.rs（上游 rag/raptor.py，1046 行，早已移植）为不同文件。书面差异：簇摘要顺序执行（Python 并发 gather）；缓存/chat_limiter/timeout 由宿主 RaptorBackend 承担；truncate 用 crate 分词器二分（上游 tiktoken）。 |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | 33439 | `2f4ad78607873601` | full | `src/structure_compile.rs` | v0.3.10ah 完成：runner.py 核心已移植入 src/structure_compile.rs（env 常量（LazyLock）、resolve_template_ids_from_groups、load_active_templates/split_tree_templates、page_index 摘要与 dataset-nav 前缀、批次并发核心（FuturesUnordered + 有序提交 + 预算分批 + merge 上限冲刷）、合成阶段（wiki PLAN/REFINE + compile_kwd 覆写）、dataset 图重建、timeline 清理；6 项 runner 单测、structure_compile 套件 42 绿）。书面差异：doc-storage 条件变量序列改为顺序 await（同一顺序保证）、批次迭代器以批次列表表达、LLMCallPool 为直通包装（并发由宿主负责）；宿主服务经 StructureCompileBackend 契约注入（v0.27.2 参数面逐字保留）。 |
-| `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | 138491 | `638f99c699a3abd9` | partial | `src/advanced_rag.rs` | v0.3.10ah 进行中（凭证据）：structure.py 已覆盖 54+4 定义的绝大部分并补齐 23 项新缺口（本轮：全量自适应 LLMCallPool/ModelPoolState/PooledChatModel、entity_candidate_groups、dataset_struct_graph_row_id、ES 组判定/合并批次（逐字三提示词）、merge_group、merge_pair(chat)、knn_candidate、dedup select-fields 常量）。余 1 项：_struct_doc_storage_dedup_batch（批量编排，KNN/判定/合并/别名改写全流程；契约与分段依赖均已就绪）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | 138491 | `638f99c699a3abd9` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：structure.py（3430 行 / 61+4 定义）全量覆盖——本地既有的提取/合并/链校验/管线引擎，加上本轮补齐的 24 项 v0.27.2 缺口（全量自适应 LLMCallPool/ModelPoolState/PooledChatModel、别名解析与关系改写/重建、精确实体合并、doc-storage 去重条件/KNN 候选/组判定与合并批次（三提示词逐字）/单组合并/批量编排 dedup_batch、entity_candidate_groups、dataset_struct_graph_row_id、RechunkedDocs 等；structure_compile 套件 70+ 测绿）。书面差异：嵌套批次编排的并发阶段顺序化执行（KNN/判定/合并/嵌入/写回各自内部顺序；共享快照语义保留）；文档身份比较以行 id 替代 Python id()；`MatchExpr::Dense` 无 extra_options.similarity 槽位；`ensure_llm_bundle` 类型系统不适用。映射：src/structure_compile.rs（主）、src/merge.rs、src/hypergraph.rs、src/dataset_structure_merger.rs。 |
 | `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | 158984 | `b6b277555fa49c9d` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | 212591 | `02392f68b6702c5c` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/think_log.py` | 95 | 3556 | `b4e8660ef9d3dfcb` | full | `src/harness/think_log.rs` | v0.3.10y：作用域前缀过滤（3 命名空间 + 括号标签行）、<br> 框定、请求级 sink（set/reset/forward；per-request 隔离由调用方上下文承载）；1 项单测 |

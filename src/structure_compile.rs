@@ -6532,6 +6532,507 @@ pub async fn struct_merge_doc_storage_group(
     (separate, Some(merged))
 }
 
+// ── `structure.py` C2b (v0.3.10ah) — doc-storage dedup orchestrator ────────
+
+#[derive(Default)]
+struct DedupGroupState {
+    separate: Vec<Value>,
+    duplicate_docs: Vec<Value>,
+    merged: Option<Value>,
+    chunk_ids: Vec<String>,
+    entity_aliases: std::collections::HashMap<String, String>,
+}
+
+/// `_struct_doc_storage_dedup_batch`: batch ES dedup — KNN candidates, grouped
+/// LLM decisions, grouped merges, canonical-alias relation rewrite. Returns
+/// `(inserted, updated)`.
+///
+/// Documented divergences: the nested batch stages run sequentially
+/// (KNN/decisions/merges/embeddings/writes are each internally ordered; the
+/// shared read-only KNN snapshot semantics are preserved); doc identity
+/// comparisons use the row `id` instead of Python `id()`.
+#[allow(clippy::too_many_arguments)]
+pub async fn struct_doc_storage_dedup_batch(
+    store: &dyn crate::doc_store::DocStore,
+    chat: &dyn crate::harness::HarnessChat,
+    embed: &dyn EmbeddingBackend,
+    docs: &[Value],
+    tenant_id: &str,
+    kb_id: &str,
+    similarity_threshold: f32,
+    merge_scope_dataset: bool,
+    cancel_check: &(dyn Fn() -> bool + Send + Sync),
+) -> std::result::Result<(usize, usize), RunnerError> {
+    let index = doc_store_index_name(tenant_id);
+    let select_fields = struct_dedup_select_fields();
+    let raise_if_canceled = || -> std::result::Result<(), RunnerError> {
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        Ok(())
+    };
+    raise_if_canceled()?;
+
+    // Stage 1: KNN candidates (read-only snapshot per old row).
+    let mut knn_results: Vec<(Value, Option<Value>)> = Vec::new();
+    for doc in docs {
+        raise_if_canceled()?;
+        let candidate = struct_doc_storage_knn_candidate(
+            store,
+            doc,
+            tenant_id,
+            kb_id,
+            similarity_threshold,
+            merge_scope_dataset,
+        );
+        knn_results.push((doc.clone(), candidate));
+    }
+    raise_if_canceled()?;
+
+    let mut inserts: Vec<Value> = Vec::new();
+    let mut old_ids: Vec<String> = Vec::new();
+    let mut old_docs: Vec<Value> = Vec::new();
+    let mut incoming_lists: Vec<Vec<Value>> = Vec::new();
+    for (doc, old_doc) in knn_results {
+        let Some(old_doc) = old_doc else {
+            inserts.push(doc);
+            continue;
+        };
+        let old_id = string_field(&old_doc, "id");
+        match old_ids.iter().position(|id| id == &old_id) {
+            Some(position) => incoming_lists[position].push(doc),
+            None => {
+                old_ids.push(old_id);
+                old_docs.push(old_doc);
+                incoming_lists.push(vec![doc]);
+            }
+        }
+    }
+
+    let mut states: Vec<DedupGroupState> = (0..old_ids.len())
+        .map(|index| DedupGroupState {
+            chunk_ids: struct_union_chunk_ids(old_docs[index].get("source_chunk_ids"), None),
+            ..DedupGroupState::default()
+        })
+        .collect();
+
+    // Stage 2: grouped decisions (batched by incoming count).
+    let mut decision_specs: Vec<Value> = Vec::new();
+    for (index, old_id) in old_ids.iter().enumerate() {
+        let incoming = &incoming_lists[index];
+        for (part, start) in (0..incoming.len())
+            .step_by(ES_DEDUP_LLM_BATCH_SIZE)
+            .enumerate()
+        {
+            let end = (start + ES_DEDUP_LLM_BATCH_SIZE).min(incoming.len());
+            decision_specs.push(serde_json::json!({
+                "old_id": old_id,
+                "request_group_id": format!("{old_id}:part-{part}"),
+                "old_doc": old_docs[index],
+                "incoming_docs": incoming[start..end].to_vec(),
+            }));
+        }
+    }
+    let mut decision_batches: Vec<Vec<Value>> = Vec::new();
+    let mut current_batch: Vec<Value> = Vec::new();
+    let mut current_size = 0usize;
+    for spec in decision_specs {
+        let size = spec
+            .get("incoming_docs")
+            .and_then(Value::as_array)
+            .map(|items| items.len())
+            .unwrap_or(0);
+        if !current_batch.is_empty() && current_size + size > ES_DEDUP_LLM_BATCH_SIZE {
+            decision_batches.push(std::mem::take(&mut current_batch));
+            current_size = 0;
+        }
+        current_batch.push(spec);
+        current_size += size;
+    }
+    if !current_batch.is_empty() {
+        decision_batches.push(current_batch);
+    }
+    let mut decisions_by_group: std::collections::HashMap<String, std::collections::HashSet<i64>> =
+        std::collections::HashMap::new();
+    for batch in &decision_batches {
+        raise_if_canceled()?;
+        let result = struct_judge_doc_storage_group_batch(chat, batch).await;
+        for (key, value) in result {
+            decisions_by_group.entry(key).or_insert(value);
+        }
+    }
+    raise_if_canceled()?;
+    for batch in &decision_batches {
+        for spec in batch {
+            let Some(old_id) = spec.get("old_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(position) = old_ids.iter().position(|id| id == old_id) else {
+                continue;
+            };
+            let request_id = spec
+                .get("request_group_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let hits = decisions_by_group
+                .get(request_id)
+                .cloned()
+                .unwrap_or_default();
+            let incoming = spec
+                .get("incoming_docs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for (incoming_index, doc) in incoming.into_iter().enumerate() {
+                if hits.contains(&(incoming_index as i64)) {
+                    states[position].duplicate_docs.push(doc);
+                } else {
+                    states[position].separate.push(doc);
+                }
+            }
+        }
+    }
+
+    // Stage 3: per-group merges.
+    for position in 0..old_ids.len() {
+        raise_if_canceled()?;
+        if states[position].duplicate_docs.is_empty() {
+            continue;
+        }
+        let old_doc = old_docs[position].clone();
+        let mut current_doc = old_doc.clone();
+        let mut current_chunk_ids = states[position].chunk_ids.clone();
+        let mut merged_payload: Option<Value> = None;
+        let duplicate_docs = states[position].duplicate_docs.clone();
+        for start in (0..duplicate_docs.len()).step_by(ES_DEDUP_LLM_BATCH_SIZE) {
+            raise_if_canceled()?;
+            let end = (start + ES_DEDUP_LLM_BATCH_SIZE).min(duplicate_docs.len());
+            let candidate_docs = duplicate_docs[start..end].to_vec();
+            let (separate, candidate_merged) =
+                struct_merge_doc_storage_group(chat, &current_doc, &candidate_docs).await;
+            let separate_ids: std::collections::HashSet<String> =
+                separate.iter().map(|doc| string_field(doc, "id")).collect();
+            states[position].separate.extend(separate);
+            let Some(candidate_merged) = candidate_merged else {
+                continue;
+            };
+            let candidate_merged =
+                crate::merge::apply_merge_invariants(&current_doc, candidate_merged);
+            if string_field(&old_doc, "knowledge_graph_kwd") == "entity" {
+                let old_name = crate::dataset_structure_merger::struct_entity_name(&current_doc);
+                let canonical_name = {
+                    let candidate =
+                        crate::dataset_structure_merger::struct_entity_name(&candidate_merged);
+                    if candidate.is_empty() {
+                        old_name.clone()
+                    } else {
+                        candidate
+                    }
+                };
+                for candidate in &candidate_docs {
+                    let candidate_name =
+                        crate::dataset_structure_merger::struct_entity_name(candidate);
+                    if !candidate_name.is_empty() && candidate_name != canonical_name {
+                        states[position]
+                            .entity_aliases
+                            .insert(candidate_name, canonical_name.clone());
+                    }
+                }
+                if !old_name.is_empty() && old_name != canonical_name {
+                    states[position]
+                        .entity_aliases
+                        .insert(old_name, canonical_name);
+                }
+            }
+            for candidate in &candidate_docs {
+                if separate_ids.contains(&string_field(candidate, "id")) {
+                    continue;
+                }
+                current_chunk_ids = struct_union_chunk_ids(
+                    Some(&Value::Array(
+                        current_chunk_ids
+                            .iter()
+                            .cloned()
+                            .map(Value::String)
+                            .collect(),
+                    )),
+                    candidate.get("source_chunk_ids"),
+                );
+            }
+            if let Some(map) = current_doc.as_object_mut() {
+                map.insert(
+                    "content_with_weight".to_string(),
+                    Value::String(candidate_merged.to_string()),
+                );
+                map.insert(
+                    "source_chunk_ids".to_string(),
+                    Value::Array(
+                        current_chunk_ids
+                            .iter()
+                            .cloned()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            merged_payload = Some(candidate_merged);
+        }
+        if merged_payload.is_some() {
+            states[position].merged = merged_payload;
+            states[position].chunk_ids = current_chunk_ids;
+        }
+    }
+    raise_if_canceled()?;
+
+    // Separate docs join the insert list; merged groups are rebuilt with fresh
+    // embeddings before the writes.
+    let mut merged_jobs: Vec<(String, usize, Value, Vec<String>)> = Vec::new();
+    for (position, state) in states.iter_mut().enumerate() {
+        inserts.extend(state.separate.drain(..));
+        if state.merged.is_none() {
+            continue;
+        }
+        merged_jobs.push((
+            old_ids[position].clone(),
+            position,
+            state.merged.clone().unwrap_or(Value::Null),
+            state.chunk_ids.clone(),
+        ));
+    }
+    let mut rebuilt: Vec<(String, Value)> = Vec::new();
+    for start in (0..merged_jobs.len()).step_by(ES_DEDUP_EMBED_BATCH_SIZE) {
+        let end = (start + ES_DEDUP_EMBED_BATCH_SIZE).min(merged_jobs.len());
+        let batch = &merged_jobs[start..end];
+        let texts: Vec<String> = batch
+            .iter()
+            .map(|(_, _, payload, _)| payload_description(payload))
+            .collect();
+        let vectors = match encode(embed, &texts).await {
+            Ok(vectors) => vectors,
+            Err(_) => Vec::new(),
+        };
+        for (offset, (old_id, position, payload, chunk_ids)) in batch.iter().enumerate() {
+            let Some(vector) = vectors.get(offset).cloned() else {
+                continue;
+            };
+            let row = struct_rebuild_doc_storage_doc(
+                payload,
+                &old_docs[*position],
+                vector,
+                chunk_ids,
+                true,
+            );
+            rebuilt.push((
+                old_id.clone(),
+                serde_json::to_value(&row).unwrap_or(Value::Null),
+            ));
+        }
+    }
+
+    let mut writes: Vec<Value> = inserts.clone();
+    writes.extend(rebuilt.iter().map(|(_, row)| row.clone()));
+    let mut inserted = 0usize;
+    let mut updated = 0usize;
+    let mut successful_entity_aliases: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for start in (0..writes.len()).step_by(ES_DEDUP_INSERT_BATCH_SIZE) {
+        raise_if_canceled()?;
+        let end = (start + ES_DEDUP_INSERT_BATCH_SIZE).min(writes.len());
+        let batch = &writes[start..end];
+        if batch.is_empty() {
+            continue;
+        }
+        let rows: Vec<crate::doc_store::DocRow> = batch
+            .iter()
+            .filter_map(|row| row.as_object().cloned())
+            .collect();
+        if store.insert(&rows, &index, kb_id).is_ok() {
+            let rebuilt_ids: std::collections::HashSet<String> =
+                rebuilt.iter().map(|(old_id, _)| old_id.clone()).collect();
+            for row in batch {
+                let row_id = string_field(row, "id");
+                if rebuilt_ids.contains(&row_id) {
+                    updated += 1;
+                    if let Some(position) = old_ids.iter().position(|id| id == &row_id) {
+                        if string_field(&old_docs[position], "knowledge_graph_kwd") == "entity" {
+                            successful_entity_aliases
+                                .extend(states[position].entity_aliases.clone());
+                        }
+                    }
+                } else {
+                    inserted += 1;
+                }
+            }
+        }
+    }
+
+    // Canonical aliases publish only after the entity writes succeeded; every
+    // relation that references an alias is rewritten in place (scope: the
+    // old document, or the whole KB in dataset scope).
+    let mut entity_aliases = successful_entity_aliases;
+    let mut existing_relation_updates = 0usize;
+    if !entity_aliases.is_empty() {
+        let mut scopes: Vec<(Option<String>, String, Option<String>)> = Vec::new();
+        for (position, old_doc) in old_docs.iter().enumerate() {
+            if string_field(old_doc, "knowledge_graph_kwd") != "entity" {
+                continue;
+            }
+            let doc_id = if merge_scope_dataset {
+                None
+            } else {
+                let value = string_field(old_doc, "doc_id");
+                if value.is_empty() { None } else { Some(value) }
+            };
+            let scope = (
+                doc_id,
+                string_field(old_doc, "compile_kwd"),
+                doc_template_id(old_doc),
+            );
+            if !scopes.contains(&scope) {
+                scopes.push(scope);
+            }
+            let _ = position;
+        }
+        for (doc_id, compile_kwd, template_id) in scopes {
+            raise_if_canceled()?;
+            let mut condition = serde_json::Map::new();
+            condition.insert("compile_kwd".to_string(), serde_json::json!([compile_kwd]));
+            condition.insert(
+                "knowledge_graph_kwd".to_string(),
+                serde_json::json!(["relation"]),
+            );
+            if let Some(doc_id) = &doc_id {
+                condition.insert("doc_id".to_string(), serde_json::json!([doc_id]));
+            }
+            if let Some(template_id) = &template_id {
+                condition.insert(
+                    "compilation_template_ids".to_string(),
+                    serde_json::json!([template_id]),
+                );
+            }
+            let query = struct_store_query(
+                &select_fields,
+                &Value::Object(condition),
+                Vec::new(),
+                &index,
+                kb_id,
+                10000,
+            );
+            let Ok(response) = store.search(&query) else {
+                continue;
+            };
+            let rows = store.get_fields(&response, &select_fields);
+            let mut rewrite_batch: Vec<(Value, Value)> = Vec::new();
+            for (row_id, row) in rows {
+                let mut row_value = Value::Object(row);
+                if let Some(map) = row_value.as_object_mut() {
+                    map.insert("id".to_string(), Value::String(row_id.clone()));
+                }
+                let Some(mut payload) = parse_content_payload(&row_value) else {
+                    continue;
+                };
+                if !struct_rewrite_relation_payload(&mut payload, &entity_aliases) {
+                    continue;
+                }
+                let from_value = string_field(&row_value, "from_entity_kwd");
+                let to_value = string_field(&row_value, "to_entity_kwd");
+                if let Some(map) = row_value.as_object_mut() {
+                    map.insert(
+                        "content_with_weight".to_string(),
+                        Value::String(payload.to_string()),
+                    );
+                    map.insert(
+                        "from_entity_kwd".to_string(),
+                        Value::String(struct_resolve_entity_alias(&from_value, &entity_aliases)),
+                    );
+                    map.insert(
+                        "to_entity_kwd".to_string(),
+                        Value::String(struct_resolve_entity_alias(&to_value, &entity_aliases)),
+                    );
+                }
+                rewrite_batch.push((row_value, payload));
+            }
+            for start in (0..rewrite_batch.len()).step_by(ES_DEDUP_EMBED_BATCH_SIZE) {
+                let end = (start + ES_DEDUP_EMBED_BATCH_SIZE).min(rewrite_batch.len());
+                let batch = &rewrite_batch[start..end];
+                let texts: Vec<String> = batch
+                    .iter()
+                    .map(|(_, payload)| payload_description(payload))
+                    .collect();
+                let Ok(vectors) = encode(embed, &texts).await else {
+                    continue;
+                };
+                let mut rewritten: Vec<crate::doc_store::DocRow> = Vec::new();
+                for (offset, (base, payload)) in batch.iter().enumerate() {
+                    let Some(vector) = vectors.get(offset).cloned() else {
+                        continue;
+                    };
+                    let chunk_ids = struct_union_chunk_ids(base.get("source_chunk_ids"), None);
+                    let row =
+                        struct_rebuild_doc_storage_doc(payload, base, vector, &chunk_ids, true);
+                    if let Some(map) = serde_json::to_value(&row)
+                        .ok()
+                        .and_then(|v| v.as_object().cloned())
+                    {
+                        rewritten.push(map);
+                    }
+                }
+                if !rewritten.is_empty() {
+                    let _ = store.insert(&rewritten, &index, kb_id);
+                    existing_relation_updates += rewritten.len();
+                }
+            }
+        }
+        // Incoming relation inserts and merged relation payloads referencing an
+        // alias are rewritten too.
+        let mut rewritten_inserts: Vec<Value> = Vec::new();
+        for doc in &inserts {
+            if string_field(doc, "knowledge_graph_kwd") == "relation" {
+                rewritten_inserts
+                    .push(struct_rewrite_relation_doc(doc, &entity_aliases, embed).await);
+            } else {
+                rewritten_inserts.push(doc.clone());
+            }
+        }
+        if rewritten_inserts != inserts {
+            let rows: Vec<crate::doc_store::DocRow> = rewritten_inserts
+                .iter()
+                .filter_map(|row| row.as_object().cloned())
+                .collect();
+            let _ = store.insert(&rows, &index, kb_id);
+        }
+        for (position, old_doc) in old_docs.iter().enumerate() {
+            if string_field(old_doc, "knowledge_graph_kwd") != "relation" {
+                continue;
+            }
+            let Some(mut payload) = states[position].merged.clone() else {
+                continue;
+            };
+            if !struct_rewrite_relation_payload(&mut payload, &entity_aliases) {
+                continue;
+            }
+            if let Some(vector) = struct_reembed_payload(&payload, embed).await {
+                let row = struct_rebuild_doc_storage_doc(
+                    &payload,
+                    old_doc,
+                    vector,
+                    &states[position].chunk_ids,
+                    true,
+                );
+                if let Some(map) = serde_json::to_value(&row)
+                    .ok()
+                    .and_then(|v| v.as_object().cloned())
+                {
+                    let _ = store.insert(&[map], &index, kb_id);
+                }
+            }
+        }
+        entity_aliases.clear();
+    }
+
+    Ok((inserted, updated + existing_relation_updates))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8529,5 +9030,200 @@ mod struct_c2a_tests {
         let (separate, merged) = struct_merge_doc_storage_group(&chat_no, &old, &incoming).await;
         assert_eq!(separate.len(), 1);
         assert!(merged.is_none());
+    }
+}
+#[cfg(test)]
+mod struct_c2b_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        replies: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            let mut queue = self.replies.lock().unwrap();
+            if queue.is_empty() {
+                Ok(String::new())
+            } else {
+                Ok(queue.remove(0))
+            }
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+        }
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        search_rows: Vec<Value>,
+        inserts: Mutex<Vec<usize>>,
+    }
+
+    impl crate::doc_store::DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(
+            &self,
+            _index_name: &str,
+            _dataset_id: &str,
+            _vector_size: usize,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            rows: &[crate::doc_store::DocRow],
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<Vec<String>> {
+            self.inserts.lock().unwrap().push(rows.len());
+            Ok(Vec::new())
+        }
+        fn get(
+            &self,
+            _data_id: &str,
+            _index_name: &str,
+            _dataset_ids: &[String],
+        ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+            Ok(None)
+        }
+        fn update(
+            &self,
+            _condition: &crate::doc_store::FilterCondition,
+            _new_value: &crate::doc_store::DocRow,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<bool> {
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            _condition: &crate::doc_store::FilterCondition,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<usize> {
+            Ok(0)
+        }
+        fn search(
+            &self,
+            query: &crate::doc_store::SearchQuery,
+        ) -> crate::Result<crate::doc_store::SearchResponse> {
+            // Only the KNN/relation searches consume rows; return the seeded set
+            // for the KNN search (match expressions or name filter), nothing for
+            // the relation-rewrite search (`knowledge_graph_kwd = relation`).
+            let wants_relation = query
+                .condition
+                .get("knowledge_graph_kwd")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().any(|item| item.as_str() == Some("relation")))
+                .unwrap_or(false);
+            let docs: Vec<crate::doc_store::DocRow> = if wants_relation {
+                Vec::new()
+            } else {
+                self.search_rows
+                    .iter()
+                    .filter_map(|row| row.as_object().cloned())
+                    .collect()
+            };
+            Ok(crate::doc_store::SearchResponse {
+                total: docs.len(),
+                docs,
+                ..Default::default()
+            })
+        }
+        fn sql(&self, _sql: &str, _fetch_size: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn entity_doc(id: &str, name: &str) -> Value {
+        json!({
+            "id": id,
+            "doc_id": "d1",
+            "compile_kwd": "list",
+            "knowledge_graph_kwd": "entity",
+            "source_chunk_ids": ["c1"],
+            "content_with_weight": json!({"name": name, "type": "fact", "description": "d"}).to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn dedup_batch_merges_duplicate_entities() {
+        let store = MockStore {
+            search_rows: vec![entity_doc("old1", "Alpha")],
+            ..MockStore::default()
+        };
+        let chat = MockChat {
+            replies: Mutex::new(vec![
+                // judge batch (ES_GROUP_DECISION_BATCH_PROMPT)
+                json!({"groups": [{"group_id": "old1:part-0", "decisions": [{"incoming_index": 0, "duplicated": true}]}]}).to_string(),
+                // merge group (single candidate -> merge-pair prompt)
+                json!({"duplicated": true, "merged": {"name": "Alpha", "type": "title"}}).to_string(),
+            ]),
+        };
+        let docs = vec![entity_doc("new1", "Alpha")];
+        let cancel = || false;
+        let (inserted, updated) = struct_doc_storage_dedup_batch(
+            &store, &chat, &MockEmbed, &docs, "t1", "kb1", 0.9, false, &cancel,
+        )
+        .await
+        .expect("dedup runs");
+        assert_eq!(inserted, 0, "the duplicate is not inserted separately");
+        assert_eq!(updated, 1, "the existing row is rewritten");
+        assert!(
+            !store.inserts.lock().unwrap().is_empty(),
+            "a write happened"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedup_batch_cancellation_surfaces() {
+        let store = MockStore::default();
+        let chat = MockChat {
+            replies: Mutex::new(Vec::new()),
+        };
+        let cancel = || true;
+        let result = struct_doc_storage_dedup_batch(
+            &store,
+            &chat,
+            &MockEmbed,
+            &[entity_doc("new1", "Alpha")],
+            "t1",
+            "kb1",
+            0.9,
+            false,
+            &cancel,
+        )
+        .await;
+        assert_eq!(result, Err(RunnerError::Cancelled));
     }
 }

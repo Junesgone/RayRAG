@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：46（UI 残留 42 + 实施队列 4）
+- partial：45（UI 残留 42 + 实施队列 3）
 - re-audit：435（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,12 +28,11 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（4 项）
+### W-4 Agentic harness 移植（最大队列）（3 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 | `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
-| `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | `src/advanced_rag.rs` | v0.3.10ah 进行中（凭证据）：structure.py 已覆盖 54+4 定义的绝大部分并补齐 23 项新缺口（本轮：全量自适应 LLMCallPool/ModelPoolState/PooledChatModel、entity_candidate_groups、dataset_struct_graph_row_id、ES 组判定/合并批次（逐字三提示词）、merge_group、merge_pair(chat)、knn_candidate、dedup select-fields 常量）。余 1 项：_struct_doc_storage_dedup_batch（批量编排，KNN/判定/合并/别名改写全流程；契约与分段依赖均已就绪）——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 
