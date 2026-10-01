@@ -12,6 +12,7 @@ pub mod html;
 pub mod json;
 pub mod markdown;
 pub mod mineru;
+pub mod mistral_ocr;
 pub mod monkeyocrv2;
 pub mod opendataloader;
 pub mod paddleocr_layout;

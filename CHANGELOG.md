@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.64] — 2026-10-01（对标批次 v0.3.10i）
+
+> W-3 完成：RAGFlow v0.27.2 的 Mistral OCR 远端 PDF 解析器全量移植（纯 Rust），OCR 解析器收敛队列清零。
+
+### Added
+
+- **Mistral OCR 远端解析器**（`deepdoc/parser/mistral_parser.py` + `rag/llm/ocr_model.py::MistralOcrModel` → `src/parser/mistral_ocr.rs`）：`GET /models` 就绪探测；`POST /v1/ocr`（`model`/`document`/`include_blocks`/`table_format`/`include_image_base64`，文档 ≤20 MiB 走 base64 data URI，超出走 `/files` 上传→签名 URL→OCR→删除）；`MISTRAL_TYPE_TO_RAGFLOW` 类型映射与 `keep_header_footer`；`@@页\tx0\tx1\t顶部\t底部##` 位置标签与 `<!--TABLE_START-->`/`<!--IMAGE_START-->` 标记输出。
+- **配置**：`layout_recognize` 支持 `Mistral OCR` 与 `<model>@Mistral OCR`（归一化）；`MISTRAL_OCR_API_KEY` / `MISTRAL_OCR_BASE_URL` / `MISTRAL_OCR_MODEL` / `MISTRAL_OCR_TABLE_FORMAT` / `MISTRAL_OCR_KEEP_HEADER_FOOTER` 环境变量（API key 缺失或服务不可达时明确报错，不做静默降级）。
+
+### Tests
+
+- 9 项单测（mock `/models`+`/v1/ocr`、上传+签名 URL+删除路径、分页选择器、错误/空结果）+ pipeline 端到端 + `@mistral ocr` 归一化测试；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.63] — 2026-10-01（对标批次 v0.3.10h）
 
 > W-3 首批：RAGFlow v0.27.2 的 MonkeyOCRv2 远端 PDF 解析器全量移植（纯 Rust）。

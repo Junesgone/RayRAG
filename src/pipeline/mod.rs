@@ -75,6 +75,7 @@ pub struct Pipeline {
     mineru: Option<crate::parser::mineru::MinerUClient>,
     somark: Option<crate::parser::somark::SoMarkClient>,
     monkeyocrv2: Option<crate::parser::monkeyocrv2::MonkeyOcrV2Client>,
+    mistral_ocr: Option<crate::parser::mistral_ocr::MistralOcrClient>,
     stt: Option<crate::audio::AsrClient>,
     vision: Option<crate::vision::VisionClient>,
 }
@@ -93,6 +94,7 @@ impl Pipeline {
             mineru: None,
             somark: None,
             monkeyocrv2: None,
+            mistral_ocr: None,
             stt: None,
             vision: None,
         }
@@ -188,6 +190,21 @@ impl Pipeline {
         Ok(self)
     }
 
+    /// Set the remote PDF provider used by a Mistral OCR layout selector.
+    pub fn with_mistral_ocr_client(
+        mut self,
+        client: crate::parser::mistral_ocr::MistralOcrClient,
+    ) -> Self {
+        self.mistral_ocr = Some(client);
+        self
+    }
+
+    /// Resolve the optional Mistral OCR PDF provider from environment.
+    pub fn with_mistral_ocr_from_env(mut self) -> Result<Self> {
+        self.mistral_ocr = crate::parser::mistral_ocr::MistralOcrClient::from_env()?;
+        Ok(self)
+    }
+
     /// Resolve the optional ASR (speech-to-text) client from environment.
     pub fn with_asr_from_env(mut self) -> Result<Self> {
         self.stt = crate::audio::asr_from_env()?;
@@ -209,6 +226,7 @@ impl Pipeline {
             .with_mineru_from_env()?
             .with_somark_from_env()?
             .with_monkeyocrv2_from_env()?
+            .with_mistral_ocr_from_env()?
             .with_asr_from_env()
     }
 
@@ -378,6 +396,32 @@ impl Pipeline {
                 .parse_pdf(name, data, Some(&options))
                 .await
                 .map_err(|error| anyhow::anyhow!("SoMark parsing failed for {name}: {error}"))?;
+            let mut document = parser::new_document(name, output.content, mime, data.len());
+            document.metadata.insert(
+                crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
+                "true".to_string(),
+            );
+            return Ok(document);
+        }
+
+        if is_mistral_ocr_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let client = self.mistral_ocr.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Mistral OCR layout requested but MISTRAL_OCR_API_KEY is not configured"
+                )
+            })?;
+            client.check_installation().await?;
+            let output = client
+                .parse_pdf(
+                    name,
+                    data,
+                    0,
+                    crate::parser::mistral_ocr::MAXIMUM_PAGE_NUMBER,
+                )
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!("Mistral OCR parsing failed for {name}: {error}")
+                })?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
                 crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
@@ -675,6 +719,11 @@ fn is_somark_layout(layout_recognize: &str) -> bool {
 fn is_monkeyocrv2_layout(layout_recognize: &str) -> bool {
     let normalized = layout_recognize.trim().to_ascii_lowercase();
     normalized == "monkeyocrv2" || normalized.ends_with("@monkeyocrv2")
+}
+
+fn is_mistral_ocr_layout(layout_recognize: &str) -> bool {
+    let normalized = layout_recognize.trim().to_ascii_lowercase();
+    normalized == "mistral ocr" || normalized.ends_with("@mistral ocr")
 }
 
 #[cfg(test)]
@@ -1036,6 +1085,73 @@ mod tests {
 
         assert!(document.content.contains("MonkeyOCRv2 pipeline"));
         assert!(document.content.contains("@@1\t1\t3\t2\t4##"));
+        assert_eq!(
+            document
+                .metadata
+                .get(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+                .map(String::as_str),
+            Some("true")
+        );
+        let mut chunks = pipeline.chunker.chunk(&document, &pipeline.config).unwrap();
+        Pipeline::annotate_chunks(&mut chunks, &pipeline.config);
+        assert_eq!(chunks.len(), 1);
+        assert!(!chunks[0].content.contains("@@"));
+        assert_eq!(
+            chunks[0].metadata.get("position_int").map(String::as_str),
+            Some("[[1,1,3,2,4]]")
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_mistral_ocr_is_used_by_the_pdf_pipeline() {
+        let app = Router::new()
+            .route("/models", axum::routing::get(|| async { StatusCode::OK }))
+            .route(
+                "/ocr",
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({
+                        "pages": [{
+                            "index": 0,
+                            "blocks": [{
+                                "type": "text",
+                                "content": "Mistral OCR pipeline",
+                                "top_left_x": 1,
+                                "top_left_y": 2,
+                                "bottom_right_x": 3,
+                                "bottom_right_y": 4
+                            }]
+                        }]
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::parser::mistral_ocr::MistralOcrClient::new(
+            crate::parser::mistral_ocr::MistralOcrConfig::new(
+                &format!("http://{address}"),
+                "sk-test",
+                "mistral-ocr-latest",
+                "html",
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "mistral-ocr-latest@primary@Mistral OCR".into(),
+            ..ParserConfig::default()
+        })
+        .with_mistral_ocr_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\n mock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("Mistral OCR pipeline"));
+        assert!(document.content.contains("@@1\t1.0\t3.0\t2.0\t4.0##"));
         assert_eq!(
             document
                 .metadata

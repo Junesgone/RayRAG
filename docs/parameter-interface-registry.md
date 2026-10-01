@@ -68,6 +68,11 @@
 | `SOMARK_SUBMIT_BUDGET_SECONDS` | `600` |  |
 | `SOMARK_POLL_BUDGET_SECONDS` | `600` |  |
 | `MONKEYOCRV2_SERVER_URL` | `` | Optional MonkeyOCRv2 remote PDF parser. Leave empty to disable the provider. |
+| `MISTRAL_OCR_API_KEY` | `` | Optional Mistral OCR remote PDF parser (POST /v1/ocr). Set an API key to enable. |
+| `MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai/v1` |  |
+| `MISTRAL_OCR_MODEL` | `mistral-ocr-latest` |  |
+| `MISTRAL_OCR_TABLE_FORMAT` | `html` |  |
+| `MISTRAL_OCR_KEEP_HEADER_FOOTER` | `0` |  |
 | `RAYRAG_ADMIN_EMAIL` | `admin@rayrag.local` | 全新状态卷首次启动时必需；密码至少 12 个字符。 |
 | `RAYRAG_ADMIN_PASSWORD` | `replace-with-a-strong-admin-password` |  |
 | `RAYRAG_PASSWORD_PRIVATE_KEY_FILE` | `` | Optional RAGFlow-compatible password transport. Generate a deployment-only RSA PKCS#8/PKCS#1 key, mount it as a secret, and set the in-container path. Never reuse RAGFlow's repository-owned conf/private.pem. When unset, auth passwords are plain JSON and the deployment must terminate HTTPS upstream. |
