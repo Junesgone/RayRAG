@@ -9261,3 +9261,888 @@ mod wiki_incremental_part14_tests {
         assert!(wiki_load_plan_group_members(&store, "t1", "kb1").is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 13 — page-move reconciliation and Mode B run
+// (`_wiki_reconcile_page_moves`, `_wiki_mode_b_run`).
+//
+// Adaptation note: the refine fan-out is sequential with the same progress
+// cadence; doc_page_source updates run serially as upstream.
+// ---------------------------------------------------------------------------
+
+/// `_wiki_reconcile_page_moves`.
+pub fn wiki_reconcile_page_moves(
+    assignments: &Map<String, Value>,
+    existing_pages: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut previous_pages: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for (page_id, page) in existing_pages {
+        for name in as_str_list(page.get("entity_names_kwd")) {
+            previous_pages
+                .entry(normalize_key(&name))
+                .or_default()
+                .push((page_id.clone(), name));
+        }
+    }
+    let mut result: Map<String, Value> = Map::new();
+    for (target_id, entities) in assignments {
+        let target_key = target_id
+            .strip_prefix("_new_")
+            .unwrap_or(target_id)
+            .to_string();
+        let entries: Vec<Value> = entities.as_array().cloned().unwrap_or_default();
+        for entity in entries {
+            let name = entity
+                .get("entity_name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let old_memberships = previous_pages
+                .get(&normalize_key(&name))
+                .cloned()
+                .unwrap_or_default();
+            let action = entity.get("action").and_then(Value::as_str).unwrap_or("");
+            if action == "delete" {
+                for (old_page_id, stored_name) in &old_memberships {
+                    let mut removal = entity.as_object().cloned().unwrap_or_default();
+                    removal.insert(
+                        "entity_name".to_string(),
+                        Value::String(stored_name.clone()),
+                    );
+                    removal.insert("claims".to_string(), Value::Array(Vec::new()));
+                    let mut retractions: Vec<Value> = entity
+                        .get("retractions")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Some(old_page) = existing_pages.get(old_page_id) {
+                        retractions.extend(wiki_claims_for_entity(old_page, stored_name));
+                    }
+                    removal.insert("retractions".to_string(), Value::Array(retractions));
+                    let bucket = result
+                        .entry(old_page_id.clone())
+                        .or_insert_with(|| Value::Array(Vec::new()));
+                    if let Some(items) = bucket.as_array_mut() {
+                        items.push(Value::Object(removal));
+                    }
+                }
+                continue;
+            }
+            let bucket = result
+                .entry(target_id.clone())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(items) = bucket.as_array_mut() {
+                items.push(entity.clone());
+            }
+            for (old_page_id, stored_name) in &old_memberships {
+                if old_page_id == &target_key {
+                    continue;
+                }
+                let mut retractions: Vec<Value> = Vec::new();
+                if let Some(old_page) = existing_pages.get(old_page_id) {
+                    retractions = wiki_claims_for_entity(old_page, stored_name);
+                }
+                let removal = json!({
+                    "entity_name": stored_name,
+                    "entity_type": entity.get("entity_type").and_then(Value::as_str).unwrap_or("entity"),
+                    "aliases": entity.get("aliases").cloned().unwrap_or(Value::Array(Vec::new())),
+                    "claims": [],
+                    "retractions": retractions,
+                    "action": "delete",
+                });
+                let bucket = result
+                    .entry(old_page_id.clone())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Some(items) = bucket.as_array_mut() {
+                    items.push(removal);
+                }
+            }
+        }
+    }
+    result.retain(|_, entities| {
+        entities
+            .as_array()
+            .map(|items| !items.is_empty())
+            .unwrap_or(false)
+    });
+    result
+}
+
+fn names_value_to_vec(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `_wiki_mode_b_run`: Page Router + per-page REFINE.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_mode_b_run(
+    store: &dyn DocStore,
+    deltas: &[Value],
+    existing_pages: &Map<String, Value>,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+    doc_to_entities: Option<&Map<String, Value>>,
+    entity_evidence: Option<&Map<String, Value>>,
+    entity_relations: Option<&Map<String, Value>>,
+    doc_topics: Option<&Map<String, Value>>,
+    topic_embeddings: Option<&mut Map<String, Value>>,
+    topic_pool: Option<&mut Map<String, Value>>,
+) -> Value {
+    let report = |message: &str| {
+        if let Some(callback) = callback {
+            callback(0.7, &format!("wiki REFINE B: {message}"));
+        }
+    };
+    let mut pages_created = 0usize;
+    let mut pages_modified = 0usize;
+    let mut pages_deleted = 0usize;
+    let mut errors: Vec<Value> = Vec::new();
+
+    let mut affected_entities: Vec<Value> = Vec::new();
+    for delta in deltas {
+        let Some(name) = delta.get("entity_name").and_then(Value::as_str) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let mut delta_claims: Vec<Value> = delta
+            .get("additions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        delta_claims.extend(
+            delta
+                .get("claims")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let relations = entity_relations
+            .and_then(|map| map.get(name))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+        affected_entities.push(json!({
+            "entity_name": name,
+            "entity_type": delta.get("entity_type").and_then(Value::as_str).unwrap_or("entity"),
+            "aliases": delta.get("aliases").cloned().unwrap_or(Value::Array(Vec::new())),
+            "claims": wiki_dedupe_claims(&delta_claims),
+            "retractions": delta.get("retractions").cloned().unwrap_or(Value::Array(Vec::new())),
+            "source_chunk_ids": delta.get("source_chunk_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+            "source_doc_ids": delta.get("retained_source_doc_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+            "relations": relations,
+            "action": delta.get("action").and_then(Value::as_str).unwrap_or(""),
+        }));
+    }
+    if affected_entities.is_empty() {
+        report("No affected entities. Skipping.");
+        return json!({
+            "pages_created": 0,
+            "pages_modified": 0,
+            "pages_deleted": 0,
+            "errors": [],
+        });
+    }
+
+    report(&format!(
+        "Page Router: routing {} entities ...",
+        affected_entities.len()
+    ));
+    let assignments = wiki_page_router(
+        store,
+        &mut affected_entities,
+        chat,
+        embd,
+        tenant_id,
+        kb_id,
+        Some(existing_pages),
+    )
+    .await;
+    let assignments = wiki_reconcile_page_moves(&assignments, existing_pages);
+    let assignments = wiki_split_unstable_page_assignments(
+        store,
+        &assignments,
+        existing_pages,
+        chat,
+        embd,
+        kb_id,
+    )
+    .await;
+    if assignments.is_empty() {
+        report("Page Router: no assignments. Skipping.");
+        return json!({
+            "pages_created": 0,
+            "pages_modified": 0,
+            "pages_deleted": 0,
+            "errors": [],
+        });
+    }
+
+    let all_page_ids: Vec<String> = existing_pages.keys().cloned().collect();
+
+    let mut page_source_chunks: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for (pid, entities) in &assignments {
+        let page_key = pid.strip_prefix("_new_").unwrap_or(pid).to_string();
+        let mut chunks: Vec<Value> = Vec::new();
+        for entity in entities.as_array().cloned().unwrap_or_default() {
+            for cid in as_str_list(entity.get("source_chunk_ids")) {
+                chunks.push(json!({"id": cid, "text": ""}));
+            }
+            if let Some(claims) = entity.get("claims").and_then(Value::as_array) {
+                for claim in claims {
+                    for cid in wiki_claim_chunk_ids(claim) {
+                        chunks.push(json!({
+                            "id": cid,
+                            "text": delta_claim_text(claim),
+                            "source_doc_id": claim.get("source_doc_id").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
+                }
+            }
+        }
+        if !chunks.is_empty() {
+            page_source_chunks.insert(page_key, chunks);
+        }
+    }
+
+    let mut doc_updates: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut doc_removals: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut topic_selection_stats: Map<String, Value> = Map::new();
+    topic_selection_stats.insert("selected".to_string(), json!(0));
+    topic_selection_stats.insert("new".to_string(), json!(0));
+    topic_selection_stats.insert("new_added".to_string(), json!(0));
+    let mut topic_embeddings = topic_embeddings;
+    let mut topic_pool = topic_pool;
+
+    let total = assignments.len();
+    report(&format!("{total} pages ..."));
+    let report_every =
+        1.max((total + WIKI_REFINE_PROGRESS_UPDATES - 1) / WIKI_REFINE_PROGRESS_UPDATES);
+    let mut completed = 0usize;
+    let assignment_entries: Vec<(String, Vec<Value>)> = assignments
+        .iter()
+        .map(|(pid, entities)| {
+            (
+                pid.clone(),
+                entities.as_array().cloned().unwrap_or_default(),
+            )
+        })
+        .collect();
+    for (page_identifier, entities) in assignment_entries {
+        let is_new = page_identifier.starts_with("_new_");
+        let page_key = page_identifier
+            .strip_prefix("_new_")
+            .unwrap_or(&page_identifier)
+            .trim()
+            .to_string();
+        if page_key.is_empty() {
+            completed += 1;
+            continue;
+        }
+        let existing = if !is_new {
+            existing_pages.get(&page_key).cloned()
+        } else {
+            None
+        };
+        let page_type = match existing.as_ref() {
+            Some(existing) => existing
+                .get("page_type_kwd")
+                .map(|value| match value {
+                    Value::Array(items) => {
+                        items.first().and_then(Value::as_str).unwrap_or("entity")
+                    }
+                    other => other.as_str().unwrap_or("entity"),
+                })
+                .unwrap_or("entity")
+                .to_string(),
+            None => {
+                if page_key.starts_with("concept/") {
+                    "concept".to_string()
+                } else {
+                    "entity".to_string()
+                }
+            }
+        };
+
+        let mut additions: Vec<Value> = Vec::new();
+        let mut retractions: Vec<Value> = Vec::new();
+        let mut page_source_doc_ids: BTreeSet<String> = BTreeSet::new();
+        let mut member_evidence: Vec<Value> = Vec::new();
+        let mut action = if is_new { "create" } else { "update" }.to_string();
+        for entity in &entities {
+            let ent_claims: Vec<Value> = entity
+                .get("claims")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            additions.extend(ent_claims.iter().cloned());
+            retractions.extend(
+                entity
+                    .get("retractions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            for doc in as_str_list(entity.get("source_doc_ids")) {
+                page_source_doc_ids.insert(doc);
+            }
+            member_evidence.push(json!({
+                "name": entity.get("entity_name").and_then(Value::as_str).unwrap_or(""),
+                "claims": ent_claims,
+                "source_chunk_ids": entity.get("source_chunk_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+            }));
+        }
+        let existing_names = existing
+            .as_ref()
+            .map(|page| as_str_list(page.get("entity_names_kwd")))
+            .unwrap_or_default();
+        let added_names: Vec<String> = entities
+            .iter()
+            .filter(|entity| entity.get("action").and_then(Value::as_str) != Some("delete"))
+            .filter_map(|entity| entity.get("entity_name").and_then(Value::as_str))
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect();
+        let deleted_names: BTreeSet<String> = entities
+            .iter()
+            .filter(|entity| entity.get("action").and_then(Value::as_str) == Some("delete"))
+            .filter_map(|entity| entity.get("entity_name").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        let mut member_names: BTreeSet<String> = existing_names.iter().cloned().collect();
+        member_names.extend(added_names);
+        for deleted in &deleted_names {
+            member_names.remove(deleted);
+        }
+        let member_names: Vec<String> = member_names.into_iter().collect();
+        if member_names.is_empty() {
+            action = "delete".to_string();
+        }
+
+        let mut member_source_chunks: Vec<Value> = page_source_chunks
+            .get(&page_key)
+            .cloned()
+            .unwrap_or_default();
+        for member_name in &member_names {
+            let evidence = entity_evidence
+                .and_then(|map| map.get(member_name))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            for doc in as_str_list(evidence.get("source_doc_ids")) {
+                page_source_doc_ids.insert(doc);
+            }
+            let evidence_chunks = as_str_list(evidence.get("source_chunk_ids"));
+            for cid in &evidence_chunks {
+                member_source_chunks.push(json!({"id": cid, "text": ""}));
+            }
+            let already = member_evidence
+                .iter()
+                .any(|item| item.get("name").and_then(Value::as_str) == Some(member_name.as_str()));
+            if !already {
+                let claims = existing
+                    .as_ref()
+                    .map(|page| wiki_claims_for_entity(page, member_name))
+                    .unwrap_or_default();
+                member_evidence.push(json!({
+                    "name": member_name,
+                    "claims": claims,
+                    "source_chunk_ids": evidence_chunks.iter().cloned().map(Value::String).collect::<Vec<Value>>(),
+                }));
+            }
+        }
+
+        if action == "delete" {
+            let page_title = existing
+                .as_ref()
+                .and_then(|page| page.get("title_kwd"))
+                .map(|value| match value {
+                    Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+                    other => other.as_str().unwrap_or(""),
+                })
+                .unwrap_or(page_key.as_str())
+                .to_string();
+            let page_version = existing
+                .as_ref()
+                .map(|page| as_int(page.get("page_version_int"), 0))
+                .unwrap_or(0);
+            let deleted_page = wiki_refine_page(RefinePageArgs {
+                store,
+                mode: "delete",
+                page_id: &page_key,
+                page_title: &page_title,
+                existing_page: existing.as_ref(),
+                page_type_kwd: &page_type,
+                additions: None,
+                retractions: None,
+                source_chunks: Some(&[]),
+                claims: Some(&[]),
+                available_pages: Some(&all_page_ids),
+                contextual_hints: "",
+                chat,
+                embd,
+                tenant_id,
+                kb_id,
+                page_version,
+                entity_names: None,
+                page_embedding: None,
+                embed_routing_context: false,
+                source_doc_ids: None,
+                topic_candidates: None,
+                topic_selection_stats: None,
+                topic_embeddings: None,
+                topic_pool: None,
+                member_evidence: None,
+            })
+            .await;
+            if deleted_page.is_none() {
+                wiki_clear_refine_failure(store, tenant_id, kb_id, &page_key);
+                wiki_delete_plan_group(store, tenant_id, kb_id, &page_key);
+                if let Some(existing) = existing.as_ref() {
+                    for did in as_str_list(existing.get("source_doc_ids")) {
+                        doc_removals.entry(did).or_default().push(page_key.clone());
+                    }
+                }
+                pages_deleted += 1;
+            }
+            completed += 1;
+            if completed % report_every == 0 || completed == total {
+                report(&format!("{completed}/{total} pages completed."));
+            }
+            continue;
+        }
+
+        let page_title = match existing.as_ref() {
+            Some(existing) => existing
+                .get("title_kwd")
+                .map(|value| match value {
+                    Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+                    other => other.as_str().unwrap_or(""),
+                })
+                .unwrap_or(page_key.as_str())
+                .to_string(),
+            None => entities
+                .first()
+                .and_then(|entity| entity.get("entity_name").and_then(Value::as_str))
+                .unwrap_or(page_key.as_str())
+                .to_string(),
+        };
+        let page_version = existing
+            .as_ref()
+            .map(|page| as_int(page.get("page_version_int"), 0))
+            .unwrap_or(0);
+        let next_version = page_version + 1;
+        let new_doc_ids: BTreeSet<String> = additions
+            .iter()
+            .filter_map(|claim| claim.get("source_doc_id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        let mut refine_mode = if is_new { "generate" } else { "modify" };
+        if let Some(existing) = existing.as_ref() {
+            if should_re_synthesize(existing, &new_doc_ids, next_version) {
+                refine_mode = "re-synthesize";
+            }
+        }
+        let source_docs: Vec<String> = page_source_doc_ids.iter().cloned().collect();
+        let topic_candidates =
+            wiki_topics_for_docs(&source_docs, doc_topics, topic_pool.as_deref());
+        let contextual_hints =
+            wiki_build_contextual_hints(&page_key, existing.as_ref(), &Map::new());
+        let result = wiki_refine_page(RefinePageArgs {
+            store,
+            mode: refine_mode,
+            page_id: &page_key,
+            page_title: &page_title,
+            existing_page: existing.as_ref(),
+            page_type_kwd: &page_type,
+            additions: Some(&additions),
+            retractions: Some(&retractions),
+            source_chunks: Some(&member_source_chunks),
+            claims: Some(&additions),
+            available_pages: Some(&all_page_ids),
+            contextual_hints: &contextual_hints,
+            chat,
+            embd,
+            tenant_id,
+            kb_id,
+            page_version,
+            entity_names: Some(&member_names),
+            page_embedding: None,
+            embed_routing_context: true,
+            source_doc_ids: Some(&source_docs),
+            topic_candidates: Some(&topic_candidates),
+            topic_selection_stats: Some(&mut topic_selection_stats),
+            topic_embeddings: topic_embeddings.as_deref_mut(),
+            topic_pool: topic_pool.as_deref_mut(),
+            member_evidence: Some(&member_evidence),
+        })
+        .await;
+        match result {
+            Some(result_page) => {
+                wiki_clear_refine_failure(store, tenant_id, kb_id, &page_key);
+                if is_new {
+                    pages_created += 1;
+                } else {
+                    pages_modified += 1;
+                }
+                let result_page_version = as_int(result_page.get("page_version_int"), 1);
+                wiki_update_plan_group(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    &page_key,
+                    &member_names,
+                    result_page_version,
+                );
+                for entity in &entities {
+                    if let Some(claims) = entity.get("claims").and_then(Value::as_array) {
+                        for claim in claims {
+                            if let Some(did) = claim.get("source_doc_id").and_then(Value::as_str) {
+                                doc_updates
+                                    .entry(did.to_string())
+                                    .or_default()
+                                    .push(page_key.clone());
+                            }
+                        }
+                    }
+                }
+                for did in &source_docs {
+                    doc_updates
+                        .entry(did.clone())
+                        .or_default()
+                        .push(page_key.clone());
+                }
+                if let Some(existing) = existing.as_ref() {
+                    let old_doc_ids: BTreeSet<String> = as_str_list(existing.get("source_doc_ids"))
+                        .into_iter()
+                        .collect();
+                    let new_doc_ids: BTreeSet<String> =
+                        as_str_list(result_page.get("source_doc_ids"))
+                            .into_iter()
+                            .collect();
+                    for did in old_doc_ids.difference(&new_doc_ids) {
+                        doc_removals
+                            .entry(did.clone())
+                            .or_default()
+                            .push(page_key.clone());
+                    }
+                }
+            }
+            None => {
+                let failed_page_id = page_identifier
+                    .strip_prefix("_new_")
+                    .unwrap_or(&page_identifier)
+                    .to_string();
+                let names: Vec<String> = entities
+                    .iter()
+                    .filter_map(|entity| entity.get("entity_name").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect();
+                wiki_record_refine_failure(
+                    store,
+                    tenant_id,
+                    kb_id,
+                    &failed_page_id,
+                    &names,
+                    &format!("REFINE returned no page content for {page_key}"),
+                );
+                errors.push(Value::String(format!("REFINE_FAILED:{page_identifier}")));
+            }
+        }
+        completed += 1;
+        if completed % report_every == 0 || completed == total {
+            report(&format!("{completed}/{total} pages completed."));
+        }
+    }
+
+    wiki_log_stats(
+        "TOPIC",
+        "selection_summary",
+        &[
+            ("mode", json!("B")),
+            (
+                "selected",
+                topic_selection_stats
+                    .get("selected")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            ),
+            (
+                "new",
+                topic_selection_stats
+                    .get("new")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            ),
+            (
+                "new_added",
+                topic_selection_stats
+                    .get("new_added")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            ),
+        ],
+    );
+
+    let mut touched_docs: BTreeSet<String> = doc_updates.keys().cloned().collect();
+    touched_docs.extend(doc_removals.keys().cloned());
+    for did in touched_docs {
+        let existing_dps =
+            wiki_load_doc_page_source(store, tenant_id, kb_id, &did).unwrap_or_else(|| json!({}));
+        let removed: BTreeSet<String> = doc_removals
+            .get(&did)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let mut existing_pids: Vec<String> = as_str_list(existing_dps.get("page_ids"));
+        existing_pids.retain(|pid| !removed.contains(pid));
+        for pid in doc_updates.get(&did).cloned().unwrap_or_default() {
+            if !existing_pids.iter().any(|existing| existing == &pid) {
+                existing_pids.push(pid);
+            }
+        }
+        let mut doc_entity_names: Vec<String> = doc_to_entities
+            .and_then(|map| map.get(&did))
+            .map(|value| names_value_to_vec(Some(value)))
+            .unwrap_or_default();
+        if doc_entity_names.is_empty() {
+            doc_entity_names = as_str_list(existing_dps.get("entity_names"));
+        }
+        let chunk_hashes: Map<String, Value> = existing_dps
+            .get("source_chunk_hashes")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let map_checksum = existing_dps
+            .get("map_checksum")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        wiki_update_doc_page_source(
+            store,
+            tenant_id,
+            kb_id,
+            &did,
+            &existing_pids,
+            if doc_entity_names.is_empty() {
+                None
+            } else {
+                Some(&doc_entity_names)
+            },
+            Some(&chunk_hashes),
+            Some(&map_checksum),
+        );
+    }
+
+    report(&format!(
+        "done: +{pages_created} ~{pages_modified} -{pages_deleted}"
+    ));
+    json!({
+        "pages_created": pages_created,
+        "pages_modified": pages_modified,
+        "pages_deleted": pages_deleted,
+        "errors": errors,
+    })
+}
+
+#[cfg(test)]
+mod wiki_incremental_part15_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    struct SequentialChat {
+        replies: Mutex<VecDeque<String>>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl SequentialChat {
+        fn new(replies: &[&str]) -> Self {
+            Self {
+                replies: Mutex::new(replies.iter().map(|reply| (*reply).to_string()).collect()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for SequentialChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            let mut queue = self.replies.lock().unwrap();
+            Ok(queue.pop_front().unwrap_or_default())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn reconcile_moves_routes_deletes_and_removals() {
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/old".to_string(),
+            json!({
+                "entity_names_kwd": ["Alpha", "Beta"],
+                "claims": "[{\"statement\": \"sA\", \"subject\": \"Alpha\"}]"
+            }),
+        );
+        let mut assignments: Map<String, Value> = Map::new();
+        assignments.insert(
+            "_new_entity/alpha".to_string(),
+            json!([{"entity_name": "Alpha", "entity_type": "entity", "action": "update", "claims": [], "retractions": []}]),
+        );
+        assignments.insert(
+            "entity/old".to_string(),
+            json!([{"entity_name": "Beta", "entity_type": "entity", "action": "delete", "retractions": [{"statement": "gone"}]}]),
+        );
+        let reconciled = wiki_reconcile_page_moves(&assignments, &existing);
+        assert!(reconciled.contains_key("_new_entity/alpha"));
+        let old_entries = reconciled["entity/old"].as_array().unwrap();
+        assert_eq!(old_entries.len(), 2);
+        let beta_removal = old_entries
+            .iter()
+            .find(|entry| entry["entity_name"] == json!("Beta"))
+            .unwrap();
+        assert_eq!(beta_removal["action"], json!("delete"));
+        assert_eq!(beta_removal["retractions"].as_array().unwrap().len(), 1);
+        let alpha_removal = old_entries
+            .iter()
+            .find(|entry| entry["entity_name"] == json!("Alpha"))
+            .unwrap();
+        assert_eq!(alpha_removal["action"], json!("delete"));
+        assert_eq!(alpha_removal["retractions"].as_array().unwrap().len(), 1);
+        assert_eq!(alpha_removal["retractions"][0]["statement"], json!("sA"));
+    }
+
+    #[tokio::test]
+    async fn mode_b_routes_updates_and_tracks_plan_group() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "md_with_weight": "OLD",
+            "entity_names_kwd": ["Alpha"],
+            "source_chunk_ids": ["c1"],
+            "source_doc_ids": ["d0"],
+            "page_version_int": 2,
+            "synthesis_version_int": 1,
+            "topic_kwd": "alpha",
+            "claims": "[]",
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({
+                "title_kwd": "Alpha",
+                "page_type_kwd": "entity",
+                "md_with_weight": "OLD",
+                "entity_names_kwd": ["Alpha"],
+                "source_chunk_ids": ["c1"],
+                "source_doc_ids": ["d0"],
+                "page_version_int": 2,
+                "synthesis_version_int": 1,
+                "topic_kwd": "alpha",
+                "claims": "[]"
+            }),
+        );
+        let chat = SequentialChat::new(&[
+            "[{\"id\": 0, \"page\": \"entity/alpha\"}]",
+            "TOPIC: alpha\n# Updated B\n\nBody from B.",
+        ]);
+        let emb = TestEmb;
+        let delta = json!({
+            "entity_name": "Alpha",
+            "entity_type": "entity",
+            "aliases": [],
+            "additions": [{"statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]}],
+            "retractions": [],
+            "claims": [],
+            "source_chunk_ids": ["c1"],
+            "retained_source_doc_ids": ["d1"],
+            "action": "update"
+        });
+        let summary = wiki_mode_b_run(
+            &store,
+            &[delta],
+            &existing,
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(1));
+        assert_eq!(summary["pages_created"], json!(0));
+        let pages = search_existing_pages(
+            &store,
+            "t1",
+            "kb1",
+            &["slug_kwd".to_string(), "md_with_weight".to_string()],
+        );
+        let alpha = pages.get("entity/alpha").cloned().expect("alpha");
+        assert!(
+            alpha["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Body from B")
+        );
+        let groups = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(groups["entity/alpha"], json!(["Alpha"]));
+        let dps = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("doc source");
+        let page_ids: Vec<String> = as_str_list(dps.get("page_ids"));
+        assert!(page_ids.contains(&"entity/alpha".to_string()));
+        assert_eq!(chat.calls.lock().unwrap().len(), 2);
+    }
+}
