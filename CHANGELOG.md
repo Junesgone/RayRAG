@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.86] — 2026-10-01（对标批次 v0.3.10ae）
+
+> W-4 续：编译产物扩展（零 LLM）全量移植——W-4 队列 6→5。
+
+- `src/harness/tools/compiled_expansion.rs`（上游 `tools/compiled_expansion.py`，514 行）：`expand_compiled_strategy`（实体种子 → 双拼写端点 → from/to 双向关系（≤50/向）→ 1 跳邻居 → `name_kwd` 查询（≤100）→ 按文档分组 → 块加载去重，≤5/策略）、`expand_wiki_page_strategy`（合成页直搜 → 源块加载、`similarity` 缺省 0.9 优先排序）、`expand_with_compiled`（4 模板 kind + tree + wiki_page/artifact_page/essence 三策略，`seen` 全局去重，按 similarity 稳定重排，返回增量）；`VECTOR_NUM_CANDIDATES=256`/`VECTOR_SIMILARITY=0.1` 常量；store/嵌入/块加载经 `CompiledExpansionHost` 注入契约。
+- 台账：`tools/compiled_expansion.py` → full；worklist W-4 6 → 5；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：3 项全绿；fmt/check 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.85] — 2026-10-01（对标批次 v0.3.10ad）
 
 > W-4 续：导航工具全量移植（nav-tree 路由 + 结构导航/向量束钻取；纯 Rust）——W-4 队列 7→6。

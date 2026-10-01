@@ -859,10 +859,10 @@ pub fn has_distinct_node_vectors(entities: &[Value]) -> bool {
 
 /// `_node_score`: cosine when the node and query carry vectors, else keyword overlap.
 pub fn node_score(qvec: Option<&Vec<f64>>, query_terms: &[String], entity: &Value) -> f64 {
-    if let Some(qvec) = qvec {
-        if let Some(vector) = value_vec(entity.get("_vec")) {
-            return cosine(qvec, &vector);
-        }
+    if let Some(qvec) = qvec
+        && let Some(vector) = value_vec(entity.get("_vec"))
+    {
+        return cosine(qvec, &vector);
     }
     node_relevance(query_terms, entity) as f64
 }
@@ -1142,10 +1142,8 @@ pub async fn render_toc_drilldown(
     let selector: &str;
     if let Some(selected) = selected.filter(|names| !names.is_empty()) {
         for name in selected {
-            if tree.by_name.contains_key(name) {
-                if kept_names_set.insert(name.clone()) {
-                    kept_order.push(name.clone());
-                }
+            if tree.by_name.contains_key(name) && kept_names_set.insert(name.clone()) {
+                kept_order.push(name.clone());
             }
         }
         // Ancestors.
@@ -1259,12 +1257,12 @@ pub async fn render_toc_drilldown(
         let path = segments.join(" -> ");
         if let Some(ids) = entity.get("source_chunk_ids").and_then(Value::as_array) {
             for id in ids {
-                if let Some(id) = id.as_str() {
-                    if !id.is_empty() {
-                        chunk_paths
-                            .entry(id.to_string())
-                            .or_insert_with(|| path.clone());
-                    }
+                if let Some(id) = id.as_str()
+                    && !id.is_empty()
+                {
+                    chunk_paths
+                        .entry(id.to_string())
+                        .or_insert_with(|| path.clone());
                 }
             }
         }

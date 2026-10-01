@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 633 | 301946 |
-| partial | 48 | 22718 |
+| full | 634 | 302460 |
+| partial | 47 | 22204 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3652,7 +3652,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/harness/stats.py` | 448 | 19444 | `a777fdcbf2f08120` | full | `src/harness/stats.rs` | v0.3.10y：phase/in_phase 作用域（RAII PhaseScope + 同名重入遮蔽）、LLMUsageStats 全量计账（calls/failed/phase_time_ms/prompt+completion+total tokens/rounds/round-phase/round claims）、snapshot 规范顺序与回退排序、日志表渲染；3 项单测 |
 | `rag/advanced_rag/harness/structure_qa.py` | 102 | 4547 | `999ba01a711eca29` | full | `src/harness/structure_qa.rs` | v0.3.10y：outline 渲染（300/300 上限、空白折叠、默认 other/related）、NAV_SYSTEM 与 user prompt（capitalize）、verdict 解析（充分性门控 answer、relevant_entities 始终透传）；2 项单测 |
 | `rag/advanced_rag/harness/tools/__init__.py` | 20 | 1051 | `79321f0e1f699d2b` | full | `src/harness/tools/mod.rs` | v0.3.10y：工具包文档（search/navigation/exploration 归属、上游已移除 TOOL_REGISTRY 的说明）；实现随动作会话批次移植（各自行独立收敛） |
-| `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | 16963 | `e252fc8bb7694a25` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：编译扩展工具；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | 16963 | `e252fc8bb7694a25` | full | `src/harness/tools/compiled_expansion.rs` | v0.3.10ae：全文件移植（零 LLM）——VECTOR_NUM_CANDIDATES=256/相似度 0.1；expand_compiled_strategy（种子实体 → from/to 双向关系 ≤50 → 1 跳邻居（排除种子、双拼写端点）→ name_kwd ≤100 查询 → 按文档分组 source_chunk_ids（去重/排除 seen）→ 块加载 ≤5/策略）；expand_wiki_page_strategy（合成页直搜 wiki_page/artifact_page/essence，source 块 similarity 缺省 0.9 优先）；expand_with_compiled（4 模板 kind + tree + 三合成策略、seen 全局去重、按 similarity 稳定重排、返回增量）；store/嵌入/块加载经 CompiledExpansionHost 注入契约；3 项单测 |
 | `rag/advanced_rag/harness/tools/exploration.py` | 468 | 19641 | `88db170eea537faa` | full | `src/harness/tools/exploration.rs` | v0.3.10ac：KG 漫游与 wiki 查询全量移植——_KG_* 常量（种子 2/候选池 64/相似度 0.8/跳数 2/邻居 128/关系 32）、_kg_scopes/_kg_search 注入契约（scope_kwd dataset|doc）、_kg_parse_entity/_kg_parse_relation、_endpoint_terms、_collect_evidence_ids、graph_explore（种子→2 跳 BFS→_ask_structure 判定；不足时按相关实体/关系回取 source_chunk_ids 并关键词窄化）、wiki_query（wiki_page_draft 页面 content_md* 抽取 + 窄化 + doc_aggs）；4 项单测 |
 | `rag/advanced_rag/harness/tools/navigation.py` | 1936 | 84658 | `cc44e3e3bc3c4197` | full | `src/harness/tools/navigation.rs` | v0.3.10ad：全文件移植完成（切片 1+2a+2b）——常量与 NavResult、_normalize_kind、_load_chunks_by_ids（24 上限）、_doc_aggs；nav-tree 路由（_ask_nav_select 编号列表选择/解析、_collect_nav_leaves BFS（深度 6/叶 300）、_content_recall_docs、dataset_navigation_by_tree 含 content-recall 兜底）；层搜索（_nav_search_titled 分数门槛 0.2/按 _nav 摘要标注/每文档取最高分/12 上限、dataset_navigation_search）；结构导航（_structure_kinds_for、_build_toc_tree 父子/根、_node_relevance/_node_score/_cosine/_has_distinct_node_vectors、_drill_kept_nodes 向量束（深度 3/K=2/相对比 0.5）与关键词回退、_render_toc_drilldown（chunk 检索序/LLM TOC/束三选择器、路径映射、统计)、_render_outline/_outline_stats/_chunk_ptrs、_build_toc_items/_select_toc_nodes（默认关闭）、_read_structures、_navigate_tree_impl/_navigate_structure_impl（XML + empty_reason）、_expand_related_via_structure）；store/LLM/向量读取经 NavRouterHost/NavStructureHost 注入契约（与 tools/search.py 收口惯例一致） |
 | `rag/advanced_rag/harness/tools/search.py` | 685 | 28279 | `9965b027c0ddfbb0` | full | `src/harness/tools/search.rs` | v0.3.10ab：检索腿与 grep 定位全量移植——设置解析（top_n/top_k/rerank 下限）、effective_query 400 字符、检索缓存键、注入式 HarnessRetriever（hybrid 权重 0.3 / vector 1.0 / BM25 0）+ 关键词窄化、grep 词抽取（10 上限）与查询转词、表块整体保留的 grep_search、list_chunks/load_specific_chunks/rank_chunks_by_terms、TOOL_NAME_BY_FUNC/COMPILED_TOOL_MODES；5 项单测 |
