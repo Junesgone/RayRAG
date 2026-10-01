@@ -120,6 +120,20 @@ impl TokenChunker {
         let _threshold = max_tokens * (100 - overlap_pct) / 100;
         let overlap_tokens = max_tokens * overlap_pct / 100;
 
+        // Oversized sections are re-split at sentence boundaries before
+        // merging (upstream `token_chunker` consumes `SENTENCE_BOUNDARY_RE`
+        // for exactly this step).
+        let sections: Vec<String> = sections
+            .into_iter()
+            .flat_map(|section| {
+                if token_count(&section) > max_tokens {
+                    super::sentence::split_sentences_keep_boundaries(&section)
+                } else {
+                    vec![section]
+                }
+            })
+            .collect();
+
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut current = String::new();
         let mut pos = 0usize;

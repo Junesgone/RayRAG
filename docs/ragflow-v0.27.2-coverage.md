@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 604 | 292955 |
-| partial | 78 | 32156 |
+| full | 605 | 292984 |
+| partial | 77 | 32127 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3686,7 +3686,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/flow/__init__.py` | 58 | 1971 | `ca6202e15e29a03d` | full | `src/pipeline/flow.rs` | flow component contracts (payloads/trace/progress) ported |
 | `rag/flow/base.py` | 60 | 2205 | `2581cc96564d4059` | full | `src/pipeline/flow.rs` | flow component contracts (payloads/trace/progress) ported |
 | `rag/flow/chunker/__init__.py` | 18 | 745 | `1a080087bab321c8` | full | `src/pipeline/flow.rs` | flow component contracts (payloads/trace/progress) ported |
-| `rag/flow/chunker/_sentence_boundary.py` | 29 | 1216 | `50fd0cd5e2141c5d` | partial | `src/chunk/` | （v0.3.10g 审计：标题/令牌分块共享句界定义；RayRAG 分块器在 src/chunk/，共享句界定待统一——worklist W-5（结构图/编译器/切分）） |
+| `rag/flow/chunker/_sentence_boundary.py` | 29 | 1216 | `50fd0cd5e2141c5d` | full | `src/chunk/sentence.rs; src/chunk/token.rs` | （v0.3.10t 移植：SENTENCE_BOUNDARY_PATTERN（中英句末标点 + 换行，捕获组保留边界归属）+ DOTALL 等价编译 + split_sentences_keep_boundaries 句级拆分；接入 token 分块器超长段重拆（对齐 token_chunker 消费点）；2 项单测，chunk::token 9 项无回归。） |
 | `rag/flow/chunker/schema.py` | 38 | 1615 | `223eaf671d83a758` | full | `src/lib.rs` | ParserConfig chunk fields added |
 | `rag/flow/chunker/title_chunker/__init__.py` | 19 | 808 | `989a6f1dca6c8206` | full | `src/chunk/title.rs` | TitleChunker hierarchy+group ported |
 | `rag/flow/chunker/title_chunker/common.py` | 469 | 18917 | `fa3a81b3deb236fc` | full | `src/chunk/title.rs` | heading parsing + sections ported [v0.27.2 content changed: re-audit] |

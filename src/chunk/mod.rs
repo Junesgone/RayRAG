@@ -5,6 +5,7 @@
 pub mod delim;
 mod naive;
 mod position;
+pub mod sentence;
 mod title;
 mod token;
 pub mod tokenizer;

@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.75] — 2026-10-01（对标批次 v0.3.10t）
+
+> W-5 续：RAGFlow v0.27.2 的共享句界定义（`rag/flow/chunker/_sentence_boundary.py`）移植（纯 Rust）。
+
+### Added
+
+- **共享句界定义**（`_sentence_boundary.py` → `src/chunk/sentence.rs`）：`SENTENCE_BOUNDARY_PATTERN`（中文/英文句末标点 + 换行，捕获组保留边界归属前一子句）、DOTALL 等价编译、`split_sentences_keep_boundaries` 句级拆分。
+- **token 分块器接线**：超过 `chunk_token_num` 的单个 section 先按句界重拆再合并（对齐上游 `token_chunker` 消费点）。
+
+### Tests
+
+- 2 项新单测（模式常量与匹配、保留边界的拆分语义）；`chunk::token` 既有 9 项测试无回归；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.74] — 2026-10-01（对标批次 v0.3.10s）
 
 > W-5 首批：RAGFlow v0.27.2 的 canonical delimiter 解析（`rag/nlp/delim.py`）移植（纯 Rust）。
