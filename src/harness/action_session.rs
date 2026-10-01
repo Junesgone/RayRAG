@@ -845,6 +845,511 @@ mod executor_tests {
     }
 }
 
+// ── Terminal parsing + tool surface (part 3a) ──────────────────────────────
+
+/// The tool registry order (`_TOOL_MAP` insertion order).
+/// (`retrieve`, `search_chunks`, `list_chunks`, `navigate_tree`,
+/// `navigate_structure`, `calculate`, `graph_explore`, `web_search`.)
+pub const TOOL_MAP_NAMES: [&str; 8] = [
+    "retrieve",
+    "search_chunks",
+    "list_chunks",
+    "navigate_tree",
+    "navigate_structure",
+    "calculate",
+    "graph_explore",
+    "web_search",
+];
+
+/// `_reason_status`: single source of truth for the cause→status mapping.
+pub fn reason_status(reason: &str) -> &'static str {
+    match reason {
+        "no_structure" => OUTCOME_EMPTY,
+        "bad_args" | "infra" => OUTCOME_ERROR,
+        // no_doc: this query reached nothing, the tool itself is fine.
+        _ => OUTCOME_MISS,
+    }
+}
+
+/// `_active_tool_specs` (name level): the tool names exposed for THIS mode.
+/// * the per-mode tool set comes from `config.THINKING_MODES` (ultra adds
+///   `graph_explore`);
+/// * `web_search` is hidden when NO web provider is configured;
+/// * disabled compile-only tools are removed for the rest of the session.
+pub fn active_tool_specs(
+    mode_tools: &std::collections::BTreeSet<String>,
+    has_web: bool,
+    disabled: &HashSet<String>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in TOOL_MAP_NAMES {
+        if !mode_tools.contains(name) {
+            continue;
+        }
+        if name == "web_search" && !has_web {
+            continue;
+        }
+        if disabled.contains(name) {
+            continue;
+        }
+        out.push(name.to_string());
+    }
+    out
+}
+
+/// `extract_json`: the first parseable JSON object found in `text` (tries the
+/// remainder from each `{`, then the balanced object starting there).
+pub fn extract_json(text: &str) -> Option<Value> {
+    for (index, ch) in text.char_indices() {
+        if ch != '{' {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(&text[index..]) {
+            if value.is_object() {
+                return Some(value);
+            }
+        }
+        if let Some(end) = balanced_object_end(&text[index..]) {
+            if let Ok(value) = serde_json::from_str::<Value>(&text[index..index + end]) {
+                if value.is_object() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn balanced_object_end(text: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index + ch.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `extract_tag`: exact-tag extraction first; then lenient fallbacks for
+/// models that wrap the JSON in code fences or emit bare objects.
+pub fn extract_tag(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    if let (Some(start), Some(end)) = (text.rfind(&open), text.rfind(&close)) {
+        if end > start {
+            return Some(text[start + open.len()..end].trim().to_string());
+        }
+    }
+    let fenced_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```").unwrap();
+    let fenced: Vec<String> = fenced_re
+        .captures_iter(text)
+        .filter_map(|capture| capture.get(1).map(|m| m.as_str().to_string()))
+        .collect();
+    let tag_re = Regex::new(&format!(r"<{tag}\b")).unwrap();
+    if fenced.is_empty() && !tag_re.is_match(text) {
+        return None;
+    }
+    // Prefer the LAST fenced block (most recent decision).
+    for fragment in fenced.iter().rev() {
+        if let Ok(object) = serde_json::from_str::<Value>(fragment) {
+            let keys: HashSet<String> = object
+                .as_object()
+                .map(|map| map.keys().cloned().collect())
+                .unwrap_or_default();
+            let matched = if tag == "state" {
+                keys.contains("new_states")
+            } else {
+                keys.contains("answer") || keys.contains("new_state")
+            };
+            if object.is_object() && matched {
+                return Some(fragment.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `apply_patch`: ONLY existing ids; mutable fields are `candidate` /
+/// `candidate_strength` / `discovered_clues`. `id` is immutable — patches may
+/// not add variables. Returns `None` when nothing changed.
+pub fn apply_patch(base: &SlotState, branch_patches: &[Value]) -> Option<SlotState> {
+    let mut new_vars: Vec<Variable> = base.state.clone();
+    let mut changed = false;
+    for patch in branch_patches {
+        let Some(object) = patch.as_object() else {
+            return None;
+        };
+        let Some(id) = object.get("id").and_then(Value::as_i64) else {
+            return None;
+        };
+        let Some(variable) = new_vars.iter_mut().find(|variable| variable.id == id) else {
+            continue;
+        };
+        if let Some(candidate) = object.get("candidate") {
+            variable.candidate = match candidate {
+                Value::String(text) if text.is_empty() => None,
+                Value::String(text) => Some(text.clone()),
+                Value::Null => None,
+                Value::Bool(flag) => {
+                    if *flag {
+                        Some("True".to_string())
+                    } else {
+                        None
+                    }
+                }
+                Value::Number(number) => {
+                    if number.as_f64().map(|value| value != 0.0).unwrap_or(true) {
+                        Some(number.to_string())
+                    } else {
+                        None
+                    }
+                }
+                other => Some(other.to_string()),
+            };
+            changed = true;
+        }
+        if let Some(strength) = object.get("candidate_strength") {
+            if !strength.is_null() {
+                let number = strength.as_f64().or_else(|| {
+                    strength
+                        .as_str()
+                        .and_then(|text| text.trim().parse::<f64>().ok())
+                });
+                if let Some(number) = number {
+                    variable.candidate_strength = Some(number.clamp(0.0, 1.0));
+                    changed = true;
+                }
+            }
+        }
+        if let Some(clues) = object.get("discovered_clues").and_then(Value::as_array) {
+            let tail: Vec<&Value> = clues
+                .iter()
+                .rev()
+                .take(4)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            for clue in tail {
+                let text = match clue {
+                    Value::String(value) => value.clone(),
+                    other => other.to_string(),
+                };
+                variable
+                    .discovered_clues
+                    .push(text.chars().take(160).collect());
+            }
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    let mut patched = SlotState::new(new_vars, base.depth + 1);
+    patched.retrieved_evidence_ids = base.retrieved_evidence_ids.clone();
+    Some(patched)
+}
+
+/// `_parse_terminal`: parse the two DeepSearch terminal output blocks.
+/// Returns `(new_states, found_answer, terminal_type, terminal_payload)` —
+/// exactly one of the first two may be set.
+pub fn parse_terminal(
+    content: &str,
+    parent: &SlotState,
+) -> (
+    Vec<SlotState>,
+    Option<String>,
+    Option<String>,
+    Option<Value>,
+) {
+    if content.contains("<state>") {
+        let block = extract_tag(content, "state").unwrap_or_else(|| "{}".to_string());
+        let data = extract_json(&block).unwrap_or_else(|| serde_json::json!({}));
+        let mut raw_branches: Vec<Value> = data
+            .get("new_states")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !raw_branches.is_empty()
+            && raw_branches
+                .iter()
+                .all(|branch| branch.is_object() && branch.get("state").is_none())
+        {
+            raw_branches = raw_branches
+                .into_iter()
+                .map(|branch| serde_json::json!({"state": [branch]}))
+                .collect();
+        }
+        let mut branches: Vec<SlotState> = Vec::new();
+        for branch in raw_branches {
+            let patches = branch
+                .get("state")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(state) = apply_patch(parent, &patches) {
+                branches.push(state);
+            }
+        }
+        return (branches, None, Some("state".to_string()), Some(data));
+    }
+    if content.contains("<answer>") {
+        let block = extract_tag(content, "answer").unwrap_or_else(|| "{}".to_string());
+        let data = extract_json(&block).unwrap_or_else(|| serde_json::json!({}));
+        let answer = data
+            .get("answer")
+            .map(|value| match value {
+                Value::String(text) => text.trim().to_string(),
+                other => other.to_string().trim().trim_matches('"').to_string(),
+            })
+            .filter(|text| !text.is_empty());
+        let mut final_state = parent.clone();
+        if let Some(list) = data.get("new_state").and_then(Value::as_array) {
+            if let Some(patched) = apply_patch(parent, list) {
+                final_state = patched;
+            }
+        }
+        return (
+            vec![final_state],
+            answer,
+            Some("answer".to_string()),
+            Some(data),
+        );
+    }
+    (Vec::new(), None, None, None)
+}
+
+/// One normalized provider tool call.
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+    /// Unknown names are kept (never dropped) so the protocol stays paired.
+    pub unknown: bool,
+}
+
+/// `_parse_tool_calls`: normalize provider-native tool calls to
+/// `ToolCall`s; synthesize stable `call_N` ids when the provider omitted one.
+pub fn parse_tool_calls(raw_calls: &[Value]) -> Vec<ToolCall> {
+    let mut calls: Vec<ToolCall> = Vec::new();
+    for (index, call) in raw_calls.iter().enumerate() {
+        let function = call.get("function");
+        let name = function
+            .and_then(|f| f.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let raw_args = function.and_then(|f| f.get("arguments"));
+        let args: Value = match raw_args {
+            Some(Value::String(text)) if !text.trim().is_empty() => {
+                serde_json::from_str::<Value>(text)
+                    .ok()
+                    .filter(Value::is_object)
+                    .unwrap_or_else(|| serde_json::json!({}))
+            }
+            Some(value) if value.is_object() => value.clone(),
+            _ => serde_json::json!({}),
+        };
+        let id = call
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| format!("call_{index}"));
+        let unknown = !TOOL_MAP_NAMES.contains(&name.as_str());
+        calls.push(ToolCall {
+            id,
+            name,
+            args,
+            unknown,
+        });
+    }
+    calls
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn state_with(vars: Vec<Variable>) -> SlotState {
+        SlotState::new(vars, 0)
+    }
+
+    #[test]
+    fn tag_and_json_extraction() {
+        let text = "blah <state>{\"new_states\": []}</state> tail";
+        assert_eq!(
+            extract_tag(text, "state"),
+            Some("{\"new_states\": []}".to_string())
+        );
+        // Fenced fallback for models that ignore the XML protocol.
+        let fenced = "here you go\n```json\n{\"answer\": \"42\"}\n```";
+        assert_eq!(
+            extract_tag(fenced, "answer"),
+            Some("{\"answer\": \"42\"}".to_string())
+        );
+        assert_eq!(extract_tag("no protocol here", "state"), None);
+        // extract_json picks the first parseable object.
+        assert_eq!(
+            extract_json("noise {\"a\": 1} trailing"),
+            Some(json!({"a": 1}))
+        );
+        assert_eq!(extract_json("no objects"), None);
+
+        let mut var = Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            ..Default::default()
+        };
+        var.candidate = Some("Ada".to_string());
+        assert_eq!(var.candidate.as_deref(), Some("Ada"));
+    }
+
+    #[test]
+    fn apply_patch_only_mutates_existing_ids() {
+        let base = state_with(vec![Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            ..Default::default()
+        }]);
+        // Unknown id -> no change -> None.
+        assert!(apply_patch(&base, &[json!({"id": 9, "candidate": "X"})]).is_none());
+        // Missing id -> structural error -> None.
+        assert!(apply_patch(&base, &[json!({"candidate": "X"})]).is_none());
+        // Valid patch on an existing id.
+        let patched = apply_patch(
+            &base,
+            &[json!({"id": 1, "candidate": "Ada", "candidate_strength": 1.7, "discovered_clues": ["a", "b"]})],
+        )
+        .expect("patch applied");
+        assert_eq!(patched.depth, 1);
+        assert_eq!(patched.state[0].candidate.as_deref(), Some("Ada"));
+        assert_eq!(
+            patched.state[0].candidate_strength,
+            Some(1.0),
+            "strength clamps to 1.0"
+        );
+        assert_eq!(
+            patched.state[0].discovered_clues,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        // Patch that changes nothing -> None.
+        assert!(apply_patch(&base, &[json!({"id": 1})]).is_none());
+    }
+
+    #[test]
+    fn terminal_parsing_paths() {
+        let base = state_with(vec![Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            ..Default::default()
+        }]);
+        // <state> with bare-dict branches gets wrapped and patched.
+        let (branches, answer, kind, _payload) = parse_terminal(
+            "<state>{\"new_states\": [{\"id\": 1, \"candidate\": \"Ada\"}]}</state>",
+            &base,
+        );
+        assert_eq!(kind.as_deref(), Some("state"));
+        assert!(answer.is_none());
+        assert_eq!(branches.len(), 1);
+        assert_eq!(branches[0].state[0].candidate.as_deref(), Some("Ada"));
+
+        // <answer> may patch the parent state too.
+        let (states, answer, kind, payload) = parse_terminal(
+            "<answer>{\"answer\": \" 42 \", \"new_state\": [{\"id\": 1, \"candidate\": \"Ada\"}]}</answer>",
+            &base,
+        );
+        assert_eq!(kind.as_deref(), Some("answer"));
+        assert_eq!(answer.as_deref(), Some("42"));
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].state[0].candidate.as_deref(), Some("Ada"));
+        assert_eq!(payload.unwrap()["answer"], json!(" 42 "));
+
+        // Empty answer -> None, no branches.
+        let (states, answer, kind, _) =
+            parse_terminal("<answer>{\"answer\": \"  \"}</answer>", &base);
+        assert!(answer.is_none());
+        assert_eq!(kind.as_deref(), Some("answer"));
+        assert_eq!(states.len(), 1, "final_state mirrors the parent");
+
+        // Neither block -> nothing.
+        let (states, answer, kind, _) = parse_terminal("just prose", &base);
+        assert!(states.is_empty() && answer.is_none() && kind.is_none());
+    }
+
+    #[test]
+    fn tool_calls_normalize_and_mark_unknown() {
+        let raw = vec![
+            json!({"id": "c1", "function": {"name": "retrieve", "arguments": "{\"query\": [\"a\"]}"}}),
+            json!({"function": {"name": "state", "arguments": "not json"}}),
+            json!({"id": "c3", "function": {"name": "search_chunks", "arguments": {"query": "b"}}}),
+        ];
+        let calls = parse_tool_calls(&raw);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].id, "c1");
+        assert_eq!(calls[0].args["query"][0], json!("a"));
+        assert!(!calls[0].unknown);
+        assert_eq!(calls[1].id, "call_1", "missing ids are synthesized");
+        assert!(calls[1].unknown, "XML protocol tags are unknown tools");
+        assert_eq!(calls[1].args, json!({}), "bad JSON falls back to {{}}");
+        assert_eq!(
+            calls[2].args["query"],
+            json!("b"),
+            "object args pass through"
+        );
+    }
+
+    #[test]
+    fn tool_surface_gates() {
+        let mut high = std::collections::BTreeSet::new();
+        for name in ["retrieve", "search_chunks", "navigate_tree", "web_search"] {
+            high.insert(name.to_string());
+        }
+        let mut ultra = high.clone();
+        ultra.insert("graph_explore".to_string());
+        let none: HashSet<String> = HashSet::new();
+        assert_eq!(
+            active_tool_specs(&high, true, &none),
+            vec!["retrieve", "search_chunks", "navigate_tree", "web_search"]
+        );
+        assert_eq!(
+            active_tool_specs(&high, false, &none),
+            vec!["retrieve", "search_chunks", "navigate_tree"],
+            "no provider hides web_search"
+        );
+        assert!(active_tool_specs(&ultra, true, &none).contains(&"graph_explore".to_string()));
+        let disabled: HashSet<String> = ["navigate_tree".to_string()].into_iter().collect();
+        assert!(!active_tool_specs(&high, true, &disabled).contains(&"navigate_tree".to_string()));
+
+        assert_eq!(reason_status("no_structure"), OUTCOME_EMPTY);
+        assert_eq!(reason_status("no_doc"), OUTCOME_MISS);
+        assert_eq!(reason_status("bad_args"), OUTCOME_ERROR);
+        assert_eq!(reason_status("infra"), OUTCOME_ERROR);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
