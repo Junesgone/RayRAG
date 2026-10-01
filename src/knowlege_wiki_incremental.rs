@@ -5719,3 +5719,1034 @@ mod wiki_incremental_part9_tests {
         assert!(embed_text.contains("content="));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 9a — LLM grouping, routing helpers and deterministic clustering
+// (`_wiki_llm_partition_candidate` .. `_wiki_expand_route_candidates` plus
+// `_wiki_cluster_entities`).
+//
+// Adaptation note: numpy matrix work becomes plain Rust loops; concurrency is
+// sequential (semaphore/gather semantics preserved observably).
+// ---------------------------------------------------------------------------
+
+/// `_wiki_llm_partition_candidate`.
+pub async fn wiki_llm_partition_candidate(
+    chat: &dyn HarnessChat,
+    entities: &[Value],
+) -> Option<Vec<Vec<Value>>> {
+    if entities.len() <= 1 {
+        return Some(vec![entities.to_vec()]);
+    }
+    let numbered = entities
+        .iter()
+        .enumerate()
+        .map(|(idx, entity)| format!("{idx}: {}", wiki_entity_planning_text(entity, 3)))
+        .collect::<Vec<String>>()
+        .join("\n");
+    let prompt = format!(
+        "Group the following knowledge-base entities into coherent encyclopedia pages.\nEach page must have one clear subject. Group entities only when a reader would naturally expect them to be explained on the same page. Do not use entity types as grouping rules because types are user-defined.\n\nReturn ONLY a JSON array of arrays of integer IDs, for example [[0, 2], [1]].\nEvery ID from 0 through {} must appear exactly once. A group may contain at most {} IDs.\n\nEntities:\n{numbered}",
+        entities.len() - 1,
+        PAGE_CLUSTER_HARD_MAX_SIZE
+    );
+    let response = match chat_mdl_ask(
+        chat,
+        "You plan concise, semantically coherent encyclopedia pages.",
+        &prompt,
+        0.0,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::warn!(error = %err, "wiki: LLM page grouping call failed");
+            return None;
+        }
+    };
+    let raw_groups = parse_json_array(&response)?;
+    let mut seen: BTreeSet<i64> = BTreeSet::new();
+    let mut groups: Vec<Vec<Value>> = Vec::new();
+    for raw_group in raw_groups {
+        let Some(items) = raw_group.as_array() else {
+            return None;
+        };
+        if items.is_empty() || items.len() > PAGE_CLUSTER_HARD_MAX_SIZE {
+            return None;
+        }
+        let mut indices: Vec<usize> = Vec::new();
+        for raw_idx in items {
+            let Some(idx) = raw_idx.as_i64() else {
+                return None;
+            };
+            if idx < 0 || idx as usize >= entities.len() || seen.contains(&idx) {
+                return None;
+            }
+            seen.insert(idx);
+            indices.push(idx as usize);
+        }
+        groups.push(
+            indices
+                .into_iter()
+                .map(|idx| entities[idx].clone())
+                .collect(),
+        );
+    }
+    if seen != (0..entities.len() as i64).collect::<BTreeSet<i64>>() {
+        return None;
+    }
+    Some(groups)
+}
+
+/// `_wiki_llm_group_entities`: embedding candidates + LLM final groups.
+pub async fn wiki_llm_group_entities(
+    chat: &dyn HarnessChat,
+    entities: &[Value],
+    embeddings: &[Vec<f32>],
+    kb_id: &str,
+) -> Vec<Vec<Value>> {
+    if entities.len() <= 1 {
+        wiki_log_stats(
+            "PLAN",
+            "group_summary",
+            &[
+                ("kb_id", json!(kb_id)),
+                ("before", json!(entities.len())),
+                ("after", json!(entities.len())),
+                ("reduction_count", json!(0)),
+                ("merged_group_count", json!(0)),
+            ],
+        );
+        return vec![entities.to_vec()];
+    }
+    let candidate_count =
+        1.max(((entities.len() as f64) / WIKI_GROUP_LLM_CANDIDATE_SIZE as f64).ceil() as usize);
+    let candidates = match wiki_cluster_entities(entities, embeddings, Some(candidate_count)) {
+        Ok(clusters) => clusters,
+        Err(err) => {
+            tracing::warn!(error = %err, "wiki: candidate clustering failed; falling back to single candidate");
+            vec![entities.to_vec()]
+        }
+    };
+    let mut all_groups: Vec<Vec<Value>> = Vec::new();
+    for candidate in &candidates {
+        let mut groups: Option<Vec<Vec<Value>>> = None;
+        for attempt in 0..2 {
+            groups = wiki_llm_partition_candidate(chat, candidate).await;
+            if groups.is_some() {
+                break;
+            }
+            tracing::warn!(
+                attempt = attempt + 1,
+                "wiki: LLM page grouping attempt failed"
+            );
+        }
+        match groups {
+            Some(groups) => {
+                let merged_groups: Vec<Vec<String>> = groups
+                    .iter()
+                    .filter(|group| group.len() > 1)
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|entity| {
+                                ["entity_name", "term"]
+                                    .iter()
+                                    .find_map(|key| entity.get(*key).and_then(Value::as_str))
+                                    .unwrap_or("")
+                                    .to_string()
+                            })
+                            .collect()
+                    })
+                    .collect();
+                for members in &merged_groups {
+                    wiki_log_stats(
+                        "PLAN",
+                        "llm_page_group",
+                        &[
+                            ("kb_id", json!(kb_id)),
+                            ("member_count", json!(members.len())),
+                            (
+                                "members",
+                                Value::Array(members.iter().cloned().map(Value::String).collect()),
+                            ),
+                        ],
+                    );
+                }
+                wiki_log_stats(
+                    "PLAN",
+                    "llm_group_candidate",
+                    &[
+                        ("kb_id", json!(kb_id)),
+                        ("before", json!(candidate.len())),
+                        ("after", json!(groups.len())),
+                        (
+                            "reduction_count",
+                            json!(
+                                groups
+                                    .iter()
+                                    .map(|group| group.len().saturating_sub(1))
+                                    .sum::<usize>()
+                            ),
+                        ),
+                        ("merged_group_count", json!(merged_groups.len())),
+                    ],
+                );
+                all_groups.extend(groups);
+            }
+            None => {
+                wiki_log_stats(
+                    "PLAN",
+                    "llm_group_unresolved",
+                    &[
+                        ("kb_id", json!(kb_id)),
+                        ("before", json!(candidate.len())),
+                        ("after", json!(candidate.len())),
+                        ("retry_count", json!(2)),
+                    ],
+                );
+                all_groups.extend(candidate.iter().cloned().map(|entity| vec![entity]));
+            }
+        }
+    }
+    wiki_log_stats(
+        "PLAN",
+        "group_summary",
+        &[
+            ("kb_id", json!(kb_id)),
+            ("before", json!(entities.len())),
+            ("after", json!(all_groups.len())),
+            (
+                "reduction_count",
+                json!(
+                    all_groups
+                        .iter()
+                        .map(|group| group.len().saturating_sub(1))
+                        .sum::<usize>()
+                ),
+            ),
+            (
+                "merged_group_count",
+                json!(all_groups.iter().filter(|group| group.len() > 1).count()),
+            ),
+        ],
+    );
+    all_groups
+}
+
+/// `_wiki_llm_route_batches`: existing-page or NEW per entity, batched.
+pub async fn wiki_llm_route_batches(
+    chat: &dyn HarnessChat,
+    route_items: &[(Value, Vec<Value>)],
+) -> BTreeMap<usize, String> {
+    if route_items.is_empty() {
+        return BTreeMap::new();
+    }
+    let indexed: Vec<(usize, Value, Vec<Value>)> = route_items
+        .iter()
+        .enumerate()
+        .map(|(idx, (entity, candidates))| (idx, entity.clone(), candidates.clone()))
+        .collect();
+    let mut decisions = route_batch_group(chat, &indexed).await;
+    let missing: Vec<(usize, Value, Vec<Value>)> = indexed
+        .iter()
+        .filter(|(id, _, _)| !decisions.contains_key(id))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        decisions.extend(route_batch_group(chat, &missing).await);
+    }
+    decisions
+}
+
+async fn route_batch_group(
+    chat: &dyn HarnessChat,
+    items: &[(usize, Value, Vec<Value>)],
+) -> BTreeMap<usize, String> {
+    let mut results: BTreeMap<usize, String> = BTreeMap::new();
+    for batch in items.chunks(WIKI_ROUTE_LLM_BATCH_SIZE.max(1)) {
+        results.extend(route_one_batch(chat, batch).await);
+    }
+    results
+}
+
+async fn route_one_batch(
+    chat: &dyn HarnessChat,
+    batch: &[(usize, Value, Vec<Value>)],
+) -> BTreeMap<usize, String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut allowed: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+    for (item_id, entity, candidates) in batch {
+        let mut options: Vec<Value> = Vec::new();
+        let mut allowed_set: BTreeSet<String> = BTreeSet::new();
+        allowed_set.insert("NEW".to_string());
+        for candidate in candidates {
+            let Some(page_id) = candidate.get("page_id").and_then(Value::as_str) else {
+                continue;
+            };
+            allowed_set.insert(page_id.to_string());
+            let score = candidate
+                .get("score")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let rounded = (score * 10000.0).round() / 10000.0;
+            options.push(json!({
+                "page": page_id,
+                "title": candidate.get("title").and_then(Value::as_str).unwrap_or(""),
+                "summary": candidate.get("summary").and_then(Value::as_str).unwrap_or(""),
+                "members": candidate.get("members").cloned().unwrap_or(Value::Array(Vec::new())),
+                "similarity": rounded,
+                "signals": candidate.get("signals").cloned().unwrap_or(Value::Array(Vec::new())),
+                "cooccurrence_count": candidate.get("cooccurrence_count").and_then(Value::as_i64).unwrap_or(0),
+            }));
+        }
+        allowed.insert(*item_id, allowed_set);
+        lines.push(
+            json!({
+                "id": item_id,
+                "entity": wiki_entity_planning_text(entity, 3),
+                "options": options,
+            })
+            .to_string(),
+        );
+    }
+    let prompt = format!(
+        "Route each entity to the single existing encyclopedia page whose subject truly covers it, or choose NEW when none does. Similarity is candidate retrieval evidence, not proof. Prefer an existing page only when the semantic fit is clear.\n\nReturn ONLY a JSON array like [{{\"id\": 0, \"page\": \"entity/example\"}}, {{\"id\": 1, \"page\": \"NEW\"}}].\n\nItems:\n{}",
+        lines.join("\n")
+    );
+    let response = match chat_mdl_ask(
+        chat,
+        "You route entities to semantically appropriate encyclopedia pages.",
+        &prompt,
+        0.0,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::warn!(error = %err, "wiki: LLM page routing batch failed");
+            return BTreeMap::new();
+        }
+    };
+    let Some(decisions) = parse_json_array(&response) else {
+        return BTreeMap::new();
+    };
+    let mut result: BTreeMap<usize, String> = BTreeMap::new();
+    for decision in decisions {
+        let Some(obj) = decision.as_object() else {
+            continue;
+        };
+        let Some(item_id) = obj.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let Some(page_id) = obj.get("page").and_then(Value::as_str) else {
+            continue;
+        };
+        let key = item_id as usize;
+        if let Some(allowed_set) = allowed.get(&key) {
+            if allowed_set.contains(page_id) {
+                result.insert(key, page_id.to_string());
+            }
+        }
+    }
+    result
+}
+
+/// `_wiki_route_page_candidate`.
+pub fn wiki_route_page_candidate(page_id: &str, page: &Value, score: f64) -> Value {
+    let title = page
+        .get("title_kwd")
+        .map(|value| match value {
+            Value::Array(items) => items.first().and_then(Value::as_str).unwrap_or(""),
+            other => other.as_str().unwrap_or(""),
+        })
+        .unwrap_or("");
+    let mut members = as_str_list(page.get("entity_names_kwd"));
+    members.truncate(12);
+    json!({
+        "score": if score == 0.0 { 0.0 } else { score },
+        "page_id": page_id,
+        "title": title,
+        "summary": page.get("summary_with_weight").and_then(Value::as_str).unwrap_or(""),
+        "members": members.into_iter().map(Value::String).collect::<Vec<Value>>(),
+        "signals": [],
+        "cooccurrence_count": 0,
+    })
+}
+
+/// `_wiki_expand_route_candidates`: merge retrieval, ownership and graph
+/// evidence into a ranked candidate list.
+pub fn wiki_expand_route_candidates(
+    entity: &Value,
+    dense_candidates: &[Value],
+    existing_pages: &Map<String, Value>,
+    entity_pages: &BTreeMap<String, BTreeSet<String>>,
+    chunk_pages: &BTreeMap<String, BTreeSet<String>>,
+    include_candidate_neighbors: bool,
+) -> Vec<Value> {
+    let mut candidates: BTreeMap<String, Value> = BTreeMap::new();
+    for candidate in dense_candidates {
+        let Some(page_id) = candidate.get("page_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if existing_pages.contains_key(page_id) {
+            candidates.insert(page_id.to_string(), candidate.clone());
+        }
+    }
+
+    let mut add = |candidates: &mut BTreeMap<String, Value>,
+                   page_id: &str,
+                   signal: &str,
+                   cooccurrence_count: i64| {
+        let Some(page) = existing_pages.get(page_id) else {
+            return;
+        };
+        let entry = candidates
+            .entry(page_id.to_string())
+            .or_insert_with(|| wiki_route_page_candidate(page_id, page, 0.0));
+        let mut signals: BTreeSet<String> = entry
+            .get("signals")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        signals.insert(signal.to_string());
+        let existing_count = entry
+            .get("cooccurrence_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert(
+                "signals".to_string(),
+                Value::Array(signals.into_iter().map(Value::String).collect()),
+            );
+            obj.insert(
+                "cooccurrence_count".to_string(),
+                json!(existing_count.max(cooccurrence_count)),
+            );
+        }
+    };
+
+    let entity_name = ["entity_name", "term"]
+        .iter()
+        .find_map(|key| entity.get(*key).and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if let Some(page_ids) = entity_pages.get(&normalize_key(&entity_name)) {
+        for page_id in page_ids {
+            add(&mut candidates, page_id, "current_owner", 0);
+        }
+    }
+    if let Some(relations) = entity.get("relations").and_then(Value::as_array) {
+        for relation in relations {
+            let counterpart = ["entity", "counterpart"]
+                .iter()
+                .find_map(|key| relation.get(*key).and_then(Value::as_str))
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if let Some(page_ids) = entity_pages.get(&normalize_key(&counterpart)) {
+                for page_id in page_ids {
+                    add(&mut candidates, page_id, "relation", 0);
+                }
+            }
+        }
+    }
+    let mut cooccurrence: BTreeMap<String, i64> = BTreeMap::new();
+    for chunk_id in as_str_list(entity.get("source_chunk_ids")) {
+        if let Some(page_ids) = chunk_pages.get(&chunk_id) {
+            for page_id in page_ids {
+                *cooccurrence.entry(page_id.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    for (page_id, count) in &cooccurrence {
+        add(&mut candidates, page_id, "cooccurrence", *count);
+    }
+
+    if include_candidate_neighbors {
+        let initial: Vec<String> = candidates.keys().cloned().collect();
+        for page_id in initial {
+            let page = existing_pages
+                .get(&page_id)
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let mut neighbor_refs: Vec<String> = as_str_list(page.get("outlinks_kwd"));
+            neighbor_refs.extend(as_str_list(page.get("related_kb_pages_kwd")));
+            for neighbor_ref in neighbor_refs {
+                if existing_pages.contains_key(&neighbor_ref) {
+                    add(&mut candidates, &neighbor_ref, "candidate_neighbor", 0);
+                    continue;
+                }
+                if let Some(page_ids) = entity_pages.get(&normalize_key(&neighbor_ref)) {
+                    for neighbor_id in page_ids {
+                        add(&mut candidates, neighbor_id, "candidate_neighbor", 0);
+                    }
+                }
+            }
+        }
+    }
+
+    let priority = |signal: &str| -> i32 {
+        match signal {
+            "current_owner" => 0,
+            "relation" => 1,
+            "cooccurrence" => 2,
+            "embedding" => 3,
+            _ => 4,
+        }
+    };
+    let mut ranked: Vec<Value> = candidates.into_values().collect();
+    ranked.sort_by(|left, right| {
+        let rank_of = |candidate: &Value| -> i32 {
+            candidate
+                .get("signals")
+                .and_then(Value::as_array)
+                .map(|signals| {
+                    signals
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(priority)
+                        .min()
+                        .unwrap_or(4)
+                })
+                .unwrap_or(4)
+        };
+        let left_rank = rank_of(left);
+        let right_rank = rank_of(right);
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| {
+                let left_count = left
+                    .get("cooccurrence_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                let right_count = right
+                    .get("cooccurrence_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                right_count.cmp(&left_count)
+            })
+            .then_with(|| {
+                let left_score = left.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+                let right_score = right.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+                right_score
+                    .partial_cmp(&left_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                let left_id = left.get("page_id").and_then(Value::as_str).unwrap_or("");
+                let right_id = right.get("page_id").and_then(Value::as_str).unwrap_or("");
+                left_id.cmp(right_id)
+            })
+    });
+    ranked.truncate(PAGE_ROUTER_MAX_CANDIDATES);
+    ranked
+}
+
+/// `_wiki_normalize_rows`: L2-normalize each row (zero rows unchanged).
+pub fn wiki_normalize_rows(matrix: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    matrix
+        .iter()
+        .map(|row| {
+            let norm = (row.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>()).sqrt();
+            if norm > 0.0 {
+                row.iter().map(|x| (*x as f64 / norm) as f32).collect()
+            } else {
+                row.clone()
+            }
+        })
+        .collect()
+}
+
+/// `_wiki_cluster_entities`: deterministic capacity-constrained spherical
+/// k-means over entity embeddings.
+pub fn wiki_cluster_entities(
+    entities: &[Value],
+    embeddings: &[Vec<f32>],
+    target_count: Option<usize>,
+) -> Result<Vec<Vec<Value>>, String> {
+    if entities.len() <= 1 {
+        return Ok(vec![entities.to_vec()]);
+    }
+    let n = entities.len();
+    let dim = embeddings.first().map(Vec::len).unwrap_or(0);
+    let shapes_ok =
+        dim > 0 && embeddings.len() == n && embeddings.iter().all(|row| row.len() == dim);
+    if !shapes_ok {
+        return Err("entity embeddings must be a two-dimensional matrix".to_string());
+    }
+    let matrix = wiki_normalize_rows(embeddings);
+    let target = match target_count {
+        Some(target) => target,
+        None => {
+            if n <= PAGE_CLUSTER_MIN_PAGES {
+                n
+            } else {
+                let raw = ((n as f64) / PAGE_CLUSTER_ITEMS_PER_PAGE as f64).round() as usize;
+                raw.clamp(PAGE_CLUSTER_MIN_PAGES, PAGE_CLUSTER_MAX_PAGES)
+            }
+        }
+    };
+    let target = target.clamp(1, n);
+
+    let names: Vec<String> = entities
+        .iter()
+        .map(|entity| {
+            ["entity_name", "name", "term"]
+                .iter()
+                .find_map(|key| entity.get(*key).and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+    let evidence: Vec<usize> = entities
+        .iter()
+        .map(|entity| {
+            entity
+                .get("claims")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        })
+        .collect();
+    let mut stable_order: Vec<usize> = (0..n).collect();
+    stable_order.sort_by(|left, right| {
+        names[*left]
+            .to_lowercase()
+            .cmp(&names[*right].to_lowercase())
+            .then_with(|| names[*left].cmp(&names[*right]))
+            .then_with(|| left.cmp(right))
+    });
+
+    let first = (0..n)
+        .min_by(|left, right| {
+            evidence[*right]
+                .cmp(&evidence[*left])
+                .then_with(|| {
+                    names[*left]
+                        .to_lowercase()
+                        .cmp(&names[*right].to_lowercase())
+                })
+                .then_with(|| names[*left].cmp(&names[*right]))
+                .then_with(|| left.cmp(right))
+        })
+        .unwrap_or(0);
+    let mut center_indices: Vec<usize> = vec![first];
+    let mut selected: BTreeSet<usize> = [first].into_iter().collect();
+    while center_indices.len() < target {
+        let mut nearest: Vec<f64> = vec![f64::NEG_INFINITY; n];
+        for idx in 0..n {
+            let best = center_indices
+                .iter()
+                .map(|center| dot_f32(&matrix[idx], &matrix[*center]) as f64)
+                .fold(f64::NEG_INFINITY, f64::max);
+            nearest[idx] = best;
+        }
+        let candidate = stable_order
+            .iter()
+            .filter(|idx| !selected.contains(*idx))
+            .min_by(|left, right| {
+                nearest[**left]
+                    .partial_cmp(&nearest[**right])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        names[**left]
+                            .to_lowercase()
+                            .cmp(&names[**right].to_lowercase())
+                    })
+                    .then_with(|| names[**left].cmp(&names[**right]))
+                    .then_with(|| left.cmp(right))
+            });
+        match candidate {
+            Some(candidate) => {
+                center_indices.push(*candidate);
+                selected.insert(*candidate);
+            }
+            None => break,
+        }
+    }
+
+    let mut centroids: Vec<Vec<f32>> = center_indices
+        .iter()
+        .map(|center| matrix[*center].clone())
+        .collect();
+    let hard_capacity =
+        PAGE_CLUSTER_HARD_MAX_SIZE.max(((n as f64) / (target as f64)).ceil() as usize);
+    let mut previous_assignments: Option<Vec<i64>> = None;
+    let mut assignments: Vec<i64> = vec![0; n];
+
+    for _ in 0..PAGE_CLUSTER_MAX_ITERATIONS {
+        let mut scores: Vec<Vec<f64>> = vec![vec![0.0; target]; n];
+        for idx in 0..n {
+            for cid in 0..target {
+                scores[idx][cid] = dot_f32(&matrix[idx], &centroids[cid]) as f64;
+            }
+        }
+        let mut sizes: Vec<usize> = vec![0; target];
+        assignments = vec![-1; n];
+        let mut ranked_entities = stable_order.clone();
+        ranked_entities.sort_by(|left, right| {
+            let preference = |idx: &usize| -> f64 {
+                if target > 1 {
+                    let mut row = scores[*idx].clone();
+                    row.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+                    row[0] - row[1]
+                } else {
+                    scores[*idx][0]
+                }
+            };
+            preference(right)
+                .partial_cmp(&preference(left))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    names[*left]
+                        .to_lowercase()
+                        .cmp(&names[*right].to_lowercase())
+                })
+                .then_with(|| names[*left].cmp(&names[*right]))
+                .then_with(|| left.cmp(right))
+        });
+        for idx in &ranked_entities {
+            let mut ranked_clusters: Vec<usize> = (0..target).collect();
+            ranked_clusters.sort_by(|left, right| {
+                scores[*idx][*right]
+                    .partial_cmp(&scores[*idx][*left])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.cmp(right))
+            });
+            let chosen = ranked_clusters
+                .iter()
+                .find(|cid| sizes[**cid] < hard_capacity)
+                .copied()
+                .unwrap_or(ranked_clusters[0]);
+            assignments[*idx] = chosen as i64;
+            sizes[chosen] += 1;
+        }
+
+        let empty_clusters: Vec<usize> = (0..target).filter(|cid| sizes[*cid] == 0).collect();
+        for empty_cid in empty_clusters {
+            let movable: Vec<usize> = stable_order
+                .iter()
+                .copied()
+                .filter(|idx| sizes[assignments[*idx] as usize] > 1)
+                .collect();
+            if movable.is_empty() {
+                break;
+            }
+            let moved = movable
+                .iter()
+                .min_by(|left, right| {
+                    let left_score = scores[**left][assignments[**left] as usize];
+                    let right_score = scores[**right][assignments[**right] as usize];
+                    left_score
+                        .partial_cmp(&right_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            names[**left]
+                                .to_lowercase()
+                                .cmp(&names[**right].to_lowercase())
+                        })
+                        .then_with(|| names[**left].cmp(&names[**right]))
+                        .then_with(|| left.cmp(right))
+                })
+                .copied()
+                .unwrap_or(movable[0]);
+            sizes[assignments[moved] as usize] -= 1;
+            assignments[moved] = empty_cid as i64;
+            sizes[empty_cid] = 1;
+        }
+
+        let mut new_centroids: Vec<Vec<f32>> = Vec::with_capacity(target);
+        for cid in 0..target {
+            let member_indices: Vec<usize> = (0..n)
+                .filter(|idx| assignments[*idx] == cid as i64)
+                .collect();
+            if member_indices.is_empty() {
+                new_centroids.push(centroids[cid].clone());
+                continue;
+            }
+            let mut centroid = vec![0.0f32; dim];
+            for idx in &member_indices {
+                for (pos, value) in matrix[*idx].iter().enumerate() {
+                    centroid[pos] += value;
+                }
+            }
+            let count = member_indices.len() as f32;
+            for value in centroid.iter_mut() {
+                *value /= count;
+            }
+            let norm = (centroid
+                .iter()
+                .map(|x| (*x as f64) * (*x as f64))
+                .sum::<f64>())
+            .sqrt();
+            if norm > 0.0 {
+                for value in centroid.iter_mut() {
+                    *value = (*value as f64 / norm) as f32;
+                }
+                new_centroids.push(centroid);
+            } else {
+                new_centroids.push(centroids[cid].clone());
+            }
+        }
+        let movement = new_centroids
+            .iter()
+            .zip(centroids.iter())
+            .map(|(new_centroid, old_centroid)| {
+                new_centroid
+                    .iter()
+                    .zip(old_centroid.iter())
+                    .map(|(a, b)| ((*a - *b) as f64).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+            })
+            .fold(0.0f64, f64::max);
+        let converged_assignments = previous_assignments.as_ref() == Some(&assignments);
+        centroids = new_centroids;
+        if converged_assignments || movement < PAGE_CLUSTER_CONVERGENCE_EPSILON {
+            break;
+        }
+        previous_assignments = Some(assignments.clone());
+    }
+
+    let mut clusters: Vec<Vec<Value>> = Vec::new();
+    for cid in 0..target {
+        let members: Vec<Value> = stable_order
+            .iter()
+            .filter(|idx| assignments[**idx] == cid as i64)
+            .map(|idx| entities[*idx].clone())
+            .collect();
+        if !members.is_empty() {
+            clusters.push(members);
+        }
+    }
+    clusters.sort_by(|left, right| {
+        let left_name = left
+            .first()
+            .and_then(|entity| entity.get("entity_name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let right_name = right
+            .first()
+            .and_then(|entity| entity.get("entity_name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        left_name
+            .to_lowercase()
+            .cmp(&right_name.to_lowercase())
+            .then_with(|| left_name.cmp(right_name))
+    });
+    Ok(clusters)
+}
+
+fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
+    left.iter().zip(right.iter()).map(|(a, b)| a * b).sum()
+}
+
+#[cfg(test)]
+mod wiki_incremental_part10_tests {
+    use super::*;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn entities(names: &[&str]) -> Vec<Value> {
+        names
+            .iter()
+            .map(|name| json!({"entity_name": name, "claims": [], "source_chunk_ids": []}))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn partition_validation() {
+        let chat = FakeChat {
+            reply: "[[0, 2], [1]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let groups = wiki_llm_partition_candidate(&chat, &entities(&["A", "B", "C"]))
+            .await
+            .expect("groups");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[0][0]["entity_name"], json!("A"));
+        assert_eq!(groups[0][1]["entity_name"], json!("C"));
+        assert_eq!(groups[1][0]["entity_name"], json!("B"));
+
+        let bad = FakeChat {
+            reply: "[[0, 9]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(
+            wiki_llm_partition_candidate(&bad, &entities(&["A", "B"]))
+                .await
+                .is_none()
+        );
+        let single = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let one = wiki_llm_partition_candidate(&single, &entities(&["A"]))
+            .await
+            .expect("single");
+        assert_eq!(one.len(), 1);
+        assert!(single.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn group_entities_uses_clusters_and_llm() {
+        let chat = FakeChat {
+            reply: "[[0, 2], [1]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let ents = entities(&["Alpha", "Beta", "Gamma"]);
+        let embeddings = vec![vec![1.0f32, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
+        let groups = wiki_llm_group_entities(&chat, &ents, &embeddings, "kb1").await;
+        let total: usize = groups.iter().map(Vec::len).sum();
+        assert_eq!(total, 3);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn route_batches_validates_pages() {
+        let chat = FakeChat {
+            reply: "[{\"id\": 0, \"page\": \"entity/a\"}]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let candidates = vec![json!({"page_id": "entity/a", "title": "A", "score": 0.51})];
+        let items = vec![(json!({"entity_name": "Alpha"}), candidates.clone())];
+        let decisions = wiki_llm_route_batches(&chat, &items).await;
+        assert_eq!(decisions.get(&0).map(String::as_str), Some("entity/a"));
+
+        let invalid = FakeChat {
+            reply: "[{\"id\": 0, \"page\": \"entity/z\"}]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let decisions2 = wiki_llm_route_batches(&invalid, &items).await;
+        assert!(decisions2.is_empty());
+    }
+
+    #[test]
+    fn expand_candidates_priorities() {
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "p1".to_string(),
+            json!({"title_kwd": "One", "entity_names_kwd": ["X"]}),
+        );
+        existing.insert(
+            "p2".to_string(),
+            json!({"title_kwd": "Two", "entity_names_kwd": ["Alpha"]}),
+        );
+        existing.insert(
+            "p3".to_string(),
+            json!({"title_kwd": "Three", "entity_names_kwd": ["Beta"]}),
+        );
+        let mut entity_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        entity_pages.insert(
+            "alpha".to_string(),
+            ["p2"].into_iter().map(str::to_string).collect(),
+        );
+        entity_pages.insert(
+            "beta".to_string(),
+            ["p3"].into_iter().map(str::to_string).collect(),
+        );
+        let mut chunk_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        chunk_pages.insert(
+            "c1".to_string(),
+            ["p2", "p3"].into_iter().map(str::to_string).collect(),
+        );
+        let entity = json!({
+            "entity_name": "Alpha",
+            "relations": [{"entity": "Beta"}],
+            "source_chunk_ids": ["c1"]
+        });
+        let dense = vec![
+            json!({"page_id": "p1", "score": 0.9}),
+            json!({"page_id": "px", "score": 0.8}),
+        ];
+        let ranked = wiki_expand_route_candidates(
+            &entity,
+            &dense,
+            &existing,
+            &entity_pages,
+            &chunk_pages,
+            false,
+        );
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0]["page_id"], json!("p2"));
+        let signals: Vec<String> = ranked[0]["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        assert!(signals.contains(&"current_owner".to_string()));
+        assert!(signals.contains(&"cooccurrence".to_string()));
+        assert_eq!(ranked[0]["cooccurrence_count"], json!(1));
+        let p3 = ranked
+            .iter()
+            .find(|candidate| candidate["page_id"] == json!("p3"))
+            .unwrap();
+        let p3_signals: Vec<String> = p3["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        assert!(p3_signals.contains(&"relation".to_string()));
+        let p1 = ranked
+            .iter()
+            .find(|candidate| candidate["page_id"] == json!("p1"))
+            .unwrap();
+        assert_eq!(p1["score"], json!(0.9));
+    }
+
+    #[test]
+    fn cluster_entities_deterministic() {
+        let ents = entities(&["A", "B", "C", "D"]);
+        let embeddings = vec![
+            vec![1.0f32, 0.0],
+            vec![0.9, 0.1],
+            vec![0.0, 1.0],
+            vec![0.1, 0.9],
+        ];
+        let first = wiki_cluster_entities(&ents, &embeddings, Some(2)).expect("clusters");
+        let second = wiki_cluster_entities(&ents, &embeddings, Some(2)).expect("clusters2");
+        assert_eq!(first.len(), 2);
+        let total: usize = first.iter().map(Vec::len).sum();
+        assert_eq!(total, 4);
+        assert_eq!(first, second);
+        assert!(wiki_cluster_entities(&ents, &embeddings[..2], Some(2)).is_err());
+    }
+}
