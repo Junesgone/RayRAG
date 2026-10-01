@@ -3979,3 +3979,741 @@ mod wiki_part6_tests {
         assert_eq!(map3["Delta"]["action"], json!("CREATE"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 6b — PLAN planning call and plan row I/O (`_wiki_planning_call` ..
+// `_wiki_persist_plan`).
+//
+// Adaptation note: batched planning runs sequentially ('static closure
+// bounds); the stored user template uses single braces and the shared
+// single-pass `render_template`.
+// ---------------------------------------------------------------------------
+
+/// `WIKI_PLAN_PLANNING_SYSTEM`.
+pub const WIKI_PLAN_PLANNING_SYSTEM: &str = "You are a knowledge compilation planner. Given extracted entities and their relationship to an existing knowledge base, produce a compilation plan. Return ONLY valid JSON.Keep the user's original language (Chinese/English etc.) for generated data.";
+
+/// `_WIKI_PLAN_MAX_OUTPUT_TOKENS`.
+pub const WIKI_PLAN_MAX_OUTPUT_TOKENS: usize = 4096;
+/// `_WIKI_PLAN_OUTPUT_SAFETY_TOKENS`.
+pub const WIKI_PLAN_OUTPUT_SAFETY_TOKENS: usize = 256;
+/// `_WIKI_PLAN_PAGE_TOKEN_ESTIMATE`.
+pub const WIKI_PLAN_PAGE_TOKEN_ESTIMATE: usize = 48;
+/// `_WIKI_PLAN_ITEMS_PER_BATCH`.
+pub const WIKI_PLAN_ITEMS_PER_BATCH: usize = 40;
+/// `_WIKI_PLAN_MAX_CONCURRENT_BATCHES` (sequential port).
+pub const WIKI_PLAN_MAX_CONCURRENT_BATCHES: usize = 4;
+
+/// `WIKI_PLAN_USER_TEMPLATE` — stored post-`.format` (single braces).
+pub const WIKI_PLAN_USER_TEMPLATE: &str = r#"## Knowledge base context
+Name: {kb_name}
+Description: {kb_description}
+
+## Extracted entities (with mention counts)
+{entities_summary}
+
+## Extracted concepts (with mention counts)
+{concepts_summary}
+
+## Extracted topics
+{topics_summary}
+
+## KB reconciliation results
+{kb_reconciliation}
+
+Produce a JSON compilation plan:
+
+{
+  "pages": [
+    {
+      "action": "CREATE",
+      "slug": "concept/example-name",
+      "title": "Example Page Title",
+      "page_type": "entity | concept | topic",
+      "topic": "short canonical topic name",
+      "entity_names": ["entity or concept name covered by this page"],
+      "related_kb_pages": ["existing-slug-1"],
+      "priority": 1
+    }
+  ],
+  "estimated_page_count": 5,
+  "compilation_notes": "any important notes for the compiler"
+}
+
+Rules:
+- action must be "CREATE" or "UPDATE".
+- For UPDATE, slug MUST be an existing wiki page slug from the KB
+  reconciliation list above.
+- page_type is one of: entity | concept | topic. Do NOT use "source".
+- topic is required for every page. Prefer a topic from the extracted
+  topics implied by the entities/concepts. If none fits, create a short
+  canonical topic name in the user's language. For topic pages, topic should
+  usually match the page title.
+
+# Slug format (CRITICAL — every slug must follow this shape exactly)
+- The slug is ``<page_type>/<short-descriptive-name>``. The separator
+  between the type and the name MUST be a forward slash ``/``. Do NOT use a
+  hyphen here.
+- The descriptive part is lowercase, English/Latin only (transliterate
+  non-English names), and uses hyphens to join multi-word names. Keep it
+  short — 1 to 4 words is ideal.
+- The descriptive part MUST be unique to that page's specific subject. Do
+  NOT prefix every slug with the same KB-wide topic word. If the KB is
+  about logistics, do NOT emit ``concept/logistics-channels``,
+  ``concept/logistics-warehousing``, ``concept/logistics-fleet`` — emit
+  ``concept/distribution-channels``, ``concept/warehousing``,
+  ``concept/fleet-management`` instead.
+- Do NOT append numeric suffixes (``-1``, ``-2``, ``-v2``) or random hex
+  tags to make slugs distinct. If two candidate slugs collide, rename one
+  to use a different descriptive word.
+
+Examples of GOOD slugs:
+  - ``entity/jane-doe``               (entity page about a person)
+  - ``entity/acme-corp``               (entity page about a company)
+  - ``concept/fire-safety``            (concept page about a topic)
+  - ``concept/expense-approval``       (concept page about a process)
+  - ``topic/water-treatment``          (topic page grouping related items)
+
+Examples of BAD slugs (do NOT produce):
+  - ``concept-fire-safety``            (missing the ``/`` between type and name)
+  - ``concept/logistics-channels-1``   (numeric suffix to distinguish pages)
+  - ``concept/logistics-channels-abc`` (random hex tag)
+  - ``logistics/concept-channels``     (type and topic order swapped)
+  - ``concept/example-name``           (just duplicate the sample)
+
+# Other rules
+- Entity/concept identity is one-to-one with pages: every extracted entity and
+  concept must be represented by exactly one canonical page, and each identity
+  may appear in only one page's ``entity_names``. Never split an identity into
+  multiple pages, page types, thematic sections, aliases, language
+  transliterations, or alternate slug spellings. Put all supported sections
+  for that identity on its single canonical page.
+- A page may represent several closely related low-signal entities/concepts
+  (max 3-4 per page), but list every represented identity in ``entity_names``
+  and do not repeat any identity on another page. If the page budget is tight,
+  group identities rather than omitting one or emitting a second page for it.
+- Identity ownership does not limit linking: ``related_kb_pages`` should list
+  every directly related canonical page supported by the input (within the
+  available-page budget). Never link duplicate or non-canonical slug variants.
+- priority 1 = highest importance (process first).
+- entity_names must match the names in the entities / concepts lists above.
+- Target approximately {target_page_count} total pages (feel free to deviate
+  by ±50% if the KB content warrants it).
+- Return no more than {max_page_count} page objects. This is a hard limit;
+  never continue the JSON beyond this number.
+- Return ONLY the JSON object.
+"#;
+
+fn plan_slug_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"^(?:entity|concept|topic)/[a-z0-9]+(?:-[a-z0-9]+)*$").expect("plan slug regex")
+    })
+}
+
+/// `_wiki_planning_call`: single LLM call → Compilation Plan JSON.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_planning_call(
+    chat: &dyn HarnessChat,
+    canonical_entities: &[Value],
+    canonical_concepts: &[Value],
+    raw_topics: &[Value],
+    reconciliation: &Map<String, Value>,
+    kb_name: Option<&str>,
+    kb_description: Option<&str>,
+    target_page_count: usize,
+    llm_timeout: i64,
+) -> Value {
+    planning_call_inner(
+        chat,
+        canonical_entities,
+        canonical_concepts,
+        raw_topics,
+        reconciliation,
+        kb_name,
+        kb_description,
+        target_page_count,
+        llm_timeout,
+        0,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn planning_call_inner(
+    chat: &dyn HarnessChat,
+    canonical_entities: &[Value],
+    canonical_concepts: &[Value],
+    raw_topics: &[Value],
+    reconciliation: &Map<String, Value>,
+    kb_name: Option<&str>,
+    kb_description: Option<&str>,
+    target_page_count: usize,
+    llm_timeout: i64,
+    batch_depth: usize,
+) -> Value {
+    let mention_count = |item: &Value| {
+        item.get("mention_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    };
+    let mut sorted_entities: Vec<Value> = canonical_entities.to_vec();
+    sorted_entities.sort_by_key(|item| std::cmp::Reverse(mention_count(item)));
+    let mut sorted_concepts: Vec<Value> = canonical_concepts.to_vec();
+    sorted_concepts.sort_by_key(|item| std::cmp::Reverse(mention_count(item)));
+
+    let model_context = chat.max_length().max(1);
+    let output_tokens =
+        WIKI_PLAN_MAX_OUTPUT_TOKENS.min(1024.max((model_context as f64 * 0.4) as usize));
+    let output_page_capacity = 1.max(
+        output_tokens.saturating_sub(WIKI_PLAN_OUTPUT_SAFETY_TOKENS)
+            / WIKI_PLAN_PAGE_TOKEN_ESTIMATE,
+    );
+    let max_page_count =
+        output_page_capacity.min((target_page_count + 8).max(target_page_count * 2));
+
+    let mut all_items: Vec<(bool, Value)> = Vec::new();
+    for item in &sorted_entities {
+        all_items.push((true, item.clone()));
+    }
+    for item in &sorted_concepts {
+        all_items.push((false, item.clone()));
+    }
+
+    if batch_depth == 0 && all_items.len() > WIKI_PLAN_ITEMS_PER_BATCH {
+        let total_items = all_items.len();
+        let mut batch_plans: Vec<Value> = Vec::new();
+        for batch in all_items.chunks(WIKI_PLAN_ITEMS_PER_BATCH) {
+            let batch_entities: Vec<Value> = batch
+                .iter()
+                .filter(|(is_entity, _)| *is_entity)
+                .map(|(_, item)| item.clone())
+                .collect();
+            let batch_concepts: Vec<Value> = batch
+                .iter()
+                .filter(|(is_entity, _)| !*is_entity)
+                .map(|(_, item)| item.clone())
+                .collect();
+            let mut batch_keys: BTreeSet<String> = BTreeSet::new();
+            for (is_entity, item) in batch {
+                let key = if *is_entity {
+                    item.get("name").and_then(Value::as_str)
+                } else {
+                    item.get("term").and_then(Value::as_str)
+                };
+                if let Some(key) = key {
+                    batch_keys.insert(key.to_string());
+                }
+            }
+            let batch_reconciliation: Map<String, Value> = reconciliation
+                .iter()
+                .filter(|(key, _)| batch_keys.contains(*key))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let batch_target = 1.max(
+                ((target_page_count as f64) * (batch.len() as f64) / (total_items as f64)).round()
+                    as usize,
+            );
+            let plan = Box::pin(planning_call_inner(
+                chat,
+                &batch_entities,
+                &batch_concepts,
+                raw_topics,
+                &batch_reconciliation,
+                kb_name,
+                kb_description,
+                batch_target,
+                llm_timeout,
+                1,
+            ))
+            .await;
+            batch_plans.push(plan);
+        }
+        let mut merged_pages: Vec<Value> = Vec::new();
+        let mut seen_slugs: BTreeSet<String> = BTreeSet::new();
+        for batch_plan in &batch_plans {
+            if let Some(Value::Array(pages)) = batch_plan.get("pages") {
+                for page in pages {
+                    if let Some(slug) = page.get("slug").and_then(Value::as_str) {
+                        if !slug.is_empty() && seen_slugs.insert(slug.to_string()) {
+                            merged_pages.push(page.clone());
+                        }
+                    }
+                }
+            }
+        }
+        tracing::info!(
+            items = total_items,
+            batches = batch_plans.len(),
+            pages = merged_pages.len(),
+            "wiki_plan: batched planning"
+        );
+        return json!({
+            "pages": merged_pages,
+            "estimated_page_count": merged_pages.len(),
+            "compilation_notes": "planned in batches",
+        });
+    }
+
+    let entities_summary = {
+        let lines: Vec<String> = sorted_entities
+            .iter()
+            .take(200)
+            .map(|entity| format_entity_for_plan(entity, reconciliation))
+            .collect();
+        if lines.is_empty() {
+            "  (none)".to_string()
+        } else {
+            lines.join("\n")
+        }
+    };
+    let concepts_summary = {
+        let lines: Vec<String> = sorted_concepts
+            .iter()
+            .take(200)
+            .map(|concept| format_concept_for_plan(concept, reconciliation))
+            .collect();
+        if lines.is_empty() {
+            "  (none)".to_string()
+        } else {
+            lines.join("\n")
+        }
+    };
+    let topics_summary = {
+        let lines: Vec<String> = raw_topics
+            .iter()
+            .take(200)
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|topic| !topic.is_empty())
+            .map(|topic| format!("  - {topic}"))
+            .collect();
+        if lines.is_empty() {
+            "  (none)".to_string()
+        } else {
+            lines.join("\n")
+        }
+    };
+    let kb_reconciliation = {
+        let lines: Vec<String> = reconciliation
+            .iter()
+            .filter(|(_, rec)| rec.get("action").and_then(Value::as_str) == Some("UPDATE"))
+            .filter_map(|(name, rec)| {
+                let slug = rec.get("page_slug").and_then(Value::as_str)?;
+                if slug.is_empty() {
+                    return None;
+                }
+                let sim = rec.get("similarity").and_then(Value::as_f64).unwrap_or(0.0);
+                Some(format!("  - UPDATE: {name} → {slug} (sim={sim:.2})"))
+            })
+            .collect();
+        if lines.is_empty() {
+            "  (all items are new)".to_string()
+        } else {
+            lines.join("\n")
+        }
+    };
+
+    let target_s = target_page_count.to_string();
+    let max_pages_s = max_page_count.to_string();
+    let user_prompt = render_template(
+        WIKI_PLAN_USER_TEMPLATE,
+        &[
+            ("kb_name", kb_name.unwrap_or("(unspecified)")),
+            (
+                "kb_description",
+                kb_description.unwrap_or("(no description)"),
+            ),
+            ("entities_summary", entities_summary.as_str()),
+            ("concepts_summary", concepts_summary.as_str()),
+            ("topics_summary", topics_summary.as_str()),
+            ("kb_reconciliation", kb_reconciliation.as_str()),
+            ("target_page_count", target_s.as_str()),
+            ("max_page_count", max_pages_s.as_str()),
+        ],
+    );
+
+    let gen_conf = knowledge_compile_gen_conf(
+        &chat.model_name(),
+        Some(&Map::from_iter([
+            ("temperature".to_string(), json!(0.1)),
+            ("max_tokens".to_string(), json!(output_tokens)),
+        ])),
+    );
+    let request_conf = Value::Object(gen_conf);
+    let timeout = std::time::Duration::from_secs(llm_timeout.max(0) as u64);
+    let outcome = tokio::time::timeout(
+        timeout,
+        wiki_gen_json(chat, WIKI_PLAN_PLANNING_SYSTEM, &user_prompt, &request_conf),
+    )
+    .await;
+    let res = match outcome {
+        Err(_elapsed) => {
+            tracing::warn!(
+                seconds = llm_timeout,
+                "wiki_plan: planning LLM call timed out"
+            );
+            return json!({
+                "pages": [],
+                "estimated_page_count": 0,
+                "compilation_notes": "planning timeout",
+            });
+        }
+        Ok(None) => {
+            tracing::warn!("wiki_plan: planning LLM call failed");
+            return json!({
+                "pages": [],
+                "estimated_page_count": 0,
+                "compilation_notes": "planning failed",
+            });
+        }
+        Ok(Some(value)) => value,
+    };
+    if !res.is_object() {
+        return json!({
+            "pages": [],
+            "estimated_page_count": 0,
+            "compilation_notes": "planner returned non-object",
+        });
+    }
+
+    let mut valid_pages: Vec<Value> = Vec::new();
+    if let Some(Value::Array(pages)) = res.get("pages") {
+        for page in pages {
+            let Some(obj) = page.as_object() else {
+                continue;
+            };
+            let action = obj.get("action").and_then(Value::as_str).unwrap_or("");
+            if action != "CREATE" && action != "UPDATE" {
+                continue;
+            }
+            let slug = obj.get("slug").and_then(Value::as_str).unwrap_or("");
+            if !plan_slug_re().is_match(slug) {
+                tracing::warn!(slug = slug, "wiki_plan: dropped invalid planner slug");
+                continue;
+            }
+            let title_ok = obj
+                .get("title")
+                .and_then(Value::as_str)
+                .map(|title| !title.trim().is_empty())
+                .unwrap_or(false);
+            if !title_ok {
+                tracing::warn!(slug = slug, "wiki_plan: dropped page with missing title");
+                continue;
+            }
+            let page_type = obj.get("page_type").and_then(Value::as_str).unwrap_or("");
+            if page_type != "entity" && page_type != "concept" && page_type != "topic" {
+                tracing::warn!(
+                    slug = slug,
+                    "wiki_plan: dropped page with invalid page_type"
+                );
+                continue;
+            }
+            if slug.split('/').next().unwrap_or("") != page_type {
+                tracing::warn!(
+                    slug = slug,
+                    page_type = page_type,
+                    "wiki_plan: dropped page with mismatched page_type"
+                );
+                continue;
+            }
+            if action == "UPDATE"
+                && !reconciliation.values().any(|rec| {
+                    rec.get("action").and_then(Value::as_str) == Some("UPDATE")
+                        && rec.get("page_slug").and_then(Value::as_str) == Some(slug)
+                })
+            {
+                tracing::warn!(
+                    slug = slug,
+                    "wiki_plan: dropped UPDATE for unreconciled slug"
+                );
+                continue;
+            }
+            let topic_ok = obj
+                .get("topic")
+                .and_then(Value::as_str)
+                .map(|topic| !topic.trim().is_empty())
+                .unwrap_or(false);
+            if !topic_ok {
+                tracing::warn!(slug = slug, "wiki_plan: dropped page with missing topic");
+                continue;
+            }
+            valid_pages.push(page.clone());
+            if valid_pages.len() >= max_page_count {
+                break;
+            }
+        }
+    }
+    let mut out = res.as_object().cloned().unwrap_or_default();
+    out.insert("pages".to_string(), Value::Array(valid_pages.clone()));
+    out.insert("estimated_page_count".to_string(), json!(valid_pages.len()));
+    out.entry("compilation_notes".to_string())
+        .or_insert(Value::String(String::new()));
+    Value::Object(out)
+}
+
+/// `_wiki_load_reduce_result` (delegates to the resume reader).
+pub fn load_reduce_result(store: &dyn DocStore, tenant_id: &str, kb_id: &str) -> Option<Value> {
+    load_reduce_resume(store, tenant_id, kb_id).map(|(cached, _)| cached)
+}
+
+/// `_wiki_load_reduce_input_hash`.
+pub fn load_reduce_input_hash(store: &dyn DocStore, tenant_id: &str, kb_id: &str) -> String {
+    load_reduce_resume(store, tenant_id, kb_id)
+        .map(|(_, hash)| hash)
+        .unwrap_or_default()
+}
+
+/// `_wiki_load_plan_resume`: `(cached_plan, stored_input_hash)` or None.
+pub fn load_plan_resume(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> Option<(Value, String)> {
+    let fields: Vec<String> = ["id", "content_with_weight", "input_hash_kwd"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PLAN_COMPILE_KWD.to_string()),
+    );
+    let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(error = %err, "wiki_plan: failed to load cached plan");
+            return None;
+        }
+    };
+    let row = rows.into_iter().next()?;
+    let content = row
+        .get("content_with_weight")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if content.is_empty() {
+        return None;
+    }
+    let cached: Value = match serde_json::from_str(content) {
+        Ok(cached) => cached,
+        Err(_) => {
+            tracing::debug!("wiki_plan: cached plan unparseable; ignoring");
+            return None;
+        }
+    };
+    if !cached.is_object() {
+        return None;
+    }
+    let stored_hash = row
+        .get("input_hash_kwd")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some((cached, stored_hash))
+}
+
+/// `_wiki_persist_plan`: upsert the single KB-scoped plan row.
+pub fn persist_plan(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    plan: &Value,
+    input_hash: &str,
+    source_doc_ids: &[String],
+) {
+    let kb_id_str = kb_id.to_string();
+    let row_id = stable_row_id(&[WIKI_PLAN_COMPILE_KWD.to_string(), kb_id_str.clone()]);
+    let mut doc = Map::new();
+    doc.insert("id".to_string(), Value::String(row_id));
+    doc.insert("doc_id".to_string(), Value::String(kb_id_str.clone()));
+    doc.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PLAN_COMPILE_KWD.to_string()),
+    );
+    doc.insert(
+        "source_id".to_string(),
+        Value::Array(vec![Value::String(kb_id_str)]),
+    );
+    doc.insert(
+        "source_doc_ids".to_string(),
+        Value::Array(
+            source_doc_ids
+                .iter()
+                .map(|doc_id| Value::String(doc_id.clone()))
+                .collect(),
+        ),
+    );
+    doc.insert(
+        "input_hash_kwd".to_string(),
+        Value::String(input_hash.to_string()),
+    );
+    doc.insert(
+        "content_with_weight".to_string(),
+        Value::String(plan.to_string()),
+    );
+    doc.insert("available_int".to_string(), json!(0));
+
+    let mut delete_condition = Map::new();
+    delete_condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_PLAN_COMPILE_KWD.to_string()),
+    );
+    if let Err(err) = store.delete(&delete_condition, &index_name(tenant_id), kb_id) {
+        tracing::debug!(
+            error = %err,
+            "wiki_plan: prior plan delete failed; will overwrite by id"
+        );
+    }
+    if let Err(err) = store.insert(&[doc], &index_name(tenant_id), kb_id) {
+        tracing::error!(error = %err, "wiki_plan: failed to persist plan row");
+    }
+}
+
+#[cfg(test)]
+mod wiki_part6b_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.to_string(),
+                delay_ms: 0,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    const PLAN_REPLY: &str = r#"{
+        "pages": [
+            {"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1},
+            {"action": "CREATE", "slug": "entity-Bad_Slug", "title": "Bad", "page_type": "entity", "topic": "bad"},
+            {"action": "CREATE", "slug": "concept/beta", "title": "", "page_type": "concept", "topic": "beta"},
+            {"action": "CREATE", "slug": "topic/gamma", "title": "Gamma", "page_type": "entity", "topic": "gamma"},
+            {"action": "UPDATE", "slug": "entity/not-reconciled", "title": "Nope", "page_type": "entity", "topic": "nope"},
+            {"action": "CREATE", "slug": "concept/delta", "title": "Delta", "page_type": "concept"},
+            42
+        ],
+        "estimated_page_count": 99,
+        "compilation_notes": "n"
+    }"#;
+
+    #[tokio::test]
+    async fn planning_validates_and_drops_bad_pages() {
+        let chat = FakeChat::new(PLAN_REPLY);
+        let entities = vec![json!({"name": "Alpha", "type": "org", "mention_count": 5})];
+        let reconciliation = Map::new();
+        let plan = wiki_planning_call(
+            &chat,
+            &entities,
+            &[],
+            &[json!("t")],
+            &reconciliation,
+            Some("KB"),
+            Some("desc"),
+            8,
+            30,
+        )
+        .await;
+        let pages = plan["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["slug"], json!("entity/alpha"));
+        assert_eq!(plan["estimated_page_count"], json!(1));
+        assert_eq!(plan["compilation_notes"], json!("n"));
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("Name: KB"));
+        assert!(prompt.contains("Description: desc"));
+        assert!(prompt.contains("Target approximately 8 total pages"));
+        assert!(prompt.contains("  - Alpha (org, 5 mentions) → CREATE"));
+    }
+
+    #[tokio::test]
+    async fn planning_timeout_returns_empty() {
+        let mut chat = FakeChat::new(PLAN_REPLY);
+        chat.delay_ms = 50;
+        let plan = wiki_planning_call(&chat, &[], &[], &[], &Map::new(), None, None, 8, 0).await;
+        assert_eq!(plan["pages"], json!([]));
+        assert_eq!(plan["compilation_notes"], json!("planning timeout"));
+    }
+
+    #[tokio::test]
+    async fn planning_batches_and_dedups_slugs() {
+        let chat = FakeChat::new(PLAN_REPLY);
+        let entities: Vec<Value> = (0..41)
+            .map(|idx| json!({"name": format!("E{idx}"), "type": "org", "mention_count": 1}))
+            .collect();
+        let plan =
+            wiki_planning_call(&chat, &entities, &[], &[], &Map::new(), None, None, 8, 30).await;
+        let calls = chat.calls.lock().unwrap().len();
+        assert_eq!(calls, 2);
+        assert_eq!(plan["compilation_notes"], json!("planned in batches"));
+        assert_eq!(plan["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["estimated_page_count"], json!(1));
+    }
+
+    #[test]
+    fn plan_resume_and_reduce_hash_io() {
+        let store = MemoryDocStore::new();
+        assert!(load_plan_resume(&store, "t1", "kb1").is_none());
+        assert_eq!(load_reduce_input_hash(&store, "t1", "kb1"), "");
+        assert!(load_reduce_result(&store, "t1", "kb1").is_none());
+        persist_plan(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"pages": [{"slug": "entity/alpha"}]}),
+            "PH1",
+            &["d1".to_string()],
+        );
+        let (cached, hash) = load_plan_resume(&store, "t1", "kb1").expect("plan");
+        assert_eq!(hash, "PH1");
+        assert_eq!(cached["pages"][0]["slug"], json!("entity/alpha"));
+        persist_reduce(&store, "t1", "kb1", &json!({"entities": []}), "RH1", &[]);
+        assert_eq!(load_reduce_input_hash(&store, "t1", "kb1"), "RH1");
+        assert!(load_reduce_result(&store, "t1", "kb1").is_some());
+        persist_plan(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"pages": [{"slug": "entity/beta"}]}),
+            "PH2",
+            &[],
+        );
+        let (cached2, hash2) = load_plan_resume(&store, "t1", "kb1").expect("plan2");
+        assert_eq!(hash2, "PH2");
+        assert_eq!(cached2["pages"][0]["slug"], json!("entity/beta"));
+    }
+}
