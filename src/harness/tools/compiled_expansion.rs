@@ -604,6 +604,7 @@ mod tests {
                 json!({"chunk_id": "base", "content_with_weight": "base", "similarity": 0.2}),
             ],
             doc_aggs: vec![],
+            pre_summary: None,
         };
         let scopes: Vec<KgScope> = vec![("kb1".to_string(), "t1".to_string(), None)];
         let added = expand_with_compiled(&host, &scopes, "q", "", &mut kbinfos).await;

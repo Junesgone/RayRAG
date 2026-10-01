@@ -37,6 +37,19 @@ pub trait HarnessChat: Send + Sync {
         gen_conf: &Value,
     ) -> Result<String, String>;
 
+    /// `chat_mdl.async_chat_streamly_delta`: streaming answer deltas. The
+    /// default bridges to `chat` and yields the whole answer as ONE delta.
+    async fn chat_streamly_delta(
+        &self,
+        system: &str,
+        history: &[Value],
+        gen_conf: &Value,
+    ) -> Result<Vec<String>, String> {
+        self.chat(system, history, gen_conf)
+            .await
+            .map(|text| vec![text])
+    }
+
     /// Provider context budget (`chat_mdl.max_length`).
     fn max_length(&self) -> usize;
 

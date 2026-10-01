@@ -643,6 +643,7 @@ mod tests {
                 json!({"content": "Beta table likely"}),
             ],
             doc_aggs: vec![],
+            pre_summary: None,
         };
         let context = render_claim_context(&claims, Some(&kbinfos));
         assert!(context.contains("Claim c1 (draft):\nalpha"));

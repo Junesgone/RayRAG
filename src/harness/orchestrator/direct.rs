@@ -16,6 +16,8 @@ use crate::harness::stats::StatsHandle;
 pub struct Kbinfos {
     pub chunks: Vec<Value>,
     pub doc_aggs: Vec<Value>,
+    /// `kbinfos["pre_summary"]` — the intermediate draft reviewed by the SCA.
+    pub pre_summary: Option<String>,
 }
 
 impl Kbinfos {
@@ -200,6 +202,7 @@ mod tests {
         let mut kbinfos = Kbinfos {
             chunks: vec![json!({"chunk_id": "c1", "text": "a"})],
             doc_aggs: vec![json!({"doc_id": "d1"})],
+            pre_summary: None,
         };
         let result = Kbinfos {
             chunks: vec![
@@ -207,6 +210,7 @@ mod tests {
                 json!({"id": 7, "text": "b"}),
             ],
             doc_aggs: vec![json!({"doc_id": "d1"}), json!({"doc_id": "d2"})],
+            pre_summary: None,
         };
         merge_kbinfos(&mut kbinfos, &result);
         assert_eq!(kbinfos.chunks.len(), 2);
@@ -219,6 +223,7 @@ mod tests {
         let result = Kbinfos {
             chunks: vec![json!({"text": "x"})],
             doc_aggs: vec![json!({}), json!({})],
+            pre_summary: None,
         };
         merge_kbinfos(&mut kbinfos, &result);
         assert_eq!(kbinfos.doc_aggs.len(), 1);
@@ -237,6 +242,7 @@ mod tests {
             Kbinfos {
                 chunks: vec![json!({"chunk_id": "c1"})],
                 doc_aggs: vec![],
+                pre_summary: None,
             },
         );
         let mut kbinfos = Kbinfos::default();

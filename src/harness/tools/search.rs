@@ -486,6 +486,7 @@ pub async fn list_chunks(
                 .take(LIST_CHUNKS_MAX_CHUNKS)
                 .collect(),
             doc_aggs: full.doc_aggs,
+            pre_summary: None,
         },
         Err(_) => Kbinfos::default(),
     }
@@ -613,6 +614,7 @@ mod tests {
                     json!({"chunk_id": "c2", "content": "unrelated filler about nothing at all"}),
                 ],
                 doc_aggs: vec![],
+                pre_summary: None,
             },
             last: std::sync::Mutex::new(None),
         };
@@ -657,6 +659,7 @@ mod tests {
             result: Kbinfos {
                 chunks: vec![table.clone(), prose.clone()],
                 doc_aggs: vec![],
+                pre_summary: None,
             },
             last: std::sync::Mutex::new(None),
         };
@@ -687,6 +690,7 @@ mod tests {
                 Ok(Kbinfos {
                     chunks: vec![json!({"chunk_id": "c1"}), json!({"chunk_id": "c2"})],
                     doc_aggs: vec![json!({"doc_id": "d1"})],
+                    pre_summary: None,
                 })
             } else {
                 Err("missing".to_string())

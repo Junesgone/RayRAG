@@ -12,7 +12,7 @@
 //! action-session port). The think-stream splitter is a feed-based state
 //! machine because Rust has no async generators.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -20,13 +20,18 @@ use futures_util::future::join_all;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::advanced_rag::agentic_rag::RagTools;
+use crate::advanced_rag::agentic_rag::{RagRetrievalBackend, RagTools, kb_prompt};
 use crate::harness::HarnessChat;
 use crate::harness::action_session::SlotState;
+use crate::harness::action_session::{ActionLlmBackend, ActionSearchBackend, ActionToolBackend};
 use crate::harness::chunk_utils;
 use crate::harness::grep_sed_narrow::narrow_by_terms;
 use crate::harness::memory::is_stopword;
 use crate::harness::orchestrator::direct::Kbinfos;
+use crate::harness::orchestrator::direct::{DirectTools, direct_search};
+use crate::harness::orchestrator::query_rewriter::rewrite_gap_to_query;
+use crate::harness::orchestrator::sufficient_context::{ScClaim, sufficient_context_agent};
+use crate::harness::stats::StatsHandle;
 use crate::harness::tools::search::{
     HarnessRetriever, RetrievalRequest, SearchContext, SearchSettings, bm25_search, hybrid_search,
     query_to_terms,
@@ -324,6 +329,8 @@ pub struct AgenticState {
     pub slot_draft: String,
     pub collected_answer: String,
     pub unresolved_slots: Vec<Value>,
+    /// slot_id -> {evidence_ids, terminal_type, candidate, strength}.
+    pub slot_evidence: Value,
     pub research_feedback: Vec<Value>,
     pub kbinfos: Kbinfos,
     pub draft: String,
@@ -355,6 +362,7 @@ impl Default for AgenticState {
             slot_draft: String::new(),
             collected_answer: String::new(),
             unresolved_slots: Vec::new(),
+            slot_evidence: serde_json::json!({}),
             research_feedback: Vec::new(),
             kbinfos: Kbinfos::default(),
             draft: String::new(),
@@ -740,6 +748,1352 @@ pub async fn fanout_search(
     added
 }
 
+// ── Graph runtime contract ──────────────────────────────────────────────────
+
+/// Everything the graph nodes need from the host (the Python `tools` object
+/// plus the search legs). The host wires the SAME model through `chat` (plain
+/// calls), `action_llm` (tool-calling sessions) and `retrieval` (raw KB reads).
+pub struct AgenticRuntime<'a> {
+    pub tools: &'a RagTools,
+    pub search: &'a SearchContext<'a>,
+    pub retrieval: &'a dyn RagRetrievalBackend,
+    pub chat: &'a dyn HarnessChat,
+    pub action_search: &'a dyn ActionSearchBackend,
+    pub action_tools: &'a dyn ActionToolBackend,
+    pub action_llm: &'a dyn ActionLlmBackend,
+    pub direct: Option<&'a dyn DirectTools>,
+    pub stats: StatsHandle,
+}
+
+fn non_empty(values: impl IntoIterator<Item = String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+fn dedupe(items: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        if !out.iter().any(|existing| existing == &item) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+/// `formalize_question` node: reset the session bookkeeping and derive the
+/// standalone question + search keywords.
+pub async fn formalize_question_node(runtime: &AgenticRuntime<'_>, state: &mut AgenticState) {
+    let (question, keywords) = runtime.tools.formalize(runtime.chat, &state.messages).await;
+    state.question = question.trim().to_string();
+    state.keywords = keywords.trim().to_string();
+    state.kbinfos = Kbinfos::default();
+    state.partial_answer = false;
+    state.abstain = false;
+    state.empty_result = true;
+    state.current_queries.clear();
+    state.research_feedback.clear();
+    state.rag_answer.clear();
+    state.draft.clear();
+    state.search_rounds = 0;
+    state.sca_view_id.clear();
+    state.no_progress = false;
+    state.deadline = Some(Instant::now() + std::time::Duration::from_secs_f64(TOTAL_BUDGET_S));
+}
+
+/// `planner` node (Phase 1): fan-out decomposition + slot table.
+pub async fn planner_node(
+    runtime: &AgenticRuntime<'_>,
+    state: &mut AgenticState,
+    answer_conf: &Value,
+) {
+    let question = state.question.clone();
+    let fanouts = expand_fanouts(runtime.chat, &question, answer_conf).await;
+    state.plan = serde_json::json!({"fanouts": fanouts});
+    state.current_queries = fanouts.iter().map(|f| serde_json::json!(f)).collect();
+    let deadline_left = remaining_s(state) - 15.0;
+    let (root, first_queries) = build_slot_table(
+        runtime,
+        &question,
+        &fanouts,
+        answer_conf,
+        Some(deadline_left),
+    )
+    .await;
+    state.slot_table = Some(root);
+    if !first_queries.is_empty() {
+        state.current_queries = first_queries.into_iter().map(Value::String).collect();
+    }
+}
+
+/// `prefetch` node: programmatic Phase-2 snippet pool for the SCA (first round
+/// leaves `DRILL_RESERVE` slots free).
+pub async fn prefetch_node(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    state: &mut AgenticState,
+) {
+    let queries: Vec<String> = if !state.current_queries.is_empty() {
+        non_empty(state.current_queries.iter().map(value_to_text))
+    } else if !state.question.is_empty() {
+        vec![state.question.clone()]
+    } else {
+        return;
+    };
+    let timeout = PREFETCH_TIMEOUT_S.min((remaining_s(state) - MIN_ROUND_HEADROOM_S).max(10.0));
+    let capacity = MAX_SNIPPET_POOL - DRILL_RESERVE;
+    let added = bounded(
+        fanout_search(
+            runtime.tools,
+            runtime.search,
+            kbinfos,
+            &queries,
+            8,
+            Some(capacity),
+        ),
+        timeout,
+    )
+    .await
+    .unwrap_or(0);
+    let mut ledger = state.attempted.clone();
+    for query in &queries {
+        ledger.push(serde_json::json!({"q": query, "r": 0, "new": added}));
+    }
+    state.attempted = ledger;
+    state.kbinfos = kbinfos.clone();
+}
+
+/// `formalize_answer` (Phase 5): compose the grounded answer and push the
+/// stream deltas into `tokens`.
+pub async fn formalize_answer_node(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &Kbinfos,
+    state: &mut AgenticState,
+    tokens: &mut Vec<String>,
+    answer_conf: &Value,
+) {
+    let status = state
+        .verdict
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if state.no_progress || status == "INSUFFICIENT" {
+        state.partial_answer = true;
+    }
+    compose_answer_from_evidence(runtime, kbinfos, state, tokens, answer_conf).await;
+}
+
+/// `_compose_answer_from_evidence`: the shared Phase-5 composition.
+pub async fn compose_answer_from_evidence(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &Kbinfos,
+    state: &mut AgenticState,
+    tokens: &mut Vec<String>,
+    answer_conf: &Value,
+) {
+    let question = state.question.clone();
+    let no_evidence = state.abstain || state.empty_result || kbinfos.chunks.is_empty();
+    if no_evidence && !runtime.tools.empty_response.is_empty() {
+        tokens.push(runtime.tools.empty_response.clone());
+        return;
+    }
+    let pre_summary = kbinfos.pre_summary.clone().unwrap_or_default();
+    let mut ranked: Vec<Value> = kbinfos.chunks.clone();
+    ranked.sort_by(|a, b| {
+        let score = |chunk: &Value| -> f64 {
+            chunk
+                .get("similarity")
+                .and_then(Value::as_f64)
+                .filter(|value| *value != 0.0)
+                .or_else(|| chunk.get("score").and_then(Value::as_f64))
+                .unwrap_or(0.0)
+        };
+        score(b)
+            .partial_cmp(&score(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    const CITE_CHUNK_CAP: usize = 6;
+    let cite_chunks: Vec<Value> = if ranked.is_empty() {
+        kbinfos.chunks.clone()
+    } else {
+        ranked.into_iter().take(CITE_CHUNK_CAP).collect()
+    };
+    let evidence_kbinfos = Kbinfos {
+        chunks: cite_chunks,
+        ..kbinfos.clone()
+    };
+    let blocks = kb_prompt(
+        &evidence_kbinfos,
+        runtime
+            .tools
+            .chat_max_length
+            .min(crate::advanced_rag::agentic_rag::EVIDENCE_BUDGET_TOKENS),
+        false,
+    );
+    let evidence = blocks.join("\n");
+    let mut parts: Vec<String> = vec![format!("Question:\n{question}\n")];
+    parts.push(
+        "Answer Target Contract:\nFinal answer must directly satisfy the user's top-level who/what request. Use bridge entities only as clues, and verify any proposed answer against the evidence. In EXTREME-SELECTION questions (shortest/longest/smallest/largest/most/least/最), compare the alternatives in the evidence and name the EXTREME one rather than the most common or first-listed.\n"
+            .to_string(),
+    );
+    if no_evidence {
+        if !pre_summary.is_empty() {
+            parts.push(
+                "The retrieved passages are limited. Answer as completely as possible from the Research Summary below, using the known facts; where a specific number/entity is missing, say what is known and avoid flatly refusing to answer.\n"
+                    .to_string(),
+            );
+        } else {
+            parts.push(
+                "No supporting evidence was retrieved. State clearly that the available sources are insufficient, and do not answer from general knowledge.\n"
+                    .to_string(),
+            );
+        }
+    }
+    if !pre_summary.is_empty() {
+        parts.push(format!(
+            "Research Summary (primary evidence):\n{pre_summary}\n"
+        ));
+    }
+    if state.partial_answer {
+        parts.push(format!(
+            "{}\n",
+            crate::harness::report_prompt::PARTIAL_ANSWER_PREAMBLE
+        ));
+    }
+    let rules = runtime.tools.get_citation_guidelines();
+    let mut system =
+        crate::harness::report_prompt::FINAL_ANSWER_SYSTEM.replace("{cite_rules}", rules.trim());
+    let configured = runtime.tools.system_prompt.trim();
+    if !configured.is_empty() {
+        system = format!(
+            "{system}\n\n# Assistant configuration (set by the user)\n{configured}\n\nFollow the configuration above for language, tone, style, format and any other presentational instruction, including where it overrides the language rule above. Where it conflicts with the citation rules, attribute fidelity, or the requirement to answer only from the provided evidence, those three take precedence."
+        );
+    }
+    parts.push(format!("Evidence:\n{evidence}"));
+    let user_content = parts.join("\n");
+    let budget = runtime
+        .tools
+        .chat_max_length
+        .min(crate::advanced_rag::agentic_rag::EVIDENCE_BUDGET_TOKENS);
+    let (_, msg) = crate::harness::message_fit_in(
+        crate::harness::form_message(&system, &user_content),
+        budget,
+    );
+    let system_content = msg
+        .first()
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let history: Vec<Value> = msg.iter().skip(1).cloned().collect();
+    match runtime
+        .chat
+        .chat_streamly_delta(&system_content, &history, answer_conf)
+        .await
+    {
+        Ok(deltas) => tokens.extend(deltas),
+        Err(_) => {
+            tokens.push("I'm sorry, I encountered an error while composing the answer.".to_string())
+        }
+    }
+}
+
+/// `rag_agent` node (Phases 2 & 4 — the retrieval researcher).
+pub async fn rag_agent_node(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    state: &mut AgenticState,
+    answer_conf: &Value,
+) {
+    let time_left = remaining_s(state);
+    if time_left < MIN_ROUND_HEADROOM_S {
+        return;
+    }
+    let deadline = time_left - 25.0;
+    let t = PASS_TIMEOUT_S.min(deadline).max(20.0);
+    let question = state.question.clone();
+    let slot_result = bounded(
+        run_slot_research_pass(runtime, kbinfos, &question, state, answer_conf, t),
+        t,
+    )
+    .await;
+    let Some(result) = slot_result.flatten() else {
+        return;
+    };
+    if let Some(table) = result.slot_table {
+        state.slot_table = Some(table);
+    }
+    if let Some(answer) = result.collected_answer {
+        state.collected_answer = answer;
+    }
+    state.unresolved_slots = result.unresolved_slots;
+    state.slot_evidence = result.slot_evidence;
+    state.slot_draft = result.slot_draft.clone();
+    if !result.slot_draft.is_empty() {
+        state.rag_answer = result.slot_draft;
+    }
+    state.attempted = result.attempted;
+    state.kbinfos = kbinfos.clone();
+}
+
+/// `draft` node (Phase 3 reviewee).
+pub async fn draft_node(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    state: &mut AgenticState,
+    answer_conf: &Value,
+) {
+    let mut draft_text = state.rag_answer.trim().to_string();
+    if draft_text.is_empty() {
+        let t = DRAFT_TIMEOUT_S.min((remaining_s(state) - 10.0).max(15.0));
+        let composed = bounded(
+            compose_fallback_draft(runtime, kbinfos, state, answer_conf),
+            t,
+        )
+        .await;
+        draft_text = composed.flatten().unwrap_or_default();
+    }
+    if !draft_text.is_empty() {
+        kbinfos.pre_summary = Some(draft_text.clone());
+    }
+    state.draft = draft_text;
+    state.kbinfos = kbinfos.clone();
+}
+
+/// `sca` node (Phase 3 — quality-control inspector).
+pub async fn sca_node(runtime: &AgenticRuntime<'_>, kbinfos: &Kbinfos, state: &mut AgenticState) {
+    let chunks: Vec<Value> = kbinfos
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.is_object())
+        .cloned()
+        .collect();
+    let draft_text = state.draft.trim().to_string();
+    let (mut view, view_id) = select_sca_view(&chunks, &view_terms(state), None);
+    let prev_id = state.sca_view_id.clone();
+    if !prev_id.is_empty() && view_id == prev_id {
+        state.verdict = serde_json::json!({"status": "INSUFFICIENT"});
+        state.sca = serde_json::json!({});
+        state.no_progress = true;
+        return;
+    }
+    let mut view_by_id: HashMap<String, usize> = HashMap::new();
+    for (index, chunk) in view.iter().enumerate() {
+        let id = chunk_utils::chunk_id(chunk);
+        if !id.is_empty() {
+            view_by_id.insert(id, index);
+        }
+    }
+    let mut view_index_by_id: HashMap<String, usize> = HashMap::new();
+    let mut claims: Vec<ScClaim> = Vec::new();
+    if !draft_text.is_empty() {
+        claims.push(ScClaim {
+            claim_id: "c0".to_string(),
+            draft: draft_text.clone(),
+            evidence_ids: Vec::new(),
+        });
+    }
+    if let Some(slot_evidence) = state.slot_evidence.as_object() {
+        for (sid, meta) in slot_evidence {
+            let eids: Vec<String> = meta
+                .get("evidence_ids")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if eids.is_empty() {
+                continue;
+            }
+            let mut positions: Vec<i64> = Vec::new();
+            for eid in &eids {
+                let mut pos = view_index_by_id.get(eid).copied();
+                if pos.is_none() {
+                    if let Some(index) = chunks
+                        .iter()
+                        .position(|chunk| chunk_utils::chunk_id(chunk) == *eid)
+                    {
+                        let cid = chunk_utils::chunk_id(&chunks[index]);
+                        if !view_by_id.contains_key(&cid) {
+                            view.push(chunks[index].clone());
+                            view_by_id.insert(cid.clone(), view.len() - 1);
+                        }
+                        pos = view_by_id.get(&cid).copied();
+                    }
+                }
+                if let Some(position) = pos {
+                    positions.push(position as i64);
+                    view_index_by_id.insert(eid.clone(), position);
+                }
+            }
+            let candidate: String = meta
+                .get("candidate")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .chars()
+                .take(400)
+                .collect();
+            let draft = if candidate.is_empty() {
+                format!("(slot {sid} evidence)")
+            } else {
+                candidate
+            };
+            claims.push(ScClaim {
+                claim_id: sid.clone(),
+                draft,
+                evidence_ids: positions,
+            });
+        }
+    }
+    if claims.is_empty() {
+        let draft = if draft_text.is_empty() {
+            "(no draft)".to_string()
+        } else {
+            draft_text.clone()
+        };
+        claims.push(ScClaim {
+            claim_id: "c0".to_string(),
+            draft,
+            evidence_ids: (0..view.len() as i64).collect(),
+        });
+    }
+    if draft_text.is_empty() && view.is_empty() {
+        state.verdict = serde_json::json!({"status": "INSUFFICIENT"});
+        state.sca = serde_json::json!({});
+        state.sca_view_id = view_id;
+        return;
+    }
+    let view_kbinfos = Kbinfos {
+        chunks: view.clone(),
+        doc_aggs: kbinfos.doc_aggs.clone(),
+        pre_summary: kbinfos.pre_summary.clone(),
+    };
+    let question = state.question.clone();
+    let timeout = SCA_TIMEOUT_S.min((remaining_s(state) - 10.0).max(15.0));
+    let payload = bounded(
+        sufficient_context_agent(
+            Some(runtime.chat),
+            &question,
+            &claims,
+            Some(&view_kbinfos),
+            &runtime.stats,
+        ),
+        timeout,
+    )
+    .await;
+    match payload {
+        None => {
+            state.verdict = serde_json::json!({"status": "INSUFFICIENT"});
+            state.sca = serde_json::json!({});
+            state.sca_view_id = view_id;
+        }
+        Some(payload) => {
+            let sufficient = value_truthy(payload.get("is_sufficient"));
+            let status = if sufficient {
+                "SUFFICIENT"
+            } else {
+                "INSUFFICIENT"
+            };
+            state.verdict = serde_json::json!({"status": status});
+            state.sca = payload;
+            state.sca_view_id = view_id;
+        }
+    }
+}
+
+/// `query_rewrite` node (Phase 4 — targeted gap pursuit).
+pub async fn query_rewrite_node(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    state: &mut AgenticState,
+) {
+    let question = state.question.clone();
+    let sca_payload = if state.sca.is_object() {
+        state.sca.clone()
+    } else {
+        serde_json::json!({})
+    };
+    let mut gaps = sca_gaps_to_rewrite(&sca_payload);
+    if gaps.is_empty() {
+        for item in &state.unresolved_slots {
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+            if let Some(clues) = object.get("question_clues").and_then(Value::as_array) {
+                for clue in clues.iter().take(2) {
+                    let text = value_to_text(clue).trim().to_string();
+                    if !text.is_empty() {
+                        gaps.push((text.clone(), text));
+                    }
+                }
+            }
+        }
+        if gaps.is_empty() {
+            state.no_progress = true;
+            return;
+        }
+    }
+    let mut history_lines: Vec<String> = Vec::new();
+    for entry in &state.attempted {
+        let Some(object) = entry.as_object() else {
+            continue;
+        };
+        let query: String = value_to_text(object.get("q").unwrap_or(&Value::Null))
+            .chars()
+            .take(120)
+            .collect();
+        let round = object.get("r").cloned().unwrap_or(serde_json::json!("?"));
+        let new = object.get("new").and_then(Value::as_u64);
+        let outcome = if new == Some(0) {
+            "no new passages".to_string()
+        } else {
+            format!("{} new passage(s)", new.unwrap_or(0))
+        };
+        history_lines.push(format!(
+            "- {query} (round {}: {outcome})",
+            value_to_text(&round)
+        ));
+    }
+    let mut pool_head_lines: Vec<String> = Vec::new();
+    for chunk in kbinfos.chunks.iter().take(12) {
+        let text = chunk
+            .get("content")
+            .or_else(|| chunk.get("content_with_weight"))
+            .map(value_to_text)
+            .unwrap_or_default();
+        let first_line = text.lines().next().unwrap_or("").trim().to_string();
+        if !first_line.is_empty() {
+            let head: String = first_line.chars().take(140).collect();
+            pool_head_lines.push(format!("- {head}"));
+        }
+    }
+    let mut research_parts: Vec<String> = Vec::new();
+    if !history_lines.is_empty() {
+        research_parts.push(format!(
+            "Previously searched queries and their outcomes:\n{}",
+            history_lines.join("\n")
+        ));
+    }
+    if !pool_head_lines.is_empty() {
+        research_parts.push(format!(
+            "Evidence currently at hand (first lines of top stored snippets):\n{}",
+            pool_head_lines.join("\n")
+        ));
+    }
+    let research_context = research_parts.join("\n\n");
+    let timeout = REWRITE_TIMEOUT_S.min((remaining_s(state) - 10.0).max(10.0));
+    let rewritten = bounded(
+        rewrite_gap_to_query(
+            Some(runtime.chat),
+            &question,
+            &gaps,
+            &[],
+            &research_context,
+            &runtime.stats,
+        ),
+        timeout,
+    )
+    .await;
+    let mut queries: Vec<String> = rewritten
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("query")
+                .and_then(Value::as_str)
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+        })
+        .collect();
+    for item in &state.unresolved_slots {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        if let Some(clues) = object.get("question_clues").and_then(Value::as_array) {
+            for clue in clues.iter().take(2) {
+                let text = value_to_text(clue).trim().to_string();
+                if !text.is_empty() {
+                    queries.push(text);
+                }
+            }
+        }
+    }
+    queries = dedupe(queries);
+    if queries.is_empty() {
+        state.no_progress = true;
+        return;
+    }
+    let added = fanout_search(runtime.tools, runtime.search, kbinfos, &queries, 6, None).await;
+    if added == 0 && state.search_rounds >= 1 {
+        state.no_progress = true;
+        state.current_queries = queries.into_iter().map(Value::String).collect();
+        return;
+    }
+    let mut ledger = state.attempted.clone();
+    for query in &queries {
+        ledger.push(serde_json::json!({"q": query, "r": state.search_rounds + 1, "new": added}));
+    }
+    state.no_progress = false;
+    state.current_queries = queries.into_iter().map(Value::String).collect();
+    state.search_rounds += 1;
+    state.attempted = ledger;
+    state.kbinfos = kbinfos.clone();
+}
+
+/// Graph edge decisions (upstream `_route_sca` / `_route_rewrite`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphRoute {
+    QueryRewrite,
+    FormalizeAnswer,
+    RagAgent,
+}
+
+/// `_route_sca`.
+pub fn route_sca(state: &AgenticState, kbinfos: &Kbinfos, config: &GraphConfig) -> GraphRoute {
+    if state.no_progress {
+        return GraphRoute::FormalizeAnswer;
+    }
+    if kbinfos.chunks.len() >= SCA_VIEW_CAP {
+        return GraphRoute::FormalizeAnswer;
+    }
+    if !config.enable_sca {
+        return GraphRoute::FormalizeAnswer;
+    }
+    let insufficient = state
+        .verdict
+        .get("status")
+        .and_then(Value::as_str)
+        .map(|status| status == "INSUFFICIENT")
+        .unwrap_or(false);
+    if insufficient
+        && state.search_rounds < config.sca_max_rounds
+        && remaining_s(state) > MIN_ROUND_HEADROOM_S
+    {
+        return GraphRoute::QueryRewrite;
+    }
+    GraphRoute::FormalizeAnswer
+}
+
+/// `_route_rewrite`.
+pub fn route_rewrite(state: &AgenticState, config: &GraphConfig) -> GraphRoute {
+    if state.no_progress {
+        return GraphRoute::FormalizeAnswer;
+    }
+    if state.search_rounds >= config.sca_max_rounds {
+        return GraphRoute::FormalizeAnswer;
+    }
+    if remaining_s(state) <= MIN_ROUND_HEADROOM_S {
+        return GraphRoute::FormalizeAnswer;
+    }
+    GraphRoute::RagAgent
+}
+
+/// Graph switches (upstream `build_agentic_graph` arguments).
+#[derive(Debug, Clone)]
+pub struct GraphConfig {
+    pub enable_sca: bool,
+    pub use_fanout: bool,
+    pub sca_max_rounds: usize,
+    pub max_loops: usize,
+}
+
+/// Explicit equivalent of `build_agentic_graph(...).compile().ainvoke(...)`: the
+/// same nodes and edges, driven by a loop (the recursion limit becomes the hard
+/// iteration cap).
+pub async fn run_agentic_graph(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    state: &mut AgenticState,
+    tokens: &mut Vec<String>,
+    answer_conf: &Value,
+    config: &GraphConfig,
+) {
+    let use_prefetch = config.use_fanout;
+    let mut node = "formalize";
+    let mut iterations = 0usize;
+    while iterations < 60 {
+        iterations += 1;
+        match node {
+            "formalize" => {
+                formalize_question_node(runtime, state).await;
+                *kbinfos = Kbinfos::default();
+                node = if config.use_fanout {
+                    "planner"
+                } else if use_prefetch {
+                    "prefetch"
+                } else {
+                    "rag_agent"
+                };
+            }
+            "planner" => {
+                planner_node(runtime, state, answer_conf).await;
+                node = if use_prefetch {
+                    "prefetch"
+                } else {
+                    "rag_agent"
+                };
+            }
+            "prefetch" => {
+                prefetch_node(runtime, kbinfos, state).await;
+                node = "rag_agent";
+            }
+            "rag_agent" => {
+                rag_agent_node(runtime, kbinfos, state, answer_conf).await;
+                node = "draft";
+            }
+            "draft" => {
+                draft_node(runtime, kbinfos, state, answer_conf).await;
+                node = "sca";
+            }
+            "sca" => {
+                sca_node(runtime, kbinfos, state).await;
+                node = match route_sca(state, kbinfos, config) {
+                    GraphRoute::QueryRewrite => "query_rewrite",
+                    _ => "formalize_answer",
+                };
+            }
+            "query_rewrite" => {
+                query_rewrite_node(runtime, kbinfos, state).await;
+                node = match route_rewrite(state, config) {
+                    GraphRoute::RagAgent => "rag_agent",
+                    _ => "formalize_answer",
+                };
+            }
+            "formalize_answer" => {
+                if !kbinfos.chunks.is_empty() {
+                    state.kbinfos = kbinfos.clone();
+                }
+                formalize_answer_node(runtime, kbinfos, state, tokens, answer_conf).await;
+                break;
+            }
+            _ => break,
+        }
+    }
+}
+
+/// `build_low_graph` equivalent: formalize → direct_search → answer.
+pub async fn run_low_graph(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    state: &mut AgenticState,
+    tokens: &mut Vec<String>,
+    answer_conf: &Value,
+) {
+    formalize_question_node(runtime, state).await;
+    *kbinfos = Kbinfos::default();
+    if let Some(direct) = runtime.direct {
+        let question = state.question.clone();
+        let mut direct_state = serde_json::json!({"question": question});
+        if let Some(object) = direct_state.as_object_mut() {
+            object.insert("messages".to_string(), Value::Array(state.messages.clone()));
+        }
+        let _ = direct_search(&direct_state, direct, kbinfos, &runtime.stats).await;
+        state.kbinfos = kbinfos.clone();
+    }
+    state.empty_result = kbinfos.chunks.is_empty();
+    formalize_answer_node(runtime, kbinfos, state, tokens, answer_conf).await;
+}
+
+/// One slot-research round's outputs (upstream dict return).
+pub struct SlotResearchResult {
+    pub slot_table: Option<SlotState>,
+    pub collected_answer: Option<String>,
+    pub unresolved_slots: Vec<Value>,
+    pub slot_evidence: Value,
+    pub slot_draft: String,
+    pub attempted: Vec<Value>,
+}
+
+/// `_render_slot_draft`: render a slot table into a fact-preserving draft.
+pub fn render_slot_draft(
+    slot_table: &SlotState,
+    collected_answer: Option<&str>,
+    slot_evidence: Option<&Value>,
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(answer) = collected_answer {
+        let meta = slot_evidence
+            .and_then(|value| value.get("_answer"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(terminal) = meta.get("terminal_type").and_then(Value::as_str) {
+            if !terminal.is_empty() {
+                parts.push(format!("terminal={terminal}"));
+            }
+        }
+        if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array) {
+            if !ids.is_empty() {
+                parts.push(format!("evidence_ids={ids:?}"));
+            }
+        }
+        let suffix = if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", parts.join(", "))
+        };
+        lines.push(format!("Candidate answer: {answer}{suffix}"));
+        lines.push(String::new());
+    }
+    if slot_table.state.is_empty() {
+        return if lines.is_empty() {
+            String::new()
+        } else {
+            lines.join("\n")
+        };
+    }
+    for variable in &slot_table.state {
+        let vtype = if variable.r#type.is_empty() {
+            "entity"
+        } else {
+            variable.r#type.as_str()
+        };
+        match &variable.candidate {
+            Some(candidate) if !candidate.is_empty() => {
+                let strength = variable
+                    .candidate_strength
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "?".to_string());
+                let clues_tail: Vec<String> = variable
+                    .discovered_clues
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .rev()
+                    .map(|clue| clue.chars().take(240).collect())
+                    .collect();
+                let tail = clues_tail.join("; ");
+                let meta = slot_evidence
+                    .and_then(|value| value.get(variable.id.to_string()))
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let mut details: Vec<String> = Vec::new();
+                if let Some(terminal) = meta.get("terminal_type").and_then(Value::as_str) {
+                    if !terminal.is_empty() {
+                        details.push(format!("terminal={terminal}"));
+                    }
+                }
+                if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array) {
+                    if !ids.is_empty() {
+                        details.push(format!("evidence_ids={ids:?}"));
+                    }
+                }
+                let suffix = if details.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", details.join(", "))
+                };
+                let tail_text = if tail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {tail}")
+                };
+                lines.push(format!(
+                    "- slot {} [{vtype}]: {candidate} (strength={strength}){suffix}{tail_text}",
+                    variable.id
+                ));
+            }
+            _ => {
+                let clues: Vec<String> = variable
+                    .question_clues
+                    .iter()
+                    .take(2)
+                    .map(|clue| clue.chars().take(80).collect())
+                    .collect();
+                lines.push(format!(
+                    "- slot {} [{vtype}]: NOT RESOLVED ({})",
+                    variable.id,
+                    clues.join("; ")
+                ));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+/// `_merge_slot_patch`: adopt the branch's candidate only when it is STRONGER
+/// than the base. Returns `None` when nothing changed (base is not mutated).
+pub fn merge_slot_patch(base: &SlotState, branch: &SlotState) -> Option<SlotState> {
+    let mut merged: Vec<crate::harness::action_session::Variable> = Vec::new();
+    let mut changed = false;
+    let branch_by_id: HashMap<i64, &crate::harness::action_session::Variable> =
+        branch.state.iter().map(|v| (v.id, v)).collect();
+    for variable in &base.state {
+        let Some(branch_var) = branch_by_id.get(&variable.id) else {
+            merged.push(variable.clone());
+            continue;
+        };
+        let branch_strength = branch_var.candidate_strength;
+        let base_strength = variable.candidate_strength;
+        let (candidate, strength) = if branch_var.candidate.is_none() {
+            (variable.candidate.clone(), base_strength)
+        } else if variable.candidate.is_none() {
+            (branch_var.candidate.clone(), branch_strength)
+        } else if branch_strength.unwrap_or(0.0) > base_strength.unwrap_or(0.0) {
+            (branch_var.candidate.clone(), branch_strength)
+        } else {
+            (variable.candidate.clone(), base_strength)
+        };
+        let mut clues: Vec<String> = variable.discovered_clues.clone();
+        for clue in &branch_var.discovered_clues {
+            if !clues.iter().any(|existing| existing == clue) {
+                clues.push(clue.clone());
+            }
+        }
+        if candidate != variable.candidate || clues != variable.discovered_clues {
+            changed = true;
+        }
+        merged.push(crate::harness::action_session::Variable {
+            id: variable.id,
+            r#type: variable.r#type.clone(),
+            question_clues: variable.question_clues.clone(),
+            discovered_clues: clues,
+            candidate,
+            candidate_strength: strength,
+        });
+    }
+    if !changed {
+        return None;
+    }
+    let mut state = SlotState::new(merged, base.depth + 1);
+    state.retrieved_evidence_ids = base.retrieved_evidence_ids.clone();
+    state.id = base.id.clone();
+    Some(state)
+}
+
+/// `_build_slot_table`: the planner's slot table (fallback: one aspect slot per
+/// fan-out, or a single answer slot).
+pub async fn build_slot_table(
+    runtime: &AgenticRuntime<'_>,
+    question: &str,
+    fanouts: &[String],
+    _answer_conf: &Value,
+    deadline_left: Option<f64>,
+) -> (SlotState, Vec<String>) {
+    let (root, first_queries) = crate::harness::action_session::initialize_state(
+        runtime.action_llm,
+        question,
+        fanouts,
+        deadline_left,
+    )
+    .await;
+    if root.state.is_empty() {
+        let queries: Vec<String> = if fanouts.is_empty() {
+            vec![question.to_string()]
+        } else {
+            fanouts.to_vec()
+        };
+        let slots: Vec<crate::harness::action_session::Variable> = queries
+            .iter()
+            .take(4)
+            .enumerate()
+            .map(|(index, query)| crate::harness::action_session::Variable {
+                id: index as i64,
+                r#type: "aspect".to_string(),
+                question_clues: vec![query.chars().take(160).collect()],
+                ..Default::default()
+            })
+            .collect();
+        let first = if first_queries.is_empty() {
+            queries.iter().take(3).cloned().collect()
+        } else {
+            first_queries.clone()
+        };
+        return (SlotState::new(slots, 0), first);
+    }
+    let first = if first_queries.is_empty() {
+        vec![question.to_string()]
+    } else {
+        first_queries
+    };
+    (root, first)
+}
+
+/// `_run_slot_research_pass`: ONE research round of slot-aware action sessions
+/// (unresolved slots in parallel, capped at 2 concurrent, folded back).
+pub async fn run_slot_research_pass(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    question: &str,
+    state: &AgenticState,
+    _answer_conf: &Value,
+    deadline_left: f64,
+) -> Option<SlotResearchResult> {
+    let mut slot_table = match &state.slot_table {
+        Some(table) => table.clone(),
+        None => {
+            let (root, _) = build_slot_table(
+                runtime,
+                if state.question.is_empty() {
+                    question
+                } else {
+                    &state.question
+                },
+                &[],
+                _answer_conf,
+                Some((deadline_left - 10.0).max(15.0)),
+            )
+            .await;
+            root
+        }
+    };
+    let question = if state.question.is_empty() {
+        question.to_string()
+    } else {
+        state.question.clone()
+    };
+    let unresolved: Vec<crate::harness::action_session::Variable> =
+        slot_table.unresolved().into_iter().cloned().collect();
+    if unresolved.is_empty() {
+        return None;
+    }
+    let targets: Vec<crate::harness::action_session::Variable> =
+        unresolved.into_iter().take(3).collect();
+    let direction_question = question.clone();
+    let parent = slot_table.clone();
+    let mode_spec = crate::harness::config::resolve_mode(&runtime.tools.thinking_mode);
+    let mode_tools = mode_spec.tools.clone();
+    let mode_label = mode_spec.label.clone();
+    let has_web = runtime.tools.has_web();
+    let action_runtime = crate::harness::action_session::ActionRuntime {
+        search: runtime.action_search,
+        tools: runtime.action_tools,
+    };
+    let deadline = (deadline_left - 10.0).max(20.0);
+    let mut sessions = Vec::new();
+    for chunk in targets.chunks(2) {
+        let futures = chunk.iter().map(|variable| {
+            let direction = variable
+                .question_clues
+                .first()
+                .cloned()
+                .unwrap_or_else(|| direction_question.clone());
+            let parent = parent.clone();
+            let mode_tools = mode_tools.clone();
+            let mode_label = mode_label.clone();
+            let action_runtime = crate::harness::action_session::ActionRuntime {
+                search: action_runtime.search,
+                tools: action_runtime.tools,
+            };
+            async move {
+                let mut scratch = Kbinfos::default();
+                let result = crate::harness::action_session::run_action_session(
+                    &action_runtime,
+                    Some(runtime.action_llm),
+                    &mut scratch,
+                    &direction,
+                    &parent,
+                    &mode_tools,
+                    &mode_label,
+                    has_web,
+                    &HashSet::new(),
+                    Some(deadline),
+                    "",
+                    None,
+                    None,
+                )
+                .await;
+                (variable.id, result)
+            }
+        });
+        sessions.extend(join_all(futures).await);
+    }
+    let mut collected = state.collected_answer.clone();
+    if collected.is_empty() {
+        collected = String::new();
+    }
+    let mut ledger = state.attempted.clone();
+    let mut slot_evidence: serde_json::Map<String, Value> = serde_json::Map::new();
+    for (slot_id, result) in sessions {
+        if let Some(answer) = result.found_answer.clone() {
+            if collected.is_empty() {
+                collected = answer.clone();
+            }
+        }
+        if !result.retrieved_evidence_ids.is_empty() {
+            let mut record = serde_json::Map::new();
+            record.insert(
+                "evidence_ids".to_string(),
+                serde_json::json!(result.retrieved_evidence_ids),
+            );
+            record.insert(
+                "terminal_type".to_string(),
+                serde_json::json!(result.terminal_type),
+            );
+            record.insert(
+                "candidate".to_string(),
+                serde_json::json!(result.found_answer),
+            );
+            record.insert("strength".to_string(), Value::Null);
+            slot_evidence.insert(slot_id.to_string(), Value::Object(record));
+        }
+        for branch in &result.new_states {
+            if let Some(merged) = merge_slot_patch(&slot_table, branch) {
+                slot_table = merged;
+            }
+        }
+        ledger.push(serde_json::json!({"q": result.found_answer.unwrap_or_default(), "new": 1}));
+    }
+    let slot_evidence_value = Value::Object(slot_evidence);
+    let unresolved_slots: Vec<Value> = slot_table
+        .unresolved()
+        .iter()
+        .map(|variable| {
+            serde_json::json!({
+                "id": variable.id,
+                "type": variable.r#type,
+                "question_clues": variable.question_clues,
+                "discovered_clues": variable
+                    .discovered_clues
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .rev()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let collected_answer = if collected.is_empty() {
+        None
+    } else {
+        Some(collected.clone())
+    };
+    let draft = render_slot_draft(
+        &slot_table,
+        collected_answer.as_deref(),
+        Some(&slot_evidence_value),
+    );
+    Some(SlotResearchResult {
+        slot_table: Some(slot_table),
+        collected_answer,
+        unresolved_slots,
+        slot_evidence: slot_evidence_value,
+        slot_draft: draft,
+        attempted: ledger,
+    })
+}
+
+/// `_compose_fallback_draft`: intermediate draft from the snippet pool.
+pub async fn compose_fallback_draft(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &Kbinfos,
+    state: &AgenticState,
+    answer_conf: &Value,
+) -> Option<String> {
+    let mut chunks = kbinfos.chunks.clone();
+    chunks.sort_by(|a, b| {
+        let score = |chunk: &Value| -> f64 {
+            chunk
+                .get("similarity")
+                .and_then(Value::as_f64)
+                .filter(|value| *value != 0.0)
+                .or_else(|| chunk.get("score").and_then(Value::as_f64))
+                .unwrap_or(0.0)
+        };
+        score(b)
+            .partial_cmp(&score(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let per_chunk = 1200usize;
+    let max_chunks = 16usize;
+    let evidence = chunks
+        .iter()
+        .take(max_chunks)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let text: String = chunk_utils::chunk_text(chunk)
+                .chars()
+                .take(per_chunk)
+                .collect();
+            format!("[{}] {text}", index + 1)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if evidence.is_empty() {
+        return None;
+    }
+    let question = state.question.clone();
+    let mut sub_points: Vec<String> = Vec::new();
+    for entry in &state.research_feedback {
+        let content = value_to_text(entry.get("content").unwrap_or(entry));
+        if !content.trim().is_empty() {
+            sub_points.push(content);
+        }
+    }
+    let focus = if sub_points.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nAdditional gaps you MUST cover:\n{}",
+            sub_points.last().cloned().unwrap_or_default()
+        )
+    };
+    let chinese = question.chars().any(|ch| ch as u32 > 127);
+    let system = format!(
+        "You are a research assistant writing an INTERMEDIATE DRAFT toward answering the user's question, using ONLY the retrieved evidence snippets below.\nRequirements:\n1. First list concrete FACTS FOUND in the snippets (exact numbers, dates, names preserved).\n2. Then output a line starting with 'MISSING:' naming precisely which part(s) of the question the snippets do NOT answer yet.\n3. No conclusions beyond the evidence; no general knowledge.\nKeep it under 250 words.{}",
+        if chinese {
+            "Write your draft in the same language as the question."
+        } else {
+            ""
+        }
+    );
+    let user = format!("Question: {question}{focus}\n\nRetrieved evidence:\n{evidence}");
+    let history = vec![serde_json::json!({"role": "user", "content": user})];
+    match runtime.chat.chat(&system, &history, answer_conf).await {
+        Ok(answer) => {
+            let trimmed = answer.trim().to_string();
+            let out = if trimmed.is_empty() {
+                evidence
+            } else {
+                trimmed
+            };
+            Some(out.chars().take(6000).collect())
+        }
+        Err(_) => Some(evidence.chars().take(4000).collect()),
+    }
+}
+
+/// `_naive_rag`: one retrieve pass, no agentic graph at all (unrecognised mode).
+pub async fn naive_rag(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    messages: &[Value],
+    gen_conf: &Value,
+) -> Vec<String> {
+    let mut question = String::new();
+    for message in messages.iter().rev() {
+        if message.get("role").and_then(Value::as_str) == Some("user") {
+            question = message
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            break;
+        }
+    }
+    let result = if question.is_empty() {
+        serde_json::json!({"chunks": [], "doc_aggs": []})
+    } else {
+        runtime
+            .tools
+            .retrieve(runtime.retrieval, &question, None, None, None, None, false)
+            .await
+    };
+    let chunks = result
+        .get("chunks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if chunks.is_empty() {
+        return vec![runtime.tools.empty_response.clone()];
+    }
+    let mut existing: HashSet<String> = kbinfos.chunks.iter().map(chunk_utils::chunk_id).collect();
+    for chunk in &chunks {
+        let id = chunk_utils::chunk_id(chunk);
+        if !existing.contains(&id) {
+            existing.insert(id);
+            kbinfos.chunks.push(chunk.clone());
+        }
+    }
+    let evidence = chunks
+        .iter()
+        .take(8)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let text: String = value_to_text(
+                chunk
+                    .get("content_with_weight")
+                    .or_else(|| chunk.get("content"))
+                    .unwrap_or(&Value::Null),
+            )
+            .chars()
+            .take(1500)
+            .collect();
+            format!("[{}] {text}", index + 1)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let system = "Answer the question using ONLY the numbered evidence below. Cite with [n] markers. If the evidence does not answer it, say so plainly — do not use outside knowledge.";
+    let (_, msg) = crate::harness::message_fit_in(
+        crate::harness::form_message(
+            system,
+            &format!("Question: {question}\n\nEvidence:\n{evidence}"),
+        ),
+        runtime.tools.chat_max_length,
+    );
+    let system_content = msg
+        .first()
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or(system)
+        .to_string();
+    let history: Vec<Value> = msg.iter().skip(1).cloned().collect();
+    match runtime.chat.chat(&system_content, &history, gen_conf).await {
+        Ok(answer) => {
+            let trimmed = answer.trim().to_string();
+            if trimmed.is_empty() {
+                vec![runtime.tools.empty_response.clone()]
+            } else {
+                vec![trimmed]
+            }
+        }
+        Err(_) => vec![evidence.chars().take(4000).collect()],
+    }
+}
+
+/// `run_agentic_rag`: drive the selected graph and return the raw answer-token
+/// deltas (upstream: an async generator over the token queue).
+pub async fn run_agentic_rag(
+    runtime: &AgenticRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    messages: &[Value],
+    max_loops: usize,
+    gen_conf: &Value,
+) -> Vec<String> {
+    let mode = crate::harness::config::resolve_mode(&runtime.tools.thinking_mode);
+    let answer_conf = if gen_conf.is_null() {
+        serde_json::json!({"temperature": 0.3})
+    } else {
+        gen_conf.clone()
+    };
+    if mode.label == "naive" {
+        return naive_rag(runtime, kbinfos, messages, &answer_conf).await;
+    }
+    let mut state = AgenticState {
+        messages: messages.to_vec(),
+        max_loops,
+        ..AgenticState::default()
+    };
+    let mut tokens: Vec<String> = Vec::new();
+    if mode.agentic {
+        let config = GraphConfig {
+            enable_sca: mode.enable_sca,
+            use_fanout: mode.use_fanout,
+            sca_max_rounds: mode.sca_max_rounds,
+            max_loops,
+        };
+        run_agentic_graph(
+            runtime,
+            kbinfos,
+            &mut state,
+            &mut tokens,
+            &answer_conf,
+            &config,
+        )
+        .await;
+    } else {
+        run_low_graph(runtime, kbinfos, &mut state, &mut tokens, &answer_conf).await;
+    }
+    tokens
+}
+
 #[cfg(test)]
 mod graph_core_tests {
     use super::*;
@@ -1048,6 +2402,7 @@ mod fanout_tests {
             Ok(Kbinfos {
                 chunks,
                 doc_aggs: Vec::new(),
+                pre_summary: None,
             })
         }
     }
