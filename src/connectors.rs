@@ -592,6 +592,7 @@ impl ConnectorRegistry {
             "rss" => Ok(Box::new(RssConnector::new(options)?)),
             "xquik" => Ok(Box::new(XquikConnector::new(options)?)),
             "sitemap" => Ok(Box::new(SitemapConnector::new(options)?)),
+            "azure_devops" => Ok(Box::new(AzureDevOpsConnector::new(options)?)),
             "airtable" => Ok(Box::new(AirtableConnector::new(options)?)),
             // PostgreSQL 外部库直读（RAGFlow rdbms 源的 postgresql 分支）。
             "postgresql" => Ok(Box::new(RdbmsConnector::new(&options)?)),
@@ -4668,6 +4669,1168 @@ impl Connector for XquikConnector {
             size_bytes: raw.len(),
             metadata,
         })
+    }
+}
+
+/// Azure DevOps connector — RAGFlow v0.27.2
+/// `common/data_source/azure_devops/{connector,utils}.py`.
+///
+/// Indexes Azure Repos source files and pull requests:
+///
+/// * Authentication: the PAT travels as the password of a basic-auth pair with
+///   an empty username. Azure DevOps answers a bad PAT with **203** plus the
+///   HTML sign-in page (never 401), so that case is detected explicitly before
+///   any JSON parse.
+/// * Scope modes: `organization` (every visible repository in one request),
+///   `projects` (comma-separated team projects) or `repositories`
+///   (comma-separated `project/repo` or bare repository names).
+/// * Content families: `code`, `pull_requests` or `both`. Code windows filter
+///   on each item's `latestProcessedChange.committer.date`; pull-request
+///   windows keep active PRs unconditionally and filter completed/abandoned
+///   ones on `closedDate` (upstream `pull_request_in_window`).
+/// * Listing skips build output, vendored trees, VCS metadata and binary
+///   extensions; files larger than 1 MB are skipped while streaming.
+/// * Requests retry up to six times with exponential backoff (1s → 30s cap);
+///   429 honours a clamped `Retry-After`; 5xx retries; other 4xx does not.
+///
+/// Bounded divergences: no checkpoint persistence (RAGFlow's resumable offsets
+/// and `last_source_id` anchors have no RayRAG counterpart — each sync lists
+/// the current state), and the rate limiter (120 calls/min upstream) is left to
+/// the retry loop. Oversized files surface as a per-file failure instead of
+/// being dropped silently.
+#[derive(Debug)]
+pub struct AzureDevOpsConnector {
+    client: reqwest::Client,
+    organization: String,
+    org_url: String,
+    pat: String,
+    index_mode: String,
+    projects: Vec<String>,
+    repositories: Vec<String>,
+    content_types: String,
+    since: Option<u64>,
+    until: Option<u64>,
+    batch_size: usize,
+    allow_http: bool,
+}
+
+pub const AZURE_DEVOPS_API_VERSION: &str = "7.1";
+const AZURE_DEVOPS_MAX_FILE_BYTES: usize = 1_000_000;
+const AZURE_DEVOPS_PR_PAGE_SIZE: usize = 100;
+const AZURE_DEVOPS_PR_DESCRIPTION_LIMIT: usize = 400;
+const AZURE_DEVOPS_MAX_ATTEMPTS: usize = 6;
+const AZURE_DEVOPS_MAX_RETRY_AFTER_SECONDS: u64 = 30;
+
+const AZURE_DEVOPS_BINARY_EXTENSIONS: [&str; 35] = [
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp", ".pdf", ".zip", ".gz",
+    ".tar", ".7z", ".rar", ".jar", ".war", ".dll", ".exe", ".so", ".dylib", ".pdb", ".class",
+    ".pyc", ".woff", ".woff2", ".ttf", ".eot", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".psd",
+    ".xlsx", ".docx",
+];
+const AZURE_DEVOPS_EXCLUDED_SEGMENTS: [&str; 11] = [
+    "/node_modules/",
+    "/bin/",
+    "/obj/",
+    "/dist/",
+    "/build/",
+    "/target/",
+    "/vendor/",
+    "/packages/",
+    "/.git/",
+    "/__pycache__/",
+    "/.venv/",
+];
+const AZURE_DEVOPS_SKIPPED_FILENAMES: [&str; 6] = [
+    ".gitattributes",
+    ".gitignore",
+    ".gitkeep",
+    ".gitmodules",
+    ".dockerignore",
+    ".editorconfig",
+];
+
+#[derive(Debug, Clone)]
+struct AzureDevOpsRepo {
+    project: String,
+    name: String,
+    branch: String,
+}
+
+fn azure_devops_encode(segment: &str) -> String {
+    let mut output = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                output.push(byte as char)
+            }
+            _ => output.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    output
+}
+
+fn azure_devops_organization_url(organization: &str, allow_http: bool) -> Result<String> {
+    let organization = organization.trim();
+    if organization.is_empty() {
+        bail!("azure_devops: organization is required (source url)");
+    }
+    if organization.starts_with("http://") {
+        if allow_http {
+            return Ok(organization.trim_end_matches('/').to_owned());
+        }
+        bail!(
+            "Azure DevOps collection URLs must use HTTPS; the personal access token is sent in the Authorization header."
+        );
+    }
+    if organization.starts_with("https://") {
+        return Ok(organization.trim_end_matches('/').to_owned());
+    }
+    Ok(format!(
+        "https://dev.azure.com/{}",
+        azure_devops_encode(organization)
+    ))
+}
+
+fn azure_devops_file_extension(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    match file.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
+            format!(".{}", extension.to_ascii_lowercase())
+        }
+        _ => ".txt".to_owned(),
+    }
+}
+
+fn azure_devops_should_skip_path(path: &str) -> bool {
+    let lowered = path.to_ascii_lowercase();
+    let padded = format!("{lowered}/");
+    if AZURE_DEVOPS_EXCLUDED_SEGMENTS
+        .iter()
+        .any(|segment| padded.contains(&segment.to_ascii_lowercase()))
+    {
+        return true;
+    }
+    let filename = lowered.rsplit('/').next().unwrap_or(&lowered).to_owned();
+    if AZURE_DEVOPS_SKIPPED_FILENAMES.contains(&filename.as_str()) {
+        return true;
+    }
+    AZURE_DEVOPS_BINARY_EXTENSIONS.contains(&azure_devops_file_extension(&lowered).as_str())
+}
+
+fn azure_devops_parse_timestamp(value: Option<&Value>) -> Option<u64> {
+    let value = value.and_then(Value::as_str)?;
+    let datetime =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
+    u64::try_from(datetime.unix_timestamp()).ok()
+}
+
+fn azure_devops_code_document_id(org: &str, project: &str, repo: &str, path: &str) -> String {
+    format!("azure_devops:{org}:{project}:{repo}:file:{path}")
+}
+
+fn azure_devops_pr_document_id(org: &str, project: &str, repo: &str, pr_id: &str) -> String {
+    format!("azure_devops:{org}:{project}:{repo}:pr:{pr_id}")
+}
+
+fn azure_devops_split_list(value: Option<&String>) -> Vec<String> {
+    value
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn azure_devops_pr_text(pr: &Value, project: &str, repo: &str) -> String {
+    let pr_id = pr
+        .get("pullRequestId")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let title = pr.get("title").and_then(Value::as_str).unwrap_or_default();
+    let description = pr
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = pr
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let created_by = pr
+        .get("createdBy")
+        .and_then(|created| created.get("displayName"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let reviewers: Vec<String> = pr
+        .get("reviewers")
+        .and_then(Value::as_array)
+        .map(|reviewers| {
+            reviewers
+                .iter()
+                .filter_map(|reviewer| reviewer.get("displayName").and_then(Value::as_str))
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let strip = |value: Option<&str>| {
+        value
+            .unwrap_or_default()
+            .strip_prefix("refs/heads/")
+            .unwrap_or_else(|| value.unwrap_or_default())
+            .to_owned()
+    };
+    let source_branch = strip(pr.get("sourceRefName").and_then(Value::as_str));
+    let target_branch = strip(pr.get("targetRefName").and_then(Value::as_str));
+    let date_only = |value: Option<&Value>| {
+        azure_devops_parse_timestamp(value)
+            .and_then(|ts| time::OffsetDateTime::from_unix_timestamp(ts as i64).ok())
+            .map(|datetime| datetime.date().to_string())
+            .unwrap_or_else(|| "N/A".to_owned())
+    };
+    let created_on = date_only(pr.get("creationDate"));
+    let closed_on = date_only(pr.get("closedDate"));
+    let reviewer_text = if reviewers.is_empty() {
+        "N/A".to_owned()
+    } else {
+        reviewers.join(", ")
+    };
+    format!(
+        "Pull Request Information:\n- Pull Request ID: {pr_id}\n- Title: {title}\n- Status: {status}\n- Repository: {project}/{repo}\n- Source Branch: {source_branch}\n- Target Branch: {target_branch}\n- Created By: {created_by}\n- Reviewers: {reviewer_text}\n- Created On: {created_on}\n- Closed On: {closed_on}\n\nDescription:\n{description}\n"
+    )
+}
+
+fn azure_devops_pr_in_window(pr: &Value, since: Option<u64>, until: Option<u64>) -> bool {
+    let status = pr
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if status != "completed" && status != "abandoned" {
+        return true;
+    }
+    let Some(closed_at) = azure_devops_parse_timestamp(pr.get("closedDate")) else {
+        return true;
+    };
+    if since.is_some_and(|since| closed_at < since) {
+        return false;
+    }
+    if until.is_some_and(|until| closed_at > until) {
+        return false;
+    }
+    true
+}
+
+impl AzureDevOpsConnector {
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        Self::with_http_override(options, false)
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(options: SourceOptions) -> Result<Self> {
+        Self::with_http_override(options, true)
+    }
+
+    fn with_http_override(options: SourceOptions, allow_http: bool) -> Result<Self> {
+        let extra = &options.extra;
+        let organization = options.url.trim().to_owned();
+        let org_url = azure_devops_organization_url(&organization, allow_http)?;
+        let pat = options.token.trim().to_owned();
+        if pat.is_empty() {
+            bail!("Azure DevOps personal access token is required (token)");
+        }
+        let index_mode = extra
+            .get("index_mode")
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "organization".to_owned());
+        if !matches!(
+            index_mode.as_str(),
+            "organization" | "projects" | "repositories"
+        ) {
+            bail!("azure_devops: index_mode must be organization, projects or repositories");
+        }
+        let content_types = extra
+            .get("content_types")
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "both".to_owned());
+        if !matches!(content_types.as_str(), "code" | "pull_requests" | "both") {
+            bail!("azure_devops: content_types must be code, pull_requests or both");
+        }
+        let batch_size = match extra.get("batch_size").map(String::as_str) {
+            Some(value) if !value.trim().is_empty() => value
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| anyhow!("batch_size must be greater than 0"))?,
+            _ if options.max_items > 0 => options.max_items,
+            _ => 50,
+        };
+        if batch_size < 1 {
+            bail!("batch_size must be greater than 0");
+        }
+        let window = |key: &str| -> Option<u64> {
+            extra
+                .get(key)
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .and_then(|value| {
+                    value.parse::<u64>().ok().or_else(|| {
+                        time::OffsetDateTime::parse(
+                            value,
+                            &time::format_description::well_known::Rfc3339,
+                        )
+                        .ok()
+                        .and_then(|datetime| u64::try_from(datetime.unix_timestamp()).ok())
+                    })
+                })
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            organization,
+            org_url,
+            pat,
+            index_mode,
+            projects: azure_devops_split_list(extra.get("projects")),
+            repositories: azure_devops_split_list(extra.get("repositories")),
+            content_types,
+            since: window("since"),
+            until: window("until"),
+            batch_size,
+            allow_http,
+        })
+    }
+
+    fn indexes_code(&self) -> bool {
+        matches!(self.content_types.as_str(), "code" | "both")
+    }
+
+    fn indexes_pull_requests(&self) -> bool {
+        matches!(self.content_types.as_str(), "pull_requests" | "both")
+    }
+
+    fn repository_filter_matches(&self, project: &str, repo: &str) -> bool {
+        if self.index_mode != "repositories" || self.repositories.is_empty() {
+            return true;
+        }
+        self.repositories
+            .iter()
+            .any(|entry| entry == repo || entry == &format!("{project}/{repo}"))
+    }
+
+    fn repo_api_url(&self, project: &str, repo: &str) -> String {
+        format!(
+            "{}/{}/_apis/git/repositories/{}",
+            self.org_url, project, repo
+        )
+    }
+
+    /// GET with the upstream auth mapping and retry policy.
+    async fn get_json(&self, url: &str, params: &[(&str, String)]) -> Result<Value> {
+        let mut last_error = "unknown error".to_owned();
+        for attempt in 0..AZURE_DEVOPS_MAX_ATTEMPTS {
+            let mut query: Vec<(&str, String)> =
+                vec![("api-version", AZURE_DEVOPS_API_VERSION.to_owned())];
+            query.extend(params.iter().cloned());
+            let response = self
+                .client
+                .get(url)
+                .basic_auth("", Some(&self.pat))
+                .query(&query)
+                .send()
+                .await
+                .map_err(|error| anyhow!("azure_devops: request to {url} failed: {error}"))?;
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if status.as_u16() == 203 {
+                bail!(
+                    "Invalid or expired Azure DevOps personal access token (HTTP 203 sign-in page)."
+                );
+            }
+            if status.as_u16() == 401 {
+                bail!("Invalid or expired Azure DevOps personal access token (HTTP 401).");
+            }
+            if status.as_u16() == 403 {
+                bail!("Personal access token lacks the required 'Code (Read)' scope (HTTP 403).");
+            }
+            if content_type.contains("text/html") {
+                bail!(
+                    "Azure DevOps returned a sign-in page; the personal access token is invalid or unauthorized."
+                );
+            }
+            if status.as_u16() == 429 || status.is_server_error() {
+                last_error = format!("HTTP {}", status.as_u16());
+                let retry_after = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .map(|seconds| seconds.min(AZURE_DEVOPS_MAX_RETRY_AFTER_SECONDS));
+                if attempt + 1 >= AZURE_DEVOPS_MAX_ATTEMPTS {
+                    bail!("Azure DevOps request failed after retries: {last_error}");
+                }
+                let backoff = retry_after
+                    .map(std::time::Duration::from_secs)
+                    .unwrap_or_else(|| std::time::Duration::from_secs(1u64 << attempt.min(5)));
+                tokio::time::sleep(backoff).await;
+                continue;
+            }
+            if !status.is_success() {
+                bail!("Azure DevOps client error: {} for {url}", status.as_u16());
+            }
+            let body = crate::common::cmd_timeout::read_body_limited(
+                response,
+                crate::common::cmd_timeout::connector_body_limit_bytes(),
+                "azure_devops",
+            )
+            .await?;
+            return serde_json::from_slice(&body)
+                .map_err(|error| anyhow!("azure_devops: invalid JSON from {url}: {error}"));
+        }
+        bail!("Azure DevOps request failed after retries: {last_error}")
+    }
+
+    /// Streamed GET with the 1 MB cap (`None` = oversized, skipped upstream).
+    async fn get_bytes_capped(
+        &self,
+        url: &str,
+        params: &[(&str, String)],
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        use futures_util::StreamExt;
+        let mut query: Vec<(&str, String)> =
+            vec![("api-version", AZURE_DEVOPS_API_VERSION.to_owned())];
+        query.extend(params.iter().cloned());
+        let response = self
+            .client
+            .get(url)
+            .basic_auth("", Some(&self.pat))
+            .query(&query)
+            .send()
+            .await
+            .map_err(|error| anyhow!("azure_devops: request to {url} failed: {error}"))?;
+        let status = response.status();
+        if status.as_u16() == 203 || status.as_u16() == 401 {
+            bail!(
+                "Invalid or expired Azure DevOps personal access token (HTTP {}).",
+                status.as_u16()
+            );
+        }
+        if status.as_u16() == 403 {
+            bail!("Personal access token lacks the required 'Code (Read)' scope (HTTP 403).");
+        }
+        if !status.is_success() {
+            bail!("Azure DevOps client error: {} for {url}", status.as_u16());
+        }
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| anyhow!("azure_devops: response read: {error}"))?;
+            if body.len() + chunk.len() > max_bytes {
+                return Ok(None);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(Some(body))
+    }
+
+    async fn discover_repositories(&self) -> Result<Vec<AzureDevOpsRepo>> {
+        let scopes: Vec<Option<String>> = if self.index_mode == "projects"
+            && !self.projects.is_empty()
+        {
+            self.projects
+                .iter()
+                .map(|project| Some(project.clone()))
+                .collect()
+        } else if self.index_mode == "repositories" && !self.repositories.is_empty() {
+            let qualified: std::collections::BTreeSet<String> = self
+                .repositories
+                .iter()
+                .filter_map(|entry| entry.split_once('/').map(|(project, _)| project.to_owned()))
+                .collect();
+            if qualified.is_empty() {
+                vec![None]
+            } else {
+                qualified.into_iter().map(Some).collect()
+            }
+        } else {
+            vec![None]
+        };
+        let mut discovered: Vec<AzureDevOpsRepo> = Vec::new();
+        for scope in scopes {
+            let url = match scope.as_deref() {
+                Some(project) => format!("{}/{}/_apis/git/repositories", self.org_url, project),
+                None => format!("{}/_apis/git/repositories", self.org_url),
+            };
+            let payload = self.get_json(&url, &[]).await?;
+            for repo in payload
+                .get("value")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+            {
+                if repo
+                    .get("isDisabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let Some(name) = repo.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let project = repo
+                    .get("project")
+                    .and_then(|project| project.get("name"))
+                    .and_then(Value::as_str)
+                    .or(scope.as_deref())
+                    .unwrap_or_default();
+                if project.is_empty() || !self.repository_filter_matches(project, name) {
+                    continue;
+                }
+                let branch = repo
+                    .get("defaultBranch")
+                    .and_then(Value::as_str)
+                    .unwrap_or("refs/heads/main")
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or("main")
+                    .to_owned();
+                discovered.push(AzureDevOpsRepo {
+                    project: project.to_owned(),
+                    name: name.to_owned(),
+                    branch,
+                });
+            }
+        }
+        discovered
+            .sort_by(|left, right| (&left.project, &left.name).cmp(&(&right.project, &right.name)));
+        Ok(discovered)
+    }
+
+    async fn list_repository_items(
+        &self,
+        project: &str,
+        repo: &str,
+        branch: &str,
+    ) -> Result<Vec<Value>> {
+        let payload = self
+            .get_json(
+                &format!("{}/items", self.repo_api_url(project, repo)),
+                &[
+                    ("recursionLevel", "Full".to_owned()),
+                    ("includeContentMetadata", "true".to_owned()),
+                    ("latestProcessedChange", "true".to_owned()),
+                    ("versionDescriptor.versionType", "branch".to_owned()),
+                    ("versionDescriptor.version", branch.to_owned()),
+                ],
+            )
+            .await?;
+        Ok(payload
+            .get("value")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|item| {
+                        item.get("gitObjectType").and_then(Value::as_str) == Some("blob")
+                            && !item
+                                .get("isFolder")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                            && !azure_devops_should_skip_path(
+                                item.get("path").and_then(Value::as_str).unwrap_or_default(),
+                            )
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn pull_request_page(
+        &self,
+        project: &str,
+        repo: &str,
+        skip: usize,
+    ) -> Result<Vec<Value>> {
+        let payload = self
+            .get_json(
+                &format!("{}/pullrequests", self.repo_api_url(project, repo)),
+                &[
+                    ("searchCriteria.status", "all".to_owned()),
+                    ("$top", AZURE_DEVOPS_PR_PAGE_SIZE.to_string()),
+                    ("$skip", skip.to_string()),
+                ],
+            )
+            .await?;
+        Ok(payload
+            .get("value")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn pull_request_detail(&self, project: &str, repo: &str, pr_id: i64) -> Result<Value> {
+        self.get_json(
+            &format!("{}/pullrequests/{pr_id}", self.repo_api_url(project, repo)),
+            &[],
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl Connector for AzureDevOpsConnector {
+    fn kind(&self) -> &'static str {
+        "azure_devops"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        if self.pat.is_empty() {
+            bail!("Azure DevOps personal access token is required (token)");
+        }
+        if self.batch_size < 1 {
+            bail!("batch_size must be greater than 0");
+        }
+        azure_devops_organization_url(&self.organization, self.allow_http)?;
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let repositories = self.discover_repositories().await?;
+        let mut files = Vec::new();
+        for repo in repositories {
+            if self.indexes_code() {
+                let items = self
+                    .list_repository_items(&repo.project, &repo.name, &repo.branch)
+                    .await?;
+                for item in items {
+                    let path = item.get("path").and_then(Value::as_str).unwrap_or_default();
+                    let item_path = path.trim_start_matches('/');
+                    let change = item
+                        .get("latestProcessedChange")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let committer = change
+                        .get("committer")
+                        .or_else(|| change.get("author"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let changed_at = azure_devops_parse_timestamp(committer.get("date"));
+                    if let Some(changed_at) = changed_at {
+                        if self.since.is_some_and(|since| changed_at < since) {
+                            continue;
+                        }
+                        if self.until.is_some_and(|until| changed_at > until) {
+                            continue;
+                        }
+                    }
+                    let commit_id = change
+                        .get("commitId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let committer_name = committer
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let web_url = format!(
+                        "{}/{}/_git/{}?path=/{item_path}&version=GB{}",
+                        self.org_url, repo.project, repo.name, repo.branch
+                    );
+                    let mut metadata = HashMap::new();
+                    metadata.insert("type".to_owned(), "CodeFile".to_owned());
+                    metadata.insert("path".to_owned(), item_path.to_owned());
+                    metadata.insert("ref".to_owned(), repo.branch.clone());
+                    metadata.insert("project".to_owned(), repo.project.clone());
+                    metadata.insert("repository".to_owned(), repo.name.clone());
+                    metadata.insert("commit_id".to_owned(), commit_id.to_owned());
+                    metadata.insert("committer".to_owned(), committer_name.to_owned());
+                    metadata.insert("web_url".to_owned(), web_url);
+                    files.push(RemoteFile {
+                        id: azure_devops_code_document_id(
+                            &self.organization,
+                            &repo.project,
+                            &repo.name,
+                            item_path,
+                        ),
+                        name: path.rsplit('/').next().unwrap_or(item_path).to_owned(),
+                        path: item_path.to_owned(),
+                        extension: azure_devops_file_extension(item_path),
+                        size_bytes: item.get("size").and_then(Value::as_u64).unwrap_or(0),
+                        updated_at: changed_at.map(|ts| ts.to_string()).unwrap_or_default(),
+                        fingerprint: commit_id.to_owned(),
+                        metadata,
+                    });
+                }
+            }
+            if self.indexes_pull_requests() {
+                let mut skip = 0usize;
+                loop {
+                    let page = self
+                        .pull_request_page(&repo.project, &repo.name, skip)
+                        .await?;
+                    let page_size = page.len();
+                    for mut pr in page {
+                        let pr_id = pr
+                            .get("pullRequestId")
+                            .and_then(Value::as_i64)
+                            .unwrap_or_default();
+                        if !azure_devops_pr_in_window(&pr, self.since, self.until) {
+                            continue;
+                        }
+                        let truncated = pr
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(|description| {
+                                description.chars().count() >= AZURE_DEVOPS_PR_DESCRIPTION_LIMIT
+                            })
+                            .unwrap_or(false);
+                        if truncated
+                            && let Ok(detail) = self
+                                .pull_request_detail(&repo.project, &repo.name, pr_id)
+                                .await
+                        {
+                            pr = detail;
+                        }
+                        let title = pr
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
+                        let status = pr
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_owned();
+                        let source_branch = pr
+                            .get("sourceRefName")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .trim_start_matches("refs/heads/")
+                            .to_owned();
+                        let target_branch = pr
+                            .get("targetRefName")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .trim_start_matches("refs/heads/")
+                            .to_owned();
+                        let web_url = format!(
+                            "{}/{}/_git/{}/pullrequest/{pr_id}",
+                            self.org_url, repo.project, repo.name
+                        );
+                        let mut metadata = HashMap::new();
+                        metadata.insert("type".to_owned(), "PullRequest".to_owned());
+                        metadata.insert("pull_request_id".to_owned(), pr_id.to_string());
+                        metadata.insert("status".to_owned(), status);
+                        metadata.insert("project".to_owned(), repo.project.clone());
+                        metadata.insert("repository".to_owned(), repo.name.clone());
+                        metadata.insert("source_branch".to_owned(), source_branch);
+                        metadata.insert("target_branch".to_owned(), target_branch);
+                        metadata.insert("web_url".to_owned(), web_url.clone());
+                        metadata.insert(
+                            "content".to_owned(),
+                            azure_devops_pr_text(&pr, &repo.project, &repo.name),
+                        );
+                        files.push(RemoteFile {
+                            id: azure_devops_pr_document_id(
+                                &self.organization,
+                                &repo.project,
+                                &repo.name,
+                                &pr_id.to_string(),
+                            ),
+                            name: format!("PR #{pr_id}: {title}"),
+                            path: web_url,
+                            extension: ".txt".to_owned(),
+                            size_bytes: 0,
+                            updated_at: azure_devops_parse_timestamp(pr.get("closedDate"))
+                                .or_else(|| azure_devops_parse_timestamp(pr.get("creationDate")))
+                                .map(|ts| ts.to_string())
+                                .unwrap_or_default(),
+                            fingerprint: String::new(),
+                            metadata,
+                        });
+                    }
+                    if page_size < AZURE_DEVOPS_PR_PAGE_SIZE {
+                        break;
+                    }
+                    skip += AZURE_DEVOPS_PR_PAGE_SIZE;
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let kind = file
+            .metadata
+            .get("type")
+            .map(String::as_str)
+            .unwrap_or("CodeFile");
+        if kind == "PullRequest" {
+            return Ok(file
+                .metadata
+                .get("content")
+                .cloned()
+                .unwrap_or_default()
+                .into_bytes());
+        }
+        let project = file.metadata.get("project").cloned().unwrap_or_default();
+        let repo = file.metadata.get("repository").cloned().unwrap_or_default();
+        let branch = file.metadata.get("ref").cloned().unwrap_or_default();
+        let path = file.metadata.get("path").cloned().unwrap_or_default();
+        let content = self
+            .get_bytes_capped(
+                &format!("{}/items", self.repo_api_url(&project, &repo)),
+                &[
+                    ("path", path.clone()),
+                    ("includeContent", "true".to_owned()),
+                    ("$format", "text".to_owned()),
+                    ("versionDescriptor.versionType", "branch".to_owned()),
+                    ("versionDescriptor.version", branch),
+                ],
+                AZURE_DEVOPS_MAX_FILE_BYTES,
+            )
+            .await?;
+        match content {
+            Some(content) => Ok(content),
+            None => bail!(
+                "azure_devops: {path} is larger than the {AZURE_DEVOPS_MAX_FILE_BYTES} byte limit"
+            ),
+        }
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let blob = String::from_utf8_lossy(&raw).to_string();
+        let mut metadata: HashMap<String, String> = file
+            .metadata
+            .iter()
+            .filter(|(key, _)| key.as_str() != "content")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        metadata.insert("source".to_owned(), "azure_devops".to_owned());
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            source: DocumentSource::AzureDevOps,
+            semantic_identifier: file.name.clone(),
+            extension: file.extension.clone(),
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+
+    /// Upstream retries a failed file once before the stage ends; the same
+    /// second pass runs here so a transient failure is not dropped silently.
+    async fn fetch_all(&self, max_items: usize) -> Result<SyncBatch> {
+        let files = self.list_files().await?;
+        let mut batch = SyncBatch::default();
+        let mut failures: Vec<(RemoteFile, String)> = Vec::new();
+        for file in files.into_iter().take(max_items.max(1)) {
+            match self.fetch_file(&file).await {
+                Ok(raw) => match self.normalize(&file, raw) {
+                    Ok(doc) => batch.docs.push(doc),
+                    Err(error) => failures.push((file, error.to_string())),
+                },
+                Err(error) => failures.push((file, error.to_string())),
+            }
+        }
+        for (file, first_error) in failures {
+            match self.fetch_file(&file).await {
+                Ok(raw) => match self.normalize(&file, raw) {
+                    Ok(doc) => batch.docs.push(doc),
+                    Err(error) => batch.failures.push(format!("{}: {error}", file.id)),
+                },
+                Err(error) => batch
+                    .failures
+                    .push(format!("{}: {error} (retry after {first_error})", file.id)),
+            }
+        }
+        Ok(batch)
+    }
+}
+
+#[cfg(test)]
+mod azure_devops_tests {
+    use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{StatusCode, Uri};
+
+    fn options(url: &str) -> SourceOptions {
+        SourceOptions {
+            url: url.to_owned(),
+            token: "pat-test".to_owned(),
+            ..SourceOptions::default()
+        }
+    }
+
+    #[test]
+    fn validation_and_url_rules() {
+        assert!(AzureDevOpsConnector::new(SourceOptions::default()).is_err());
+        let mut no_pat = options("myorg");
+        no_pat.token = String::new();
+        assert!(
+            AzureDevOpsConnector::new(no_pat)
+                .unwrap_err()
+                .to_string()
+                .contains("personal access token")
+        );
+        // Plain HTTP collection URLs are refused outside the test constructor.
+        assert!(
+            AzureDevOpsConnector::new(options("http://tfs.local/collection"))
+                .unwrap_err()
+                .to_string()
+                .contains("HTTPS")
+        );
+        let mut bad_mode = options("myorg");
+        bad_mode
+            .extra
+            .insert("index_mode".to_owned(), "everything".to_owned());
+        assert!(AzureDevOpsConnector::new(bad_mode).is_err());
+        let mut bad_content = options("myorg");
+        bad_content
+            .extra
+            .insert("content_types".to_owned(), "issues".to_owned());
+        assert!(AzureDevOpsConnector::new(bad_content).is_err());
+        // Bare organization names resolve to dev.azure.com.
+        let connector = AzureDevOpsConnector::new(options("myorg")).unwrap();
+        assert_eq!(connector.org_url, "https://dev.azure.com/myorg");
+    }
+
+    fn json_response(body: String) -> axum::response::Response {
+        axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    fn repositories_body() -> String {
+        serde_json::json!({
+            "value": [{
+                "name": "repo",
+                "project": {"name": "proj"},
+                "defaultBranch": "refs/heads/main",
+                "isDisabled": false
+            }]
+        })
+        .to_string()
+    }
+
+    fn items_body() -> String {
+        serde_json::json!({
+            "value": [
+                {
+                    "path": "/src/main.rs",
+                    "gitObjectType": "blob",
+                    "size": 12,
+                    "latestProcessedChange": {
+                        "commitId": "c1",
+                        "committer": {"name": "Alice", "date": "2026-01-01T00:00:00Z"}
+                    }
+                },
+                {
+                    "path": "/README.md",
+                    "gitObjectType": "blob",
+                    "size": 5,
+                    "latestProcessedChange": {
+                        "commitId": "c2",
+                        "committer": {"name": "Bob", "date": "2026-01-02T00:00:00Z"}
+                    }
+                },
+                {"path": "/logo.png", "gitObjectType": "blob"},
+                {"path": "/node_modules/dep/index.js", "gitObjectType": "blob"},
+                {"path": "/.gitignore", "gitObjectType": "blob"},
+                {"path": "/src", "gitObjectType": "tree", "isFolder": true}
+            ]
+        })
+        .to_string()
+    }
+
+    async fn site(uri: Uri) -> axum::response::Response {
+        let path = uri.path().to_owned();
+        let query = uri.query().unwrap_or_default().to_owned();
+        if path.ends_with("/_apis/git/repositories") {
+            return json_response(repositories_body());
+        }
+        if path.ends_with("/items") && query.contains("includeContent=true") {
+            if query.contains("path=%2Fsrc%2Fmain.rs") || query.contains("path=/src/main.rs") {
+                return json_response("fn main() {}".to_owned());
+            }
+            return json_response("# Readme".to_owned());
+        }
+        if path.ends_with("/items") {
+            return json_response(items_body());
+        }
+        if path.ends_with("/pullrequests/7") {
+            return json_response(
+                serde_json::json!({
+                    "pullRequestId": 7,
+                    "title": "Active work",
+                    "description": "full description from detail endpoint",
+                    "status": "active",
+                    "createdBy": {"displayName": "Alice"},
+                    "reviewers": [{"displayName": "Bob"}],
+                    "sourceRefName": "refs/heads/feature",
+                    "targetRefName": "refs/heads/main",
+                    "creationDate": "2025-06-01T00:00:00Z"
+                })
+                .to_string(),
+            );
+        }
+        if path.ends_with("/pullrequests") {
+            return json_response(
+                serde_json::json!({
+                    "value": [
+                        {
+                            "pullRequestId": 7,
+                            "title": "Active work",
+                            "description": "x".repeat(450),
+                            "status": "active",
+                            "createdBy": {"displayName": "Alice"},
+                            "reviewers": [],
+                            "sourceRefName": "refs/heads/feature",
+                            "targetRefName": "refs/heads/main",
+                            "creationDate": "2025-06-01T00:00:00Z"
+                        },
+                        {
+                            "pullRequestId": 8,
+                            "title": "Old closed",
+                            "description": "short",
+                            "status": "completed",
+                            "createdBy": {"displayName": "Carol"},
+                            "reviewers": [],
+                            "sourceRefName": "refs/heads/old",
+                            "targetRefName": "refs/heads/main",
+                            "creationDate": "2019-01-01T00:00:00Z",
+                            "closedDate": "2020-01-01T00:00:00Z"
+                        },
+                        {
+                            "pullRequestId": 9,
+                            "title": "Recent closed",
+                            "description": "short",
+                            "status": "completed",
+                            "createdBy": {"displayName": "Dave"},
+                            "reviewers": [],
+                            "sourceRefName": "refs/heads/recent",
+                            "targetRefName": "refs/heads/main",
+                            "creationDate": "2025-01-01T00:00:00Z",
+                            "closedDate": "2025-06-15T00:00:00Z"
+                        }
+                    ]
+                })
+                .to_string(),
+            );
+        }
+        axum::response::Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("missing"))
+            .unwrap()
+    }
+
+    async fn spawn_site() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().fallback(site);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), server)
+    }
+
+    #[tokio::test]
+    async fn code_listing_maps_files_and_skips_noise() {
+        let (base, server) = spawn_site().await;
+        let mut opts = options(&base);
+        opts.extra
+            .insert("content_types".to_owned(), "code".to_owned());
+        let connector = AzureDevOpsConnector::new_for_test(opts).unwrap();
+        let batch = connector.fetch_all(20).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2, "{:?}", batch.failures);
+        let readme = batch
+            .docs
+            .iter()
+            .find(|doc| doc.id.ends_with("file:README.md"))
+            .expect("README indexed");
+        assert!(readme.id.starts_with("azure_devops:"));
+        assert_eq!(readme.extension, ".md");
+        assert!(readme.blob.contains("Readme"), "{}", readme.blob);
+        assert_eq!(readme.metadata.get("type"), Some(&"CodeFile".to_owned()));
+        assert!(
+            readme
+                .metadata
+                .get("web_url")
+                .unwrap()
+                .contains("/proj/_git/repo")
+        );
+        assert!(
+            batch
+                .docs
+                .iter()
+                .any(|doc| doc.id.ends_with("file:src/main.rs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_requests_respect_window_and_fetch_truncated_details() {
+        let (base, server) = spawn_site().await;
+        let mut opts = options(&base);
+        opts.extra
+            .insert("content_types".to_owned(), "pull_requests".to_owned());
+        opts.extra
+            .insert("since".to_owned(), "2021-01-01T00:00:00Z".to_owned());
+        let connector = AzureDevOpsConnector::new_for_test(opts).unwrap();
+        let batch = connector.fetch_all(20).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2, "{:?}", batch.failures);
+        let active = batch
+            .docs
+            .iter()
+            .find(|doc| doc.id.ends_with(":pr:7"))
+            .expect("active PR kept");
+        assert!(
+            active
+                .blob
+                .contains("full description from detail endpoint"),
+            "{}",
+            active.blob
+        );
+        assert!(active.blob.contains("Pull Request Information"));
+        assert_eq!(active.metadata.get("status"), Some(&"active".to_owned()));
+        assert!(batch.docs.iter().any(|doc| doc.id.ends_with(":pr:9")));
+        assert!(
+            !batch.docs.iter().any(|doc| doc.id.ends_with(":pr:8")),
+            "the 2020-closed PR must fall outside the 2021 window"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_failures_map_to_credential_errors() {
+        let app = Router::new().fallback(|| async {
+            axum::response::Response::builder()
+                .status(StatusCode::NON_AUTHORITATIVE_INFORMATION)
+                .body(Body::from("<html>sign in</html>"))
+                .unwrap()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connector =
+            AzureDevOpsConnector::new_for_test(options(&format!("http://{address}"))).unwrap();
+        let error = connector.list_files().await.unwrap_err().to_string();
+        server.abort();
+        assert!(error.contains("personal access token"), "{error}");
     }
 }
 

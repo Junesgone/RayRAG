@@ -38,6 +38,9 @@ pub enum DocumentSource {
     Xquik,
     /// Sitemap-driven web crawler (RAGFlow `sitemap_connector.py` parity).
     Sitemap,
+    /// Azure DevOps repositories and pull requests
+    /// (RAGFlow `azure_devops/connector.py` parity).
+    AzureDevOps,
 }
 
 impl DocumentSource {
@@ -57,6 +60,7 @@ impl DocumentSource {
             DocumentSource::AirTable => "airtable",
             DocumentSource::Xquik => "xquik",
             DocumentSource::Sitemap => "sitemap",
+            DocumentSource::AzureDevOps => "azure_devops",
         }
     }
 
@@ -76,6 +80,7 @@ impl DocumentSource {
             "airtable" => Some(DocumentSource::AirTable),
             "xquik" => Some(DocumentSource::Xquik),
             "sitemap" => Some(DocumentSource::Sitemap),
+            "azure_devops" => Some(DocumentSource::AzureDevOps),
             _ => None,
         }
     }

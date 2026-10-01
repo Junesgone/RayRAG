@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：86（UI 残留 42 + 实施队列 44）
+- partial：83（UI 残留 42 + 实施队列 41）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -18,13 +18,10 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-2 数据源接入（3 项）
+### W-2 数据源接入（0 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `common/data_source/azure_devops/__init__.py` | 0 | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Azure DevOps 数据源包（v0.27.2 新增）；RayRAG 数据源框架（35 源）就位，该源待接入——worklist W-2（数据源）） |
-| `common/data_source/azure_devops/connector.py` | 650 | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Azure DevOps 连接器；数据源框架就位，该源待接入——worklist W-2（数据源）） |
-| `common/data_source/azure_devops/utils.py` | 495 | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Azure DevOps 工具函数；随 Azure DevOps 数据源接入——worklist W-2（数据源）） |
 
 ### W-3 OCR/视觉解析器（0 项）
 

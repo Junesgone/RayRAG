@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 596 | 290401 |
-| partial | 86 | 34710 |
+| full | 599 | 291546 |
+| partial | 83 | 33565 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -738,9 +738,9 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `common/data_source/airtable_connector.py` | 216 | 8008 | `ed35bbfa9018a0bb` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/asana_connector.py` | 483 | 20019 | `7e4375af0f889245` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/azure_blob_connector.py` | 422 | 18163 | `498c3dd91c6f04d1` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
-| `common/data_source/azure_devops/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | partial | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Azure DevOps 数据源包（v0.27.2 新增）；RayRAG 数据源框架（35 源）就位，该源待接入——worklist W-2（数据源）） |
-| `common/data_source/azure_devops/connector.py` | 650 | 27681 | `b20e2adf0f44e0c2` | partial | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Azure DevOps 连接器；数据源框架就位，该源待接入——worklist W-2（数据源）） |
-| `common/data_source/azure_devops/utils.py` | 495 | 18438 | `aaaa800f8d83958b` | partial | `src/data_source/mod.rs; src/connectors.rs` | （v0.3.10g 审计：Azure DevOps 工具函数；随 Azure DevOps 数据源接入——worklist W-2（数据源）） |
+| `common/data_source/azure_devops/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/connectors.rs` | （空包标记文件；Azure DevOps 连接器已并入 src/connectors.rs 注册表，无独立实现。） |
+| `common/data_source/azure_devops/connector.py` | 650 | 27681 | `b20e2adf0f44e0c2` | full | `src/connectors.rs` | （v0.3.10p 移植：AzureDevOpsConnector——三种索引模式（organization/projects/repositories，含 project/repo 过滤）、两类内容（code/pull_requests/both）；code 阶段条目列举（recursionLevel=Full/latestProcessedChange）+ 窗口（committer.date）+ 文件级一次重试；PR 阶段 $skip 分页 + 窗口（活跃恒留、完成/放弃按 closedDate）+ ≥400 字符描述详情补全；ConnectorDoc 映射与注册表分支。有界差异：无检查点持久化（可恢复偏移无对应，每次全量列举）、无 120/min 限流器（由重试循环承担）、超限文件以失败条目呈现而非静默丢弃。） |
+| `common/data_source/azure_devops/utils.py` | 495 | 18438 | `aaaa800f8d83958b` | full | `src/connectors.rs` | （v0.3.10p 移植：PAT 基本鉴权（空用户名+token 密码）、组织 URL 解析（https 集合 URL 或裸组织名→dev.azure.com；http 拒绝）、203/401/403/HTML 登录页鉴权映射、重试（6 次指数退避 1→30s、429 Retry-After ≤30s、5xx 重试、其余 4xx 立即抛）、项目/仓库/条目/PR 分页助手、pull_request_in_window/may_be_truncated、二进制/构建目录/VCS 元数据跳过规则、1MB 文件上限、code/PR 文档 id 与映射逐条对齐；测试注入 http 端点（生产仅 https）。） |
 | `common/data_source/bigquery_connector.py` | 700 | 31209 | `89558371e6519fca` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/bitbucket/__init__.py` | 0 | 0 | `e69de29bb2d1d643` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |
 | `common/data_source/bitbucket/connector.py` | 370 | 14623 | `798ecd989061d26d` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |

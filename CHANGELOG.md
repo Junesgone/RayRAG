@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.71] — 2026-10-01（对标批次 v0.3.10p）
+
+> W-2 清零：RAGFlow v0.27.2 的 Azure DevOps 数据源（代码文件 + Pull Request）移植（纯 Rust）。
+
+### Added
+
+- **Azure DevOps 数据源连接器**（`common/data_source/azure_devops/{connector,utils}.py` → `src/connectors.rs`）：PAT 基本鉴权与 203/401/403/登录页映射；三种索引模式（organization / projects / repositories）；code 内容（条目列举、窗口过滤、跳过规则、1MB 流式上限、文件级一次重试）与 pull_requests 内容（`$skip` 分页、活跃恒留/完成按 `closedDate` 的窗口语义、≥400 字符描述详情补全）；6 次指数退避重试与 `Retry-After` 截断。
+- `DocumentSource::AzureDevOps` 与注册表 `azure_devops` 分支；有界差异（台账记录）：无检查点持久化、无 120/min 限流器、超限文件以失败条目呈现。
+
+### Tests
+
+- 4 项 mock 单测（校验/URL 规则、code 映射与噪音跳过、PR 窗口与截断详情、203 鉴权映射）；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.70] — 2026-10-01（对标批次 v0.3.10o）
 
 > W-2 续：RAGFlow v0.27.2 的 Sitemap 数据源连接器移植（纯 Rust）。
