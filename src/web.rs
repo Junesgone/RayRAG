@@ -2519,16 +2519,17 @@ pub async fn dataset_page(
     b.push_str(" chunks</div><div class='stats'>");
     b.push_str(&desc);
     b.push_str("</div>");
-    // Sidebar nav — upstream `pages/dataset/sidebar/index.tsx`: real route links
-    // (`/dataset/{files|retrieval|logs|configuration|knowledge-graph}/{id}`) with
-    // the `knowledgeDetails.*` labels in source order.
+    // Sidebar nav — upstream `pages/dataset/sidebar/index.tsx` (v0.27.2): real
+    // route links for files / retrieval / logs / configuration plus the
+    // hardcoded Artifacts entry (`Routes.Compilation`). The knowledge-graph
+    // panel keeps its deep link but is no longer a sidebar item.
     b.push_str("<ul class='ds-nav'>");
     for (idx, tab, label_en, label_zh) in [
         (0usize, "files", "Files", "文件列表"),
         (2, "retrieval", "Retrieval testing", "检索测试"),
         (1, "logs", "Logs", "日志"),
         (3, "configuration", "Configuration", "配置"),
-        (4, "knowledge-graph", "Knowledge graph", "知识图谱"),
+        (5, "compilation", "Artifacts", "Artifacts"),
     ] {
         b.push_str("<li><a href='/dataset/");
         b.push_str(tab);
@@ -3053,6 +3054,30 @@ pub async fn dataset_page(
         zh,
     ));
     b.push_str("</p></div></div></div>");
+    // Tab 5: Artifacts (v0.27.2 knowledge-compilation page). Upstream
+    // `pages/dataset/compilation/index.tsx`: Back + "{name}{suffix}" header, the
+    // view-mode selector (Wiki default) and the LlmWiki empty state. Generation
+    // follows upstream's eligibility gate (`canGenerateWiki`: chunk_count > 0 and
+    // a pipeline id); the wiki/tree/structure backends land in a later slice.
+    b.push_str("<div id='tab5' style='display:none'><div class='card' data-testid='dataset-compilation-panel'><header style='display:flex;flex-direction:column;gap:12px'><button type='button' class='btn btn-o btn-sm' style='align-self:flex-start' data-testid='dataset-compilation-back' onclick=\"location.href='/dataset/files/");
+    b.push_str(&id);
+    b.push_str("'\">← ");
+    b.push_str(t("Back", zh));
+    b.push_str("</button><div style='display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'><div style='display:flex;align-items:center;gap:10px'><span class='av-lg' aria-hidden='true'>");
+    b.push_str(&initial);
+    b.push_str("</span><h2 style='margin:0;font-size:20px'>");
+    b.push_str(&name);
+    b.push_str(if zh { " 数据集" } else { "' dataset" });
+    b.push_str("</h2></div><select id='cwpMode' data-testid='dataset-compilation-mode' style='max-width:220px' onchange='cwpModeChange()'><option value='llm-wiki'>Wiki</option><option value='tree'>Tree/PageIndex</option><option value='graph'>");
+    b.push_str(t("Knowledge graph", zh));
+    b.push_str("</option><option value='mindmap'>");
+    b.push_str(if zh { "Mindmap" } else { "Mind map" });
+    b.push_str("</option><option value='timeline'>Timeline</option></select></div></header><div id='cwpBody' style='margin-top:20px;text-align:center;padding:40px 16px'><p style='color:var(--tm);margin:0 0 16px' data-testid='dataset-compilation-empty'>");
+    b.push_str(if zh { "暂无 Wiki" } else { "No wiki yet" });
+    b.push_str("</p><button type='button' class='btn btn-p' id='cwpGenerate' data-testid='dataset-compilation-generate' disabled onclick='cwpGenerate()'>");
+    b.push_str(if zh { "生成" } else { "Generate" });
+    b.push_str("</button></div><p id='cwpMsg' class='ct-message' role='status'></p></div></div>");
+    b.push_str("<script>function cwpModeChange(){var mode=document.getElementById('cwpMode').value;var msg=document.getElementById('cwpMsg');if(!msg)return;msg.textContent=mode==='llm-wiki'?'':'The '+mode+' view is queued for a later slice.';msg.style.color='var(--tm)'}async function cwpBoot(){try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId));var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));var kb=data.data||{};var chunks=parseInt(kb.chunk_count,10)||0;var pipeline=String(kb.pipeline_id||'').trim();var button=document.getElementById('cwpGenerate');if(button)button.disabled=!(chunks>0&&pipeline.length>0)}catch(error){var node=document.getElementById('cwpMsg');if(node){node.textContent=String(error.message||error);node.style.color='var(--d)'}}}function cwpGenerate(){var node=document.getElementById('cwpMsg');if(node){node.textContent='Wiki generation is queued for a later slice.';node.style.color='var(--tm)'}}if(document.getElementById('tab5'))cwpBoot();</script>");
     b.push_str("</div></div>");
     // JS
     let embd_fields_payload = serde_json::json!([
@@ -3112,7 +3137,7 @@ function removeDatasetAvatar(){avatarDataUrl='';cfgAvatarSet('');var m=document.
 function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}</script>");
     b.push_str("<script>var kbId='");
     b.push_str(&id);
-    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){var seg=(location.pathname.split('/')[2]||'');var map={files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4};if(map[seg]!==undefined)n=map[seg];for(var i=0;i<5;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
+    b.push_str("';var pollTimer=null;var disKey='rayrag_disabled_docs';function getDisabled(){try{return JSON.parse(localStorage.getItem(disKey)||'{}')}catch(e){return{}}}function isDocDisabled(id){var m=getDisabled();return !!(m[kbId]&&m[kbId][id])}function setDocDisabled(id,on){var m=getDisabled();if(!m[kbId])m[kbId]={};if(on){m[kbId][id]=1}else{delete m[kbId][id]}try{localStorage.setItem(disKey,JSON.stringify(m))}catch(e){}}function showTab(n){var seg=(location.pathname.split('/')[2]||'');var map={files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4,'compilation':5};if(map[seg]!==undefined)n=map[seg];for(var i=0;i<6;i++){var t=document.getElementById('tab'+i);var nav=document.getElementById('nav'+i);if(t)t.style.display='none';if(nav)nav.classList.remove('active')}document.getElementById('tab'+n).style.display='block';document.getElementById('nav'+n).classList.add('active')};");
     b.push_str("function fmtSize(n){n=n||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB'};function fmtTime(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString()}catch(e){return ts}};");
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
@@ -15548,7 +15573,11 @@ connection: close
             0,
             "overview panel must be balanced before the testing panel"
         );
-        for (start, end) in [("id='tab2'", "id='tab3'"), ("id='tab3'", "id='tab4'")] {
+        for (start, end) in [
+            ("id='tab2'", "id='tab3'"),
+            ("id='tab3'", "id='tab4'"),
+            ("id='tab4'", "id='tab5'"),
+        ] {
             assert_eq!(
                 panel_div_balance(&html, start, end),
                 0,
@@ -15560,7 +15589,7 @@ connection: close
         // `.ds-content` early and drops Configuration/Knowledge graph into the
         // sidebar column.
         let base = div_depth_at(&html, html.find("id='tab0'").expect("tab0"));
-        for tab in ["tab1", "tab2", "tab3", "tab4"] {
+        for tab in ["tab1", "tab2", "tab3", "tab4", "tab5"] {
             let marker = format!("id='{tab}'");
             let at = html.find(&marker).expect("panel marker");
             assert_eq!(
@@ -15750,7 +15779,9 @@ connection: close
         let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
         // The panel is chosen from the URL path client-side.
         assert!(html.contains("var seg=(location.pathname.split('/')[2]||'')"));
-        assert!(html.contains("{files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4}"));
+        assert!(html.contains(
+            "{files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4,'compilation':5}"
+        ));
         assert!(html.contains("showTab(0);</script>"));
         // `kbId` must be declared before the panel scripts that use it.
         let kb_id_at = html.find("var kbId=").expect("kbId declaration");
@@ -15772,16 +15803,22 @@ connection: close
             .unwrap();
         let html =
             body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
-        // 5 个 tab —— 上游 sidebar 顺序与 route 链接
-        for nav in ["nav0", "nav1", "nav2", "nav3", "nav4"] {
+        // v0.27.2 sidebar order: Files / Retrieval testing / Logs /
+        // Configuration / Artifacts. The knowledge-graph panel keeps its deep
+        // link (tab4) but is no longer a sidebar entry.
+        for nav in ["nav0", "nav1", "nav2", "nav3", "nav5"] {
             assert!(html.contains(nav), "nav {} missing", nav);
         }
+        assert!(
+            !html.contains("id='nav4'"),
+            "knowledge-graph must leave the sidebar"
+        );
         for (route, label) in [
             ("files", "Files"),
             ("retrieval", "Retrieval testing"),
             ("logs", "Logs"),
             ("configuration", "Configuration"),
-            ("knowledge-graph", "Knowledge graph"),
+            ("compilation", "Artifacts"),
         ] {
             assert!(
                 html.contains(&format!("href='/dataset/{route}/")),
@@ -15794,8 +15831,8 @@ connection: close
             html.contains("id='datasetLogs'"),
             "logs panel merged missing"
         );
-        assert!(!html.contains("id='tab5'"), "legacy logs tab remains");
-        for tab in ["tab0", "tab1", "tab2", "tab3", "tab4"] {
+        assert!(html.contains("id='tab5'"), "artifacts panel missing");
+        for tab in ["tab0", "tab1", "tab2", "tab3", "tab4", "tab5"] {
             assert!(html.contains(&format!("id='{}'", tab)), "{} missing", tab);
         }
         // 文档 tab：上传 / 批量操作 / 状态进度 / 块数

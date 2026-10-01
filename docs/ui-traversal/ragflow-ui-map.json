@@ -1,6 +1,6 @@
 {
   "base": "http://127.0.0.1:11526",
-  "generated_at": "2026-09-30T23:12:08.370Z",
+  "generated_at": "2026-10-01T02:23:14.841Z",
   "routes": [
     {
       "route": "/",
@@ -2684,6 +2684,784 @@
       "body_text_head": "404\nPage not found, please enter a correct address.\nBusiness",
       "total_interactive": 1,
       "probed": 1
+    },
+    {
+      "route": "/dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Add file",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Select all",
+          "role": "checkbox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Home",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "R",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Artifacts",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Home\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nU\nui-traversal-1790821357\n0 files\nCreated 01/10/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nArtifacts\nFiles\n\nPlease wait for your files to finish parsing before starting an AI-powered chat.\n\nAdd file\n\t\nName\n\t\nUpload date\n\tEnable\tChunks\tMetadata\tParse\t\tAction\n\nNo data available\nTotal 0\n50 / Page",
+      "total_interactive": 21,
+      "probed": 21
+    },
+    {
+      "route": "/dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "File",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "50 / Page",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Home",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "R",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Artifacts",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Go to previous page",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Go to next page",
+          "role": "a",
+          "result": "skipped: not-found"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Home\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nU\nui-traversal-1790821357\n0 files\nCreated 01/10/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nArtifacts\nTotal files\n0\n0% from last week\nDownloading\n0\nSuccess\n0\nFailed\n0\nProcessing\n0\nSuccess\n0\nFailed\n0\nFile\nDataset\nID\tFile name\tSource\tIngestion pipeline\t\nStart date\n\tTask\tStatus\tOperations\n\nNo log yet\nTotal 0\n50 / Page",
+      "total_interactive": 21,
+      "probed": 21
+    },
+    {
+      "route": "/dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"English\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" id=\"radix-:rl:\" data-state=\"closed\" aria-label=\"English\" aria-haspopup=\"menu\" aria-expanded=\"false\" data-inspector-line=\"127\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/header.tsx\" class=\"inline-flex items-center justify-center whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 [&_svg]:shrink-0 t…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "English",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Upload",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Upload\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-inspector-line=\"289\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/components/avatar-upload.tsx\" class=\"justify-center whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary border-border-button border-dashed hover:text-text-primary hover:bg-border-button hover:border-border-default focus-v…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"264\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"py-2 px-6 overflow-y-auto scrollbar-auto max-h-[calc(100vh-280px)] focus-visible:!outline-none\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"204\" data-inspector-column=\"8\" class=\"flex items-start gap-3\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"204\" data-inspector-column=\"8\" class=\"flex items-start gap-3\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-inspector-line=\"204\" data-inspector-column=\"8\" class=\"flex items-start gap-3\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Only me",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Select value",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Select value\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button id=\":r1c:\" type=\"button\" data-state=\"closed\" aria-invalid=\"false\" aria-expanded=\"false\" aria-haspopup=\"dialog\" data-inspector-line=\"70\" data-inspector-column=\"16\" aria-controls=\"radix-:r1d:\" name=\"parser_config.tag_kb_ids\" aria-describedby=\":r1a:-form-item-description\" data-inspector-relative-path=\"src/pages/dataset/setting/python/components/tag-item.tsx\" class=\"gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg:not([class*=\"s…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "General",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "DeepDOC",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"DeepDOC\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-state=\"closed\" aria-expanded=\"false\" aria-haspopup=\"dialog\" data-inspector-line=\"244\" data-inspector-column=\"10\" aria-controls=\"radix-:r4e:\" data-testid=\"ds-settings-parser-pdf-parser-select\" data-inspector-relative-path=\"src/components/tree-select.tsx\" class=\"flex items-center justify-between border border-border-button rounded-md px-3 py-1.5 w-full bg-bg-input text-sm hover:bg-border-button transition-colors\">…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Settings",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Settings\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-inspector-line=\"367\" data-inspector-column=\"8\" data-testid=\"ds-settings-metadata-open-modal-btn\" data-inspector-relative-path=\"src/pages/dataset/setting/python/configuration/common-item.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-tex…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"175\" data-inspector-column=\"6\" class=\"flex items-center justify-end px-6 py-6\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"204\" data-inspector-column=\"8\" class=\"flex items-start gap-3\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"204\" data-inspector-column=\"8\" class=\"flex items-start gap-3\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Link data source",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Link data source\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-inspector-line=\"194\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/pages/dataset/setting/python/components/link-data-source.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary bg-transparent border-0.5 border-border-button hover:text-text-pr…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Save",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Save\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button data-inspector-line=\"58\" data-inspector-column=\"4\" data-testid=\"ds-settings-page-save-btn\" data-inspector-relative-path=\"src/pages/dataset/setting/python/saving-button.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 bg-text-primary text-bg-base shadow-xs hover:…>Save</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <h2 id=\"radix-:r4a:\" data-inspector-line=\"208\" data-inspector-column=\"14\" class=\"text-lg font-medium text-foreground mb-2\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">Warn</h2> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <h2 id=\"radix-:r4a:\" data-inspector-line=\"208\" data-inspector-column=\"14\" class=\"text-lg font-medium text-foreground mb-2\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">Warn</h2> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div data-inspector-line=\"51\" data-inspector-column=\"10\" data-inspector-relative-path=\"src/hooks/use-warn-empty-model.tsx\">…</div> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 × retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <h2 id=\"radix-:r4a:\" data-inspector-line=\"208\" data-inspector-column=\"14\" class=\"text-lg font-medium text-foreground mb-2\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\">Warn</h2> from <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Built-in pipeline introduction",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Built-in pipeline introduction\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button data-inspector-line=\"15\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/pages/dataset/setting/python/chunk-method-learn-more.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary bg-bg-input border-0.5 border-border-button hover:text-text-primary hover:bg-border-b…>Built-in pipeline introduction</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Home",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Home\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/\" data-discover=\"true\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Dataset\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/datasets\" aria-current=\"page\" icon_name=\"datasets\" data-discover=\"true\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all !text-bg-base\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Chat\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/chats\" icon_name=\"chats\" data-discover=\"true\" data-testid=\"nav-chat\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Search\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/searches\" icon_name=\"searches\" data-discover=\"true\" data-testid=\"nav-search\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Agent\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/agents\" icon_name=\"agents\" data-discover=\"true\" data-testid=\"nav-agent\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Memory\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/memories\" icon_name=\"memory\" data-discover=\"true\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"File\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/files\" icon_name=\"file\" data-discover=\"true\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "R",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"R\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a href=\"/searches\" icon_name=\"searches\" data-discover=\"true\" data-testid=\"nav-search\" data-inspector-line=\"116\" data-inspector-column=\"14\" data-inspector-relative-path=\"src/layouts/components/global-navbar.tsx\" class=\"h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all\">…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Files\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a data-discover=\"true\" data-inspector-line=\"110\" data-inspector-column=\"16\" href=\"/dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c\" data-inspector-relative-path=\"src/pages/dataset/sidebar/index.tsx\" class=\"inline-flex items-center whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary hover:bg-border-button focus-vi…>…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Retrieval testing\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a data-discover=\"true\" data-inspector-line=\"110\" data-inspector-column=\"16\" href=\"/dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c\" data-inspector-relative-path=\"src/pages/dataset/sidebar/index.tsx\" class=\"inline-flex items-center whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary hover:bg-border-button focu…>…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Logs\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a data-discover=\"true\" data-inspector-line=\"110\" data-inspector-column=\"16\" href=\"/dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c\" data-inspector-relative-path=\"src/pages/dataset/sidebar/index.tsx\" class=\"inline-flex items-center whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary hover:bg-border-button focus-vis…>…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Configuration\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a data-discover=\"true\" data-inspector-line=\"110\" data-inspector-column=\"16\" href=\"/dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c\" data-inspector-relative-path=\"src/pages/dataset/sidebar/index.tsx\" class=\"inline-flex items-center whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 hover:bg-border-button focus-visible:bg-bor…>…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Artifacts",
+          "role": "a",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('a:has-text(\"Artifacts\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <a data-discover=\"true\" data-inspector-line=\"110\" data-inspector-column=\"16\" href=\"/dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c\" data-inspector-relative-path=\"src/pages/dataset/sidebar/index.tsx\" class=\"inline-flex items-center whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary hover:bg-border-button fo…>…</a>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div data-state=\"open\" data-inspector-line=\"223\" data-inspector-column=\"8\" data-inspector-relative-path=\"src/components/ui/modal/modal.tsx\" class=\"fixed inset-0 z-[1000] bg-bg-card backdrop-blur-[1px] flex items-center justify-center p-4\">…</div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "Name",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Language",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Avatar",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Description",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Home\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nU\nui-traversal-1790821357\n0 files\nCreated 01/10/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nArtifacts\nConfiguration\nUpdate your dataset configuration here, particularly the LLM and prompts.\nBasic\nName\nLanguage\nEnglish\nAvatar\nUpload\nYou can upload an image up to 4 MB.\nDescription\nPermissions\nOnly me\nEmbedding model\nPage rank\nTag sets\nSelect value\nSwitch or configure ingestion pipeline.\nParse type\nBuilt-in\nPipeline\nBuilt-in\nGeneral\nPDF parser\nDeepDOC\nRecommended chunk size\nOverlapped percent(%)\nDelimiter for text\nSplits at:\n↵\n(1)\nChild chu",
+      "total_interactive": 49,
+      "probed": 30
+    },
+    {
+      "route": "/dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Select value",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Select value",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Run",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Run\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button disabled type=\"submit\" data-inspector-line=\"145\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/pages/dataset/testing/testing-form.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 border-0.5 border-transparent [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 bg-text-primary text-bg-base shadow-xs hover:bg-text-primary/90 focu…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Home",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "R",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Artifacts",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "textarea",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Similarity threshold",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Vector similarity weight",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Rerank model",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Cross-language search",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Meta data",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Rerank candidates",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        },
+        {
+          "text": "Top N",
+          "role": "label",
+          "result": "form-field (not clicked)"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Home\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nU\nui-traversal-1790821357\n0 files\nCreated 01/10/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nArtifacts\nRetrieval testing\nConduct a retrieval test to check if RAGFlow can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.\nSetting\nSimilarity threshold\nVector simila",
+      "total_interactive": 27,
+      "probed": 27
+    },
+    {
+      "route": "/dataset/knowledge-graph/fb5fb000bd3e11f1b44f1fb89275ef9c",
+      "ok": true,
+      "elements": [
+        {
+          "text": "English",
+          "role": "button",
+          "result": [
+            "no visible popup or nav"
+          ]
+        },
+        {
+          "text": "(icon)",
+          "role": "button",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "(icon)",
+          "role": "a",
+          "result": "skipped: not-found"
+        },
+        {
+          "text": "Home",
+          "role": "a",
+          "result": [
+            "nav -> /"
+          ]
+        },
+        {
+          "text": "Dataset",
+          "role": "a",
+          "result": [
+            "nav -> /datasets"
+          ]
+        },
+        {
+          "text": "Chat",
+          "role": "a",
+          "result": [
+            "nav -> /chats"
+          ]
+        },
+        {
+          "text": "Search",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Agent",
+          "role": "a",
+          "result": [
+            "nav -> /agents"
+          ]
+        },
+        {
+          "text": "Memory",
+          "role": "a",
+          "result": [
+            "nav -> /memories"
+          ]
+        },
+        {
+          "text": "File",
+          "role": "a",
+          "result": [
+            "nav -> /files"
+          ]
+        },
+        {
+          "text": "R",
+          "role": "a",
+          "result": [
+            "nav -> /searches"
+          ]
+        },
+        {
+          "text": "Files",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Retrieval testing",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Logs",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Configuration",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Artifacts",
+          "role": "a",
+          "result": [
+            "nav -> /dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Home\nDataset\nChat\nSearch\nAgent\nMemory\nFile\nEnglish\nR\nU\nui-traversal-1790821357\n0 files\nCreated 01/10/2026\nFiles\nRetrieval testing\nLogs\nConfiguration\nArtifacts\nDelete",
+      "total_interactive": 17,
+      "probed": 16
+    },
+    {
+      "route": "/dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c",
+      "ok": true,
+      "elements": [
+        {
+          "text": "Back",
+          "role": "button",
+          "result": [
+            "nav -> /dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c"
+          ]
+        },
+        {
+          "text": "Wiki",
+          "role": "combobox",
+          "result": "skipped: no-locator"
+        },
+        {
+          "text": "Generate",
+          "role": "button",
+          "result": "skipped: TimeoutError: locator.click: Timeout 2500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button:has-text(\"Generate\")').first()\u001b[22m\n\u001b[2m    - locator resolved to <button disabled data-inspector-line=\"68\" data-inspector-column=\"12\" data-inspector-relative-path=\"src/pages/dataset/compilation/empty-state.tsx\" class=\"inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*=\"size-\"])]:size-4 shrink-0 [&_svg]:shrink-0 text-text-secondary bg-bg-input border-0.5 border-border-button hover:text-text-primary hover:bg-border-button…>…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    5 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n"
+        }
+      ],
+      "note": "",
+      "title": "RAGFlow",
+      "body_text_head": "Back\nU\nui-traversal-1790821357' dataset\nWiki\n\nNo wiki yet\n\nGenerate",
+      "total_interactive": 3,
+      "probed": 3
     }
   ]
 }

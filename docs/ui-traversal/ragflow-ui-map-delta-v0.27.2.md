@@ -1,11 +1,11 @@
 # RAGFlow UI map delta
 
 - old: http://127.0.0.1:11526 @ 2026-08-17T15:00:45.397Z — 35 routes
-- new: http://127.0.0.1:11526 @ 2026-09-30T23:12:08.370Z — 34 routes
+- new: http://127.0.0.1:11526 @ 2026-10-01T02:23:14.841Z — 40 routes
 
 ## Routes
 
-- added: /home, /chats/share, /chats/widget, /search/share, /agent, /agent/share, /compilation-templates/edit-next, /dataflow-result
+- added: /home, /chats/share, /chats/widget, /search/share, /agent, /agent/share, /compilation-templates/edit-next, /dataflow-result, /dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c, /dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c, /dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c, /dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c, /dataset/knowledge-graph/fb5fb000bd3e11f1b44f1fb89275ef9c, /dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c
 - removed: /dataset/files/a710b71c52b611f193f62728e4a35a69, /dataset/logs/a710b71c52b611f193f62728e4a35a69, /dataset/configuration/a710b71c52b611f193f62728e4a35a69, /dataset/retrieval/a710b71c52b611f193f62728e4a35a69, /dataset/knowledge-graph/a710b71c52b611f193f62728e4a35a69, /agent/f9e7dc32973e11f197ff23af4dabe863, /agent/f9e7dc32973e11f197ff23af4dabe863/explore, /memory/memory-message/0ee40d8a52b711f193f62728e4a35a69, /memory/memory-setting/0ee40d8a52b711f193f62728e4a35a69
 
 ## Per-route element changes
@@ -1478,3 +1478,9 @@ Call log:
   - changed: Business [button]: nav -> /admin -> nav -> /admin/services
 - `/admin/monitoring`: +0 / -0 / ~1
   - changed: Business [button]: nav -> /admin -> nav -> /admin/services
+- `/dataset/files/fb5fb000bd3e11f1b44f1fb89275ef9c`: NEW (21 elements)
+- `/dataset/logs/fb5fb000bd3e11f1b44f1fb89275ef9c`: NEW (21 elements)
+- `/dataset/configuration/fb5fb000bd3e11f1b44f1fb89275ef9c`: NEW (30 elements)
+- `/dataset/retrieval/fb5fb000bd3e11f1b44f1fb89275ef9c`: NEW (27 elements)
+- `/dataset/knowledge-graph/fb5fb000bd3e11f1b44f1fb89275ef9c`: NEW (16 elements)
+- `/dataset/compilation/fb5fb000bd3e11f1b44f1fb89275ef9c`: NEW (3 elements)

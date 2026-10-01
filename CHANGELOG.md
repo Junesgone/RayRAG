@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.59] — 2026-10-01（对标批次 v0.3.10d）
+
+> 详情路由真实遍历补齐 + v0.27.2 数据集 Artifacts 页签落地。
+
+### Added
+
+- **数据集 Artifacts 页签**（`/dataset/compilation/{id}`，v0.27.2 新增）：sidebar 顺序改为上游 v0.27.2 的
+  Files / Retrieval testing / Logs / Configuration / **Artifacts**（knowledge-graph 保留深链面板但不再占 sidebar）；
+  页面含 Back（→ files）、"{数据集名}' dataset" 标题、视图选择器（Wiki / Tree-PageIndex / Graph / Mind map /
+  Timeline，默认 Wiki）、LlmWiki 空态 "No wiki yet" 与按上游 `canGenerateWiki`（chunk_count > 0 且 pipeline_id）
+  门控的 Generate 按钮。
+
+### Notes
+
+- 真点遍历：临时数据集上补齐 `/dataset/{files,logs,configuration,retrieval,knowledge-graph,compilation}/{id}`
+  六个详情路由（分别 21/21/30/27/16/3 个交互元素），全量 UI map 与增量报告同步更新。
+- wiki/tree/structure 生成后端与深层组件（版本历史、进度、导航树、编辑器）列入下一轮队列；
+  Generate 在无 chunk/pipeline 时与上游一致保持禁用。
+- 台账：dataset/compilation 5 个已实现文件分类（index/constants/llm-wiki-view/empty-state → partial，
+  wiki-generation-eligibility → full）；unmapped 472 → 467、partial 38 → 42，`--check` 通过。
+- 真点探针 `scripts/ui-traversal/dataset-artifacts-tab-cdp.mjs`（sidebar Artifacts 项/隐藏 knowledge-graph、
+  面板视图模式/空态/门控、Back 返回 files）**PASS**；全量 `cargo test --locked --offline --lib` **1638 passed / 0 failed / 27 ignored**（首跑出现一次 oauth 并行竞态偶发失败，单跑与复跑均通过）；`cargo fmt --check` 干净。
+
 ## [0.4.58] — 2026-10-01（对标批次 v0.3.10c）
 
 > 补齐 v0.27.2 唯一缺失的路由 `/compilation-templates/edit-next`（含 `/:id`），

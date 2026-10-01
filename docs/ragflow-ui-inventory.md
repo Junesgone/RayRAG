@@ -585,8 +585,11 @@ API；截图 `00-chat-channels.png` 至 `02-telegram-deleted.png`。
   增量 `docs/ui-traversal/ragflow-ui-map-delta-v0.27.2.md`；截图 `docs/ui-traversal/shot-*.png` 已重拍。
 - v0.27 新增路由（旧地图没有）：`/home`、`/chats/share`、`/chats/widget`、`/search/share`、
   `/agent`、`/agent/share`、`/compilation-templates/edit-next`、`/dataflow-result`。
-- 旧地图的参数化详情路由（dataset files/logs/configuration/retrieval/knowledge-graph、agent、memory）
-  本轮实例无数据，未遍历；下一轮用临时数据集补齐 `/dataset/{files,logs,configuration,retrieval,knowledge-graph}/{id}`、
-  `/search/{id}` 与 chunk 详情路由。
+- 数据集详情路由已补齐（2026-10-01，临时数据集 `fb5fb000…`，遍历后删除）：`/dataset/{files,logs,configuration,retrieval,knowledge-graph,compilation}/{id}`
+  六路由分别记录 21/21/30/27/16/3 个交互元素。**v0.27.2 重要变化**：sidebar 为
+  Files / Retrieval testing / Logs / Configuration / **Artifacts**（knowledge-graph 不再是 sidebar 项但深链仍可用）；
+  `/dataset/compilation/{id}` 是新的 Wiki/知识编译页（Back、"{数据集名}' dataset"、视图选择器
+  Wiki/Tree-PageIndex/Graph/Mind map/Timeline、空态 "No wiki yet"、按 canGenerateWiki 门控的 Generate）。
+- 仍未遍历：`/search/{id}`（需搜索应用）与 chunk 详情路由（需已解析文档）；agent/memory 详情（需模型/数据）。
 - Model providers 页：RayRAG 侧卡片刻意与上游 v0.27.2 对齐（71 卡、顺序/标签/文档链接/行标签
   经 `provider-catalog-diff.py` 核对 PASS）。

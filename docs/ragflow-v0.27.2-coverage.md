@@ -18,12 +18,12 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 278 | 68000 |
-| full | 568 | 282196 |
-| partial | 38 | 11158 |
+| full | 569 | 282204 |
+| partial | 42 | 11547 |
 | replaced | 108 | 41809 |
 | N/A | 61 | 10542 |
 | reference | 4452 | 1209152 |
-| unmapped | 472 | 78324 |
+| unmapped | 467 | 77927 |
 
 ## Removed upstream paths
 
@@ -5771,11 +5771,11 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `web/src/pages/dataflow-result/interface.ts` | 156 | 3533 | `4cdee07e6ef71284` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataflow-result/parser.tsx` | 241 | 7599 | `4995ea9e0ea6041b` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
 | `web/src/pages/dataflow-result/utils.ts` | 24 | 531 | `9284828a7056c9d7` | reference | `src/web.rs; web/static/` | React implementation and assets are UI reference material; RayRAG serves a Rust-native management surface and compatible static assets |
-| `web/src/pages/dataset/compilation/constants.ts` | 47 | 1352 | `37cecc25f314fb10` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/dataset/compilation/constants.ts` | 47 | 1352 | `37cecc25f314fb10` | partial | `src/web.rs` | （v0.3.10d 复核：数据集 Artifacts 页签外壳/视图选择器/空态/Generate 门控已在 src/web.rs 实现并经真点验证；wiki 生成与深层组件未复刻） |
 | `web/src/pages/dataset/compilation/create-directory-dialog/create-directory-form.tsx` | 25 | 736 | `d35cfa04a3d06597` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/create-directory-dialog/index.tsx` | 51 | 1183 | `ca1f55c44bf13351` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/dataset-structure-view.tsx` | 229 | 7715 | `9c70cd63b423eab8` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/dataset/compilation/empty-state.tsx` | 146 | 5238 | `38771846b4f3192c` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/dataset/compilation/empty-state.tsx` | 146 | 5238 | `38771846b4f3192c` | partial | `src/web.rs` | （v0.3.10d 复核：数据集 Artifacts 页签外壳/视图选择器/空态/Generate 门控已在 src/web.rs 实现并经真点验证；wiki 生成与深层组件未复刻） |
 | `web/src/pages/dataset/compilation/hooks/use-commit-artifact.ts` | 76 | 1779 | `602a6228e048080d` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/hooks/use-compilation-artifact.ts` | 32 | 818 | `de180127a360e98b` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/hooks/use-compilation-nav.ts` | 296 | 8252 | `69060ba29ec8e858` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
@@ -5786,9 +5786,9 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `web/src/pages/dataset/compilation/hooks/use-wiki-editor.ts` | 41 | 920 | `d5da8b4a06f977cf` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/hooks/use-wiki-link-navigation.ts` | 64 | 1570 | `94f4b102a8c299d6` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/hooks/use-wiki-version.ts` | 30 | 780 | `0c23aee44f8f8114` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/dataset/compilation/index.tsx` | 79 | 2711 | `465a8b19a1ecd879` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/dataset/compilation/index.tsx` | 79 | 2711 | `465a8b19a1ecd879` | partial | `src/web.rs` | （v0.3.10d 复核：数据集 Artifacts 页签外壳/视图选择器/空态/Generate 门控已在 src/web.rs 实现并经真点验证；wiki 生成与深层组件未复刻） |
 | `web/src/pages/dataset/compilation/interface.ts` | 20 | 366 | `1d0a4a582d657918` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/dataset/compilation/llm-wiki-view.tsx` | 117 | 3964 | `784fcf6715d50d07` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/dataset/compilation/llm-wiki-view.tsx` | 117 | 3964 | `784fcf6715d50d07` | partial | `src/web.rs` | （v0.3.10d 复核：数据集 Artifacts 页签外壳/视图选择器/空态/Generate 门控已在 src/web.rs 实现并经真点验证；wiki 生成与深层组件未复刻） |
 | `web/src/pages/dataset/compilation/loading-card.tsx` | 10 | 324 | `cfd51c301aa78c6a` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/nav-tree-left-panel.test.tsx` | 94 | 2467 | `fefc45d6629a0f78` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/nav-tree-left-panel.tsx` | 202 | 6017 | `804c235d26198464` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
@@ -5815,7 +5815,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `web/src/pages/dataset/compilation/wiki-detail-header.tsx` | 68 | 1916 | `395ef856d582cf5d` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/wiki-detail-toolbar.tsx` | 75 | 1883 | `1209d1ef3c8a7dae` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/wiki-generation-eligibility.test.ts` | 32 | 862 | `ff71232e5ee2d61f` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
-| `web/src/pages/dataset/compilation/wiki-generation-eligibility.ts` | 8 | 239 | `5dcb285b2085eb71` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
+| `web/src/pages/dataset/compilation/wiki-generation-eligibility.ts` | 8 | 239 | `5dcb285b2085eb71` | full | `src/web.rs` | （v0.3.10d 复核：canGenerateWiki 门控 chunk_count>0 && pipeline_id 已实现） |
 | `web/src/pages/dataset/compilation/wiki-left-panel/hooks/use-wiki-clear.ts` | 21 | 588 | `171ca27832f4f8e4` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/wiki-left-panel/hooks/use-wiki-navigation.ts` | 181 | 4637 | `de9a1a428aa08c21` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
 | `web/src/pages/dataset/compilation/wiki-left-panel/hooks/use-wiki-update.ts` | 39 | 1069 | `64bf000516f24e84` | unmapped | `-` | Added in RAGFlow v0.27.2; pending audit |
