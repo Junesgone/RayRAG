@@ -13,11 +13,14 @@
 //!   scanner with the same boundary semantics.
 //! - Module-level `_env_int(...)` constants become functions evaluated on
 //!   call.
-use crate::structure_compile::{cfg_get, env_int, localize};
+use super::knowlege_dataset_nav::index_name;
+use crate::doc_store::{DocRow, DocStore, SearchQuery};
+use crate::structure_compile::{cfg_get, env_int, localize, stable_row_id};
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
+use uuid::Uuid;
 
 /// `_WIKI_PIPELINE_REV` — bumping this invalidates every cached wiki row.
 pub const WIKI_PIPELINE_REV: &str = "v1";
@@ -108,8 +111,8 @@ fn state_hash(value: &Value) -> String {
 /// `_wiki_compare_chunk_states` — `previous` / `current` map chunk_id to a
 /// state dict carrying a `hash` field.
 pub fn compare_chunk_states(
-    previous: &HashMap<String, Value>,
-    current: &HashMap<String, Value>,
+    previous: &Map<String, Value>,
+    current: &Map<String, Value>,
 ) -> ChunkStateDelta {
     let previous_ids: BTreeSet<&String> = previous.keys().collect();
     let current_ids: BTreeSet<&String> = current.keys().collect();
@@ -755,8 +758,8 @@ pub fn unwrap_extract(res: &Value) -> Value {
 pub fn resolve_chunk_ids(
     extract: &Value,
     label_to_id: &HashMap<String, String>,
-) -> (Value, HashMap<String, Value>) {
-    let mut per_chunk: HashMap<String, Value> = HashMap::new();
+) -> (Value, Map<String, Value>) {
+    let mut per_chunk: Map<String, Value> = Map::new();
     for real_id in label_to_id.values() {
         per_chunk.insert(real_id.clone(), empty_extract());
     }
@@ -862,11 +865,11 @@ mod wiki_part1_tests {
 
     #[test]
     fn compare_chunk_states_buckets() {
-        let mut previous = HashMap::new();
+        let mut previous = Map::new();
         previous.insert("a".to_string(), json!({"hash": "1"}));
         previous.insert("b".to_string(), json!({"hash": "2"}));
         previous.insert("c".to_string(), json!({"hash": "3"}));
-        let mut current = HashMap::new();
+        let mut current = Map::new();
         current.insert("a".to_string(), json!({"hash": "1"}));
         current.insert("b".to_string(), json!({"hash": "9"}));
         current.insert("d".to_string(), json!({"hash": "4"}));
@@ -1101,5 +1104,709 @@ mod wiki_part1_tests {
         let id1 = &per_chunk["id1"];
         assert_eq!(id1["claims"].as_array().unwrap().len(), 0);
         assert_eq!(id1["entities"].as_array().unwrap().len(), 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 2 — resume/state store group (`_wiki_merge_extracts` ..
+// `_wiki_commit_active_map_state`).
+//
+// Adaptation note: RayRAG's doc store matches conditions by JSONB
+// containment / exact equality on scalar fields, not Elasticsearch `terms`.
+// Upstream conditions that used to rely on `terms` lists are therefore
+// rewritten as scalar conditions plus per-value loops and client-side
+// filtering (same row sets); `must_not exists` is enforced client-side.
+// ---------------------------------------------------------------------------
+
+/// `_wiki_merge_extracts`: concat the five lists across batch extracts.
+pub fn merge_extracts(extracts: &[Value]) -> Value {
+    let mut out = empty_extract();
+    let mut seen_topics: BTreeSet<String> = BTreeSet::new();
+    for extract in extracts {
+        let Some(obj) = extract.as_object() else {
+            continue;
+        };
+        for key in EXTRACT_LIST_KEYS {
+            if let Some(Value::Array(items)) = obj.get(key) {
+                if let Some(target) = out.get_mut(key).and_then(Value::as_array_mut) {
+                    target.extend(items.iter().cloned());
+                }
+            }
+        }
+        if let Some(Value::Array(topics)) = obj.get("topics") {
+            for topic in topics {
+                let dedup_key = topic
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| topic.to_string());
+                if seen_topics.insert(dedup_key) {
+                    if let Some(target) = out.get_mut("topics").and_then(Value::as_array_mut) {
+                        target.push(topic.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `_wiki_build_resume_doc`: one non-searchable ES-style row per chunk.
+pub fn build_resume_doc(
+    chunk_id: &str,
+    doc_id: &str,
+    per_chunk_extract: &Value,
+    chunk_hash: &str,
+) -> Value {
+    let doc_id_str = doc_id.to_string();
+    json!({
+        "id": stable_row_id(&[
+            WIKI_MAP_COMPILE_KWD.to_string(),
+            doc_id_str.clone(),
+            chunk_id.to_string(),
+            chunk_hash.to_string(),
+        ]),
+        "doc_id": doc_id_str,
+        "compile_kwd": WIKI_MAP_COMPILE_KWD,
+        "source_chunk_ids": [chunk_id],
+        "chunk_hash_kwd": chunk_hash,
+        "content_with_weight": per_chunk_extract.to_string(),
+        "available_int": 0,
+    })
+}
+
+/// One page of rows through the local doc store (select + condition).
+fn search_page(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    fields: &[String],
+    condition: &Map<String, Value>,
+    offset: usize,
+    limit: usize,
+) -> crate::Result<Vec<Value>> {
+    let query = SearchQuery {
+        select_fields: fields.to_vec(),
+        condition: condition.clone(),
+        match_expressions: Vec::new(),
+        offset,
+        limit,
+        index_names: vec![index_name(tenant_id)],
+        dataset_ids: vec![kb_id.to_string()],
+        ..Default::default()
+    };
+    let response = store.search(&query)?;
+    Ok(store
+        .get_fields(&response, fields)
+        .into_values()
+        .map(Value::Object)
+        .collect())
+}
+
+/// `_wiki_load_map_versions`: historical MAP versions as
+/// `chunk_id -> hash -> extract` (partial result on read failure).
+pub fn load_map_versions(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_ids: &BTreeSet<String>,
+    requested_versions: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
+    let fields: Vec<String> = ["source_chunk_ids", "chunk_hash_kwd", "content_with_weight"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut versions: Map<String, Value> = Map::new();
+    let requested_chunk_ids: BTreeSet<String> = requested_versions
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default();
+    let requested_hashes: BTreeSet<String> = requested_versions
+        .map(|map| {
+            map.values()
+                .filter_map(Value::as_str)
+                .filter(|hash| !hash.is_empty())
+                .map(|hash| hash.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    for doc_id in doc_ids {
+        let mut condition = Map::new();
+        condition.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_MAP_COMPILE_KWD.to_string()),
+        );
+        condition.insert("doc_id".to_string(), Value::String(doc_id.clone()));
+        let mut offset = 0usize;
+        loop {
+            let rows = match search_page(store, tenant_id, kb_id, &fields, &condition, offset, 1000)
+            {
+                Ok(rows) => rows,
+                Err(err) => {
+                    tracing::warn!(error = %err, doc = %doc_id, "wiki_map: failed to load historical versions");
+                    return versions;
+                }
+            };
+            for row in &rows {
+                let chunk_hash = row
+                    .get("chunk_hash_kwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if chunk_hash.is_empty() {
+                    continue;
+                }
+                if !requested_hashes.is_empty() && !requested_hashes.contains(&chunk_hash) {
+                    continue;
+                }
+                let extract: Value = row
+                    .get("content_with_weight")
+                    .and_then(Value::as_str)
+                    .and_then(|body| serde_json::from_str(body).ok())
+                    .unwrap_or(Value::Null);
+                if !extract.is_object() {
+                    continue;
+                }
+                for chunk_id in wiki_doc_ids(row.get("source_chunk_ids").unwrap_or(&Value::Null)) {
+                    if !requested_chunk_ids.is_empty() && !requested_chunk_ids.contains(&chunk_id) {
+                        continue;
+                    }
+                    if let Some(requested) = requested_versions {
+                        let want = requested
+                            .get(&chunk_id)
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if want != chunk_hash {
+                            continue;
+                        }
+                    }
+                    let entry = versions
+                        .entry(chunk_id)
+                        .or_insert_with(|| Value::Object(Map::new()));
+                    if let Some(map) = entry.as_object_mut() {
+                        map.entry(chunk_hash.clone())
+                            .or_insert_with(|| extract.clone());
+                    }
+                }
+            }
+            if rows.len() < 1000 {
+                break;
+            }
+            offset += 1000;
+        }
+    }
+    versions
+}
+
+/// `_wiki_persist_extracts`: write one non-searchable row per chunk.
+pub fn persist_extracts(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    per_chunk: &Map<String, Value>,
+    doc_id: &str,
+    chunk_hashes: Option<&Map<String, Value>>,
+) {
+    if per_chunk.is_empty() {
+        return;
+    }
+    let mut docs: Vec<Value> = Vec::new();
+    for (chunk_id, extract) in per_chunk {
+        if chunk_id.is_empty() {
+            continue;
+        }
+        let hash = chunk_hashes
+            .and_then(|map| map.get(chunk_id))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        docs.push(build_resume_doc(chunk_id, doc_id, extract, hash));
+    }
+    if docs.is_empty() {
+        return;
+    }
+    let rows: Vec<DocRow> = docs
+        .iter()
+        .filter_map(|doc| doc.as_object().cloned())
+        .collect();
+    if let Err(err) = store.insert(&rows, &index_name(tenant_id), kb_id) {
+        tracing::warn!(error = %err, count = rows.len(), "wiki_map: failed to persist resume docs");
+    }
+}
+
+/// `_wiki_scan_current_chunk_state`: current MAP input hashes of enabled
+/// source chunks (`must_not exists compile_kwd` enforced client-side).
+pub fn scan_current_chunk_state(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_ids: &BTreeSet<String>,
+) -> crate::Result<Map<String, Value>> {
+    let mut state: Map<String, Value> = Map::new();
+    if doc_ids.is_empty() {
+        return Ok(state);
+    }
+    let fields: Vec<String> = ["id", "doc_id", "content_with_weight", "compile_kwd"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    for doc_id in doc_ids {
+        let mut condition = Map::new();
+        condition.insert("doc_id".to_string(), Value::String(doc_id.clone()));
+        condition.insert("available_int".to_string(), json!(1));
+        let mut offset = 0usize;
+        loop {
+            let rows = search_page(store, tenant_id, kb_id, &fields, &condition, offset, 1000)?;
+            for row in &rows {
+                if row
+                    .get("compile_kwd")
+                    .map(|value| !value.is_null())
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let chunk_id = row
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if chunk_id.is_empty() {
+                    continue;
+                }
+                let mut entry = Map::new();
+                entry.insert(
+                    "doc_id".to_string(),
+                    Value::String(
+                        row.get("doc_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| doc_id.clone()),
+                    ),
+                );
+                entry.insert(
+                    "hash".to_string(),
+                    Value::String(chunk_hash(
+                        row.get("content_with_weight")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                    )),
+                );
+                state.insert(chunk_id, Value::Object(entry));
+            }
+            if rows.len() < 1000 {
+                break;
+            }
+            offset += 1000;
+        }
+    }
+    Ok(state)
+}
+
+/// `_wiki_load_active_map_generation`: the active generation marker value.
+pub fn load_active_map_generation(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> crate::Result<String> {
+    let fields: Vec<String> = vec!["type_kwd".to_string()];
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_MAP_STATE_META_COMPILE_KWD.to_string()),
+    );
+    condition.insert(
+        "id".to_string(),
+        Value::String(stable_row_id(&[
+            WIKI_MAP_STATE_META_COMPILE_KWD.to_string(),
+            kb_id.to_string(),
+        ])),
+    );
+    let rows = search_page(store, tenant_id, kb_id, &fields, &condition, 0, 1)?;
+    for row in &rows {
+        let values = wiki_doc_ids(row.get("type_kwd").unwrap_or(&Value::Null));
+        if let Some(first) = values.into_iter().next() {
+            return Ok(first);
+        }
+    }
+    Ok(String::new())
+}
+
+/// `_wiki_load_active_map_state`: chunk versions of the last committed build.
+pub fn load_active_map_state(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+) -> crate::Result<Map<String, Value>> {
+    let generation = load_active_map_generation(store, tenant_id, kb_id)?;
+    if generation.is_empty() {
+        return Ok(Map::new());
+    }
+    let fields: Vec<String> = ["doc_id", "source_chunk_ids", "chunk_hash_kwd"]
+        .iter()
+        .map(|field| field.to_string())
+        .collect();
+    let mut condition = Map::new();
+    condition.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_MAP_STATE_COMPILE_KWD.to_string()),
+    );
+    condition.insert("type_kwd".to_string(), Value::String(generation));
+    let mut state: Map<String, Value> = Map::new();
+    let mut offset = 0usize;
+    loop {
+        let rows = search_page(store, tenant_id, kb_id, &fields, &condition, offset, 1000)?;
+        for row in &rows {
+            let chunk_hash = row
+                .get("chunk_hash_kwd")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if chunk_hash.is_empty() {
+                continue;
+            }
+            let doc_id = wiki_doc_ids(row.get("doc_id").unwrap_or(&Value::Null))
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            for chunk_id in wiki_doc_ids(row.get("source_chunk_ids").unwrap_or(&Value::Null)) {
+                let mut entry = Map::new();
+                entry.insert("doc_id".to_string(), Value::String(doc_id.clone()));
+                entry.insert("hash".to_string(), Value::String(chunk_hash.to_string()));
+                state.insert(chunk_id, Value::Object(entry));
+            }
+        }
+        if rows.len() < 1000 {
+            break;
+        }
+        offset += 1000;
+    }
+    Ok(state)
+}
+
+/// `_wiki_load_map_extracts_for_state`: MAP versions selected by a snapshot.
+pub fn load_map_extracts_for_state(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    state: &Map<String, Value>,
+    chunk_ids: Option<&BTreeSet<String>>,
+) -> Vec<Value> {
+    let mut selected: BTreeSet<String> = state.keys().cloned().collect();
+    if let Some(ids) = chunk_ids {
+        selected = selected.intersection(ids).cloned().collect();
+    }
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    let mut by_doc: Map<String, Value> = Map::new();
+    for chunk_id in &selected {
+        let doc_id = state
+            .get(chunk_id)
+            .and_then(|item| item.get("doc_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if doc_id.is_empty() {
+            continue;
+        }
+        by_doc
+            .entry(doc_id)
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .expect("array")
+            .push(Value::String(chunk_id.clone()));
+    }
+    let mut requested: Map<String, Value> = Map::new();
+    for ids in by_doc.values() {
+        for id in ids.as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            let chunk_id = id.as_str().unwrap_or("").to_string();
+            let hash = state
+                .get(&chunk_id)
+                .and_then(|item| item.get("hash"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            requested.insert(chunk_id, Value::String(hash));
+        }
+    }
+    let doc_set: BTreeSet<String> = by_doc.keys().cloned().collect();
+    let versions = load_map_versions(store, tenant_id, kb_id, &doc_set, Some(&requested));
+    let mut extracts: Vec<Value> = Vec::new();
+    for (doc_id, ids) in &by_doc {
+        for id in ids.as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            let chunk_id = id.as_str().unwrap_or("").to_string();
+            let chunk_hash = state
+                .get(&chunk_id)
+                .and_then(|item| item.get("hash"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let Some(extract) = versions
+                .get(&chunk_id)
+                .and_then(|by_hash| by_hash.get(&chunk_hash))
+            else {
+                continue;
+            };
+            if !extract.is_object() {
+                continue;
+            }
+            let mut item = extract.as_object().cloned().unwrap_or_default();
+            item.insert("doc_id".to_string(), Value::String(doc_id.clone()));
+            let mut map_version = Map::new();
+            map_version.insert("chunk_id".to_string(), Value::String(chunk_id.clone()));
+            map_version.insert("hash".to_string(), Value::String(chunk_hash.clone()));
+            item.insert("_map_version".to_string(), Value::Object(map_version));
+            extracts.push(Value::Object(item));
+        }
+    }
+    extracts
+}
+
+/// `_wiki_commit_active_map_state`: atomically switch the active snapshot.
+pub fn commit_active_map_state(
+    store: &dyn DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    state: &Map<String, Value>,
+) -> crate::Result<()> {
+    let previous_generation = load_active_map_generation(store, tenant_id, kb_id)?;
+    let generation = Uuid::new_v4().simple().to_string();
+    let mut rows: Vec<DocRow> = Vec::new();
+    for (chunk_id, item) in state {
+        let doc_id = item
+            .get("doc_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let chunk_hash = item
+            .get("hash")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if doc_id.is_empty() || chunk_hash.is_empty() {
+            continue;
+        }
+        let mut row = Map::new();
+        row.insert(
+            "id".to_string(),
+            Value::String(stable_row_id(&[
+                WIKI_MAP_STATE_COMPILE_KWD.to_string(),
+                generation.clone(),
+                doc_id.clone(),
+                chunk_id.clone(),
+            ])),
+        );
+        row.insert("doc_id".to_string(), Value::String(doc_id));
+        row.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_MAP_STATE_COMPILE_KWD.to_string()),
+        );
+        row.insert("type_kwd".to_string(), Value::String(generation.clone()));
+        row.insert(
+            "source_chunk_ids".to_string(),
+            Value::Array(vec![Value::String(chunk_id.clone())]),
+        );
+        row.insert("chunk_hash_kwd".to_string(), Value::String(chunk_hash));
+        row.insert(
+            "content_with_weight".to_string(),
+            Value::String("{}".to_string()),
+        );
+        row.insert("available_int".to_string(), json!(0));
+        rows.push(row);
+    }
+    if !rows.is_empty() {
+        store.insert(&rows, &index_name(tenant_id), kb_id)?;
+    }
+    let mut marker = Map::new();
+    marker.insert(
+        "id".to_string(),
+        Value::String(stable_row_id(&[
+            WIKI_MAP_STATE_META_COMPILE_KWD.to_string(),
+            kb_id.to_string(),
+        ])),
+    );
+    marker.insert("doc_id".to_string(), Value::String(String::new()));
+    marker.insert(
+        "compile_kwd".to_string(),
+        Value::String(WIKI_MAP_STATE_META_COMPILE_KWD.to_string()),
+    );
+    marker.insert("type_kwd".to_string(), Value::String(generation.clone()));
+    marker.insert(
+        "source_chunk_ids".to_string(),
+        Value::Array(vec![Value::String("__wiki_map_state__".to_string())]),
+    );
+    marker.insert(
+        "chunk_hash_kwd".to_string(),
+        Value::String("committed".to_string()),
+    );
+    marker.insert(
+        "content_with_weight".to_string(),
+        Value::String("{}".to_string()),
+    );
+    marker.insert("available_int".to_string(), json!(0));
+    store.insert(&[marker], &index_name(tenant_id), kb_id)?;
+    if !previous_generation.is_empty() && previous_generation != generation {
+        let mut condition = Map::new();
+        condition.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_MAP_STATE_COMPILE_KWD.to_string()),
+        );
+        condition.insert(
+            "type_kwd".to_string(),
+            Value::String(previous_generation.clone()),
+        );
+        if let Err(err) = store.delete(&condition, &index_name(tenant_id), kb_id) {
+            tracing::warn!(
+                error = %err,
+                generation = %previous_generation,
+                "wiki_map: failed to remove inactive state generation"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod wiki_part2_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+
+    #[test]
+    fn merge_extracts_concats_and_dedups_topics() {
+        let merged = merge_extracts(&[
+            json!({"entities": [{"name": "A"}], "topics": ["t1", "t2"]}),
+            json!({"entities": [{"name": "B"}], "claims": [{"statement": "s"}], "topics": ["t2", "t3"]}),
+        ]);
+        assert_eq!(merged["entities"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(merged["topics"], json!(["t1", "t2", "t3"]));
+    }
+
+    #[test]
+    fn resume_doc_shape_roundtrips() {
+        let doc = build_resume_doc("c1", "d1", &json!({"topics": ["t"]}), "h1");
+        assert_eq!(doc["compile_kwd"], json!("wiki_map_extract"));
+        assert_eq!(doc["source_chunk_ids"], json!(["c1"]));
+        assert_eq!(doc["chunk_hash_kwd"], json!("h1"));
+        assert_eq!(doc["available_int"], json!(0));
+        assert_eq!(doc["id"].as_str().unwrap().len(), 16);
+        let parsed: Value =
+            serde_json::from_str(doc["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["topics"], json!(["t"]));
+    }
+
+    #[test]
+    fn persist_and_load_versions_roundtrip() {
+        let store = MemoryDocStore::new();
+        let mut per_chunk = Map::new();
+        per_chunk.insert(
+            "c1".to_string(),
+            json!({"entities": [{"name": "A"}], "topics": ["t"]}),
+        );
+        let mut hashes = Map::new();
+        hashes.insert("c1".to_string(), Value::String("h1".to_string()));
+        persist_extracts(&store, "t1", "kb1", &per_chunk, "d1", Some(&hashes));
+        let docs = BTreeSet::from(["d1".to_string()]);
+        let versions = load_map_versions(&store, "t1", "kb1", &docs, None);
+        let by_hash = versions.get("c1").expect("chunk versions");
+        assert_eq!(by_hash["h1"]["entities"][0]["name"], json!("A"));
+        let mut wrong = Map::new();
+        wrong.insert("c1".to_string(), Value::String("hX".to_string()));
+        assert!(load_map_versions(&store, "t1", "kb1", &docs, Some(&wrong)).is_empty());
+        let mut right = Map::new();
+        right.insert("c1".to_string(), Value::String("h1".to_string()));
+        assert!(!load_map_versions(&store, "t1", "kb1", &docs, Some(&right)).is_empty());
+    }
+
+    #[test]
+    fn scan_state_excludes_compile_rows() {
+        let store = MemoryDocStore::new();
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "hello", "available_int": 1})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "x1", "doc_id": "d1", "content_with_weight": "cached", "available_int": 1, "compile_kwd": "wiki_map_extract"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+        let state =
+            scan_current_chunk_state(&store, "t1", "kb1", &BTreeSet::from(["d1".to_string()]))
+                .unwrap();
+        assert!(state.contains_key("c1"));
+        assert!(!state.contains_key("x1"));
+        assert_eq!(state["c1"]["hash"], json!(chunk_hash("hello")));
+        assert_eq!(state["c1"]["doc_id"], json!("d1"));
+    }
+
+    #[test]
+    fn commit_switches_generation_and_cleans_previous() {
+        let store = MemoryDocStore::new();
+        let mut state = Map::new();
+        let mut entry = Map::new();
+        entry.insert("doc_id".to_string(), Value::String("d1".to_string()));
+        entry.insert("hash".to_string(), Value::String("h1".to_string()));
+        state.insert("c1".to_string(), Value::Object(entry));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        let generation_1 = load_active_map_generation(&store, "t1", "kb1").unwrap();
+        assert_eq!(generation_1.len(), 32);
+        let loaded = load_active_map_state(&store, "t1", "kb1").unwrap();
+        assert_eq!(loaded["c1"]["doc_id"], json!("d1"));
+        assert_eq!(loaded["c1"]["hash"], json!("h1"));
+
+        let mut state2 = Map::new();
+        let mut entry2 = Map::new();
+        entry2.insert("doc_id".to_string(), Value::String("d2".to_string()));
+        entry2.insert("hash".to_string(), Value::String("h2".to_string()));
+        state2.insert("c2".to_string(), Value::Object(entry2));
+        commit_active_map_state(&store, "t1", "kb1", &state2).unwrap();
+        let generation_2 = load_active_map_generation(&store, "t1", "kb1").unwrap();
+        assert_ne!(generation_1, generation_2);
+        let loaded2 = load_active_map_state(&store, "t1", "kb1").unwrap();
+        assert!(loaded2.contains_key("c2"));
+        assert!(!loaded2.contains_key("c1"));
+
+        let mut stale = Map::new();
+        stale.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_MAP_STATE_COMPILE_KWD.to_string()),
+        );
+        stale.insert("type_kwd".to_string(), Value::String(generation_1));
+        let query = SearchQuery {
+            select_fields: vec!["id".to_string()],
+            condition: stale,
+            match_expressions: Vec::new(),
+            offset: 0,
+            limit: 10,
+            index_names: vec![index_name("t1")],
+            dataset_ids: vec!["kb1".to_string()],
+            ..Default::default()
+        };
+        let response = store.search(&query).unwrap();
+        assert_eq!(response.total, 0);
+    }
+
+    #[test]
+    fn extracts_for_state_annotates_selection() {
+        let store = MemoryDocStore::new();
+        let mut per_chunk = Map::new();
+        per_chunk.insert(
+            "c1".to_string(),
+            json!({"entities": [{"name": "Alpha"}], "topics": ["t"]}),
+        );
+        let mut hashes = Map::new();
+        hashes.insert("c1".to_string(), Value::String("h1".to_string()));
+        persist_extracts(&store, "t1", "kb1", &per_chunk, "d1", Some(&hashes));
+        let mut state = Map::new();
+        let mut entry = Map::new();
+        entry.insert("doc_id".to_string(), Value::String("d1".to_string()));
+        entry.insert("hash".to_string(), Value::String("h1".to_string()));
+        state.insert("c1".to_string(), Value::Object(entry));
+        let extracts = load_map_extracts_for_state(&store, "t1", "kb1", &state, None);
+        assert_eq!(extracts.len(), 1);
+        assert_eq!(extracts[0]["doc_id"], json!("d1"));
+        assert_eq!(extracts[0]["_map_version"]["chunk_id"], json!("c1"));
+        assert_eq!(extracts[0]["_map_version"]["hash"], json!("h1"));
+        assert_eq!(extracts[0]["entities"][0]["name"], json!("Alpha"));
+        let none = load_map_extracts_for_state(&store, "t1", "kb1", &state, Some(&BTreeSet::new()));
+        assert!(none.is_empty());
     }
 }
