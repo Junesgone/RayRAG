@@ -442,6 +442,9 @@
 | 文档/切片状态 | `UNSTARTED / RUNNING / DONE / FAILED`；文档启用位 `status` 为 `"0"/"1"` | `{"run":"DONE","status":"1"}` |
 | 运行形态 | 纯 Linux 与纯 Docker 等价；元数据 PostgreSQL，向量 zvec（不允许 MySQL） | `RAYRAG_VECTOR_BACKEND=zvec` |
 | 超时 | 命令/HTTP 客户端统一读取 `RAYRAG_CMD_TIMEOUT` | `timeout: 7200` |
+| Compiler 参数（流程组件） | `compilation_template_group_id`（单数优先）与 `compilation_template_group_ids`（传统复数回退）；`check()` 归一化为列表，空组报 `Compilation Template Group does not support empty value.` | `{"compilation_template_group_id":"g1"}` |
+| Compiler 上游载荷 | `CompilerFromUpstream`：serde 别名 `_created_time`/`_elapsed_time`/`json`/`markdown`/`text`/`html`，`output_format ∈ {json,markdown,text,html,chunks}`，未知字段拒绝（↔ 上游 `extra="forbid"`） | `{"name":"doc.md","output_format":"markdown","markdown":"# a"}` |
+| Compiler 切分常量 | `PARSER_TEXT_CHUNK_TOKEN_SIZE=1024` / `PARSER_CANDIDATE_TOKEN_SIZE=128` / `PARSER_MIN_COARSE_CHUNK_TOKEN_SIZE=256` / `PARSER_MIN_SPLIT_CHARACTERS=24`（与上游 1:1） | `slumber_candidates(text, level, Some(1024))` |
 
 ## 4. 变更流程
 

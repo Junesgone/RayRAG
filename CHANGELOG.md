@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.78] — 2026-10-01（对标批次 v0.3.10w）
+
+> W-5 续：RAGFlow v0.27.2 Compiler 流程包（`rag/flow/compiler/*`）移植 + `agent/templates/compiler.json` 判定（纯 Rust）。
+
+- `src/compiler.rs`：`CompilerFromUpstream`（serde 别名 `_created_time`/`_elapsed_time`/`json`/`markdown`/`text`/`html` + `deny_unknown_fields` ↔ 上游 `populate_by_name=True, extra="forbid"`）与 `CompilerOutputFormat` 五值枚举；切分/归一化全套（slumber 两级切分、markdown 原子块、原子 JSON 记录、rechunk 组形式化、小块合并、五路上游归一化）；`CompilerParam.check`（单数优先 + 传统复数回退，空组报错文案 1:1）、`compile_language` 三级回退、`compile_progress`；共 11 项单测。
+- `agent/templates/compiler.json`：判定为上游永不入库的 DSL-only 残留（容器内复刻 `IntegrityError: NOT NULL constraint failed: canvas_template.id`），台账记 replaced，等价能力由 compilation templates + Compiler 组件承载。
+- 台账 4 行收敛（full×3 / replaced×1），`worklist` W-5 队列 6→2；`ragflow-coverage --check` 通过（5977 文件、unmapped=0）。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.77] — 2026-10-01（对标批次 v0.3.10v）
 
 > W-5 续：RAGFlow v0.27.2 的重解析计数器释放（`api/db/services/document_counter_service.py`）移植（纯 Rust）。

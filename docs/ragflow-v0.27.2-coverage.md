@@ -18,9 +18,9 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 607 | 293096 |
-| partial | 75 | 32015 |
-| replaced | 123 | 49952 |
+| full | 610 | 293860 |
+| partial | 71 | 30804 |
+| replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
 | unmapped | 0 | 0 |
@@ -507,7 +507,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `agent/templates/advanced_ingestion_pipeline.json` | 820 | 46591 | `1c666ac921f4db72` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) （v0.3.10e 复核：fixture/meta 已按 v0.27.2 dsl 与元数据同步） |
 | `agent/templates/cajal_scientific_paper_agent.json` | 308 | 20226 | `0e879a60b270da29` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) （v0.3.10e 复核：fixture/meta 已按 v0.27.2 dsl 与元数据同步） |
 | `agent/templates/chunk_summary.json` | 544 | 28767 | `891cf3f68612b4bf` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) （v0.3.10e 复核：fixture/meta 已按 v0.27.2 dsl 与元数据同步） |
-| `agent/templates/compiler.json` | 447 | 11394 | `52fce122516c1ec1` | partial | `src/agent_templates.rs; src/structure_compile.rs` | （v0.3.10g 审计：DSL-only Compiler 流程模板；RayRAG 编译模板流程就位，该内置模板未接入——worklist W-5（结构图/编译器/切分）） |
+| `agent/templates/compiler.json` | 447 | 11394 | `52fce122516c1ec1` | replaced | `src/api/compilation_templates.rs; src/compiler.rs` | v0.3.10w 判定：v0.27.2 DSL-only 残留（components/globals/graph/history/messages/path/retrieval/variables，无 title/description/dsl 包装键、无 id）；上游 add_graph_templates 必然入库失败（容器内复刻：CanvasTemplate(**dsl).save(force_insert=True) -> IntegrityError NOT NULL canvas_template.id；回退 cnvs["id"] -> KeyError）→ 仅记录并跳过，UI/DB 无此模板；等价能力由 CompilationTemplate YAML 内置 + Compiler 组件承载 |
 | `agent/templates/customer_feedback_dispatcher.json` | 625 | 35159 | `b3d261b7f1ffafb6` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) （v0.3.10e 复核：fixture/meta 已按 v0.27.2 dsl 与元数据同步） |
 | `agent/templates/data_analysis_beginner_assistant.json` | 296 | 22864 | `000abee0cad34dd3` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) |
 | `agent/templates/deep_research.json` | 867 | 148292 | `d9cd33001d69e5dd` | full | `src/agent_templates.rs; src/api/fixtures/agent_templates/` | 25 RAGFlow agent workflow templates seeded (include_str! fixtures, agents page template library 3->28) （v0.3.10e 复核：fixture/meta 已按 v0.27.2 dsl 与元数据同步） |
@@ -3695,9 +3695,9 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/flow/chunker/title_chunker/schema.py` | 37 | 1614 | `60eac5c0a91dce0c` | full | `src/lib.rs` | ParserConfig chunk_method/title fields added |
 | `rag/flow/chunker/title_chunker/title_chunker.py` | 40 | 1563 | `7b21712ac8bd7551` | full | `src/chunk/title.rs` | title continuity / section numbering semantics ported |
 | `rag/flow/chunker/token_chunker.py` | 553 | 24426 | `78bb38042cde9d9b` | full | `src/chunk/token.rs` | Token/Title chunker ported; pipeline chunk_method dispatch wired [v0.27.2 content changed: re-audit] |
-| `rag/flow/compiler/__init__.py` | 18 | 725 | `c211f972f3930d1d` | partial | `src/structure_compile.rs; src/raptor.rs` | （v0.3.10g 审计：Compiler 流程包；RayRAG 编译模板/管线部分就位（raptor、structure_compile），compiler 流程待对齐——worklist W-5（结构图/编译器/切分）） |
-| `rag/flow/compiler/compiler.py` | 711 | 31757 | `d1fda66979be4042` | partial | `src/structure_compile.rs; src/raptor.rs` | （v0.3.10g 审计：Compiler 主流程（711 行）；待对齐——worklist W-5（结构图/编译器/切分）） |
-| `rag/flow/compiler/schema.py` | 35 | 1472 | `484e706b850564f8` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：Compiler schema；待对齐——worklist W-5（结构图/编译器/切分）） |
+| `rag/flow/compiler/__init__.py` | 18 | 725 | `c211f972f3930d1d` | full | `src/compiler.rs` | Compiler 包接口（Compiler/CompilerParam 重导出语义）映射到 src/compiler.rs：CompilerParam.check 单数组 id 优先 + 传统复数回退归一化（v0.3.10w；11 项单测全绿） |
+| `rag/flow/compiler/compiler.py` | 711 | 31757 | `d1fda66979be4042` | full | `src/compiler.rs; src/api/compilation_templates.rs; src/pipeline/flow.rs; src/raptor.rs` | v0.3.10w：711 行全部入档——slumber 两级切分（24 字符边界 + 段落→句级降级 + naive_merge 兜底）、markdown 块原子化（表格/fenced code）、原子 JSON 记录判定（table/image/bbox/img_id/html 表格/围栏代码）、rechunk 组形式化（source_chunk_ids 保留首个存在源、清 q_*_vec 与位置列）、小块合并（256 粗粒度下限）、上游归一化五路（chunks/json/markdown/text/html）、CompilerParam.check、_compile_language 三级回退、_compile_progress；编排（_invoke/_compile_tree_templates）由 pipeline/flow 合约 + compilation_templates REST + raptor 承载；fmt/clippy/11 项单测干净 |
+| `rag/flow/compiler/schema.py` | 35 | 1472 | `484e706b850564f8` | full | `src/compiler.rs` | CompilerFromUpstream（serde 别名 _created_time/_elapsed_time/json/markdown/text/html + deny_unknown_fields、populate-by-name 语义）+ CompilerOutputFormat 五值枚举 + 别名/未知字段/五格式往返单测（v0.3.10w） |
 | `rag/flow/extractor/__init__.py` | 15 | 621 | `b4663378e881bfc6` | full | `src/extractor.rs` | statistical key-term extractor (tf/position/POS-proxy scoring, CJK n-gram) |
 | `rag/flow/extractor/extractor.py` | 124 | 5013 | `0592eccde93a97e2` | full | `src/extractor.rs` | statistical key-term extractor (tf/position/POS-proxy scoring, CJK n-gram) [v0.27.2 content changed: re-audit] |
 | `rag/flow/extractor/schema.py` | 38 | 1612 | `0a9404e333c61dfd` | full | `src/extractor.rs` | statistical key-term extractor (tf/position/POS-proxy scoring, CJK n-gram) |

@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：75（UI 残留 42 + 实施队列 33）
+- partial：71（UI 残留 42 + 实施队列 29）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -60,15 +60,11 @@
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/think_log.py` | 95 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：思考日志；待移植——worklist W-4（agentic harness）） |
 
-### W-5 结构图/编译器/切分（6 项）
+### W-5 结构图/编译器/切分（2 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `agent/templates/compiler.json` | 447 | `src/agent_templates.rs; src/structure_compile.rs` | （v0.3.10g 审计：DSL-only Compiler 流程模板；RayRAG 编译模板流程就位，该内置模板未接入——worklist W-5（结构图/编译器/切分）） |
 | `api/apps/services/structure_graph_common.py` | 598 | `src/graphrag_enhanced.rs; src/hypergraph.rs` | （v0.3.10g 审计：结构图子图采样服务；RayRAG 图谱管线部分就位，采样端点待对齐——worklist W-5（结构图/编译器/切分）） |
-| `rag/flow/compiler/__init__.py` | 18 | `src/structure_compile.rs; src/raptor.rs` | （v0.3.10g 审计：Compiler 流程包；RayRAG 编译模板/管线部分就位（raptor、structure_compile），compiler 流程待对齐——worklist W-5（结构图/编译器/切分）） |
-| `rag/flow/compiler/compiler.py` | 711 | `src/structure_compile.rs; src/raptor.rs` | （v0.3.10g 审计：Compiler 主流程（711 行）；待对齐——worklist W-5（结构图/编译器/切分）） |
-| `rag/flow/compiler/schema.py` | 35 | `src/structure_compile.rs` | （v0.3.10g 审计：Compiler schema；待对齐——worklist W-5（结构图/编译器/切分）） |
 | `rag/svr/task_executor_refactor/dataset_structure_merger.py` | 1027 | `src/graphrag_enhanced.rs; src/structure_compile.rs` | （v0.3.10g 审计：数据集级结构图合并任务（增量/分桶）；待移植——worklist W-5（结构图/编译器/切分）） |
 
 ### W-6 沙箱提供商与鉴权（0 项）
