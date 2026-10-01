@@ -4874,6 +4874,182 @@ pub(crate) fn value_is_truthy(value: &Value) -> bool {
     }
 }
 
+// ── `structure.py` gaps A1 (v0.3.10ah) ─────────────────────────────────────
+
+/// `_RechunkedDocs`: compiled rows plus the formal chunks created by rechunking.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RechunkedDocs {
+    pub docs: Vec<Value>,
+    pub rechunked_chunks: Vec<Value>,
+}
+
+impl RechunkedDocs {
+    /// `_RechunkedDocs(docs=None, rechunked_chunks=None)`.
+    pub fn new(docs: Vec<Value>, rechunked_chunks: Vec<Value>) -> Self {
+        Self {
+            docs,
+            rechunked_chunks,
+        }
+    }
+}
+
+/// `_struct_merge_lock_key`.
+pub fn struct_merge_lock_key(kb_id: &str, compilation_template_id: Option<&str>) -> String {
+    format!(
+        "struct_merge:{kb_id}:{}",
+        compilation_template_id.unwrap_or("")
+    )
+}
+
+/// `_STRUCT_INVALID_SENTINELS`.
+pub const STRUCT_INVALID_SENTINELS: [&str; 1] = ["-1"];
+
+/// `_struct_is_invalid_sentinel`.
+pub fn struct_is_invalid_sentinel(value: &Value) -> bool {
+    value
+        .as_str()
+        .map(|text| STRUCT_INVALID_SENTINELS.contains(&text.trim()))
+        .unwrap_or(false)
+}
+
+/// `_struct_expand_source_chunk_ids`: expand compact positional ids such as
+/// `t1-t3` (descending ranges allowed); unknown ids are dropped.
+pub fn struct_expand_source_chunk_ids(
+    raw_ids: &Value,
+    source_texts: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let values: Vec<Value> = match raw_ids {
+        Value::String(_) => vec![raw_ids.clone()],
+        Value::Array(items) => items.clone(),
+        _ => return Vec::new(),
+    };
+    let range_re = regex::Regex::new(r"(?i)^t(\d+)\s*-\s*t(\d+)$").expect("range regex");
+    let mut expanded: Vec<String> = Vec::new();
+    for raw in values {
+        let value = match &raw {
+            Value::String(text) => text.trim().to_string(),
+            other => other.to_string().trim().to_string(),
+        };
+        let chunk_ids: Vec<String> = if let Some(captures) = range_re.captures(&value) {
+            let start: i64 = captures[1].parse().unwrap_or(0);
+            let end: i64 = captures[2].parse().unwrap_or(0);
+            let step = if start <= end { 1 } else { -1 };
+            let mut ids = Vec::new();
+            let mut index = start;
+            loop {
+                ids.push(format!("t{index}"));
+                if index == end {
+                    break;
+                }
+                index += step;
+            }
+            ids
+        } else {
+            vec![value]
+        };
+        for chunk_id in chunk_ids {
+            if source_texts.contains_key(&chunk_id)
+                && !expanded.iter().any(|existing| existing == &chunk_id)
+            {
+                expanded.push(chunk_id);
+            }
+        }
+    }
+    expanded
+}
+
+/// `_struct_payload_chunk_ids`: model-selected ids that belong to this batch
+/// (falls back to the whole batch when none survive).
+pub fn struct_payload_chunk_ids(payload: &Value, batch_ids: &[String]) -> Vec<String> {
+    let raw_ids: Vec<Value> = match payload.get("source_chunk_ids") {
+        Some(Value::String(_)) => vec![payload.get("source_chunk_ids").cloned().unwrap()],
+        Some(Value::Array(items)) => items.clone(),
+        _ => Vec::new(),
+    };
+    let mut selected: Vec<String> = Vec::new();
+    for raw in raw_ids {
+        let chunk_id = match &raw {
+            Value::String(text) => text.trim().to_string(),
+            other => other.to_string().trim().to_string(),
+        };
+        if batch_ids.iter().any(|batch| batch == &chunk_id)
+            && !selected.iter().any(|existing| existing == &chunk_id)
+        {
+            selected.push(chunk_id);
+        }
+    }
+    if selected.is_empty() {
+        batch_ids.to_vec()
+    } else {
+        selected
+    }
+}
+
+/// `_struct_merge_graph_relations`: dedupe relation payloads on
+/// `(from, to, type|related)` (case-folded), unioning `doc_ids_kwd`.
+pub fn struct_merge_graph_relations(relations: &[Value]) -> Vec<Value> {
+    let mut merged: std::collections::HashMap<(String, String, String), Value> =
+        std::collections::HashMap::new();
+    let mut order: Vec<(String, String, String)> = Vec::new();
+    for relation in relations {
+        let key = (
+            relation
+                .get("from")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_lowercase(),
+            relation
+                .get("to")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_lowercase(),
+            relation
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("related")
+                .trim()
+                .to_lowercase(),
+        );
+        if key.0.is_empty() || key.1.is_empty() {
+            continue;
+        }
+        match merged.get_mut(&key) {
+            None => {
+                merged.insert(key.clone(), relation.clone());
+                order.push(key);
+            }
+            Some(target) => {
+                let mut doc_ids: Vec<String> = Vec::new();
+                for source in [target.get("doc_ids_kwd"), relation.get("doc_ids_kwd")] {
+                    if let Some(items) = source.and_then(Value::as_array) {
+                        for item in items {
+                            if let Some(text) = item.as_str() {
+                                if !doc_ids.iter().any(|existing| existing == text) {
+                                    doc_ids.push(text.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                if !doc_ids.is_empty() {
+                    if let Some(map) = target.as_object_mut() {
+                        map.insert(
+                            "doc_ids_kwd".to_string(),
+                            Value::Array(doc_ids.into_iter().map(Value::String).collect()),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|key| merged.remove(&key))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6156,5 +6332,96 @@ mod runner_tests {
             run_structure_compile_over_batches(&backend, request).await,
             Err(RunnerError::Cancelled)
         );
+    }
+}
+#[cfg(test)]
+mod struct_gap_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn lock_key_and_sentinel() {
+        assert_eq!(
+            struct_merge_lock_key("kb1", Some("t1")),
+            "struct_merge:kb1:t1"
+        );
+        assert_eq!(struct_merge_lock_key("kb1", None), "struct_merge:kb1:");
+        assert!(struct_is_invalid_sentinel(&json!(" -1 ")));
+        assert!(!struct_is_invalid_sentinel(&json!("-2")));
+        assert!(!struct_is_invalid_sentinel(&json!(1)));
+    }
+
+    #[test]
+    fn expand_source_chunk_ids_ranges() {
+        let mut texts = HashMap::new();
+        for id in ["t1", "t2", "t3", "t4"] {
+            texts.insert(id.to_string(), "text".to_string());
+        }
+        assert_eq!(
+            struct_expand_source_chunk_ids(&json!("t1-t3"), &texts),
+            vec!["t1", "t2", "t3"]
+        );
+        assert_eq!(
+            struct_expand_source_chunk_ids(&json!(["T4-T2"]), &texts),
+            vec!["t4", "t3", "t2"],
+            "descending ranges and case-insensitive prefixes"
+        );
+        assert_eq!(
+            struct_expand_source_chunk_ids(&json!(["t9", "t1", "t1"]), &texts),
+            vec!["t1"],
+            "unknown ids dropped, duplicates removed"
+        );
+        assert!(struct_expand_source_chunk_ids(&json!(5), &texts).is_empty());
+    }
+
+    #[test]
+    fn payload_chunk_ids_filters_and_falls_back() {
+        let batch = vec!["c1".to_string(), "c2".to_string()];
+        let payload = json!({"source_chunk_ids": ["c2", "c9", "c2"]});
+        assert_eq!(struct_payload_chunk_ids(&payload, &batch), vec!["c2"]);
+        assert_eq!(
+            struct_payload_chunk_ids(&json!({}), &batch),
+            batch.clone(),
+            "no selection -> whole batch"
+        );
+        assert_eq!(
+            struct_payload_chunk_ids(&json!({"source_chunk_ids": ["c9"]}), &batch),
+            batch,
+            "nothing survives -> whole batch"
+        );
+        assert_eq!(
+            struct_payload_chunk_ids(&json!({"source_chunk_ids": "c1"}), &["c1".to_string()]),
+            vec!["c1"]
+        );
+    }
+
+    #[test]
+    fn merge_graph_relations_unions_doc_ids() {
+        let relations = vec![
+            json!({"from": "Alpha", "to": "Beta", "type": "owns", "doc_ids_kwd": ["d1"]}),
+            json!({"from": " alpha ", "to": "BETA", "type": "OWNS", "doc_ids_kwd": ["d1", "d2"]}),
+            json!({"from": "", "to": "Beta", "type": "x"}),
+            json!({"from": "Gamma", "to": "Delta", "type": "likes"}),
+        ];
+        let merged = struct_merge_graph_relations(&relations);
+        assert_eq!(
+            merged.len(),
+            2,
+            "folded pair + untouched pair; blank from dropped"
+        );
+        assert_eq!(merged[0]["from"], json!("Alpha"));
+        assert_eq!(merged[0]["doc_ids_kwd"], json!(["d1", "d2"]));
+        assert_eq!(merged[0]["type"], json!("owns"), "first payload wins");
+        assert_eq!(merged[1]["type"], json!("likes"));
+    }
+
+    #[test]
+    fn rechunked_docs_defaults() {
+        let docs = RechunkedDocs::new(vec![json!({"id": "r1"})], Vec::new());
+        assert_eq!(docs.docs.len(), 1);
+        assert!(docs.rechunked_chunks.is_empty());
+        let empty = RechunkedDocs::default();
+        assert!(empty.docs.is_empty());
     }
 }
