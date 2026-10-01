@@ -2352,6 +2352,491 @@ pub async fn run_session_loop(
     }
 }
 
+// ── Deterministic navigation prefix (upstream `_NavRule` / `_NavContext` /
+// `_run_drill_merge` / `_NAV_RULES` / `_emit_nav_pair` / `_run_nav_chain` /
+// `run_nav_prefix` / `_extract_relevant_evidence`) ──────────────────────────
+
+/// The navigation ladder is armed at v0.27.2 (`_NAV_RULES_ENABLED = True`).
+pub const NAV_RULES_ENABLED: bool = true;
+/// Share of the session deadline the prefix may spend; the ReAct loop keeps the rest.
+pub const NAV_PREFIX_BUDGET_RATIO: f64 = 0.35;
+/// Per-call ceiling so one slow navigation cannot swallow the whole prefix.
+pub const NAV_PREFIX_CALL_TIMEOUT_S: f64 = 25.0;
+/// Cap on the nav-hint text fed back into retrieval as BM25 keywords.
+pub const NAV_HINT_CHARS: usize = 600;
+/// The first ladder rung.
+pub const NAV_START_RULE: &str = "locate";
+
+/// `_NavRule.mode`: AUTO steps run in code; LLM steps hand control back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavMode {
+    Auto,
+    Llm,
+}
+
+/// One step of the navigation chain.
+#[derive(Debug, Clone)]
+pub struct NavRule {
+    pub id: &'static str,
+    pub tool: &'static str,
+    pub mode: NavMode,
+    /// `status -> next rule id`; a missing key (or `""`) ends the chain.
+    pub next: &'static [(&'static str, &'static str)],
+}
+
+impl NavRule {
+    /// ``next.get(status, "")``.
+    pub fn next_rule(&self, status: &str) -> &'static str {
+        self.next
+            .iter()
+            .find(|(key, _)| *key == status)
+            .map(|(_, value)| *value)
+            .unwrap_or("")
+    }
+}
+
+/// The per-slot strategy ladder (upstream `_NAV_RULES`).
+///
+/// ``locate`` navigate_tree → route to top-n docs; ``drill`` retrieve+merge →
+/// whole-corpus retrieve (nav summaries as a soft BM25 hint) + structure paths
+/// merged on chunk_id + routed-doc chunks re-ranked to the top; ``global``
+/// retrieve → the safety net when drill itself comes back empty.
+pub const NAV_RULES: [NavRule; 3] = [
+    NavRule {
+        id: "locate",
+        tool: "navigate_tree",
+        mode: NavMode::Auto,
+        next: &[
+            (OUTCOME_OK, "drill"),
+            (OUTCOME_MISS, "global"),
+            (OUTCOME_EMPTY, "global"),
+            (OUTCOME_POOR, "global"),
+            (OUTCOME_ERROR, "global"),
+        ],
+    },
+    NavRule {
+        id: "drill",
+        tool: "navigate_structure",
+        mode: NavMode::Auto,
+        // drill returns OK with the merged, re-ranked evidence; only an empty
+        // whole-corpus result (MISS) or an infra failure falls through to global.
+        next: &[
+            (OUTCOME_OK, ""),
+            (OUTCOME_MISS, "global"),
+            (OUTCOME_EMPTY, "global"),
+            (OUTCOME_ERROR, "global"),
+        ],
+    },
+    NavRule {
+        id: "global",
+        tool: "retrieve",
+        mode: NavMode::Auto,
+        next: &[],
+    },
+];
+
+/// `_nav_rule_by_id`.
+pub fn nav_rule_by_id(id: &str) -> Option<&'static NavRule> {
+    NAV_RULES.iter().find(|rule| rule.id == id)
+}
+
+/// The `args` lambdas of the three rules (`"query": direction`, list form for
+/// `retrieve`) — also used for display when the drill step composes internally.
+pub fn nav_rule_args(rule_id: &str, ctx: &NavContext) -> Value {
+    if rule_id == "global" {
+        serde_json::json!({"query": [ctx.direction]})
+    } else {
+        serde_json::json!({"query": ctx.direction})
+    }
+}
+
+/// Mutable state threaded through the navigation chain.
+#[derive(Debug, Clone, Default)]
+pub struct NavContext {
+    pub direction: String,
+    /// The routed scope (doc_ids, for validate-against checks).
+    pub known_docs: Vec<String>,
+    /// Each routed doc's OVERALL SUMMARY — the hint that feeds retrieval as a
+    /// soft boost instead of a hard filter ("nav is a hint, not a constraint").
+    pub routed_docs: Vec<(String, String)>,
+    /// The joined summaries used as retrieval keywords.
+    pub nav_hint: String,
+}
+
+fn parse_routed_docs(value: Option<&Value>) -> Vec<(String, String)> {
+    value
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    let pair = row.as_array()?;
+                    Some((
+                        pair.first()?.as_str()?.to_string(),
+                        pair.get(1)?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `_run_drill_merge`: corpus retrieve for REAL chunks + the root->chunk
+/// structure paths from navigate_structure, MERGED on chunk_id so every
+/// retrieved chunk carries its hierarchy context.
+///
+/// **Nav is a hint, not a constraint.** Retrieval runs over the WHOLE corpus
+/// (no doc_scope filter), the routed docs' summaries ride along as BM25
+/// `keywords` (soft boost), and the returned chunks are re-ranked so routed-doc
+/// chunks float to the top while non-routed chunks stay below.
+pub async fn run_drill_merge(
+    runtime: &ActionRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    ctx: &NavContext,
+    available: &HashSet<String>,
+    budget_s: f64,
+) -> ToolOutcome {
+    // The host enforces the per-call ceiling `min(NAV_PREFIX_CALL_TIMEOUT_S, budget_s)`.
+    let _ = budget_s;
+    let mut merged: Vec<Value> = Vec::new();
+    let mut evidence_ids: Vec<String> = Vec::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
+
+    // 1. Skeleton A: whole-corpus retrieval, softly boosted by the nav hints.
+    let ret_oc = exec_retrieve(
+        runtime.search,
+        kbinfos,
+        &[ctx.direction.clone()],
+        None,
+        &ctx.nav_hint,
+    )
+    .await;
+    for cid in &ret_oc.evidence_ids {
+        if seen_ids.insert(cid.clone()) {
+            evidence_ids.push(cid.clone());
+        }
+    }
+    let routed_ids: HashSet<String> = ctx.known_docs.iter().cloned().collect();
+
+    // 2. Supplement B: root->chunk paths from EVERY routed doc's structure.
+    let mut paths: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if available.contains("navigate_structure") && !ctx.known_docs.is_empty() {
+        for doc_id in &ctx.known_docs {
+            let args = serde_json::json!({
+                "doc_id": doc_id,
+                "query": ctx.direction,
+                "kind": "catalog",
+            });
+            let s_oc = execute_tool(
+                runtime,
+                kbinfos,
+                &HashSet::new(),
+                "navigate_structure",
+                &args,
+            )
+            .await;
+            for d in &s_oc.evidence_ids {
+                if seen_ids.insert(d.clone()) {
+                    evidence_ids.push(d.clone());
+                }
+            }
+            if let Some(map) = s_oc.metrics.get("chunk_paths").and_then(Value::as_object) {
+                for (cid, path) in map {
+                    if !cid.is_empty() && !paths.contains_key(cid) {
+                        paths.insert(
+                            cid.clone(),
+                            path.as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| path.to_string()),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Merge: skeleton A is the base; attach structure_path where ids align.
+    //    Re-rank so routed-doc chunks float to the top WITHOUT deleting the rest.
+    for passage in &ret_oc.payload {
+        if !passage.is_object() {
+            merged.push(serde_json::json!({
+                "content": passage
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| passage.to_string()),
+            }));
+            continue;
+        }
+        let mut entry = passage.clone();
+        let cid = entry.get("id").and_then(Value::as_str).map(str::to_string);
+        if let Some(cid) = cid {
+            if let Some(path) = paths.get(&cid) {
+                entry["structure_path"] = serde_json::json!(path);
+            }
+        }
+        let doc = entry
+            .get("doc_id")
+            .and_then(Value::as_str)
+            .or_else(|| entry.get("document_id").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
+        entry["nav_rank"] = serde_json::json!(if routed_ids.contains(&doc) { 0 } else { 1 });
+        merged.push(entry);
+    }
+    merged.sort_by_key(|entry| entry.get("nav_rank").and_then(Value::as_i64).unwrap_or(1));
+
+    if merged.is_empty() {
+        let mut metrics = serde_json::Map::new();
+        metrics.insert("hits".to_string(), serde_json::json!(0));
+        return ToolOutcome {
+            payload: Vec::new(),
+            evidence_ids,
+            status: OUTCOME_MISS.to_string(),
+            reason: "no_doc".to_string(),
+            metrics,
+        };
+    }
+    let hits = merged.len();
+    let mut metrics = serde_json::Map::new();
+    metrics.insert("hits".to_string(), serde_json::json!(hits));
+    metrics.insert("routed".to_string(), serde_json::json!(routed_ids.len()));
+    ToolOutcome {
+        payload: merged,
+        evidence_ids,
+        status: OUTCOME_OK.to_string(),
+        reason: String::new(),
+        metrics,
+    }
+}
+
+/// `_emit_nav_pair`: append one completed assistant/tool exchange. The pair
+/// MUST be well formed — every tool_call needs its tool response. `max_chars`
+/// caps the serialized payload (0 = uncapped); the truncation keeps at least
+/// 800 characters. Returns the characters actually added.
+pub fn emit_nav_pair(
+    messages: &mut Vec<Value>,
+    call_id: &str,
+    tool: &str,
+    args: &Value,
+    oc: &ToolOutcome,
+    max_chars: usize,
+) -> usize {
+    let mut payload = serde_json::json!({"passages": oc.payload}).to_string();
+    if max_chars > 0 && payload.chars().count() > max_chars {
+        let keep = max_chars.max(800);
+        payload = payload.chars().take(keep).collect();
+    }
+    let added = payload.chars().count();
+    messages.push(serde_json::json!({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": call_id,
+            "type": "function",
+            "function": {"name": tool, "arguments": args.to_string()},
+        }],
+    }));
+    messages.push(serde_json::json!({
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": payload,
+    }));
+    added
+}
+
+/// Run `NAV_RULES` from `start_id`, stopping at the first LLM step. AUTO steps
+/// are executed here; an LLM step is returned without being run. Returns the
+/// id of the rule control now rests on (`""` when finished or abandoned).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_nav_chain(
+    runtime: &ActionRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    ctx: &mut NavContext,
+    start_id: &str,
+    budget_s: f64,
+    available: &HashSet<String>,
+    messages: &mut Vec<Value>,
+    evidence_ids: &mut Vec<String>,
+    outcomes: &mut Vec<Value>,
+    id_prefix: &str,
+    max_chars: usize,
+) -> String {
+    let started = std::time::Instant::now();
+    let mut spent = 0usize;
+    let mut rule_id = start_id.to_string();
+    while !rule_id.is_empty() {
+        let Some(rule) = nav_rule_by_id(&rule_id) else {
+            break;
+        };
+        if !available.contains(rule.tool) {
+            break;
+        }
+        if rule.mode == NavMode::Llm {
+            return rule_id; // hand control back: the model must decide
+        }
+        let remaining = budget_s - started.elapsed().as_secs_f64();
+        if remaining <= 1.0 {
+            break;
+        }
+        let args = nav_rule_args(rule.id, ctx);
+        let oc = if rule.id == "drill" {
+            // A composed step owns its own tool calls; it only needs the budget.
+            run_drill_merge(runtime, kbinfos, ctx, available, remaining.max(5.0)).await
+        } else {
+            execute_tool(runtime, kbinfos, &HashSet::new(), rule.tool, &args).await
+        };
+        outcomes.push(serde_json::json!({
+            "name": rule.tool,
+            "status": oc.status.clone(),
+            "reason": oc.reason.clone(),
+            "metrics": oc.metrics.clone(),
+        }));
+        if rule.tool == "navigate_tree" && oc.status == OUTCOME_OK {
+            // Routed docs become the validated scope for every later step.
+            if let Some(doc_ids) = oc
+                .payload
+                .first()
+                .and_then(|passage| passage.get("doc_ids"))
+                .and_then(Value::as_array)
+            {
+                for doc in doc_ids {
+                    if let Some(doc) = doc.as_str() {
+                        if !doc.is_empty() && !ctx.known_docs.iter().any(|known| known == doc) {
+                            ctx.known_docs.push(doc.to_string());
+                        }
+                    }
+                }
+            }
+            // Keep the routed docs WITH their summaries: the hint used to boost
+            // (not filter) retrieval for the drilled docs.
+            ctx.routed_docs = parse_routed_docs(oc.metrics.get("routed_docs"));
+            let hints: Vec<String> = ctx
+                .routed_docs
+                .iter()
+                .filter_map(|(_, summary)| {
+                    if summary.is_empty() {
+                        None
+                    } else {
+                        Some(summary.clone())
+                    }
+                })
+                .collect();
+            if !hints.is_empty() {
+                ctx.nav_hint = hints.join(" ").chars().take(NAV_HINT_CHARS).collect();
+            }
+        }
+        evidence_ids.extend(oc.evidence_ids.iter().cloned());
+        spent += emit_nav_pair(
+            messages,
+            &format!("{id_prefix}_{}", rule.id),
+            rule.tool,
+            &args,
+            &oc,
+            max_chars,
+        );
+        rule_id = rule.next_rule(&oc.status).to_string();
+    }
+    let _ = spent;
+    rule_id
+}
+
+/// `run_nav_prefix`: run the navigation ladder up to the first model-driven
+/// step. Returns ``(messages, evidence_ids, outcomes, pending_rule_id)`` — the
+/// messages are completed assistant/tool pairs ready to seed the session
+/// history. Returns empty results when navigation is unavailable — the ladder
+/// is an optimisation, never a precondition for the session to run.
+///
+/// `available` is the caller's `_nav_tool_surface` (the `active_tool_specs`
+/// name set with the mode/web/disabled gates already applied).
+pub async fn run_nav_prefix(
+    runtime: &ActionRuntime<'_>,
+    kbinfos: &mut Kbinfos,
+    direction: &str,
+    deadline_left: Option<f64>,
+    available: &HashSet<String>,
+    ctx: Option<&mut NavContext>,
+) -> (Vec<Value>, Vec<String>, Vec<Value>, String) {
+    if available.is_empty() || !available.contains("navigate_tree") {
+        return (Vec::new(), Vec::new(), Vec::new(), String::new());
+    }
+    let mut owned;
+    let ctx: &mut NavContext = match ctx {
+        Some(ctx) => ctx,
+        None => {
+            owned = NavContext {
+                direction: direction.to_string(),
+                ..NavContext::default()
+            };
+            &mut owned
+        }
+    };
+    let mut messages: Vec<Value> = Vec::new();
+    let mut evidence_ids: Vec<String> = Vec::new();
+    let mut outcomes: Vec<Value> = Vec::new();
+    let budget = (deadline_left.unwrap_or(ACTION_TIMEOUT_S) * NAV_PREFIX_BUDGET_RATIO).max(5.0);
+    let pending = run_nav_chain(
+        runtime,
+        kbinfos,
+        ctx,
+        NAV_START_RULE,
+        budget,
+        available,
+        &mut messages,
+        &mut evidence_ids,
+        &mut outcomes,
+        "nav",
+        0,
+    )
+    .await;
+    (messages, evidence_ids, outcomes, pending)
+}
+
+/// `_extract_relevant_evidence`: chunks of the pool relevant to `direction`
+/// (per-token substring hits, stable ranking), for seed-user injection.
+pub fn extract_relevant_evidence(kbinfos: &Kbinfos, direction: &str, max_chunks: usize) -> String {
+    let chunks = &kbinfos.chunks;
+    if chunks.is_empty() {
+        return String::new();
+    }
+    let token_re = Regex::new(r"[a-zA-Z0-9\u{4e00}-\u{9fff}]{2,}").expect("token regex");
+    let lowered = direction.to_lowercase();
+    let dir_tokens: HashSet<String> = token_re
+        .find_iter(&lowered)
+        .map(|m| m.as_str().to_string())
+        .collect();
+    let mut ranked: Vec<&Value> = if dir_tokens.is_empty() {
+        let start = chunks.len().saturating_sub(max_chunks);
+        chunks[start..].iter().collect()
+    } else {
+        let mut scored: Vec<(usize, &Value)> = chunks
+            .iter()
+            .map(|chunk| {
+                let text = chunk_utils::chunk_text(chunk).to_lowercase();
+                let rel = dir_tokens
+                    .iter()
+                    .filter(|token| text.contains(token.as_str()))
+                    .count();
+                (rel, chunk)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.into_iter().map(|(_, chunk)| chunk).collect()
+    };
+    ranked.truncate(max_chunks);
+    let lines: Vec<String> = ranked
+        .iter()
+        .map(|chunk| {
+            let cid = chunk_utils::chunk_id(chunk);
+            let text: String = chunk_utils::chunk_text(chunk)
+                .chars()
+                .take(300)
+                .collect::<String>()
+                .replace('\n', " ");
+            format!("[{cid}] {text}")
+        })
+        .collect();
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod loop_tests {
     use super::*;
@@ -3084,5 +3569,306 @@ mod session_loop_tests {
             1,
             "finalize harvest keeps breadcrumbs"
         );
+    }
+}
+#[cfg(test)]
+mod nav_prefix_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    fn chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    struct NavMockSearch {
+        grep: Vec<Value>,
+        keywords: Mutex<Vec<Option<String>>>,
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for NavMockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            keywords: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            self.keywords
+                .lock()
+                .unwrap()
+                .push(keywords.map(str::to_string));
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct NavMockTools {
+        tree: NavResult,
+        structure: NavResult,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for NavMockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.tree.clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.structure.clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    fn ctx_fixture() -> NavContext {
+        NavContext {
+            direction: "alpha topic".to_string(),
+            known_docs: vec!["d1".to_string()],
+            routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+            nav_hint: "routed summary".to_string(),
+        }
+    }
+
+    #[test]
+    fn nav_rules_table_matches_upstream() {
+        assert!(NAV_RULES_ENABLED);
+        assert_eq!(NAV_START_RULE, "locate");
+        assert_eq!(NAV_RULES.len(), 3);
+        assert_eq!(NAV_RULES[0].id, "locate");
+        assert_eq!(NAV_RULES[0].tool, "navigate_tree");
+        assert_eq!(NAV_RULES[1].id, "drill");
+        assert_eq!(NAV_RULES[1].tool, "navigate_structure");
+        assert_eq!(NAV_RULES[2].id, "global");
+        assert_eq!(NAV_RULES[2].tool, "retrieve");
+        assert!(NAV_RULES.iter().all(|rule| rule.mode == NavMode::Auto));
+        assert_eq!(NAV_RULES[0].next_rule(OUTCOME_OK), "drill");
+        assert_eq!(NAV_RULES[0].next_rule(OUTCOME_MISS), "global");
+        assert_eq!(NAV_RULES[0].next_rule(OUTCOME_POOR), "global");
+        assert_eq!(NAV_RULES[1].next_rule(OUTCOME_OK), "");
+        assert_eq!(NAV_RULES[1].next_rule(OUTCOME_EMPTY), "global");
+        assert_eq!(NAV_RULES[2].next_rule(OUTCOME_OK), "");
+        assert_eq!(
+            NAV_RULES[0].next_rule(OUTCOME_REDUNDANT),
+            "",
+            "unmapped statuses end the chain"
+        );
+    }
+
+    #[tokio::test]
+    async fn drill_merge_soft_boosts_and_reranks() {
+        let search = NavMockSearch {
+            grep: vec![
+                chunk("cB", "beta text", "d9"),
+                chunk("cA", "alpha text", "d1"),
+            ],
+            keywords: Mutex::new(Vec::new()),
+        };
+        let tools = NavMockTools {
+            tree: NavResult::default(),
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: HashMap::from([("cA".to_string(), "Root > A".to_string())]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let ctx = ctx_fixture();
+        let available: HashSet<String> = ["retrieve".to_string(), "navigate_structure".to_string()]
+            .into_iter()
+            .collect();
+        let oc = run_drill_merge(&runtime, &mut kbinfos, &ctx, &available, 10.0).await;
+        assert_eq!(oc.status, OUTCOME_OK);
+        assert_eq!(oc.payload.len(), 2);
+        assert_eq!(oc.payload[0]["id"], "cA", "routed chunk floats to the top");
+        assert_eq!(oc.payload[0]["nav_rank"], 0);
+        assert_eq!(oc.payload[0]["structure_path"], "Root > A");
+        assert_eq!(oc.payload[1]["id"], "cB", "non-routed chunk stays below");
+        assert_eq!(oc.payload[1]["nav_rank"], 1);
+        assert!(oc.payload[1].get("structure_path").is_none());
+        assert!(oc.evidence_ids.contains(&"cA".to_string()));
+        assert!(oc.evidence_ids.contains(&"d1".to_string()));
+        let keywords = search.keywords.lock().unwrap();
+        assert_eq!(
+            keywords[0].as_deref(),
+            Some("routed summary"),
+            "nav hint is a soft BM25 boost"
+        );
+    }
+
+    #[tokio::test]
+    async fn nav_chain_locates_then_drills_to_completion() {
+        let search = NavMockSearch {
+            grep: vec![chunk("cA", "alpha text", "d1")],
+            keywords: Mutex::new(Vec::new()),
+        };
+        let tools = NavMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+                ..NavResult::default()
+            },
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: HashMap::from([("cA".to_string(), "Root > A".to_string())]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mut ctx = NavContext {
+            direction: "alpha topic".to_string(),
+            ..NavContext::default()
+        };
+        let available: HashSet<String> = [
+            "navigate_tree".to_string(),
+            "retrieve".to_string(),
+            "navigate_structure".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let mut messages: Vec<Value> = Vec::new();
+        let mut evidence_ids: Vec<String> = Vec::new();
+        let mut outcomes: Vec<Value> = Vec::new();
+        let pending = run_nav_chain(
+            &runtime,
+            &mut kbinfos,
+            &mut ctx,
+            NAV_START_RULE,
+            30.0,
+            &available,
+            &mut messages,
+            &mut evidence_ids,
+            &mut outcomes,
+            "nav",
+            0,
+        )
+        .await;
+        assert_eq!(pending, "", "drill OK ends the ladder");
+        assert_eq!(ctx.known_docs, vec!["d1".to_string()]);
+        assert_eq!(
+            ctx.routed_docs,
+            vec![("d1".to_string(), "routed summary".to_string())]
+        );
+        assert_eq!(ctx.nav_hint, "routed summary");
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0]["name"], "navigate_tree");
+        assert_eq!(outcomes[1]["name"], "navigate_structure");
+        assert_eq!(messages.len(), 4, "two completed assistant/tool pairs");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "nav_locate");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "nav_drill");
+        assert!(evidence_ids.contains(&"cA".to_string()));
+        assert!(evidence_ids.contains(&"d1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn nav_prefix_requires_navigate_tree() {
+        let search = NavMockSearch {
+            grep: Vec::new(),
+            keywords: Mutex::new(Vec::new()),
+        };
+        let tools = NavMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let available: HashSet<String> = ["retrieve".to_string()].into_iter().collect();
+        let (messages, evidence_ids, outcomes, pending) =
+            run_nav_prefix(&runtime, &mut kbinfos, "q", Some(30.0), &available, None).await;
+        assert!(messages.is_empty() && evidence_ids.is_empty() && outcomes.is_empty());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn emit_nav_pair_caps_payload() {
+        let mut messages: Vec<Value> = Vec::new();
+        let oc = ToolOutcome::ok(
+            vec![json!({"id": "c1", "content": "x"})],
+            vec!["c1".to_string()],
+        );
+        let added = emit_nav_pair(
+            &mut messages,
+            "nav_global",
+            "retrieve",
+            &json!({"query": ["q"]}),
+            &oc,
+            0,
+        );
+        assert!(added > 0);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "nav_global");
+        let parsed: Value = serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["passages"][0]["id"], "c1");
+
+        let big = "y".repeat(2000);
+        let oc_big = ToolOutcome::ok(
+            vec![json!({"id": "c2", "content": big})],
+            vec!["c2".to_string()],
+        );
+        let mut capped: Vec<Value> = Vec::new();
+        let added = emit_nav_pair(
+            &mut capped,
+            "nav_global",
+            "retrieve",
+            &json!({}),
+            &oc_big,
+            100,
+        );
+        assert_eq!(added, 800, "max(max_chars, 800) keeps at least 800 chars");
+        assert_eq!(capped[1]["content"].as_str().unwrap().chars().count(), 800);
+    }
+
+    #[test]
+    fn extract_relevant_evidence_ranks_by_tokens() {
+        let mut kbinfos = Kbinfos::default();
+        kbinfos.chunks = vec![
+            chunk("c1", "alpha", "d1"),
+            chunk("c2", "gamma", "d1"),
+            chunk("c3", "alpha beta gamma", "d1"),
+        ];
+        let text = extract_relevant_evidence(&kbinfos, "alpha gamma", 4);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("[c3] "), "two token hits rank first");
+        assert!(lines[1].starts_with("[c1] "));
+        assert!(lines[2].starts_with("[c2] "));
+        let none = extract_relevant_evidence(&kbinfos, "", 2);
+        let lines: Vec<&str> = none.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(
+            lines[0].starts_with("[c2] "),
+            "no tokens -> the last chunks"
+        );
+        assert!(lines[1].starts_with("[c3] "));
+        assert!(extract_relevant_evidence(&Kbinfos::default(), "alpha", 4).is_empty());
     }
 }
