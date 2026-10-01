@@ -281,15 +281,15 @@ fn list_to_kv(value: &mut Value) {
                 let mut converted = Map::new();
                 let mut saw_pair = false;
                 for item in items.iter() {
-                    if let Some(pair) = item.as_array() {
-                        if pair.len() >= 2 {
-                            let pair_key = match &pair[0] {
-                                Value::String(text) => text.clone(),
-                                other => other.to_string(),
-                            };
-                            converted.insert(pair_key, pair[1].clone());
-                            saw_pair = true;
-                        }
+                    if let Some(pair) = item.as_array()
+                        && pair.len() >= 2
+                    {
+                        let pair_key = match &pair[0] {
+                            Value::String(text) => text.clone(),
+                            other => other.to_string(),
+                        };
+                        converted.insert(pair_key, pair[1].clone());
+                        saw_pair = true;
                     }
                 }
                 if saw_pair {

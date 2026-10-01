@@ -3708,6 +3708,176 @@ pub async fn upsert_row_by_id(
     }
 }
 
+// ── `_common.py` helpers (v0.3.10ah) ────────────────────────────────────────
+
+/// `env_int`: read a non-empty integer environment override, else `default`;
+/// values below `minimum` are clamped (logged upstream).
+pub fn env_int(name: &str, default: i64, minimum: Option<i64>) -> i64 {
+    let value = match std::env::var(name) {
+        Ok(raw) if !raw.trim().is_empty() => raw.trim().parse::<i64>().unwrap_or(default),
+        _ => default,
+    };
+    match minimum {
+        Some(floor) if value < floor => floor,
+        _ => value,
+    }
+}
+
+/// `env_float`: read a non-empty float override, else `default`; non-finite
+/// values fall back to `default`; the result is clamped to `[minimum, maximum]`.
+pub fn env_float(name: &str, default: f64, minimum: Option<f64>, maximum: Option<f64>) -> f64 {
+    let mut value = match std::env::var(name) {
+        Ok(raw) if !raw.trim().is_empty() => raw.trim().parse::<f64>().unwrap_or(default),
+        _ => default,
+    };
+    if !value.is_finite() {
+        value = default;
+    }
+    if let Some(floor) = minimum {
+        if value < floor {
+            value = floor;
+        }
+    }
+    if let Some(cap) = maximum {
+        if value > cap {
+            value = cap;
+        }
+    }
+    value
+}
+
+/// `knowledge_compile_gen_conf`: add model-specific reasoning controls for
+/// knowledge compilation. The port takes the resolved model name instead of
+/// the live bundle (`model_config.llm_name` / `llm_name`).
+pub fn knowledge_compile_gen_conf(
+    model_name: &str,
+    gen_conf: Option<&serde_json::Map<String, Value>>,
+) -> serde_json::Map<String, Value> {
+    let mut conf = gen_conf.cloned().unwrap_or_default();
+    let model_name = model_name.to_lowercase();
+    if model_name.contains("deepseek-v4") {
+        conf.insert(
+            "max_completion_tokens".to_string(),
+            serde_json::json!(32768),
+        );
+        let mut extra_body = conf
+            .get("extra_body")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        extra_body.insert(
+            "thinking".to_string(),
+            serde_json::json!({"type": "disabled"}),
+        );
+        conf.insert("extra_body".to_string(), Value::Object(extra_body));
+    } else if model_name.contains("qwen3") {
+        conf.insert(
+            "enable_thinking".to_string(),
+            Value::Bool(model_name.contains("-preview")),
+        );
+    } else {
+        conf.insert(
+            "reasoning_effort".to_string(),
+            Value::String("none".to_string()),
+        );
+    }
+    conf
+}
+
+/// `encode`: the `LLMBundle.encode` seam (`thread_pool_exec(embd_mdl.encode,
+/// texts)` in Python). Returns the embeddings list; empty input returns `[]`.
+#[async_trait::async_trait]
+pub trait EmbeddingBackend: Send + Sync {
+    async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String>;
+}
+
+/// `encode(embd_mdl, texts)`.
+pub async fn encode(
+    embed: &dyn EmbeddingBackend,
+    texts: &[String],
+) -> std::result::Result<Vec<Vec<f32>>, String> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+    embed.encode(texts).await
+}
+
+/// `make_input_budget`: `max_length * utilization - tokens(prompts)`, floored.
+pub fn make_input_budget(
+    max_length: usize,
+    prompts: &[&str],
+    floor: usize,
+    utilization: f64,
+) -> usize {
+    let overhead: usize = prompts
+        .iter()
+        .map(|prompt| crate::chunk::tokenizer::token_count(prompt))
+        .sum();
+    let budget = (max_length as f64 * utilization) as i64 - overhead as i64;
+    budget.max(floor as i64) as usize
+}
+
+// `ensure_llm_bundle` (Python duck-typing: unwrap a tuple result passed in
+// place of the bundle) has no Rust counterpart — the type system rejects a
+// tuple where a bundle is expected, so the defensive unwrap is intentionally
+// not ported (documented in the ledger note).
+
+/// `index_name(uid)`: `f"ragflow_{uid}"`.
+pub fn doc_store_index_name(uid: &str) -> String {
+    format!("ragflow_{uid}")
+}
+
+/// `doc_storage_search`: thin wrapper over `DocStore.search` + `get_fields`.
+/// Returns `{row_id: row}`; `{}` on failure.
+pub async fn doc_storage_search(
+    store: &dyn crate::doc_store::DocStore,
+    query: crate::doc_store::SearchQuery,
+    select_fields: &[String],
+) -> std::collections::HashMap<String, crate::doc_store::DocRow> {
+    match store.search(&query) {
+        Ok(response) => store.get_fields(&response, select_fields),
+        Err(_) => std::collections::HashMap::new(),
+    }
+}
+
+/// `doc_storage_insert`: bulk insert; best-effort (failures are swallowed
+/// after the upstream logs them).
+pub async fn doc_storage_insert(
+    store: &dyn crate::doc_store::DocStore,
+    rows: &[crate::doc_store::DocRow],
+    index_name: &str,
+    dataset_id: &str,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let _ = store.insert(rows, index_name, dataset_id);
+}
+
+/// `doc_storage_delete`: bulk delete; best-effort.
+pub async fn doc_storage_delete(
+    store: &dyn crate::doc_store::DocStore,
+    condition: &crate::doc_store::FilterCondition,
+    index_name: &str,
+    dataset_id: &str,
+) {
+    let _ = store.delete(condition, index_name, dataset_id);
+}
+
+/// `doc_storage_upsert_one`: delete-by-filter then insert (stable row ids make
+/// an id-based upsert the race fallback).
+pub async fn doc_storage_upsert_one(
+    store: &dyn crate::doc_store::DocStore,
+    filter_condition: &crate::doc_store::FilterCondition,
+    row: &crate::doc_store::DocRow,
+    tenant_id: &str,
+    kb_id: &str,
+) {
+    let index_name = doc_store_index_name(tenant_id);
+    doc_storage_delete(store, filter_condition, &index_name, kb_id).await;
+    doc_storage_insert(store, std::slice::from_ref(row), &index_name, kb_id).await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4434,5 +4604,247 @@ mod tests {
         assert_eq!(indices, vec![2, 3]);
         // Malformed / empty output yields no merges.
         assert!(parse_resolution_results("no delimiters here", 5, "##", "<|>", "&&").is_empty());
+    }
+}
+#[cfg(test)]
+mod common_helpers_tests {
+    use super::*;
+
+    fn set_env(key: &str, value: &str) {
+        // SAFETY: tests use unique variable names and do not rely on the
+        // process environment otherwise.
+        unsafe { std::env::set_var(key, value) }
+    }
+
+    fn clear_env(key: &str) {
+        unsafe { std::env::remove_var(key) }
+    }
+    use crate::doc_store::{DocRow, DocStore, FilterCondition, SearchQuery, SearchResponse};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[test]
+    fn env_int_and_float_read_and_clamp() {
+        set_env("RAYRAG_TEST_COMMON_INT", "12");
+        assert_eq!(env_int("RAYRAG_TEST_COMMON_INT", 5, None), 12);
+        set_env("RAYRAG_TEST_COMMON_INT", "2");
+        assert_eq!(env_int("RAYRAG_TEST_COMMON_INT", 5, Some(4)), 4, "floored");
+        set_env("RAYRAG_TEST_COMMON_INT", "not-a-number");
+        assert_eq!(
+            env_int("RAYRAG_TEST_COMMON_INT", 5, None),
+            5,
+            "invalid -> default"
+        );
+        set_env("RAYRAG_TEST_COMMON_INT", "  ");
+        assert_eq!(
+            env_int("RAYRAG_TEST_COMMON_INT", 5, None),
+            5,
+            "blank -> default"
+        );
+        clear_env("RAYRAG_TEST_COMMON_INT");
+        assert_eq!(env_int("RAYRAG_TEST_COMMON_INT", 7, None), 7);
+
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "0.25");
+        assert_eq!(env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, None, None), 0.25);
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "0.01");
+        assert_eq!(
+            env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, Some(0.1), None),
+            0.1
+        );
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "2.0");
+        assert_eq!(
+            env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, None, Some(1.0)),
+            1.0
+        );
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "nan");
+        assert_eq!(
+            env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, None, None),
+            0.5,
+            "non-finite -> default"
+        );
+        clear_env("RAYRAG_TEST_COMMON_FLOAT");
+    }
+
+    #[test]
+    fn gen_conf_model_branches() {
+        let deepseek = knowledge_compile_gen_conf("deepseek-v4-flash", None);
+        assert_eq!(deepseek["max_completion_tokens"], json!(32768));
+        assert_eq!(
+            deepseek["extra_body"]["thinking"]["type"],
+            json!("disabled")
+        );
+
+        let qwen = knowledge_compile_gen_conf("Qwen3-32B", None);
+        assert_eq!(qwen["enable_thinking"], json!(false));
+        let preview = knowledge_compile_gen_conf("qwen3.8-max-preview", None);
+        assert_eq!(preview["enable_thinking"], json!(true));
+
+        let other = knowledge_compile_gen_conf("gpt-4o", None);
+        assert_eq!(other["reasoning_effort"], json!("none"));
+
+        let mut base = serde_json::Map::new();
+        base.insert("temperature".to_string(), json!(0.1));
+        let kept = knowledge_compile_gen_conf("gpt-4o", Some(&base));
+        assert_eq!(kept["temperature"], json!(0.1));
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2]).collect())
+        }
+    }
+
+    struct FailingEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for FailingEmbed {
+        async fn encode(&self, _texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Err("boom".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn encode_seam_contract() {
+        assert!(encode(&MockEmbed, &[]).await.unwrap().is_empty());
+        let vectors = encode(&MockEmbed, &["a".to_string(), "b".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(vectors.len(), 2);
+        assert!(encode(&FailingEmbed, &["a".to_string()]).await.is_err());
+    }
+
+    #[test]
+    fn input_budget_math() {
+        let budget = make_input_budget(10_000, &[""], 1024, 0.5);
+        assert_eq!(budget, 5000, "empty prompts leave half the context");
+        let floored = make_input_budget(100, &[""], 1024, 0.5);
+        assert_eq!(floored, 1024);
+        let overhead = make_input_budget(10_000, &["hello world"], 0, 0.5);
+        assert!(overhead < 5000);
+    }
+
+    #[test]
+    fn index_name_matches_upstream() {
+        assert_eq!(doc_store_index_name("t1"), "ragflow_t1");
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        inserted: Mutex<usize>,
+        deleted: Mutex<usize>,
+        rows: Mutex<Vec<DocRow>>,
+    }
+
+    impl DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(
+            &self,
+            _index_name: &str,
+            _dataset_id: &str,
+            _vector_size: usize,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            rows: &[DocRow],
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<Vec<String>> {
+            *self.inserted.lock().unwrap() += rows.len();
+            self.rows.lock().unwrap().extend(rows.iter().cloned());
+            Ok(rows
+                .iter()
+                .filter_map(|row| row.get("id").and_then(|v| v.as_str()).map(str::to_string))
+                .collect())
+        }
+        fn get(
+            &self,
+            _data_id: &str,
+            _index_name: &str,
+            _dataset_ids: &[String],
+        ) -> crate::Result<Option<DocRow>> {
+            Ok(None)
+        }
+        fn update(
+            &self,
+            _condition: &FilterCondition,
+            _new_value: &DocRow,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<bool> {
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            _condition: &FilterCondition,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<usize> {
+            *self.deleted.lock().unwrap() += 1;
+            Ok(1)
+        }
+        fn search(&self, _query: &SearchQuery) -> crate::Result<SearchResponse> {
+            let rows = self.rows.lock().unwrap().clone();
+            Ok(SearchResponse {
+                total: rows.len(),
+                docs: rows,
+                ..SearchResponse::default()
+            })
+        }
+        fn sql(&self, _sql: &str, _fetch_size: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn doc_storage_wrappers_roundtrip() {
+        let store = MockStore::default();
+        let row: DocRow = [
+            ("id".to_string(), json!("r1")),
+            ("name".to_string(), json!("Alpha")),
+        ]
+        .into_iter()
+        .collect();
+        doc_storage_insert(&store, std::slice::from_ref(&row), "ragflow_t1", "kb1").await;
+        let fields = vec!["id".to_string(), "name".to_string()];
+        let found = doc_storage_search(
+            &store,
+            SearchQuery {
+                select_fields: fields.clone(),
+                dataset_ids: vec!["kb1".to_string()],
+                ..SearchQuery::default()
+            },
+            &fields,
+        )
+        .await;
+        assert_eq!(
+            found.get("r1").and_then(|r| r.get("name")),
+            Some(&json!("Alpha"))
+        );
+
+        let condition: FilterCondition = [("id".to_string(), json!("r1"))].into_iter().collect();
+        doc_storage_upsert_one(&store, &condition, &row, "t1", "kb1").await;
+        assert_eq!(*store.deleted.lock().unwrap(), 1);
+        assert_eq!(
+            *store.inserted.lock().unwrap(),
+            2,
+            "one direct + one upsert insert"
+        );
     }
 }

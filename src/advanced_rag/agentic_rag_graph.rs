@@ -15,7 +15,6 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use async_trait::async_trait;
 use futures_util::future::join_all;
 use regex::Regex;
 use serde_json::Value;
@@ -33,8 +32,7 @@ use crate::harness::orchestrator::query_rewriter::rewrite_gap_to_query;
 use crate::harness::orchestrator::sufficient_context::{ScClaim, sufficient_context_agent};
 use crate::harness::stats::StatsHandle;
 use crate::harness::tools::search::{
-    HarnessRetriever, RetrievalRequest, SearchContext, SearchSettings, bm25_search, hybrid_search,
-    query_to_terms,
+    HarnessRetriever, SearchContext, bm25_search, hybrid_search, query_to_terms,
 };
 
 // ── Global research budget & per-call timeouts (source-level switches) ──
@@ -2235,6 +2233,7 @@ mod graph_core_tests {
 #[cfg(test)]
 mod fanout_tests {
     use super::*;
+    use crate::harness::tools::search::{HarnessRetriever, RetrievalRequest, SearchSettings};
     use async_trait::async_trait;
     use serde_json::json;
     use std::sync::Mutex;
@@ -2517,6 +2516,8 @@ mod graph_node_tests {
     };
     use crate::harness::chunk_utils;
     use crate::harness::tools::navigation::NavResult;
+    use crate::harness::tools::search::{HarnessRetriever, RetrievalRequest, SearchSettings};
+    use async_trait::async_trait;
     use serde_json::json;
 
     fn variable(id: i64, kind: &str, candidate: Option<&str>, strength: Option<f64>) -> Variable {
