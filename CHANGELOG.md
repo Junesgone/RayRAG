@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.77] — 2026-10-01（对标批次 v0.3.10v）
+
+> W-5 续：RAGFlow v0.27.2 的重解析计数器释放（`api/db/services/document_counter_service.py`）移植（纯 Rust）。
+
+### Added
+
+- **重解析计数器释放**（`document_counter_service.py` → `src/api/document.rs`）：`reparse_counter_release` 按文档当前 `chunk_count` 产出负 chunk 增量与其 KB 归属，`reparse_doc` 在入队前应用（`KbStore::update_counts` + `DocStore::set_chunk_count(id, 0)`），使重解析从零开始——文档缺失报错、全零跳过，与上游 `LookupError`/空值语义一致。
+- 有界差异（台账注记）：本地存储没有单事务，两次写由处理器按顺序执行；KB 缺失路径经前置 `kb_manageable` 校验不可达。
+
+### Tests
+
+- 1 项单测（释放并双端归零、二次调用 no-op、缺失文档报错）；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.76] — 2026-10-01（对标批次 v0.3.10u）
 
 > W-5 续：RAGFlow v0.27.2 的渠道智能体目标校验（`api/channels/targets.py`）移植（纯 Rust）。

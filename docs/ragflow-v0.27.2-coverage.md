@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 606 | 293018 |
-| partial | 76 | 32093 |
+| full | 607 | 293096 |
+| partial | 75 | 32015 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -675,7 +675,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `api/db/services/conversation_service.py` | 377 | 16490 | `5101d0a151991df3` | aligned | `src/llm.rs; src/server.rs` | Conversation, message, reference, feedback and regeneration lifecycle [v0.27.2 content changed: re-audit] |
 | `api/db/services/dialog_service.py` | 2302 | 106582 | `6ce31c5f8b8a1075` | full | `src/api/joint_services.rs` | service layer semantics ported (settings/canvas/langfuse/mcp/conversation/task) [v0.27.2 content changed: re-audit] |
 | `api/db/services/doc_metadata_service.py` | 1406 | 59195 | `9e75b6d43acb8f7e` | aligned | `src/api/document_metadata.rs` | Metadata replacement, summary, batch update and retrieval filters [v0.27.2 content changed: re-audit] |
-| `api/db/services/document_counter_service.py` | 78 | 3888 | `2e18375ff4422f82` | partial | `src/api/document.rs; src/server.rs` | （v0.3.10g 审计：重解析计数器回滚；RayRAG 重解析路径存在，计数器释放助手待对齐——worklist W-5（结构图/编译器/切分）） |
+| `api/db/services/document_counter_service.py` | 78 | 3888 | `2e18375ff4422f82` | full | `src/api/document.rs` | （v0.3.10v 移植：reparse_counter_release——按 doc.chunk_count 计算负 chunk_delta 与 kb_id；文档缺失报错（对齐 LookupError）、全零跳过；reparse_doc 入队前应用（kbs.update_counts + docs.set_chunk_count(0)）；差异：本地存储无单事务，两次写由处理器按顺序执行；kb 缺失经前置 kb_manageable 校验不可达；1 项单测。） |
 | `api/db/services/document_service.py` | 1415 | 58299 | `8dfc70608548ec6f` | aligned | `src/api/document.rs; src/server.rs` | Document lifecycle, queueing, parsing and index commit [v0.27.2 content changed: re-audit] |
 | `api/db/services/file2document_service.py` | 96 | 3559 | `0ee1510799972a52` | aligned | `src/api/document.rs; src/api/file_mgr.rs` | File/document ownership and conversion lifecycle |
 | `api/db/services/file_commit_service.py` | 1068 | 40645 | `30a6df25ac7d033c` | replaced | `src/persistence.rs; src/api/file_mgr.rs` | Atomic fsync/rename commit boundary [v0.27.2 content changed: re-audit] |

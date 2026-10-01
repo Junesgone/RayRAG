@@ -359,6 +359,37 @@ pub(crate) fn enqueue_document_processing(
 }
 
 /// POST /api/v1/datasets/{kb_id}/documents/{doc_id}/reparse — re-parse
+/// `api/db/services/document_counter_service.py::release_reparse_counters`
+/// over the local stores.
+///
+/// A re-parse must start from zero: the document's chunk counter is released
+/// and the same amount is subtracted from the owning knowledge base so the
+/// totals never double-count. The caller performs both writes (the local
+/// store has no single transaction); a missing document is an error, a zero
+/// counter is a no-op — matching the upstream contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReparseCounterRelease {
+    pub kb_id: String,
+    /// Negative chunk delta to apply to the owning KB.
+    pub chunk_delta: isize,
+}
+
+pub fn reparse_counter_release(
+    docs: &DocStore,
+    doc_id: &str,
+) -> anyhow::Result<Option<ReparseCounterRelease>> {
+    let Some(doc) = docs.get(doc_id) else {
+        anyhow::bail!("Document not found: {doc_id}");
+    };
+    if doc.chunk_count == 0 {
+        return Ok(None);
+    }
+    Ok(Some(ReparseCounterRelease {
+        kb_id: doc.kb_id.clone(),
+        chunk_delta: -(doc.chunk_count as isize),
+    }))
+}
+
 pub async fn reparse_doc(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -372,6 +403,20 @@ pub async fn reparse_doc(
     };
     if doc.kb_id != kb_id {
         return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    // Upstream `release_reparse_counters`: zero the document counters and
+    // subtract them from the owning KB before the new parse starts.
+    match reparse_counter_release(&state.docs, &doc_id) {
+        Ok(Some(release)) => {
+            let _ = state
+                .kbs
+                .update_counts(&release.kb_id, release.chunk_delta, 0);
+            let _ = state.docs.set_chunk_count(&doc_id, 0);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, %doc_id, "reparse counter release skipped");
+        }
     }
     match enqueue_document_processing(
         state,
@@ -990,6 +1035,34 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod store_tests {
     use super::*;
+
+    #[test]
+    fn reparse_counter_release_matches_upstream_semantics() {
+        let path = std::env::temp_dir().join(format!(
+            "rayrag-reparse-release-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let docs = DocStore::new(path.to_str().unwrap()).unwrap();
+        let mut doc = sample_doc("doc-1");
+        doc.chunk_count = 7;
+        let kb_id = doc.kb_id.clone();
+        docs.insert(doc).unwrap();
+
+        let release = reparse_counter_release(&docs, "doc-1")
+            .unwrap()
+            .expect("counters released");
+        assert_eq!(release.kb_id, kb_id);
+        assert_eq!(release.chunk_delta, -7);
+
+        // Apply exactly as the handler does, then the second call is a no-op.
+        docs.set_chunk_count("doc-1", 0).unwrap();
+        assert_eq!(docs.get("doc-1").unwrap().chunk_count, 0);
+        assert!(reparse_counter_release(&docs, "doc-1").unwrap().is_none());
+
+        // Missing document → error (upstream LookupError).
+        assert!(reparse_counter_release(&docs, "missing").is_err());
+        let _ = std::fs::remove_file(path);
+    }
 
     fn sample_doc(id: &str) -> DocRecord {
         DocRecord {
