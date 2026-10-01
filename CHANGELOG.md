@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.93] — 2026-10-01（对标批次 v0.3.10ah，W-4 收口）
+
+> wiki.py（4154 行 / 68 定义）与 wiki_incremental.py（5004 行 / 73 定义）全量收敛为 \`full\`：
+> - \`src/knowlege_wiki.rs\`（61 模块单测）：MAP/REDUCE/PLAN/REFINE 四相（提示词逐字、状态代数、KNN 对账、计划校验、逐页写出、链接/证据/草稿持久化）。
+> - \`src/knowlege_wiki_incremental.rs\`（模块单测全绿）：双模式增量编译（实体逐页/主题分组）、规范实体索引与匹配、页面路由（嵌入候选+LLM 决策+NEW 二次确认）、容量受限球面 k-means、页移动对账与不稳定页拆分、FINALIZE 死链清理与自动链接、文档删除清理。
+> - 台账两文件 → full；coverage --check 常绿。
+
 ## [0.4.92] — 2026-10-01（对标批次 v0.3.10ah，中间版）
 
 > dataset_nav.py（1967 行 / 42 定义）全量收敛为 `full`（`src/knowlege_dataset_nav.rs`，18 项单测绿）：命名/存储包装/行构造/分词与关键词/条件与范围/文本与向量检索（过滤回退扫描）/分层簇定位/LLM 合并与标题/图文本/upsert 主流程（锁契约注入）/移除与清理级联/两均值分裂/扁平混合检索 `search_dataset_nav`/带束树检索 `search_nav_tree_descent`（词法种子、逐层融合、叶子门控、覆盖兜底）。书面差异：KNN/束搜索顺序执行、行 id 用 xxh3（上游 xxh64）、`MatchExpr::Dense` 无 extra_options、无 sync wrapper。W-4 余 2（wiki.py、wiki_incremental.py）。
