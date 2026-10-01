@@ -9,6 +9,8 @@
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 
+use async_trait::async_trait;
+
 use regex::Regex;
 use serde_json::Value;
 
@@ -250,6 +252,596 @@ impl ToolOutcome {
             status: OUTCOME_MISS.to_string(),
             ..Self::default()
         }
+    }
+}
+
+// ── Evidence admission + tool executors (part 2) ────────────────────────────
+
+use std::sync::atomic::Ordering;
+
+use crate::harness::chunk_utils;
+use crate::harness::orchestrator::direct::Kbinfos;
+use crate::harness::tools::search::is_table_chunk;
+
+/// `_admit_evidence`: register one chunk into the session output AND the shared
+/// evidence pool. Returns `true` when the chunk was NEW to the shared pool; a
+/// retrieval whose every hit was already known surfaces as `redundant`.
+pub fn admit_evidence(
+    kbinfos: &mut Kbinfos,
+    kb_seen: &mut HashSet<String>,
+    chunk: &Value,
+    out: &mut Vec<Value>,
+    ids: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    include_doc_id: bool,
+) -> bool {
+    // Early-stop: the shared evidence pool is hard-capped (the SCA view and
+    // compose can only consume the first 60 anyway).
+    if kbinfos.chunks.len() >= EVIDENCE_POOL_CAP {
+        if !EVIDENCE_POOL_FULL_LOGGED.swap(true, Ordering::Relaxed) {
+            // The "pool FULL" line is emitted once per fill, not per chunk.
+        }
+        return false;
+    }
+    let cid = chunk_utils::chunk_id(chunk);
+    if seen.contains(&cid) {
+        return false;
+    }
+    seen.insert(cid.clone());
+    ids.push(cid.clone());
+    // Table chunks pass through UN-truncated (the 1200-char cap hides answer
+    // rows in the mid/late table).
+    let text = chunk_utils::chunk_text(chunk);
+    let mut entry = if is_table_chunk(chunk) {
+        serde_json::json!({"id": cid, "content": text})
+    } else {
+        serde_json::json!({"id": cid, "content": text.chars().take(1200).collect::<String>()})
+    };
+    if include_doc_id {
+        if let Some(object) = entry.as_object_mut() {
+            object.insert(
+                "doc_id".to_string(),
+                Value::String(chunk_utils::doc_id(chunk)),
+            );
+        }
+    }
+    out.push(entry);
+    if chunk.is_object() && !kb_seen.contains(&cid) {
+        kb_seen.insert(cid);
+        kbinfos.chunks.push(chunk.clone());
+        return true;
+    }
+    false
+}
+
+/// `_search_outcome`: wrap a query-based retrieval result. A run that surfaced
+/// hits but admitted NOTHING NEW is `redundant` rather than `ok`.
+pub fn search_outcome(payload: &[Value], ids: &[String], new_evidence: usize) -> ToolOutcome {
+    if payload.is_empty() {
+        return ToolOutcome {
+            payload: Vec::new(),
+            evidence_ids: Vec::new(),
+            status: OUTCOME_MISS.to_string(),
+            reason: "no_doc".to_string(),
+            metrics: [
+                ("hits".to_string(), serde_json::json!(0)),
+                ("new_evidence".to_string(), serde_json::json!(0)),
+            ]
+            .into_iter()
+            .collect(),
+        };
+    }
+    ToolOutcome {
+        payload: payload.to_vec(),
+        evidence_ids: ids.to_vec(),
+        status: if new_evidence == 0 {
+            OUTCOME_REDUNDANT.to_string()
+        } else {
+            OUTCOME_OK.to_string()
+        },
+        reason: String::new(),
+        metrics: [
+            ("hits".to_string(), serde_json::json!(payload.len())),
+            ("new_evidence".to_string(), serde_json::json!(new_evidence)),
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+/// `_arg_query_list`: normalize a tool call's `query` argument (string | list |
+/// absent) and cap it.
+pub fn arg_query_list(args: &Value, max_q: usize) -> Vec<String> {
+    let query = args.get("query");
+    let list: Vec<Value> = match query {
+        Some(Value::String(text)) => vec![Value::String(text.clone())],
+        Some(Value::Array(items)) => items.clone(),
+        _ => Vec::new(),
+    };
+    list.into_iter()
+        .take(max_q)
+        .map(|item| match item {
+            Value::String(text) => text,
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+/// The injected retrieval backends the executors drive.
+#[async_trait]
+pub trait ActionSearchBackend: Send + Sync {
+    /// `grep_search` (exact-term locate; `doc_scope` + soft `keywords` hint).
+    async fn grep_search(
+        &self,
+        query: &str,
+        top_n: usize,
+        doc_scope: Option<&[String]>,
+        keywords: Option<&str>,
+    ) -> Result<Vec<Value>, String>;
+    /// `hybrid_search` (semantic; optional compiled expansion).
+    async fn hybrid_search(
+        &self,
+        query: &str,
+        top_n: usize,
+        use_compiled: bool,
+    ) -> Result<Vec<Value>, String>;
+    /// `list_chunks` (full document read).
+    async fn list_chunks(&self, doc_id: &str) -> Result<Vec<Value>, String>;
+    /// Web provider availability (`tools.web_search`).
+    fn has_web(&self) -> bool;
+    /// Web retrieval (chunks share the RAGFlow chunk shape).
+    async fn web_search(&self, query: &str) -> Result<Vec<Value>, String>;
+}
+
+struct SearchRun {
+    out: Vec<Value>,
+    ids: Vec<String>,
+    new_evidence: usize,
+}
+
+fn admit_candidates(
+    kbinfos: &mut Kbinfos,
+    kb_seen: &mut HashSet<String>,
+    candidates: &[Value],
+    out: &mut Vec<Value>,
+    ids: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    include_doc_id: bool,
+) -> usize {
+    let mut new_evidence = 0usize;
+    for chunk in candidates.iter().take(SNIPPETS_PER_QUERY) {
+        if admit_evidence(kbinfos, kb_seen, chunk, out, ids, seen, include_doc_id) {
+            new_evidence += 1;
+        }
+    }
+    new_evidence
+}
+
+/// `_exec_retrieve`: corpus search via grep (exact-term locate).
+/// `nav_hint` is a SOFT retrieval hint (BM25 keywords), never a constraint.
+pub async fn exec_retrieve(
+    backend: &dyn ActionSearchBackend,
+    kbinfos: &mut Kbinfos,
+    queries: &[String],
+    doc_scope: Option<&[String]>,
+    nav_hint: &str,
+) -> ToolOutcome {
+    let mut out: Vec<Value> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut new_evidence = 0usize;
+    let mut kb_seen: HashSet<String> = kbinfos.chunks.iter().map(chunk_utils::chunk_id).collect();
+    for query in queries.iter().take(3) {
+        let Ok(candidates) = backend
+            .grep_search(
+                query,
+                10,
+                doc_scope,
+                if nav_hint.is_empty() {
+                    None
+                } else {
+                    Some(nav_hint)
+                },
+            )
+            .await
+        else {
+            continue;
+        };
+        new_evidence += admit_candidates(
+            kbinfos,
+            &mut kb_seen,
+            &candidates,
+            &mut out,
+            &mut ids,
+            &mut seen,
+            true,
+        );
+    }
+    search_outcome(&out, &ids, new_evidence)
+}
+
+/// `_exec_search_chunks`: semantic retrieval (hybrid vector+BM25).
+pub async fn exec_search_chunks(
+    backend: &dyn ActionSearchBackend,
+    kbinfos: &mut Kbinfos,
+    queries: &[String],
+    use_compiled: bool,
+) -> ToolOutcome {
+    let mut out: Vec<Value> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut new_evidence = 0usize;
+    let mut kb_seen: HashSet<String> = kbinfos.chunks.iter().map(chunk_utils::chunk_id).collect();
+    for query in queries.iter().take(2) {
+        let Ok(candidates) = backend.hybrid_search(query, 20, use_compiled).await else {
+            continue;
+        };
+        new_evidence += admit_candidates(
+            kbinfos,
+            &mut kb_seen,
+            &candidates,
+            &mut out,
+            &mut ids,
+            &mut seen,
+            true,
+        );
+    }
+    search_outcome(&out, &ids, new_evidence)
+}
+
+/// `_exec_web_search`: open-web retrieval (≤2 queries, ≤8 chunks each).
+pub async fn exec_web_search(
+    backend: &dyn ActionSearchBackend,
+    kbinfos: &mut Kbinfos,
+    queries: &[String],
+) -> ToolOutcome {
+    if !backend.has_web() {
+        // No web provider: emit an explicit, actionable note (never an empty
+        // payload the model would just retry).
+        return ToolOutcome {
+            payload: vec![serde_json::json!({
+                "kind": "web_search",
+                "note": "Web search is NOT configured for this session. Do not use this tool again; use the corpus tools (retrieve / search_chunks / navigate_*) instead."
+            })],
+            evidence_ids: Vec::new(),
+            status: OUTCOME_ERROR.to_string(),
+            reason: "infra".to_string(),
+            metrics: serde_json::Map::new(),
+        };
+    }
+    let mut out: Vec<Value> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut new_evidence = 0usize;
+    let mut kb_seen: HashSet<String> = kbinfos.chunks.iter().map(chunk_utils::chunk_id).collect();
+    for query in queries.iter().take(2) {
+        let Ok(candidates) = backend.web_search(query).await else {
+            continue;
+        };
+        for chunk in candidates.iter().take(8) {
+            let cid = chunk_utils::chunk_id(chunk);
+            if cid.is_empty() || seen.contains(&cid) {
+                continue;
+            }
+            if admit_evidence(
+                kbinfos,
+                &mut kb_seen,
+                chunk,
+                &mut out,
+                &mut ids,
+                &mut seen,
+                false,
+            ) {
+                new_evidence += 1;
+            }
+        }
+    }
+    search_outcome(&out, &ids, new_evidence)
+}
+
+/// `_exec_list_chunks`: deep-read one document (≤30 chunks). An unknown/blank
+/// `doc_id` is a QUERY-level miss, never a dataset fact.
+pub async fn exec_list_chunks(
+    backend: &dyn ActionSearchBackend,
+    kbinfos: &mut Kbinfos,
+    doc_id: &str,
+) -> ToolOutcome {
+    let chunks = match backend.list_chunks(doc_id).await {
+        Ok(chunks) => chunks,
+        Err(_) => {
+            return ToolOutcome {
+                payload: Vec::new(),
+                evidence_ids: Vec::new(),
+                status: OUTCOME_ERROR.to_string(),
+                reason: "infra".to_string(),
+                metrics: serde_json::Map::new(),
+            };
+        }
+    };
+    let mut out: Vec<Value> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut new_evidence = 0usize;
+    let mut kb_seen: HashSet<String> = kbinfos.chunks.iter().map(chunk_utils::chunk_id).collect();
+    for chunk in chunks.iter().take(30) {
+        let cid = chunk_utils::chunk_id(chunk);
+        if cid.is_empty() {
+            continue;
+        }
+        if admit_evidence(
+            kbinfos,
+            &mut kb_seen,
+            chunk,
+            &mut out,
+            &mut ids,
+            &mut seen,
+            false,
+        ) {
+            new_evidence += 1;
+        }
+    }
+    let _ = SearchRun {
+        out: Vec::new(),
+        ids: Vec::new(),
+        new_evidence: 0,
+    };
+    search_outcome(&out, &ids, new_evidence)
+}
+
+#[cfg(test)]
+mod executor_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    struct MockBackend {
+        grep: Vec<Value>,
+        hybrid: Vec<Value>,
+        document: Vec<Value>,
+        web: Vec<Value>,
+        web_enabled: bool,
+        fail: bool,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Default for MockBackend {
+        fn default() -> Self {
+            Self {
+                grep: Vec::new(),
+                hybrid: Vec::new(),
+                document: Vec::new(),
+                web: Vec::new(),
+                web_enabled: false,
+                fail: false,
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for MockBackend {
+        async fn grep_search(
+            &self,
+            query: &str,
+            _top_n: usize,
+            _doc_scope: Option<&[String]>,
+            keywords: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("grep:{query}:{keywords:?}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(
+            &self,
+            query: &str,
+            _top_n: usize,
+            use_compiled: bool,
+        ) -> Result<Vec<Value>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("hybrid:{query}:{use_compiled}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.hybrid.clone())
+        }
+        async fn list_chunks(&self, doc_id: &str) -> Result<Vec<Value>, String> {
+            self.calls.lock().unwrap().push(format!("list:{doc_id}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.document.clone())
+        }
+        fn has_web(&self) -> bool {
+            self.web_enabled
+        }
+        async fn web_search(&self, query: &str) -> Result<Vec<Value>, String> {
+            self.calls.lock().unwrap().push(format!("web:{query}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.web.clone())
+        }
+    }
+
+    fn chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    #[test]
+    fn admission_caps_and_table_passthrough() {
+        let mut kbinfos = Kbinfos::default();
+        let mut kb_seen: HashSet<String> = HashSet::new();
+        let mut out: Vec<Value> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        let table =
+            json!({"chunk_id": "t1", "content_with_weight": "| a |\n| - |\n| 1 |", "doc_id": "d1"});
+        assert!(!is_table_chunk(
+            &json!({"content_with_weight": "plain prose"})
+        ));
+        assert!(admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &table,
+            &mut out,
+            &mut ids,
+            &mut seen,
+            true
+        ));
+        assert_eq!(
+            out[0]["content"],
+            json!("| a |\n| - |\n| 1 |"),
+            "tables stay whole"
+        );
+        assert_eq!(out[0]["doc_id"], json!("d1"));
+
+        let long = "x".repeat(2000);
+        assert!(admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &chunk("c2", &long, "d1"),
+            &mut out,
+            &mut ids,
+            &mut seen,
+            false
+        ));
+        assert_eq!(out[1]["content"].as_str().unwrap().chars().count(), 1200);
+        assert!(out[1].get("doc_id").is_none());
+
+        // Already-seen chunk -> not new, not duplicated.
+        assert!(!admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &chunk("c2", &long, "d1"),
+            &mut out,
+            &mut ids,
+            &mut seen,
+            false
+        ));
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn admission_early_stops_at_pool_cap() {
+        let mut kbinfos = Kbinfos::default();
+        for index in 0..EVIDENCE_POOL_CAP {
+            kbinfos.chunks.push(chunk(&format!("pre{index}"), "x", "d"));
+        }
+        let mut kb_seen: HashSet<String> = HashSet::new();
+        let mut out: Vec<Value> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        assert!(!admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &chunk("late", "y", "d"),
+            &mut out,
+            &mut ids,
+            &mut seen,
+            true
+        ));
+        assert!(out.is_empty(), "pool cap blocks further admits");
+    }
+
+    #[test]
+    fn outcome_and_query_args_mirror_upstream() {
+        let miss = search_outcome(&[], &[], 0);
+        assert_eq!(miss.status, OUTCOME_MISS);
+        assert_eq!(miss.reason, "no_doc");
+        let redundant = search_outcome(&[json!({"id": "c1"})], &["c1".to_string()], 0);
+        assert_eq!(redundant.status, OUTCOME_REDUNDANT);
+        let ok = search_outcome(&[json!({"id": "c2"})], &["c2".to_string()], 1);
+        assert_eq!(ok.status, OUTCOME_OK);
+        assert_eq!(ok.metrics["hits"], json!(1));
+
+        assert_eq!(arg_query_list(&json!({"query": "one"}), 3), vec!["one"]);
+        assert_eq!(
+            arg_query_list(&json!({"query": ["a", "b", "c", "d"]}), 3),
+            vec!["a", "b", "c"]
+        );
+        assert!(arg_query_list(&json!({}), 3).is_empty());
+    }
+
+    #[tokio::test]
+    async fn retrieve_and_search_executors() {
+        let backend = MockBackend {
+            grep: vec![chunk("c1", "alpha", "d1"), chunk("c2", "beta", "d1")],
+            hybrid: vec![chunk("c1", "alpha", "d1"), chunk("c3", "gamma", "d1")],
+            ..Default::default()
+        };
+        let mut kbinfos = Kbinfos::default();
+        let outcome = exec_retrieve(
+            &backend,
+            &mut kbinfos,
+            &["q1".to_string()],
+            None,
+            "nav hint",
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(
+            outcome.evidence_ids,
+            vec!["c1".to_string(), "c2".to_string()]
+        );
+        assert_eq!(kbinfos.chunks.len(), 2);
+        assert!(backend.calls.lock().unwrap()[0].contains("Some(\"nav hint\")"));
+
+        // Second search over the same chunks -> redundant.
+        let outcome = exec_search_chunks(&backend, &mut kbinfos, &["q2".to_string()], true).await;
+        assert_eq!(outcome.status, OUTCOME_OK, "c3 is new");
+        let outcome = exec_search_chunks(&backend, &mut kbinfos, &["q3".to_string()], false).await;
+        assert_eq!(outcome.status, OUTCOME_REDUNDANT);
+
+        // Backend failure -> continue with an empty (miss) outcome.
+        let failing = MockBackend {
+            fail: true,
+            ..Default::default()
+        };
+        let outcome = exec_retrieve(&failing, &mut kbinfos, &["q".to_string()], None, "").await;
+        assert_eq!(outcome.status, OUTCOME_MISS);
+    }
+
+    #[tokio::test]
+    async fn web_and_list_chunks_contracts() {
+        let mut kbinfos = Kbinfos::default();
+        let no_web = MockBackend::default();
+        let outcome = exec_web_search(&no_web, &mut kbinfos, &["q".to_string()]).await;
+        assert_eq!(outcome.status, OUTCOME_ERROR);
+        assert_eq!(outcome.reason, "infra");
+        assert!(
+            outcome.payload[0]["note"]
+                .as_str()
+                .unwrap()
+                .contains("NOT configured")
+        );
+
+        let web = MockBackend {
+            web_enabled: true,
+            web: vec![chunk("w1", "web hit", "w")],
+            ..Default::default()
+        };
+        let outcome = exec_web_search(&web, &mut kbinfos, &["q".to_string()]).await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert!(
+            outcome.payload[0].get("doc_id").is_none(),
+            "web entries omit doc_id"
+        );
+
+        let doc = MockBackend {
+            document: vec![chunk("d1", "doc text", "doc")],
+            ..Default::default()
+        };
+        let outcome = exec_list_chunks(&doc, &mut kbinfos, "doc").await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(outcome.evidence_ids, vec!["d1".to_string()]);
     }
 }
 
