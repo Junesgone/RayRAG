@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.84] — 2026-10-01（对标批次 v0.3.10ac）
+
+> W-4 续：探索工具（知识图谱漫游 + wiki 查询）全量移植；导航工具共享层就位（纯 Rust）。
+
+- `src/harness/tools/exploration.rs`（上游 `tools/exploration.py`，468 行）：KG 常量（种子 2 / 候选池 64 / 相似度 0.8 / 跳数 2 / 邻居 128 / 关系 32）、注入式检索契约、`kg_parse_entity`/`kg_parse_relation`、`endpoint_terms`、`collect_evidence_ids`、`graph_explore`（种子 → 2 跳 BFS → outline 判定；不足时按相关实体/关系回取证据块并关键词窄化）与 `wiki_query`（`wiki_page_draft` 页面 markdown 抽取 + 窄化 + doc_aggs）。
+- `src/harness/tools/navigation.rs`（切片 1）：`CATALOG_KINDS`/`MINDMAP_KINDS`/`MAX_EVIDENCE_CHUNKS`/`MAX_ENTITIES`、`NavResult`、`normalize_kind`、注入式 `load_chunks_by_ids`、`doc_aggs`；导航树路由与结构导航留待 v0.3.10ad。
+- `src/harness/structure_qa.rs`：新增 `ask_structure`（outline 判定调用，exploration/导航复用）。
+- 台账：`tools/exploration.py` → full；`tools/navigation.py` 记录切片进度；worklist W-4 8 → 7。
+- 单测：新增 7 项（exploration 4 + navigation 2 + structure_qa 1）；fmt/clippy 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.83] — 2026-10-01（对标批次 v0.3.10ab）
 
 > W-4 续：agentic harness 检索腿与 SCA 统一审查移植（纯 Rust）。

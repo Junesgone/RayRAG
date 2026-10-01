@@ -10,6 +10,8 @@
 
 use serde_json::Value;
 
+use crate::harness::HarnessChat;
+
 /// Cap how much compiled structure is rendered into the prompt.
 pub const MAX_ENTITIES: usize = 300;
 pub const MAX_RELATIONS: usize = 300;
@@ -174,6 +176,37 @@ pub fn parse_verdict(raw: &str) -> (bool, String, Vec<String>) {
     (sufficient, answer, relevant)
 }
 
+/// `_ask_structure`: ask the chat model to answer `topic` from the rendered
+/// outline. Returns `(answer, relevant_entity_names)` — `answer` is empty
+/// unless the model judged the outline sufficient; the names are always
+/// returned so the caller can pull the underlying source chunks.
+pub async fn ask_structure(
+    chat: &dyn HarnessChat,
+    topic: &str,
+    entities: &[Value],
+    relations: &[Value],
+    noun: &str,
+    _label: &str,
+) -> (String, Vec<String>) {
+    let user = build_user_prompt(topic, entities, relations, noun);
+    let (_, messages) = crate::harness::message_fit_in(
+        crate::harness::form_message(&nav_system(noun), &user),
+        chat.max_length(),
+    );
+    let system = messages
+        .first()
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or(NAV_SYSTEM);
+    let history = messages[1..].to_vec();
+    let raw = chat
+        .chat(system, &history, &serde_json::json!({"temperature": 0.2}))
+        .await
+        .unwrap_or_default();
+    let (_, answer, relevant) = parse_verdict(&raw);
+    (answer, relevant)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +232,48 @@ mod tests {
         assert!(prompt.starts_with("Question:\nWho?\n\nDocument catalog:\n"));
         assert!(prompt.ends_with("\n\nOutput JSON:"));
         assert!(nav_system("knowledge graph").contains("the knowledge graph"));
+    }
+
+    #[tokio::test]
+    async fn ask_structure_uses_outline_verdict() {
+        struct MockChat {
+            reply: String,
+        }
+        #[async_trait::async_trait]
+        impl HarnessChat for MockChat {
+            async fn chat(
+                &self,
+                system: &str,
+                _history: &[Value],
+                _gen: &Value,
+            ) -> Result<String, String> {
+                assert!(system.contains("You are given"));
+                Ok(self.reply.clone())
+            }
+            fn max_length(&self) -> usize {
+                8192
+            }
+        }
+        let entities = vec![json!({"name": "Alpha", "type": "Person"})];
+        let relations = vec![json!({"from": "Alpha", "to": "Beta", "type": "knows"})];
+        let chat = MockChat {
+            reply:
+                "{\"is_sufficient\": true, \"answer\": \"42\", \"relevant_entities\": [\"Alpha\"]}"
+                    .to_string(),
+        };
+        let (answer, relevant) =
+            ask_structure(&chat, "q", &entities, &relations, "knowledge graph", "test").await;
+        assert_eq!(answer, "42");
+        assert_eq!(relevant, vec!["Alpha"]);
+
+        let chat = MockChat {
+            reply: "{\"is_sufficient\": false, \"answer\": \"drop\", \"relevant_entities\": [\"Alpha\"]}"
+                .to_string(),
+        };
+        let (answer, relevant) =
+            ask_structure(&chat, "q", &entities, &relations, "catalog", "test").await;
+        assert!(answer.is_empty());
+        assert_eq!(relevant, vec!["Alpha"]);
     }
 
     #[test]

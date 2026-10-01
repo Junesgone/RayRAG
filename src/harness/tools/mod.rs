@@ -16,5 +16,7 @@
 //! never read by any live path and has been removed upstream — `_active_tool_specs`
 //! is the single place that decides the visible tool surface.
 //!
+pub mod exploration;
+pub mod navigation;
 pub mod search;
 pub mod text_processing;
