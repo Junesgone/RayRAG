@@ -4819,6 +4819,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/llm/my_llms", get(crate::api::system::my_llms))
         .route(
+            "/api/v1/llm/aimlapi/authorize/start",
+            post(crate::api::aimlapi::aimlapi_authorize_start),
+        )
+        .route(
+            "/api/v1/llm/aimlapi/authorize/poll",
+            post(crate::api::aimlapi::aimlapi_authorize_poll),
+        )
+        .route(
             "/api/v1/document/upload_info",
             post(crate::api::system::document_upload_info),
         )

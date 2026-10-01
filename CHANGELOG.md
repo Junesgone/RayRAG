@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.68] — 2026-10-01（对标批次 v0.3.10m）
+
+> W-1 清零：RAGFlow v0.27.2 的 MWS 助手与 AIMLAPI 设备授权端点移植（纯 Rust）。
+
+### Added
+
+- **MWS GPT Model Hub 助手**（`rag/llm/mws_utils.py` → `src/mws.rs`）：`normalize_mws_project_url`（`projects/<project>` 根校验、拒绝凭据/查询/片段、保留 host:port）、`mws_api_url`、`require_mws_token`。
+- **AIMLAPI 设备授权端点**（`api/apps/restful_apis/aimlapi_api.py` + `common/aimlapi_utils.py` → `src/api/aimlapi.rs` + `src/aimlapi.rs`）：`POST /api/v1/llm/aimlapi/authorize/start` 与 `/poll`（RFC 8628 设备码流、apiKey 多字段变体、终止态处理）；归因头 `X-AIMLAPI-Source`/`X-AIMLAPI-Partner-ID`；设备码服务端保存（进程内 TTL 存储，单实例有界差异）。
+- **配置**：`AIMLAPI_APP_URL` / `AIMLAPI_SOURCE` / `AIMLAPI_PARTNER_ID` / `AIMLAPI_PARTNER_NAME` / `AIMLAPI_VERIFICATION_BASE_URL` / `AIMLAPI_REQUESTED_USD_LIMIT_MINOR`。
+
+### Tests
+
+- mws 3 项 + aimlapi 6 项单测（项目根校验矩阵、设备码存储 TTL/用户作用域、start/poll 成功与 pending/expired/用户不匹配、终止态清理、上游 400）；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend`、登记表门禁全绿。
 ## [0.4.67] — 2026-10-01（对标批次 v0.3.10l）
 
 > W-1 续：RAGFlow v0.27.2 的 Sofya 与 You.com 智能体工具移植（纯 Rust）。

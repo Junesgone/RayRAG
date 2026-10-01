@@ -22,6 +22,12 @@
 | `RAYRAG_EMBEDDING_DIMENSION` | `384` |  |
 | `TAVILY_API_KEY` | `` | Optional Tavily credential for TavilySearch/TavilyExtract Canvas nodes and Agent tools. A non-empty per-tool api_key in the DSL takes precedence. |
 | `QUERIT_API_KEY` | `` |  |
+| `AIMLAPI_APP_URL` | `https://app.aimlapi.com` | Optional AIMLAPI agent-authorization (OAuth 2.0 device flow). Defaults match RAGFlow. |
+| `AIMLAPI_SOURCE` | `agent/ragflow` |  |
+| `AIMLAPI_PARTNER_ID` | `part_yNkcOvbGLtgxWLjy4sRysaer` |  |
+| `AIMLAPI_PARTNER_NAME` | `RAGFlow` |  |
+| `AIMLAPI_VERIFICATION_BASE_URL` | `https://aimlapi.com` |  |
+| `AIMLAPI_REQUESTED_USD_LIMIT_MINOR` | `1000` |  |
 | `BOCHA_API_KEY` | `` | 国内连接器（大陆直连、免代理）。除博查外均无需 key： Bing/百度/百度学术直接抓取结果页；腾讯财经读取 GBK 行情端点； 东方财富 A股新闻（akshare stock_news_em 同源 JSONP API，免 key）。 百度系对自动化请求偶发"安全验证"风控，连接器会返回明确错误供上层重试/切换。 |
 | `JIN10_SECRET_KEY` | `` | 金十财经（Jin10 flash/calendar/symbols/news）：需金十开放数据 secret-key （https://open-data-api.jin10.com 申请；RAGFlow 默认占位 "xxx" 也会被接受校验）。 |
 | `QWEATHER_API_KEY` | `` | 和风天气（QWeather weather/indices/airquality）：需 Web API key （https://dev.qweather.com 注册免费订阅；免费档走 devapi.qweather.com）。 |
@@ -407,6 +413,8 @@
 | GET | `/api/v1/llm/models` | `-` |
 | GET | `/api/v1/llm/factories` | `-` |
 | GET | `/api/v1/llm/my_llms` | `-` |
+| POST | `/api/v1/llm/aimlapi/authorize/start` | `-` |
+| POST | `/api/v1/llm/aimlapi/authorize/poll` | `-` |
 | POST | `/api/v1/document/upload_info` | `-` |
 | POST | `/api/v1/sessions/related_questions` | `-` |
 | POST | `/api/v1/searches/{search_id}/completions` | `-` |
