@@ -297,13 +297,11 @@ pub fn admit_evidence(
     } else {
         serde_json::json!({"id": cid, "content": text.chars().take(1200).collect::<String>()})
     };
-    if include_doc_id {
-        if let Some(object) = entry.as_object_mut() {
-            object.insert(
-                "doc_id".to_string(),
-                Value::String(chunk_utils::doc_id(chunk)),
-            );
-        }
+    if include_doc_id && let Some(object) = entry.as_object_mut() {
+        object.insert(
+            "doc_id".to_string(),
+            Value::String(chunk_utils::doc_id(chunk)),
+        );
     }
     out.push(entry);
     if chunk.is_object() && !kb_seen.contains(&cid) {
@@ -904,17 +902,16 @@ pub fn extract_json(text: &str) -> Option<Value> {
         if ch != '{' {
             continue;
         }
-        if let Ok(value) = serde_json::from_str::<Value>(&text[index..]) {
-            if value.is_object() {
-                return Some(value);
-            }
+        if let Ok(value) = serde_json::from_str::<Value>(&text[index..])
+            && value.is_object()
+        {
+            return Some(value);
         }
-        if let Some(end) = balanced_object_end(&text[index..]) {
-            if let Ok(value) = serde_json::from_str::<Value>(&text[index..index + end]) {
-                if value.is_object() {
-                    return Some(value);
-                }
-            }
+        if let Some(end) = balanced_object_end(&text[index..])
+            && let Ok(value) = serde_json::from_str::<Value>(&text[index..index + end])
+            && value.is_object()
+        {
+            return Some(value);
         }
     }
     None
@@ -955,10 +952,10 @@ fn balanced_object_end(text: &str) -> Option<usize> {
 pub fn extract_tag(text: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
-    if let (Some(start), Some(end)) = (text.rfind(&open), text.rfind(&close)) {
-        if end > start {
-            return Some(text[start + open.len()..end].trim().to_string());
-        }
+    if let (Some(start), Some(end)) = (text.rfind(&open), text.rfind(&close))
+        && end > start
+    {
+        return Some(text[start + open.len()..end].trim().to_string());
     }
     let fenced_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```").unwrap();
     let fenced: Vec<String> = fenced_re
@@ -1028,17 +1025,17 @@ pub fn apply_patch(base: &SlotState, branch_patches: &[Value]) -> Option<SlotSta
             };
             changed = true;
         }
-        if let Some(strength) = object.get("candidate_strength") {
-            if !strength.is_null() {
-                let number = strength.as_f64().or_else(|| {
-                    strength
-                        .as_str()
-                        .and_then(|text| text.trim().parse::<f64>().ok())
-                });
-                if let Some(number) = number {
-                    variable.candidate_strength = Some(number.clamp(0.0, 1.0));
-                    changed = true;
-                }
+        if let Some(strength) = object.get("candidate_strength")
+            && !strength.is_null()
+        {
+            let number = strength.as_f64().or_else(|| {
+                strength
+                    .as_str()
+                    .and_then(|text| text.trim().parse::<f64>().ok())
+            });
+            if let Some(number) = number {
+                variable.candidate_strength = Some(number.clamp(0.0, 1.0));
+                changed = true;
             }
         }
         if let Some(clues) = object.get("discovered_clues").and_then(Value::as_array) {
@@ -1124,10 +1121,10 @@ pub fn parse_terminal(
             })
             .filter(|text| !text.is_empty());
         let mut final_state = parent.clone();
-        if let Some(list) = data.get("new_state").and_then(Value::as_array) {
-            if let Some(patched) = apply_patch(parent, list) {
-                final_state = patched;
-            }
+        if let Some(list) = data.get("new_state").and_then(Value::as_array)
+            && let Some(patched) = apply_patch(parent, list)
+        {
+            final_state = patched;
         }
         return (
             vec![final_state],
@@ -1347,6 +1344,176 @@ mod parse_tests {
         assert_eq!(reason_status("no_doc"), OUTCOME_MISS);
         assert_eq!(reason_status("bad_args"), OUTCOME_ERROR);
         assert_eq!(reason_status("infra"), OUTCOME_ERROR);
+    }
+}
+
+// ── Tool spec constants (part 3b-1; `_TOOL_MAP` schemas verbatim) ───────────
+
+/// `_RETRIEVE_TOOL_SPEC` description.
+pub const RETRIEVE_TOOL_DESCRIPTION: &str = "WHEN TO CALL: Use when you know or suspect exact surface terms or keywords in the corpus (names, titles, codes, phrases). Best as the first recall pass; send 1-3 queries covering different facets.DO NOT CALL: When you already hold a doc_id and need to read it (use list_chunks); when the answer shares no surface words with any query (use search_chunks); for counting or enumerating a whole document.ARGUMENTS: query — array of 1-3 strings (natural-language queries). Note: doc_scope exists inside the executor but is NOT a declared parameter; do not pass it.OUTPUT: Short exact-term-matched snippets, each carrying its doc_id and chunk id. Status ok means new evidence entered the pool; redundant means everything was already there.IF IT FAILS: miss (empty payload) means this query matched nothing — rephrase or switch to search_chunks; do not conclude the corpus lacks the fact. redundant means stop re-searching and emit a state patch.";
+
+/// `_LIST_CHUNKS_TOOL_SPEC` description.
+pub const LIST_CHUNKS_TOOL_DESCRIPTION: &str = "WHEN TO CALL: You need the FULL text of one document (enumeration, counts, arithmetic over many passages) and you already have its doc_id from a prior tool result.DO NOT CALL: When you only need a single passage (use search_chunks or retrieve first); when you have no doc_id yet (locate it via navigate_tree or search_chunks first).ARGUMENTS: doc_id — string, the document id seen in a retrieve / search_chunks / navigate result. ONLY doc_id is accepted; there is no chunk_ids argument, and the tool returns the whole document (capped at 30 chunks).OUTPUT: All chunks of the document in reading order. ok = new evidence; redundant = already in pool.IF IT FAILS: An unknown or blank doc_id yields an empty result (query-level miss, not a dataset fact) — pick a different doc_id or locate one first. Do not treat this as a reason to disable the tool.";
+
+/// `_SEARCH_CHUNKS_TOOL_SPEC` description.
+pub const SEARCH_CHUNKS_TOOL_DESCRIPTION: &str = "WHEN TO CALL: Primary semantic recall. Use when exact retrieve returns nothing useful, when the corpus is large and you are unsure which document holds the answer, or when the answer passage shares no surface words with your query. Send 1-2 queries.DO NOT CALL: When you already have a doc_id and want to read that document (use list_chunks); when a single exact passage would be found faster by grep-style retrieve.ARGUMENTS: query — array of 1-2 strings. Compiled-structure expansion is automatic and a no-op on datasets without compiled structure, so no extra argument is needed.OUTPUT: Relevance-ranked snippet chunks, possibly with structural neighbours (parent/child headings, sibling pages) appended. ok = new evidence; redundant = already seen.IF IT FAILS: miss means this query matched nothing — change the angle or fall back to retrieve or navigate_tree. Re-issuing a near-duplicate query is skipped as redundant, so vary the query instead of paraphrasing it.";
+
+/// `_WEB_SEARCH_TOOL_SPEC` description.
+pub const WEB_SEARCH_TOOL_DESCRIPTION: &str = "WHEN TO CALL: The needed fact is world knowledge, a recent event, or newer than the corpus (a current event, a person's alive-now status, a fresh statistic). This tool only appears when a web provider is configured.DO NOT CALL: When the fact plausibly lives in the fixed corpus — prefer retrieve or search_chunks first. For corpus-only questions this tool is unavailable.ARGUMENTS: query — array of 1-2 strings.OUTPUT: Web results shaped like corpus chunks, merged into the same evidence pool.IF IT FAILS: error (no provider) — it will not appear at all this session; if it does appear and fails, switch to corpus tools permanently and do not retry it.";
+
+/// `_NAVIGATE_TREE_TOOL_SPEC` description.
+pub const NAVIGATE_TREE_TOOL_DESCRIPTION: &str = "WHEN TO CALL: The question names a topic, entity, or alias but you do NOT know which document discusses it, especially on a large corpus. Routes by topic or cluster similarity over the compiled navigation tree.DO NOT CALL: When you already hold a doc_id (go straight to navigate_structure); when the answer is likely a single exact passage (use retrieve or search_chunks).ARGUMENTS: query — string, the topic / entity / alias whose document(s) to locate. Note: keywords is read by the executor but is NOT a declared parameter; do not pass it.OUTPUT: Candidate doc_ids plus a first-chunk summary of each; these become your known-docs set for the next step.IF IT FAILS: empty (no_structure) means the dataset has no compiled navigation tree — immediately switch to search_chunks. A second such empty disables this tool for the rest of the session, so do not retry it.";
+
+/// `_NAVIGATE_STRUCTURE_TOOL_SPEC` description.
+pub const NAVIGATE_STRUCTURE_TOOL_DESCRIPTION: &str = "WHEN TO CALL: You know the doc_id and need to PINPOINT where the answer lives inside that one document, without reading every chunk. The in-document counterpart of navigate_tree.DO NOT CALL: When you have no doc_id yet; when the document has no compiled structure (use list_chunks to read the full document).ARGUMENTS: doc_id — string, required. query — string, what to locate within the document. kind — enum catalog / mindmap / graph, default catalog (compiled-structure kind).OUTPUT: The structure outline annotated with matching chunk_ids, reading-order aware. ok = useful hits; poor (chunk_ptrs = 0) means it drilled to nothing usable.IF IT FAILS: empty (no_structure) — try another doc_id or kind, or fall back to list_chunks / search_chunks. poor — read the full document via list_chunks(doc_id). A second empty disables the tool for the session.";
+
+/// `_CALCULATE_TOOL_SPEC` description.
+pub const CALCULATE_TOOL_DESCRIPTION: &str = "WHEN TO CALL: The question asks you to DERIVE a number by combining facts you found (sum / difference / percentage / ratio / sort / compare / length / age / price / area / growth). NEVER do arithmetic mentally.DO NOT CALL: When the answer IS one of the stated numbers (no combination needed) — answer directly. When a needed number is still missing — retrieve it first; do not estimate.ARGUMENTS: question — string, the user question verbatim. facts — array of strings, the numbers or facts found in evidence, verbatim (keep the original language; pass them exactly as written).OUTPUT: an object with expression and result — report the computed result verbatim.IF IT FAILS: poor (no numeric answer derivable) — retrieve more numbers, or answer directly if the answer is already stated. Never fabricate a computation.";
+
+/// `_GRAPH_EXPLORE_TOOL_SPEC` description.
+pub const GRAPH_EXPLORE_TOOL_DESCRIPTION: &str = "EXPLORE the compiled KNOWLEDGE GRAPH (entities + relations) for a RELATIONAL/multi-hop answer. Different from navigate_*: instead of locating a document or passage, it seeds entities for the query, hops along their RELATIONS, and returns either a direct answer or the source passages behind the relevant entities/relations. Use when the answer requires connecting several entities through their relations (e.g. who-was-related-to-whom, cause-effect chains, membership/ownership) and you already have a starting entity from a search result, a navigation outline, or a list_chunks reading. If the dataset has NO compiled knowledge graph, it returns empty — fall back to search_chunks / navigate_structure.";
+
+/// `_TOOL_MAP`: the OpenAI function schema for one tool name (`None` when the
+/// name is not a registered tool).
+pub fn tool_spec(name: &str) -> Option<Value> {
+    let (description, parameters) = match name {
+        "retrieve" => (
+            RETRIEVE_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 3}
+                },
+                "required": ["query"]
+            }),
+        ),
+        "list_chunks" => (
+            LIST_CHUNKS_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "doc_id": {"type": "string", "description": "document id seen in a retrieve snippet"}
+                },
+                "required": ["doc_id"]
+            }),
+        ),
+        "search_chunks" => (
+            SEARCH_CHUNKS_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2}
+                },
+                "required": ["query"]
+            }),
+        ),
+        "web_search" => (
+            WEB_SEARCH_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2}
+                },
+                "required": ["query"]
+            }),
+        ),
+        "navigate_tree" => (
+            NAVIGATE_TREE_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "topic / entity / alias whose document(s) to locate"}
+                },
+                "required": ["query"]
+            }),
+        ),
+        "navigate_structure" => (
+            NAVIGATE_STRUCTURE_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "doc_id": {"type": "string", "description": "document id seen from a prior tool result"},
+                    "query": {"type": "string", "description": "what to locate within the document"},
+                    "kind": {"type": "string", "enum": ["catalog", "mindmap", "graph"], "description": "compiled structure kind, default catalog"}
+                },
+                "required": ["doc_id"]
+            }),
+        ),
+        "calculate" => (
+            CALCULATE_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "the user's question, verbatim"},
+                    "facts": {"type": "array", "items": {"type": "string"}, "description": "numbers/facts found in the evidence, verbatim"}
+                },
+                "required": ["question", "facts"]
+            }),
+        ),
+        "graph_explore" => (
+            GRAPH_EXPLORE_TOOL_DESCRIPTION,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "the relational question / starting entity"},
+                    "doc_scope": {"type": "array", "items": {"type": "string"}, "description": "optional doc_ids to restrict the graph to (from prior navigation/list_chunks)"}
+                },
+                "required": ["query"]
+            }),
+        ),
+        _ => return None,
+    };
+    Some(serde_json::json!({
+        "type": "function",
+        "function": {"name": name, "description": description, "parameters": parameters}
+    }))
+}
+
+/// `_TOOL_MAP` spec list for a set of visible tool names (`_active_tool_specs`
+/// payload): schemas in registry order.
+pub fn active_tool_schemas(names: &[String]) -> Vec<Value> {
+    TOOL_MAP_NAMES
+        .iter()
+        .filter(|name| names.iter().any(|visible| visible == *name))
+        .filter_map(|name| tool_spec(name))
+        .collect()
+}
+
+#[cfg(test)]
+mod spec_tests {
+    use super::*;
+
+    #[test]
+    fn all_eight_specs_build_with_verbatim_names() {
+        let names: Vec<String> = TOOL_MAP_NAMES.iter().map(|n| (*n).to_string()).collect();
+        let specs = active_tool_schemas(&names);
+        assert_eq!(specs.len(), 8);
+        for (index, spec) in specs.iter().enumerate() {
+            assert_eq!(spec["type"], serde_json::json!("function"));
+            assert_eq!(
+                spec["function"]["name"],
+                serde_json::json!(TOOL_MAP_NAMES[index])
+            );
+            let description = spec["function"]["description"].as_str().unwrap();
+            assert!(
+                description.chars().count() > 40,
+                "spec {} carries a description",
+                TOOL_MAP_NAMES[index]
+            );
+            assert_eq!(
+                spec["function"]["parameters"]["type"],
+                serde_json::json!("object")
+            );
+        }
+        // Subset filtering keeps registry order.
+        let subset = active_tool_schemas(&["list_chunks".to_string(), "retrieve".to_string()]);
+        assert_eq!(subset.len(), 2);
+        assert_eq!(subset[0]["function"]["name"], serde_json::json!("retrieve"));
+        assert_eq!(
+            subset[1]["function"]["name"],
+            serde_json::json!("list_chunks")
+        );
+        assert!(tool_spec("unknown").is_none());
     }
 }
 
