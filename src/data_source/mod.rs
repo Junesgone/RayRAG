@@ -36,6 +36,8 @@ pub enum DocumentSource {
     AirTable,
     /// Xquik X/Twitter post search (RAGFlow `xquik_connector.py` parity).
     Xquik,
+    /// Sitemap-driven web crawler (RAGFlow `sitemap_connector.py` parity).
+    Sitemap,
 }
 
 impl DocumentSource {
@@ -54,6 +56,7 @@ impl DocumentSource {
             DocumentSource::Box => "box",
             DocumentSource::AirTable => "airtable",
             DocumentSource::Xquik => "xquik",
+            DocumentSource::Sitemap => "sitemap",
         }
     }
 
@@ -72,6 +75,7 @@ impl DocumentSource {
             "box" => Some(DocumentSource::Box),
             "airtable" => Some(DocumentSource::AirTable),
             "xquik" => Some(DocumentSource::Xquik),
+            "sitemap" => Some(DocumentSource::Sitemap),
             _ => None,
         }
     }

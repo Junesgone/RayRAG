@@ -591,6 +591,7 @@ impl ConnectorRegistry {
             "azure_blob" => Ok(Box::new(BlobAdapter::new(options))),
             "rss" => Ok(Box::new(RssConnector::new(options)?)),
             "xquik" => Ok(Box::new(XquikConnector::new(options)?)),
+            "sitemap" => Ok(Box::new(SitemapConnector::new(options)?)),
             "airtable" => Ok(Box::new(AirtableConnector::new(options)?)),
             // PostgreSQL 外部库直读（RAGFlow rdbms 源的 postgresql 分支）。
             "postgresql" => Ok(Box::new(RdbmsConnector::new(&options)?)),
@@ -3678,6 +3679,561 @@ use serde_json::Value;
 /// Bounded divergences: document ids are `xquik:<post id>` instead of the
 /// upstream `hash128("rest_api:<id>")`, and `media[*].mediaUrl` values are
 /// joined with " | " because `RemoteFile.metadata` carries strings.
+/// Sitemap connector — RAGFlow v0.27.2 `common/data_source/sitemap_connector.py`.
+///
+/// Ingests web pages listed in a `sitemap.xml`:
+///
+/// * Standard `urlset` sitemaps and `sitemapindex` files (recursive, at most
+///   `SITEMAP_MAX_DEPTH` levels, each sitemap URL fetched at most once, and at
+///   most `SITEMAP_MAX_FETCHES` sitemap documents per run).
+/// * Incremental windows via `<lastmod>` (`since`/`until` in `options.extra`,
+///   RFC3339 or unix seconds).
+/// * Optional `url_filter` regex (length-capped and nested-quantifier-checked
+///   like upstream; Rust's regex engine is linear-time, so catastrophic
+///   backtracking is impossible by construction).
+/// * SSRF-fail-closed URL validation on every hop of the redirect chain
+///   (at most 10), a 64 MiB response cap and a configurable User-Agent.
+///
+/// Bounded divergences: document ids are `sitemap:<sha1(url)>` instead of the
+/// upstream `sitemap:<md5(url)>`; PDF payloads are stored through the shared
+/// `ConnectorDoc.blob` string channel (lossy, same as the Blob connector) and
+/// `follow_pdf_links` link discovery is deferred (the Slim docs API has no
+/// RayRAG counterpart yet).
+pub const SITEMAP_MAX_DEPTH: usize = 5;
+const SITEMAP_MAX_FETCHES: usize = 1000;
+const SITEMAP_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const SITEMAP_MAX_REDIRECTS: usize = 10;
+const SITEMAP_MAX_FILTER_LENGTH: usize = 512;
+const SITEMAP_MAX_MATCHED_URL_LENGTH: usize = 4096;
+const SITEMAP_DEFAULT_USER_AGENT: &str = "RAGFlow-SitemapConnector/1.0";
+const SITEMAP_DEFAULT_BATCH_SIZE: usize = 10;
+
+#[derive(Debug)]
+pub struct SitemapConnector {
+    client: reqwest::Client,
+    sitemap_url: String,
+    batch_size: usize,
+    user_agent: String,
+    url_filter: Option<regex::Regex>,
+    follow_pdf_links: bool,
+    restrict_pdf_to_domain: bool,
+    since: Option<u64>,
+    until: Option<u64>,
+    allow_private_hosts: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SitemapDocument {
+    Index(Vec<String>),
+    UrlSet(Vec<(String, Option<u64>)>),
+}
+
+fn sitemap_bool(extra: &HashMap<String, String>, key: &str, default: bool) -> bool {
+    match extra
+        .get(key)
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        Some(value) => matches!(value.as_str(), "1" | "true" | "yes" | "on"),
+        None => default,
+    }
+}
+
+/// Fail-closed URL validation (scheme, host, resolved private addresses).
+fn sitemap_validate_url(url: &str, allow_private: bool) -> Result<()> {
+    use std::net::ToSocketAddrs;
+    if url.is_empty() {
+        bail!("sitemap: URL is required");
+    }
+    let parsed =
+        url::Url::parse(url).map_err(|error| anyhow!("sitemap: invalid URL {url}: {error}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => bail!("sitemap: URL must be http or https, got scheme: {other}"),
+    }
+    let host = parsed
+        .host_str()
+        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| anyhow!("sitemap: URL must include a host: {url}"))?;
+    if allow_private {
+        return Ok(());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_private_ip(ip) {
+            bail!("sitemap: refusing private/loopback host: {host}");
+        }
+        return Ok(());
+    }
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addrs: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| anyhow!("sitemap: cannot resolve {host}: {error}"))?
+        .collect();
+    if addrs.is_empty() {
+        bail!("sitemap: cannot resolve {host}");
+    }
+    if let Some(bad) = addrs.iter().find(|addr| is_private_ip(addr.ip())) {
+        bail!(
+            "sitemap: refusing host resolving to private address {}: {host}",
+            bad.ip()
+        );
+    }
+    Ok(())
+}
+
+/// `_compile_url_filter`: length cap + obvious nested quantifiers stay as user
+/// feedback; Rust regex matching is linear-time, so no timeout is needed.
+fn sitemap_compile_filter(pattern: &str) -> Result<regex::Regex> {
+    if pattern.len() > SITEMAP_MAX_FILTER_LENGTH {
+        bail!("url_filter is too long (max {SITEMAP_MAX_FILTER_LENGTH} characters)");
+    }
+    if sitemap_has_nested_quantifier(pattern) {
+        bail!(
+            "url_filter must not contain nested quantifiers such as '(a+)+', which can cause catastrophic backtracking"
+        );
+    }
+    regex::Regex::new(pattern).map_err(|error| anyhow!("url_filter is not a valid regex: {error}"))
+}
+
+/// Heuristic scan for `(...quantifier...)quantifier` shapes (upstream
+/// `_NESTED_QUANTIFIER_RE`).
+fn sitemap_has_nested_quantifier(pattern: &str) -> bool {
+    let inner_quantifier = |chunk: &str| {
+        chunk
+            .char_indices()
+            .filter(|(_, ch)| matches!(ch, '+' | '*' | '}'))
+            .any(|(index, _)| !chunk[..index].ends_with('\\'))
+    };
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'(' {
+            index += 1;
+            continue;
+        }
+        let Some(close) = pattern[index..].find(')') else {
+            break;
+        };
+        let group = &pattern[index + 1..index + close];
+        if !group.contains('(') && inner_quantifier(group) {
+            let after = index + close + 1;
+            if let Some(ch) = pattern[after..].chars().next()
+                && matches!(ch, '+' | '*' | '?' | '{')
+            {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+/// `_build_document_id` (upstream md5; RayRAG uses sha1 for the same purpose).
+fn sitemap_document_id(url: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let digest = Sha1::digest(url.as_bytes());
+    format!(
+        "sitemap:{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
+}
+
+/// `_url_to_identifier`: path without the leading slash, host as fallback.
+fn sitemap_url_identifier(url: &str) -> String {
+    let parsed = url::Url::parse(url).ok();
+    parsed
+        .as_ref()
+        .map(|parsed| parsed.path().trim_start_matches('/').to_owned())
+        .filter(|path| !path.is_empty())
+        .or_else(|| parsed.and_then(|parsed| parsed.host_str().map(str::to_owned)))
+        .unwrap_or_else(|| url.to_owned())
+}
+
+/// `_parse_lastmod`: RFC3339 (with/without fractional seconds and `Z`/offset)
+/// or date-only, normalized to unix seconds.
+fn sitemap_parse_lastmod(value: &str) -> Option<u64> {
+    if let Ok(datetime) =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+    {
+        return u64::try_from(datetime.unix_timestamp()).ok();
+    }
+    if let Ok(date) = time::Date::parse(value, &time::format_description::well_known::Iso8601::DATE)
+    {
+        return u64::try_from(date.midnight().assume_utc().unix_timestamp()).ok();
+    }
+    None
+}
+
+fn sitemap_parse_window(value: Option<&String>) -> Option<u64> {
+    let value = value
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())?;
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds);
+    }
+    sitemap_parse_lastmod(value)
+}
+
+/// Parse one sitemap document into either child sitemap URLs or page URLs.
+fn sitemap_parse_document(xml: &str) -> Result<SitemapDocument> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut root: Option<String> = None;
+    let mut current_tag: Option<Vec<u8>> = None;
+    let mut current_text = String::new();
+    let mut current_loc: Option<String> = None;
+    let mut current_lastmod: Option<u64> = None;
+    let mut index_urls: Vec<String> = Vec::new();
+    let mut page_urls: Vec<(String, Option<u64>)> = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(tag)) => {
+                let name = tag.local_name().as_ref().to_vec();
+                if root.is_none() {
+                    root = Some(String::from_utf8_lossy(&name).into_owned());
+                }
+                if name == b"loc" || name == b"lastmod" {
+                    current_tag = Some(name);
+                    current_text.clear();
+                }
+            }
+            Ok(Event::Empty(tag)) => {
+                if root.is_none() {
+                    root = Some(String::from_utf8_lossy(tag.local_name().as_ref()).into_owned());
+                }
+            }
+            Ok(Event::Text(text)) => {
+                if current_tag.is_some() {
+                    current_text.push_str(&text.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::End(tag)) => {
+                let name = tag.local_name().as_ref().to_vec();
+                if name == b"loc" && current_tag.as_deref() == Some(b"loc".as_slice()) {
+                    let value = current_text.trim().to_owned();
+                    if !value.is_empty() {
+                        current_loc = Some(value);
+                    }
+                    current_tag = None;
+                } else if name == b"lastmod"
+                    && current_tag.as_deref() == Some(b"lastmod".as_slice())
+                {
+                    current_lastmod = sitemap_parse_lastmod(current_text.trim());
+                    current_tag = None;
+                } else if name == b"url" {
+                    if let Some(loc) = current_loc.take() {
+                        page_urls.push((loc, current_lastmod.take()));
+                    }
+                } else if name == b"sitemap" {
+                    if let Some(loc) = current_loc.take() {
+                        index_urls.push(loc);
+                        current_lastmod = None;
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => bail!("Failed to parse sitemap XML: {error}"),
+            _ => {}
+        }
+        buffer.clear();
+    }
+    match root.as_deref() {
+        Some(root) if root.to_ascii_lowercase().contains("sitemapindex") => {
+            Ok(SitemapDocument::Index(index_urls))
+        }
+        _ => Ok(SitemapDocument::UrlSet(page_urls)),
+    }
+}
+
+impl SitemapConnector {
+    /// Registry entry point. `options.url` is the sitemap URL; `extra` carries
+    /// `batch_size`, `user_agent`, `url_filter`, `follow_pdf_links`,
+    /// `restrict_pdf_to_domain`, `since` and `until`.
+    pub fn new(options: SourceOptions) -> Result<Self> {
+        Self::with_private_hosts(options, false)
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(options: SourceOptions) -> Result<Self> {
+        Self::with_private_hosts(options, true)
+    }
+
+    fn with_private_hosts(options: SourceOptions, allow_private_hosts: bool) -> Result<Self> {
+        let extra = &options.extra;
+        let sitemap_url = options.url.trim().to_owned();
+        if sitemap_url.is_empty() {
+            bail!("sitemap: sitemap_url is required (source url)");
+        }
+        sitemap_validate_url(&sitemap_url, allow_private_hosts)?;
+        let batch_size = match extra.get("batch_size").map(String::as_str) {
+            Some(value) if !value.trim().is_empty() => value
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| anyhow!("batch_size must be greater than 0"))?,
+            _ if options.max_items > 0 => options.max_items,
+            _ => SITEMAP_DEFAULT_BATCH_SIZE,
+        };
+        if batch_size < 1 {
+            bail!("batch_size must be greater than 0");
+        }
+        let user_agent = extra
+            .get("user_agent")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| SITEMAP_DEFAULT_USER_AGENT.to_owned());
+        let url_filter = match extra.get("url_filter").map(|value| value.trim()) {
+            Some(pattern) if !pattern.is_empty() => Some(sitemap_compile_filter(pattern)?),
+            _ => None,
+        };
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            sitemap_url,
+            batch_size,
+            user_agent,
+            url_filter,
+            follow_pdf_links: sitemap_bool(extra, "follow_pdf_links", false),
+            restrict_pdf_to_domain: sitemap_bool(extra, "restrict_pdf_to_domain", true),
+            since: sitemap_parse_window(extra.get("since")),
+            until: sitemap_parse_window(extra.get("until")),
+            allow_private_hosts,
+        })
+    }
+
+    fn url_matches(&self, url: &str) -> bool {
+        let Some(filter) = self.url_filter.as_ref() else {
+            return true;
+        };
+        let sample: String = url.chars().take(SITEMAP_MAX_MATCHED_URL_LENGTH).collect();
+        filter.is_match(&sample)
+    }
+
+    /// `_fetch_raw`: manual redirect loop (max 10 hops), per-hop SSRF
+    /// validation, 64 MiB cap.
+    async fn fetch_raw(&self, url: &str) -> Result<(Vec<u8>, String)> {
+        let mut current = url.to_owned();
+        for _ in 0..=SITEMAP_MAX_REDIRECTS {
+            sitemap_validate_url(&current, self.allow_private_hosts)?;
+            let response = self
+                .client
+                .get(&current)
+                .header(reqwest::header::USER_AGENT, &self.user_agent)
+                .send()
+                .await
+                .map_err(|error| anyhow!("sitemap: request to {current} failed: {error}"))?;
+            let status = response.status();
+            if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        anyhow!("sitemap: redirect without Location fetching {current}")
+                    })?;
+                current = reqwest::Url::parse(&current)
+                    .and_then(|base| base.join(&location))
+                    .map_err(|error| anyhow!("sitemap: invalid redirect from {current}: {error}"))?
+                    .to_string();
+                continue;
+            }
+            if !status.is_success() {
+                bail!("sitemap: {current} returned HTTP {}", status.as_u16());
+            }
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let body = crate::common::cmd_timeout::read_body_limited(
+                response,
+                SITEMAP_MAX_RESPONSE_BYTES,
+                "sitemap",
+            )
+            .await?;
+            return Ok((body, content_type));
+        }
+        bail!("sitemap: exceeded {SITEMAP_MAX_REDIRECTS} redirects fetching {url:?}")
+    }
+
+    /// `_iter_sitemap_urls`: recursive traversal with visited-set, depth and
+    /// fetch-count guards. Fetch failures only warn and prune that subtree.
+    fn walk_sitemaps<'a>(
+        &'a self,
+        url: &'a str,
+        depth: usize,
+        visited: &'a mut std::collections::HashSet<String>,
+        fetched: &'a mut usize,
+        out: &'a mut Vec<(String, Option<u64>)>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if depth > SITEMAP_MAX_DEPTH {
+                tracing::warn!(url, "sitemap: max depth reached, skipping");
+                return Ok(());
+            }
+            if !visited.insert(url.to_owned()) {
+                tracing::warn!(url, "sitemap: sitemap already visited, skipping");
+                return Ok(());
+            }
+            if *fetched >= SITEMAP_MAX_FETCHES {
+                tracing::warn!(url, "sitemap: maximum sitemap fetches reached, skipping");
+                return Ok(());
+            }
+            *fetched += 1;
+            let (body, _content_type) = match self.fetch_raw(url).await {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::warn!(%error, url, "sitemap: failed to fetch sitemap");
+                    return Ok(());
+                }
+            };
+            let xml = String::from_utf8_lossy(&body);
+            match sitemap_parse_document(&xml) {
+                Ok(SitemapDocument::Index(children)) => {
+                    for child in children {
+                        self.walk_sitemaps(&child, depth + 1, visited, fetched, out)
+                            .await?;
+                    }
+                }
+                Ok(SitemapDocument::UrlSet(pages)) => out.extend(pages),
+                Err(error) => {
+                    tracing::warn!(%error, url, "sitemap: failed to parse sitemap XML");
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+#[async_trait]
+impl Connector for SitemapConnector {
+    fn kind(&self) -> &'static str {
+        "sitemap"
+    }
+
+    async fn load_credentials(&mut self) -> Result<()> {
+        sitemap_validate_url(&self.sitemap_url, self.allow_private_hosts)?;
+        if self.batch_size < 1 {
+            bail!("batch_size must be greater than 0");
+        }
+        let mut visited = std::collections::HashSet::new();
+        let mut fetched = 0usize;
+        let mut pages = Vec::new();
+        self.walk_sitemaps(
+            &self.sitemap_url.clone(),
+            0,
+            &mut visited,
+            &mut fetched,
+            &mut pages,
+        )
+        .await?;
+        if !pages.iter().any(|(url, _)| self.url_matches(url)) {
+            bail!("Sitemap contains no URLs matching the filter");
+        }
+        Ok(())
+    }
+
+    async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let mut visited = std::collections::HashSet::new();
+        let mut fetched = 0usize;
+        let mut pages = Vec::new();
+        self.walk_sitemaps(
+            &self.sitemap_url.clone(),
+            0,
+            &mut visited,
+            &mut fetched,
+            &mut pages,
+        )
+        .await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut files = Vec::new();
+        for (url, lastmod) in pages {
+            if !seen.insert(url.clone()) || !self.url_matches(&url) {
+                continue;
+            }
+            if self.since.is_some() || self.until.is_some() {
+                match lastmod {
+                    None => {
+                        if self.since.is_some() {
+                            continue;
+                        }
+                    }
+                    Some(ts) => {
+                        if self.since.is_some_and(|since| ts <= since) {
+                            continue;
+                        }
+                        if self.until.is_some_and(|until| ts > until) {
+                            continue;
+                        }
+                    }
+                }
+            }
+            let mut metadata = HashMap::new();
+            metadata.insert("url".to_owned(), url.clone());
+            metadata.insert("sitemap_url".to_owned(), self.sitemap_url.clone());
+            if let Some(lastmod) = lastmod {
+                metadata.insert("lastmod".to_owned(), lastmod.to_string());
+            }
+            files.push(RemoteFile {
+                id: sitemap_document_id(&url),
+                name: sitemap_url_identifier(&url),
+                path: url.clone(),
+                extension: ".md".to_owned(),
+                size_bytes: 0,
+                updated_at: lastmod.map(|ts| ts.to_string()).unwrap_or_default(),
+                fingerprint: String::new(),
+                metadata,
+            });
+        }
+        Ok(files)
+    }
+
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+        let (body, _content_type) = self.fetch_raw(&file.path).await?;
+        Ok(body)
+    }
+
+    fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+        let is_pdf = raw.starts_with(b"%PDF");
+        let (blob, extension) = if is_pdf {
+            (String::from_utf8_lossy(&raw).to_string(), ".pdf".to_owned())
+        } else {
+            let html = String::from_utf8_lossy(&raw);
+            (crate::crawler::html_to_markdown(&html), ".md".to_owned())
+        };
+        let mut metadata: HashMap<String, String> = file.metadata.clone();
+        metadata.insert("source".to_owned(), "sitemap".to_owned());
+        if self.follow_pdf_links {
+            metadata.insert("follow_pdf_links".to_owned(), "true".to_owned());
+        }
+        if self.restrict_pdf_to_domain {
+            metadata.insert("restrict_pdf_to_domain".to_owned(), "true".to_owned());
+        }
+        Ok(ConnectorDoc {
+            id: file.id.clone(),
+            blob,
+            source: DocumentSource::Sitemap,
+            semantic_identifier: file.name.clone(),
+            extension,
+            doc_updated_at: file.updated_at.clone(),
+            size_bytes: raw.len(),
+            metadata,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct XquikConnector {
     client: reqwest::Client,
@@ -3920,8 +4476,7 @@ impl XquikConnector {
             .get("text")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            .replace('\n', " ")
-            .replace('\r', " ")
+            .replace(['\n', '\r'], " ")
             .trim()
             .chars()
             .take(100)
@@ -4113,6 +4668,217 @@ impl Connector for XquikConnector {
             size_bytes: raw.len(),
             metadata,
         })
+    }
+}
+
+#[cfg(test)]
+mod sitemap_tests {
+    use super::*;
+    use axum::Router;
+    use axum::http::{HeaderMap, Uri};
+
+    fn options(url: &str) -> SourceOptions {
+        SourceOptions {
+            url: url.to_owned(),
+            ..SourceOptions::default()
+        }
+    }
+
+    #[test]
+    fn validation_rejects_bad_inputs() {
+        assert!(SitemapConnector::new(options("")).is_err());
+        assert!(SitemapConnector::new(options("ftp://example.com/s.xml")).is_err());
+        assert!(
+            SitemapConnector::new(options("http://127.0.0.1:9/s.xml"))
+                .unwrap_err()
+                .to_string()
+                .contains("private")
+        );
+        let mut zero_batch = options("http://example.com/s.xml");
+        zero_batch
+            .extra
+            .insert("batch_size".to_owned(), "0".to_owned());
+        assert!(SitemapConnector::new(zero_batch).is_err());
+        let mut long_filter = options("http://example.com/s.xml");
+        long_filter.extra.insert(
+            "url_filter".to_owned(),
+            "a".repeat(SITEMAP_MAX_FILTER_LENGTH + 1),
+        );
+        assert!(
+            SitemapConnector::new(long_filter)
+                .unwrap_err()
+                .to_string()
+                .contains("too long")
+        );
+        let mut nested = options("http://example.com/s.xml");
+        nested
+            .extra
+            .insert("url_filter".to_owned(), "(a+)+$".to_owned());
+        assert!(
+            SitemapConnector::new(nested)
+                .unwrap_err()
+                .to_string()
+                .contains("nested quantifiers")
+        );
+        let mut invalid = options("http://example.com/s.xml");
+        invalid
+            .extra
+            .insert("url_filter".to_owned(), "(a".to_owned());
+        assert!(
+            SitemapConnector::new(invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("not a valid regex")
+        );
+    }
+
+    async fn site(uri: Uri, headers: HeaderMap) -> axum::response::Response {
+        let host = headers
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("127.0.0.1")
+            .to_owned();
+        let base = format!("http://{host}");
+        let (content_type, body) = match uri.path() {
+            "/sitemap.xml" => (
+                "application/xml",
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>{base}/page1</loc><lastmod>2025-01-01T00:00:00Z</lastmod></url>
+  <url><loc>{base}/page2</loc><lastmod>2020-01-01</lastmod></url>
+</urlset>"#
+                ),
+            ),
+            "/index.xml" => (
+                "application/xml",
+                format!(
+                    r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<sitemap><loc>{base}/index.xml</loc></sitemap>
+<sitemap><loc>{base}/child.xml</loc></sitemap>
+</sitemapindex>"#
+                ),
+            ),
+            "/child.xml" => (
+                "application/xml",
+                format!(
+                    r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url><loc>{base}/page3</loc></url></urlset>"#
+                ),
+            ),
+            "/page1" => (
+                "text/html",
+                "<html><body><h1>One</h1><p>Hello</p></body></html>".to_owned(),
+            ),
+            "/page2" => (
+                "text/html",
+                "<html><body><h1>Two</h1></body></html>".to_owned(),
+            ),
+            "/page3" => (
+                "text/html",
+                "<html><body><h1>Three</h1></body></html>".to_owned(),
+            ),
+            _ => {
+                return axum::response::Response::builder()
+                    .status(404)
+                    .body(axum::body::Body::from("missing"))
+                    .unwrap();
+            }
+        };
+        axum::response::Response::builder()
+            .status(200)
+            .header("content-type", content_type)
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    }
+
+    async fn spawn_site() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().fallback(site);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), server)
+    }
+
+    #[tokio::test]
+    async fn urlset_fetch_builds_markdown_docs() {
+        let (base, server) = spawn_site().await;
+        let connector =
+            SitemapConnector::new_for_test(options(&format!("{base}/sitemap.xml"))).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2);
+        assert!(batch.docs[0].id.starts_with("sitemap:"));
+        assert_eq!(batch.docs[0].extension, ".md");
+        assert!(
+            batch.docs[0].blob.contains("One"),
+            "blob: {}",
+            batch.docs[0].blob
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("source"),
+            Some(&"sitemap".to_owned())
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("url"),
+            Some(&format!("{base}/page1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn index_recurses_and_guards_cycles() {
+        let (base, server) = spawn_site().await;
+        let connector =
+            SitemapConnector::new_for_test(options(&format!("{base}/index.xml"))).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.docs[0].blob.contains("Three"));
+        assert_eq!(
+            batch.docs[0].metadata.get("url"),
+            Some(&format!("{base}/page3"))
+        );
+    }
+
+    #[tokio::test]
+    async fn window_and_filter_narrow_the_url_set() {
+        let (base, server) = spawn_site().await;
+        let sitemap = format!("{base}/sitemap.xml");
+
+        let mut windowed = options(&sitemap);
+        windowed
+            .extra
+            .insert("since".to_owned(), "2021-01-01T00:00:00Z".to_owned());
+        let connector = SitemapConnector::new_for_test(windowed).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(
+            batch.docs.len(),
+            1,
+            "only the 2025 page survives the window"
+        );
+        assert!(batch.docs[0].blob.contains("One"));
+
+        let mut filtered = options(&sitemap);
+        filtered
+            .extra
+            .insert("url_filter".to_owned(), "page2$".to_owned());
+        let connector = SitemapConnector::new_for_test(filtered).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.docs[0].blob.contains("Two"));
+    }
+
+    #[tokio::test]
+    async fn validation_requires_at_least_one_matching_url() {
+        let (base, server) = spawn_site().await;
+        let mut opts = options(&format!("{base}/sitemap.xml"));
+        opts.extra
+            .insert("url_filter".to_owned(), "nomatch$".to_owned());
+        let mut connector = SitemapConnector::new_for_test(opts).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        server.abort();
+        assert!(error.contains("no URLs matching the filter"), "{error}");
     }
 }
 

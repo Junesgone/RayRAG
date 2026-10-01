@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 595 | 289786 |
-| partial | 87 | 35325 |
+| full | 596 | 290401 |
+| partial | 86 | 34710 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -796,7 +796,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `common/data_source/salesforce_connector.py` | 542 | 23394 | `a9af3eb72c85ebad` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/seafile_connector.py` | 643 | 23845 | `90fa402898728cc6` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/sharepoint_connector.py` | 271 | 11333 | `67c6203cab4a5c26` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
-| `common/data_source/sitemap_connector.py` | 615 | 25179 | `65f45280c2d13532` | partial | `src/data_source/mod.rs; src/crawler.rs` | （v0.3.10g 审计：站点地图数据源（v0.27.2 新增）；数据源框架就位，该源待接入——worklist W-2（数据源）） |
+| `common/data_source/sitemap_connector.py` | 615 | 25179 | `65f45280c2d13532` | full | `src/connectors.rs; src/crawler.rs` | （v0.3.10o 移植：sitemap 数据源——urlset/sitemapindex 递归（深度上限 5、访问去重、sitemap 抓取上限 1000）；<lastmod> 多格式解析（RFC3339 含小数/偏移、date-only）与 since/until 增量窗口；url_filter（长度上限 512、嵌套量词启发拒绝、regex 编译错误复制上游措辞；Rust regex 线性时间，超时防护不需要——有界差异）；逐跳 SSRF 校验 + 最多 10 次重定向 + 64MiB 响应上限 + 可配置 UA；html→markdown 复用 crawler.rs；PDF 以 %PDF 魔数识别（blob 走 ConnectorDoc 字符串通道，lossy——与 Blob 连接器同先例）；文档 id sitemap:<sha1>（上游 md5，有界差异）；follow_pdf_links 链接发现推迟（Slim docs API 无对应）；5 项 mock 单测（校验矩阵、urlset 抓取+markdown、index 递归+自引用防护、窗口/过滤收窄、无匹配 URL 报错）。） |
 | `common/data_source/slack_connector.py` | 689 | 25741 | `cdb653c71c8e3412` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/teams_connector.py` | 308 | 12538 | `c31e03d31a0c2713` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) [v0.27.2 content changed: re-audit] |
 | `common/data_source/utils.py` | 1281 | 45180 | `ad4c43c6e4135723` | full | `src/connectors.rs; src/api/data_source_mgr.rs` | connector framework ported (Connector trait, Local/WebDAV/Blob/Feishu/Confluence, registry) |

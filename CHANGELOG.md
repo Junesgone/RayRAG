@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.70] — 2026-10-01（对标批次 v0.3.10o）
+
+> W-2 续：RAGFlow v0.27.2 的 Sitemap 数据源连接器移植（纯 Rust）。
+
+### Added
+
+- **Sitemap 数据源连接器**（`common/data_source/sitemap_connector.py` → `src/connectors.rs`）：`sitemap` 注册表分支与 `DocumentSource::Sitemap`；`urlset`/`sitemapindex` 递归（深度上限 5、访问去重、抓取上限 1000）；`<lastmod>` 多格式解析与 `since`/`until` 增量窗口；`url_filter`（长度上限、嵌套量词拒绝、编译错误措辞对齐）；逐跳 SSRF 校验 + 10 次重定向上限 + 64 MiB 响应上限 + 可配置 User-Agent；网页经共享 `crawler::html_to_markdown` 转为 Markdown。
+- 有界差异（台账记录）：文档 id `sitemap:<sha1>`（上游 md5）、PDF 载荷走 `ConnectorDoc.blob` 字符串通道（lossy，同 Blob 连接器先例）、`follow_pdf_links` 链接发现推迟（缺 Slim docs API 对应）、Rust regex 线性时间故无需超时防护。
+
+### Tests
+
+- 5 项 mock 单测（校验矩阵、urlset 抓取 + Markdown、index 递归 + 自引用防护、窗口/过滤收窄、无匹配 URL 报错）；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.69] — 2026-10-01（对标批次 v0.3.10n）
 
 > W-2 首批：RAGFlow v0.27.2 的 Xquik 数据源连接器移植（纯 Rust）。

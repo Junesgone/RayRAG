@@ -4,14 +4,14 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
 
 ## 项目状态
 
-- 版本：**v0.4.69**，对齐切片 **v0.3.10n**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
+- 版本：**v0.4.70**，对齐切片 **v0.3.10o**（每次切片推进 RAGFlow v0.27.2 的逐文件、逐行对齐，
   见 `CHANGELOG.md` 与 `运维记录.md`）。
 - 测试基线：`cargo test --locked --lib`（`postgres-backend` 与 `zvec-backend` 已是默认 feature，无需显式指定）
   **1636 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
   凭据、公网或 MinIO 的 live 测试。
 - 覆盖台账（RAGFlow v0.27.2 固定快照 `a024bea0cd93`，5977 个文件，
-  `docs/ragflow-v0.27.2-coverage.md`）：v0.3.10n（W-2 首批：Xquik 数据源连接器）—— full **595** / aligned **279** /
-  replaced **123** / N/A **61** / partial **87** / reference **4832** / unmapped **0**；
+  `docs/ragflow-v0.27.2-coverage.md`）：v0.3.10o（W-2 续：Sitemap 数据源连接器）—— full **596** / aligned **279** /
+  replaced **123** / N/A **61** / partial **86** / reference **4832** / unmapped **0**；
   partial 逐条带书面注记（搜索提供商、数据源、OCR 解析器、agentic harness、结构图/编译器、沙箱
   六类收敛队列，以及 UI 残留与上游变更复核队列）；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
   可复核（`--write` 刷新 Summary，`--migrate` 迁移基线）。

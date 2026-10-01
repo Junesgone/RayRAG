@@ -206,7 +206,7 @@ fn strip_all_tags(html: &str) -> String {
 }
 
 /// 轻量 HTML→Markdown 转换：标题/段落/链接/列表/粗斜体/代码块（对齐 crawl4ai markdown 的核心形态）。
-fn html_to_markdown(html: &str) -> String {
+pub(crate) fn html_to_markdown(html: &str) -> String {
     let document = Html::parse_document(html);
     let root = document.root_element();
     let body = root
