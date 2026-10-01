@@ -219,6 +219,11 @@ pub fn clear(memory: &mut Vec<Value>) {
 // Relevance-ranked retrieval over memory (retrieval-reuse cache, not noise).
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// `_STOPWORDS` accessor (upstream `harness.memory._STOPWORDS`).
+pub fn is_stopword(term: &str) -> bool {
+    STOPWORDS.contains(&term.to_lowercase().as_str())
+}
+
 const STOPWORDS: [&str; 53] = [
     "what", "which", "how", "many", "much", "does", "did", "do", "the", "a", "an", "is", "are",
     "was", "were", "be", "been", "being", "of", "for", "to", "in", "on", "with", "and", "or", "by",
