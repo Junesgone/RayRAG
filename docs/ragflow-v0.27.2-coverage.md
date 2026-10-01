@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 581 | 287180 |
-| partial | 101 | 37931 |
+| full | 588 | 288400 |
+| partial | 94 | 36711 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3865,19 +3865,19 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/utils/opendal_conn.py` | 123 | 5145 | `fcf7a7a61d870ec4` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure |
 | `rag/utils/opensearch_conn.py` | 871 | 37480 | `b29b236781d50dbb` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure [v0.27.2 content changed: re-audit] |
 | `rag/utils/oss_conn.py` | 176 | 6236 | `8e372b2c95fd53d4` | replaced | `src/storage.rs` | Aliyun OSS is S3-compatible; set RAYRAG_STORAGE_ENDPOINT to oss-cn-<region>.aliyuncs.com |
-| `rag/utils/querit_conn.py` | 124 | 4618 | `4cc5eb3d283ca94b` | partial | `src/connectors.rs; src/search.rs` | （v0.3.10g 审计：Querit 搜索连接器（v0.27.2 新增）；RayRAG 搜索框架就位，该提供商待接入——worklist W-1（搜索/提供商）） |
+| `rag/utils/querit_conn.py` | 124 | 4618 | `4cc5eb3d283ca94b` | full | `src/web_search.rs` | （v0.3.10j 移植：POST /v1/search Bearer、count=6/chunksPerDoc=1、results.result[].snippet 归一；失败按上游语义返回空并告警（不含查询文本）。） |
 | `rag/utils/raptor_utils.py` | 219 | 7372 | `0ddfa46f205a136f` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure [v0.27.2 content changed: re-audit] |
 | `rag/utils/redis_conn.py` | 565 | 19900 | `70a275648c57ba80` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure [v0.27.2 content changed: re-audit] |
 | `rag/utils/s3_conn.py` | 323 | 13944 | `f2845940262c3ad9` | replaced | `src/storage.rs` | Same StorageClient covers AWS S3 (path-style or virtual-host, region from env) [v0.27.2 content changed: re-audit] |
 | `rag/utils/serenedb_conn.py` | 725 | 31930 | `b35ddd6c6a8c87ab` | replaced | `src/doc_store.rs; src/store/mod.rs` | （v0.3.10g 审计：SereneDB 文档存储引擎；zvec-rust 与 PostgreSQL 替代外部检索引擎） |
-| `rag/utils/serply_conn.py` | 124 | 4618 | `cb72d5034b782f19` | partial | `src/connectors.rs; src/search.rs` | （v0.3.10g 审计：Serply 搜索连接器（v0.27.2 新增）；框架就位，该提供商待接入——worklist W-1（搜索/提供商）） |
+| `rag/utils/serply_conn.py` | 124 | 4618 | `cb72d5034b782f19` | full | `src/web_search.rs` | （v0.3.10j 移植：GET /v1/search/ X-Api-Key + 必需 User-Agent、q/num 参数、results[].description 归一；失败返回空并告警。） |
 | `rag/utils/storage_factory.py` | 15 | 622 | `177b91dd0511cf12` | replaced | `src/storage.rs` | StorageConfig::from_env selects endpoint/region/credentials; empty endpoint = local filesystem mode |
 | `rag/utils/table_es_metadata.py` | 287 | 12405 | `b56edcadc400d0b1` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure [v0.27.2 content changed: re-audit] |
 | `rag/utils/tavily_conn.py` | 66 | 2641 | `a638eec59dfd70a9` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure [v0.27.2 content changed: re-audit] |
 | `rag/utils/tts_cache.py` | 120 | 3608 | `a96f1925288f7204` | replaced | `src/store/mod.rs; src/persistence.rs` | zvec-rust and PostgreSQL replace Elasticsearch/MySQL infrastructure |
-| `rag/utils/url_utils.py` | 68 | 2534 | `51c8be90e24bcfd7` | partial | `src/model_meta.rs` | （v0.3.10g 审计：ensure_v1 URL 规范化助手；RayRAG 在模型发现中已有 ensure_v1_url（src/model_meta.rs），通用共享助手待抽——worklist W-1（搜索/提供商）） |
-| `rag/utils/web_search_conn.py` | 88 | 3556 | `08d97494412c7743` | partial | `src/tavily.rs; src/search.rs; src/connectors.rs` | （v0.3.10g 审计：联网搜索提供商注册（tavily/querit/serply/youcom）；RayRAG 已内置 tavily 与国内搜索连接器，querit/serply/youcom 待接入——worklist W-1（搜索/提供商）） |
-| `rag/utils/youcom_conn.py` | 152 | 6282 | `ed7202eddd1e20a8` | partial | `src/connectors.rs; src/search.rs` | （v0.3.10g 审计：You.com 搜索连接器（v0.27.2 新增）；框架就位，该提供商待接入——worklist W-1（搜索/提供商）） |
+| `rag/utils/url_utils.py` | 68 | 2534 | `51c8be90e24bcfd7` | full | `src/url_utils.rs` | （v0.3.10j 移植：ensure_v1（v+数字段检测）与 append_api_path 幂等追加；文档示例逐条入测试；差异：不可解析 URL 原样返回（Python urlparse 不报错）。） |
+| `rag/utils/web_search_conn.py` | 88 | 3556 | `08d97494412c7743` | full | `src/web_search.rs; src/tavily.rs` | （v0.3.10j 移植：提供商解析（web_search_provider 默认 tavily；querit/serply/youcom，youcom 免钥）+ chunk/doc_agg 聚合形状；9 项 mock 单测（keyless/keyed 端点选择、web+news 合并截断、错误吞掉仅告警）；差异：chunk_id 用 uuid4 simple-hex（上游 uuid1().hex 同为 32 位）、固定端点不读取代理环境。） |
+| `rag/utils/youcom_conn.py` | 152 | 6282 | `ed7202eddd1e20a8` | full | `src/web_search.rs` | （v0.3.10j 移植：keyless /v1/agents/search 与 keyed /v1/search 端点-头部联动、snippets 合并或 description 回退、按 6 截断；免钥路径有测试。） |
 | `ragflow_deps/Dockerfile` | 10 | 576 | `236b38eb71d96ce0` | reference | `Cargo.toml; Cargo.lock` | Vendored upstream dependency sources are not application-runtime parity targets |
 | `ragflow_deps/download_deps.py` | 299 | 16943 | `adcaf1a938286a20` | reference | `Cargo.toml; Cargo.lock` | Vendored upstream dependency sources are not application-runtime parity targets |
 | `ragflow_deps/download_go_deps.py` | 345 | 17286 | `36f83744d447e567` | reference | `Cargo.toml; Cargo.lock` | Vendored upstream dependency sources are not application-runtime parity targets |

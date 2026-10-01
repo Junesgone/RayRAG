@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.65] — 2026-10-01（对标批次 v0.3.10j）
+
+> W-1 首批：RAGFlow v0.27.2 的 web_search 提供商层（Querit / Serply / You.com）与共享 URL 助手移植（纯 Rust）。
+
+### Added
+
+- **web_search 提供商层**（`rag/utils/web_search_conn.py` + `querit_conn.py` + `serply_conn.py` + `youcom_conn.py` → `src/web_search.rs`）：`has_web_search_provider` / `create_web_search_provider`（`prompt_config.web_search_provider` 默认 `tavily`，`*_api_key` 字段，You.com 免钥）与四个连接器（Tavily 复用既有 Canvas 工具客户端，advanced/6 条）；chunk/doc_agg 聚合形状与上游一致；失败按上游语义返回空并告警（不记录查询文本）。
+- **共享 URL 助手**（`rag/utils/url_utils.py` → `src/url_utils.rs`）：`ensure_v1`（识别 v+数字版本段）与 `append_api_path`（幂等追加），上游 docstring 示例逐条入测试。
+
+### Tests
+
+- web_search 9 项 mock 单测（请求头/参数/载荷、keyless/keyed 端点选择、web+news 合并截断、失败路径、Tavily 适配器）+ url_utils 2 项；`cargo fmt --check` 与 `cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.64] — 2026-10-01（对标批次 v0.3.10i）
 
 > W-3 完成：RAGFlow v0.27.2 的 Mistral OCR 远端 PDF 解析器全量移植（纯 Rust），OCR 解析器收敛队列清零。

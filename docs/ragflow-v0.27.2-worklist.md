@@ -7,13 +7,13 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：99（UI 残留 42 + 实施队列 57）
+- partial：94（UI 残留 42 + 实施队列 52）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
 ## 实施队列
 
-### W-1 搜索/提供商接入（11 项）
+### W-1 搜索/提供商接入（6 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
@@ -23,11 +23,6 @@
 | `api/apps/restful_apis/aimlapi_api.py` | 198 | `src/api/oauth_web.rs; src/providers.rs` | （v0.3.10g 审计：AIMLAPI 设备码授权端点；RayRAG OAuth/提供商框架就位，AIMLAPI 设备流待接入——worklist W-1（搜索/提供商）） |
 | `common/aimlapi_utils.py` | 49 | `src/providers.rs` | （v0.3.10g 审计：AIMLAPI 请求归因头；随 AIMLAPI 提供商接入——worklist W-1（搜索/提供商）） |
 | `rag/llm/mws_utils.py` | 43 | `src/providers.rs; src/model_meta.rs` | （v0.3.10g 审计：MWS GPT Model Hub 项目 URL 校验；RayRAG 提供商目录/校验框架就位，MWS 条目待接入——worklist W-1（搜索/提供商）） |
-| `rag/utils/querit_conn.py` | 124 | `src/connectors.rs; src/search.rs` | （v0.3.10g 审计：Querit 搜索连接器（v0.27.2 新增）；RayRAG 搜索框架就位，该提供商待接入——worklist W-1（搜索/提供商）） |
-| `rag/utils/serply_conn.py` | 124 | `src/connectors.rs; src/search.rs` | （v0.3.10g 审计：Serply 搜索连接器（v0.27.2 新增）；框架就位，该提供商待接入——worklist W-1（搜索/提供商）） |
-| `rag/utils/url_utils.py` | 68 | `src/model_meta.rs` | （v0.3.10g 审计：ensure_v1 URL 规范化助手；RayRAG 在模型发现中已有 ensure_v1_url（src/model_meta.rs），通用共享助手待抽——worklist W-1（搜索/提供商）） |
-| `rag/utils/web_search_conn.py` | 88 | `src/tavily.rs; src/search.rs; src/connectors.rs` | （v0.3.10g 审计：联网搜索提供商注册（tavily/querit/serply/youcom）；RayRAG 已内置 tavily 与国内搜索连接器，querit/serply/youcom 待接入——worklist W-1（搜索/提供商）） |
-| `rag/utils/youcom_conn.py` | 152 | `src/connectors.rs; src/search.rs` | （v0.3.10g 审计：You.com 搜索连接器（v0.27.2 新增）；框架就位，该提供商待接入——worklist W-1（搜索/提供商）） |
 
 ### W-2 数据源接入（5 项）
 
