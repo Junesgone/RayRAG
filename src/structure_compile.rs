@@ -3996,23 +3996,451 @@ pub fn page_index_graph_summary(graph: &Value, limit: usize) -> String {
     lines.join("\n")
 }
 
-/// `LLMCallPool` (pass-through): the host owns scheduling/concurrency; the
-/// wrapper keeps the call-site shape (`priority` / `label` / `context` ride
-/// along for host-side instrumentation).
-pub struct LlmCallPool;
+// ── `structure.py` pool (v0.3.10ah A2) ─────────────────────────────────────
+
+/// `LLM_POOL_RATE_LIMIT_RETRIES`.
+pub static LLM_POOL_RATE_LIMIT_RETRIES: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_int("LLM_POOL_RATE_LIMIT_RETRIES", 3, Some(0)).max(0) as usize);
+/// `LLM_POOL_RATE_LIMIT_RETRY_BASE_DELAY`.
+pub static LLM_POOL_RATE_LIMIT_RETRY_BASE_DELAY: std::sync::LazyLock<f64> =
+    std::sync::LazyLock::new(|| {
+        env_float("LLM_POOL_RATE_LIMIT_RETRY_BASE_DELAY", 1.0, Some(0.0), None)
+    });
+/// `LLM_POOL_RATE_LIMIT_RETRY_MAX_DELAY`.
+pub static LLM_POOL_RATE_LIMIT_RETRY_MAX_DELAY: std::sync::LazyLock<f64> =
+    std::sync::LazyLock::new(|| {
+        env_float("LLM_POOL_RATE_LIMIT_RETRY_MAX_DELAY", 30.0, Some(0.0), None)
+    });
+
+/// `_LLMModelPoolState`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPoolState {
+    pub concurrency: usize,
+    pub active: usize,
+    pub successes: usize,
+    pub last_decrease_at: f64,
+    pub last_increase_at: f64,
+}
+
+impl ModelPoolState {
+    fn new(concurrency: usize) -> Self {
+        Self {
+            concurrency,
+            active: 0,
+            successes: 0,
+            last_decrease_at: f64::NEG_INFINITY,
+            last_increase_at: f64::NEG_INFINITY,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PoolTicket {
+    priority: i64,
+    seq: u64,
+    model_key: String,
+}
+
+#[derive(Default)]
+struct PoolInner {
+    active: usize,
+    ticket: u64,
+    waiting: Vec<PoolTicket>,
+    model_states: std::collections::HashMap<String, ModelPoolState>,
+}
+
+/// `LLMCallPool`: task-scoped adaptive priority scheduler for chat-model calls.
+/// `max_concurrency` is the task-wide hard ceiling; each model starts at that
+/// ceiling, halves its own admission limit after an explicit rate-limit
+/// response, retries through the reduced limit, and recovers one slot at a
+/// time after sustained success. The clock is injectable for tests.
+pub struct LlmCallPool {
+    pub max_concurrency: usize,
+    pub max_pending: usize,
+    pub min_concurrency: usize,
+    pub decrease_factor: f64,
+    pub decrease_cooldown: f64,
+    pub recovery_successes: usize,
+    pub recovery_cooldown: f64,
+    pub rate_limit_retries: usize,
+    pub rate_limit_retry_base_delay: f64,
+    pub rate_limit_retry_max_delay: f64,
+    clock: std::sync::Arc<dyn Fn() -> f64 + Send + Sync>,
+    inner: tokio::sync::Mutex<PoolInner>,
+    notify: tokio::sync::Notify,
+}
+
+const RATE_LIMIT_MARKERS: [&str; 8] = [
+    "429",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "requests per minute",
+    "concurrency limit",
+    "concurrent request",
+    "maximum number of concurrent",
+];
 
 impl LlmCallPool {
-    /// `LLMCallPool(size)`.
-    pub fn new(_size: usize) -> Self {
-        Self
+    /// `LLMCallPool(max_concurrency=10, ...)` with the upstream defaults.
+    pub fn new(max_concurrency: usize) -> Self {
+        let max = max_concurrency.max(1);
+        Self {
+            max_concurrency: max,
+            max_pending: max,
+            min_concurrency: 1,
+            decrease_factor: 0.5,
+            decrease_cooldown: 5.0,
+            recovery_successes: 20,
+            recovery_cooldown: 30.0,
+            rate_limit_retries: *LLM_POOL_RATE_LIMIT_RETRIES,
+            rate_limit_retry_base_delay: *LLM_POOL_RATE_LIMIT_RETRY_BASE_DELAY,
+            rate_limit_retry_max_delay: *LLM_POOL_RATE_LIMIT_RETRY_MAX_DELAY,
+            clock: std::sync::Arc::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            }),
+            inner: tokio::sync::Mutex::new(PoolInner::default()),
+            notify: tokio::sync::Notify::new(),
+        }
     }
 
-    /// `llm_pool.wrap(chat_mdl, priority=…, label=…, context=…)`.
-    pub fn wrap<'a>(
+    /// Inject a clock (tests use a manual counter).
+    pub fn with_clock(mut self, clock: std::sync::Arc<dyn Fn() -> f64 + Send + Sync>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// `_model_key`: join the identifying config parts; fall back to the name.
+    pub fn model_key_for(model_id: &str, factory: &str, name: &str, endpoint: &str) -> String {
+        if !model_id.is_empty() || !factory.is_empty() || !name.is_empty() || !endpoint.is_empty() {
+            return format!("{model_id}:{factory}:{name}:{endpoint}");
+        }
+        name.to_string()
+    }
+
+    /// `active_count`.
+    pub async fn active_count(&self) -> usize {
+        self.inner.lock().await.active
+    }
+
+    /// `pending_count`.
+    pub async fn pending_count(&self) -> usize {
+        let inner = self.inner.lock().await;
+        inner.active + inner.waiting.len()
+    }
+
+    /// `concurrency_for`.
+    pub async fn concurrency_for(&self, model_key: &str) -> usize {
+        let mut inner = self.inner.lock().await;
+        let max = self.max_concurrency;
+        Self::state_mut(&mut inner, model_key, max).concurrency
+    }
+
+    fn state_mut<'g>(
+        inner: &'g mut PoolInner,
+        model_key: &str,
+        max: usize,
+    ) -> &'g mut ModelPoolState {
+        inner
+            .model_states
+            .entry(model_key.to_string())
+            .or_insert_with(|| ModelPoolState::new(max))
+    }
+
+    fn next_admissible(inner: &PoolInner, max_concurrency: usize) -> Option<PoolTicket> {
+        if inner.active >= max_concurrency {
+            return None;
+        }
+        let mut best: Option<PoolTicket> = None;
+        for ticket in &inner.waiting {
+            let state = inner.model_states.get(&ticket.model_key);
+            let active = state.map(|s| s.active).unwrap_or(0);
+            let limit = state.map(|s| s.concurrency).unwrap_or(max_concurrency);
+            if active >= limit {
+                continue;
+            }
+            match &best {
+                None => best = Some(ticket.clone()),
+                Some(current) => {
+                    if (ticket.priority, ticket.seq) < (current.priority, current.seq) {
+                        best = Some(ticket.clone());
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    /// `_is_rate_limited`.
+    pub fn is_rate_limited(value: &str) -> bool {
+        let text = value.to_lowercase();
+        RATE_LIMIT_MARKERS
+            .iter()
+            .any(|marker| text.contains(marker))
+    }
+
+    /// `_is_error_result`.
+    pub fn is_error_result(result: &str) -> bool {
+        result.trim_start().to_lowercase().starts_with("**error**")
+    }
+
+    /// `_acquire`.
+    pub async fn acquire(&self, model_key: &str, priority: i64) {
+        let mut my_ticket: Option<PoolTicket> = None;
+        loop {
+            {
+                let mut inner = self.inner.lock().await;
+                if my_ticket.is_none() {
+                    let pending = inner.active + inner.waiting.len();
+                    if pending < self.max_pending {
+                        let seq = inner.ticket;
+                        inner.ticket += 1;
+                        let ticket = PoolTicket {
+                            priority,
+                            seq,
+                            model_key: model_key.to_string(),
+                        };
+                        inner.waiting.push(ticket.clone());
+                        my_ticket = Some(ticket);
+                    }
+                }
+                if let Some(ticket) = &my_ticket {
+                    let admissible = Self::next_admissible(&inner, self.max_concurrency)
+                        .map(|next| &next == ticket)
+                        .unwrap_or(false);
+                    if admissible {
+                        inner.waiting.retain(|entry| entry != ticket);
+                        inner.active += 1;
+                        let max = self.max_concurrency;
+                        Self::state_mut(&mut inner, model_key, max).active += 1;
+                        return;
+                    }
+                }
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    /// `_record_feedback`.
+    fn record_feedback(
         &self,
+        inner: &mut PoolInner,
+        model_key: &str,
+        outcome: &str,
+    ) -> Option<(usize, usize, &'static str)> {
+        let now = (self.clock)();
+        let max = self.max_concurrency;
+        let state = Self::state_mut(inner, model_key, max);
+        if outcome == "rate_limited" {
+            state.successes = 0;
+            if now - state.last_decrease_at < self.decrease_cooldown {
+                return None;
+            }
+            let old = state.concurrency;
+            state.concurrency = self
+                .min_concurrency
+                .max((state.concurrency as f64 * self.decrease_factor) as usize);
+            state.last_decrease_at = now;
+            if state.concurrency != old {
+                return Some((old, state.concurrency, "rate limited"));
+            }
+            return None;
+        }
+        if outcome != "success" {
+            state.successes = 0;
+            return None;
+        }
+        if state.concurrency >= self.max_concurrency {
+            state.successes = 0;
+            return None;
+        }
+        state.successes += 1;
+        if state.successes < self.recovery_successes {
+            return None;
+        }
+        if now - state.last_decrease_at < self.recovery_cooldown
+            || now - state.last_increase_at < self.recovery_cooldown
+        {
+            return None;
+        }
+        let old = state.concurrency;
+        state.concurrency = self.max_concurrency.min(state.concurrency + 1);
+        state.successes = 0;
+        state.last_increase_at = now;
+        Some((old, state.concurrency, "recovered"))
+    }
+
+    /// `_release` (the concurrency-change callback is a host concern).
+    pub async fn release(&self, model_key: &str, outcome: &str) {
+        let mut inner = self.inner.lock().await;
+        inner.active = inner.active.saturating_sub(1);
+        let max = self.max_concurrency;
+        Self::state_mut(&mut inner, model_key, max).active =
+            Self::state_mut(&mut inner, model_key, max)
+                .active
+                .saturating_sub(1);
+        let _change = self.record_feedback(&mut inner, model_key, outcome);
+        drop(inner);
+        self.notify.notify_waiters();
+    }
+
+    /// `_rate_limit_retry_delay`.
+    pub fn rate_limit_retry_delay(&self, retry: usize) -> f64 {
+        let exponent = retry.saturating_sub(1).min(30) as i32;
+        self.rate_limit_retry_max_delay
+            .min(self.rate_limit_retry_base_delay * 2f64.powi(exponent))
+    }
+
+    /// `call(fn, ...)`: run `f` under the pool with rate-limit retries. A
+    /// non-rate-limited `**ERROR**` result is returned as a value (upstream
+    /// semantics); only transport failures surface as `Err`.
+    pub async fn call<F, Fut>(
+        &self,
+        f: F,
+        model_key: &str,
+        priority: i64,
+        _label: &str,
+        _context: Option<&str>,
+    ) -> std::result::Result<String, String>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<String, String>>,
+    {
+        let mut retry = 0usize;
+        loop {
+            self.acquire(model_key, priority).await;
+            match f().await {
+                Ok(result) => {
+                    let error_result = Self::is_error_result(&result);
+                    let rate_limited = error_result && Self::is_rate_limited(&result);
+                    self.release(
+                        model_key,
+                        if rate_limited {
+                            "rate_limited"
+                        } else if error_result {
+                            "failed"
+                        } else {
+                            "success"
+                        },
+                    )
+                    .await;
+                    if rate_limited && retry < self.rate_limit_retries {
+                        // fall through to the retry delay
+                    } else {
+                        return Ok(result);
+                    }
+                }
+                Err(exc) => {
+                    let rate_limited = Self::is_rate_limited(&exc);
+                    self.release(
+                        model_key,
+                        if rate_limited {
+                            "rate_limited"
+                        } else {
+                            "failed"
+                        },
+                    )
+                    .await;
+                    if !rate_limited || retry >= self.rate_limit_retries {
+                        return Err(exc);
+                    }
+                }
+            }
+            let delay = self.rate_limit_retry_delay(retry + 1);
+            if delay > 0.0 {
+                tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
+            }
+            retry += 1;
+        }
+    }
+
+    /// `wrap(chat_mdl, *, priority, label, context)`: a pooled chat surface.
+    pub fn wrap<'a>(
+        &'a self,
         chat: &'a dyn crate::harness::HarnessChat,
-    ) -> &'a dyn crate::harness::HarnessChat {
-        chat
+        model_key: &str,
+        model_name: &str,
+        priority: i64,
+        label: &str,
+        context: Option<&str>,
+    ) -> PooledChatModel<'a> {
+        PooledChatModel {
+            pool: self,
+            inner: chat,
+            model_key: model_key.to_string(),
+            model_name: model_name.to_string(),
+            priority,
+            label: label.to_string(),
+            context: context.map(str::to_string),
+        }
+    }
+
+    /// Test support: push a ticket without waiting (ordering assertions).
+    #[doc(hidden)]
+    pub async fn debug_enqueue(&self, model_key: &str, priority: i64) {
+        let mut inner = self.inner.lock().await;
+        let seq = inner.ticket;
+        inner.ticket += 1;
+        inner.waiting.push(PoolTicket {
+            priority,
+            seq,
+            model_key: model_key.to_string(),
+        });
+    }
+
+    /// Test support: admit the next admissible ticket (returns its model key).
+    #[doc(hidden)]
+    pub async fn debug_admit_next(&self) -> Option<String> {
+        let mut inner = self.inner.lock().await;
+        let ticket = Self::next_admissible(&inner, self.max_concurrency)?;
+        inner.waiting.retain(|entry| entry != &ticket);
+        inner.active += 1;
+        let max = self.max_concurrency;
+        Self::state_mut(&mut inner, &ticket.model_key, max).active += 1;
+        Some(ticket.model_key)
+    }
+}
+
+/// `PooledChatModel`: wraps a chat surface behind the pool and applies the
+/// knowledge-compile generation controls per call.
+pub struct PooledChatModel<'a> {
+    pool: &'a LlmCallPool,
+    inner: &'a dyn crate::harness::HarnessChat,
+    model_key: String,
+    model_name: String,
+    priority: i64,
+    label: String,
+    context: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl crate::harness::HarnessChat for PooledChatModel<'_> {
+    async fn chat(
+        &self,
+        system: &str,
+        history: &[Value],
+        gen_conf: &Value,
+    ) -> std::result::Result<String, String> {
+        let conf = Value::Object(knowledge_compile_gen_conf(
+            &self.model_name,
+            gen_conf.as_object(),
+        ));
+        self.pool
+            .call(
+                || async { self.inner.chat(system, history, &conf).await },
+                &self.model_key,
+                self.priority,
+                &self.label,
+                self.context.as_deref(),
+            )
+            .await
+    }
+
+    fn max_length(&self) -> usize {
+        self.inner.max_length()
     }
 }
 
@@ -5396,6 +5824,134 @@ pub async fn struct_merge_exact_named_entities(
         .collect();
     out.extend(unchanged);
     (out, dropped)
+}
+
+// ── `structure.py` gaps C1 (v0.3.10ah) ─────────────────────────────────────
+
+/// `_struct_filter_key` over store rows (`CompiledRow::filter_key` already
+/// provides the typed variant).
+pub fn struct_filter_key_value(
+    doc: &Value,
+) -> (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let opt = |value: String| if value.is_empty() { None } else { Some(value) };
+    (
+        string_field(doc, "doc_id"),
+        string_field(doc, "compile_kwd"),
+        opt(string_field(doc, "from_entity_kwd")),
+        opt(string_field(doc, "to_entity_kwd")),
+        doc_template_id(doc),
+    )
+}
+
+/// `_dataset_struct_graph_row_id`: stable KB-wide graph-row id. The upstream
+/// seed (`"{kb}:dataset_structure_graph:{kwd}:{tpl}"`) is hashed with the
+/// crate's row-id helper (xxh3-64; upstream xxh64 — documented divergence).
+pub fn dataset_struct_graph_row_id(
+    kb_id: &str,
+    compile_kwd: &str,
+    compilation_template_id: Option<&str>,
+) -> String {
+    let seed = format!(
+        "{kb_id}:dataset_structure_graph:{compile_kwd}:{}",
+        compilation_template_id.unwrap_or("")
+    );
+    stable_row_id(&[seed])
+}
+
+/// `_struct_entity_candidate_groups`: partition entity candidates into
+/// independent cosine-connected groups (per filter key, union-find over
+/// pairwise cosine >= threshold).
+pub fn struct_entity_candidate_groups(
+    docs: &[Value],
+    similarity_threshold: f32,
+) -> Vec<Vec<Value>> {
+    let mut order: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = Vec::new();
+    let mut buckets: std::collections::HashMap<
+        (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        Vec<Value>,
+    > = std::collections::HashMap::new();
+    for doc in docs {
+        let key = struct_filter_key_value(doc);
+        if !buckets.contains_key(&key) {
+            order.push(key.clone());
+        }
+        buckets.entry(key).or_default().push(doc.clone());
+    }
+    let mut result: Vec<Vec<Value>> = Vec::new();
+    for key in order {
+        let bucket = buckets.remove(&key).unwrap_or_default();
+        let vectors: Vec<Option<Vec<f32>>> = bucket.iter().map(|doc| find_vec_field(doc)).collect();
+        let valid: Vec<usize> = vectors
+            .iter()
+            .enumerate()
+            .filter_map(|(index, vector)| vector.as_ref().map(|_| index))
+            .collect();
+        let mut parent: Vec<usize> = (0..bucket.len()).collect();
+        fn find(parent: &mut Vec<usize>, mut index: usize) -> usize {
+            while parent[index] != index {
+                parent[index] = parent[parent[index]];
+                index = parent[index];
+            }
+            index
+        }
+        if valid.len() > 1 {
+            for left_offset in 0..valid.len() {
+                for right_offset in (left_offset + 1)..valid.len() {
+                    let left = valid[left_offset];
+                    let right = valid[right_offset];
+                    let left_vec = vectors[left].clone().unwrap_or_default();
+                    let right_vec = vectors[right].clone().unwrap_or_default();
+                    if crate::merge::cosine_similarity(&left_vec, &right_vec)
+                        >= similarity_threshold
+                    {
+                        let left_root = find(&mut parent, left);
+                        let right_root = find(&mut parent, right);
+                        if left_root != right_root {
+                            parent[right_root] = left_root;
+                        }
+                    }
+                }
+            }
+        }
+        let mut components: std::collections::HashMap<usize, Vec<Value>> =
+            std::collections::HashMap::new();
+        let mut component_order: Vec<usize> = Vec::new();
+        for (index, doc) in bucket.into_iter().enumerate() {
+            let root = if valid.contains(&index) {
+                find(&mut parent, index)
+            } else {
+                index
+            };
+            if !components.contains_key(&root) {
+                component_order.push(root);
+            }
+            components.entry(root).or_default().push(doc);
+        }
+        for root in component_order {
+            if let Some(group) = components.remove(&root) {
+                result.push(group);
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -6966,5 +7522,307 @@ mod struct_b1_tests {
             "the rebuilt row unions the envelope chunk ids"
         );
         assert_eq!(out[0]["id"], json!("e1"), "base id preserved");
+    }
+}
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    fn manual_clock() -> (
+        std::sync::Arc<dyn Fn() -> f64 + Send + Sync>,
+        std::sync::Arc<Mutex<f64>>,
+    ) {
+        let value = std::sync::Arc::new(Mutex::new(0.0f64));
+        let read = value.clone();
+        let clock: std::sync::Arc<dyn Fn() -> f64 + Send + Sync> =
+            std::sync::Arc::new(move || *read.lock().unwrap());
+        (clock, value)
+    }
+
+    #[test]
+    fn model_key_join_semantics() {
+        assert_eq!(
+            LlmCallPool::model_key_for("1", "openai", "gpt", "http://x"),
+            "1:openai:gpt:http://x"
+        );
+        assert_eq!(LlmCallPool::model_key_for("", "", "qwen3", ""), "::qwen3:");
+        assert_eq!(LlmCallPool::model_key_for("", "", "", ""), "");
+    }
+
+    #[test]
+    fn rate_limit_and_error_detection() {
+        assert!(LlmCallPool::is_rate_limited("HTTP 429 Too Many Requests"));
+        assert!(LlmCallPool::is_rate_limited("Rate_Limit exceeded"));
+        assert!(!LlmCallPool::is_rate_limited("ok"));
+        assert!(LlmCallPool::is_error_result("  **ERROR** boom"));
+        assert!(!LlmCallPool::is_error_result("fine"));
+    }
+
+    #[test]
+    fn retry_delay_is_exponential_capped() {
+        let pool = LlmCallPool::new(2);
+        assert_eq!(pool.rate_limit_retry_delay(1), 1.0);
+        assert_eq!(pool.rate_limit_retry_delay(2), 2.0);
+        assert_eq!(pool.rate_limit_retry_delay(5), 16.0);
+        assert_eq!(pool.rate_limit_retry_delay(10), 30.0, "capped at max delay");
+    }
+
+    #[tokio::test]
+    async fn admission_respects_concurrency_and_priority() {
+        let pool = LlmCallPool::new(1);
+        pool.debug_enqueue("a", 30).await;
+        pool.debug_enqueue("b", 10).await;
+        assert_eq!(
+            pool.debug_admit_next().await.as_deref(),
+            Some("b"),
+            "lower priority wins"
+        );
+        assert_eq!(pool.active_count().await, 1);
+        assert_eq!(pool.debug_admit_next().await, None, "ceiling reached");
+        pool.release("b", "success").await;
+        assert_eq!(pool.debug_admit_next().await.as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn acquire_blocks_until_release() {
+        let pool = std::sync::Arc::new(LlmCallPool::new(1));
+        pool.acquire("m", 20).await;
+        let clone = pool.clone();
+        let waiting = tokio::spawn(async move { clone.acquire("m", 20).await });
+        let blocked = tokio::time::timeout(std::time::Duration::from_millis(80), async {
+            loop {
+                if pool.active_count().await == 2 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(
+            blocked.is_err(),
+            "second acquire must block while the slot is taken"
+        );
+        pool.release("m", "success").await;
+        tokio::time::timeout(std::time::Duration::from_millis(200), waiting)
+            .await
+            .expect("second acquire proceeds after release")
+            .expect("task ok");
+        assert_eq!(
+            pool.active_count().await,
+            1,
+            "the first acquire was released; the second now holds the slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn adaptive_decrease_and_cooldown() {
+        let (clock, now) = manual_clock();
+        let pool = LlmCallPool::new(10).with_clock(clock);
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(pool.concurrency_for("m").await, 5, "halved");
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(
+            pool.concurrency_for("m").await,
+            5,
+            "cooldown suppresses the second decrease"
+        );
+        *now.lock().unwrap() = 6.0;
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(pool.concurrency_for("m").await, 2, "5 * 0.5 floored");
+    }
+
+    #[tokio::test]
+    async fn adaptive_recovery_after_successes() {
+        let (clock, now) = manual_clock();
+        let mut pool = LlmCallPool::new(10).with_clock(clock);
+        pool.recovery_successes = 2;
+        pool.recovery_cooldown = 0.0;
+        pool.decrease_cooldown = 0.0;
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(pool.concurrency_for("m").await, 5);
+        *now.lock().unwrap() = 100.0;
+        for _ in 0..2 {
+            pool.acquire("m", 20).await;
+            pool.release("m", "success").await;
+        }
+        assert_eq!(pool.concurrency_for("m").await, 6, "one slot recovered");
+    }
+
+    #[tokio::test]
+    async fn call_retries_rate_limits_and_returns_error_results() {
+        let mut pool = LlmCallPool::new(4);
+        pool.rate_limit_retry_base_delay = 0.0;
+        pool.rate_limit_retry_max_delay = 0.0;
+        let attempts = std::sync::Arc::new(Mutex::new(0usize));
+        let counter = attempts.clone();
+        let result = pool
+            .call(
+                || {
+                    let counter = counter.clone();
+                    async move {
+                        let mut count = counter.lock().unwrap();
+                        *count += 1;
+                        if *count < 3 {
+                            Err("429 rate limit".to_string())
+                        } else {
+                            Ok("done".to_string())
+                        }
+                    }
+                },
+                "m",
+                20,
+                "test",
+                None,
+            )
+            .await;
+        assert_eq!(result, Ok("done".to_string()));
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            3,
+            "two rate-limit retries then success"
+        );
+        assert_eq!(pool.active_count().await, 0, "slots released");
+
+        let error_text = pool
+            .call(
+                || async { Ok("**ERROR** provider exploded".to_string()) },
+                "m",
+                20,
+                "test",
+                None,
+            )
+            .await;
+        assert_eq!(error_text, Ok("**ERROR** provider exploded".to_string()));
+    }
+
+    struct MockChat {
+        seen_conf: Mutex<Vec<Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            self.seen_conf.lock().unwrap().push(gen_conf.clone());
+            Ok("answer".to_string())
+        }
+        fn max_length(&self) -> usize {
+            1234
+        }
+    }
+
+    #[tokio::test]
+    async fn pooled_chat_model_applies_gen_conf() {
+        let pool = LlmCallPool::new(2);
+        let chat = MockChat {
+            seen_conf: Mutex::new(Vec::new()),
+        };
+        let pooled = pool.wrap(&chat, "key", "gpt-4o", 20, "label", None);
+        assert_eq!(crate::harness::HarnessChat::max_length(&pooled), 1234);
+        let answer = crate::harness::HarnessChat::chat(
+            &pooled,
+            "sys",
+            &[json!({"role": "user", "content": "hi"})],
+            &json!({"temperature": 0.1}),
+        )
+        .await;
+        assert_eq!(answer, Ok("answer".to_string()));
+        let conf = chat.seen_conf.lock().unwrap()[0].clone();
+        assert_eq!(conf["temperature"], json!(0.1), "caller conf preserved");
+        assert_eq!(
+            conf["reasoning_effort"],
+            json!("none"),
+            "model-specific control applied"
+        );
+    }
+}
+
+#[cfg(test)]
+mod struct_c1_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn doc(id: &str, doc_id: &str, vec: [f32; 3]) -> Value {
+        json!({
+            "id": id,
+            "doc_id": doc_id,
+            "compile_kwd": "list",
+            "knowledge_graph_kwd": "entity",
+            "q_1024_vec": vec,
+            "content_with_weight": json!({"name": id}).to_string(),
+        })
+    }
+
+    #[test]
+    fn filter_key_value_matches_tuple() {
+        let row = json!({
+            "doc_id": "d1",
+            "compile_kwd": "list",
+            "from_entity_kwd": "A",
+            "to_entity_kwd": "",
+            "compilation_template_ids": ["t1"],
+        });
+        let key = struct_filter_key_value(&row);
+        assert_eq!(key.0, "d1");
+        assert_eq!(key.1, "list");
+        assert_eq!(key.2.as_deref(), Some("A"));
+        assert_eq!(key.3, None);
+        assert_eq!(key.4.as_deref(), Some("t1"));
+    }
+
+    #[test]
+    fn dataset_graph_row_id_is_stable_and_scoped() {
+        let first = dataset_struct_graph_row_id("kb1", "list", Some("t1"));
+        let again = dataset_struct_graph_row_id("kb1", "list", Some("t1"));
+        assert_eq!(first, again);
+        assert_ne!(first, dataset_struct_graph_row_id("kb1", "list", None));
+        assert_ne!(
+            first,
+            dataset_struct_graph_row_id("kb2", "list", Some("t1"))
+        );
+        assert_ne!(first, dataset_struct_graph_row_id("kb1", "set", Some("t1")));
+    }
+
+    #[test]
+    fn entity_candidate_groups_partition_by_similarity() {
+        let docs = vec![
+            doc("a1", "d1", [1.0, 0.0, 0.0]),
+            doc("a2", "d1", [0.99, 0.01, 0.0]),
+            doc("b1", "d1", [0.0, 1.0, 0.0]),
+            doc("a3-doc2", "d2", [1.0, 0.0, 0.0]),
+        ];
+        let groups = struct_entity_candidate_groups(&docs, 0.9);
+        // d1: a1+a2 connected, b1 alone; d2: a3-doc2 alone (different filter key).
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[0][0]["id"], json!("a1"));
+        assert_eq!(groups[1].len(), 1);
+        assert_eq!(groups[2].len(), 1);
+        assert_eq!(groups[2][0]["id"], json!("a3-doc2"));
+    }
+
+    #[test]
+    fn entity_candidate_groups_keep_vectorless_docs_separate() {
+        let mut no_vec = doc("c1", "d1", [0.0, 0.0, 0.0]);
+        if let Some(map) = no_vec.as_object_mut() {
+            map.remove("q_1024_vec");
+        }
+        let docs = vec![doc("a1", "d1", [1.0, 0.0, 0.0]), no_vec];
+        let groups = struct_entity_candidate_groups(&docs, 0.9);
+        assert_eq!(
+            groups.len(),
+            2,
+            "a doc without a vector never joins a component"
+        );
     }
 }
