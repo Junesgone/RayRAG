@@ -3878,6 +3878,1002 @@ pub async fn doc_storage_upsert_one(
     doc_storage_insert(store, std::slice::from_ref(row), &index_name, kb_id).await;
 }
 
+// ── `runner.py` — document-scoped structure compilation core (v0.3.10ah) ──
+//
+// The compile core drives every non-`tree` template over chunk batches with
+// bounded concurrency and ordered commits, then runs the optional synthesis,
+// dataset-graph, page-index navigation and timeline-cleanup phases. The host
+// services (extraction entry, merge, graph rebuilds, wiki synthesis, dataset
+// navigation, timeline cleanup, template lookups) arrive through
+// [`StructureCompileBackend`]. Documented divergences: the async
+// doc-storage condition-variable dance collapses to sequential awaits (same
+// ordering guarantee); the batch iterator is a batch list; the LLM pool is a
+// pass-through wrapper (concurrency is the host's concern).
+
+/// Errors the runner can surface (`TaskCanceledException` + backend failures).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunnerError {
+    Cancelled,
+    Backend(String),
+}
+
+/// `DOC_STRUCTURE_COMPILE_BATCH_CHUNKS`.
+pub static DOC_STRUCTURE_COMPILE_BATCH_CHUNKS: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| {
+        env_int("DOC_STRUCTURE_COMPILE_BATCH_CHUNKS", 4, Some(1)).max(1) as usize
+    });
+pub static STRUCTURE_CONTEXT_FRACTION: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
+    env_float("STRUCTURE_CONTEXT_FRACTION", 0.5, Some(0.01), Some(1.0))
+});
+pub static STRUCTURE_DEFAULT_CONTEXT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    env_int("STRUCTURE_DEFAULT_CONTEXT", 100_000, Some(1)).max(1) as usize
+});
+pub static KNOWLEDGE_GRAPH_CONTEXT_FRACTION: std::sync::LazyLock<f64> =
+    std::sync::LazyLock::new(|| {
+        env_float(
+            "KNOWLEDGE_GRAPH_CONTEXT_FRACTION",
+            0.1,
+            Some(0.01),
+            Some(1.0),
+        )
+    });
+pub static KNOWLEDGE_GRAPH_MIN_BATCH_TOKENS: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| {
+        env_int("KNOWLEDGE_GRAPH_MIN_BATCH_TOKENS", 2048, Some(1)).max(1) as usize
+    });
+pub static KNOWLEDGE_GRAPH_MAX_BATCH_TOKENS: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| {
+        let minimum = *KNOWLEDGE_GRAPH_MIN_BATCH_TOKENS as i64;
+        env_int("KNOWLEDGE_GRAPH_MAX_BATCH_TOKENS", 4096, Some(minimum)).max(minimum) as usize
+    });
+pub static DOC_STRUCTURE_COMPILE_MAX_IN_FLIGHT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| {
+        env_int("DOC_STRUCTURE_COMPILE_MAX_IN_FLIGHT", 15, Some(1)).max(1) as usize
+    });
+pub static DOC_STRUCTURE_LLM_POOL_SIZE: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| {
+        env_int("DOC_STRUCTURE_LLM_POOL_SIZE", 20, Some(1)).max(1) as usize
+    });
+/// `DOC_STRUCTURE_MERGE_MAX_DOCS`.
+pub const DOC_STRUCTURE_MERGE_MAX_DOCS: usize = 512;
+/// `STRUCTURE_CHAIN_CORRECTION_TIMEOUT_S`.
+pub static STRUCTURE_CHAIN_CORRECTION_TIMEOUT_S: std::sync::LazyLock<f64> =
+    std::sync::LazyLock::new(|| {
+        env_float(
+            "STRUCTURE_CHAIN_CORRECTION_TIMEOUT_S",
+            120.0,
+            Some(0.1),
+            None,
+        )
+    });
+
+/// `_compilation_template_kind`: `strip().lower().replace("-", "_")`.
+pub fn runner_template_kind(kind: Option<&str>) -> String {
+    kind.map(|value| value.trim().to_lowercase().replace('-', "_"))
+        .unwrap_or_default()
+}
+
+/// `_is_page_index_template`.
+pub fn is_page_index_template(parser_cfg: &Value) -> bool {
+    matches!(
+        runner_template_kind(parser_cfg.get("kind").and_then(Value::as_str)).as_str(),
+        "page_index" | "pageindex"
+    )
+}
+
+/// `_page_index_graph_summary`.
+pub fn page_index_graph_summary(graph: &Value, limit: usize) -> String {
+    let Some(entities) = graph.get("entities").and_then(Value::as_array) else {
+        return String::new();
+    };
+    let mut lines: Vec<String> = Vec::new();
+    for entity in entities {
+        if !entity.is_object() {
+            continue;
+        }
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let description = entity
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let text = format!("{name}: {description}")
+            .trim_matches(|c: char| c == ':' || c == ' ')
+            .to_string();
+        if !text.is_empty() {
+            lines.push(text);
+        }
+        if lines.len() >= limit {
+            break;
+        }
+    }
+    lines.join("\n")
+}
+
+/// `LLMCallPool` (pass-through): the host owns scheduling/concurrency; the
+/// wrapper keeps the call-site shape (`priority` / `label` / `context` ride
+/// along for host-side instrumentation).
+pub struct LlmCallPool;
+
+impl LlmCallPool {
+    /// `LLMCallPool(size)`.
+    pub fn new(_size: usize) -> Self {
+        Self
+    }
+
+    /// `llm_pool.wrap(chat_mdl, priority=…, label=…, context=…)`.
+    pub fn wrap<'a>(
+        &self,
+        chat: &'a dyn crate::harness::HarnessChat,
+    ) -> &'a dyn crate::harness::HarnessChat {
+        chat
+    }
+}
+
+/// The host services the compile core drives.
+#[async_trait::async_trait]
+pub trait StructureCompileBackend: Send + Sync {
+    /// `CompilationTemplateGroupService.resolve_template_ids(group_id, tenant_id)`.
+    fn resolve_template_ids_from_group(&self, group_id: &str, tenant_id: &str) -> Vec<String>;
+    /// `CompilationTemplateService.get_saved(template_id, tenant_id)`.
+    fn saved_template(&self, template_id: &str, tenant_id: &str) -> Option<Value>;
+    /// `compile_structure_from_text(batch, parser_cfg, chat_mdl, embd_mdl, doc_id,
+    /// doc_name, language, callback, max_workers=3, compilation_template_id)`.
+    async fn compile_structure_from_text(
+        &self,
+        batch: &[Value],
+        parser_cfg: &Value,
+        doc_id: &str,
+        doc_name: &str,
+        language: &str,
+        compilation_template_id: &str,
+    ) -> std::result::Result<Vec<Value>, String>;
+    /// `merge_compiled_structures(...)` — returns `{inserted, updated,
+    /// duplicates_dropped, compile_kwds}`.
+    async fn merge_compiled_structures(
+        &self,
+        request: MergeFlushRequest<'_>,
+    ) -> std::result::Result<Value, String>;
+    /// `rebuild_structure_graph_json(tenant_id, kb_id, doc_id, doc_name, compile_kwd, compilation_template_id=…)`.
+    async fn rebuild_structure_graph_json(
+        &self,
+        tenant_id: &str,
+        kb_id: &str,
+        doc_id: &str,
+        doc_name: &str,
+        compile_kwd: &str,
+        compilation_template_id: &str,
+    ) -> std::result::Result<Value, String>;
+    /// `rebuild_dataset_structure_graph_json(tenant_id, kb_id, compile_kwd, compilation_template_id, structure_kind)`.
+    async fn rebuild_dataset_structure_graph_json(
+        &self,
+        tenant_id: &str,
+        kb_id: &str,
+        compile_kwd: &str,
+        compilation_template_id: &str,
+        structure_kind: Option<&str>,
+    ) -> std::result::Result<(), String>;
+    /// `upsert_dataset_nav_doc(tenant_id, kb_id, doc_id, summary, embd_mdl=…, chat_mdl=…)`.
+    async fn upsert_dataset_nav_doc(
+        &self,
+        tenant_id: &str,
+        kb_id: &str,
+        doc_id: &str,
+        summary: &str,
+    ) -> std::result::Result<(), String>;
+    /// `wiki_plan_from_reduction(chat_mdl, embd_mdl, tenant_id, kb_id, callback)`.
+    async fn wiki_plan_from_reduction(
+        &self,
+        tenant_id: &str,
+        kb_id: &str,
+    ) -> std::result::Result<Value, String>;
+    /// `wiki_refine_from_plan(chat_mdl, embd_mdl, tenant_id, kb_id, callback, example)`.
+    async fn wiki_refine_from_plan(
+        &self,
+        tenant_id: &str,
+        kb_id: &str,
+        example: &str,
+    ) -> std::result::Result<Vec<Value>, String>;
+    /// `cleanup_timeline_isolated_entities(tenant_id, kb_id, doc_id, doc_name, compilation_template_id)`.
+    async fn cleanup_timeline_isolated_entities(
+        &self,
+        tenant_id: &str,
+        kb_id: &str,
+        doc_id: &str,
+        doc_name: &str,
+        compilation_template_id: &str,
+    ) -> std::result::Result<(), String>;
+}
+
+/// `merge_compiled_structures` call surface for one flush.
+pub struct MergeFlushRequest<'a> {
+    pub docs: Vec<Value>,
+    pub tenant_id: &'a str,
+    pub kb_id: &'a str,
+    pub doc_id: &'a str,
+    pub doc_name: &'a str,
+    pub compilation_template_id: &'a str,
+    pub chain_kind: &'a str,
+    pub timing_context: &'a str,
+    /// `MERGE_SCOPE_DATASET` when the template sets `dataset_merge`.
+    pub merge_scope_dataset: bool,
+    pub chain_timeout_seconds: f64,
+    pub chunks_by_id: &'a std::collections::HashMap<String, String>,
+    pub progress: &'a (dyn Fn(&str) + Send + Sync),
+}
+
+/// `resolve_template_ids_from_groups`.
+pub fn resolve_template_ids_from_groups(
+    backend: &dyn StructureCompileBackend,
+    group_ids: &[String],
+    tenant_id: &str,
+) -> Vec<String> {
+    let mut template_ids: Vec<String> = Vec::new();
+    for group_id in group_ids {
+        let trimmed = group_id.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        for template_id in backend.resolve_template_ids_from_group(trimmed, tenant_id) {
+            if !template_ids.iter().any(|existing| existing == &template_id) {
+                template_ids.push(template_id);
+            }
+        }
+    }
+    template_ids
+}
+
+/// `load_active_templates`: keep templates whose kind is real and not `wiki`
+/// (missing/invalid configs are dropped).
+pub fn load_active_templates(
+    backend: &dyn StructureCompileBackend,
+    template_ids: &[String],
+    tenant_id: &str,
+) -> Vec<(String, Value)> {
+    let mut active: Vec<(String, Value)> = Vec::new();
+    for template_id in template_ids {
+        let Some(template) = backend.saved_template(template_id, tenant_id) else {
+            continue;
+        };
+        let parser_cfg = template.get("config").cloned().unwrap_or_else(|| json!({}));
+        if !parser_cfg.is_object() {
+            continue;
+        }
+        let kind = runner_template_kind(parser_cfg.get("kind").and_then(Value::as_str));
+        if kind.is_empty() || kind == "wiki" {
+            continue;
+        }
+        active.push((template_id.clone(), parser_cfg));
+    }
+    active
+}
+
+/// `split_tree_templates`.
+pub fn split_tree_templates(
+    active_templates: Vec<(String, Value)>,
+) -> (Vec<(String, Value)>, Vec<(String, Value)>) {
+    let mut tree: Vec<(String, Value)> = Vec::new();
+    let mut non_tree: Vec<(String, Value)> = Vec::new();
+    for (template_id, cfg) in active_templates {
+        if runner_template_kind(cfg.get("kind").and_then(Value::as_str)) == "tree" {
+            tree.push((template_id, cfg));
+        } else {
+            non_tree.push((template_id, cfg));
+        }
+    }
+    (tree, non_tree)
+}
+
+/// `_dynamic_batch_budget`.
+pub fn dynamic_batch_budget(max_length: Option<usize>, template_kind: &str) -> usize {
+    let max_length = max_length
+        .filter(|value| *value > 0)
+        .unwrap_or(*STRUCTURE_DEFAULT_CONTEXT);
+    if template_kind == "knowledge_graph" {
+        let lower = ((max_length as f64 * *KNOWLEDGE_GRAPH_CONTEXT_FRACTION) as i64)
+            .max(*KNOWLEDGE_GRAPH_MIN_BATCH_TOKENS as i64);
+        lower.min(*KNOWLEDGE_GRAPH_MAX_BATCH_TOKENS as i64) as usize
+    } else {
+        ((max_length as f64 * *STRUCTURE_CONTEXT_FRACTION) as i64).max(1024) as usize
+    }
+}
+
+/// `_upsert_dataset_nav_from_page_index`.
+pub async fn upsert_dataset_nav_from_page_index(
+    backend: &dyn StructureCompileBackend,
+    active_templates: &[(String, Value)],
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+    doc_name: &str,
+    progress: &(dyn Fn(&str) + Send + Sync),
+    cancel_check: &(dyn Fn() -> bool + Send + Sync),
+) -> std::result::Result<(), RunnerError> {
+    let page_index_templates: Vec<&(String, Value)> = active_templates
+        .iter()
+        .filter(|(_, cfg)| is_page_index_template(cfg))
+        .collect();
+    if page_index_templates.is_empty() {
+        return Ok(());
+    }
+    let mut summaries: Vec<String> = Vec::new();
+    for (template_id, _) in &page_index_templates {
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        let mut graph = backend
+            .rebuild_structure_graph_json(
+                tenant_id,
+                kb_id,
+                doc_id,
+                doc_name,
+                "page_index",
+                template_id,
+            )
+            .await
+            .unwrap_or_else(|_| json!({}));
+        let mut summary = page_index_graph_summary(&graph, 80);
+        if summary.is_empty() {
+            graph = backend
+                .rebuild_structure_graph_json(
+                    tenant_id,
+                    kb_id,
+                    doc_id,
+                    doc_name,
+                    "timeline",
+                    template_id,
+                )
+                .await
+                .unwrap_or_else(|_| json!({}));
+            summary = page_index_graph_summary(&graph, 80);
+        }
+        if !summary.is_empty() {
+            summaries.push(summary);
+        }
+    }
+    if summaries.is_empty() {
+        return Ok(());
+    }
+    if cancel_check() {
+        return Err(RunnerError::Cancelled);
+    }
+    progress(&format!(
+        "page_index: updating dataset navigation for doc {doc_id} ..."
+    ));
+    let joined = summaries.join("\n\n");
+    backend
+        .upsert_dataset_nav_doc(tenant_id, kb_id, doc_id, &joined)
+        .await
+        .map_err(RunnerError::Backend)
+}
+
+/// Batch stream + callbacks for [`run_structure_compile_over_batches`].
+pub struct CompileOverBatchesRequest<'a> {
+    pub active_templates: Vec<(String, Value)>,
+    pub tenant_id: &'a str,
+    pub kb_id: &'a str,
+    pub doc_id: &'a str,
+    pub doc_name: &'a str,
+    pub language: &'a str,
+    /// Chunks arrive as batches (upstream: an async iterator of batches).
+    pub chunk_batches: Vec<Vec<Value>>,
+    pub progress: &'a (dyn Fn(&str) + Send + Sync),
+    pub cancel_check: &'a (dyn Fn() -> bool + Send + Sync),
+    pub record: Option<&'a (dyn Fn(&str, Value) + Send + Sync)>,
+}
+
+/// `run_structure_compile_over_batches`: extract + merge structures for every
+/// non-`tree` template over chunk batches, then the synthesis / dataset-graph /
+/// dataset-nav / timeline phases. Returns `{template_id: {inserted, updated,
+/// duplicates_dropped, rechunked_chunk_count}}`.
+pub async fn run_structure_compile_over_batches(
+    backend: &dyn StructureCompileBackend,
+    request: CompileOverBatchesRequest<'_>,
+) -> std::result::Result<Value, RunnerError> {
+    use futures_util::StreamExt;
+    if request.active_templates.is_empty() {
+        return Ok(json!({}));
+    }
+    let total = request.active_templates.len();
+    let progress = request.progress;
+    let cancel_check = request.cancel_check;
+    let mut accumulators: std::collections::HashMap<String, Vec<Value>> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, _)| (template_id.clone(), Vec::new()))
+        .collect();
+    let template_kinds: std::collections::HashMap<String, String> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, cfg)| {
+            (
+                template_id.clone(),
+                runner_template_kind(cfg.get("kind").and_then(Value::as_str)),
+            )
+        })
+        .collect();
+    let merge_scope_dataset: std::collections::HashMap<String, bool> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, cfg)| {
+            (
+                template_id.clone(),
+                cfg.get("dataset_merge")
+                    .map(crate::structure_compile::value_is_truthy)
+                    .unwrap_or(false),
+            )
+        })
+        .collect();
+    let mut compile_kwds_by_tid: std::collections::HashMap<String, Vec<String>> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, _)| (template_id.clone(), Vec::new()))
+        .collect();
+    let mut agg_infos: std::collections::HashMap<String, serde_json::Map<String, Value>> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, _)| {
+            (
+                template_id.clone(),
+                serde_json::Map::from_iter([
+                    ("inserted".to_string(), json!(0)),
+                    ("updated".to_string(), json!(0)),
+                    ("duplicates_dropped".to_string(), json!(0)),
+                ]),
+            )
+        })
+        .collect();
+    let mut chunks_by_id: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut flush_sequence = 0usize;
+    progress(&format!(
+        "Start document knowledge compilation ({total} template(s)) ..."
+    ));
+
+    // Flushes run sequentially in submission order (see the module note).
+    async fn flush(
+        backend: &dyn StructureCompileBackend,
+        template_id: &str,
+        accumulator: &mut Vec<Value>,
+        request: &CompileOverBatchesRequest<'_>,
+        template_kinds: &std::collections::HashMap<String, String>,
+        merge_scope_dataset: &std::collections::HashMap<String, bool>,
+        compile_kwds_by_tid: &mut std::collections::HashMap<String, Vec<String>>,
+        agg_infos: &mut std::collections::HashMap<String, serde_json::Map<String, Value>>,
+        chunks_by_id: &std::collections::HashMap<String, String>,
+        flush_sequence: &mut usize,
+    ) -> std::result::Result<(), RunnerError> {
+        if accumulator.is_empty() {
+            return Ok(());
+        }
+        let docs = std::mem::take(accumulator);
+        *flush_sequence += 1;
+        let timing_context = format!(
+            "{}:{}:flush-{}",
+            request.doc_id, template_id, flush_sequence
+        );
+        let kind = template_kinds.get(template_id).cloned().unwrap_or_default();
+        let flush_request = MergeFlushRequest {
+            docs,
+            tenant_id: request.tenant_id,
+            kb_id: request.kb_id,
+            doc_id: request.doc_id,
+            doc_name: request.doc_name,
+            compilation_template_id: template_id,
+            chain_kind: &kind,
+            timing_context: &timing_context,
+            merge_scope_dataset: *merge_scope_dataset.get(template_id).unwrap_or(&false),
+            chain_timeout_seconds: *STRUCTURE_CHAIN_CORRECTION_TIMEOUT_S,
+            chunks_by_id,
+            progress: request.progress,
+        };
+        if let Ok(info) = backend.merge_compiled_structures(flush_request).await {
+            if info.is_object() {
+                let agg = agg_infos
+                    .entry(template_id.to_string())
+                    .or_insert_with(serde_json::Map::new);
+                for key in ["inserted", "updated", "duplicates_dropped"] {
+                    let current = agg.get(key).and_then(Value::as_i64).unwrap_or(0);
+                    let delta = info.get(key).and_then(Value::as_i64).unwrap_or(0);
+                    agg.insert(key.to_string(), json!(current + delta));
+                }
+                if let Some(kwds) = info.get("compile_kwds").and_then(Value::as_array) {
+                    let entry = compile_kwds_by_tid
+                        .entry(template_id.to_string())
+                        .or_insert_with(Vec::new);
+                    for kwd in kwds {
+                        if let Some(text) = kwd.as_str() {
+                            if !text.is_empty() && !entry.iter().any(|existing| existing == text) {
+                                entry.push(text.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let template_ids_by_id: std::collections::HashMap<String, usize> = request
+        .active_templates
+        .iter()
+        .enumerate()
+        .map(|(index, (template_id, _))| (template_id.clone(), index + 1))
+        .collect();
+    let mut in_flight: futures_util::stream::FuturesUnordered<
+        std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = (
+                            usize,
+                            usize,
+                            usize,
+                            String,
+                            std::result::Result<Vec<Value>, String>,
+                        ),
+                    > + Send
+                    + '_,
+            >,
+        >,
+    > = futures_util::stream::FuturesUnordered::new();
+    let mut completed: std::collections::BTreeMap<usize, (usize, usize, String, Vec<Value>)> =
+        std::collections::BTreeMap::new();
+    let mut submit_sequence = 0usize;
+    let mut commit_sequence = 0usize;
+    let mut batch_no = 0usize;
+    let mut dynamic_buffers: std::collections::HashMap<String, Vec<Value>> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, _)| (template_id.clone(), Vec::new()))
+        .collect();
+    let mut dynamic_buffer_tokens: std::collections::HashMap<String, usize> = request
+        .active_templates
+        .iter()
+        .map(|(template_id, _)| (template_id.clone(), 0))
+        .collect();
+
+    for incoming_batch in &request.chunk_batches {
+        for chunk in incoming_batch {
+            if let Some(cid) = chunk.get("id").and_then(Value::as_str) {
+                if !chunks_by_id.contains_key(cid) {
+                    let text = chunk
+                        .get("content_with_weight")
+                        .or_else(|| chunk.get("text"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    chunks_by_id.insert(cid.to_string(), text);
+                }
+            }
+        }
+        for (template_id, parser_cfg) in &request.active_templates {
+            if cancel_check() {
+                return Err(RunnerError::Cancelled);
+            }
+            let budget = dynamic_batch_budget(
+                None,
+                template_kinds
+                    .get(template_id)
+                    .map(String::as_str)
+                    .unwrap_or(""),
+            );
+            let buffer = dynamic_buffers.entry(template_id.clone()).or_default();
+            let mut buffer_tokens = *dynamic_buffer_tokens.get(template_id).unwrap_or(&0);
+            for chunk in incoming_batch {
+                let text = chunk
+                    .get("content_with_weight")
+                    .or_else(|| chunk.get("text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let chunk_tokens = crate::chunk::tokenizer::token_count(text);
+                if !buffer.is_empty() && buffer_tokens + chunk_tokens > budget {
+                    batch_no += 1;
+                    let batch = std::mem::take(buffer);
+                    let sequence = submit_sequence;
+                    submit_sequence += 1;
+                    let batch_len = batch.len();
+                    let template = template_id.clone();
+                    let cfg = parser_cfg.clone();
+                    let no = batch_no;
+                    in_flight.push(Box::pin(async move {
+                        let result = backend
+                            .compile_structure_from_text(
+                                &batch,
+                                &cfg,
+                                request.doc_id,
+                                request.doc_name,
+                                request.language,
+                                &template,
+                            )
+                            .await;
+                        (sequence, no, batch_len, template, result)
+                    }));
+                    buffer_tokens = 0;
+                    while in_flight.len() + completed.len() >= *DOC_STRUCTURE_COMPILE_MAX_IN_FLIGHT
+                    {
+                        if let Some((sequence, no, len, template, result)) = in_flight.next().await
+                        {
+                            if let Ok(docs) = result {
+                                completed.insert(sequence, (no, len, template, docs));
+                            }
+                        }
+                        while let Some((no, len, template, docs)) =
+                            completed.remove(&commit_sequence)
+                        {
+                            let _ = len;
+                            if !docs.is_empty() {
+                                accumulators
+                                    .entry(template.clone())
+                                    .or_default()
+                                    .extend(docs);
+                            }
+                            if accumulators.get(&template).map(|a| a.len()).unwrap_or(0)
+                                >= DOC_STRUCTURE_MERGE_MAX_DOCS
+                            {
+                                progress(&format!(
+                                    "  merge flush for batch {no} for template ({}/{total})",
+                                    template_ids_by_id.get(&template).copied().unwrap_or(0)
+                                ));
+                                let accumulator = accumulators.entry(template.clone()).or_default();
+                                flush(
+                                    backend,
+                                    &template,
+                                    accumulator,
+                                    &request,
+                                    &template_kinds,
+                                    &merge_scope_dataset,
+                                    &mut compile_kwds_by_tid,
+                                    &mut agg_infos,
+                                    &chunks_by_id,
+                                    &mut flush_sequence,
+                                )
+                                .await?;
+                            }
+                            commit_sequence += 1;
+                        }
+                    }
+                }
+                buffer.push(chunk.clone());
+                buffer_tokens += chunk_tokens;
+                if buffer_tokens >= budget {
+                    batch_no += 1;
+                    let batch = std::mem::take(buffer);
+                    let sequence = submit_sequence;
+                    submit_sequence += 1;
+                    let batch_len = batch.len();
+                    let template = template_id.clone();
+                    let cfg = parser_cfg.clone();
+                    let no = batch_no;
+                    in_flight.push(Box::pin(async move {
+                        let result = backend
+                            .compile_structure_from_text(
+                                &batch,
+                                &cfg,
+                                request.doc_id,
+                                request.doc_name,
+                                request.language,
+                                &template,
+                            )
+                            .await;
+                        (sequence, no, batch_len, template, result)
+                    }));
+                    buffer_tokens = 0;
+                }
+            }
+            *dynamic_buffer_tokens
+                .entry(template_id.clone())
+                .or_default() = buffer_tokens;
+        }
+    }
+
+    for (template_id, buffer) in dynamic_buffers.clone() {
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        if !buffer.is_empty() {
+            batch_no += 1;
+            let sequence = submit_sequence;
+            submit_sequence += 1;
+            let batch_len = buffer.len();
+            let cfg = request
+                .active_templates
+                .iter()
+                .find(|(template, _)| template == &template_id)
+                .map(|(_, cfg)| cfg.clone())
+                .unwrap_or_else(|| json!({}));
+            let template = template_id.clone();
+            let no = batch_no;
+            in_flight.push(Box::pin(async move {
+                let result = backend
+                    .compile_structure_from_text(
+                        &buffer,
+                        &cfg,
+                        request.doc_id,
+                        request.doc_name,
+                        request.language,
+                        &template,
+                    )
+                    .await;
+                (sequence, no, batch_len, template, result)
+            }));
+        }
+        dynamic_buffers.entry(template_id).or_default().clear();
+    }
+
+    while !in_flight.is_empty() {
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        if let Some((sequence, no, len, template, result)) = in_flight.next().await {
+            if let Ok(docs) = result {
+                completed.insert(sequence, (no, len, template, docs));
+            }
+        }
+        while let Some((no, len, template, docs)) = completed.remove(&commit_sequence) {
+            let _ = len;
+            if !docs.is_empty() {
+                accumulators
+                    .entry(template.clone())
+                    .or_default()
+                    .extend(docs);
+            }
+            if accumulators.get(&template).map(|a| a.len()).unwrap_or(0)
+                >= DOC_STRUCTURE_MERGE_MAX_DOCS
+            {
+                progress(&format!(
+                    "  merge flush for batch {no} for template ({}/{total})",
+                    template_ids_by_id.get(&template).copied().unwrap_or(0)
+                ));
+                let accumulator = accumulators.entry(template.clone()).or_default();
+                flush(
+                    backend,
+                    &template,
+                    accumulator,
+                    &request,
+                    &template_kinds,
+                    &merge_scope_dataset,
+                    &mut compile_kwds_by_tid,
+                    &mut agg_infos,
+                    &chunks_by_id,
+                    &mut flush_sequence,
+                )
+                .await?;
+            }
+            commit_sequence += 1;
+        }
+    }
+    while let Some((no, len, template, docs)) = completed.remove(&commit_sequence) {
+        let _ = len;
+        if !docs.is_empty() {
+            accumulators
+                .entry(template.clone())
+                .or_default()
+                .extend(docs);
+        }
+        if accumulators.get(&template).map(|a| a.len()).unwrap_or(0) >= DOC_STRUCTURE_MERGE_MAX_DOCS
+        {
+            progress(&format!(
+                "  merge flush for batch {no} for template ({}/{total})",
+                template_ids_by_id.get(&template).copied().unwrap_or(0)
+            ));
+            let accumulator = accumulators.entry(template.clone()).or_default();
+            flush(
+                backend,
+                &template,
+                accumulator,
+                &request,
+                &template_kinds,
+                &merge_scope_dataset,
+                &mut compile_kwds_by_tid,
+                &mut agg_infos,
+                &chunks_by_id,
+                &mut flush_sequence,
+            )
+            .await?;
+        }
+        commit_sequence += 1;
+    }
+
+    for (template_id, _) in &request.active_templates {
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        let accumulator = accumulators.entry(template_id.clone()).or_default();
+        flush(
+            backend,
+            template_id,
+            accumulator,
+            &request,
+            &template_kinds,
+            &merge_scope_dataset,
+            &mut compile_kwds_by_tid,
+            &mut agg_infos,
+            &chunks_by_id,
+            &mut flush_sequence,
+        )
+        .await?;
+    }
+
+    // Dataset structure graph rebuild (dataset-scope templates).
+    for (template_id, _) in &request.active_templates {
+        if !*merge_scope_dataset.get(template_id).unwrap_or(&false) {
+            continue;
+        }
+        let structure_kind = backend
+            .saved_template(template_id, request.tenant_id)
+            .and_then(|template| {
+                template
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+            });
+        let mut kwds = compile_kwds_by_tid
+            .get(template_id)
+            .cloned()
+            .unwrap_or_default();
+        kwds.sort();
+        for compile_kwd in kwds {
+            if cancel_check() {
+                return Err(RunnerError::Cancelled);
+            }
+            progress(&format!(
+                "Rebuilding dataset structure graph (compile_kwd={compile_kwd}) ..."
+            ));
+            let _ = backend
+                .rebuild_dataset_structure_graph_json(
+                    request.tenant_id,
+                    request.kb_id,
+                    &compile_kwd,
+                    template_id,
+                    structure_kind.as_deref(),
+                )
+                .await;
+        }
+    }
+
+    upsert_dataset_nav_from_page_index(
+        backend,
+        &request.active_templates,
+        request.tenant_id,
+        request.kb_id,
+        request.doc_id,
+        request.doc_name,
+        progress,
+        cancel_check,
+    )
+    .await?;
+
+    for (template_id, _) in &request.active_templates {
+        if template_kinds.get(template_id).map(String::as_str) != Some("timeline") {
+            continue;
+        }
+        let _ = backend
+            .cleanup_timeline_isolated_entities(
+                request.tenant_id,
+                request.kb_id,
+                request.doc_id,
+                request.doc_name,
+                template_id,
+            )
+            .await;
+    }
+
+    // Per-template progress + recording, then the optional synthesis phase.
+    for (index, (template_id, parser_cfg)) in request.active_templates.iter().enumerate() {
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        let agg = agg_infos.get(template_id).cloned().unwrap_or_default();
+        if let Some(record) = request.record {
+            let mut recorded = agg.clone();
+            recorded.insert("rechunked_chunk_count".to_string(), json!(0));
+            record(
+                &format!("document_structure_compile:{template_id}"),
+                Value::Object(recorded),
+            );
+        }
+        progress(&format!(
+            "Document knowledge compilation done ({}/{}): inserted={}, updated={}, duplicates_dropped={}",
+            index + 1,
+            total,
+            agg.get("inserted").and_then(Value::as_i64).unwrap_or(0),
+            agg.get("updated").and_then(Value::as_i64).unwrap_or(0),
+            agg.get("duplicates_dropped")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        ));
+        let synthesis_cfg = parser_cfg
+            .get("synthesis")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if !synthesis_cfg
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let example = synthesis_cfg
+            .get("example")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let compile_kwd = synthesis_cfg
+            .get("compile_kwd")
+            .and_then(Value::as_str)
+            .unwrap_or("wiki_page");
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        if example.is_empty() {
+            continue;
+        }
+        progress(&format!(
+            "Synthesis PLAN for template {template_id} (kind={compile_kwd}) ..."
+        ));
+        let plan = backend
+            .wiki_plan_from_reduction(request.tenant_id, request.kb_id)
+            .await
+            .unwrap_or_else(|_| json!({}));
+        if cancel_check() {
+            return Err(RunnerError::Cancelled);
+        }
+        let planned = plan
+            .get("pages")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if planned.is_empty() {
+            progress(&format!(
+                "Synthesis: no pages planned for template {template_id}."
+            ));
+            continue;
+        }
+        progress(&format!(
+            "Synthesis REFINE for template {template_id} ({} page(s)) ...",
+            planned.len()
+        ));
+        let mut pages = backend
+            .wiki_refine_from_plan(request.tenant_id, request.kb_id, example)
+            .await
+            .unwrap_or_default();
+        for page in pages.iter_mut() {
+            if let Some(map) = page.as_object_mut() {
+                map.insert("compile_kwd".to_string(), json!(compile_kwd));
+            }
+        }
+        progress(&format!(
+            "Synthesis done: {} {compile_kwd} page(s) written.",
+            pages.len()
+        ));
+    }
+
+    Ok(Value::Object(
+        agg_infos
+            .into_iter()
+            .map(|(key, value)| (key, Value::Object(value)))
+            .collect(),
+    ))
+}
+
+/// Local truthiness helper (`if dataset_merge:`).
+pub(crate) fn value_is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().map(|n| n != 0.0).unwrap_or(true),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4845,6 +5841,320 @@ mod common_helpers_tests {
             *store.inserted.lock().unwrap(),
             2,
             "one direct + one upsert insert"
+        );
+    }
+}
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct MockBackend {
+        templates: std::collections::HashMap<String, Value>,
+        compile_calls: std::sync::Mutex<Vec<String>>,
+        merges: std::sync::Mutex<Vec<String>>,
+        dataset_rebuilds: std::sync::Mutex<Vec<String>>,
+        nav_upserts: std::sync::Mutex<usize>,
+        timeline_cleanups: std::sync::Mutex<usize>,
+        plans: std::sync::Mutex<usize>,
+        refines: std::sync::Mutex<usize>,
+        docs_per_batch: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl StructureCompileBackend for MockBackend {
+        fn resolve_template_ids_from_group(&self, group_id: &str, _tenant_id: &str) -> Vec<String> {
+            vec![format!("{group_id}-a"), format!("{group_id}-b")]
+        }
+        fn saved_template(&self, template_id: &str, _tenant_id: &str) -> Option<Value> {
+            self.templates.get(template_id).cloned()
+        }
+        async fn compile_structure_from_text(
+            &self,
+            batch: &[Value],
+            _parser_cfg: &Value,
+            _doc_id: &str,
+            _doc_name: &str,
+            _language: &str,
+            compilation_template_id: &str,
+        ) -> std::result::Result<Vec<Value>, String> {
+            self.compile_calls
+                .lock()
+                .unwrap()
+                .push(compilation_template_id.to_string());
+            Ok((0..self.docs_per_batch.max(batch.len()))
+                .map(|index| json!({"id": format!("{compilation_template_id}-{index}")}))
+                .collect())
+        }
+        async fn merge_compiled_structures(
+            &self,
+            request: MergeFlushRequest<'_>,
+        ) -> std::result::Result<Value, String> {
+            self.merges
+                .lock()
+                .unwrap()
+                .push(request.compilation_template_id.to_string());
+            Ok(json!({
+                "inserted": request.docs.len(),
+                "updated": 0,
+                "duplicates_dropped": 0,
+                "compile_kwds": ["list"],
+            }))
+        }
+        async fn rebuild_structure_graph_json(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _doc_id: &str,
+            _doc_name: &str,
+            compile_kwd: &str,
+            _compilation_template_id: &str,
+        ) -> std::result::Result<Value, String> {
+            if compile_kwd == "page_index" {
+                return Ok(json!({"entities": [{"name": "Alpha", "description": "first"}]}));
+            }
+            Ok(json!({}))
+        }
+        async fn rebuild_dataset_structure_graph_json(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            compile_kwd: &str,
+            _compilation_template_id: &str,
+            _structure_kind: Option<&str>,
+        ) -> std::result::Result<(), String> {
+            self.dataset_rebuilds
+                .lock()
+                .unwrap()
+                .push(compile_kwd.to_string());
+            Ok(())
+        }
+        async fn upsert_dataset_nav_doc(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _doc_id: &str,
+            _summary: &str,
+        ) -> std::result::Result<(), String> {
+            *self.nav_upserts.lock().unwrap() += 1;
+            Ok(())
+        }
+        async fn wiki_plan_from_reduction(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+        ) -> std::result::Result<Value, String> {
+            *self.plans.lock().unwrap() += 1;
+            Ok(json!({"pages": [{"title": "P"}]}))
+        }
+        async fn wiki_refine_from_plan(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _example: &str,
+        ) -> std::result::Result<Vec<Value>, String> {
+            *self.refines.lock().unwrap() += 1;
+            Ok(vec![json!({"title": "P"})])
+        }
+        async fn cleanup_timeline_isolated_entities(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _doc_id: &str,
+            _doc_name: &str,
+            _compilation_template_id: &str,
+        ) -> std::result::Result<(), String> {
+            *self.timeline_cleanups.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn template_helpers() {
+        assert_eq!(runner_template_kind(Some(" Page-Index ")), "page_index");
+        assert_eq!(runner_template_kind(None), "");
+        assert!(is_page_index_template(&json!({"kind": "pageindex"})));
+        assert!(is_page_index_template(&json!({"kind": "Page-Index"})));
+        assert!(!is_page_index_template(&json!({"kind": "tree"})));
+        assert!(!is_page_index_template(&json!({})));
+    }
+
+    #[test]
+    fn page_index_summary_limits_and_formats() {
+        let graph = json!({"entities": [
+            {"name": "Alpha", "description": "first"},
+            {"name": "Beta", "description": "second"},
+            {"name": "", "description": ""},
+        ]});
+        assert_eq!(
+            page_index_graph_summary(&graph, 80),
+            "Alpha: first\nBeta: second"
+        );
+        assert_eq!(page_index_graph_summary(&graph, 1), "Alpha: first");
+        assert!(page_index_graph_summary(&json!({}), 80).is_empty());
+    }
+
+    #[test]
+    fn resolve_and_filter_templates() {
+        let mut backend = MockBackend::default();
+        backend
+            .templates
+            .insert("g1-a".to_string(), json!({"config": {"kind": "list"}}));
+        backend
+            .templates
+            .insert("g1-b".to_string(), json!({"config": {"kind": "wiki"}}));
+        backend
+            .templates
+            .insert("g2-a".to_string(), json!({"config": {"kind": "tree"}}));
+        let ids = resolve_template_ids_from_groups(
+            &backend,
+            &["g1".to_string(), "g1".to_string(), " ".to_string()],
+            "t1",
+        );
+        assert_eq!(
+            ids,
+            vec!["g1-a".to_string(), "g1-b".to_string()],
+            "deduped, blanks skipped"
+        );
+        let active = load_active_templates(&backend, &ids, "t1");
+        assert_eq!(active.len(), 1, "wiki and missing templates are dropped");
+        assert_eq!(active[0].0, "g1-a");
+
+        let mut with_tree = active.clone();
+        with_tree.push(("g2-a".to_string(), json!({"kind": "tree"})));
+        let (tree, non_tree) = split_tree_templates(with_tree);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(non_tree.len(), 1);
+    }
+
+    #[test]
+    fn batch_budget_knowledge_graph_clamped() {
+        let kg = dynamic_batch_budget(Some(100_000), "knowledge_graph");
+        assert_eq!(
+            kg, *KNOWLEDGE_GRAPH_MAX_BATCH_TOKENS,
+            "0.1 * 100k = 10k -> capped at 4096"
+        );
+        let kg_small = dynamic_batch_budget(Some(10_000), "knowledge_graph");
+        assert_eq!(
+            kg_small, *KNOWLEDGE_GRAPH_MIN_BATCH_TOKENS,
+            "1000 < 2048 floor"
+        );
+        let list = dynamic_batch_budget(Some(10_000), "list");
+        assert_eq!(list, 5000);
+        assert_eq!(
+            dynamic_batch_budget(None, "list"),
+            (100_000.0 * 0.5) as usize
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_end_to_end_with_synthesis_and_phases() {
+        let mut backend = MockBackend {
+            docs_per_batch: 2,
+            ..MockBackend::default()
+        };
+        backend
+            .templates
+            .insert("tpl-list".to_string(), json!({"config": {"kind": "list"}}));
+        backend.templates.insert(
+            "tpl-kg".to_string(),
+            json!({"config": {"kind": "knowledge_graph", "dataset_merge": true}}),
+        );
+        backend.templates.insert(
+            "tpl-timeline".to_string(),
+            json!({"config": {"kind": "timeline"}}),
+        );
+        backend.templates.insert(
+            "tpl-pi".to_string(),
+            json!({"config": {"kind": "page_index", "synthesis": {"enabled": true, "example": "{\"title\": \"x\"}", "compile_kwd": "wiki_page"}}}),
+        );
+        let progress = |_msg: &str| {};
+        let cancel = || false;
+        let recorded = std::sync::Mutex::new(Vec::new());
+        let record = |key: &str, value: Value| {
+            recorded.lock().unwrap().push((key.to_string(), value));
+        };
+        let chunks: Vec<Value> = (0..3)
+            .map(|index| json!({"id": format!("c{index}"), "content_with_weight": "alpha beta gamma"}))
+            .collect();
+        let request = CompileOverBatchesRequest {
+            active_templates: vec![
+                ("tpl-list".to_string(), json!({"kind": "list"})),
+                (
+                    "tpl-kg".to_string(),
+                    json!({"kind": "knowledge_graph", "dataset_merge": true}),
+                ),
+                ("tpl-timeline".to_string(), json!({"kind": "timeline"})),
+                (
+                    "tpl-pi".to_string(),
+                    json!({"kind": "page_index", "synthesis": {"enabled": true, "example": "x"}}),
+                ),
+            ],
+            tenant_id: "t1",
+            kb_id: "kb1",
+            doc_id: "d1",
+            doc_name: "Doc",
+            language: "en",
+            chunk_batches: vec![chunks],
+            progress: &progress,
+            cancel_check: &cancel,
+            record: Some(&record),
+        };
+        let agg = run_structure_compile_over_batches(&backend, request)
+            .await
+            .unwrap();
+        for template_id in ["tpl-list", "tpl-kg", "tpl-timeline", "tpl-pi"] {
+            assert!(agg.get(template_id).is_some(), "{template_id} reported");
+            assert_eq!(
+                agg[template_id]["inserted"].as_i64().unwrap() > 0,
+                true,
+                "{template_id} merged docs"
+            );
+        }
+        assert!(
+            backend.merges.lock().unwrap().len() >= 4,
+            "one flush per template"
+        );
+        assert!(
+            backend
+                .dataset_rebuilds
+                .lock()
+                .unwrap()
+                .contains(&"list".to_string()),
+            "dataset-scope rebuild runs for harvested kwds"
+        );
+        assert_eq!(
+            *backend.nav_upserts.lock().unwrap(),
+            1,
+            "page_index nav upsert"
+        );
+        assert_eq!(*backend.timeline_cleanups.lock().unwrap(), 1);
+        assert_eq!(*backend.plans.lock().unwrap(), 1);
+        assert_eq!(*backend.refines.lock().unwrap(), 1);
+        assert_eq!(recorded.lock().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn runner_cancellation_surfaces() {
+        let backend = MockBackend::default();
+        let progress = |_msg: &str| {};
+        let cancel = || true;
+        let request = CompileOverBatchesRequest {
+            active_templates: vec![("tpl".to_string(), json!({"kind": "list"}))],
+            tenant_id: "t1",
+            kb_id: "kb1",
+            doc_id: "d1",
+            doc_name: "Doc",
+            language: "en",
+            chunk_batches: vec![vec![json!({"id": "c1", "content_with_weight": "x"})]],
+            progress: &progress,
+            cancel_check: &cancel,
+            record: None,
+        };
+        assert_eq!(
+            run_structure_compile_over_batches(&backend, request).await,
+            Err(RunnerError::Cancelled)
         );
     }
 }

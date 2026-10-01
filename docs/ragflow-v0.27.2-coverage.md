@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 633 | 297312 |
-| partial | 48 | 27352 |
+| full | 634 | 298062 |
+| partial | 47 | 26602 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3662,7 +3662,7 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | 70842 | `e18c290ac09bc8d2` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/mind_map_extractor.py` | 169 | 6258 | `79b0f639d17f5be6` | full | `src/advanced_rag.rs` | v0.3.10ah 完成：mind_map_extractor.py 已移植为 src/mind_map.rs（MindMapResult/MindMapExtractor、分组预算、process_document 变量替换、_merge/_todict/_list_to_kv/_be_children/_key；6 项单测绿）。差异书面说明：Python 第三方 markdown_to_json.dictify 以「ATX 标题+缩进列表+段落」子集实现（文档注明）；chat 面注入（HarnessChat） |
 | `rag/advanced_rag/knowlege_compile/raptor.py` | 500 | 22437 | `b9c33d7fbe4c6911` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：RecursiveAbstractiveProcessing4TreeOrganizedRetrieval（500 行）未见实现（仅 kind 字符串）——worklist W-4（agentic harness） |
-| `rag/advanced_rag/knowlege_compile/runner.py` | 750 | 33439 | `2f4ad78607873601` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/knowlege_compile/runner.py` | 750 | 33439 | `2f4ad78607873601` | full | `src/structure_compile.rs` | v0.3.10ah 完成：runner.py 核心已移植入 src/structure_compile.rs（env 常量（LazyLock）、resolve_template_ids_from_groups、load_active_templates/split_tree_templates、page_index 摘要与 dataset-nav 前缀、批次并发核心（FuturesUnordered + 有序提交 + 预算分批 + merge 上限冲刷）、合成阶段（wiki PLAN/REFINE + compile_kwd 覆写）、dataset 图重建、timeline 清理；6 项 runner 单测、structure_compile 套件 42 绿）。书面差异：doc-storage 条件变量序列改为顺序 await（同一顺序保证）、批次迭代器以批次列表表达、LLMCallPool 为直通包装（并发由宿主负责）；宿主服务经 StructureCompileBackend 契约注入（v0.27.2 参数面逐字保留）。 |
 | `rag/advanced_rag/knowlege_compile/structure.py` | 3430 | 138491 | `638f99c699a3abd9` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库 src/structure_compile.rs（头部注明源自 v0.26.4）、src/merge.rs、src/hypergraph.rs 已覆盖提取/合并/链校验/图重建核心（extract_hypergraph、compile_hypergraph、merge_compiled_structures、validate_and_correct_chain、rebuild_structure_graph_json）；v0.27.2 符号级缺口（全递归检索）：compile_structure_from_text 全多类入口、cleanup_timeline_isolated_entities、LLMCallPool、_common.env_* 调用面——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | 158984 | `b6b277555fa49c9d` | partial | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | 212591 | `02392f68b6702c5c` | partial | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
