@@ -11,6 +11,7 @@
 //! `DocStore`; row ids use the crate row-id helper over the upstream seed
 //! (xxh3-64; upstream xxh64 — established divergence).
 
+use crate::structure_compile::EmbeddingBackend;
 use serde_json::Value;
 
 /// `_COMPILE_KWD`.
@@ -987,6 +988,587 @@ pub fn build_nav_graph_text(graph_json: &Value) -> (String, String) {
     (root_summary, graph_parts.join("\n"))
 }
 
+/// `RedisDistributedLock` seam for one KB's nav tree (`spin_acquire` +
+/// `release`); the host owns the actual distributed lock.
+pub trait NavKbLock: Send + Sync {
+    /// `lock.spin_acquire()`.
+    fn acquire(&self, kb_id: &str) -> bool;
+    /// `lock.release()`.
+    fn release(&self, kb_id: &str);
+}
+
+/// `_embed(embd_mdl, text)`: one text's embedding (`[]` when unavailable).
+pub async fn nav_embed(embed: Option<&dyn EmbeddingBackend>, text: &str) -> Vec<f32> {
+    let Some(embed) = embed else {
+        return Vec::new();
+    };
+    match crate::structure_compile::encode(embed, &[text.to_string()]).await {
+        Ok(vectors) => vectors.into_iter().next().unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `upsert_dataset_nav_doc`: place a document into the nav clustering tree
+/// (merge into the nearest cluster, create a sibling, or seed a root cluster).
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_dataset_nav_doc(
+    store: &dyn crate::doc_store::DocStore,
+    embed: Option<&dyn EmbeddingBackend>,
+    chat: Option<&dyn crate::harness::HarnessChat>,
+    lock: &dyn NavKbLock,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+    summary_or_tree: &Value,
+) {
+    if doc_id.is_empty() || kb_id.is_empty() {
+        return;
+    }
+    let (summary, graph_content) = nav_summary_and_graph(summary_or_tree);
+    if summary.is_empty() {
+        return;
+    }
+    let embed_text = if graph_content.is_empty() {
+        summary.clone()
+    } else {
+        graph_content.clone()
+    };
+    let doc_embedding = nav_embed(embed, &embed_text).await;
+    let vec_dim = doc_embedding.len();
+    if !lock.acquire(kb_id) {
+        return;
+    }
+    let outcome = upsert_locked(
+        store,
+        embed,
+        chat,
+        tenant_id,
+        kb_id,
+        doc_id,
+        &summary,
+        &graph_content,
+        &doc_embedding,
+        vec_dim,
+    )
+    .await;
+    let _ = outcome;
+    lock.release(kb_id);
+}
+
+fn nav_summary_and_graph(summary_or_tree: &Value) -> (String, String) {
+    match summary_or_tree {
+        Value::String(text) => (text.clone(), String::new()),
+        Value::Object(map) => {
+            if map.contains_key("title") && map.contains_key("graph_text") {
+                (
+                    map.get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                    map.get("graph_text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                )
+            } else {
+                (
+                    extract_root_summary_from_tree(summary_or_tree),
+                    String::new(),
+                )
+            }
+        }
+        _ => (String::new(), String::new()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upsert_locked(
+    store: &dyn crate::doc_store::DocStore,
+    embed: Option<&dyn EmbeddingBackend>,
+    chat: Option<&dyn crate::harness::HarnessChat>,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+    summary: &str,
+    graph_content: &str,
+    doc_embedding: &[f32],
+    vec_dim: usize,
+) -> std::result::Result<(), String> {
+    // 3. Replace an existing nav_doc under the same lock (skip identical).
+    let existing = store_get(store, tenant_id, kb_id, &nav_doc_id(doc_id));
+    if let Some(existing) = &existing {
+        let old_payload = existing
+            .get("content_with_weight")
+            .and_then(Value::as_str)
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if old_payload.get("description").and_then(Value::as_str) == Some(summary) {
+            return Ok(());
+        }
+        remove_dataset_nav_doc_locked(store, tenant_id, kb_id, doc_id);
+    }
+
+    // 4. Layered KNN placement.
+    let (best_name, best_parent, sim) = if !doc_embedding.is_empty() {
+        find_best_cluster(store, tenant_id, kb_id, doc_embedding, vec_dim)
+    } else {
+        (None, None, 0.0)
+    };
+
+    if let Some(best_name) = &best_name {
+        if sim >= MERGE_THRESHOLD {
+            // Merge into the best cluster.
+            let cluster_id = nav_cluster_id(kb_id, best_name);
+            let cluster_row = store_get(store, tenant_id, kb_id, &cluster_id);
+            if let Some(cluster_row) = &cluster_row {
+                let mut payload = cluster_row
+                    .get("content_with_weight")
+                    .and_then(Value::as_str)
+                    .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let old_desc = payload
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let new_desc = llm_merge(chat, &old_desc, summary).await;
+                if let Some(map) = payload.as_object_mut() {
+                    map.insert("description".to_string(), Value::String(new_desc.clone()));
+                }
+                let mut row = cluster_row.clone();
+                if let Some(map) = row.as_object_mut() {
+                    map.insert(
+                        "content_with_weight".to_string(),
+                        Value::String(payload.to_string()),
+                    );
+                    let mut doc_ids = as_str_list(map.get("doc_ids_kwd"));
+                    if !doc_ids.iter().any(|existing| existing == doc_id) {
+                        doc_ids.push(doc_id.to_string());
+                    }
+                    map.insert("doc_ids_kwd".to_string(), serde_json::json!(doc_ids));
+                    map.insert(
+                        "doc_count_int".to_string(),
+                        serde_json::json!(doc_ids.len()),
+                    );
+                }
+                if embed.is_some() && new_desc != old_desc {
+                    let new_emb = nav_embed(embed, &new_desc).await;
+                    if !new_emb.is_empty() {
+                        if let Some(map) = row.as_object_mut() {
+                            map.insert(vec_field(new_emb.len()), serde_json::json!(new_emb));
+                        }
+                    }
+                }
+                store_upsert(store, tenant_id, kb_id, &row);
+            }
+            let depth = cluster_row
+                .as_ref()
+                .and_then(|row| row.get("depth_int"))
+                .and_then(Value::as_i64)
+                .map(|depth| depth + 1)
+                .unwrap_or(2);
+            let nav_doc_row = make_nav_doc_row(
+                kb_id,
+                doc_id,
+                summary,
+                best_name,
+                depth,
+                doc_embedding,
+                graph_content,
+            );
+            store_upsert(store, tenant_id, kb_id, &nav_doc_row);
+            maybe_split_cluster(store, embed, chat, tenant_id, kb_id, best_name).await;
+            return Ok(());
+        }
+        if sim >= MIN_SIM {
+            // Create a new cluster under the best cluster's parent.
+            let parent_for_new = match &best_parent {
+                Some(parent) if !parent.is_empty() => parent.clone(),
+                _ => best_name.clone(),
+            };
+            let mut depth_of_parent = 1i64;
+            let parent_row = store_get(
+                store,
+                tenant_id,
+                kb_id,
+                &nav_cluster_id(kb_id, &parent_for_new),
+            );
+            if let Some(row) = &parent_row {
+                depth_of_parent = row.get("depth_int").and_then(Value::as_i64).unwrap_or(1);
+            }
+            let new_depth = depth_of_parent + 1;
+            let (new_title, new_desc) = llm_create_summary(chat, &[summary.to_string()]).await;
+            let new_name = readable_cluster_name(&new_title, summary);
+            let new_cluster = make_nav_cluster_row(
+                kb_id,
+                &new_name,
+                &new_desc,
+                &parent_for_new,
+                depth_of_parent,
+                &[doc_id.to_string()],
+                doc_embedding,
+            );
+            store_upsert(store, tenant_id, kb_id, &new_cluster);
+            let nav_doc_row = make_nav_doc_row(
+                kb_id,
+                doc_id,
+                summary,
+                &new_name,
+                new_depth,
+                doc_embedding,
+                graph_content,
+            );
+            store_upsert(store, tenant_id, kb_id, &nav_doc_row);
+            return Ok(());
+        }
+    }
+
+    // Root-level new cluster.
+    let (root_title, new_desc) = llm_create_summary(chat, &[summary.to_string()]).await;
+    let new_name = readable_cluster_name(&root_title, summary);
+    let new_cluster = make_nav_cluster_row(
+        kb_id,
+        &new_name,
+        &new_desc,
+        "root",
+        0,
+        &[doc_id.to_string()],
+        doc_embedding,
+    );
+    store_upsert(store, tenant_id, kb_id, &new_cluster);
+    let nav_doc_row = make_nav_doc_row(
+        kb_id,
+        doc_id,
+        summary,
+        &new_name,
+        1,
+        doc_embedding,
+        graph_content,
+    );
+    store_upsert(store, tenant_id, kb_id, &nav_doc_row);
+    Ok(())
+}
+
+/// `remove_dataset_nav_doc`.
+pub async fn remove_dataset_nav_doc(
+    store: &dyn crate::doc_store::DocStore,
+    lock: &dyn NavKbLock,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+) {
+    if doc_id.is_empty() || kb_id.is_empty() {
+        return;
+    }
+    if !lock.acquire(kb_id) {
+        return;
+    }
+    remove_dataset_nav_doc_locked(store, tenant_id, kb_id, doc_id);
+    lock.release(kb_id);
+}
+
+/// `_remove_dataset_nav_doc_locked` (caller holds the KB nav lock).
+fn remove_dataset_nav_doc_locked(
+    store: &dyn crate::doc_store::DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    doc_id: &str,
+) {
+    let doc_row_id = nav_doc_id(doc_id);
+    let Some(doc_row) = store_get(store, tenant_id, kb_id, &doc_row_id) else {
+        return;
+    };
+    let parent_name = doc_row
+        .get("parent_kwd")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    store_delete(store, tenant_id, kb_id, &doc_row_id);
+    if !parent_name.is_empty() && parent_name != "root" {
+        let cluster_id = nav_cluster_id(kb_id, &parent_name);
+        if let Some(cluster_row) = store_get(store, tenant_id, kb_id, &cluster_id) {
+            let mut row = cluster_row.clone();
+            let mut doc_ids = as_str_list(row.get("doc_ids_kwd"));
+            doc_ids.retain(|existing| existing != doc_id);
+            if doc_ids.is_empty() {
+                store_delete(store, tenant_id, kb_id, &cluster_id);
+                let grandparent = cluster_row
+                    .get("parent_kwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if !grandparent.is_empty() && grandparent != "root" {
+                    cleanup_empty_cluster(store, tenant_id, kb_id, &grandparent);
+                }
+            } else {
+                if let Some(map) = row.as_object_mut() {
+                    map.insert("doc_ids_kwd".to_string(), serde_json::json!(doc_ids));
+                    map.insert(
+                        "doc_count_int".to_string(),
+                        serde_json::json!(doc_ids.len()),
+                    );
+                }
+                store_upsert(store, tenant_id, kb_id, &row);
+            }
+        }
+    }
+}
+
+/// `_cleanup_empty_cluster`: recursively drop empty clusters.
+fn cleanup_empty_cluster(
+    store: &dyn crate::doc_store::DocStore,
+    tenant_id: &str,
+    kb_id: &str,
+    cluster_name: &str,
+) {
+    let cluster_id = nav_cluster_id(kb_id, cluster_name);
+    let Some(cluster) = store_get(store, tenant_id, kb_id, &cluster_id) else {
+        return;
+    };
+    let child_cond = serde_json::json!({
+        "kb_id": [kb_id],
+        "compile_kwd": [COMPILE_KWD],
+        "parent_kwd": [cluster_name],
+    });
+    let children = store_search(
+        store,
+        tenant_id,
+        kb_id,
+        &child_cond,
+        &["id".to_string()],
+        100,
+    );
+    let doc_ids = as_str_list(cluster.get("doc_ids_kwd"));
+    if children.is_empty() && doc_ids.is_empty() {
+        store_delete(store, tenant_id, kb_id, &cluster_id);
+        let grandparent = cluster
+            .get("parent_kwd")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if !grandparent.is_empty() && grandparent != "root" {
+            cleanup_empty_cluster(store, tenant_id, kb_id, &grandparent);
+        }
+    }
+}
+
+/// `_maybe_split_cluster`: split a cluster that exceeds fanout/doc-count using
+/// a lightweight 2-means pass over the children embeddings.
+pub async fn maybe_split_cluster(
+    store: &dyn crate::doc_store::DocStore,
+    embed: Option<&dyn EmbeddingBackend>,
+    chat: Option<&dyn crate::harness::HarnessChat>,
+    tenant_id: &str,
+    kb_id: &str,
+    cluster_name: &str,
+) {
+    let child_cond = serde_json::json!({
+        "kb_id": [kb_id],
+        "compile_kwd": [COMPILE_KWD],
+        "parent_kwd": [cluster_name],
+    });
+    let children = store_search(
+        store,
+        tenant_id,
+        kb_id,
+        &child_cond,
+        &["id".to_string(), "name".to_string(), "type_kwd".to_string()],
+        200,
+    );
+    if children.is_empty() {
+        return;
+    }
+    let cluster_kids = children
+        .iter()
+        .filter(|child| child.get("type_kwd").and_then(Value::as_str) == Some("nav_cluster"))
+        .count();
+    let doc_kids = children
+        .iter()
+        .filter(|child| child.get("type_kwd").and_then(Value::as_str) == Some("nav_doc"))
+        .count();
+    let should_split = cluster_kids + doc_kids > MAX_FANOUT || doc_kids > MAX_DOCS_PER_CLUSTER;
+    if !should_split {
+        return;
+    }
+    // Discover the vector field from the first child that carries one.
+    let child_details = store_search(
+        store,
+        tenant_id,
+        kb_id,
+        &child_cond,
+        &[
+            "id".to_string(),
+            "name".to_string(),
+            "type_kwd".to_string(),
+            "content_with_weight".to_string(),
+        ],
+        200,
+    );
+    let mut vf = String::from("q_768_vec");
+    'discover: for child in &child_details {
+        if let Some(map) = child.as_object() {
+            for key in map.keys() {
+                if key.starts_with("q_") && key.ends_with("_vec") {
+                    vf = key.clone();
+                    break 'discover;
+                }
+            }
+        }
+    }
+    let mut embeddings: Vec<Vec<f32>> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut name_to_type: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for child in &child_details {
+        let stored = vector_of(child.get(&vf));
+        let name = child
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if !stored.is_empty() {
+            embeddings.push(stored);
+            names.push(name.clone());
+        }
+        if !name.is_empty() {
+            name_to_type.insert(
+                name,
+                child
+                    .get("type_kwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("nav_cluster")
+                    .to_string(),
+            );
+        }
+    }
+    if embeddings.len() < 4 {
+        return;
+    }
+    // 2-means with the first and middle embeddings as initial centroids.
+    let mut centroids = vec![
+        embeddings[0].clone(),
+        embeddings[embeddings.len() / 2].clone(),
+    ];
+    let mut labels = vec![0usize; embeddings.len()];
+    for _ in 0..10 {
+        let mut groups: Vec<Vec<Vec<f32>>> = vec![Vec::new(), Vec::new()];
+        for (index, emb) in embeddings.iter().enumerate() {
+            let d0: f64 = emb
+                .iter()
+                .zip(centroids[0].iter())
+                .map(|(a, b)| ((a - b) as f64).powi(2))
+                .sum();
+            let d1: f64 = emb
+                .iter()
+                .zip(centroids[1].iter())
+                .map(|(a, b)| ((a - b) as f64).powi(2))
+                .sum();
+            let group = if d0 < d1 { 0 } else { 1 };
+            labels[index] = group;
+            groups[group].push(emb.clone());
+        }
+        for group in 0..2 {
+            if groups[group].is_empty() {
+                continue;
+            }
+            let mut avg = vec![0.0f32; centroids[group].len()];
+            for emb in &groups[group] {
+                for (slot, value) in avg.iter_mut().zip(emb.iter()) {
+                    *slot += value / groups[group].len() as f32;
+                }
+            }
+            centroids[group] = avg;
+        }
+    }
+    let cluster_row = store_get(
+        store,
+        tenant_id,
+        kb_id,
+        &nav_cluster_id(kb_id, cluster_name),
+    );
+    let depth = cluster_row
+        .as_ref()
+        .and_then(|row| row.get("depth_int"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        + 1;
+    for group in 0..2 {
+        let kid_names: Vec<String> = names
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| labels[*index] == group)
+            .map(|(_, name)| name.clone())
+            .collect();
+        if kid_names.is_empty() {
+            continue;
+        }
+        let mut doc_ids: Vec<String> = Vec::new();
+        let mut descs: Vec<String> = Vec::new();
+        for kid in &kid_names {
+            let is_doc = name_to_type.get(kid).map(String::as_str) == Some("nav_doc");
+            let cid = if is_doc {
+                nav_doc_id(kid)
+            } else {
+                nav_cluster_id(kb_id, kid)
+            };
+            if let Some(row) = store_get(store, tenant_id, kb_id, &cid) {
+                let payload = row
+                    .get("content_with_weight")
+                    .and_then(Value::as_str)
+                    .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                descs.push(
+                    payload
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                );
+                for d in as_str_list(row.get("doc_ids_kwd")) {
+                    if !doc_ids.iter().any(|existing| existing == &d) {
+                        doc_ids.push(d);
+                    }
+                }
+            }
+        }
+        let (group_title, group_desc) = if descs.is_empty() {
+            let fallback = format!("Group {}", group + 1);
+            (fallback.clone(), fallback)
+        } else {
+            llm_create_summary(chat, &descs).await
+        };
+        let group_name = readable_cluster_name(&group_title, &group_desc);
+        let group_emb = nav_embed(embed, &group_desc).await;
+        let new_cluster = make_nav_cluster_row(
+            kb_id,
+            &group_name,
+            &group_desc,
+            cluster_name,
+            depth,
+            &doc_ids,
+            &group_emb,
+        );
+        store_upsert(store, tenant_id, kb_id, &new_cluster);
+        for kid in &kid_names {
+            let is_doc = name_to_type.get(kid).map(String::as_str) == Some("nav_doc");
+            let cid = if is_doc {
+                nav_doc_id(kid)
+            } else {
+                nav_cluster_id(kb_id, kid)
+            };
+            if let Some(mut row) = store_get(store, tenant_id, kb_id, &cid) {
+                if let Some(map) = row.as_object_mut() {
+                    map.insert("parent_kwd".to_string(), Value::String(group_name.clone()));
+                    map.insert("depth_int".to_string(), serde_json::json!(depth + 1));
+                }
+                store_upsert(store, tenant_id, kb_id, &row);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod dataset_nav_tests {
     use super::*;
@@ -1504,5 +2086,288 @@ mod dataset_nav_part3_tests {
         );
         assert_eq!(rows.len(), 1, "fallback scan re-checked the filter");
         assert_eq!(rows[0]["name"], json!("A"));
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part3b_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct OpenLock;
+
+    impl NavKbLock for OpenLock {
+        fn acquire(&self, _kb_id: &str) -> bool {
+            true
+        }
+        fn release(&self, _kb_id: &str) {}
+    }
+
+    struct MockChat;
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            Ok(json!({"name": "Topic", "summary": "Merged summary"}).to_string())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        rows: Mutex<std::collections::HashMap<String, Value>>,
+        writes: Mutex<Vec<Value>>,
+        deletes: Mutex<Vec<String>>,
+    }
+
+    impl MockStore {
+        fn seed(&self, row: Value) {
+            let id = row
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.rows.lock().unwrap().insert(id, row);
+        }
+    }
+
+    impl crate::doc_store::DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(&self, _i: &str, _d: &str, _v: usize) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _i: &str, _d: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _i: &str, _d: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            rows: &[crate::doc_store::DocRow],
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<Vec<String>> {
+            for row in rows {
+                let value = Value::Object(row.clone());
+                if let Some(id) = row.get("id").and_then(Value::as_str) {
+                    self.rows
+                        .lock()
+                        .unwrap()
+                        .insert(id.to_string(), value.clone());
+                }
+                self.writes.lock().unwrap().push(value);
+            }
+            Ok(Vec::new())
+        }
+        fn get(
+            &self,
+            data_id: &str,
+            _i: &str,
+            _d: &[String],
+        ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .get(data_id)
+                .and_then(|row| row.as_object().cloned()))
+        }
+        fn update(
+            &self,
+            condition: &crate::doc_store::FilterCondition,
+            new_value: &crate::doc_store::DocRow,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<bool> {
+            let id = condition.get("id").and_then(Value::as_str).unwrap_or("");
+            let mut rows = self.rows.lock().unwrap();
+            if let Some(row) = rows.get_mut(id) {
+                if let Some(map) = row.as_object_mut() {
+                    for (key, value) in new_value {
+                        map.insert(key.clone(), value.clone());
+                    }
+                }
+                return Ok(true);
+            }
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            condition: &crate::doc_store::FilterCondition,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<usize> {
+            let ids = as_str_list(condition.get("id"));
+            let mut removed = 0;
+            for id in ids {
+                if self.rows.lock().unwrap().remove(&id).is_some() {
+                    removed += 1;
+                }
+                self.deletes.lock().unwrap().push(id);
+            }
+            Ok(removed)
+        }
+        fn search(
+            &self,
+            query: &crate::doc_store::SearchQuery,
+        ) -> crate::Result<crate::doc_store::SearchResponse> {
+            let parent = query
+                .condition
+                .get("parent_kwd")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let docs: Vec<crate::doc_store::DocRow> = self
+                .rows
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|row| match &parent {
+                    None => true,
+                    Some(parent) => {
+                        row.get("parent_kwd").and_then(Value::as_str) == Some(parent.as_str())
+                    }
+                })
+                .filter_map(|row| row.as_object().cloned())
+                .collect();
+            Ok(crate::doc_store::SearchResponse {
+                total: docs.len(),
+                docs,
+                ..Default::default()
+            })
+        }
+        fn sql(&self, _s: &str, _f: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn cluster_row(name: &str, parent: &str, depth: i64, doc_ids: &[&str]) -> Value {
+        json!({
+            "id": nav_cluster_id("kb1", name),
+            "name": name,
+            "parent_kwd": parent,
+            "depth_int": depth,
+            "type_kwd": "nav_cluster",
+            "kb_id": "kb1",
+            "compile_kwd": "dataset_nav",
+            "doc_ids_kwd": doc_ids,
+            "doc_count_int": doc_ids.len(),
+            "q_2_vec": [1.0, 0.0],
+            "content_with_weight": json!({"type": "nav_cluster", "description": "old desc"}).to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn upsert_merges_into_nearest_cluster() {
+        let store = MockStore::default();
+        store.seed(cluster_row("Topic", "root", 0, &[]));
+        upsert_dataset_nav_doc(
+            &store,
+            Some(&MockEmbed),
+            Some(&MockChat),
+            &OpenLock,
+            "t1",
+            "kb1",
+            "d1",
+            &json!("brand new summary"),
+        )
+        .await;
+        let writes = store.writes.lock().unwrap();
+        assert!(
+            writes
+                .iter()
+                .any(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_doc")),
+            "nav_doc upserted"
+        );
+        assert!(
+            !store
+                .deletes
+                .lock()
+                .unwrap()
+                .contains(&nav_cluster_id("kb1", "Topic")),
+            "cluster kept"
+        );
+        let doc_row = writes
+            .iter()
+            .find(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_doc"))
+            .unwrap();
+        assert_eq!(doc_row["parent_kwd"], json!("Topic"));
+        assert_eq!(doc_row["depth_int"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn upsert_seeds_root_cluster_when_no_similar() {
+        let store = MockStore::default();
+        upsert_dataset_nav_doc(
+            &store,
+            Some(&MockEmbed),
+            Some(&MockChat),
+            &OpenLock,
+            "t1",
+            "kb1",
+            "d9",
+            &json!("fresh doc"),
+        )
+        .await;
+        let writes = store.writes.lock().unwrap();
+        let cluster = writes
+            .iter()
+            .find(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_cluster"))
+            .expect("root cluster created");
+        assert_eq!(cluster["parent_kwd"], json!("root"));
+        assert_eq!(cluster["depth_int"], json!(0));
+        assert_eq!(cluster["doc_ids_kwd"], json!(["d9"]));
+        let doc = writes
+            .iter()
+            .find(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_doc"))
+            .unwrap();
+        assert_eq!(doc["depth_int"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn remove_updates_parent_and_cleans_empties() {
+        let store = MockStore::default();
+        store.seed(cluster_row("Parent", "root", 0, &["d1"]));
+        store.seed(json!({
+            "id": nav_doc_id("d1"),
+            "name": "Doc One",
+            "parent_kwd": "Parent",
+            "type_kwd": "nav_doc",
+            "kb_id": "kb1",
+            "compile_kwd": "dataset_nav",
+            "doc_id": "d1",
+            "content_with_weight": json!({"type": "nav_doc", "description": "one"}).to_string(),
+        }));
+        remove_dataset_nav_doc(&store, &OpenLock, "t1", "kb1", "d1").await;
+        let deletes = store.deletes.lock().unwrap();
+        assert!(deletes.contains(&nav_doc_id("d1")), "nav_doc removed");
+        assert!(
+            deletes.contains(&nav_cluster_id("kb1", "Parent")),
+            "parent became empty and was removed"
+        );
     }
 }
