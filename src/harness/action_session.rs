@@ -2002,36 +2002,37 @@ pub async fn tool_node_policy(
         if let Some(ladder) = ladder.as_deref_mut() {
             let resting = ladder.pending_rule.clone();
             if !resting.is_empty()
-                && let Some(rule) = nav_rule_by_id(&resting) {
-                    let next_rule = rule.next_rule(&call_status);
-                    if !next_rule.is_empty() {
-                        let mut ctx = NavContext {
-                            direction: ladder.direction.to_string(),
-                            known_docs: ladder.routed_docs.to_vec(),
-                            ..NavContext::default()
-                        };
-                        let mut ladder_messages: Vec<Value> = Vec::new();
-                        let ladder_budget = (ladder.deadline_left.unwrap_or(ACTION_TIMEOUT_S)
-                            * NAV_PREFIX_BUDGET_RATIO)
-                            .max(5.0);
-                        let stepped_to = run_nav_chain(
-                            runtime,
-                            kbinfos,
-                            &mut ctx,
-                            next_rule,
-                            ladder_budget,
-                            ladder.available,
-                            &mut ladder_messages,
-                            &mut result.evidence_ids,
-                            &mut result.outcomes,
-                            "ladder",
-                            MAX_TOOL_RESPONSE_CHARS * 4,
-                        )
-                        .await;
-                        *ladder.pending_rule = stepped_to;
-                        result.tool_messages.extend(ladder_messages);
-                    }
+                && let Some(rule) = nav_rule_by_id(&resting)
+            {
+                let next_rule = rule.next_rule(&call_status);
+                if !next_rule.is_empty() {
+                    let mut ctx = NavContext {
+                        direction: ladder.direction.to_string(),
+                        known_docs: ladder.routed_docs.to_vec(),
+                        ..NavContext::default()
+                    };
+                    let mut ladder_messages: Vec<Value> = Vec::new();
+                    let ladder_budget = (ladder.deadline_left.unwrap_or(ACTION_TIMEOUT_S)
+                        * NAV_PREFIX_BUDGET_RATIO)
+                        .max(5.0);
+                    let stepped_to = run_nav_chain(
+                        runtime,
+                        kbinfos,
+                        &mut ctx,
+                        next_rule,
+                        ladder_budget,
+                        ladder.available,
+                        &mut ladder_messages,
+                        &mut result.evidence_ids,
+                        &mut result.outcomes,
+                        "ladder",
+                        MAX_TOOL_RESPONSE_CHARS * 4,
+                    )
+                    .await;
+                    *ladder.pending_rule = stepped_to;
+                    result.tool_messages.extend(ladder_messages);
                 }
+            }
         }
     }
     result.disabled = disabled.clone();
@@ -2229,30 +2230,32 @@ pub fn strip_unpaired_tool_calls(messages: &[Value]) -> Vec<Value> {
     let mut responded: HashSet<String> = HashSet::new();
     for message in messages {
         if message.get("role").and_then(Value::as_str) == Some("tool")
-            && let Some(id) = message.get("tool_call_id").and_then(Value::as_str) {
-                responded.insert(id.to_string());
-            }
+            && let Some(id) = message.get("tool_call_id").and_then(Value::as_str)
+        {
+            responded.insert(id.to_string());
+        }
     }
     let mut cleaned: Vec<Value> = Vec::with_capacity(messages.len());
     for message in messages {
         if message.get("role").and_then(Value::as_str) == Some("assistant")
             && let Some(calls) = message.get("tool_calls").and_then(Value::as_array)
-                && !calls.is_empty() {
-                    let paired = calls.iter().all(|call| {
-                        call.get("id")
-                            .and_then(Value::as_str)
-                            .map(|id| responded.contains(id))
-                            .unwrap_or(false)
-                    });
-                    if !paired {
-                        let mut clone = message.clone();
-                        if let Some(object) = clone.as_object_mut() {
-                            object.remove("tool_calls");
-                        }
-                        cleaned.push(clone);
-                        continue;
-                    }
+            && !calls.is_empty()
+        {
+            let paired = calls.iter().all(|call| {
+                call.get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| responded.contains(id))
+                    .unwrap_or(false)
+            });
+            if !paired {
+                let mut clone = message.clone();
+                if let Some(object) = clone.as_object_mut() {
+                    object.remove("tool_calls");
                 }
+                cleaned.push(clone);
+                continue;
+            }
+        }
         cleaned.push(message.clone());
     }
     cleaned
@@ -2307,9 +2310,10 @@ pub async fn finalize_node(llm: &dyn ActionLlmBackend, state: &mut SessionState)
                 && let Some(patched) = apply_patch(
                     &parent,
                     &[serde_json::json!({"id": target_id, "discovered_clues": loose_clues})],
-                ) {
-                    state.new_states = vec![patched];
-                }
+                )
+            {
+                state.new_states = vec![patched];
+            }
         }
     }
     state.pending_calls.clear();
@@ -2631,9 +2635,10 @@ pub async fn run_drill_merge(
         let mut entry = passage.clone();
         let cid = entry.get("id").and_then(Value::as_str).map(str::to_string);
         if let Some(cid) = cid
-            && let Some(path) = paths.get(&cid) {
-                entry["structure_path"] = serde_json::json!(path);
-            }
+            && let Some(path) = paths.get(&cid)
+        {
+            entry["structure_path"] = serde_json::json!(path);
+        }
         let doc = entry
             .get("doc_id")
             .and_then(Value::as_str)
@@ -2761,9 +2766,11 @@ pub async fn run_nav_chain(
             {
                 for doc in doc_ids {
                     if let Some(doc) = doc.as_str()
-                        && !doc.is_empty() && !ctx.known_docs.iter().any(|known| known == doc) {
-                            ctx.known_docs.push(doc.to_string());
-                        }
+                        && !doc.is_empty()
+                        && !ctx.known_docs.iter().any(|known| known == doc)
+                    {
+                        ctx.known_docs.push(doc.to_string());
+                    }
                 }
             }
             // Keep the routed docs WITH their summaries: the hint used to boost

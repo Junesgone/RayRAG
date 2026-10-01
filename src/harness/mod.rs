@@ -17,6 +17,8 @@ pub mod config;
 pub mod grep_sed_narrow;
 pub mod keywords;
 pub mod memory;
+#[path = "../mind_map.rs"]
+pub mod mind_map;
 pub mod orchestrator;
 pub mod report_prompt;
 pub mod stats;

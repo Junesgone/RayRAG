@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+use async_trait::async_trait;
 use futures_util::future::join_all;
 use regex::Regex;
 use serde_json::Value;
@@ -32,7 +33,8 @@ use crate::harness::orchestrator::query_rewriter::rewrite_gap_to_query;
 use crate::harness::orchestrator::sufficient_context::{ScClaim, sufficient_context_agent};
 use crate::harness::stats::StatsHandle;
 use crate::harness::tools::search::{
-    HarnessRetriever, SearchContext, bm25_search, hybrid_search, query_to_terms,
+    HarnessRetriever, RetrievalRequest, SearchContext, SearchSettings, bm25_search, hybrid_search,
+    query_to_terms,
 };
 
 // ── Global research budget & per-call timeouts (source-level switches) ──

@@ -813,9 +813,10 @@ impl RagTools {
             return empty;
         }
         if let Some(scope) = &self.doc_scope
-            && !scope.contains(&doc_id.to_string()) {
-                return empty;
-            }
+            && !scope.contains(&doc_id.to_string())
+        {
+            return empty;
+        }
         let Some((kb_id, tenant_id)) = self.doc_tenant(backend, doc_id) else {
             return empty;
         };
@@ -1292,15 +1293,16 @@ impl RagTools {
         if !effective_q.is_empty() {
             messages.push(serde_json::json!({"role": "user", "content": effective_q}));
             if !self.text_attachments_content.is_empty()
-                && let Some(last) = messages.last_mut() {
-                    let content = last
-                        .get("content")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    last["content"] =
-                        serde_json::json!(format!("{content}{}", self.text_attachments_content));
-                }
+                && let Some(last) = messages.last_mut()
+            {
+                let content = last
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                last["content"] =
+                    serde_json::json!(format!("{content}{}", self.text_attachments_content));
+            }
         }
         let tools_snapshot = self.clone();
         let runtime = AgenticRuntime {
