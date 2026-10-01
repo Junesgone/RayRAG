@@ -20,6 +20,8 @@ pub mod keywords;
 pub mod knowlege_dataset_nav;
 #[path = "../knowlege_raptor.rs"]
 pub mod knowlege_raptor;
+#[path = "../knowlege_wiki.rs"]
+pub mod knowlege_wiki;
 pub mod memory;
 #[path = "../mind_map.rs"]
 pub mod mind_map;
