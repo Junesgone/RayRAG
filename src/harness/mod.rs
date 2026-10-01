@@ -16,6 +16,8 @@ pub mod chunk_utils;
 pub mod config;
 pub mod grep_sed_narrow;
 pub mod keywords;
+#[path = "../knowlege_dataset_nav.rs"]
+pub mod knowlege_dataset_nav;
 #[path = "../knowlege_raptor.rs"]
 pub mod knowlege_raptor;
 pub mod memory;
