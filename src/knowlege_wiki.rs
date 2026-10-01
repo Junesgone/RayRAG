@@ -6552,3 +6552,731 @@ mod wiki_part10_tests {
         assert!(stored.get("title_tks").is_some());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Part 11 — REFINE main entry (`wiki_refine_from_plan`).
+//
+// Adaptation note: writers run sequentially ('static closure bounds); a
+// writer failure logs and skips that page instead of failing the phase;
+// the strong-typed signature makes `_ensure_llm_bundle` unnecessary.
+// ---------------------------------------------------------------------------
+
+/// `wiki_refine_from_plan`: KB-scoped REFINE phase.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_refine_from_plan(
+    store: &dyn DocStore,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    max_workers: usize,
+    llm_timeout: i64,
+    source_budget_chars: usize,
+    merge_shrink_threshold: f64,
+    force_rerun: bool,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+    instruction: Option<&str>,
+    example: Option<&str>,
+) -> Vec<Value> {
+    let _ = max_workers; // sequential writes; kept for signature parity
+    if let Some(callback) = callback {
+        callback(0.02, "wiki REFINE: loading plan");
+    }
+
+    let Some((plan, plan_input_hash)) = load_plan_resume(store, tenant_id, kb_id) else {
+        tracing::warn!(kb = kb_id, "wiki_refine: no wiki_compilation_plan found");
+        return Vec::new();
+    };
+    if !plan.is_object() {
+        tracing::warn!(kb = kb_id, "wiki_refine: cached plan is not an object");
+        return Vec::new();
+    }
+    let pages_raw: Vec<Value> = plan
+        .get("pages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if pages_raw.is_empty() {
+        tracing::info!(kb = kb_id, "wiki_refine: plan has no pages");
+        return Vec::new();
+    }
+
+    let priority_of =
+        |page: &Value| -> f64 { page.get("priority").and_then(Value::as_f64).unwrap_or(99.0) };
+    let mut sorted_spec: Vec<Value> = pages_raw
+        .into_iter()
+        .filter(|page| {
+            page.is_object()
+                && page
+                    .get("slug")
+                    .and_then(Value::as_str)
+                    .map(|slug| !slug.is_empty())
+                    .unwrap_or(false)
+        })
+        .collect();
+    sorted_spec.sort_by(|a, b| {
+        priority_of(a)
+            .partial_cmp(&priority_of(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut pages_spec: Vec<Value> = Vec::new();
+    let mut seen_slugs: BTreeSet<String> = BTreeSet::new();
+    let mut duplicates_dropped = 0usize;
+    for page in sorted_spec {
+        let slug = page
+            .get("slug")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if slug.is_empty() {
+            continue;
+        }
+        if !seen_slugs.insert(slug.clone()) {
+            duplicates_dropped += 1;
+            continue;
+        }
+        pages_spec.push(page);
+    }
+    if duplicates_dropped > 0 {
+        tracing::info!(
+            dropped = duplicates_dropped,
+            kb = kb_id,
+            "wiki_refine: dropped duplicate slug entries from plan"
+        );
+    }
+
+    let all_claims: Vec<Value> = plan
+        .get("_claims")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let all_plan_slugs: Vec<String> = pages_spec
+        .iter()
+        .filter_map(|page| page.get("slug").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let mut page_titles: Map<String, Value> = Map::new();
+    for page in &pages_spec {
+        if let Some(slug) = page.get("slug").and_then(Value::as_str) {
+            if let Some(title) = page.get("title").and_then(Value::as_str) {
+                let title = title.trim();
+                if !title.is_empty() {
+                    page_titles.insert(slug.to_string(), Value::String(title.to_string()));
+                }
+            }
+        }
+    }
+
+    let mut entity_by_name: Map<String, Value> = Map::new();
+    if let Some(entities) = plan.get("_entities").and_then(Value::as_array) {
+        for entity in entities {
+            if !entity.is_object() {
+                continue;
+            }
+            if let Some(canon) = entity.get("name").and_then(Value::as_str) {
+                let canon = canon.trim();
+                if !canon.is_empty() {
+                    entity_by_name
+                        .entry(canon.to_lowercase())
+                        .or_insert_with(|| entity.clone());
+                }
+            }
+            if let Some(aliases) = entity.get("aliases").and_then(Value::as_array) {
+                for alias in aliases {
+                    if let Some(alias) = alias.as_str() {
+                        let alias = alias.trim();
+                        if !alias.is_empty() {
+                            entity_by_name
+                                .entry(alias.to_lowercase())
+                                .or_insert_with(|| entity.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut concept_by_term: Map<String, Value> = Map::new();
+    if let Some(concepts) = plan.get("_concepts").and_then(Value::as_array) {
+        for concept in concepts {
+            if !concept.is_object() {
+                continue;
+            }
+            if let Some(term) = concept.get("term").and_then(Value::as_str) {
+                let term = term.trim();
+                if !term.is_empty() {
+                    concept_by_term
+                        .entry(term.to_lowercase())
+                        .or_insert_with(|| concept.clone());
+                }
+            }
+            if let Some(aliases) = concept.get("aliases").and_then(Value::as_array) {
+                for alias in aliases {
+                    if let Some(alias) = alias.as_str() {
+                        let alias = alias.trim();
+                        if !alias.is_empty() {
+                            concept_by_term
+                                .entry(alias.to_lowercase())
+                                .or_insert_with(|| concept.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cached: BTreeMap<String, Value> = BTreeMap::new();
+    if !force_rerun {
+        let all_drafts = wiki_load_refine_resume(store, tenant_id, kb_id);
+        let mut stale_drafts = 0usize;
+        for (slug, (page, stored_hash)) in all_drafts {
+            if !plan_input_hash.is_empty()
+                && !stored_hash.is_empty()
+                && stored_hash == plan_input_hash
+            {
+                cached.insert(slug, page);
+            } else {
+                stale_drafts += 1;
+            }
+        }
+        if !cached.is_empty() || stale_drafts > 0 {
+            tracing::info!(
+                fresh = cached.len(),
+                stale = stale_drafts,
+                kb = kb_id,
+                "wiki_refine: resume drafts"
+            );
+        }
+    }
+
+    let pending: Vec<Value> = pages_spec
+        .iter()
+        .filter(|page| {
+            let slug = page.get("slug").and_then(Value::as_str).unwrap_or("");
+            !cached.contains_key(slug)
+        })
+        .cloned()
+        .collect();
+    let total = pending.len().max(1);
+    if let Some(callback) = callback {
+        callback(
+            0.1,
+            &format!(
+                "wiki REFINE: writing {} page(s) (cached={})",
+                pending.len(),
+                cached.len()
+            ),
+        );
+    }
+    let progress_updates = 20usize;
+    let report_every = 1.max((total + progress_updates - 1) / progress_updates);
+
+    let valid_slugs: BTreeSet<String> = all_plan_slugs.iter().cloned().collect();
+    let mut completed = 0usize;
+    let mut new_pages: Vec<Option<Value>> = Vec::new();
+    for plan_item in &pending {
+        let slug = plan_item
+            .get("slug")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let page = write_refine_page(
+            store,
+            chat,
+            embd,
+            tenant_id,
+            kb_id,
+            plan_item,
+            &all_claims,
+            &all_plan_slugs,
+            &valid_slugs,
+            &page_titles,
+            &entity_by_name,
+            &concept_by_term,
+            source_budget_chars,
+            merge_shrink_threshold,
+            llm_timeout,
+            instruction,
+            example,
+            &plan_input_hash,
+        )
+        .await;
+        if page.is_some() {
+            completed += 1;
+            if let Some(callback) = callback {
+                if completed % report_every == 0 || completed == total {
+                    let progress = 0.1 + 0.85 * (completed as f64 / total as f64);
+                    callback(
+                        progress,
+                        &format!("wiki REFINE: {completed}/{total} pages completed"),
+                    );
+                }
+            }
+        }
+        if page.is_none() {
+            tracing::warn!(slug = slug.as_str(), "wiki_refine: writer failed for slug");
+        }
+        new_pages.push(page);
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+    for spec in &pages_spec {
+        let Some(slug) = spec.get("slug").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(page) = cached.get(slug) {
+            results.push(page.clone());
+        } else {
+            for candidate in &new_pages {
+                if let Some(page) = candidate {
+                    if page.get("slug").and_then(Value::as_str) == Some(slug) {
+                        results.push(page.clone());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Re-render against the pages that actually survived this run so no
+    // dangling artifact link reaches persistence.
+    let actual_slugs: BTreeSet<String> = results
+        .iter()
+        .filter_map(|page| page.get("slug").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let mut actual_titles: Map<String, Value> = Map::new();
+    for page in &results {
+        if let Some(slug) = page.get("slug").and_then(Value::as_str) {
+            if let Some(title) = page.get("title").and_then(Value::as_str) {
+                let title = title.trim();
+                if !title.is_empty() {
+                    actual_titles.insert(slug.to_string(), Value::String(title.to_string()));
+                }
+            }
+        }
+    }
+    for page in results.iter_mut() {
+        let raw_content = ["content_md_raw", "content_md"]
+            .iter()
+            .find_map(|key| page.get(*key).and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
+        let (rendered, outlinks) = transform_links(
+            &raw_content,
+            kb_id,
+            Some(&actual_titles),
+            Some(&actual_slugs),
+        );
+        let summary = {
+            let extracted = wiki_extract_summary(&rendered, 300);
+            if extracted.is_empty() {
+                page.get("title")
+                    .or_else(|| page.get("slug"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                extracted
+            }
+        };
+        if let Some(obj) = page.as_object_mut() {
+            obj.insert("content_md".to_string(), Value::String(rendered.clone()));
+            obj.insert("content_md_rendered".to_string(), Value::String(rendered));
+            obj.insert(
+                "outlinks".to_string(),
+                Value::Array(outlinks.into_iter().map(Value::String).collect()),
+            );
+            obj.insert("summary".to_string(), Value::String(summary));
+        }
+        let page_snapshot = page.clone();
+        wiki_persist_draft(
+            store,
+            embd,
+            tenant_id,
+            kb_id,
+            &page_snapshot,
+            &plan_input_hash,
+        )
+        .await;
+    }
+
+    tracing::info!(
+        kb = kb_id,
+        written = results.len(),
+        cached = cached.len(),
+        new = new_pages.iter().filter(|page| page.is_some()).count(),
+        "wiki_refine: done"
+    );
+    if let Some(callback) = callback {
+        callback(1.0, "wiki REFINE: done");
+    }
+    results
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_refine_page(
+    store: &dyn DocStore,
+    chat: &dyn HarnessChat,
+    embd: Option<&dyn Embedder>,
+    tenant_id: &str,
+    kb_id: &str,
+    plan_item: &Value,
+    all_claims: &[Value],
+    all_plan_slugs: &[String],
+    valid_slugs: &BTreeSet<String>,
+    page_titles: &Map<String, Value>,
+    entity_by_name: &Map<String, Value>,
+    concept_by_term: &Map<String, Value>,
+    source_budget_chars: usize,
+    merge_shrink_threshold: f64,
+    llm_timeout: i64,
+    instruction: Option<&str>,
+    example: Option<&str>,
+    plan_input_hash: &str,
+) -> Option<Value> {
+    let slug = plan_item
+        .get("slug")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let action = plan_item
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("CREATE")
+        .to_uppercase();
+    let title = plan_item
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or(slug.as_str())
+        .to_string();
+    let page_type = plan_item
+        .get("page_type")
+        .and_then(Value::as_str)
+        .unwrap_or("concept")
+        .to_string();
+
+    let evidence = assemble_evidence(
+        plan_item,
+        all_claims,
+        Some(entity_by_name),
+        Some(concept_by_term),
+    );
+    let source_chunk_ids = collect_evidence_chunk_ids(&evidence);
+    let source_context =
+        build_source_context(store, tenant_id, kb_id, &evidence, source_budget_chars);
+
+    let mut existing_md_raw: Option<String> = None;
+    if action == "UPDATE" {
+        if let Some(existing) = wiki_get_existing_page(store, tenant_id, kb_id, &slug) {
+            existing_md_raw = ["content_md_raw", "content_md"]
+                .iter()
+                .find_map(|key| existing.get(*key).and_then(Value::as_str))
+                .filter(|text| !text.is_empty())
+                .map(str::to_string);
+        }
+    }
+
+    let mut content_md_raw = wiki_write_page_simple(
+        chat,
+        plan_item,
+        &evidence,
+        existing_md_raw.as_deref(),
+        &source_context,
+        all_plan_slugs,
+        llm_timeout,
+        instruction,
+        example,
+    )
+    .await;
+    if content_md_raw.is_empty() {
+        content_md_raw = format!("# {title}\n\n(Page generation produced no content.)");
+    }
+    if let Some(existing) = existing_md_raw.as_deref() {
+        content_md_raw = wiki_merge_page_content(
+            chat,
+            existing,
+            &content_md_raw,
+            &slug,
+            merge_shrink_threshold,
+            llm_timeout,
+        )
+        .await;
+    }
+
+    let (content_md_rendered, outlinks) =
+        transform_links(&content_md_raw, kb_id, Some(page_titles), Some(valid_slugs));
+    let source_doc_ids = wiki_collect_doc_ids(store, tenant_id, kb_id, &source_chunk_ids);
+    let summary = {
+        let extracted = wiki_extract_summary(&content_md_rendered, 300);
+        if extracted.is_empty() {
+            title.clone()
+        } else {
+            extracted
+        }
+    };
+    let topic = plan_item
+        .get("topic")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| text.trim().to_string())
+        .unwrap_or_else(|| {
+            if title.is_empty() {
+                slug.clone()
+            } else {
+                title.clone()
+            }
+        });
+    let entity_names = plan_item
+        .get("entity_names")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let related_kb_pages = plan_item
+        .get("related_kb_pages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let page = json!({
+        "slug": slug,
+        "title": title,
+        "page_type": page_type,
+        "topic": topic,
+        "action": action,
+        "content_md": content_md_rendered,
+        "content_md_rendered": content_md_rendered,
+        "content_md_raw": content_md_raw,
+        "outlinks": outlinks,
+        "summary": summary,
+        "entity_names": entity_names,
+        "related_kb_pages": related_kb_pages,
+        "source_chunk_ids": source_chunk_ids,
+        "source_doc_ids": source_doc_ids,
+        "kb_id": kb_id,
+    });
+    wiki_persist_draft(store, embd, tenant_id, kb_id, &page, plan_input_hash).await;
+    Some(page)
+}
+
+#[cfg(test)]
+mod wiki_part11_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn seed_plan(store: &MemoryDocStore) {
+        persist_plan(
+            store,
+            "t1",
+            "kb1",
+            &json!({
+                "pages": [
+                    {"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1},
+                    {"action": "CREATE", "slug": "concept/beta", "title": "Beta", "page_type": "concept", "topic": "beta", "entity_names": ["Beta"], "priority": 2}
+                ],
+                "_claims": [{"statement": "s", "subject": "Alpha", "chunk_ids": ["c1"]}],
+                "_entities": [{"name": "Alpha", "chunk_ids": ["c1"]}],
+                "_concepts": [{"term": "Beta", "chunk_ids": ["c2"], "definition_excerpt": "d"}]
+            }),
+            "PH",
+            &[],
+        );
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "alpha source text"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    #[tokio::test]
+    async fn refine_without_plan_returns_empty() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "body".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let pages = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(pages.is_empty());
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn refine_writes_pages_and_caches() {
+        let store = MemoryDocStore::new();
+        seed_plan(&store);
+        let chat = FakeChat {
+            reply: "# Page\n\nSee [[concept/beta]] for more.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let pages = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0]["slug"], json!("entity/alpha"));
+        assert_eq!(pages[1]["slug"], json!("concept/beta"));
+        let alpha_md = pages[0]["content_md"].as_str().unwrap();
+        assert!(alpha_md.contains("artifact/kb1/concept/beta"));
+        assert!(!alpha_md.contains("[["));
+        assert!(
+            pages[0]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("See [Beta](artifact/kb1/concept/beta)")
+        );
+        assert_eq!(pages[0]["action"], json!("CREATE"));
+        let drafts = wiki_load_refine_resume(&store, "t1", "kb1");
+        assert_eq!(drafts.len(), 2);
+        let calls_after_first = chat.calls.lock().unwrap().len();
+        assert_eq!(calls_after_first, 2);
+
+        let pages2 = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages2.len(), 2);
+        assert_eq!(chat.calls.lock().unwrap().len(), calls_after_first);
+        assert_eq!(pages2[0]["slug"], json!("entity/alpha"));
+
+        let pages3 = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            true,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages3.len(), 2);
+        assert_eq!(chat.calls.lock().unwrap().len(), calls_after_first + 2);
+    }
+
+    #[tokio::test]
+    async fn refine_update_reads_existing_and_merges() {
+        let store = MemoryDocStore::new();
+        seed_plan(&store);
+        let existing = "# Alpha\n\n".to_string() + &"old detail ".repeat(30);
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "content_with_weight": existing
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let short_reply = "# Alpha\n\nnew body only".to_string();
+        let chat = FakeChat {
+            reply: short_reply.clone(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let plan_override = json!({
+            "pages": [{"action": "UPDATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1}],
+            "_claims": [],
+            "_entities": [{"name": "Alpha", "chunk_ids": ["c1"]}],
+            "_concepts": []
+        });
+        persist_plan(&store, "t1", "kb1", &plan_override, "PH2", &[]);
+        let pages = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["action"], json!("UPDATE"));
+        let raw = pages[0]["content_md_raw"].as_str().unwrap();
+        assert!(raw.contains("new body only"));
+        assert!(chat.calls.lock().unwrap().len() >= 2);
+    }
+}
