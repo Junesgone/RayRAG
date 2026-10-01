@@ -21,9 +21,12 @@ use serde_json::Value;
 
 use crate::common::misc_utils::hash_str2int;
 use crate::harness::HarnessChat;
+use crate::harness::action_session::{ActionLlmBackend, ActionSearchBackend, ActionToolBackend};
 use crate::harness::chunk_utils;
 use crate::harness::keywords::extract_weighted_keywords;
+use crate::harness::orchestrator::direct::DirectTools;
 use crate::harness::orchestrator::direct::Kbinfos;
+use crate::harness::stats::StatsHandle;
 use crate::harness::tools::search::{SearchSettings, resolve_rerank_candidates, resolve_top_k};
 use crate::harness::tools::text_processing::compact_keywords;
 use crate::harness::{form_message, message_fit_in};
@@ -1160,6 +1163,14 @@ fn strip_code_fences(text: &str) -> String {
     re.replace_all(text, "").to_string()
 }
 
+fn json_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 fn dedupe_preserving_order(items: &[String]) -> Vec<String> {
     let mut seen: HashSet<&str> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
@@ -1169,6 +1180,243 @@ fn dedupe_preserving_order(items: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Backend bundle for the `rag` tool (the graph runtime without the `tools`
+/// reference, which `rag` supplies from `&mut self` via a snapshot).
+pub struct AgenticBackends<'a> {
+    pub search: &'a crate::harness::tools::search::SearchContext<'a>,
+    pub retrieval: &'a dyn RagRetrievalBackend,
+    pub chat: &'a dyn HarnessChat,
+    pub action_search: &'a dyn ActionSearchBackend,
+    pub action_tools: &'a dyn ActionToolBackend,
+    pub action_llm: &'a dyn ActionLlmBackend,
+    pub direct: Option<&'a dyn DirectTools>,
+    pub stats: StatsHandle,
+}
+
+impl RagTools {
+    /// `pick_documents`: narrowing is disabled upstream (the method returns
+    /// `None` before any lookup), so every caller searches everything. The
+    /// helpers below it (`_select_by_titles`; the metadata pushdown path) stay
+    /// unreachable there; `select_by_titles` is ported for source parity.
+    pub async fn pick_documents(&self) -> Option<Vec<String>> {
+        None
+    }
+
+    /// `_select_by_titles`: ask the model to filter a document catalogue.
+    pub async fn select_by_titles(
+        &self,
+        chat: &dyn HarnessChat,
+        question: &str,
+        docs: &[(String, String)],
+    ) -> Vec<String> {
+        if docs.is_empty() {
+            return Vec::new();
+        }
+        let catalogue = docs
+            .iter()
+            .map(|(id, title)| format!("docID: {id}, title: {title}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let system = "You filter a document catalogue to find which documents are relevant to a user's question. Use ONLY the titles in the catalogue — do not invent docIDs. Output ONLY a JSON array of the docIDs you consider relevant, e.g. [\"abc123\", \"def456\"]. If no document is clearly relevant, output []. No explanations, no Markdown, no code fences, no prose around the array.";
+        let user = format!(
+            "Question:\n{question}\n\nDocuments:\n{catalogue}\n\nRelevant docIDs (JSON array):"
+        );
+        let (_, fitted) = message_fit_in(form_message(system, &user), self.chat_max_length);
+        let system_content = fitted
+            .first()
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or(system)
+            .to_string();
+        let history: Vec<Value> = fitted.iter().skip(1).cloned().collect();
+        let ans = chat
+            .chat(
+                &system_content,
+                &history,
+                &serde_json::json!({"temperature": 0.1}),
+            )
+            .await
+            .unwrap_or_default();
+        let cleaned = strip_code_fences(&strip_think_prefix(&ans));
+        let cleaned = cleaned.trim().to_string();
+        let Some(ids) = serde_json::from_str::<Value>(&cleaned)
+            .ok()
+            .or_else(|| crate::structure_compile::repair_json_text(&cleaned))
+            .filter(Value::is_array)
+        else {
+            return Vec::new();
+        };
+        let known: HashSet<String> = docs.iter().map(|(id, _)| id.clone()).collect();
+        ids.as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .filter(|id| known.contains(id))
+            .collect()
+    }
+
+    /// `rag` (the bound tool): answer via the full agentic-search pipeline.
+    pub async fn rag(
+        &mut self,
+        backends: &AgenticBackends<'_>,
+        question: &str,
+        gen_conf: &Value,
+    ) -> String {
+        use crate::advanced_rag::agentic_rag_graph::{
+            AgenticRuntime, ThinkKind, ThinkSplitter, run_agentic_rag,
+        };
+        // Near-identical re-ask cache: reuse the prior answer instead of
+        // re-running the whole graph, unless the last round was insufficient.
+        if !question.is_empty() && self.text_attachments_content.is_empty() {
+            let qk = question_keywords(question);
+            let last_status = self
+                .rag_verdict
+                .as_ref()
+                .and_then(|verdict| verdict.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let cache_ok = last_status.is_empty() || last_status == "SUFFICIENT";
+            if cache_ok && !self.rag_cache.is_empty() {
+                for (cached_answer, cached_gram) in self.rag_cache.values() {
+                    if !cached_gram.0.is_empty() && cache_similar(&qk, cached_gram) {
+                        return cached_answer.clone();
+                    }
+                }
+            }
+        }
+        let effective_q = resolve_effective_question(question, &self.original_user_question);
+        let mut messages: Vec<Value> = Vec::new();
+        if !effective_q.is_empty() {
+            messages.push(serde_json::json!({"role": "user", "content": effective_q}));
+            if !self.text_attachments_content.is_empty() {
+                if let Some(last) = messages.last_mut() {
+                    let content = last
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    last["content"] =
+                        serde_json::json!(format!("{content}{}", self.text_attachments_content));
+                }
+            }
+        }
+        let tools_snapshot = self.clone();
+        let runtime = AgenticRuntime {
+            tools: &tools_snapshot,
+            search: backends.search,
+            retrieval: backends.retrieval,
+            chat: backends.chat,
+            action_search: backends.action_search,
+            action_tools: backends.action_tools,
+            action_llm: backends.action_llm,
+            direct: backends.direct,
+            stats: StatsHandle(backends.stats.0.clone()),
+        };
+        let tokens = run_agentic_rag(&runtime, &mut self.kbinfos, &messages, 3, gen_conf).await;
+        let mut splitter = ThinkSplitter::default();
+        let mut final_text = String::new();
+        for token in &tokens {
+            for (kind, text) in splitter.push(token) {
+                if kind == ThinkKind::Answer {
+                    final_text.push_str(&text);
+                }
+            }
+        }
+        for (kind, text) in splitter.finish() {
+            if kind == ThinkKind::Answer {
+                final_text.push_str(&text);
+            }
+        }
+        let id_marker = Regex::new(r"\(\**(ID:\d+)\**\)").expect("id regex");
+        let mut final_answer = id_marker.replace_all(&final_text, "[$1]").to_string();
+        if !question.is_empty()
+            && !final_answer.is_empty()
+            && self.text_attachments_content.is_empty()
+        {
+            self.rag_cache.insert(
+                question.to_string(),
+                (final_answer.clone(), question_keywords(question)),
+            );
+        }
+        // Sufficiency feedback for the outer loop + the consecutive-insufficient
+        // guardrail (bound useless re-runs).
+        if let Some(verdict) = self.rag_verdict.clone().filter(Value::is_object) {
+            let status = verdict
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if !status.is_empty() && status != "SUFFICIENT" {
+                let status_hint = match status.as_str() {
+                    "USEFUL_BUT_INCOMPLETE" => {
+                        "evidence is partially sufficient (gaps remain)".to_string()
+                    }
+                    "INSUFFICIENT" => "evidence is not yet sufficient".to_string(),
+                    "CONFLICTING" => "evidence contains conflicts".to_string(),
+                    other => format!("sufficiency status: {other}"),
+                };
+                let missing: Vec<String> = verdict
+                    .get("missing_claims")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().take(3).map(json_text).collect())
+                    .unwrap_or_default();
+                let missing_txt = if missing.is_empty() {
+                    String::new()
+                } else {
+                    format!("; missing: {}", missing.join("; "))
+                };
+                let hard: Vec<String> = verdict
+                    .get("hard_violations")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().take(3).map(json_text).collect())
+                    .unwrap_or_default();
+                let hard_txt = if hard.is_empty() {
+                    String::new()
+                } else {
+                    format!("; hard gaps: {}", hard.join(", "))
+                };
+                let conf_txt = verdict
+                    .get("agent_confidence")
+                    .and_then(Value::as_f64)
+                    .map(|confidence| format!("; agent confidence: {confidence:.2}"))
+                    .unwrap_or_default();
+                let feedback = verdict
+                    .get("feedback")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let fb_txt = if feedback.is_empty() {
+                    String::new()
+                } else {
+                    let head: String = feedback.chars().take(200).collect();
+                    format!("; feedback: {head}")
+                };
+                let insufficient = matches!(
+                    status.as_str(),
+                    "UNANSWERABLE" | "INSUFFICIENT" | "CONFLICTING"
+                );
+                if insufficient {
+                    self.consecutive_unanswerable += 1;
+                } else {
+                    self.consecutive_unanswerable = 0;
+                }
+                if self.consecutive_unanswerable >= 2 {
+                    final_answer = format!(
+                        "{final_answer}\n\n[Research status] {status_hint}{missing_txt}{hard_txt}{conf_txt}{fb_txt}. STOP calling rag again: {} consecutive research rounds returned insufficient evidence. The sources likely lack the required data. Give your best answer from the evidence already gathered; do not re-run rag.",
+                        self.consecutive_unanswerable
+                    );
+                } else {
+                    final_answer = format!(
+                        "{final_answer}\n\n[Research status] {status_hint}{missing_txt}{hard_txt}{conf_txt}{fb_txt}. If these gaps are material, call rag again with a question focused on them."
+                    );
+                }
+            }
+        }
+        final_answer
+    }
 }
 
 #[cfg(test)]
@@ -2005,5 +2253,299 @@ mod document_tests {
             1,
             "no lookup without KBs"
         );
+    }
+}
+#[cfg(test)]
+mod rag_tool_tests {
+    use super::*;
+    use crate::harness::action_session::LlmReply;
+    use crate::harness::orchestrator::direct::Kbinfos;
+    use crate::harness::stats::StatsHandle;
+    use crate::harness::tools::search::{
+        HarnessRetriever, RetrievalRequest, SearchContext, SearchSettings,
+    };
+    use serde_json::json;
+
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockRetriever;
+
+    #[async_trait]
+    impl HarnessRetriever for MockRetriever {
+        async fn retrieval(&self, _request: RetrievalRequest) -> Result<Kbinfos, String> {
+            Ok(Kbinfos::default())
+        }
+    }
+
+    struct MockKbReads;
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockKbReads {
+        async fn retrieval(&self, _request: &RagRetrievalRequest) -> Option<Value> {
+            None
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            chunks.to_vec()
+        }
+        fn rank_feature(&self, _question: &str) -> Value {
+            json!({})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            HashSet::new()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            None
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            None
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            json!({})
+        }
+        fn doc_titles_for_kb(&self, _kb_id: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            None
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _max_count: usize,
+            _offset: usize,
+        ) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    struct MockActionSearch;
+
+    #[async_trait]
+    impl ActionSearchBackend for MockActionSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockActionTools;
+
+    #[async_trait]
+    impl ActionToolBackend for MockActionTools {
+        async fn navigate_tree(&self, _q: &str) -> crate::harness::tools::navigation::NavResult {
+            crate::harness::tools::navigation::NavResult::default()
+        }
+        async fn navigate_structure(
+            &self,
+            _d: &str,
+            _q: &str,
+            _k: &str,
+        ) -> crate::harness::tools::navigation::NavResult {
+            crate::harness::tools::navigation::NavResult::default()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct MockActionLlm;
+
+    #[async_trait]
+    impl ActionLlmBackend for MockActionLlm {
+        async fn complete_with_tools(
+            &self,
+            _messages: &[Value],
+            _schemas: &[Value],
+            _timeout_s: f64,
+        ) -> Option<LlmReply> {
+            None
+        }
+        async fn complete_plain(&self, _messages: &[Value], _timeout_s: f64) -> Option<LlmReply> {
+            None
+        }
+    }
+
+    struct Fixture {
+        tools: RagTools,
+        retriever: MockRetriever,
+        kb_reads: MockKbReads,
+        chat: MockChat,
+        action_search: MockActionSearch,
+        action_tools: MockActionTools,
+        action_llm: MockActionLlm,
+        stats: StatsHandle,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                tools: RagTools::new(RagToolsConfig {
+                    kbs: vec![KbRef {
+                        id: "kb1".to_string(),
+                        tenant_id: "t1".to_string(),
+                        field_map: None,
+                    }],
+                    empty_response: "NO EVIDENCE".to_string(),
+                    thinking_mode: "high".to_string(),
+                    chat_max_length: 4096,
+                    ..RagToolsConfig::default()
+                }),
+                retriever: MockRetriever,
+                kb_reads: MockKbReads,
+                chat: MockChat {
+                    reply: String::new(),
+                },
+                action_search: MockActionSearch,
+                action_tools: MockActionTools,
+                action_llm: MockActionLlm,
+                stats: StatsHandle::new(),
+            }
+        }
+    }
+
+    fn search_ctx(retriever: &MockRetriever) -> SearchContext<'_> {
+        SearchContext {
+            kb_ids: vec!["kb1".to_string()],
+            sql_kb_ids: Vec::new(),
+            tenant_ids: vec!["t1".to_string()],
+            has_embed_model: false,
+            settings: SearchSettings {
+                top_n: None,
+                top_k: None,
+                rerank_candidates_count: None,
+                vector_similarity_weight: None,
+                similarity_threshold: None,
+            },
+            retriever,
+            scoped_doc_ids: None,
+            search_cache: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rag_tool_returns_empty_response_without_evidence() {
+        let mut fixture = Fixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let backends = AgenticBackends {
+            search: &ctx,
+            retrieval: &fixture.kb_reads,
+            chat: &fixture.chat,
+            action_search: &fixture.action_search,
+            action_tools: &fixture.action_tools,
+            action_llm: &fixture.action_llm,
+            direct: None,
+            stats: StatsHandle::new(),
+        };
+        let answer = fixture.tools.rag(&backends, "Who?", &json!({})).await;
+        assert_eq!(answer, "NO EVIDENCE");
+    }
+
+    #[tokio::test]
+    async fn rag_tool_cache_reuses_prior_answer() {
+        let mut fixture = Fixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let backends = AgenticBackends {
+            search: &ctx,
+            retrieval: &fixture.kb_reads,
+            chat: &fixture.chat,
+            action_search: &fixture.action_search,
+            action_tools: &fixture.action_tools,
+            action_llm: &fixture.action_llm,
+            direct: None,
+            stats: StatsHandle::new(),
+        };
+        fixture.tools.rag_cache.insert(
+            "population of Paris 2019".to_string(),
+            (
+                "CACHED ANSWER".to_string(),
+                question_keywords("population of Paris 2019"),
+            ),
+        );
+        let answer = fixture
+            .tools
+            .rag(&backends, "legal population of Paris 2019", &json!({}))
+            .await;
+        assert_eq!(
+            answer, "CACHED ANSWER",
+            "near-identical re-ask reuses the cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn rag_tool_cache_skipped_after_insufficient_round() {
+        let mut fixture = Fixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let backends = AgenticBackends {
+            search: &ctx,
+            retrieval: &fixture.kb_reads,
+            chat: &fixture.chat,
+            action_search: &fixture.action_search,
+            action_tools: &fixture.action_tools,
+            action_llm: &fixture.action_llm,
+            direct: None,
+            stats: StatsHandle::new(),
+        };
+        fixture.tools.rag_cache.insert(
+            "population of Paris 2019".to_string(),
+            (
+                "CACHED ANSWER".to_string(),
+                question_keywords("population of Paris 2019"),
+            ),
+        );
+        fixture.tools.rag_verdict = Some(json!({"status": "INSUFFICIENT"}));
+        let answer = fixture
+            .tools
+            .rag(&backends, "legal population of Paris 2019", &json!({}))
+            .await;
+        assert_ne!(answer, "CACHED ANSWER", "insufficient rounds must re-run");
+        assert!(answer.contains("[Research status]"));
+        assert_eq!(fixture.tools.consecutive_unanswerable, 1);
     }
 }
