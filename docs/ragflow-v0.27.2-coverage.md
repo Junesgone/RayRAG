@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 635 | 304602 |
-| partial | 46 | 20062 |
+| full | 637 | 307363 |
+| partial | 44 | 17301 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3633,8 +3633,8 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `pyproject.toml` | 406 | 14817 | `6e328ff646faa3c8` | replaced | `Cargo.toml; Cargo.lock` | Rust dependency graph [v0.27.2 content changed: re-audit] |
 | `rag/__init__.py` | 18 | 699 | `a42cd9a6dd709c94` | N/A | - | empty package marker (no code) |
 | `rag/advanced_rag/__init__.py` | 27 | 896 | `e20b0c948c9e3b28` | full | `src/advanced_rag.rs` | RAPTOR tree-structured retrieval ported [v0.27.2 content changed: re-audit] |
-| `rag/advanced_rag/agentic_rag.py` | 995 | 47613 | `79cf1082fdf0edf0` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：v0.27.2 Agentic-RAG 能力层（RAGTools 检索原语）；RayRAG 有多跳检索与画布智能体运行时，agentic 编排层待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/agentic_rag_graph.py` | 1766 | 81982 | `ac263070413cf54e` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic-search 图编排（1766 行）；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/agentic_rag.py` | 995 | 47613 | `79cf1082fdf0edf0` | full | `src/advanced_rag.rs; src/agent.rs` | v0.3.10ag 完成：agentic_rag.py 全文件 1:1 移植（995 行；agentic_rag 单测 52 项全绿：问题关键词/缓存相似度/有效问题解析、RagTools 数据模型与 KB 分组、formalize（单/多轮）、sys_prompt 路由、extract_keywords、检索契约（RagRetrievalBackend）+ retrieve/web_retrieve/structured_retrieve、证据拟合、充分性判定/追问生成（gen_json 移植）、四 DB 助手、fetch_full_document 分页+token 预算、忠实 kb_prompt、summarize_document、rag 工具（run_agentic_rag 接线 + ThinkSplitter、近重复答复缓存、连续不足护栏与状态反馈、ID 归一）。pick_documents 上游即 return None（忠实保留）；_filter_by_metadata 依赖元数据下推服务且上游不可达——书面说明（helpers 保留 select_by_titles 移植）） |
+| `rag/advanced_rag/agentic_rag_graph.py` | 1766 | 81982 | `ac263070413cf54e` | full | `src/advanced_rag.rs; src/agent.rs` | v0.3.10ag 完成：agentic_rag_graph.py 全文件 1:1 移植（1766 行；graph 单测全绿：预算常量、snip/safe_list/sca-view 视图选择、AgenticState、思考流分割器（think/answer）、SCA 缺口提取、fanout 解析与形状守卫、expand_fanouts、双通道 fanout_search（BM25+narrow 与 hybrid 旁路 + 全局池上限）、槽位草稿渲染、强度优先合并、路由矩阵、全管线端到端（mocks）、回退草稿、naive RAG、run_agentic_rag/run_low_graph；LangGraph 编译图以显式循环等价（recursion_limit→迭代上限）；AgenticRuntime 注入契约（SearchContext/RagRetrievalBackend/HarnessChat/action 三契约/DirectTools/StatsHandle）） |
 | `rag/advanced_rag/harness/__init__.py` | 1 | 48 | `af1a61737d2f2076` | full | `src/harness/mod.rs` | v0.3.10y：包文档 + 9 子模块注册（chunk_utils/config/keywords/stats/structure_qa/report_prompt/think_log/orchestrator/tools）；共享 HarnessChat 契约与 form_message/message_fit_in 提示装配（含单测） |
 | `rag/advanced_rag/harness/action_session.py` | 2142 | 99017 | `eb37234b1e91366e` | full | `src/advanced_rag.rs; src/agent.rs` | v0.3.10af 完成：action_session.py 全文件 1:1 移植（2142 行；42 项单测绿：槽位模型 Variable/SlotState/SessionResult、ToolOutcome 契约、0.8 Jaccard 近重复、admit_evidence、八执行器与 execute_tool 全分发、终态解析、parse_tool_calls、8 个逐字 tool schema、tool_node_policy、会话节点循环（ActionLlmBackend 契约、run_action/finalize、_route/_route_after_tool、显式会话图）、导航前缀（NavRule 阶梯、run_drill_merge 软提升重排、emit_nav_pair、run_nav_chain/run_nav_prefix）、会话内 ladder 续跑、initialize_state 槽位构建 + init 重试预算、run_action_session 入口、action_run/action_initialize_state 提示词逐字；提交 ff9f84b→be4134b；架构性差异（Python 宿主管线 _kb_ids/_seed_evidence/_inject_nav_tools_ref）已在 ActionRuntime 文档注明） |
 | `rag/advanced_rag/harness/arithmetic.py` | 420 | 19598 | `96043fd9115601c9` | full | `src/harness/arithmetic.rs` | v0.3.10aa：白名单解析/求值器（Python 语义：地板除/取模符号/幂上限/链式比较/短路 and-or/三元；类型错误映射）、letters/digit_sum/date_diff、_format_number、compute、COMPUTE_SYSTEM 原文 + compute_from_facts（HarnessChat）；3 项单测 |

@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：46（UI 残留 42 + 实施队列 4）
+- partial：44（UI 残留 42 + 实施队列 2）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,12 +28,10 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（4 项）
+### W-4 Agentic harness 移植（最大队列）（2 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `rag/advanced_rag/agentic_rag.py` | 995 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：v0.27.2 Agentic-RAG 能力层（RAGTools 检索原语）；RayRAG 有多跳检索与画布智能体运行时，agentic 编排层待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/agentic_rag_graph.py` | 1766 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic-search 图编排（1766 行）；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 

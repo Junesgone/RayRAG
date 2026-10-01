@@ -15,7 +15,6 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use async_trait::async_trait;
 use futures_util::future::join_all;
 use regex::Regex;
 use serde_json::Value;
@@ -33,8 +32,7 @@ use crate::harness::orchestrator::query_rewriter::rewrite_gap_to_query;
 use crate::harness::orchestrator::sufficient_context::{ScClaim, sufficient_context_agent};
 use crate::harness::stats::StatsHandle;
 use crate::harness::tools::search::{
-    HarnessRetriever, RetrievalRequest, SearchContext, SearchSettings, bm25_search, hybrid_search,
-    query_to_terms,
+    HarnessRetriever, SearchContext, bm25_search, hybrid_search, query_to_terms,
 };
 
 // ── Global research budget & per-call timeouts (source-level switches) ──
@@ -151,7 +149,7 @@ pub fn select_sca_view(
         .collect();
     let mut ids: Vec<String> = view
         .iter()
-        .map(|chunk| chunk_utils::chunk_id(chunk))
+        .map(chunk_utils::chunk_id)
         .filter(|id| !id.is_empty())
         .collect();
     ids.sort();
@@ -388,7 +386,7 @@ impl Default for AgenticState {
 pub fn sca_gaps_to_rewrite(sca: &Value) -> Vec<(String, String)> {
     let mut gaps: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut add =
+    let add =
         |what: &str, hint: &str, gaps: &mut Vec<(String, String)>, seen: &mut HashSet<String>| {
             let what = what.trim().to_string();
             let hint = hint.trim().to_string();
@@ -1113,18 +1111,17 @@ pub async fn sca_node(runtime: &AgenticRuntime<'_>, kbinfos: &Kbinfos, state: &m
             let mut positions: Vec<i64> = Vec::new();
             for eid in &eids {
                 let mut pos = view_index_by_id.get(eid).copied();
-                if pos.is_none() {
-                    if let Some(index) = chunks
+                if pos.is_none()
+                    && let Some(index) = chunks
                         .iter()
                         .position(|chunk| chunk_utils::chunk_id(chunk) == *eid)
-                    {
-                        let cid = chunk_utils::chunk_id(&chunks[index]);
-                        if !view_by_id.contains_key(&cid) {
-                            view.push(chunks[index].clone());
-                            view_by_id.insert(cid.clone(), view.len() - 1);
-                        }
-                        pos = view_by_id.get(&cid).copied();
+                {
+                    let cid = chunk_utils::chunk_id(&chunks[index]);
+                    if !view_by_id.contains_key(&cid) {
+                        view.push(chunks[index].clone());
+                        view_by_id.insert(cid.clone(), view.len() - 1);
                     }
+                    pos = view_by_id.get(&cid).copied();
                 }
                 if let Some(position) = pos {
                     positions.push(position as i64);
@@ -1522,18 +1519,18 @@ pub fn render_slot_draft(
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         let mut parts: Vec<String> = Vec::new();
-        if let Some(terminal) = meta.get("terminal_type").and_then(Value::as_str) {
-            if !terminal.is_empty() {
-                parts.push(format!("terminal={terminal}"));
-            }
+        if let Some(terminal) = meta.get("terminal_type").and_then(Value::as_str)
+            && !terminal.is_empty()
+        {
+            parts.push(format!("terminal={terminal}"));
         }
-        if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array) {
-            if !ids.is_empty() {
-                parts.push(format!(
-                    "evidence_ids={}",
-                    serde_json::to_string(ids).unwrap_or_default()
-                ));
-            }
+        if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array)
+            && !ids.is_empty()
+        {
+            parts.push(format!(
+                "evidence_ids={}",
+                serde_json::to_string(ids).unwrap_or_default()
+            ));
         }
         let suffix = if parts.is_empty() {
             String::new()
@@ -1576,18 +1573,18 @@ pub fn render_slot_draft(
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
                 let mut details: Vec<String> = Vec::new();
-                if let Some(terminal) = meta.get("terminal_type").and_then(Value::as_str) {
-                    if !terminal.is_empty() {
-                        details.push(format!("terminal={terminal}"));
-                    }
+                if let Some(terminal) = meta.get("terminal_type").and_then(Value::as_str)
+                    && !terminal.is_empty()
+                {
+                    details.push(format!("terminal={terminal}"));
                 }
-                if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array) {
-                    if !ids.is_empty() {
-                        details.push(format!(
-                            "evidence_ids={}",
-                            serde_json::to_string(ids).unwrap_or_default()
-                        ));
-                    }
+                if let Some(ids) = meta.get("evidence_ids").and_then(Value::as_array)
+                    && !ids.is_empty()
+                {
+                    details.push(format!(
+                        "evidence_ids={}",
+                        serde_json::to_string(ids).unwrap_or_default()
+                    ));
                 }
                 let suffix = if details.is_empty() {
                     String::new()
@@ -1724,7 +1721,7 @@ pub async fn build_slot_table(
 /// (unresolved slots in parallel, capped at 2 concurrent, folded back).
 pub async fn run_slot_research_pass(
     runtime: &AgenticRuntime<'_>,
-    kbinfos: &mut Kbinfos,
+    _kbinfos: &mut Kbinfos,
     question: &str,
     state: &AgenticState,
     _answer_conf: &Value,
@@ -1816,10 +1813,10 @@ pub async fn run_slot_research_pass(
     let mut ledger = state.attempted.clone();
     let mut slot_evidence: serde_json::Map<String, Value> = serde_json::Map::new();
     for (slot_id, result) in sessions {
-        if let Some(answer) = result.found_answer.clone() {
-            if collected.is_empty() {
-                collected = answer.clone();
-            }
+        if let Some(answer) = result.found_answer.clone()
+            && collected.is_empty()
+        {
+            collected = answer.clone();
         }
         if !result.retrieved_evidence_ids.is_empty() {
             let mut record = serde_json::Map::new();

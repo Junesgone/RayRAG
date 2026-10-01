@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.89] — 2026-10-01（对标批次 v0.3.10ag）
+
+> W-4 续：Agentic-RAG 能力层（`agentic_rag.py`，995 行）+ 五阶段编排图（`agentic_rag_graph.py`，1766 行）全文件 1:1 移植完成。W-4 队列 4 → 2（余 runner.py、wiki_incremental.py）。
+
+- `src/advanced_rag/agentic_rag.rs`（对齐上游 995 行；52 项单测绿）：
+  - 问题层：`question_keywords`/`cache_similar`（0.6 重叠 + ≥2 共享词 + 数字集必须一致）/`resolve_effective_question`（同轮 ≥2 关键词才采用原始问题）；
+  - `RagTools` 数据模型：KB 分组（field_map 键存在性→结构化）、doc_scope 去重、`_settings` 读取、has_* 旗标、`scoped_doc_ids` 矩阵、`fit_messages`、引用准则（用户覆盖优先 + 说明尾注）；
+  - 能力层：`sys_prompt` 路由、`formalize`（单轮直取 + 多轮一次 LLM 出 question/keywords，think/围栏剥离与 JSON 修复）、`extract_keywords`（四加权面并集压实）；
+  - 检索：`RagRetrievalBackend` 注入契约 + `retrieve`（-999 哨兵、未知文档回退/阻断、向量权重、knn/rerank 解析）、`web_retrieve`、`structured_retrieve`（use_sql）；
+  - 证据与判定：`fit_evidence`（8000 token 固定预算）、`judge_sufficiency`/`gen_followups`（`gen_json` 移植：think/围栏剥离 + 一次纠正重试）、四 DB 助手、`fetch_full_document`（128 分页 + token 预算外层中断）、忠实 `kb_prompt`（ID 行/元数据/预算）、`summarize_document`（start_idx 尾部 + 引用头）；
+  - `rag` 工具：`run_agentic_rag` 接线 + `ThinkSplitter`（think/answer）、ID 归一 `(ID:n)`→`[ID:n]`、近重复答复缓存（不足裁决跳过缓存）、连续不足护栏（≥2 轮 STOP 提示）；
+  - `pick_documents` 上游即 `return None`（忠实保留）；`_filter_by_metadata` 依赖元数据下推服务且上游不可达——书面说明；`select_by_titles` 已移植。
+- `src/advanced_rag/agentic_rag_graph.rs`（对齐上游 1766 行；22 项单测绿）：
+  - 预算常量（180/50/120/90/60/60/45/60）、`snip`/`safe_list`/`is_poisoned`、`select_sca_view`（相关度+覆盖+新鲜度、稳定身份哈希）、`view_terms`、`remaining_s`、`bounded`；
+  - `AgenticState`（含 slot_evidence）、`ThinkSplitter`（含未配对关闭标签与部分标签保持）；
+  - SCA 缺口提取、fanout 形状守卫/解析/扩展（严格重试）、双通道 `fanout_search`（BM25+narrow 与 hybrid 旁路、全局池上限 60）；
+  - 节点：formalize/planner/prefetch/rag_agent（槽位研究回合，2 路并发）/draft（回退草稿）/sca（视图换入、槽证据定位、早停）/query_rewrite（账本上下文、槽线索折入、饱和早停）/formalize_answer；路由含池满/无进展/预算守卫；
+  - `run_agentic_graph`（显式循环等价 LangGraph，迭代上限 60）/`run_low_graph`/`run_agentic_rag`（NAIVE 回退）；`AgenticRuntime` 注入契约；
+  - 支撑件：`Kbinfos.pre_summary` 字段 + `HarnessChat::chat_streamly_delta` 默认桥。
+- 台账：`agentic_rag.py`、`agentic_rag_graph.py` → `full`；worklist W-4 4 → 2；`ragflow-coverage --check` 常绿（5977、unmapped=0）。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.88] — 2026-10-01（对标批次 v0.3.10af 正式）
 
 > W-4 收口：动作会话（`action_session.py`，2142 行）全文件 1:1 移植完成。0.4.87 的中间发布已含前四分区；本版补齐会话节点循环、导航前缀、会话内 ladder 续跑、槽位构建器与入口。
