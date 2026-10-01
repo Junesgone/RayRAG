@@ -295,12 +295,11 @@ pub async fn hybrid_search(
     let doc_scope = ctx.scope(doc_scope);
     let effective = effective_query(query, keywords, retrieval_query);
     let cache_key = search_cache_key(&effective, &target_ids, top_n, &doc_scope);
-    if let Some(cache) = ctx.search_cache {
-        if let Ok(cache) = cache.lock() {
-            if let Some(cached) = cache.get(&cache_key) {
-                return cached.clone();
-            }
-        }
+    if let Some(cache) = ctx.search_cache
+        && let Ok(cache) = cache.lock()
+        && let Some(cached) = cache.get(&cache_key)
+    {
+        return cached.clone();
     }
     let vector_weight = if ctx.has_embed_model {
         ctx.settings
@@ -331,10 +330,10 @@ pub async fn hybrid_search(
     let mut kbinfos = ctx.retriever.retrieval(request).await.unwrap_or_default();
     kbinfos.chunks = narrow_or_keep(&kbinfos.chunks, keywords, "hybrid_search");
     let _ = use_compiled; // compiled expansion lands with the navigation batch
-    if let Some(cache) = ctx.search_cache {
-        if let Ok(mut cache) = cache.lock() {
-            cache.insert(cache_key, kbinfos.clone());
-        }
+    if let Some(cache) = ctx.search_cache
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.insert(cache_key, kbinfos.clone());
     }
     kbinfos
 }

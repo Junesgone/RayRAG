@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.85] — 2026-10-01（对标批次 v0.3.10ad）
+
+> W-4 续：导航工具全量移植（nav-tree 路由 + 结构导航/向量束钻取；纯 Rust）——W-4 队列 7→6。
+
+- `src/harness/tools/navigation.rs`（上游 `tools/navigation.py`，1936 行；切片 1+2a+2b 完成）：常量与 `NavResult`、`normalize_kind`、`load_chunks_by_ids`、`doc_aggs`；nav-tree 路由（编号列表 LLM 选择与解析、叶节点 BFS（深度 6/叶 300/文档 scope 过滤）、内容召回兜底、`dataset_navigation_by_tree`）；层搜索（分数门槛 0.2、`_nav` 摘要标注、每文档取最高分、12 上限、`dataset_navigation_search`）；结构导航（`structure_kinds_for`、TOC 树构建、向量束钻取（深度 3/K=2/相对比 0.5）与关键词回退、三选择器渲染（chunk 检索序/LLM TOC/束）、root→node 路径映射与统计、`render_outline` 兜底、`build_toc_items`/`select_toc_nodes`（默认关闭）、`read_structures`、`navigate_tree_impl`/`navigate_structure_impl`（XML + `empty_reason`）、`expand_related_via_structure`）；store/LLM/向量读取经 `NavRouterHost`/`NavStructureHost` 注入契约。
+- 台账：`tools/navigation.py` → full；worklist W-4 7 → 6；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：导航 11 项全绿（基础 2 + router 4 + structure 5）；fmt/check 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.84] — 2026-10-01（对标批次 v0.3.10ac）
 
 > W-4 续：探索工具（知识图谱漫游 + wiki 查询）全量移植；导航工具共享层就位（纯 Rust）。

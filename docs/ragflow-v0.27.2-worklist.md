@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：49（UI 残留 42 + 实施队列 7）
+- partial：48（UI 残留 42 + 实施队列 6）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,7 +28,7 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（7 项）
+### W-4 Agentic harness 移植（最大队列）（6 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
@@ -36,7 +36,6 @@
 | `rag/advanced_rag/agentic_rag_graph.py` | 1766 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：agentic-search 图编排（1766 行）；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/action_session.py` | 2142 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：动作会话执行器（2142 行）；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：编译扩展工具；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/tools/navigation.py` | 1936 | `src/advanced_rag.rs; src/agent.rs` | v0.3.10ac 切片 1：CATALOG_KINDS/MINDMAP_KINDS/MAX_EVIDENCE_CHUNKS/MAX_ENTITIES、NavResult、_normalize_kind、_load_chunks_by_ids（注入式 doc store + 24 上限）、_doc_aggs 已移植；导航树路由（_ask_nav_select/_collect_nav_leaves/_content_recall_docs/dataset_navigation_by_tree/search）与结构导航（_navigate_within_doc/_navigate_tree_impl/_navigate_structure_impl/TOC 树/实体向量读取）待移植——worklist W-4（agentic harness 切片 2） |
 | `rag/advanced_rag/knowlege_compile/runner.py` | 750 | `src/structure_compile.rs` | （v0.3.10g 审计：知识编译 runner（服务集成）；RayRAG 编译管线在 src/structure_compile.rs，runner 集成待对齐——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
 
