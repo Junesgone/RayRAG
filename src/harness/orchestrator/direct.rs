@@ -52,10 +52,10 @@ fn value_str(value: &Value) -> String {
 /// keeps distinct anonymous chunks distinct, which is the observable contract.
 fn chunk_key(chunk: &Value, index: usize) -> String {
     for key in ["chunk_id", "id"] {
-        if let Some(value) = chunk.get(key) {
-            if truthy(value) {
-                return value_str(value);
-            }
+        if let Some(value) = chunk.get(key)
+            && truthy(value)
+        {
+            return value_str(value);
         }
     }
     format!("anon:{index}")

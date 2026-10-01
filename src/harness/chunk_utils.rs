@@ -49,10 +49,10 @@ pub fn xml_escape(value: &Value) -> String {
 /// (`content_with_weight` or `content` or `text`) — full Python falsiness.
 pub fn chunk_text(chunk: &Value) -> String {
     for key in ["content_with_weight", "content", "text"] {
-        if let Some(value) = chunk.get(key) {
-            if truthy(value) {
-                return str_of(value);
-            }
+        if let Some(value) = chunk.get(key)
+            && truthy(value)
+        {
+            return str_of(value);
         }
     }
     String::new()

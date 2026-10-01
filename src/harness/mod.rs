@@ -10,9 +10,12 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
+pub mod arithmetic;
 pub mod chunk_utils;
 pub mod config;
+pub mod grep_sed_narrow;
 pub mod keywords;
+pub mod memory;
 pub mod orchestrator;
 pub mod report_prompt;
 pub mod stats;

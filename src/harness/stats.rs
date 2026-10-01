@@ -125,34 +125,34 @@ impl LLMUsageStats {
     /// `note_phase_exit`.
     pub fn note_phase_exit(&mut self, phase_name: &str, entry_round: usize) {
         let now = Instant::now();
-        if let Some(count) = self.phase_active_counts.get_mut(phase_name) {
-            if *count > 0 {
-                *count -= 1;
-                if *count == 0 {
-                    let start = self.phase_starts.remove(phase_name).unwrap_or(now);
-                    self.phase_active_counts.remove(phase_name);
-                    let elapsed = (now - start).as_secs_f64() * 1000.0;
-                    self.accumulate_phase_time(phase_name, elapsed, 0);
-                }
+        if let Some(count) = self.phase_active_counts.get_mut(phase_name)
+            && *count > 0
+        {
+            *count -= 1;
+            if *count == 0 {
+                let start = self.phase_starts.remove(phase_name).unwrap_or(now);
+                self.phase_active_counts.remove(phase_name);
+                let elapsed = (now - start).as_secs_f64() * 1000.0;
+                self.accumulate_phase_time(phase_name, elapsed, 0);
             }
         }
         if entry_round > 0 {
             let key = (phase_name.to_string(), entry_round);
-            if let Some(count) = self.round_phase_active_counts.get_mut(&key) {
-                if *count > 0 {
-                    *count -= 1;
-                    if *count == 0 {
-                        let start = self.round_phase_starts.remove(&key).unwrap_or(now);
-                        self.round_phase_active_counts.remove(&key);
-                        let times = self
-                            .round_phase_times_ms
-                            .entry(phase_name.to_string())
-                            .or_default();
-                        while times.len() < entry_round {
-                            times.push(0.0);
-                        }
-                        times[entry_round - 1] += (now - start).as_secs_f64() * 1000.0;
+            if let Some(count) = self.round_phase_active_counts.get_mut(&key)
+                && *count > 0
+            {
+                *count -= 1;
+                if *count == 0 {
+                    let start = self.round_phase_starts.remove(&key).unwrap_or(now);
+                    self.round_phase_active_counts.remove(&key);
+                    let times = self
+                        .round_phase_times_ms
+                        .entry(phase_name.to_string())
+                        .or_default();
+                    while times.len() < entry_round {
+                        times.push(0.0);
                     }
+                    times[entry_round - 1] += (now - start).as_secs_f64() * 1000.0;
                 }
             }
         }

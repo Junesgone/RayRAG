@@ -16,5 +16,4 @@
 //! never read by any live path and has been removed upstream — `_active_tool_specs`
 //! is the single place that decides the visible tool surface.
 //!
-//! The implementations land with the action-session batch; this package root
-//! already carries the upstream layout.
+pub mod text_processing;

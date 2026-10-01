@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.82] — 2026-10-01（对标批次 v0.3.10aa）
+
+> W-4 续：agentic harness 确定性工具层移植（文本窄化 + 记忆检索 + 安全算术；纯 Rust）。
+
+- `src/harness/tools/text_processing.rs`：句切分（块级 HTML 标签栈与 markdown 表格原子化）、词干匹配（上游回退词干器路径）、关键词窄化与高亮、fact-dense 句子保留。
+- `src/harness/grep_sed_narrow.rs`：Claude-Code 式内存 grep+sed 窄化（行定位 + 上下文扩窗 + 字符预算钳制、兜底词机械重试、总预算按块分摊）。
+- `src/harness/memory.rs`：原始检索记忆（无损 add、grep 前缀容忍 + 句窗上下文、语言无关 significance 检索复用 + 重叠比门槛）。
+- `src/harness/arithmetic.rs`：白名单解析/求值器（Python 语义的地板除/取模符号/幂指数上限/链式比较短路/and-or 返回操作数/惰性三元），letters/digit_sum/date_diff，`compute` 与 `compute_from_facts`（`COMPUTE_SYSTEM` 原文）。
+- 台账 4 行 partial → full；worklist W-4 队列 14 → 10；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：harness 全量 33 项全绿；fmt/clippy 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.81] — 2026-10-01（对标批次 v0.3.10z）
 
 > W-4 续：agentic harness orchestrator 策略移植（`direct` + `query_rewriter`，纯 Rust）。
