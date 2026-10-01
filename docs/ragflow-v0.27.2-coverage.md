@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 599 | 291546 |
-| partial | 83 | 33565 |
+| full | 601 | 291784 |
+| partial | 81 | 33327 |
 | replaced | 123 | 49952 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -456,10 +456,10 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `agent/sandbox/executor_manager/requirements.txt` | 3 | 23 | `5295d12a90c6717c` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
 | `agent/sandbox/executor_manager/seccomp-profile-default.json` | 55 | 970 | `e384ac35824c349f` | N/A | `src/sandbox.rs; src/code_exec.rs; Dockerfile; docker-compose.yml` | N/A-by-design: non-code artifact (Python sandbox image/scripts/config/packaging/docs); equivalent semantics are expressed in src/sandbox.rs (seccomp profile, --user nobody, tmpfs, --memory + RLIMIT_AS resource limits, GNU timeout with 124/137 exit-code classification) + Dockerfile multi-stage build — the Python sandbox image is outside the Rust port scope |
 | `agent/sandbox/executor_manager/services/__init__.py` | 15 | 622 | `177b91dd0511cf12` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
-| `agent/sandbox/executor_manager/services/auth.py` | 128 | 5441 | `64ff506624883acc` | partial | `src/sandbox.rs; src/code_exec.rs` | （v0.3.10g 审计：执行器 API token 鉴权；RayRAG 沙箱契约已移植，token 鉴权流程待对齐——worklist W-6（沙箱提供商/鉴权）） |
+| `agent/sandbox/executor_manager/services/auth.py` | 128 | 5441 | `64ff506624883acc` | full | `src/sandbox.rs` | （v0.3.10q 移植：/run 共享密钥鉴权——SANDBOX_EXECUTOR_MANAGER_API_TOKEN、fail-closed 503、无效令牌 401、SANDBOX_EXECUTOR_MANAGER_ALLOW_UNAUTHENTICATED 显式免鉴权与一次性安全警告、Bearer/X-Sandbox-Token 提取、常量时间比较（compare_digest 等价）、启动姿态日志；RemoteSandboxConfig 增加 api_token 并随 POST /run 发送 Authorization: Bearer（/healthz 不带，对齐 self_managed.py）；5 项单测。） |
 | `agent/sandbox/executor_manager/services/execution.py` | 478 | 17219 | `935d94b3a6a3402c` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) [v0.27.2 content changed: re-audit] |
 | `agent/sandbox/executor_manager/services/limiter.py` | 46 | 1801 | `8b380abf1f11ce2b` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) [v0.27.2 content changed: re-audit] |
-| `agent/sandbox/executor_manager/services/preauth.py` | 110 | 4459 | `0cf2988d706f2bc8` | partial | `src/sandbox.rs; src/code_exec.rs` | （v0.3.10g 审计：执行器预授权流程；待对齐——worklist W-6（沙箱提供商/鉴权）） |
+| `agent/sandbox/executor_manager/services/preauth.py` | 110 | 4459 | `0cf2988d706f2bc8` | full | `src/sandbox.rs` | （v0.3.10q 移植：/run 预鉴权限流——SANDBOX_RUN_PREAUTH_RATE_LIMIT（默认 30/minute）解析、按客户端地址滑动窗口、每窗口一次拒绝告警、超万地址清理、reset；单测覆盖窗口滑动/地址隔离/解析错误/latest 拒绝消息。） |
 | `agent/sandbox/executor_manager/services/security.py` | 207 | 9327 | `f0323e747a2a2819` | full | `src/sandbox.rs; src/code_exec.rs` | executor_manager contract ported (enums, failure protocol, runtime env, artifact/security contracts) |
 | `agent/sandbox/executor_manager/tests/conftest.py` | 51 | 2074 | `9858e3a1b7a189e5` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |
 | `agent/sandbox/executor_manager/tests/test_artifact_promotion.py` | 46 | 1654 | `9b0df4e5031f88de` | reference | `Rust unit and HTTP tests` | Upstream tests, benchmarks and fixtures guide Rust compatibility verification and are not production runtime |

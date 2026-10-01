@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.72] — 2026-10-01（对标批次 v0.3.10q）
+
+> W-6 首批：RAGFlow v0.27.2 的执行器 /run 鉴权（auth.py）与预鉴权限流（preauth.py）移植（纯 Rust）。
+
+### Added
+
+- **执行器 /run 鉴权**（`agent/sandbox/executor_manager/services/auth.py` → `src/sandbox.rs`）：共享密钥 env、fail-closed 503、无效令牌 401、`ALLOW_UNAUTHENTICATED` 显式 opt-in 与一次性安全警告、`Bearer`/`X-Sandbox-Token` 提取、常量时间比较、启动姿态日志；`RemoteSandboxConfig.api_token`（env `SANDBOX_EXECUTOR_MANAGER_API_TOKEN`）随 `POST /run` 发送 `Authorization: Bearer`（`/healthz` 不带，对齐 self_managed.py）。
+- **预鉴权限流**（`preauth.py` → `src/sandbox.rs`）：`SANDBOX_RUN_PREAUTH_RATE_LIMIT`（默认 30/minute）解析、按客户端地址滑动窗口、每窗口一次拒绝告警、超万地址清理、reset。
+
+### Tests
+
+- 5 项新单测（令牌提取、常量时间比较、三种鉴权姿态与 503/401、速率解析、滑动窗口行为）；`cargo test --locked --lib sandbox` 34 passed；`cargo fmt --check`、`cargo check --locked --features postgres-backend,zvec-backend` 全绿。
 ## [0.4.71] — 2026-10-01（对标批次 v0.3.10p）
 
 > W-2 清零：RAGFlow v0.27.2 的 Azure DevOps 数据源（代码文件 + Pull Request）移植（纯 Rust）。

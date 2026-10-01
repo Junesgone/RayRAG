@@ -1579,6 +1579,9 @@ pub struct RemoteSandboxConfig {
     pub max_retries: u32,
     /// 容器池大小（默认 10，仅信息用途）。
     pub pool_size: u32,
+    /// executor_manager 共享密钥（对齐 SelfManagedProvider.api_token：
+    /// 节点配置或 SANDBOX_EXECUTOR_MANAGER_API_TOKEN；仅随 POST /run 发送）。
+    pub api_token: Option<String>,
 }
 
 impl Default for RemoteSandboxConfig {
@@ -1588,6 +1591,7 @@ impl Default for RemoteSandboxConfig {
             timeout_seconds: 30,
             max_retries: 3,
             pool_size: 10,
+            api_token: None,
         }
     }
 }
@@ -1611,6 +1615,10 @@ impl RemoteSandboxConfig {
         {
             config.pool_size = parsed;
         }
+        config.api_token = std::env::var(EXECUTOR_MANAGER_API_TOKEN_ENV)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         config
     }
 }
@@ -1691,7 +1699,17 @@ impl RemoteSandboxClient {
         let attempts = self.config.max_retries.max(1);
         let mut last_error: Option<anyhow::Error> = None;
         for attempt in 0..attempts {
-            match client.post(&url).json(&payload).send().await {
+            let mut request = client.post(&url).json(&payload);
+            if let Some(token) = self
+                .config
+                .api_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|token| !token.is_empty())
+            {
+                request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+            }
+            match request.send().await {
                 Ok(response) => {
                     let status = response.status();
                     let body = response.text().await?;
@@ -1716,6 +1734,412 @@ impl RemoteSandboxClient {
         }
         Err(last_error
             .unwrap_or_else(|| anyhow::anyhow!("HTTP request failed after {attempts} attempts")))
+    }
+}
+
+// ───────────── executor_manager /run 鉴权与预鉴权限流（auth.py + preauth.py） ─────────────
+
+/// `SANDBOX_EXECUTOR_MANAGER_API_TOKEN` shared-secret env var.
+pub const EXECUTOR_MANAGER_API_TOKEN_ENV: &str = "SANDBOX_EXECUTOR_MANAGER_API_TOKEN";
+/// Explicit insecure opt-in env var.
+pub const ALLOW_UNAUTHENTICATED_ENV: &str = "SANDBOX_EXECUTOR_MANAGER_ALLOW_UNAUTHENTICATED";
+/// Pre-auth rate limit env var (`30/minute` by default).
+pub const PREAUTH_RATE_LIMIT_ENV: &str = "SANDBOX_RUN_PREAUTH_RATE_LIMIT";
+pub const DEFAULT_PREAUTH_RATE_LIMIT: &str = "30/minute";
+const UNAUTH_OPT_IN_HINT: &str = "Set SANDBOX_EXECUTOR_MANAGER_API_TOKEN to a strong shared secret (and configure RAGFlow with the same value), or explicitly accept the risk by setting SANDBOX_EXECUTOR_MANAGER_ALLOW_UNAUTHENTICATED=true.";
+
+fn env_trimmed(name: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// `get_configured_api_token`.
+pub fn configured_api_token() -> String {
+    env_trimmed(EXECUTOR_MANAGER_API_TOKEN_ENV)
+}
+
+fn truthy_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// `unauthenticated_access_explicitly_allowed`.
+pub fn unauthenticated_access_explicitly_allowed() -> bool {
+    truthy_flag(&env_trimmed(ALLOW_UNAUTHENTICATED_ENV))
+}
+
+/// The effective `/run` authentication posture (`log_authentication_startup_state`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxAuthPosture {
+    /// A shared secret is configured; every `/run` must present it.
+    TokenEnforced,
+    /// No token but the explicit insecure opt-in is set.
+    ExplicitlyUnauthenticated,
+    /// No token and no opt-in: `/run` refuses with 503.
+    FailClosed,
+}
+
+pub fn authentication_posture(token: &str, opt_in: bool) -> SandboxAuthPosture {
+    if !token.trim().is_empty() {
+        return SandboxAuthPosture::TokenEnforced;
+    }
+    if opt_in {
+        SandboxAuthPosture::ExplicitlyUnauthenticated
+    } else {
+        SandboxAuthPosture::FailClosed
+    }
+}
+
+pub fn current_authentication_posture() -> SandboxAuthPosture {
+    authentication_posture(
+        &configured_api_token(),
+        unauthenticated_access_explicitly_allowed(),
+    )
+}
+
+/// Log the startup posture once (auth.py `log_authentication_startup_state`).
+pub fn log_authentication_startup_state() {
+    match current_authentication_posture() {
+        SandboxAuthPosture::TokenEnforced => {
+            tracing::info!("Sandbox executor /run authentication: shared-secret token configured");
+        }
+        SandboxAuthPosture::ExplicitlyUnauthenticated => {
+            warn_if_unauthenticated_opt_in();
+        }
+        SandboxAuthPosture::FailClosed => {
+            tracing::error!(
+                "SANDBOX_EXECUTOR_MANAGER_API_TOKEN is not set: /run will refuse requests with 503. {UNAUTH_OPT_IN_HINT}"
+            );
+        }
+    }
+}
+
+/// Emit the prominent insecure-opt-in warning once per process.
+pub fn warn_if_unauthenticated_opt_in() {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if WARNED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    tracing::warn!(
+        "SECURITY WARNING: SANDBOX_EXECUTOR_MANAGER_ALLOW_UNAUTHENTICATED=true and no API token is configured. \
+         The executor manager accepts unauthenticated requests on /run: anyone who can reach this endpoint can \
+         execute code in the sandbox pool. Remove the flag and set SANDBOX_EXECUTOR_MANAGER_API_TOKEN to a strong shared secret."
+    );
+}
+
+/// `_extract_request_token`: `Authorization: Bearer <token>` or `X-Sandbox-Token`.
+pub fn extract_request_token(authorization: Option<&str>, x_sandbox_token: Option<&str>) -> String {
+    if let Some(value) = authorization {
+        let trimmed = value.trim();
+        if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("bearer ") {
+            return trimmed[7..].trim().to_owned();
+        }
+    }
+    x_sandbox_token
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Constant-time string comparison (`secrets.compare_digest`).
+pub fn constant_time_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
+/// `/run` authentication failure (`HTTPException` 503/401).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SandboxAuthError {
+    pub status_code: u16,
+    pub detail: String,
+}
+
+/// `require_api_token` core (env-free so tests stay deterministic).
+pub fn require_api_token_with(
+    configured_token: &str,
+    opt_in: bool,
+    authorization: Option<&str>,
+    x_sandbox_token: Option<&str>,
+) -> Result<(), SandboxAuthError> {
+    let configured_token = configured_token.trim();
+    if configured_token.is_empty() {
+        if opt_in {
+            warn_if_unauthenticated_opt_in();
+            return Ok(());
+        }
+        return Err(SandboxAuthError {
+            status_code: 503,
+            detail: format!(
+                "Sandbox executor authentication is not configured; refusing unauthenticated /run. {UNAUTH_OPT_IN_HINT}"
+            ),
+        });
+    }
+    let provided = extract_request_token(authorization, x_sandbox_token);
+    if provided.is_empty() || !constant_time_eq(&provided, configured_token) {
+        return Err(SandboxAuthError {
+            status_code: 401,
+            detail: "Missing or invalid sandbox executor API token".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// `require_api_token` against the process environment.
+pub fn require_api_token(
+    authorization: Option<&str>,
+    x_sandbox_token: Option<&str>,
+) -> Result<(), SandboxAuthError> {
+    require_api_token_with(
+        &configured_api_token(),
+        unauthenticated_access_explicitly_allowed(),
+        authorization,
+        x_sandbox_token,
+    )
+}
+
+/// Sliding-window rate limit description (`30/minute`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreAuthRate {
+    pub amount: u64,
+    pub window_seconds: u64,
+}
+
+/// `SANDBOX_RUN_PREAUTH_RATE_LIMIT` parser (`limits.parse_many` single rate).
+pub fn parse_preauth_rate_limit(value: &str) -> Result<PreAuthRate> {
+    let trimmed = value.trim();
+    let (amount, period) = trimmed.split_once('/').ok_or_else(|| {
+        anyhow::anyhow!(
+            "SANDBOX_RUN_PREAUTH_RATE_LIMIT must be a single rate like '30/minute', got {value:?}"
+        )
+    })?;
+    let amount: u64 = amount
+        .trim()
+        .parse()
+        .ok()
+        .filter(|amount| *amount > 0)
+        .ok_or_else(|| anyhow::anyhow!("SANDBOX_RUN_PREAUTH_RATE_LIMIT must be a single rate like '30/minute', got {value:?}"))?;
+    let window_seconds = match period.trim().to_ascii_lowercase().as_str() {
+        "second" => 1,
+        "minute" => 60,
+        "hour" => 3600,
+        "day" => 86400,
+        _ => {
+            anyhow::bail!(
+                "SANDBOX_RUN_PREAUTH_RATE_LIMIT must be a single rate like '30/minute', got {value:?}"
+            )
+        }
+    };
+    Ok(PreAuthRate {
+        amount,
+        window_seconds,
+    })
+}
+
+/// Rejection raised past the pre-auth budget (slowapi `RateLimitExceeded`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreAuthRateLimited {
+    pub detail: &'static str,
+}
+
+/// Thread-safe sliding-window limiter keyed by client address
+/// (`PreAuthRateLimiter`), applied before authentication so invalid-token
+/// traffic cannot burn unbounded authentication work.
+#[derive(Debug)]
+pub struct PreAuthRateLimiter {
+    rate: PreAuthRate,
+    hits: std::sync::Mutex<std::collections::HashMap<String, std::collections::VecDeque<f64>>>,
+    last_logged: std::sync::Mutex<std::collections::HashMap<String, f64>>,
+}
+
+impl PreAuthRateLimiter {
+    pub fn new(rate: PreAuthRate) -> Self {
+        Self {
+            rate,
+            hits: std::sync::Mutex::new(std::collections::HashMap::new()),
+            last_logged: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    pub fn from_env() -> Result<Self> {
+        let value = std::env::var(PREAUTH_RATE_LIMIT_ENV)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_PREAUTH_RATE_LIMIT.to_owned());
+        Ok(Self::new(parse_preauth_rate_limit(&value)?))
+    }
+
+    pub fn rate(&self) -> PreAuthRate {
+        self.rate
+    }
+
+    pub fn hit(&self, address: &str) -> Result<(), PreAuthRateLimited> {
+        self.hit_at(address, monotonic_seconds())
+    }
+
+    /// Record one hit for `address` at `now` (seconds); over budget rejects
+    /// with a single warning per address per window.
+    pub fn hit_at(&self, address: &str, now: f64) -> Result<(), PreAuthRateLimited> {
+        let cutoff = now - self.rate.window_seconds as f64;
+        let mut hits = self.hits.lock().unwrap();
+        let window = hits.entry(address.to_owned()).or_default();
+        while window.front().is_some_and(|timestamp| *timestamp <= cutoff) {
+            window.pop_front();
+        }
+        if window.len() >= self.rate.amount as usize {
+            let mut last_logged = self.last_logged.lock().unwrap();
+            if now
+                - last_logged
+                    .get(address)
+                    .copied()
+                    .unwrap_or(f64::NEG_INFINITY)
+                >= self.rate.window_seconds as f64
+            {
+                last_logged.insert(address.to_owned(), now);
+                tracing::warn!(
+                    address,
+                    limit = ?self.rate,
+                    "Pre-auth rate limit exceeded on /run; further rejections from this address are throttled silently for this window"
+                );
+            }
+            return Err(PreAuthRateLimited {
+                detail: "Too many requests, please try again later",
+            });
+        }
+        window.push_back(now);
+        if hits.len() > 10_000 {
+            let stale: Vec<String> = hits
+                .iter()
+                .filter(|(_, window)| window.back().is_none_or(|timestamp| *timestamp <= cutoff))
+                .map(|(address, _)| address.clone())
+                .collect();
+            for address in stale {
+                hits.remove(&address);
+                self.last_logged.lock().unwrap().remove(&address);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn reset(&self) {
+        self.hits.lock().unwrap().clear();
+        self.last_logged.lock().unwrap().clear();
+    }
+}
+
+fn monotonic_seconds() -> f64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+}
+
+#[cfg(test)]
+mod sandbox_auth_tests {
+    use super::*;
+
+    #[test]
+    fn token_extraction_matches_upstream_formats() {
+        assert_eq!(extract_request_token(Some("Bearer abc"), None), "abc");
+        assert_eq!(
+            extract_request_token(Some("bearer  spaced "), Some("ignored")),
+            "spaced"
+        );
+        assert_eq!(
+            extract_request_token(Some("Basic abc"), Some(" x-token ")),
+            "x-token"
+        );
+        assert_eq!(extract_request_token(None, None), "");
+    }
+
+    #[test]
+    fn constant_time_equality_matches_compare_digest() {
+        assert!(constant_time_eq("secret", "secret"));
+        assert!(!constant_time_eq("secret", "secreu"));
+        assert!(!constant_time_eq("secret", "secret2"));
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "x"));
+    }
+
+    #[test]
+    fn auth_postures_fail_closed_by_default() {
+        assert_eq!(
+            authentication_posture("", false),
+            SandboxAuthPosture::FailClosed
+        );
+        assert_eq!(
+            authentication_posture(" tok ", false),
+            SandboxAuthPosture::TokenEnforced
+        );
+        assert_eq!(
+            authentication_posture("", true),
+            SandboxAuthPosture::ExplicitlyUnauthenticated
+        );
+
+        let fail_closed = require_api_token_with("", false, None, None).unwrap_err();
+        assert_eq!(fail_closed.status_code, 503);
+        assert!(fail_closed.detail.contains("not configured"));
+
+        let bad = require_api_token_with("secret", false, Some("Bearer wrong"), None).unwrap_err();
+        assert_eq!(bad.status_code, 401);
+        assert!(require_api_token_with("secret", false, Some("Bearer secret"), None).is_ok());
+        assert!(
+            require_api_token_with("secret", false, None, Some("secret")).is_ok(),
+            "X-Sandbox-Token also authenticates"
+        );
+        assert!(
+            require_api_token_with("", true, None, None).is_ok(),
+            "opt-in passes"
+        );
+    }
+
+    #[test]
+    fn preauth_rate_limit_parsing() {
+        assert_eq!(
+            parse_preauth_rate_limit("30/minute").unwrap(),
+            PreAuthRate {
+                amount: 30,
+                window_seconds: 60
+            }
+        );
+        assert_eq!(
+            parse_preauth_rate_limit("2/second").unwrap().window_seconds,
+            1
+        );
+        assert!(parse_preauth_rate_limit("30").is_err());
+        assert!(parse_preauth_rate_limit("0/minute").is_err());
+        assert!(parse_preauth_rate_limit("30/fortnight").is_err());
+    }
+
+    #[test]
+    fn preauth_limiter_slides_per_address() {
+        let limiter = PreAuthRateLimiter::new(PreAuthRate {
+            amount: 2,
+            window_seconds: 5,
+        });
+        assert!(limiter.hit_at("a", 0.0).is_ok());
+        assert!(limiter.hit_at("a", 1.0).is_ok());
+        let limited = limiter.hit_at("a", 2.0).unwrap_err();
+        assert_eq!(limited.detail, "Too many requests, please try again later");
+        // A different address keeps its own window.
+        assert!(limiter.hit_at("b", 2.0).is_ok());
+        // Once the window slides past the old hits, the address is allowed.
+        assert!(limiter.hit_at("a", 6.5).is_ok());
+        limiter.reset();
+        assert!(limiter.hit_at("a", 6.6).is_ok());
     }
 }
 
