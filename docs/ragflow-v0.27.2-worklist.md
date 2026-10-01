@@ -32,9 +32,9 @@
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
-| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：本库仅见 harness/tools/navigation.rs 的 dataset_navigation_search / dataset_navigation_by_tree（检索侧）；1967 行/42 定义的 upsert_dataset_nav/store/knn/lock 等未见——worklist W-4（agentic harness） |
-| `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | `src/advanced_rag.rs` | v0.3.10ah 复核证据：wiki_plan_from_reduction / wiki_refine_from_plan 等（4154 行/68 定义）全递归未见（仅散布 wiki 文案与页检索）；v0.27.2 wiki 编译管线待移植——worklist W-4（agentic harness） |
-| `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | （v0.3.10g 审计：wiki 增量编译（5004 行）；RayRAG wiki 管线基础在 structure_compile.rs，增量语义待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/knowlege_compile/dataset_nav.py` | 1967 | `src/advanced_rag.rs` | v0.3.10ah 机器测绘（凭证据）：1967 行 / 42 定义，本地覆盖 3 项，**缺 39**（nav doc/cluster/lock id、store get/search/text/knn/upsert/delete、向量工具、nav 行构造、fine_tokenize/nav_keywords/nav_entities、scope/条件匹配、find_best_cluster、llm_merge、clean/fallback title、upsert_dataset_nav_doc 主流程等）——计划移植为 src/knowlege_dataset_nav.rs（DocStore/EmbeddingBackend/HarnessChat 契约）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/wiki.py` | 4154 | `src/advanced_rag.rs` | v0.3.10ah 机器测绘（凭证据）：4154 行 / 68 定义，本地覆盖 4 项，**缺 64**（_chunk_hash、_wiki_compare_chunk_states、schema/模板渲染族、_wiki_merge_extracts、map 版本/持久化、chunk 状态扫描、plan/refine 主流程等）——计划移植为 src/knowlege_wiki.rs（HarnessChat/EmbeddingBackend/DocStore 契约）——worklist W-4（agentic harness） |
+| `rag/advanced_rag/knowlege_compile/wiki_incremental.py` | 5004 | `src/structure_compile.rs` | v0.3.10ah 机器测绘（凭证据）：5004 行 / 73 定义，本地覆盖 2 项，**缺 71**（_wiki_run_refine_tasks、失败记录族、canonical 实体族、_knn_search_canonical、_wiki_match_entities、页面图/outlinks 族、topics/concept 决策、增量 refine 主流程等）——计划移植为 src/knowlege_wiki_incremental.rs（并接线 runner 已留位的 wiki synth 契约）——worklist W-4（agentic harness） |
 
 ### W-5 结构图/编译器/切分（0 项）
 
