@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.90] — 2026-10-01（对标批次 v0.3.10ah，进行中）
+
+> W-4 续 + 台账证据化重定级：本轮完成 mind_map_extractor、_common、runner、knowlege_compile/raptor 四个文件/单元的 1:1 移植；全递归核查发现六个此前标记 `full` 的 knowlege_compile 条目存在 v0.27.2 符号缺口，已凭证据回退为 `partial` 并附缺口说明（W-4 队列 2→8，本轮消化 4 → 余 4）。
+
+- `src/mind_map.rs`（新，经 `#[path]` 挂载；上游 `knowlege_compile/mind_map_extractor.py`，6 测绿）：`MindMapResult`/`MindMapExtractor`（分组预算、变量替换、think/围栏剥离、`_merge`/`_todict`/`_list_to_kv`/`_be_children`/`_key`、单根/多根输出形状）；`markdown_to_json.dictify` 以「ATX 标题 + 缩进列表 + 段落」子集实现（书面说明）。
+- `src/structure_compile.rs`（`_common.py` 与 `runner.py`，套件 42 测绿）：
+  - `_common`：`env_int`/`env_float`、`knowledge_compile_gen_conf`（deepseek-v4/qwen3-*preview/其它三分支）、`EmbeddingBackend` 契约 + `encode`、`make_input_budget`、`doc_store_index_name`、`doc_storage_search/insert/delete/upsert_one`；`ensure_llm_bundle` 书面说明未移植（类型系统）。
+  - `runner`：env 常量（LazyLock）、`resolve_template_ids_from_groups`/`load_active_templates`/`split_tree_templates`、page_index 摘要与 dataset-nav 前缀、批次并发核心（FuturesUnordered + 有序提交 + 动态 token 预算 + merge 上限冲刷）、合成阶段（wiki PLAN/REFINE + compile_kwd 覆写）、dataset 图重建、timeline 清理；宿主服务经 `StructureCompileBackend` 契约注入（v0.27.2 参数面逐字）。
+- `src/knowlege_raptor.rs`（新，挂载；上游 `knowlege_compile/raptor.py`，6 测绿）：1D 分水岭聚类（手写 `np.percentile` 线性插值、比率上限二次调阈、退化聚类守卫）、`clustering` 密集重标、摘要（think/截断清理、标题首行、嵌入、错误预算）、递归层构建（小层塌缩）与层树物化；与旧 `src/raptor.rs`（上游 `rag/raptor.py`）为不同文件。
+- 台账：mind_map/_common/runner/raptor → `full`；structure.py/dataset_nav.py/wiki.py/`_common` 之外的其余两个（wiki_incremental.py、structure.py/dataset_nav.py/wiki.py 缺口）保持 `partial` 并写入证据化缺口说明（W-4 余 4）；coverage --check 常绿（5977、unmapped=0）。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.89] — 2026-10-01（对标批次 v0.3.10ag）
 
 > W-4 续：Agentic-RAG 能力层（`agentic_rag.py`，995 行）+ 五阶段编排图（`agentic_rag_graph.py`，1766 行）全文件 1:1 移植完成。W-4 队列 4 → 2（余 runner.py、wiki_incremental.py）。
