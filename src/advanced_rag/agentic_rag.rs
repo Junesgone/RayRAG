@@ -18,7 +18,10 @@ use std::collections::{HashMap, HashSet};
 use regex::Regex;
 use serde_json::Value;
 
+use crate::harness::HarnessChat;
+use crate::harness::keywords::extract_weighted_keywords;
 use crate::harness::orchestrator::direct::Kbinfos;
+use crate::harness::tools::text_processing::compact_keywords;
 use crate::harness::{form_message, message_fit_in};
 use crate::prompts::RAGFLOW_CITATION_PROMPT;
 
@@ -330,6 +333,170 @@ impl RagTools {
     pub fn get_citation_guidelines(&self) -> String {
         get_citation_guidelines(&self.user_defined_prompts)
     }
+
+    /// `sys_prompt`: the thin router prompt for callers that bind `tools`.
+    pub fn sys_prompt(&self) -> String {
+        let summarize_line = if self.has_unstructured() {
+            "- Call `summarize_document` ONLY when the user explicitly asks to summarise a specific document ('summarise the security audit', 'tldr the onboarding guide'). It needs a document ID.\n"
+        } else {
+            ""
+        };
+        let router_prompt = format!(
+            "You are a smart agent. For any question that needs evidence from the knowledge bases or the web, call the `rag` tool with a self-contained question — it runs the full search-and-answer pipeline and returns a cited answer.\nAfter the `rag` tool returns, do not call `rag` again for the same user question. Use the returned cited answer as the final answer unless the user explicitly asks a new question.\nCRITICAL — preserve the full multi-hop structure when phrasing the `rag` question. A question that compares two or more DISTINCT targets or needs an arithmetic result across them (\"how much taller is X than Y\", \"how many days after A's death did B die\", \"which of these was discovered last\") MUST keep every target and relation in the question you pass to `rag`. Never rewrite a comparison into a single-entity question — dropping the second entity (e.g. the purchaser in \"how many days after his death did the man who purchased it in 1933 die\") makes the pipeline answer only the first part. Pass the complete comparison.\n{summarize_line}Do not invent facts and do not fabricate document IDs."
+        );
+        if self.system_prompt.is_empty() {
+            router_prompt
+        } else {
+            format!("{}\n\n{router_prompt}", self.system_prompt)
+        }
+    }
+
+    /// `extract_keywords`: the compact keyword string (deduped union of the four
+    /// weighted aspects), falling back to the question when extraction fails.
+    pub async fn extract_keywords(&self, chat: &dyn HarnessChat, question: &str) -> String {
+        if question.is_empty() {
+            return String::new();
+        }
+        let (_, union) = extract_weighted_keywords(chat, question).await;
+        compact_keywords(&union, 15)
+    }
+
+    /// `_extract_keywords_weighted`: the four weighted keyword aspects as
+    /// `(weighted_query, plain_union)`.
+    pub async fn extract_keywords_weighted(
+        &self,
+        chat: &dyn HarnessChat,
+        question: &str,
+    ) -> (String, String) {
+        extract_weighted_keywords(chat, question).await
+    }
+
+    /// `formalize`: rewrite the latest user message into a standalone question
+    /// AND derive its search keywords (each with close synonyms) in one LLM call
+    /// (the single-turn path keeps the question verbatim and extracts keywords).
+    pub async fn formalize(&self, chat: &dyn HarnessChat, messages: &[Value]) -> (String, String) {
+        if messages.is_empty() {
+            return (String::new(), String::new());
+        }
+        let mut lines: Vec<String> = Vec::new();
+        let mut last_user = String::new();
+        for message in messages {
+            if let Some(text) = message.as_str() {
+                lines.push(text.to_string());
+                last_user = text.to_string();
+                continue;
+            }
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("user");
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if role == "user" {
+                last_user = content.clone();
+            }
+            let prefix = match role {
+                "user" => "User".to_string(),
+                "assistant" => "Assistant".to_string(),
+                other => capitalize(other),
+            };
+            lines.push(format!("{prefix}: {content}"));
+        }
+        let transcript = lines.join("\n");
+        let user_turns = messages
+            .iter()
+            .filter(|message| {
+                message.as_str().is_some()
+                    || message
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or("user")
+                        == "user"
+            })
+            .count();
+        let multi_turn = user_turns > 1;
+        if !multi_turn && !last_user.is_empty() {
+            // Single-turn self-contained question — kept verbatim (no rewrite).
+            let keywords = self.extract_keywords(chat, &last_user).await;
+            return (last_user.trim().to_string(), keywords);
+        }
+        let system = "You are given a conversation. Do BOTH of the following and return JSON only:\n1. Rewrite the LAST user message into a single, self-contained question that can be understood without the prior conversation — resolve pronouns, ellipses and follow-up shortcuts using the earlier turns. In most cases, it should be EXACTLY THE SAME as the last user query — only rewrite when there is something to resolve (a pronoun/ellipsis pointing back at an earlier turn). Preserve the original language.\n2. Extract keywords for a keyword search: the salient content words and phrases that literally appear in the (standalone) question — key nouns, named entities, domain terms — PLUS 2-3 close synonyms/abbreviations/aliases/alternative spellings of each, in the SAME language as the question. Maximize recall. Do NOT include terms that would be part of the answer.\n   Example — \"In which year did Apple acquire Beats?\" -> keywords = \"Apple, Apple Inc., AAPL, acquire, acquisition, acquired, Beats, Beats Electronics\".\n\nOutput ONLY JSON, no prose, no code fences: {\"question\": \"<standalone question>\", \"keywords\": \"<term1, term2, synonym1, ...>\"}";
+        let user = format!("Conversation:\n{transcript}\n\nOutput JSON:");
+        let (_, fitted) = message_fit_in(form_message(system, &user), self.chat_max_length);
+        let system_content = fitted
+            .first()
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or(system)
+            .to_string();
+        let history: Vec<Value> = fitted.iter().skip(1).cloned().collect();
+        let ans = chat
+            .chat(
+                &system_content,
+                &history,
+                &serde_json::json!({"temperature": 0.1}),
+            )
+            .await
+            .unwrap_or_default();
+        let cleaned = strip_think_prefix(&ans);
+        let cleaned = strip_code_fences(&cleaned).trim().to_string();
+        let data = serde_json::from_str::<Value>(&cleaned)
+            .ok()
+            .or_else(|| crate::structure_compile::repair_json_text(&cleaned))
+            .filter(Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({}));
+        let mut question = data
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'')
+            .to_string();
+        if question.is_empty() {
+            question = last_user.trim().to_string();
+        }
+        let keywords = match data.get("keywords") {
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| match item {
+                    Value::String(text) => text.trim().to_string(),
+                    other => other.to_string(),
+                })
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join(", "),
+            Some(value) => value
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value.to_string()),
+            None => String::new(),
+        };
+        (question, compact_keywords(keywords.trim(), 15))
+    }
+}
+
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+        None => String::new(),
+    }
+}
+
+/// `re.sub(r"^.*</think>", "", text, flags=re.DOTALL)`: drop a leading think
+/// block (through the LAST closing tag).
+fn strip_think_prefix(text: &str) -> String {
+    let re = Regex::new(r"(?s)^.*</think>").expect("think regex");
+    re.replace(text, "").to_string()
+}
+
+/// `re.sub(r"```(?:json)?\s*|\s*```", "", text)`: drop code fences.
+fn strip_code_fences(text: &str) -> String {
+    let re = Regex::new(r"```(?:json)?\s*|\s*```").expect("fence regex");
+    re.replace_all(text, "").to_string()
 }
 
 fn dedupe_preserving_order(items: &[String]) -> Vec<String> {
@@ -485,6 +652,142 @@ mod tests {
         assert!(
             content_len < 5000,
             "the fitter trims the oversized user turn"
+        );
+    }
+}
+#[cfg(test)]
+mod formalize_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        reply: Result<String, String>,
+        max_length: usize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl MockChat {
+        fn ok(reply: &str) -> Self {
+            Self {
+                reply: Ok(reply.to_string()),
+                max_length: 4096,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn err() -> Self {
+            Self {
+                reply: Err("boom".to_string()),
+                max_length: 4096,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            self.calls.lock().unwrap().push("chat".to_string());
+            self.reply.clone()
+        }
+        fn max_length(&self) -> usize {
+            self.max_length
+        }
+    }
+
+    fn tools_with_kb() -> RagTools {
+        RagTools::new(RagToolsConfig {
+            kbs: vec![KbRef {
+                id: "kb1".to_string(),
+                field_map: None,
+            }],
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        })
+    }
+
+    #[test]
+    fn sys_prompt_router_matrix() {
+        let tools = RagTools::new(RagToolsConfig {
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        });
+        let plain = tools.sys_prompt();
+        assert!(plain.starts_with("You are a smart agent."));
+        assert!(
+            !plain.contains("summarize_document"),
+            "no KB -> no summarize line"
+        );
+
+        let with_kb = tools_with_kb().sys_prompt();
+        assert!(with_kb.contains("Call `summarize_document` ONLY"));
+
+        let custom = RagTools::new(RagToolsConfig {
+            system_prompt: "CUSTOM".to_string(),
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        });
+        assert!(
+            custom
+                .sys_prompt()
+                .starts_with("CUSTOM\n\nYou are a smart agent.")
+        );
+    }
+
+    #[tokio::test]
+    async fn formalize_single_turn_keeps_question_verbatim() {
+        let tools = tools_with_kb();
+        let chat = MockChat::err();
+        let messages = vec![json!({"role": "user", "content": "  Who discovered radium?  "})];
+        let (question, keywords) = tools.formalize(&chat, &messages).await;
+        assert_eq!(question, "Who discovered radium?", "trimmed, not rewritten");
+        assert!(keywords.is_empty() || keywords == "Who discovered radium?");
+    }
+
+    #[tokio::test]
+    async fn formalize_multi_turn_parses_think_and_fences() {
+        let tools = tools_with_kb();
+        let chat = MockChat::ok(
+            "<think>hmm</think>```json\n{\"question\": \"standalone?\", \"keywords\": \"a, b, a, c\"}\n```",
+        );
+        let messages = vec![
+            json!({"role": "user", "content": "first"}),
+            json!({"role": "assistant", "content": "second"}),
+            json!({"role": "user", "content": "third"}),
+        ];
+        let (question, keywords) = tools.formalize(&chat, &messages).await;
+        assert_eq!(question, "standalone?");
+        assert_eq!(keywords, "a b c", "deduped and space-joined");
+        assert_eq!(chat.calls.lock().unwrap().len(), 1, "one LLM round-trip");
+    }
+
+    #[tokio::test]
+    async fn formalize_multi_turn_falls_back_to_last_user() {
+        let tools = tools_with_kb();
+        let chat = MockChat::ok("no json here");
+        let messages = vec![
+            json!({"role": "user", "content": "first"}),
+            json!({"role": "user", "content": "second"}),
+        ];
+        let (question, keywords) = tools.formalize(&chat, &messages).await;
+        assert_eq!(question, "second");
+        assert!(keywords.is_empty());
+    }
+
+    #[tokio::test]
+    async fn extract_keywords_empty_question_returns_empty() {
+        let tools = tools_with_kb();
+        let chat = MockChat::err();
+        assert!(tools.extract_keywords(&chat, "").await.is_empty());
+        assert!(
+            chat.calls.lock().unwrap().is_empty(),
+            "no LLM call for empty input"
         );
     }
 }
