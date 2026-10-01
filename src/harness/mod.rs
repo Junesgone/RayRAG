@@ -61,6 +61,11 @@ pub trait HarnessChat: Send + Sync {
     /// Provider context budget (`chat_mdl.max_length`).
     fn max_length(&self) -> usize;
 
+    /// Provider model name (`chat_mdl.model_name`); empty when unknown.
+    fn model_name(&self) -> String {
+        String::new()
+    }
+
     /// Provider-reported usage for the last call (`mdl.last_usage`); `None`
     /// when the provider does not report one.
     async fn last_usage(&self) -> Option<Value> {

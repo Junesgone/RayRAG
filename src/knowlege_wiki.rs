@@ -15,7 +15,11 @@
 //!   call.
 use super::knowlege_dataset_nav::index_name;
 use crate::doc_store::{DocRow, DocStore, SearchQuery};
-use crate::structure_compile::{cfg_get, env_int, localize, stable_row_id};
+use crate::harness::HarnessChat;
+use crate::structure_compile::{
+    ChunkInput, PackedEntry, build_chunk_batches, cfg_get, env_int, knowledge_compile_gen_conf,
+    localize, parse_json_lenient, stable_row_id,
+};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -1808,5 +1812,656 @@ mod wiki_part2_tests {
         assert_eq!(extracts[0]["entities"][0]["name"], json!("Alpha"));
         let none = load_map_extracts_for_state(&store, "t1", "kb1", &state, Some(&BTreeSet::new()));
         assert!(none.is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part 3 — per-batch extraction and the public MAP entry
+// (`_wiki_extract_one_batch` .. `wiki_map_from_chunks`).
+//
+// Adaptation note: upstream fans batches out through `_run_chunked_pipeline`
+// with an asyncio semaphore; the Rust closure bounds of
+// `run_chunked_pipeline` require `'static` captures, so this port runs the
+// packed batches sequentially in order (`max_workers` is accepted and only
+// recorded). Generated JSON is cleaned exactly like `struct_gen_json`.
+// ---------------------------------------------------------------------------
+
+fn wiki_think_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?s)^.*</think>").expect("think regex"))
+}
+
+fn wiki_fence_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"```(?:json)?\s*|\s*```").expect("fence regex"))
+}
+
+/// `gen_json` over `HarnessChat`, with the same think/fence cleaning that
+/// `struct_gen_json` applies (json_repair-backed lenient parse fallback).
+async fn wiki_gen_json(
+    chat: &dyn HarnessChat,
+    system: &str,
+    user: &str,
+    gen_conf: &Value,
+) -> Option<Value> {
+    let history = vec![json!({"role": "user", "content": user})];
+    let raw = chat.chat(system, &history, gen_conf).await.ok()?;
+    let stripped = wiki_think_re().replace(&raw, "").to_string();
+    let cleaned = wiki_fence_re()
+        .replace_all(&stripped, "")
+        .trim()
+        .to_string();
+    serde_json::from_str::<Value>(&cleaned)
+        .ok()
+        .or_else(|| parse_json_lenient(&cleaned))
+}
+
+/// `_wiki_extract_one_batch`: one LLM call for one packed batch.
+pub async fn wiki_extract_one_batch(
+    chat: &dyn HarnessChat,
+    packed: &[PackedEntry],
+    doc_id: &str,
+    language: &str,
+    llm_timeout: i64,
+    parser_config: &Value,
+    batch_idx: usize,
+    total_batches: usize,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+) -> Option<Value> {
+    let (body, labels) = format_batch_prompt(
+        &packed
+            .iter()
+            .map(|entry| json!({"label": entry.label, "text": entry.text}))
+            .collect::<Vec<Value>>(),
+    );
+    let chunk_id_list = labels
+        .iter()
+        .map(|label| format!("- {label}"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    let user_prompt = build_user_prompt(
+        parser_config,
+        language,
+        doc_id,
+        packed.len(),
+        &chunk_id_list,
+        &body,
+    );
+    let gen_conf = knowledge_compile_gen_conf(
+        &chat.model_name(),
+        Some(&Map::from_iter([("temperature".to_string(), json!(0.1))])),
+    );
+    let request_conf = Value::Object(gen_conf);
+    let timeout = std::time::Duration::from_secs(llm_timeout.max(0) as u64);
+    let outcome = tokio::time::timeout(
+        timeout,
+        wiki_gen_json(chat, WIKI_MAP_SYSTEM, &user_prompt, &request_conf),
+    )
+    .await;
+    match outcome {
+        Err(_elapsed) => {
+            tracing::warn!(
+                seconds = llm_timeout,
+                chunks = packed.len(),
+                "wiki_map: batch extraction timed out"
+            );
+            if let Some(callback) = callback {
+                callback(
+                    (batch_idx + 1) as f64 / (total_batches.max(1)) as f64,
+                    &format!(
+                        "[ERROR] Wiki MAP batch {}/{} timed out after {}s ({} chunks).",
+                        batch_idx + 1,
+                        total_batches,
+                        llm_timeout,
+                        packed.len()
+                    ),
+                );
+            }
+            None
+        }
+        Ok(None) => {
+            tracing::warn!(chunks = packed.len(), "wiki_map: batch extraction failed");
+            if let Some(callback) = callback {
+                callback(
+                    (batch_idx + 1) as f64 / (total_batches.max(1)) as f64,
+                    &format!(
+                        "[ERROR] Wiki MAP batch {}/{} failed ({} chunks).",
+                        batch_idx + 1,
+                        total_batches,
+                        packed.len()
+                    ),
+                );
+            }
+            None
+        }
+        Ok(Some(res)) => {
+            let _ = language; // reserved for future localization
+            Some(unwrap_extract(&res))
+        }
+    }
+}
+
+/// `_wiki_process_batch`: LLM extract → split by source chunk → persist.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_process_batch(
+    chat: &dyn HarnessChat,
+    store: &dyn DocStore,
+    packed: &[PackedEntry],
+    batch_idx: usize,
+    total_batches: usize,
+    doc_id: &str,
+    tenant_id: &str,
+    kb_id: &str,
+    language: &str,
+    llm_timeout: i64,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+    parser_config: &Value,
+    chunk_hashes: Option<&Map<String, Value>>,
+) -> Value {
+    if packed.is_empty() {
+        return empty_extract();
+    }
+    let mut label_to_id: HashMap<String, String> = HashMap::new();
+    for entry in packed {
+        label_to_id.insert(entry.label.clone(), entry.chunk_id.clone());
+    }
+    let raw_extract = wiki_extract_one_batch(
+        chat,
+        packed,
+        doc_id,
+        language,
+        llm_timeout,
+        parser_config,
+        batch_idx,
+        total_batches,
+        callback,
+    )
+    .await;
+    let Some(raw_extract) = raw_extract else {
+        // LLM call failed/timed out: leave no resume hash so the next run
+        // re-extracts these chunks instead of locking in an empty result.
+        return empty_extract();
+    };
+    let (merged, per_chunk) = resolve_chunk_ids(&raw_extract, &label_to_id);
+    persist_extracts(store, tenant_id, kb_id, &per_chunk, doc_id, chunk_hashes);
+    if let Some(callback) = callback {
+        let n_items: usize = EXTRACT_LIST_KEYS
+            .iter()
+            .map(|key| {
+                merged
+                    .get(*key)
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0)
+            })
+            .sum();
+        callback(
+            (batch_idx + 1) as f64 / (total_batches.max(1)) as f64,
+            &format!(
+                "Wiki MAP {}/{}: {} items from {} chunks",
+                batch_idx + 1,
+                total_batches,
+                n_items,
+                packed.len()
+            ),
+        );
+    }
+    merged
+}
+
+fn wiki_meta(doc_id: &str, requested: usize, cache_hits: usize, extracted: usize) -> Value {
+    json!({
+        "doc_id": doc_id,
+        "requested": requested,
+        "cache_hits": cache_hits,
+        "extracted": extracted,
+    })
+}
+
+/// `wiki_map_from_chunks`: MAP phase of the wiki compilation pipeline.
+#[allow(clippy::too_many_arguments)]
+pub async fn wiki_map_from_chunks(
+    store: &dyn DocStore,
+    chat: &dyn HarnessChat,
+    chunks: &[Value],
+    doc_id: &str,
+    tenant_id: &str,
+    kb_id: &str,
+    language: &str,
+    max_workers: usize,
+    llm_timeout: i64,
+    parser_config: &Value,
+    batch_size_cap: Option<usize>,
+    window_fraction: Option<f64>,
+    target_chunk_ids: Option<&BTreeSet<String>>,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+) -> Value {
+    let _ = max_workers; // sequential execution; kept for signature parity
+    if chunks.is_empty() {
+        let mut out = empty_extract();
+        out.as_object_mut()
+            .expect("object")
+            .insert("_meta".to_string(), wiki_meta(doc_id, 0, 0, 0));
+        return out;
+    }
+
+    let mut current_chunk_hashes: Map<String, Value> = Map::new();
+    for chunk in chunks {
+        let cid = chunk
+            .get("id")
+            .or_else(|| chunk.get("chunk_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if cid.is_empty() {
+            continue;
+        }
+        let text = pick_chunk_text(chunk);
+        current_chunk_hashes.insert(cid.to_string(), Value::String(chunk_hash(&text)));
+    }
+
+    let mut requested_ids: BTreeSet<String> = current_chunk_hashes.keys().cloned().collect();
+    if let Some(target) = target_chunk_ids {
+        requested_ids = requested_ids.intersection(target).cloned().collect();
+    }
+
+    let mut requested_versions: Map<String, Value> = Map::new();
+    for chunk_id in &requested_ids {
+        if let Some(hash) = current_chunk_hashes.get(chunk_id) {
+            requested_versions.insert(chunk_id.clone(), hash.clone());
+        }
+    }
+    let historical_versions = load_map_versions(
+        store,
+        tenant_id,
+        kb_id,
+        &BTreeSet::from([doc_id.to_string()]),
+        Some(&requested_versions),
+    );
+    let mut cache_hits: Vec<Value> = Vec::new();
+    let mut cache_hit_ids: BTreeSet<String> = BTreeSet::new();
+    for chunk_id in &requested_ids {
+        let hash = current_chunk_hashes
+            .get(chunk_id)
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let extract = historical_versions
+            .get(chunk_id)
+            .and_then(|by_hash| by_hash.get(hash));
+        if let Some(extract) = extract {
+            cache_hit_ids.insert(chunk_id.clone());
+            cache_hits.push(extract.clone());
+        }
+    }
+
+    let extract_ids: BTreeSet<String> = requested_ids.difference(&cache_hit_ids).cloned().collect();
+    // Skip chunks outside this run's delta as well as historical cache hits.
+    let resume_set: std::collections::HashSet<String> = current_chunk_hashes
+        .keys()
+        .filter(|chunk_id| !extract_ids.contains(*chunk_id))
+        .cloned()
+        .collect();
+
+    // Defensive scrub: chunkers sometimes embed the chunk_id / doc_id into
+    // the body; without this the LLM tends to extract the hash as an entity.
+    let mut all_known_ids: Vec<String> = Vec::new();
+    for chunk in chunks {
+        let cid = chunk
+            .get("id")
+            .or_else(|| chunk.get("chunk_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !cid.is_empty() {
+            all_known_ids.push(cid.to_string());
+        }
+    }
+    if !doc_id.is_empty() {
+        all_known_ids.push(doc_id.to_string());
+    }
+
+    let overhead =
+        crate::chunk::tokenizer::token_count(&format!("{WIKI_MAP_SYSTEM}{WIKI_MAP_USER_TEMPLATE}"));
+    let mut inputs: Vec<ChunkInput> = Vec::new();
+    for chunk in chunks {
+        let cid = chunk
+            .get("id")
+            .or_else(|| chunk.get("chunk_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if cid.is_empty() {
+            continue;
+        }
+        inputs.push(ChunkInput {
+            id: cid.to_string(),
+            text: scrub_known_ids(&pick_chunk_text(chunk), &all_known_ids),
+        });
+    }
+    let (batches, _info) = build_chunk_batches(
+        &inputs,
+        chat.max_length(),
+        overhead,
+        Some(&resume_set),
+        batch_size_cap,
+        window_fraction,
+        1024,
+    );
+    let cached_merged = merge_extracts(&cache_hits);
+    if batches.is_empty() {
+        let mut out = cached_merged;
+        out.as_object_mut().expect("object").insert(
+            "_meta".to_string(),
+            wiki_meta(doc_id, requested_ids.len(), cache_hit_ids.len(), 0),
+        );
+        return out;
+    }
+
+    let mut extracted_batches: Vec<Value> = Vec::new();
+    let total_batches = batches.len();
+    for (batch_idx, batch) in batches.iter().enumerate() {
+        let merged_batch = wiki_process_batch(
+            chat,
+            store,
+            batch,
+            batch_idx,
+            total_batches,
+            doc_id,
+            tenant_id,
+            kb_id,
+            language,
+            llm_timeout,
+            callback,
+            parser_config,
+            Some(&current_chunk_hashes),
+        )
+        .await;
+        extracted_batches.push(merged_batch);
+    }
+    let extracted = merge_extracts(&extracted_batches);
+    let merged = merge_extracts(&[cached_merged, extracted]);
+    let counts = |key: &str| {
+        merged
+            .get(key)
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0)
+    };
+    tracing::info!(
+        doc = doc_id,
+        requested = requested_ids.len(),
+        cache_hits = cache_hit_ids.len(),
+        extracted = extract_ids.len(),
+        entities = counts("entities"),
+        concepts = counts("concepts"),
+        claims = counts("claims"),
+        relations = counts("relations"),
+        topics = counts("topics"),
+        "wiki_map: document processed"
+    );
+    let mut merged = merged;
+    merged.as_object_mut().expect("object").insert(
+        "_meta".to_string(),
+        wiki_meta(
+            doc_id,
+            requested_ids.len(),
+            cache_hit_ids.len(),
+            extract_ids.len(),
+        ),
+    );
+    merged
+}
+
+#[cfg(test)]
+mod wiki_part3_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct FakeChat {
+        reply: String,
+        max_length: usize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str, max_length: usize) -> Self {
+            Self {
+                reply: reply.to_string(),
+                max_length,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            self.max_length
+        }
+    }
+
+    const REPLY: &str = r#"{
+        "entities": [
+            {"name": "Alpha", "source_chunk_id": "C1"},
+            {"name": "C1", "source_chunk_id": "C2"}
+        ],
+        "concepts": [
+            {"term": "Beta", "definition_excerpt": "d", "source_chunk_id": "C2"}
+        ],
+        "claims": [],
+        "relations": [],
+        "topics": ["t"]
+    }"#;
+
+    #[tokio::test]
+    async fn extract_one_batch_builds_prompt_and_unwraps() {
+        let chat = FakeChat::new(REPLY, 100_000);
+        let packed = vec![
+            PackedEntry {
+                label: "C1".to_string(),
+                chunk_id: "id1".to_string(),
+                text: "a".to_string(),
+            },
+            PackedEntry {
+                label: "C2".to_string(),
+                chunk_id: "id2".to_string(),
+                text: "b".to_string(),
+            },
+        ];
+        let out = wiki_extract_one_batch(&chat, &packed, "d1", "en", 30, &json!({}), 0, 1, None)
+            .await
+            .expect("extract");
+        assert_eq!(out["entities"].as_array().unwrap().len(), 2);
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("Document id: d1"));
+        assert!(prompt.contains("- C1"));
+        assert!(prompt.contains("- C2"));
+        assert!(prompt.contains("[CHUNK_ID C1]"));
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_none_and_fires_callback() {
+        let chat = FakeChat::new(REPLY, 100_000);
+        let packed = vec![PackedEntry {
+            label: "C1".to_string(),
+            chunk_id: "id1".to_string(),
+            text: "a".to_string(),
+        }];
+        let fired = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = fired.clone();
+        let callback = move |_progress: f64, message: &str| {
+            if message.contains("[ERROR]") {
+                flag.store(true, Ordering::SeqCst);
+            }
+        };
+        let out = wiki_extract_one_batch(
+            &chat,
+            &packed,
+            "d1",
+            "en",
+            0,
+            &json!({}),
+            0,
+            1,
+            Some(&callback),
+        )
+        .await;
+        assert!(out.is_none());
+        assert!(fired.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn process_batch_persists_resume_rows() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat::new(REPLY, 100_000);
+        let packed = vec![
+            PackedEntry {
+                label: "C1".to_string(),
+                chunk_id: "id1".to_string(),
+                text: "a".to_string(),
+            },
+            PackedEntry {
+                label: "C2".to_string(),
+                chunk_id: "id2".to_string(),
+                text: "b".to_string(),
+            },
+        ];
+        let mut hashes = Map::new();
+        hashes.insert("id1".to_string(), Value::String("h1".to_string()));
+        hashes.insert("id2".to_string(), Value::String("h2".to_string()));
+        let merged = wiki_process_batch(
+            &chat,
+            &store,
+            &packed,
+            0,
+            1,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            30,
+            None,
+            &json!({}),
+            Some(&hashes),
+        )
+        .await;
+        assert_eq!(merged["entities"][0]["chunk_ids"], json!(["id1"]));
+        assert_eq!(merged["concepts"][0]["chunk_ids"], json!(["id2"]));
+        let versions = load_map_versions(
+            &store,
+            "t1",
+            "kb1",
+            &BTreeSet::from(["d1".to_string()]),
+            None,
+        );
+        assert_eq!(versions["id1"]["h1"]["entities"][0]["name"], json!("Alpha"));
+    }
+
+    #[tokio::test]
+    async fn map_entry_caches_on_second_run() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat::new(REPLY, 100_000);
+        let chunks = vec![
+            json!({"id": "c1", "text": "hello"}),
+            json!({"id": "c2", "content_with_weight": "world"}),
+        ];
+        let out = wiki_map_from_chunks(
+            &store,
+            &chat,
+            &chunks,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            2,
+            30,
+            &json!({}),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(out["_meta"]["requested"], json!(2));
+        assert_eq!(out["_meta"]["cache_hits"], json!(0));
+        assert_eq!(out["_meta"]["extracted"], json!(2));
+        assert_eq!(out["entities"].as_array().unwrap().len(), 1);
+        assert_eq!(out["concepts"].as_array().unwrap().len(), 1);
+        assert_eq!(out["entities"][0]["chunk_ids"], json!(["c1"]));
+        let calls_first = chat.calls.lock().unwrap().len();
+        assert!(calls_first >= 1);
+
+        let out2 = wiki_map_from_chunks(
+            &store,
+            &chat,
+            &chunks,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            2,
+            30,
+            &json!({}),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(out2["_meta"]["cache_hits"], json!(2));
+        assert_eq!(out2["_meta"]["extracted"], json!(0));
+        assert_eq!(chat.calls.lock().unwrap().len(), calls_first);
+        assert_eq!(out2["entities"][0]["name"], json!("Alpha"));
+    }
+
+    #[tokio::test]
+    async fn map_entry_target_filter_limits_extraction() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat::new(REPLY, 100_000);
+        let chunks = vec![
+            json!({"id": "c1", "text": "hello"}),
+            json!({"id": "c2", "text": "world"}),
+        ];
+        let target = BTreeSet::from(["c2".to_string()]);
+        let out = wiki_map_from_chunks(
+            &store,
+            &chat,
+            &chunks,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            2,
+            30,
+            &json!({}),
+            None,
+            None,
+            Some(&target),
+            None,
+        )
+        .await;
+        assert_eq!(out["_meta"]["requested"], json!(1));
+        assert_eq!(out["_meta"]["extracted"], json!(1));
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("[CHUNK_ID C1]"));
+        assert!(prompt.contains("world"));
+        assert!(!prompt.contains("hello"));
     }
 }
