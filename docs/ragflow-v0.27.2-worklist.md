@@ -7,7 +7,7 @@
 ## 现状摘要
 
 - 文件总数：5977；unmapped=0（v0.3.10g 全量分类完成）
-- partial：58（UI 残留 42 + 实施队列 16）
+- partial：56（UI 残留 42 + 实施队列 14）
 - re-audit：440（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
 
@@ -28,7 +28,7 @@
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
 
-### W-4 Agentic harness 移植（最大队列）（16 项）
+### W-4 Agentic harness 移植（最大队列）（14 项）
 
 | 文件 | 行数 | RayRAG 对应 | 台账注记 |
 |---|---:|---|---|
@@ -38,8 +38,6 @@
 | `rag/advanced_rag/harness/arithmetic.py` | 420 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：算式求值工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/grep_sed_narrow.py` | 449 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：窄域 grep/sed 文本检索；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/memory.py` | 390 | `src/advanced_rag.rs; src/agent.rs; src/memory.rs` | （v0.3.10g 审计：harness 会话记忆；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/orchestrator/direct.py` | 60 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：直接回答编排；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/orchestrator/query_rewriter.py` | 98 | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：查询改写编排；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/sufficient_context.py` | 419 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：上下文充分性判定；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/compiled_expansion.py` | 514 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：编译扩展工具；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/tools/exploration.py` | 468 | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：探索工具；待移植——worklist W-4（agentic harness）） |

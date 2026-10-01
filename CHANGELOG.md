@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.81] — 2026-10-01（对标批次 v0.3.10z）
+
+> W-4 续：agentic harness orchestrator 策略移植（`direct` + `query_rewriter`，纯 Rust）。
+
+- `src/harness/orchestrator/direct.rs`：`direct_search`（`Kbinfos` 合并去重、`_chunk_key` 真值链与匿名回退、doc_aggs 的 None 语义、entity 加权检索查询注入、`empty_result` 分支、`direct` 阶段作用域）+ `DirectTools` 注入契约（`extract_keywords_weighted` / `hybrid_search`）。
+- `src/harness/orchestrator/query_rewriter.rs`：`sca_query_rewrite` 模板原文 + 渲染（gaps / bridge / research_context）、`parse_rewrite_queries`（对象与裸字符串、去重保序、think/围栏清洗）、`rewrite_gap_to_query`（缺 chat / 空 gaps / 调用失败 → 空、`rewrite` 阶段作用域）。
+- 台账 2 行 partial → full；worklist W-4 队列 16 → 14；`ragflow-coverage --check` 常绿（5977 文件、unmapped=0）。
+- 单测：orchestrator 5 项全绿；fmt/clippy 干净。
+
+**构建**：`cargo build --release --locked`（默认 feature：`postgres-backend`、`zvec-backend`）。
+
 ## [0.4.80] — 2026-10-01（对标批次 v0.3.10y）
 
 > W-4 起步：RAGFlow v0.27.2 agentic harness 基础层移植（`src/harness/`，纯 Rust）。

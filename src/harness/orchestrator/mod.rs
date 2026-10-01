@@ -11,6 +11,5 @@
 //! Which strategies a mode runs is decided in [`crate::harness::config`]
 //! (`THINKING_MODES`), not here — see `ModeSpec::enable_sca` / `use_fanout`.
 //!
-//! The strategy implementations land with the tool pipeline (hybrid search +
-//! the action-session runtime); this package root already carries the upstream
-//! layout.
+pub mod direct;
+pub mod query_rewriter;

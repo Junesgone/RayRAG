@@ -18,8 +18,8 @@
 | Status | Files | Text source lines |
 |---|---:|---:|
 | aligned | 279 | 68052 |
-| full | 623 | 296554 |
-| partial | 58 | 28110 |
+| full | 625 | 296712 |
+| partial | 56 | 27952 |
 | replaced | 124 | 50399 |
 | N/A | 61 | 10542 |
 | reference | 4832 | 1247524 |
@@ -3644,8 +3644,8 @@ These 309 path(s) existed in the RAGFlow v0.26.4 ledger and no longer exist in v
 | `rag/advanced_rag/harness/keywords.py` | 169 | 8962 | `a866779629022144` | full | `src/harness/keywords.rs` | v0.3.10y：四面向抽取（KEYWORDS_SYSTEM 原文）、跨面向单集合去重、entity 与 qualifier ×3 加权、400 字符上限、think/围栏清洗、LLM 失败回退 (question, question)；2 项单测 |
 | `rag/advanced_rag/harness/memory.py` | 390 | 13832 | `46ded2be869204cd` | partial | `src/advanced_rag.rs; src/agent.rs; src/memory.rs` | （v0.3.10g 审计：harness 会话记忆；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/orchestrator/__init__.py` | 12 | 523 | `9066d26600b9edf4` | full | `src/harness/orchestrator/mod.rs` | v0.3.10y：策略包文档（direct/sufficient_context/query_rewriter 归属与 THINKING_MODES 关系）；策略实现随工具管线批次移植（各自行独立收敛） |
-| `rag/advanced_rag/harness/orchestrator/direct.py` | 60 | 2195 | `befe6fd499473c37` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：直接回答编排；待移植——worklist W-4（agentic harness）） |
-| `rag/advanced_rag/harness/orchestrator/query_rewriter.py` | 98 | 3820 | `c186b323a556bc8b` | partial | `src/advanced_rag.rs; src/agent.rs; src/prompts.rs` | （v0.3.10g 审计：查询改写编排；待移植——worklist W-4（agentic harness）） |
+| `rag/advanced_rag/harness/orchestrator/direct.py` | 60 | 2195 | `befe6fd499473c37` | full | `src/harness/orchestrator/direct.rs` | v0.3.10z：direct_search 全量移植（Kbinfos 合并/去重、_chunk_key 真值链与匿名回退、doc_aggs None 语义、entity 加权检索查询注入、empty_result 分支、direct 阶段作用域）；DirectTools 注入式 hybrid_search 回调；2 项单测 |
+| `rag/advanced_rag/harness/orchestrator/query_rewriter.py` | 98 | 3820 | `c186b323a556bc8b` | full | `src/harness/orchestrator/query_rewriter.rs` | v0.3.10z：sca_query_rewrite 模板原文 + gaps/bridge/research_context 渲染；gen_json 等价调用（system=渲染提示、user=Output:）；queries 解析（对象/字符串、去重、think/围栏清洗）；缺 chat/空 gaps/失败→空；rewrite 阶段作用域；2 项单测 |
 | `rag/advanced_rag/harness/orchestrator/sufficient_context.py` | 419 | 18055 | `5d68bcb2589d92b8` | partial | `src/advanced_rag.rs; src/agent.rs` | （v0.3.10g 审计：上下文充分性判定；待移植——worklist W-4（agentic harness）） |
 | `rag/advanced_rag/harness/prompts/__init__.py` | 1 | 48 | `2c759e9a863eaf4b` | full | `src/harness/mod.rs` | v0.3.10y：提示词包映射到 src/harness/{report_prompt,keywords,structure_qa}.rs 的提示词常量 |
 | `rag/advanced_rag/harness/prompts/report_prompt.py` | 33 | 1818 | `11a2ee0f908b348b` | full | `src/harness/report_prompt.rs` | v0.3.10y：FINAL_ANSWER_SYSTEM（{cite_rules} 填充入口）+ PARTIAL_ANSWER_PREAMBLE 原文移植；1 项单测 |
