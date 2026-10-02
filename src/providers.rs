@@ -1049,7 +1049,7 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: false,
         kinds: &[ProviderKind::Chat],
-        models: &[],
+        models: &["llama3-8b", "mixtral-8x7b"],
         note: "LeptonAI（按模型子域 <model>.lepton.run，需国际网络）",
     },
     ProviderPreset {
@@ -1060,7 +1060,7 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         dialect: ProviderDialect::OpenAiCompatible,
         domestic: true,
         kinds: &[ProviderKind::Embedding],
-        models: &[],
+        models: &["BAAI/bge-m3", "BAAI/bge-large-zh-v1.5"],
         note: "PerfXCloud 嵌入（国内直连）",
     },
 ];
