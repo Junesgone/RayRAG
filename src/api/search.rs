@@ -421,6 +421,14 @@ pub struct DifyRetrievalModel {
     pub rerank_id: Option<String>,
 }
 
+/// `GET /api/v1/dify/retrieval` — the probe half of upstream's `dify_retrieval_api`.
+///
+/// Upstream answers `{"code":0,"data":true}` on GET and performs the retrieval on POST;
+/// a Dify configuration screen that probes with GET must not see a 405.
+pub async fn dify_retrieval_probe() -> impl axum::response::IntoResponse {
+    axum::Json(serde_json::json!({ "code": 0, "data": true }))
+}
+
 /// GET /api/v1/dify/retrieval/health — upstream `dify_retrieval_api.retrieval_health_check`.
 ///
 /// Dify calls this before saving the external knowledge-base configuration; the

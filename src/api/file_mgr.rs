@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
-use crate::server::{AppState, AuthContext};
+use crate::server::{AppState, AuthContext, file_physical_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRecord {
@@ -71,6 +71,41 @@ impl FileStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// One record by id, regardless of the folder it sits in.
+    pub fn get(&self, id: &str) -> Option<FileRecord> {
+        self.files.read().unwrap().get(id).cloned()
+    }
+
+    /// Every record this caller may see, in any folder (the folder tree walks use it).
+    pub fn all_for(&self, owner_id: &str, is_admin: bool) -> Vec<FileRecord> {
+        self.files
+            .read()
+            .unwrap()
+            .values()
+            .filter(|file| file.owner_id == owner_id || (is_admin && file.owner_id.is_empty()))
+            .cloned()
+            .collect()
+    }
+
+    /// Re-parent (and optionally rename) one record, keeping the store's own bookkeeping.
+    pub fn move_record(
+        &self,
+        id: &str,
+        parent_id: &str,
+        new_name: Option<&str>,
+    ) -> anyhow::Result<FileRecord> {
+        self.mutate(|files| {
+            let Some(file) = files.get_mut(id) else {
+                anyhow::bail!("File not found");
+            };
+            file.parent_id = parent_id.to_string();
+            if let Some(name) = new_name.map(str::trim).filter(|name| !name.is_empty()) {
+                file.name = name.to_string();
+            }
+            Ok(file.clone())
+        })
     }
 
     pub fn add(&self, f: FileRecord) -> anyhow::Result<()> {
@@ -146,6 +181,271 @@ pub async fn list_files(
         "code": 0,
         "data": state.files.list_for(&auth.user_id, auth.is_admin, "root")
     }))
+}
+
+/// `GET /api/v1/files/{id}/parent` — upstream `file_api.parent_folder`.
+///
+/// The parent record itself (not just its id), because the breadcrumb renders its name.
+pub async fn parent_folder(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Response {
+    let Some(record) = visible_file(&state, &auth, &file_id) else {
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+            .into_response();
+    };
+    let parent = state.files.get(&record.parent_id);
+    Json(serde_json::json!({ "code": 0, "data": parent })).into_response()
+}
+
+/// `GET /api/v1/files/{id}/ancestors` — upstream `file_api.ancestors`.
+///
+/// Upstream walks up from the requested file, appending each record until a record is
+/// its own parent (the root folder), so the list starts at the file itself.
+pub async fn file_ancestors(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Response {
+    if visible_file(&state, &auth, &file_id).is_none() {
+        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+            .into_response();
+    }
+    let mut chain = Vec::new();
+    let mut current = Some(file_id.clone());
+    while let Some(id) = current {
+        let Some(record) = state.files.get(&id) else {
+            break;
+        };
+        let is_root = record.parent_id == record.id || record.parent_id == "root";
+        current = if is_root {
+            None
+        } else {
+            Some(record.parent_id.clone())
+        };
+        chain.push(record);
+        if chain.len() > 64 {
+            // A cycle in the parent links must not hang the request.
+            tracing::error!(%file_id, "File ancestor chain exceeded 64 links; stopping");
+            break;
+        }
+    }
+    Json(serde_json::json!({ "code": 0, "data": chain })).into_response()
+}
+
+/// `POST /api/v1/files/move` — upstream `file_api.move`: re-parent the selected records
+/// (`dest_file_id`) and optionally rename them (`new_name`).
+pub async fn move_files(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let src_ids: Vec<String> = body
+        .get("src_file_ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if src_ids.is_empty() {
+        return Json(serde_json::json!({ "code": 102, "message": "`src_file_ids` is required" }))
+            .into_response();
+    }
+    let Some(mut dest) = body
+        .get("dest_file_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return Json(serde_json::json!({ "code": 102, "message": "`dest_file_id` is required" }))
+            .into_response();
+    };
+    if dest == "root" {
+        dest = "root".to_string();
+    }
+    let new_name = body
+        .get("new_name")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty())
+        .filter(|_| src_ids.len() == 1);
+    let mut moved = Vec::new();
+    for src_id in &src_ids {
+        if visible_file(&state, &auth, src_id).is_none() {
+            return Json(serde_json::json!({
+                "code": 102,
+                "message": format!("File not found: {src_id}")
+            }))
+            .into_response();
+        }
+        match state.files.move_record(src_id, &dest, new_name.as_deref()) {
+            Ok(record) => moved.push(record),
+            Err(error) => {
+                tracing::error!(%error, file_id = %src_id, "Failed to move file");
+                return Json(serde_json::json!({ "code": 500, "message": error.to_string() }))
+                    .into_response();
+            }
+        }
+    }
+    Json(serde_json::json!({ "code": 0, "data": moved })).into_response()
+}
+
+/// `DELETE /api/v1/files` — upstream `file_api.delete`: bulk delete by `ids`.
+pub async fn delete_files(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let ids: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Json(serde_json::json!({ "code": 400, "message": "'ids' is required" }))
+            .into_response();
+    }
+    let mut success_count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for id in &ids {
+        match remove_file_record(&state, &auth, id) {
+            Ok(true) => success_count += 1,
+            Ok(false) => errors.push(format!("File not found: {id}")),
+            Err(error) => {
+                tracing::error!(%error, file_id = %id, "Failed to delete file");
+                errors.push(format!("{id}: {error}"));
+            }
+        }
+    }
+    if errors.is_empty() {
+        return Json(serde_json::json!({
+            "code": 0,
+            "data": { "success_count": success_count }
+        }))
+        .into_response();
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "message": format!(
+            "Partially deleted {success_count} files with {} errors",
+            errors.len()
+        ),
+        "data": { "success_count": success_count, "errors": errors },
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/files` — upstream `file_api.create_or_upload`.
+///
+/// One path serves both faces: `multipart/form-data` uploads files, a JSON body creates
+/// a folder. The upload side delegates to the same handler as `/files/upload`, so the
+/// two entry points cannot diverge.
+pub async fn create_or_upload(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    request: axum::extract::Request,
+) -> Response {
+    let content_type = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if content_type.contains("multipart/form-data") {
+        // The upload handler takes `Multipart`; extracting it here keeps one code path
+        // for the multipart body instead of duplicating the streaming upload.
+        use axum::extract::FromRequest as _;
+        match axum::extract::Multipart::from_request(request, &()).await {
+            Ok(multipart) => return upload_file(State(state), Extension(auth), multipart).await,
+            Err(error) => {
+                return Json(serde_json::json!({ "code": 400, "message": error.to_string() }))
+                    .into_response();
+            }
+        }
+    }
+    let (_, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Json(serde_json::json!({ "code": 400, "message": error.to_string() }))
+                .into_response();
+        }
+    };
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+    let parent_id = parsed
+        .get("parent_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("root")
+        .to_string();
+    let name = parsed
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Json(serde_json::json!({ "code": 102, "message": "`name` is required" }))
+            .into_response();
+    }
+    let record = FileRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        owner_id: auth.user_id.clone(),
+        parent_id,
+        size: 0,
+        content_hash: String::new(),
+        file_type: "folder".into(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as u64)
+            .unwrap_or_default(),
+    };
+    match state.files.add_unique(record) {
+        Ok(record) => Json(serde_json::json!({ "code": 0, "data": record })).into_response(),
+        Err(error) => {
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response()
+        }
+    }
+}
+
+/// The record behind an id, when this caller may see it.
+fn visible_file(
+    state: &AppState,
+    auth: &AuthContext,
+    file_id: &str,
+) -> Option<crate::api::file_mgr::FileRecord> {
+    state
+        .files
+        .get(file_id)
+        .filter(|record| record.owner_id == auth.user_id || auth.is_admin)
+}
+
+/// Delete a record and its blob, reporting rather than swallowing a failure.
+fn remove_file_record(state: &AppState, auth: &AuthContext, file_id: &str) -> anyhow::Result<bool> {
+    let Some(record) = visible_file(state, auth, file_id) else {
+        return Ok(false);
+    };
+    let physical = file_physical_path(&state.files.data_dir, file_id, &record.name);
+    if physical.exists()
+        && let Err(error) = std::fs::remove_file(&physical)
+    {
+        tracing::warn!(%error, %file_id, "Failed to remove the file blob");
+    }
+    state.files.remove(file_id)
 }
 
 /// DELETE /api/v1/files/{id} — 删除文件记录 + 物理文件。

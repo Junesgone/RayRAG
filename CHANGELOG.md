@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.1] - 2026-10-02
+
+- **接口对标第三批（文件树 + 会话批量删除 + 4 处方法缺口）**：数字由「同名 85 / 别名 38 / 未实现 56 / 方法缺 8」推进到「同名 **88** / 别名 **38** / 未实现 **53** / 方法缺 **4**」。
+- **文件管理器对齐上游**：`POST /files`（multipart 上传 / JSON 建文件夹，一个入口两种面孔，上传复用同一处理器）、`DELETE /files`（按 `ids` 批量删除，返回上游的 `success_count` + `errors`）、`POST /files/move`（改父目录并可改名）、`GET /files/{id}/parent`、`GET /files/{id}/ancestors`（从文件自身向上走到根，含环路保护）。
+- **会话删除**：`DELETE /chats` 支持上游的三种请求体——`{"ids":[…]}` 批量、`{"delete_all":true}` 全清、以及向后兼容的 `{"chat_id":"…"}` 单删——并返回上游的 `{}` / `{success_count, errors}` 包封；`PUT /chats/{id}` 与既有 PATCH 同处理器。
+- **Dify 探测**：`GET /dify/retrieval` 补齐（上游 GET 探测 + POST 检索同路径），配置页用 GET 探测不会再收到 405。
+- **测试**：新增文件树与会话批量删除任务级回归（建文件夹→建子文件→parent/ancestors 链→move 改名→批量删除部分成功；`delete_all=false` 空体返回 `{}`；Dify GET 探测）。全量 **2125 passed / 0 failed**。
+
 ## [0.5.0] - 2026-10-02
 
 - **接口对标推进一批（9 条落地）**：接口对照数字由「同名 77 / 别名 37 / 未实现 65 / 方法缺 9」推进到「同名 **86** / 别名 **37** / 未实现 **56** / 方法缺 **8**」。本轮落地：数据集级批量解析 `POST /datasets/{id}/documents/parse`、批量停止 `POST /datasets/{id}/documents/stop`（均返回上游的 `{"success_count": n}`，未知文档按上游返回 `code 102` 并列出 id）、元数据汇总 `GET /datasets/{id}/metadata/summary`（上游 GET + `doc_ids` 查询，返回 `{"summary": {字段: {type, values}}}`）、元数据批量更新 `POST /datasets/{id}/metadata/update`、元数据扁平表 `GET /datasets/metadata/flattened`、标签聚合 `GET /datasets/tags/aggregation`。

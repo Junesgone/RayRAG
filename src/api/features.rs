@@ -356,6 +356,90 @@ pub async fn delete_chat(
     }
 }
 
+/// `DELETE /api/v1/chats` — upstream `chat_api.bulk_delete_chats`.
+///
+/// Three accepted bodies, exactly as upstream: `{"ids": [...]}` for a selection,
+/// `{"delete_all": true}` for everything, and the legacy `{"chat_id": "..."}` for one.
+/// Upstream answers `{}` when there is nothing to do and `{success_count, errors}`
+/// otherwise; both are reproduced here.
+pub async fn bulk_delete_chats(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let mut ids: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        if body.get("delete_all").and_then(|value| value.as_bool()) == Some(true) {
+            ids = state
+                .conversations
+                .list_for(&auth.user_id)
+                .into_iter()
+                .map(|chat| chat.id)
+                .collect();
+            if ids.is_empty() {
+                return Json(serde_json::json!({ "code": 0, "data": {} })).into_response();
+            }
+        } else if let Some(chat_id) = body.get("chat_id").and_then(|value| value.as_str()) {
+            // Backward-compatible single delete: upstream answers `data: true`.
+            return match state.conversations.delete_for(chat_id, &auth.user_id) {
+                Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+                Ok(false) => Json(serde_json::json!({
+                    "code": 102,
+                    "message": format!("Failed to delete chat {chat_id}")
+                }))
+                .into_response(),
+                Err(error) => {
+                    Json(serde_json::json!({ "code": 500, "message": error.to_string() }))
+                        .into_response()
+                }
+            };
+        } else {
+            return Json(serde_json::json!({ "code": 0, "data": {} })).into_response();
+        }
+    }
+    let mut success_count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for chat_id in &ids {
+        match state.conversations.delete_for(chat_id, &auth.user_id) {
+            Ok(true) => success_count += 1,
+            Ok(false) => errors.push(format!("Chat({chat_id}) not found.")),
+            Err(error) => {
+                tracing::error!(%error, %chat_id, "Failed to delete chat");
+                errors.push(format!("Chat({chat_id}) failed: {error}"));
+            }
+        }
+    }
+    let message = if errors.is_empty() {
+        serde_json::Value::Null
+    } else if success_count > 0 {
+        serde_json::json!(format!(
+            "Partially deleted {success_count} chats with {} errors",
+            errors.len()
+        ))
+    } else {
+        serde_json::json!(format!("Deleted chats failed with {} errors", errors.len()))
+    };
+    let mut payload = serde_json::json!({
+        "code": 0,
+        "data": { "success_count": success_count, "errors": errors }
+    });
+    if !message.is_null() {
+        payload["message"] = message;
+    }
+    Json(payload).into_response()
+}
+
 /// DELETE /api/v1/chats/{session_id}/messages/{message_id} — delete one turn.
 pub async fn delete_chat_message(
     State(state): State<Arc<AppState>>,

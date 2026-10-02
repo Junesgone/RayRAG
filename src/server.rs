@@ -346,7 +346,7 @@ async fn delete_my_api_key(
 
 // ── File rename / copy (files page) ────────────────────────────────────
 
-fn file_physical_path(data_dir: &str, id: &str, name: &str) -> std::path::PathBuf {
+pub(crate) fn file_physical_path(data_dir: &str, id: &str, name: &str) -> std::path::PathBuf {
     let extension = std::path::Path::new(name)
         .extension()
         .and_then(|value| value.to_str())
@@ -4276,7 +4276,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/search", post(crate::api::search::weighted_search))
         .route(
             "/api/v1/dify/retrieval",
-            post(crate::api::search::dify_retrieval),
+            // Upstream registers GET (probe) and POST (retrieval) on this path.
+            get(crate::api::search::dify_retrieval_probe).post(crate::api::search::dify_retrieval),
         )
         .route(
             "/api/v1/chunks/{doc_id}",
@@ -4289,11 +4290,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/completions", post(chat_completion))
         .route(
             "/api/v1/chats",
-            get(crate::api::features::list_chats).post(crate::api::features::create_chat),
+            get(crate::api::features::list_chats)
+                .post(crate::api::features::create_chat)
+                // Upstream `chat_api.bulk_delete_chats`: the list's "delete selected",
+                // "delete all" (ids/delete_all/chat_id bodies) and legacy single delete.
+                .delete(crate::api::features::bulk_delete_chats),
         )
         .route(
             "/api/v1/chats/{id}",
             get(crate::api::features::get_chat)
+                // Upstream registers PUT and PATCH on the same handler.
+                .put(crate::api::features::update_chat)
                 .patch(crate::api::features::update_chat)
                 .delete(crate::api::features::delete_chat),
         )
@@ -4351,10 +4358,32 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/evaluation-runs/{id}/recommendations",
             get(crate::api::evaluation::recommendations),
         )
-        .route("/api/v1/files", get(crate::api::file_mgr::list_files))
+        .route(
+            "/api/v1/files",
+            get(crate::api::file_mgr::list_files)
+                // Upstream `file_api.create_or_upload`: multipart uploads, a JSON body
+                // creates a folder — one path for both faces.
+                .post(crate::api::file_mgr::create_or_upload)
+                // Upstream `file_api.delete`: bulk delete by `ids`.
+                .delete(crate::api::file_mgr::delete_files),
+        )
+        .route(
+            // Upstream `file_api.move`: re-parent and optionally rename.
+            "/api/v1/files/move",
+            axum::routing::post(crate::api::file_mgr::move_files),
+        )
         .route(
             "/api/v1/files/folder",
             axum::routing::post(crate::api::file_mgr::create_folder),
+        )
+        // Upstream `file_api.parent_folder` / `ancestors`: the file manager's breadcrumb.
+        .route(
+            "/api/v1/files/{file_id}/parent",
+            get(crate::api::file_mgr::parent_folder),
+        )
+        .route(
+            "/api/v1/files/{file_id}/ancestors",
+            get(crate::api::file_mgr::file_ancestors),
         )
         .route(
             "/api/v1/files/{file_id}",
@@ -15272,6 +15301,153 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The file tree and the bulk-delete paths must behave like upstream's: a folder can
+    /// be created through `POST /files`, moved, walked up with `parent`/`ancestors`, and
+    /// deleted in bulk; `DELETE /chats` takes `ids` or `delete_all`.
+    #[tokio::test]
+    async fn file_tree_and_bulk_delete_endpoints_follow_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        let create = |name: &str, parent: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = serde_json::json!({"name": name, "parent_id": parent}).to_string();
+            async move {
+                let response = router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/files")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                response_json(response).await
+            }
+        };
+
+        let folder = create("Docs", "root").await;
+        assert_eq!(folder["code"], 0);
+        let folder_id = folder["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(folder["data"]["file_type"], "folder");
+
+        let child = create("report.pdf", &folder_id).await;
+        let child_id = child["data"]["id"].as_str().unwrap().to_string();
+
+        let parent = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/files/{child_id}/parent"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let parent = response_json(parent).await;
+        assert_eq!(parent["code"], 0);
+        assert_eq!(parent["data"]["id"], folder_id.as_str());
+
+        let ancestors = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/files/{child_id}/ancestors"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let ancestors = response_json(ancestors).await;
+        let chain = ancestors["data"].as_array().unwrap();
+        // Upstream starts at the file itself and walks up to the root.
+        assert_eq!(chain[0]["id"], child_id.as_str());
+        assert_eq!(chain[1]["id"], folder_id.as_str());
+
+        let moved = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/files/move")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "src_file_ids": [child_id.clone()],
+                            "dest_file_id": "root",
+                            "new_name": "summary.pdf"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let moved = response_json(moved).await;
+        assert_eq!(moved["code"], 0);
+        assert_eq!(moved["data"][0]["name"], "summary.pdf");
+        assert_eq!(moved["data"][0]["parent_id"], "root");
+
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/files")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"ids": [folder_id.clone(), "missing"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let deleted = response_json(deleted).await;
+        assert_eq!(deleted["code"], 0);
+        assert_eq!(deleted["data"]["success_count"], 1);
+        assert_eq!(deleted["data"]["errors"].as_array().unwrap().len(), 1);
+
+        // `DELETE /chats` with no selection and no flag answers the empty object.
+        let empty = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/chats")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), StatusCode::OK);
+        assert_eq!(response_json(empty).await["data"], serde_json::json!({}));
+
+        // The Dify probe answers on GET as well as POST.
+        let probe = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dify/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(probe.status(), StatusCode::OK);
+        assert_eq!(response_json(probe).await["data"], true);
     }
 
     /// The dataset-scoped upstream endpoints must answer with upstream's own envelopes:

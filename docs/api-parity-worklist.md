@@ -5,12 +5,12 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**260**
-- 同名应答（exact）：**85**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**263**
+- 同名应答（exact）：**88**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**56**
-- 路径已有但方法缺失（method）：**8**
+- 尚未实现（missing，已登记）：**53**
+- 路径已有但方法缺失（method）：**4**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -63,9 +63,6 @@
 | `/documents/upload` | `document_api.py` | 文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload） |
 | `/thumbnails` | `document_api.py` | 缩略图服务 |
 | `/files/link-to-datasets` | `file2document_api.py` | 文件关联数据集 |
-| `/files/<file_id>/ancestors` | `file_api.py` | 文件祖先链（面包屑） |
-| `/files/<file_id>/parent` | `file_api.py` | 文件父目录 |
-| `/files/move` | `file_api.py` | 文件移动 |
 | `/workspace-files/<file_id>/versions` | `file_commit_api.py` | 文件版本历史（file_commit） |
 | `/plugin/tools` | `plugin_api.py` | 插件工具列表 |
 | `/auth/password/forgot/captcha` | `user_api.py` | 忘记密码-图形验证码 |
@@ -90,10 +87,6 @@
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
 | `/agents/<agent_id>/sessions` | agent_api.py [DELETE] |
-| `/chats` | chat_api.py [DELETE] |
-| `/chats/<chat_id>` | chat_api.py [PUT] |
-| `/dify/retrieval` | dify_retrieval_api.py [GET] |
-| `/files` | file_api.py [DELETE,POST] |
 | `/providers/<provider_id_or_name>/instances/<instance_id_or_name>` | provider_api.py [PUT] |
 | `/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models` | provider_api.py [DELETE] |
 | `/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models/<path:model_name>` | provider_api.py [POST] |

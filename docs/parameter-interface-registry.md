@@ -336,7 +336,6 @@
 | GET | `/api/v1/admin/environments` | `-` |
 | GET | `/api/v1/admin/log_levels` | `-` |
 | POST | `/api/v1/search` | `-` |
-| POST | `/api/v1/dify/retrieval` | `-` |
 | GET | `/api/v1/chunks/{doc_id}` | `-` |
 | POST | `/api/v1/chunks/feedback` | `-` |
 | POST | `/api/v1/completions` | `-` |
@@ -357,6 +356,8 @@
 | GET | `/api/v1/evaluation-runs/{id}/recommendations` | `-` |
 | GET | `/api/v1/files` | `-` |
 | ANY | `/api/v1/files/folder` | `axum::routing` |
+| GET | `/api/v1/files/{file_id}/parent` | `-` |
+| GET | `/api/v1/files/{file_id}/ancestors` | `-` |
 | ANY | `/api/v1/files/{file_id}` | `axum::routing` |
 | POST | `/api/v1/files/{file_id}/copy` | `-` |
 | ANY | `/api/v1/files/{file_id}/download` | `axum::routing` |

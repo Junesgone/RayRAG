@@ -65,10 +65,6 @@ COVERED: dict[str, str] = {
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
     "/agents/<agent_id>/sessions": "DELETE 删除 Agent 会话",
-    "/chats": "DELETE 清空会话列表",
-    "/chats/<chat_id>": "PUT 更新会话（重命名等）",
-    "/dify/retrieval": "GET 探测（上游与 POST 同路径）",
-    "/files": "POST 新建文件 / DELETE 批量删除",
     "/providers/<provider_id_or_name>/instances/<instance_id_or_name>": "PUT 更新模型实例",
     "/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models": "DELETE 移除实例内模型",
     "/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models/<path:model_name>": "POST 新增实例内模型",
@@ -119,10 +115,7 @@ KNOWN_MISSING: dict[str, str] = {
     "/documents/artifact/<filename>": "文档产物文件读取",
     "/documents/images/<image_id>": "文档内图片读取",
     "/documents/upload": "文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload）",
-    "/files/<file_id>/ancestors": "文件祖先链（面包屑）",
-    "/files/<file_id>/parent": "文件父目录",
     "/files/link-to-datasets": "文件关联数据集",
-    "/files/move": "文件移动",
     "/plugin/tools": "插件工具列表",
     "/searchbots/ask": "搜索应用问答机器人（上游 bot_api 的公开问答面）",
     "/searchbots/detail": "搜索应用机器人详情",
