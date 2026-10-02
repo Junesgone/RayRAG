@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.5] - 2026-10-02
+
+- **补上 `HarnessChat` 的生产适配器（长期缺件）**：`crate::harness::HarnessChat` 是导航生成、wiki/Artifacts 生成、结构编译共同依赖的对话模型接口，但此前**只有测试用的 `FakeChat`**——这正是这些"引擎已移植、单测完备"的功能一直无法上线的原因：不是缺端点，而是**缺一个把真实对话客户端接到 trait 上的适配器**。新增 `LlmHarnessChat`：把 OpenAI 形状的 `history`（`{"role","content"}`）映射为 `ChatMessage`，空 system 不发送，实现 `max_length`（取模型 `max_tokens`，下限 1024）与 `model_name`。
+- **错误语义**：空输入返回 `Err("harness chat called with no system prompt and no history")`，**绝不返回空 `Ok`**——否则生成器会"成功"却什么都没产生。尚未转发的 `gen_conf`（temperature/top_p 等）以 debug 日志**明确说明使用模型默认值**，而不是静默忽略。
+- **测试**：新增两条（空输入必须报错且错误信息说明缺什么；`max_length`/`model_name` 来自客户端）。全量 **2139 passed / 0 failed**。
+- **下一步**：适配器已具备，下一轮接 `POST /datasets/{id}/navigation` 本体（施工单在 `docs/api-parity-plan.md`）。
+
 ## [0.7.4] - 2026-10-02
 
 - **知识图谱面板开始消费 `GET /datasets/{id}/graph`**：此前面板只在点击 Build Graph 之后显示一次构建摘要（且只有一行统计 + 环形图）。现在打开 `/dataset/knowledge-graph/{id}` 时会**直接读出已构建的图谱**并渲染成两张表 —— 实体（Entity / Type / Degree / Documents）与关系（Source / Target / Weight），只在有边时显示关系表；没有实体时给出**解释性**文案（"Build Graph 从已索引分块抽取实体，文本很少的文档自然图谱很小"），而不是一片空白。

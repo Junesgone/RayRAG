@@ -549,6 +549,16 @@ impl LlmClient {
     }
 
     /// Backward-compatible content-only adapter.
+    /// `{model}@{provider}` style selector, for diagnostics.
+    pub fn model_selector(&self) -> String {
+        self.config.model.clone()
+    }
+
+    /// The context window the harness uses to trim history (`HarnessChat::max_length`).
+    pub fn max_context_tokens(&self) -> usize {
+        self.config.generation.max_tokens.max(1024) as usize
+    }
+
     pub async fn chat(&self, messages: &[ChatMessage]) -> Result<String> {
         Ok(self.chat_completion(messages).await?.content)
     }
@@ -3197,4 +3207,118 @@ fn tokio_test_block_on<F: std::future::Future>(future: F) -> F::Output {
         .build()
         .expect("failed to build test runtime")
         .block_on(future)
+}
+
+/// The production [`crate::harness::HarnessChat`] over RayRAG's chat client.
+///
+/// The ported generators (dataset navigation, wiki/artifact compilation, structure
+/// compilation) all drive `crate::harness::HarnessChat`, but until now the trait had **only
+/// test doubles** — which is why those engines could be built and unit-tested yet never run
+/// in production. This is the adapter that connects them to a real model.
+///
+/// OpenAI-shaped `history` entries (`{"role": …, "content": …}`) are mapped onto
+/// [`ChatMessage`]s; an empty system prompt is omitted rather than sent as an empty message.
+/// A failure is returned as `Err(String)` — never as an empty `Ok`, which would let a
+/// generator "succeed" while producing nothing.
+pub struct LlmHarnessChat {
+    client: std::sync::Arc<LlmClient>,
+}
+
+impl LlmHarnessChat {
+    pub fn new(client: std::sync::Arc<LlmClient>) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::harness::HarnessChat for LlmHarnessChat {
+    async fn chat(
+        &self,
+        system: &str,
+        history: &[serde_json::Value],
+        gen_conf: &serde_json::Value,
+    ) -> std::result::Result<String, String> {
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        if !system.trim().is_empty() {
+            messages.push(ChatMessage::new("system", system.trim()));
+        }
+        for entry in history {
+            let role = entry
+                .get("role")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("user");
+            let content = entry
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if content.trim().is_empty() {
+                continue;
+            }
+            messages.push(ChatMessage::new(role, content));
+        }
+        if messages.is_empty() {
+            return Err("harness chat called with no system prompt and no history".to_string());
+        }
+        if gen_conf
+            .as_object()
+            .map(|object| !object.is_empty())
+            .unwrap_or(false)
+        {
+            // Stated rather than silently dropped: generation parameters (temperature, top_p)
+            // are not forwarded yet, so a caller that sets them gets the model defaults.
+            tracing::debug!(
+                model = %self.client.model_selector(),
+                "HarnessChat generation parameters are not forwarded yet; using model defaults"
+            );
+        }
+        self.client
+            .chat(&messages)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// `chat_mdl.max_length` — the ported generators use it to trim history.
+    fn max_length(&self) -> usize {
+        self.client.max_context_tokens()
+    }
+
+    fn model_name(&self) -> String {
+        self.client.model_selector()
+    }
+}
+
+#[cfg(test)]
+mod harness_chat_tests {
+    use super::*;
+    use crate::harness::HarnessChat;
+
+    fn client() -> std::sync::Arc<LlmClient> {
+        std::sync::Arc::new(LlmClient::new(LlmConfig {
+            api_base: "http://127.0.0.1:1/v1".to_string(),
+            api_key: "test".to_string(),
+            model: "test-model".to_string(),
+            ..LlmConfig::default()
+        }))
+    }
+
+    /// An empty call must be an error, not an empty success: a generator that receives `Ok("")`
+    /// records "done" while producing nothing.
+    #[tokio::test]
+    async fn empty_input_is_an_error_not_an_empty_answer() {
+        let chat = LlmHarnessChat::new(client());
+        let result = chat.chat("", &[], &serde_json::json!({})).await;
+        assert!(result.is_err(), "expected an error, got {result:?}");
+        assert!(
+            result.unwrap_err().contains("no system prompt"),
+            "the error should say what was missing"
+        );
+    }
+
+    /// `max_length` and `model_name` answer from the client rather than panicking.
+    #[test]
+    fn length_and_name_come_from_the_client() {
+        let chat = LlmHarnessChat::new(client());
+        assert!(chat.max_length() >= 1024);
+        assert_eq!(chat.model_name(), "test-model");
+    }
 }
