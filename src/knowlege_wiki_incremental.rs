@@ -5201,9 +5201,16 @@ pub async fn wiki_refine_page(args: RefinePageArgs<'_>) -> Option<Value> {
             if let Some(embeddings) = topic_embeddings.as_deref_mut() {
                 if !embeddings.contains_key(&topic) {
                     if let Some(embd) = embd {
-                        if let Ok(vectors) = embd.embed(&[topic.as_str()]).await {
-                            if let Some(vector) = vectors.into_iter().next() {
-                                embeddings.insert(topic.clone(), json!(vector));
+                        match embd.embed(&[topic.as_str()]).await {
+                            Ok(vectors) => {
+                                if let Some(vector) = vectors.into_iter().next() {
+                                    embeddings.insert(topic.clone(), json!(vector));
+                                }
+                            }
+                            Err(error) => {
+                                // Without a vector the topic drops to lexical-only matching
+                                // for this run; a silent recall loss is hard to diagnose.
+                                tracing::warn!(%error, %topic, "Topic embedding failed; semantic selection skipped for this topic");
                             }
                         }
                     }

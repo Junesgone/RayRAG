@@ -1507,8 +1507,14 @@ pub(crate) fn register_document_upload(
     let doc = state.docs.insert_unique(doc)?;
     let name = doc.name.clone();
     if let Err(error) = state.kbs.update_counts(dataset_id, 0, 1) {
-        state.docs.delete(&doc_id).ok();
-        std::fs::remove_file(&path).ok();
+        // The upload is being undone: report the primary failure, but say it if the
+        // compensating writes fail too, otherwise an orphan row/blob stays behind.
+        if let Err(cleanup) = state.docs.delete(&doc_id) {
+            tracing::error!(%cleanup, %doc_id, "Failed to remove the document row after a failed upload");
+        }
+        if let Err(cleanup) = std::fs::remove_file(&path) {
+            tracing::error!(%cleanup, path = %path.display(), "Failed to remove the uploaded blob after a failed upload");
+        }
         return Err(error);
     }
     let task_id = match queue_document_processing(
@@ -1519,9 +1525,15 @@ pub(crate) fn register_document_upload(
     ) {
         Ok(task_id) => task_id,
         Err(error) => {
-            state.docs.delete(&doc_id).ok();
-            state.kbs.update_counts(dataset_id, 0, -1).ok();
-            std::fs::remove_file(&path).ok();
+            if let Err(cleanup) = state.docs.delete(&doc_id) {
+                tracing::error!(%cleanup, %doc_id, "Failed to remove the document row after a failed queue");
+            }
+            if let Err(cleanup) = state.kbs.update_counts(dataset_id, 0, -1) {
+                tracing::error!(%cleanup, %dataset_id, "Failed to roll back the KB document count");
+            }
+            if let Err(cleanup) = std::fs::remove_file(&path) {
+                tracing::error!(%cleanup, path = %path.display(), "Failed to remove the uploaded blob after a failed queue");
+            }
             return Err(error);
         }
     };
@@ -1571,31 +1583,40 @@ pub(crate) fn queue_document_processing(
                 .docs
                 .update_status(&doc.id, "UNSTARTED", 0.0, "Queued for parsing")
     {
-        state.tasks.request_cancel(&task_id).ok();
+        if let Err(cancel_error) = state.tasks.request_cancel(&task_id) {
+            tracing::error!(%cancel_error, %task_id, "Failed to cancel the queued task after a status write failure");
+        }
         return Err(error);
     }
     // Hand the task to the async TaskExecutor (RAGFlow task_executor port):
     // the executor's worker pool runs `process_document` off the request path.
     // The TaskQueue lease makes this execution exclusive with the legacy
     // dispatcher, so queueing here is idempotent with `dispatch_pending_document_tasks`.
-    let _ = state.task_executor.submit(crate::task_executor::ExecTask {
-        id: task_id.clone(),
-        doc_id: doc.id.clone(),
-        kb_id: doc.kb_id.clone(),
-        name: doc.name.clone(),
-        priority,
-        from_page: 0,
-        to_page: -1,
-        attempts: 0,
-        max_retries: 2,
-        state: crate::task_executor::TaskState::Pending,
-        progress: 0.0,
-        message: "Queued for parsing".into(),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
-    });
+    state
+        .task_executor
+        .submit(crate::task_executor::ExecTask {
+            id: task_id.clone(),
+            doc_id: doc.id.clone(),
+            kb_id: doc.kb_id.clone(),
+            name: doc.name.clone(),
+            priority,
+            from_page: 0,
+            to_page: -1,
+            attempts: 0,
+            max_retries: 2,
+            state: crate::task_executor::TaskState::Pending,
+            progress: 0.0,
+            message: "Queued for parsing".into(),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        })
+        .map_err(|error| {
+            // Answering "queued for parsing" while the executor is shut down leaves the
+            // document UNSTARTED for ever with nothing to explain why.
+            anyhow::anyhow!("Failed to queue the parse task: {error}")
+        })?;
     Ok(task_id)
 }
 
@@ -1673,9 +1694,13 @@ async fn process_document(
 ) {
     let worker_id = format!("rayrag-worker-{}", uuid::Uuid::new_v4());
     if state.tasks.is_cancelled(&task_id) {
-        let _ = state
-            .docs
-            .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled");
+        if let Err(error) =
+            state
+                .docs
+                .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled")
+        {
+            tracing::error!(%error, doc_id = %doc.id, "Failed to persist cancelled document status");
+        }
         return;
     }
     let lease = match state.tasks.claim(
@@ -1879,10 +1904,18 @@ async fn process_document(
         }
         Err(_error) if state.tasks.is_cancelled(&task_id) => {
             let message = "Processing cancelled";
-            let _ = state
-                .tasks
-                .update_claimed(&task_id, &lease.token, "cancelled", 1.0, message);
-            let _ = state.docs.update_status(&doc.id, "CANCELLED", 1.0, message);
+            // A cancellation that fails to persist leaves the task claimed and the
+            // document parsing for ever, with nothing in the log to explain it.
+            if let Err(error) =
+                state
+                    .tasks
+                    .update_claimed(&task_id, &lease.token, "cancelled", 1.0, message)
+            {
+                tracing::error!(%error, %task_id, "Failed to persist task cancellation");
+            }
+            if let Err(error) = state.docs.update_status(&doc.id, "CANCELLED", 1.0, message) {
+                tracing::error!(%error, doc_id = %doc.id, "Failed to persist cancelled document status");
+            }
         }
         Err(error) if retryable_processing_error(&error) && state.tasks.can_retry(&task_id) => {
             let message = format!("Attempt {} failed: {error}; retrying", lease.attempt);
@@ -1897,9 +1930,14 @@ async fn process_document(
                     return;
                 }
             }
-            let _ = state
+            if let Err(error) = state
                 .docs
-                .update_status(&doc.id, "UNSTARTED", 0.0, &message);
+                .update_status(&doc.id, "UNSTARTED", 0.0, &message)
+            {
+                // The retry is queued, but the document keeps showing FAILED: the two
+                // views disagree and nothing says why.
+                tracing::error!(%error, doc_id = %doc.id, "Failed to reset document status for the retry");
+            }
             // Release the local worker slot so every retry is re-ordered by
             // the same priority-aware dispatcher as newly queued work.
         }
@@ -1976,7 +2014,9 @@ fn commit_indexed_document(
     }
 
     if let Err(error) = state.kbs.update_counts(&doc.kb_id, count_delta, 0) {
-        state.graphs.replace_snapshot(previous_graphs).ok();
+        if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs) {
+            tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+        }
         restore_index(state, &previous_index, "KB count update failed");
         return Err(error.context("Failed to update KB counts after index commit"));
     }
@@ -1986,8 +2026,12 @@ fn commit_indexed_document(
     {
         Ok(true) => {}
         Ok(false) => {
-            state.graphs.replace_snapshot(previous_graphs.clone()).ok();
-            state.kbs.update_counts(&doc.kb_id, -count_delta, 0).ok();
+            if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs.clone()) {
+                tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+            }
+            if let Err(rollback) = state.kbs.update_counts(&doc.kb_id, -count_delta, 0) {
+                tracing::error!(%rollback, kb_id = %doc.kb_id, "Failed to roll back the chunk count");
+            }
             restore_index(
                 state,
                 &previous_index,
@@ -1996,7 +2040,9 @@ fn commit_indexed_document(
             anyhow::bail!("Document metadata disappeared during index commit");
         }
         Err(error) => {
-            state.graphs.replace_snapshot(previous_graphs).ok();
+            if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs) {
+                tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+            }
             if let Err(rollback_error) = state.kbs.update_counts(&doc.kb_id, -count_delta, 0) {
                 tracing::error!(%rollback_error, doc_id = %doc.id, "Failed to roll back KB counts");
             }
@@ -2347,13 +2393,15 @@ async fn process_memory_task(state: Arc<AppState>, task: crate::api::features::T
             }
         }
         Err(_error) if state.tasks.is_cancelled(&task_id) => {
-            let _ = state.tasks.update_claimed(
+            if let Err(error) = state.tasks.update_claimed(
                 &task_id,
                 &lease.token,
                 "cancelled",
                 1.0,
                 "Processing cancelled",
-            );
+            ) {
+                tracing::error!(%error, %task_id, "Failed to persist Memory task cancellation");
+            }
         }
         Err(error) if retryable_memory_error(&error) && state.tasks.can_retry(&task_id) => {
             let message = format!("Attempt {} failed: {error}; retrying", lease.attempt);
@@ -2446,30 +2494,38 @@ fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::
             } else {
                 message.to_string()
             };
-            let _ = state.tasks.update(&task.id, status, 1.0, &message);
+            // Every one of these writes decides a task's fate; a silent failure leaves it
+            // pending/claimed for ever and the file is never parsed.
+            if let Err(error) = state.tasks.update(&task.id, status, 1.0, &message) {
+                tracing::error!(%error, task_id = %task.id, "Failed to persist recovered task outcome");
+            }
             drop(active_guard);
             drop(permit);
             continue;
         }
         let Some(doc) = state.docs.get(&task.doc_id) else {
-            let _ = state.tasks.update(
+            if let Err(error) = state.tasks.update(
                 &task.id,
                 "failed",
                 1.0,
                 "Cannot recover task because document metadata is missing",
-            );
+            ) {
+                tracing::error!(%error, task_id = %task.id, "Failed to persist task rejection (document metadata missing)");
+            }
             drop(active_guard);
             drop(permit);
             continue;
         };
         let path = document_storage_path(&state, &doc);
         if !path.is_file() {
-            let _ = state.tasks.update(
+            if let Err(error) = state.tasks.update(
                 &task.id,
                 "failed",
                 1.0,
                 "Cannot recover task because uploaded file is missing",
-            );
+            ) {
+                tracing::error!(%error, task_id = %task.id, "Failed to persist task rejection (uploaded file missing)");
+            }
             drop(active_guard);
             drop(permit);
             continue;
@@ -2631,7 +2687,9 @@ pub(crate) fn delete_document_data(
         .kbs
         .update_counts(&doc.kb_id, -(removed_chunks as isize), -1)
     {
-        state.graphs.replace_snapshot(previous_graphs).ok();
+        if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs) {
+            tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+        }
         restore_index(
             state,
             &previous_index,
@@ -2641,11 +2699,15 @@ pub(crate) fn delete_document_data(
     }
     let previous_document_metadata = state.document_metadata.get(&doc.id, &doc.kb_id);
     if let Err(error) = state.document_metadata.delete(&doc.id, &doc.kb_id) {
-        state.graphs.replace_snapshot(previous_graphs).ok();
-        state
+        if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs) {
+            tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+        }
+        if let Err(rollback) = state
             .kbs
             .update_counts(&doc.kb_id, removed_chunks as isize, 1)
-            .ok();
+        {
+            tracing::error!(%rollback, kb_id = %doc.kb_id, "Failed to roll back the chunk count");
+        }
         restore_index(
             state,
             &previous_index,
@@ -2656,17 +2718,22 @@ pub(crate) fn delete_document_data(
     match state.docs.delete(&doc.id) {
         Ok(true) => {}
         Ok(false) => {
-            if let Some(metadata) = previous_document_metadata.clone() {
-                state
+            if let Some(metadata) = previous_document_metadata.clone()
+                && let Err(rollback) = state
                     .document_metadata
                     .replace(&doc.id, &doc.kb_id, metadata)
-                    .ok();
+            {
+                tracing::error!(%rollback, doc_id = %doc.id, "Failed to restore document-level metadata");
             }
-            state.graphs.replace_snapshot(previous_graphs.clone()).ok();
-            state
+            if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs.clone()) {
+                tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+            }
+            if let Err(rollback) = state
                 .kbs
                 .update_counts(&doc.kb_id, removed_chunks as isize, 1)
-                .ok();
+            {
+                tracing::error!(%rollback, kb_id = %doc.kb_id, "Failed to roll back the chunk count");
+            }
             restore_index(
                 state,
                 &previous_index,
@@ -2675,13 +2742,16 @@ pub(crate) fn delete_document_data(
             anyhow::bail!("Document metadata was already deleted");
         }
         Err(error) => {
-            if let Some(metadata) = previous_document_metadata {
-                state
+            if let Some(metadata) = previous_document_metadata
+                && let Err(rollback) = state
                     .document_metadata
                     .replace(&doc.id, &doc.kb_id, metadata)
-                    .ok();
+            {
+                tracing::error!(%rollback, doc_id = %doc.id, "Failed to restore document-level metadata");
             }
-            state.graphs.replace_snapshot(previous_graphs).ok();
+            if let Err(rollback) = state.graphs.replace_snapshot(previous_graphs) {
+                tracing::error!(%rollback, doc_id = %doc.id, "Failed to roll back the GraphRAG snapshot");
+            }
             if let Err(rollback_error) =
                 state
                     .kbs

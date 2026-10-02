@@ -724,7 +724,11 @@ pub async fn ingest_documents(
                 Ok(()) => {
                     // The document row survives the chunk removal (its file is
                     // re-parsed from disk), so it is re-inserted with an empty index.
-                    let _ = state.docs.set_chunk_count(&doc.id, 0);
+                    if let Err(error) = state.docs.set_chunk_count(&doc.id, 0) {
+                        // The next commit computes its delta from this counter; leaving it
+                        // stale makes the KB chunk count wrong for ever, silently.
+                        tracing::error!(%error, doc_id = %doc.id, "redo: chunk count reset failed");
+                    }
                 }
                 Err(error) => {
                     errors.push(

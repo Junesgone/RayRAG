@@ -319,14 +319,26 @@ pub fn embed_rows(rows: &mut [DocRow], texts: &[String], embed: Option<&EmbedBat
         if start >= end {
             break;
         }
-        if let Ok(vectors) = embed(&texts[start..end]) {
-            for (offset, vector) in vectors.iter().enumerate() {
-                if !vector.is_empty() {
-                    let index = start + offset;
-                    if index < rows.len() {
-                        rows[index].insert(format!("q_{}_vec", vector.len()), json!(vector));
+        match embed(&texts[start..end]) {
+            Ok(vectors) => {
+                for (offset, vector) in vectors.iter().enumerate() {
+                    if !vector.is_empty() {
+                        let index = start + offset;
+                        if index < rows.len() {
+                            rows[index].insert(format!("q_{}_vec", vector.len()), json!(vector));
+                        }
                     }
                 }
+            }
+            Err(error) => {
+                // Rows written without vectors can never be found by vector search: the
+                // compile still "succeeds", so this must be visible.
+                tracing::error!(
+                    %error,
+                    start,
+                    end,
+                    "Embedding a structure batch failed; those rows get no vectors"
+                );
             }
         }
         start = end;
@@ -435,9 +447,11 @@ pub async fn save_build_time(
     if existing.is_some() {
         let condition: FilterCondition =
             [("id".to_string(), json!([meta_id]))].into_iter().collect();
-        let _ = store.update(&condition, &payload, index_name, kb_id);
-    } else {
-        let _ = store.insert(&[payload], index_name, kb_id);
+        if let Err(error) = store.update(&condition, &payload, index_name, kb_id) {
+            tracing::error!(%error, %index_name, %kb_id, "Failed to update the structure meta row");
+        }
+    } else if let Err(error) = store.insert(&[payload], index_name, kb_id) {
+        tracing::error!(%error, %index_name, %kb_id, "Failed to insert the structure meta row");
     }
 }
 
@@ -873,7 +887,11 @@ pub async fn cleanup_deleted_docs(
             [("id".to_string(), json!([row_id]))].into_iter().collect();
         let mut new_value = DocRow::new();
         new_value.insert("doc_ids_kwd".to_string(), json!(remaining));
-        let _ = store.update(&condition, &new_value, index_name, kb_id);
+        if let Err(error) = store.update(&condition, &new_value, index_name, kb_id) {
+            // A stale doc_ids_kwd attributes documents to a structure that no longer
+            // contains them, and the compile still reports success.
+            tracing::error!(%error, %row_id, %index_name, "Failed to shrink the merged structure doc list");
+        }
     }
 
     // Markers are NOT deleted here — the caller deletes them once after all
@@ -983,7 +1001,9 @@ pub async fn do_build(
         )]
         .into_iter()
         .collect();
-        let _ = store.delete(&meta_condition, index_name, kb_id);
+        if let Err(error) = store.delete(&meta_condition, index_name, kb_id) {
+            tracing::error!(%error, %index_name, %kb_id, "Failed to delete the consumed structure meta row");
+        }
     }
 
     // ── Incremental: clean up ghosts from deleted docs ───────────────

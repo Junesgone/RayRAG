@@ -47,31 +47,54 @@ impl ExcelParser {
         let mut text = String::new();
         let mut row_count = 0;
 
+        let mut skipped_rows = 0usize;
         // Headers
-        if let Ok(headers) = csv_reader.headers() {
-            text.push_str("<!--TABLE_START-->\n");
-            text.push_str(&format!(
-                "| {} |\n",
-                headers.iter().collect::<Vec<_>>().join(" | ")
-            ));
-            text.push_str(&format!(
-                "|{}|\n",
-                headers.iter().map(|_| "---").collect::<Vec<_>>().join("|")
-            ));
+        match csv_reader.headers() {
+            Ok(headers) => {
+                text.push_str("<!--TABLE_START-->\n");
+                text.push_str(&format!(
+                    "| {} |\n",
+                    headers.iter().collect::<Vec<_>>().join(" | ")
+                ));
+                text.push_str(&format!(
+                    "|{}|\n",
+                    headers.iter().map(|_| "---").collect::<Vec<_>>().join("|")
+                ));
+            }
+            Err(error) => {
+                tracing::warn!(%error, "CSV header row is unreadable; continuing without a header");
+            }
         }
 
         for result in csv_reader.records() {
-            if let Ok(record) = result {
-                text.push_str(&format!(
-                    "| {} |\n",
-                    record.iter().collect::<Vec<_>>().join(" | ")
-                ));
-                row_count += 1;
+            match result {
+                Ok(record) => {
+                    text.push_str(&format!(
+                        "| {} |\n",
+                        record.iter().collect::<Vec<_>>().join(" | ")
+                    ));
+                    row_count += 1;
+                }
+                Err(error) => {
+                    // Dropping malformed rows one by one used to make a broken file look
+                    // like a successfully parsed (but almost empty) table.
+                    skipped_rows += 1;
+                    if skipped_rows <= 5 {
+                        tracing::warn!(%error, row = row_count + skipped_rows, "Skipping a malformed CSV row");
+                    }
+                }
             }
             if row_count > 1000 {
                 text.push_str("| ... (truncated) |\n");
                 break;
             }
+        }
+        if skipped_rows > 0 {
+            tracing::warn!(
+                %skipped_rows,
+                parsed_rows = row_count,
+                "CSV parse skipped malformed rows; the extracted table is incomplete"
+            );
         }
         text.push_str("<!--TABLE_END-->\n");
 
@@ -1021,6 +1044,32 @@ mod tests {
         assert_eq!(rows, vec![vec!["42", "Hello & world", "", "tail"]]);
         // mergeCell ref="B2:C3" → 1-based inclusive range
         assert_eq!(merged_ranges, vec![(2, 2, 3, 3)]);
+    }
+
+    #[test]
+    fn csv_extracts_well_formed_rows_and_survives_a_broken_quote() {
+        let parser = ExcelParser::new();
+        let data = b"name,qty\nwidget,3\ngadget,4\n";
+        let text = parser.parse_csv(data).expect("csv parse must not fail hard");
+        assert!(text.contains("| name | qty |"), "header preserved: {text}");
+        assert!(text.contains("| widget | 3 |"), "first row: {text}");
+        assert!(text.contains("| gadget | 4 |"), "second row: {text}");
+    }
+
+    #[test]
+    fn csv_unterminated_quote_consumes_the_rest_and_stays_a_valid_table() {
+        // Standard CSV semantics: a quoted field may contain newlines, so an unterminated
+        // quote swallows the remainder of the file into that cell. The parser must still
+        // produce a document (never a hard error), and this test pins that behaviour —
+        // it is exactly why a malformed source file looks like a short table.
+        let parser = ExcelParser::new();
+        let text = parser
+            .parse_csv(b"name,qty\n\"broken,9\ngadget,4\n")
+            .expect("csv parse must not fail hard");
+        assert!(text.contains("| name | qty |"), "{text}");
+        assert!(text.contains("broken,9"), "the swallowed tail is visible: {text}");
+        assert!(text.starts_with("<!--TABLE_START-->"), "{text}");
+        assert!(text.trim_end().ends_with("<!--TABLE_END-->"), "{text}");
     }
 
     #[test]

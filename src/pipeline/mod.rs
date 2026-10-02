@@ -588,6 +588,15 @@ impl Pipeline {
                         ));
                     }
                 }
+                Ok(transcription) => {
+                    // "ASR succeeded but produced no text" is the case that silently turns
+                    // an audio document into a metadata-only placeholder; the Vision branch
+                    // logs exactly this, so the audio branch must too.
+                    tracing::warn!(
+                        name = %name,
+                        "ASR returned an empty transcription; falling back to metadata"
+                    );
+                }
                 Err(error) => {
                     tracing::warn!(%error, "ASR transcription failed; falling back to metadata");
                 }

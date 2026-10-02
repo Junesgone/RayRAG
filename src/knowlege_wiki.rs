@@ -3523,7 +3523,16 @@ pub async fn reconcile_with_kb(
                 ..Default::default()
             };
             let mut best: Option<(String, Value, f64)> = None;
-            if let Ok(response) = store.search(&query) {
+            let search_result = match store.search(&query) {
+                Ok(response) => Some(response),
+                Err(error) => {
+                    // The reconciliation fallback silently matched nothing before, so the
+                    // page was rebuilt without reconciling existing claims.
+                    tracing::error!(%error, key = %key, "wiki_plan: fallback KNN search failed");
+                    None
+                }
+            };
+            if let Some(response) = search_result {
                 for (row_id, row) in store.get_fields(&response, &fields) {
                     let stored: Vec<f32> = row
                         .get(&vec_field)

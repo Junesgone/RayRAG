@@ -1054,7 +1054,16 @@ impl DocStore for ZvecDocStore {
         });
         if let Some(embedding) = dense {
             let zvec = self.zvec.lock().unwrap();
-            if let Ok(hits) = zvec.search(embedding, query.limit.max(64)) {
+            let hits = match zvec.search(embedding, query.limit.max(64)) {
+                Ok(hits) => Some(hits),
+                Err(error) => {
+                    // Recall silently drops to in-memory scoring here; without this line
+                    // nobody can tell why answer quality fell after an index problem.
+                    tracing::warn!(%error, "Native zvec search failed; using in-memory scoring");
+                    None
+                }
+            };
+            if let Some(hits) = hits {
                 let mut boosted = query.clone();
                 let mut features = boosted.rank_feature.take().unwrap_or_default();
                 for hit in hits {

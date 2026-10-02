@@ -163,10 +163,14 @@ pub fn store_upsert(
             [("id".to_string(), Value::String(row_id.to_string()))]
                 .into_iter()
                 .collect();
-        let _ = store.update(&condition, &upd, &index, kb_id);
+        if let Err(error) = store.update(&condition, &upd, &index, kb_id) {
+            tracing::error!(%error, %index, %kb_id, "dataset nav: row update failed; the tree is stale");
+        }
     } else {
-        if let Some(map) = doc.as_object().cloned() {
-            let _ = store.insert(&[map], &index, kb_id);
+        if let Some(map) = doc.as_object().cloned()
+            && let Err(error) = store.insert(&[map], &index, kb_id)
+        {
+            tracing::error!(%error, %index, %kb_id, "dataset nav: row insert failed; the tree is stale");
         }
     }
 }
@@ -183,7 +187,9 @@ pub fn store_delete(
         [("id".to_string(), serde_json::json!([row_id]))]
             .into_iter()
             .collect();
-    let _ = store.delete(&condition, &index, kb_id);
+    if let Err(error) = store.delete(&condition, &index, kb_id) {
+        tracing::error!(%error, %index, %kb_id, %row_id, "dataset nav: row delete failed; a removed row stays visible");
+    }
 }
 
 /// `_vector_len`.

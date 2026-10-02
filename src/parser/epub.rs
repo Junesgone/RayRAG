@@ -50,7 +50,10 @@ impl RAGFlowEpubParser {
             for i in 0..zf.len() {
                 let mut f = match zf.by_index(i) {
                     Ok(f) => f,
-                    Err(_) => continue,
+                    Err(error) => {
+                        tracing::warn!(%error, index = i, "Skipping an unreadable EPUB archive entry");
+                        continue;
+                    }
                 };
                 if f.name() == item_path {
                     // Capped read: an epub chapter is archive-controlled data.
@@ -190,7 +193,10 @@ fn parse_container(xml: &str) -> Option<String> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(_) => return None,
+            Err(error) => {
+                tracing::warn!(%error, "EPUB XML stream failed; the spine/manifest scan stops here");
+                return None;
+            }
             _ => {}
         }
         buf.clear();
@@ -304,7 +310,10 @@ fn parse_opf(
                 depth = depth.saturating_sub(1);
             }
             Ok(Event::Eof) => break,
-            Err(_) => return None,
+            Err(error) => {
+                tracing::warn!(%error, "EPUB XML stream failed; the spine/manifest scan stops here");
+                return None;
+            }
             _ => {}
         }
         buf.clear();
