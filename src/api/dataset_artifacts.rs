@@ -596,6 +596,8 @@ pub async fn compile_artifacts(
     let chat = crate::llm::LlmHarnessChat::new(chat_client);
     // Phase 1 — MAP: model per document, extracts stored for phase 2.
     let mut mapped = 0usize;
+    let mut extracts = 0usize;
+    let mut skipped: Vec<Value> = Vec::new();
     let mut all_chunk_ids: BTreeSet<String> = BTreeSet::new();
     let total = per_doc.len();
     for (doc_id, chunks) in &per_doc {
@@ -604,7 +606,7 @@ pub async fn compile_artifacts(
                 all_chunk_ids.insert(id.to_string());
             }
         }
-        crate::harness::knowlege_wiki::wiki_map_from_chunks(
+        let mapped_doc = crate::harness::knowlege_wiki::wiki_map_from_chunks(
             &store,
             &chat,
             chunks,
@@ -621,6 +623,32 @@ pub async fn compile_artifacts(
             None,
         )
         .await;
+        // Report what MAP actually found. Without this, a compile that produces no pages is
+        // ambiguous: "the model extracted nothing" and "COMPILE never saw the extracts" both
+        // come back as `pages_created: 0`.
+        let per_doc_extracts: usize = crate::harness::knowlege_wiki::EXTRACT_LIST_KEYS
+            .iter()
+            .map(|key| {
+                mapped_doc
+                    .get(*key)
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0)
+            })
+            .sum::<usize>()
+            + mapped_doc
+                .get("topics")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
+        if per_doc_extracts == 0 {
+            skipped.push(serde_json::json!({
+                "doc_id": doc_id,
+                "reason": "the model extracted no entities, concepts, claims, relations or topics from this document"
+            }));
+            tracing::info!(%doc_id, %kb_id, "artifact MAP found nothing to extract");
+        }
+        extracts += per_doc_extracts;
         mapped += 1;
     }
     // Phase 2 — COMPILE: reads the extracts phase 1 just stored.
@@ -668,7 +696,7 @@ pub async fn compile_artifacts(
     .await;
     Json(serde_json::json!({
         "code": 0,
-        "data": { "mapped": mapped, "total": total, "skipped": [], "compile": outcome }
+        "data": { "mapped": mapped, "total": total, "extracts": extracts, "skipped": skipped, "compile": outcome }
     }))
     .into_response()
 }
