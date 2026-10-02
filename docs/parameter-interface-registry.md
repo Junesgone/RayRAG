@@ -466,7 +466,6 @@
 | POST | `/api/v1/skills/reindex` | `-` |
 | GET | `/api/v1/users` | `-` |
 | PUT | `/api/v1/users/{id}` | `-` |
-| ANY | `/api/v1/users/me` | `axum::routing` |
 | POST | `/api/v1/users/invite` | `-` |
 | GET | `/api/v1/tenant` | `-` |
 | GET | `/api/v1/tenants` | `-` |

@@ -10,6 +10,7 @@
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**37**
 - 形状不同但已被应答（covered）：**2**
 - 尚未实现（missing，已登记）：**65**
+- 路径已有但方法缺失（method）：**9**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -92,3 +93,17 @@
 | `/compilation-templates/wiki-presets` | `/api/v1/compilation_templates/wiki_presets` |
 | `/searches/<search_id>/completions` | `/api/v1/searches/{search_id}/completions` |
 | `/system/stats` | `/api/v1/stats` |
+
+## 方法级缺口（路径已应答，但上游方法未实现）
+
+| 上游路径 | 来源与缺失方法 |
+| --- | --- |
+| `/agents/<agent_id>/sessions` | agent_api.py [DELETE] |
+| `/chats` | chat_api.py [DELETE] |
+| `/chats/<chat_id>` | chat_api.py [PUT] |
+| `/datasets/<dataset_id>/metadata/summary` | document_api.py [GET] |
+| `/dify/retrieval` | dify_retrieval_api.py [GET] |
+| `/files` | file_api.py [DELETE,POST] |
+| `/providers/<provider_id_or_name>/instances/<instance_id_or_name>` | provider_api.py [PUT] |
+| `/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models` | provider_api.py [DELETE] |
+| `/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models/<path:model_name>` | provider_api.py [POST] |

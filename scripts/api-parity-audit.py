@@ -61,6 +61,20 @@ COVERED: dict[str, str] = {
     "/messages/<memory_id>:<message_id>/content": "/api/v1/messages/{message_ref}/content",
 }
 
+# Upstream methods on paths RayRAG already answers with other methods. A path-only audit
+# cannot see these: `/users/me` answered 405 for GET until it was wired up.
+KNOWN_METHOD_GAPS: dict[str, str] = {
+    "/agents/<agent_id>/sessions": "DELETE 删除 Agent 会话",
+    "/chats": "DELETE 清空会话列表",
+    "/chats/<chat_id>": "PUT 更新会话（重命名等）",
+    "/datasets/<dataset_id>/metadata/summary": "GET 数据集元数据汇总",
+    "/dify/retrieval": "GET 探测（上游与 POST 同路径）",
+    "/files": "POST 新建文件 / DELETE 批量删除",
+    "/providers/<provider_id_or_name>/instances/<instance_id_or_name>": "PUT 更新模型实例",
+    "/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models": "DELETE 移除实例内模型",
+    "/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models/<path:model_name>": "POST 新增实例内模型",
+}
+
 KNOWN_MISSING: dict[str, str] = {
     "/agents/<agent_id>/upload": "Agent 附件上传（画布内文件输入）",
     "/agents/<agent_id>/webhook": "Agent Webhook 配置（含 logs/test）",
@@ -130,27 +144,64 @@ KNOWN_MISSING: dict[str, str] = {
 }
 
 
-def upstream_routes(source: Path) -> dict[str, str]:
-    """Upstream route -> source file name."""
+def upstream_routes(source: Path) -> dict[str, tuple[str, frozenset[str]]]:
+    """Upstream route -> (source file, HTTP methods)."""
     directory = source / "api" / "apps" / "restful_apis"
     if not directory.is_dir():
         sys.exit(f"reference tree not found: {directory}")
-    routes: dict[str, str] = {}
+    routes: dict[str, tuple[str, frozenset[str]]] = {}
     for path in sorted(directory.glob("*.py")):
         text = path.read_text(encoding="utf-8", errors="replace")
-        for match in re.finditer(r'@manager\.route\(\s*"([^"]+)"', text):
-            routes.setdefault(match.group(1), path.name)
+        pattern = re.compile(
+            r'@manager\.route\(\s*"([^"]+)"(?:\s*,\s*methods\s*=\s*\[([^\]]*)\])?'
+        )
+        for match in pattern.finditer(text):
+            methods = frozenset(
+                part.strip().strip('"\'').upper()
+                for part in (match.group(2) or '"GET"').split(",")
+                if part.strip()
+            )
+            previous = routes.get(match.group(1))
+            if previous:
+                methods = previous[1] | methods
+            routes[match.group(1)] = (path.name, methods)
     return routes
 
 
-def rayrgg_routes() -> set[str]:
-    """Every `/api/v1/...` path RayRAG registers in `src/server.rs`."""
+def rayrgg_routes() -> dict[str, tuple[str, frozenset[str]]]:
+    """Every `/api/v1/...` path RayRAG registers, with the methods it answers.
+
+    The route call is scanned with bracket matching so `get(a).post(b)` and a nested
+    `axum::routing::post(c)` are both read; a handler name is not a method name, so only
+    the method builders themselves count.
+    """
     text = SERVER_RS.read_text(encoding="utf-8", errors="replace")
-    return {
-        match.group(1)
-        for match in re.finditer(r'\.route\(\s*"([^"]+)"', text)
-        if match.group(1).startswith("/api/v1")
-    }
+    routes: dict[str, tuple[str, frozenset[str]]] = {}
+    for match in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', text):
+        path = match.group(1)
+        if not path.startswith("/api/v1"):
+            continue
+        depth = 1
+        index = match.end()
+        while index < len(text) and depth > 0:
+            char = text[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            index += 1
+        body = text[match.end() : index]
+        methods = frozenset(
+            found.group(1).upper()
+            for found in re.finditer(
+                r"(?<![A-Za-z0-9_])(get|post|put|delete|patch|head|options)\s*\(", body
+            )
+        ) or frozenset({"ANY"})
+        previous = routes.get(path)
+        if previous:
+            methods = previous[1] | methods
+        routes[path] = (path, methods)
+    return routes
 
 
 def upstream_spelling(path: str) -> str:
@@ -173,37 +224,67 @@ def normalise(path: str) -> str:
     return path.replace("-", "_").rstrip("/").lower()
 
 
-def classify(upstream: dict[str, str], own: set[str]) -> dict[str, list[tuple[str, str]]]:
-    by_norm: dict[str, set[str]] = {}
-    for route in own:
-        by_norm.setdefault(normalise(route), set()).add(route)
+def classify(
+    upstream: dict[str, tuple[str, frozenset[str]]],
+    own: dict[str, tuple[str, frozenset[str]]],
+) -> dict[str, list[tuple[str, str]]]:
+    """Route-level and method-level classification.
+
+    A path can exist while a method on it does not — upstream's `GET /users/me` answered
+    405 in RayRAG for exactly that reason, and a path-only audit cannot see it.
+    """
+    by_norm: dict[str, dict[str, frozenset[str]]] = {}
+    for route, (_, methods) in own.items():
+        by_norm.setdefault(normalise(route), {})[route] = methods
 
     result: dict[str, list[tuple[str, str]]] = {
         "exact": [],
         "alias": [],
         "missing": [],
         "covered": [],
+        "method": [],
         "mismatch": [],
     }
-    for path, origin in sorted(upstream.items()):
+    for path, (origin, methods) in sorted(upstream.items()):
         spelled = f"/api/v1{upstream_spelling(path)}"
+        candidates: dict[str, frozenset[str]] = {}
         if spelled in own:
             result["exact"].append((path, origin))
+            candidates = by_norm.get(normalise(spelled), {})
         elif spelled in ALIASES.values():
             result["alias"].append((path, origin))
+            candidates = by_norm.get(normalise(spelled), {})
         elif normalise(path) in by_norm:
             result["alias"].append((path, origin))
+            candidates = by_norm[normalise(path)]
         elif path in COVERED:
             result["covered"].append((path, origin))
+            candidates = by_norm.get(normalise(COVERED[path]), {})
         elif path in KNOWN_MISSING:
             result["missing"].append((path, origin))
+            continue
         else:
             result["mismatch"].append((path, origin))
+            continue
+
+        answered = set().union(*candidates.values()) if candidates else set()
+        answered |= {"GET"} if "HEAD" in answered else set()
+        missing_methods = {
+            method
+            for method in methods
+            if method not in answered and "ANY" not in answered and not (method == "HEAD" and "GET" in answered)
+        }
+        if missing_methods:
+            result["method"].append(
+                (path, f"{origin} [{','.join(sorted(missing_methods))}]")
+            )
     return result
 
 
 def render(
-    upstream: dict[str, str], own: set[str], result: dict[str, list[tuple[str, str]]]
+    upstream: dict[str, tuple[str, frozenset[str]]],
+    own: dict[str, tuple[str, frozenset[str]]],
+    result: dict[str, list[tuple[str, str]]],
 ) -> str:
     out = [
         "# RayRAG ↔ RAGFlow HTTP 接口对照工作清单（内部文档，禁止发布）",
@@ -219,6 +300,7 @@ def render(
         f"- 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**{len(result['alias'])}**",
         f"- 形状不同但已被应答（covered）：**{len(result['covered'])}**",
         f"- 尚未实现（missing，已登记）：**{len(result['missing'])}**",
+        f"- 路径已有但方法缺失（method）：**{len(result['method'])}**",
         f"- 未登记的缺口（mismatch，`--check` 视为失败）：**{len(result['mismatch'])}**",
         "",
         "## 未实现清单（按上游文件分组）",
@@ -239,6 +321,11 @@ def render(
     out += ["", "## 别名对照（上游拼写 → RayRAG 路由）", "", "| 上游路径 | RayRAG 路由 |", "| --- | --- |"]
     for upstream_path, own_path in sorted(ALIASES.items()):
         out.append(f"| `{upstream_path}` | `{own_path}` |")
+    out += ["", "## 方法级缺口（路径已应答，但上游方法未实现）", "", "| 上游路径 | 来源与缺失方法 |", "| --- | --- |"]
+    for path, detail in result["method"]:
+        out.append(f"| `{path}` | {detail} |")
+    if not result["method"]:
+        out.append("| — | — |")
     out.append("")
     return "\n".join(out)
 
@@ -287,6 +374,14 @@ def main() -> int:
     for path, origin in result["mismatch"]:
         problems.append(f"unclassified upstream route (add an alias or a KNOWN_MISSING note): {path} ({origin})")
 
+    for path, detail in result["method"]:
+        if path not in KNOWN_METHOD_GAPS:
+            problems.append(f"method gap without a note: {path} {detail}")
+    implemented_gaps = {f"/api/v1{path}" for path in KNOWN_METHOD_GAPS}
+    for path, _ in result["exact"] + result["alias"]:
+        if f"/api/v1{path}" in implemented_gaps and path not in {p for p, _ in result["method"]}:
+            problems.append(f"stale KNOWN_METHOD_GAPS entry (now answered): {path}")
+
     if result["missing"]:
         for path, origin in result["missing"]:
             if path not in KNOWN_MISSING:
@@ -297,13 +392,14 @@ def main() -> int:
         print(f"worklist written: {WORKLIST}")
 
     print(
-        "api parity: upstream={u} rayrgg={r} exact={e} alias={a} covered={c} missing={m} mismatch={x}".format(
+        "api parity: upstream={u} rayrgg={r} exact={e} alias={a} covered={c} missing={m} method={mm} mismatch={x}".format(
             u=len(upstream),
             r=len(own),
             e=len(result["exact"]),
             a=len(result["alias"]),
             c=len(result["covered"]),
             m=len(result["missing"]),
+            mm=len(result["method"]),
             x=len(result["mismatch"]),
         )
     )

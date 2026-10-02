@@ -4818,7 +4818,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/users/{id}", put(crate::api::system::update_user))
         .route(
             "/api/v1/users/me",
-            axum::routing::patch(crate::api::system::update_me),
+            // Upstream `user_api.py` registers GET (profile) and PATCH (settings) on the
+            // same path; a client that reads the profile with GET must not get a 405.
+            axum::routing::get(user_info).patch(crate::api::system::update_me),
         )
         .route(
             "/api/v1/users/invite",
@@ -15302,6 +15304,24 @@ mod tests {
             .unwrap();
         assert_eq!(health.status(), StatusCode::OK);
         assert_eq!(response_json(health).await["data"], true);
+
+        // Upstream registers GET (profile) and PATCH (settings) on `/users/me`; a
+        // path-only audit missed the GET, and the live probe answered 405 for it.
+        let profile = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users/me")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+        let profile = response_json(profile).await;
+        assert_eq!(profile["data"]["email"], "test@example.com");
+        assert!(profile["data"].get("password_hash").is_none());
 
         // Upstream answers these two with its own "document engine is not this one"
         // envelopes; a monitoring client reads `data.status`, so both must stay 200 OK.
