@@ -8,11 +8,18 @@
 #   book.xlsx  : header row 'name,size' + one data row
 #   deck.pptx  : TWO slides; first slide text 'First slide preview probe'
 #   legacy.docx: Word document with 'preview probe' (matrix expects the pending notice)
-import struct, zlib, zipfile
+import os
+import struct
+import zipfile
+import zlib
 from pathlib import Path
 
-D = Path('/tmp/rr-preview-fixtures')
+# Contract path shared with document-preview-matrix-cdp.mjs; override with
+# RAYRAG_PREVIEW_FIXTURES. The directory is created owner-only because it holds
+# generated test bytes only.
+D = Path(os.environ.get('RAYRAG_PREVIEW_FIXTURES', '/tmp/rr-preview-fixtures'))
 D.mkdir(parents=True, exist_ok=True)
+os.chmod(D, 0o700)
 
 (D / 'notes.txt').write_text('preview probe\n\nRayRAG preview fixture note.\n')
 (D / 'notes.md').write_text(
