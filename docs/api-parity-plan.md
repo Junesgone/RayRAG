@@ -157,3 +157,14 @@
 6. 测试：无嵌入模型 → 102 且文案指明缺什么；有分块 → 生成后 `GET /navigation` 能读到节点；无分块的文档 → 计入 `skipped` 而不是静默略过。
 
 **UI 联动**：`/dataset/compilation`（Artifacts）与数据集导航视图在生成后应能立即读到新树（读取接口已实现）。
+
+### 施工前必须先补的一块：`HarnessChat` 的生产适配器（本轮查明的缺件）
+
+**证据**：`grep -rn "impl .*HarnessChat" src/` 的结果**只有测试用的 `FakeChat`**（`knowlege_wiki_incremental.rs` 的 5 处 `#[cfg(test)]`）。也就是说 `crate::harness::HarnessChat` 这个 trait 在**生产路径上没有任何实现**——而导航生成（`upsert_dataset_nav_doc` / `llm_create_summary` / `llm_merge`）与 wiki 生成都需要它。
+
+**因此下一轮的施工顺序应为**：
+1. 写 `HarnessChat` 的生产适配器：包住 RayRAG 真实的对话客户端（`state.llm` / `state.tenant_models` 解析出的租户默认对话模型），把 `chat(system, history, gen_conf) -> Result<String,String>` 映射到现有 LLM 调用；**错误要原样带出**（返回 `Err(String)` 而不是空串），否则生成会"成功但什么都没产生"。
+2. 视需要在 `AppState` 上暴露一个返回该适配器的访问点（`Arc<dyn HarnessChat>`），或按请求构造。
+3. 然后才是 `POST /datasets/{id}/navigation` 本体（本文件上一节的 6 条要点）。
+
+**顺带收益**：`HarnessChat` 一旦有了生产实现，wiki（Artifacts）生成与结构编译的同类缺口也一并解除——这几条一直挂在"引擎已移植但无处调用"的状态。
