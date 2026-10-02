@@ -102,6 +102,53 @@ pub fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<
     }
 }
 
+/// Load a JSON state file that must never be read as "no data".
+///
+/// The failure this guards against is quiet and destructive: a corrupt or old-schema
+/// file deserialises to an empty collection, the page shows nothing, and the next save
+/// writes that emptiness over the real records. Refusing to boot would be the other
+/// extreme — one damaged side-file must not take the whole service down.
+///
+/// So the damaged file is **kept** (moved to `<path>.corrupt-<timestamp>`), the reason is
+/// logged at error level, and the caller starts from the type's default. Nothing is
+/// destroyed and nothing is silent.
+pub fn load_json_or_quarantine<T>(path: &Path) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    let data = match std::fs::read(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(T::default()),
+        Err(error) => return Err(error.into()),
+    };
+    match serde_json::from_slice::<T>(&data) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let backup = path.with_extension(format!(
+                "json.corrupt-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis())
+                    .unwrap_or_default()
+            ));
+            tracing::error!(
+                %error,
+                path = %path.display(),
+                backup = %backup.display(),
+                "State file is not readable as this schema; keeping it as a backup and starting empty"
+            );
+            if let Err(rename_error) = std::fs::rename(path, &backup) {
+                tracing::error!(
+                    %rename_error,
+                    path = %path.display(),
+                    "Failed to move the damaged state file aside; it will be overwritten on the next save"
+                );
+            }
+            Ok(T::default())
+        }
+    }
+}
+
 /// Probe the configured PostgreSQL snapshot mirror. `Ok(false)` means the
 /// optional mirror is disabled; an enabled but unreachable mirror is an error.
 pub fn snapshot_mirror_health() -> anyhow::Result<bool> {
@@ -670,6 +717,49 @@ mod tests {
         let path = root.join("absent.json");
         let loaded: Option<serde_json::Value> = load_json(&path).unwrap();
         assert!(loaded.is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn quarantined_state_files_are_kept_and_logged_instead_of_read_as_empty() {
+        use std::collections::HashMap;
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-quarantine-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Old schema (`[]` where a map is expected): the data must survive the load.
+        let path = root.join("chat_apps.json");
+        std::fs::write(&path, b"[]").unwrap();
+        let loaded: HashMap<String, String> = load_json_or_quarantine(&path).unwrap();
+        assert!(loaded.is_empty());
+        assert!(!path.exists(), "the damaged file must be moved aside");
+        let backups: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains("corrupt-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "exactly one backup: {backups:?}");
+        assert_eq!(
+            std::fs::read(root.join(&backups[0])).unwrap(),
+            b"[]",
+            "the backup keeps the original bytes"
+        );
+
+        // A missing file is a fresh deployment, not a fault.
+        let fresh: HashMap<String, String> =
+            load_json_or_quarantine(&root.join("absent.json")).unwrap();
+        assert!(fresh.is_empty());
+
+        // A healthy file is returned untouched, and is not moved aside.
+        let healthy = root.join("healthy.json");
+        std::fs::write(&healthy, br#"{"a":"1"}"#).unwrap();
+        let value: HashMap<String, String> = load_json_or_quarantine(&healthy).unwrap();
+        assert_eq!(value.get("a").map(String::as_str), Some("1"));
+        assert!(healthy.exists());
+
         std::fs::remove_dir_all(root).ok();
     }
 

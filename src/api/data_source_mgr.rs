@@ -291,22 +291,12 @@ impl DataSourceStore {
             .to_string_lossy()
             .to_string();
         crate::persistence::restore_if_missing(std::path::Path::new(&metadata_path))?;
-        let sources = if std::path::Path::new(&metadata_path).exists() {
-            let content = std::fs::read_to_string(&metadata_path)?;
-            // A corrupt file must never be read as "no data sources": the store would
-            // start empty, the page would show nothing, and the next save would persist
-            // that emptiness over the real records. Fail loudly instead — the damaged
-            // file stays on disk for the operator to repair.
-            serde_json::from_str::<HashMap<String, DataSourceRecord>>(&content).map_err(
-                |error| {
-                    anyhow::anyhow!(
-                        "{metadata_path} is not valid JSON ({error}); refusing to start from an empty store"
-                    )
-                },
-            )?
-        } else {
-            HashMap::new()
-        };
+        // A corrupt or old-schema file must never be read as "no data sources": the store
+        // would start empty, the page would show nothing, and the next save would persist
+        // that emptiness over the real records. The loader keeps the damaged file as a
+        // timestamped backup, logs the reason and starts empty.
+        let sources: HashMap<String, DataSourceRecord> =
+            crate::persistence::load_json_or_quarantine(std::path::Path::new(&metadata_path))?;
         Ok(Self {
             sources: RwLock::new(sources),
             metadata_path,
