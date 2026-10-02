@@ -42,6 +42,9 @@ EXCLUDES=(
     "docs/ragflow-ui-ref"
     # Internal parameter/interface registry (engineering lookup surface).
     "docs/parameter-interface-registry.md"
+    # Internal parity ledgers and the plan derived from them: never published.
+    "docs/api-parity-worklist.md"
+    "docs/api-parity-plan.md"
     # The coverage gate validates the internal parity ledger against a pinned
     # RAGFlow checkout; neither the ledger nor the reference tree ships, so the
     # binary is internal engineering tooling.
