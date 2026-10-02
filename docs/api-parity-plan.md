@@ -133,3 +133,27 @@
 1. 把第 3 项从「日志」改为「概览」，面板内容按上游 overview 表（文档数/分块数/存储/最近活动）实现，日志移入概览页内的入口（上游同样是 Logs 图标 + overview 标签）。
 2. 知识图谱：保持不在侧栏（与上游一致），但要给出**可达入口**（上游在概览页/解析配置里的图谱开关），并确认 `#tab4` 的 Build Graph 在接上 `/datasets/{id}/graph` 后真正可用。
 3. 用户报障「配置页排版溢出」已在 0.6.9 修复（页面横向溢出 0）。
+
+## 唯一剩下的方法缺口：`POST /datasets/{id}/navigation`（下一轮的施工单）
+
+**上游契约**（`api/apps/restful_apis/dataset_api.py::generate_dataset_nav`，行 1171 起）：
+- 方法/路径：`POST /datasets/<dataset_id>/navigation`
+- 请求体：`{"documents": [...]}`（可选；缺省表示该数据集全部文档）
+- 成功：`get_result(data=result)`——即 `{"code":0,"data":<service 的返回值>}`
+- 语义：对该数据集的文档做一遍导航树生成（LLM 聚类 + 嵌入），已存在的树按文档增量更新
+
+**RayRAG 侧已具备的零件**（都已移植且有单测，位于 `src/knowlege_dataset_nav.rs`）：
+- `upsert_dataset_nav_doc(store, embed, chat, lock, tenant_id, kb_id, doc_id, summary_or_tree)` —— **单文档入口**（async）：内部完成摘要/图谱文本 → 嵌入 → 找最佳簇 `find_best_cluster` → 必要时 `maybe_split_cluster` → 落行
+- `nav_embed(embed, text)`、`llm_merge`、`llm_create_summary`、`readable_cluster_name`、`nav_keywords(_limited)`、`nav_entities(_limited)`
+- 行写入用 `store_upsert` / `store_delete`，索引为 `knowlege_dataset_nav::index_name(tenant)`
+- 存储已接通：`AppState.doc_store`（`DocStorePool`），**必须用 `spawn_blocking`**（`with_store` 模式，见 `src/api/dataset_artifacts.rs`）
+
+**实现要点（下一轮照此施工）**：
+1. 解析请求体 `documents`（缺省 = `state.docs.list(&kb_id)` 的全部文档 id）；
+2. 对每个文档取已解析分块文本（`state.engine` 中的索引分块，按 `doc_id` 过滤）拼成 `summary_or_tree`；
+3. 取租户默认嵌入与对话模型（`state.tenant_models` + `state.embedder`/`state.llm`）；**缺失时返回 `code 102` 并说明缺哪一个**，不要静默跳过——这正是 UI 上用户需要看到的提示；
+4. 逐个文档调用 `upsert_dataset_nav_doc`，**按需、流水线式**（不要一次性把所有文档读进内存，遵循用户的"避免内存泄漏"要求）；
+5. 返回值带 `generated: <文档数>`、`skipped: [...]`（无分块/无摘要的文档及其原因），让部分失败可见；
+6. 测试：无嵌入模型 → 102 且文案指明缺什么；有分块 → 生成后 `GET /navigation` 能读到节点；无分块的文档 → 计入 `skipped` 而不是静默略过。
+
+**UI 联动**：`/dataset/compilation`（Artifacts）与数据集导航视图在生成后应能立即读到新树（读取接口已实现）。
