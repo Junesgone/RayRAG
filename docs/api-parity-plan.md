@@ -168,3 +168,23 @@
 3. 然后才是 `POST /datasets/{id}/navigation` 本体（本文件上一节的 6 条要点）。
 
 **顺带收益**：`HarnessChat` 一旦有了生产实现，wiki（Artifacts）生成与结构编译的同类缺口也一并解除——这几条一直挂在"引擎已移植但无处调用"的状态。
+
+### 施工配方（本轮把最后几个未知点也查清了，下一轮照抄即可）
+
+四块零件全部就位，且都有可参照的现有代码：
+
+1. **按数据集取分块**（照抄 `src/server.rs:2901` 的图谱构建写法）：
+   ```rust
+   let chunks: Vec<crate::search::IndexedChunk> = state.engine.read().unwrap().to_vec()
+       .into_iter()
+       .filter(|c| c.metadata.get("kb_id").map(String::as_str) == Some(kb_id.as_str()))
+       .collect();
+   ```
+   空则按上游语义返回明确错误（图谱那边是 `"No chunks in this knowledge base"`；导航可返回 `code 102` + `skipped` 说明）。
+2. **嵌入**：`state.embedder: Option<SharedEmbedder>`（`Arc<dyn EmbeddingBackend>`），直接传给 `upsert_dataset_nav_doc(store, Some(&*embedder), …)`。
+3. **对话**：`state.llm: Option<Arc<LlmClient>>` → 包一层本轮新增的 `LlmHarnessChat::new(llm)` 即得到 `dyn HarnessChat`。
+4. **锁**：`knowlege_dataset_nav::NavKbLock` 只有测试实现（`OpenLock`，`knowlege_dataset_nav.rs:2934`）。生产实现写一个极小的 `Mutex<HashSet<String>>` 版本：`acquire` 插入成功即 true，`release` 移除即可（对应上游 `lock.spin_acquire/release`）。
+
+**端点骨架**：所有权检查 → 前置条件检查（缺嵌入/对话 → `code 102` **分别指明缺哪一个**）→ 解析 `documents`（缺省=数据集全部文档）→ 取分块 → 逐文档 `upsert_dataset_nav_doc`（顺序执行、用完即丢，避免一次性把整个数据集读进内存）→ 返回 `{generated, skipped:[{doc_id, reason}], total}`。
+
+**验收**：① 无嵌入或对话模型 → `code 102` 且文案指明缺哪个；② 有分块且有模型 → 生成后 `GET /datasets/{id}/navigation` 能读到节点；③ 无分块的文档 → 出现在 `skipped` 里并带原因，不静默略过；④ 越权数据集 → 400（沿用 `kb_accessible`）。
