@@ -90,6 +90,8 @@ pub mod duckduckgo;
 pub mod eastmoney;
 pub mod email;
 pub mod embed;
+#[cfg(test)]
+pub mod env_surface;
 pub mod exesql;
 pub mod extractor;
 pub mod generation_params;

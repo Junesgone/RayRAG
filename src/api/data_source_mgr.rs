@@ -293,7 +293,17 @@ impl DataSourceStore {
         crate::persistence::restore_if_missing(std::path::Path::new(&metadata_path))?;
         let sources = if std::path::Path::new(&metadata_path).exists() {
             let content = std::fs::read_to_string(&metadata_path)?;
-            serde_json::from_str(&content).unwrap_or_default()
+            // A corrupt file must never be read as "no data sources": the store would
+            // start empty, the page would show nothing, and the next save would persist
+            // that emptiness over the real records. Fail loudly instead — the damaged
+            // file stays on disk for the operator to repair.
+            serde_json::from_str::<HashMap<String, DataSourceRecord>>(&content).map_err(
+                |error| {
+                    anyhow::anyhow!(
+                        "{metadata_path} is not valid JSON ({error}); refusing to start from an empty store"
+                    )
+                },
+            )?
         } else {
             HashMap::new()
         };
@@ -726,7 +736,12 @@ pub async fn update_data_source(
     // success (or `fail` on error) — a documented deviation from upstream's
     // async task queue.
     if should_resume {
-        let _ = perform_sync(&state, &auth, &id, None).await;
+        // The response carries the record read back below, so a failed sync must leave a
+        // trace here: without it the API answers 200 with a source that is stuck in
+        // `running` and no sync-log row explains why.
+        if let Err((status, message)) = perform_sync(&state, &auth, &id, None).await {
+            tracing::error!(%status, %message, %id, "Rescheduled data-source sync failed");
+        }
         let updated = store
             .get(&id)
             .ok_or_else(|| data_source_error(StatusCode::NOT_FOUND, "data source not found"))?;
@@ -837,7 +852,9 @@ async fn perform_sync(
     let record = store
         .get(id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
-    let _ = store.set_status(id, "running");
+    if let Err(error) = store.set_status(id, "running") {
+        tracing::warn!(%error, %id, "Failed to persist the running sync status");
+    }
     let options = record.to_options();
     let connector_result: std::result::Result<crate::connectors::SyncBatch, (StatusCode, String)> =
         match record.kind.as_str() {

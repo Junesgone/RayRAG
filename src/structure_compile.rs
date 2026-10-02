@@ -3840,8 +3840,8 @@ pub async fn doc_storage_search(
     }
 }
 
-/// `doc_storage_insert`: bulk insert; best-effort (failures are swallowed
-/// after the upstream logs them).
+/// `doc_storage_insert`: bulk insert; best-effort (failures are logged, not
+/// propagated, so a compile that already committed does not report a hard error).
 pub async fn doc_storage_insert(
     store: &dyn crate::doc_store::DocStore,
     rows: &[crate::doc_store::DocRow],
@@ -3851,17 +3851,32 @@ pub async fn doc_storage_insert(
     if rows.is_empty() {
         return;
     }
-    let _ = store.insert(rows, index_name, dataset_id);
+    if let Err(error) = store.insert(rows, index_name, dataset_id) {
+        tracing::error!(
+            %error,
+            %index_name,
+            %dataset_id,
+            rows = rows.len(),
+            "Failed to insert compiled structure rows; they stay missing from retrieval"
+        );
+    }
 }
 
-/// `doc_storage_delete`: bulk delete; best-effort.
+/// `doc_storage_delete`: bulk delete; best-effort (logged).
 pub async fn doc_storage_delete(
     store: &dyn crate::doc_store::DocStore,
     condition: &crate::doc_store::FilterCondition,
     index_name: &str,
     dataset_id: &str,
 ) {
-    let _ = store.delete(condition, index_name, dataset_id);
+    if let Err(error) = store.delete(condition, index_name, dataset_id) {
+        tracing::error!(
+            %error,
+            %index_name,
+            %dataset_id,
+            "Failed to delete compiled structure rows; stale rows stay searchable"
+        );
+    }
 }
 
 /// `doc_storage_upsert_one`: delete-by-filter then insert (stable row ids make

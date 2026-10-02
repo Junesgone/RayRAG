@@ -408,10 +408,15 @@ pub async fn reparse_doc(
     // subtract them from the owning KB before the new parse starts.
     match reparse_counter_release(&state.docs, &doc_id) {
         Ok(Some(release)) => {
-            let _ = state
+            if let Err(error) = state
                 .kbs
-                .update_counts(&release.kb_id, release.chunk_delta, 0);
-            let _ = state.docs.set_chunk_count(&doc_id, 0);
+                .update_counts(&release.kb_id, release.chunk_delta, 0)
+            {
+                tracing::warn!(%error, doc_id = %doc_id, "reparse: KB chunk counter release failed");
+            }
+            if let Err(error) = state.docs.set_chunk_count(&doc_id, 0) {
+                tracing::warn!(%error, doc_id = %doc_id, "reparse: document chunk count reset failed");
+            }
         }
         Ok(None) => {}
         Err(error) => {
@@ -689,9 +694,13 @@ pub async fn ingest_documents(
                     return Json(serde_json::json!({ "code": 500, "message": error.to_string() }));
                 }
             }
-            let _ = state
-                .docs
-                .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled");
+            if let Err(error) =
+                state
+                    .docs
+                    .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled")
+            {
+                tracing::warn!(%error, doc_id = %doc.id, "cancel: document status write failed");
+            }
         }
         tracing::info!(
             documents = accepted.len(),

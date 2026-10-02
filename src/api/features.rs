@@ -773,6 +773,20 @@ pub async fn chat_complete(
                     serde_json::json!({"object": "chat.completion.references", "references": refs})
                         .to_string(),
                 )));
+            } else {
+                // The client only sees the stream: a failed generation that still ends
+                // with `finish_reason: "stop"` and `[DONE]` looks like a successful empty
+                // answer. Send the error frame, like the chat-app channel does.
+                let message = match &generated {
+                    Err(error) => error.to_string(),
+                    Ok(_) => "generation failed".to_string(),
+                };
+                tracing::error!(%message, "Agent chat generation failed");
+                let err = serde_json::json!({
+                    "object": "chat.completion.chunk",
+                    "error": {"message": message},
+                });
+                let _ = tx.blocking_send(Ok(Event::default().data(err.to_string())));
             }
             let done = serde_json::json!({
                 "id": id2,
@@ -996,7 +1010,15 @@ pub(crate) async fn generate_chat_answer(
                         .search_kbs(&query_vector, 5, kb_ids)
                 })
                 .unwrap_or_default(),
-            Err(_) => Vec::new(),
+            Err(error) => {
+                // Answering with zero retrieved context is a wrong answer presented as a
+                // normal one: the model speaks confidently about documents it never saw.
+                tracing::error!(
+                    %error,
+                    "Query embedding failed; answering without knowledge-base context"
+                );
+                Vec::new()
+            }
         }
     };
     let mut contexts: Vec<String> = search_results

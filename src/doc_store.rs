@@ -656,7 +656,17 @@ pub struct PostgresDocStore {
 #[cfg(feature = "postgres-backend")]
 impl PostgresDocStore {
     pub fn from_config(url: &str) -> crate::Result<Self> {
-        let mut client = postgres::Client::connect(url, postgres::NoTls)?;
+        let mut client = postgres::Client::connect(url, postgres::NoTls).map_err(|error| {
+            // The driver reports only "db error" for a refused connection; name the
+            // endpoint (credentials redacted) so a first deployment has something to act
+            // on instead of a bare failure.
+            anyhow::anyhow!(
+                "cannot connect to PostgreSQL at {}: {error}. Start the bundled database \
+                 (`docker compose up -d postgres`), point RAYRAG_POSTGRES_URL at a \
+                 reachable server, or use the zvec backend (RAYRAG_VECTOR_BACKEND=zvec).",
+                crate::persistence::redact_dsn(url)
+            )
+        })?;
         client.batch_execute(
             "CREATE TABLE IF NOT EXISTS doc_store_chunks (
                 id TEXT NOT NULL,

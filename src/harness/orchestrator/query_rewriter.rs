@@ -142,7 +142,12 @@ pub async fn rewrite_gap_to_query(
     let history = vec![json!({"role": "user", "content": "Output:\n"})];
     let raw = match chat.chat(&rendered, &history, &json!({})).await {
         Ok(raw) => raw,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            // Rewriting is an optimisation: fall back to the original question, but say
+            // so, otherwise a silent recall drop looks like a bad model.
+            tracing::warn!(%error, "Query rewrite LLM call failed; searching the original question");
+            return Vec::new();
+        }
     };
     parse_rewrite_queries(&raw)
 }

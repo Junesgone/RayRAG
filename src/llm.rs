@@ -419,13 +419,29 @@ impl LlmClient {
                     if data == "[DONE]" {
                         break;
                     }
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data)
-                        && let Some(delta) = value
-                            .pointer("/choices/0/delta/content")
-                            .and_then(|content| content.as_str())
-                    {
-                        full.push_str(delta);
-                        on_chunk(delta);
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(value) => {
+                            // An in-stream error frame is part of the OpenAI SSE contract;
+                            // skipping it would turn a provider failure into a silently
+                            // truncated answer.
+                            if let Some(error) = value.get("error") {
+                                tracing::warn!(%error, "Model stream returned an error frame");
+                            }
+                            if let Some(delta) = value
+                                .pointer("/choices/0/delta/content")
+                                .and_then(|content| content.as_str())
+                            {
+                                full.push_str(delta);
+                                on_chunk(delta);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                %error,
+                                frame = %data.chars().take(200).collect::<String>(),
+                                "Skipping an unparsable model stream frame"
+                            );
+                        }
                     }
                 }
             }

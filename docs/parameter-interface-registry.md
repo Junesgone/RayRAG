@@ -20,6 +20,62 @@
 | `RAYRAG_VECTOR_BACKEND` | `zvec` |  |
 | `RAYRAG_ZVEC_DIR` | `./zvec-data` |  |
 | `RAYRAG_EMBEDDING_DIMENSION` | `384` |  |
+| `LLM_API_BASE` | `https://api.minimaxi.com/v1` | 模型端点（OpenAI 兼容）。首次登录的引导页会写回下面这些键，保存后的值与 本文件保持动态同步；未设置的键使用代码内置默认，或按“未配置”明确报错。 这些行默认注释：取消注释即生效，直接复制本模板不会改变运行行为。 Model endpoints (OpenAI-compatible). The first-login wizard writes these keys back into this very file; unset keys fall back to the built-in default or to an explicit "not configured" error. Commented by default on purpose. （模板中默认注释，取消注释即生效） |
+| `LLM_API_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `LLM_MODEL` | `MiniMax-M3` | （模板中默认注释，取消注释即生效） |
+| `FALLBACK_LLM_BASE` | `` | 主 LLM 失败时的回退端点（可选）；模型默认 Qwen3.5-9B。 （模板中默认注释，取消注释即生效） |
+| `FALLBACK_LLM_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `FALLBACK_LLM_MODEL` | `Qwen3.5-9B` | （模板中默认注释，取消注释即生效） |
+| `LLM_TIMEOUT_SECONDS` | `10` | 模型目录/探测请求超时（秒），默认 10，钳制 1..120。 （模板中默认注释，取消注释即生效） |
+| `EMBED_API_BASE` | `` | （模板中默认注释，取消注释即生效） |
+| `EMBED_API_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `EMBED_MODEL` | `` | （模板中默认注释，取消注释即生效） |
+| `TEI_MODEL` | `` | 需要显式模型名的向量服务（TEI / Xinference / vLLM 多模型），配合 COMPOSE_PROFILES 使用。 （模板中默认注释，取消注释即生效） |
+| `RERANK_API_BASE` | `` | （模板中默认注释，取消注释即生效） |
+| `RERANK_API_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `RERANK_MODEL` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ASR_API_BASE` | `` | 语音转写（ASR，OpenAI 兼容 /v1/audio/transcriptions）；不设置时音频解析回退为 元数据占位并在日志中说明，而不是静默产出空文档。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ASR_API_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ASR_MODEL` | `whisper-1` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_MAX_CONCURRENT_TASKS` | `` | 资源与流水线。留空 = 按本机 CPU/内存/GPU 自动推导（启动日志会打印探测结果）， 引导页会把推荐值预填出来让用户确认，因此这里默认注释以免覆盖自动调优。 文档处理并发任务数上限（自动推导值见启动日志 host_resources/document_tasks）。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_MODEL_TIMEOUT` | `300` | 单次模型调用超时（秒），默认 300，钳制 1..1800；与命令级 RAYRAG_CMD_TIMEOUT（2h 上限）区分。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_HTTP_BODY_LIMIT_BYTES` | `33554432` | 单次 HTTP 响应体上限（字节），默认 33554432（32 MiB）。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_CONNECTOR_BODY_LIMIT_BYTES` | `268435456` | 连接器（S3/WebDAV/HTTP）单次下载上限（字节），默认 268435456（256 MiB）。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_PDF_STREAM_LIMIT_BYTES` | `67108864` | 单个 PDF 流解码后的输出上限（字节），默认 67108864（64 MiB）；小于 1 MiB 的取值被忽略。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ZVEC_MAX_BUFFER_BYTES` | `67108864` | zvec 单集合写缓冲上限（字节），默认 67108864（64 MiB）；小于 1 MiB 的取值被忽略。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_MAX_UPLOAD_BYTES` | `67108864` | 单次上传大小上限（字节），默认 67108864（64 MiB）。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_NO_FSYNC` | `` | 容器 overlay 上 fsync 极慢时可设 1 跳过（崩溃最多丢最后一次快照，JSON 可重建）。 （模板中默认注释，取消注释即生效） |
+| `CHUNK_FEEDBACK_ENABLED` | `` | 分块反馈（点赞/点踩）：enabled 取 1/true 打开；weighting 取 uniform\|relevance（默认 relevance）。 （模板中默认注释，取消注释即生效） |
+| `CHUNK_FEEDBACK_WEIGHTING` | `relevance` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_CORS_ORIGIN` | `` | 网络与服务 浏览器跨域来源（如 https://rag.example.com）；不设置则不挂载 CORS 层。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ADVERTISE_HOST` | `127.0.0.1` | 管理控制台“服务状态”页展示的对外主机/端口；默认 127.0.0.1:9380。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ADVERTISE_PORT` | `9380` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_POSTGRES_PORT` | `5432` | 宿主映射的 PostgreSQL 端口（仅用于服务状态页展示），默认 5432。 （模板中默认注释，取消注释即生效） |
+| `ALLOW_ANY_HOST` | `` | MCP 客户端是否允许任意 Host 头（对齐上游 ALLOW_ANY_HOST），默认 false。 （模板中默认注释，取消注释即生效） |
+| `LOG_LEVELS` | `` | 每目标日志级别覆盖，形如 info,ragflow=debug,h2=warn；默认全仓 INFO。 （模板中默认注释，取消注释即生效） |
+| `ES_INDEX_PREFIX` | `` | 消息索引前缀（对齐上游 ES_INDEX_PREFIX），默认空。 （模板中默认注释，取消注释即生效） |
+| `EXESQL_PORT` | `5432` | ExeSQL 组件默认连接端口，默认 5432。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_SANDBOX_PROVIDER` | `self_managed` | 代码执行沙箱（管理控制台的沙箱设置写入运行期配置；这里的环境变量优先级更高） 提供商：local\|self_managed\|ssh\|aliyun_codeinterpreter\|e2b\|tenki\|ucloud_agent_sandbox，默认 self_managed。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_SANDBOX_TIMEOUT` | `` | 沙箱单次执行超时（秒）；不设置时读管理控制台配置，再回退内置默认。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_EXECUTOR_MANAGER_URL` | `` | 执行器管理器地址（优先于 RAYRAG_SANDBOX_HOST 与管理控制台配置）。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_SANDBOX_HOST` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_SANDBOX_PYTHON` | `python3` | 本机沙箱解释器路径，默认 python3 / node。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_SANDBOX_NODE` | `node` | （模板中默认注释，取消注释即生效） |
+| `SANDBOX_HOST` | `` | 上游同名变量（对齐 RAGFlow sandbox 配置）：管理器地址/端口/池大小/令牌/限流与基础镜像。 （模板中默认注释，取消注释即生效） |
+| `SANDBOX_EXECUTOR_MANAGER_PORT` | `9385` | （模板中默认注释，取消注释即生效） |
+| `SANDBOX_EXECUTOR_MANAGER_POOL_SIZE` | `` | （模板中默认注释，取消注释即生效） |
+| `SANDBOX_EXECUTOR_MANAGER_API_TOKEN` | `` | （模板中默认注释，取消注释即生效） |
+| `SANDBOX_RUN_PREAUTH_RATE_LIMIT` | `` | （模板中默认注释，取消注释即生效） |
+| `SANDBOX_BASE_PYTHON_IMAGE` | `sandbox-base-python:latest` | （模板中默认注释，取消注释即生效） |
+| `SANDBOX_BASE_NODEJS_IMAGE` | `sandbox-base-nodejs:latest` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_HOST` | `` | MCP 服务端（沿用上游同名变量，供外部 MCP 客户端连接本实例） （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_PORT` | `9382` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_BASE_URL` | `` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_LAUNCH_MODE` | `` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_HOST_API_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_TRANSPORT_SSE_ENABLED` | `true` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_TRANSPORT_STREAMABLE_ENABLED` | `true` | （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_MCP_JSON_RESPONSE` | `true` | （模板中默认注释，取消注释即生效） |
 | `TAVILY_API_KEY` | `` | Optional Tavily credential for TavilySearch/TavilyExtract Canvas nodes and Agent tools. A non-empty per-tool api_key in the DSL takes precedence. |
 | `QUERIT_API_KEY` | `` |  |
 | `AIMLAPI_APP_URL` | `https://app.aimlapi.com` | Optional AIMLAPI agent-authorization (OAuth 2.0 device flow). Defaults match RAGFlow. |
@@ -32,6 +88,15 @@
 | `JIN10_SECRET_KEY` | `` | 金十财经（Jin10 flash/calendar/symbols/news）：需金十开放数据 secret-key （https://open-data-api.jin10.com 申请；RAGFlow 默认占位 "xxx" 也会被接受校验）。 |
 | `QWEATHER_API_KEY` | `` | 和风天气（QWeather weather/indices/airquality）：需 Web API key （https://dev.qweather.com 注册免费订阅；免费档走 devapi.qweather.com）。 |
 | `SEARXNG_URL` | `` | SearXNG 元搜索实例基址（可自建，兼容大陆/全球引擎聚合；无 key）。 也可在画布节点参数里按节点传 searxng_url。 |
+| `TUSHARE_TOKEN` | `` | 其它数据源与组件的可选凭据（全部可留空；留空即该组件返回"未配置"的明确错误）。 行情：Tushare token；问财 hexin-v（网页端 Cookie 中的 v 值）。 （模板中默认注释，取消注释即生效） |
+| `IWENCAI_HEXIN_V` | `` | （模板中默认注释，取消注释即生效） |
+| `TENCENT_REGION` | `` | 腾讯云文档解析（TCADP）区域，默认 ap-guangzhou。 （模板中默认注释，取消注释即生效） |
+| `SERPAPI_API_KEY` | `` | SerpApi key：Google 结果。大陆环境无需它——Bing/百度/百度学术/博查等直连连接器默认可用。 （模板中默认注释，取消注释即生效） |
+| `BAIDU_TRANSLATE_APPID` | `` | 百度翻译开放平台（文档翻译组件）。 （模板中默认注释，取消注释即生效） |
+| `BAIDU_TRANSLATE_KEY` | `` | （模板中默认注释，取消注释即生效） |
+| `MINERU_POLL_TIMEOUT_SECONDS` | `30` | MinerU 轮询超时（秒），默认 30；MINERU_TIMEOUT_SECONDS 优先。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_RES_PATH` | `` | 资源目录覆盖（一般无需设置，默认按可执行文件相对路径查找）。 （模板中默认注释，取消注释即生效） |
+| `RAGFLOW_RES_PATH` | `` | （模板中默认注释，取消注释即生效） |
 | `RAYRAG_TEST_LLM_BASE` | `http://127.0.0.1:8088` | GPU 本地模型端点（llama.cpp llama-server，OpenAI 兼容）。 测试套件用这些变量做真实推理闭环验证（--ignored 测试）。 |
 | `RAYRAG_TEST_LLM_MODEL` | `Qwen3.5-9B-Q4_K_M.gguf` |  |
 | `RAYRAG_TEST_EMBEDDING_BASE` | `http://127.0.0.1:8888` |  |
@@ -39,7 +104,15 @@
 | `RAYRAG_TEST_RERANKER_BASE` | `http://127.0.0.1:8081` |  |
 | `RAYRAG_TEST_VISION_BASE` | `http://127.0.0.1:8088/v1` |  |
 | `RAYRAG_TEST_VISION_MODEL` | `Qwen3.5-9B-Q4_K_M.gguf` |  |
-| `RAYRAG_TEST_RERANKER_KEY` | `mxbai-rerank-key` | S3-compatible object storage (MinIO / AWS S3 / Aliyun OSS / Tencent COS) Empty endpoint keeps local-filesystem mode; path-style defaults to true (required for MinIO and most self-hosted endpoints). RAYRAG_STORAGE_ENDPOINT=http://127.0.0.1:9000 RAYRAG_STORAGE_REGION=us-east-1 RAYRAG_STORAGE_ACCESS_KEY=minioadmin RAYRAG_STORAGE_SECRET_KEY=minioadmin RAYRAG_STORAGE_PATH_STYLE=true |
+| `RAYRAG_STORAGE_ENDPOINT` | `http://127.0.0.1:9000` | S3-compatible object storage (MinIO / AWS S3 / Aliyun OSS / Tencent COS) Empty endpoint keeps local-filesystem mode; path-style defaults to true (required for MinIO and most self-hosted endpoints). （模板中默认注释，取消注释即生效） |
+| `RAYRAG_STORAGE_REGION` | `us-east-1` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_STORAGE_ACCESS_KEY` | `minioadmin` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_STORAGE_SECRET_KEY` | `minioadmin` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_STORAGE_PATH_STYLE` | `true` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_TEST_RERANKER_KEY` | `mxbai-rerank-key` |  |
+| `RAYRAG_TEST_LLM_KEY` | `` | 真实模型闭环测试里可选的 LLM key；PDF 大纲解析测试的夹具路径。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_TEST_PDF_OUTLINE` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_POSTGRES_TEST_URL` | `` | 面向真实 PostgreSQL 的集成测试 DSN（默认关闭，需显式 --ignored 运行）。 （模板中默认注释，取消注释即生效） |
 | `RAYRAG_OCR_PROVIDER` | `` | Optional OCR. Leave the provider empty to disable external OCR. PaddleOCR follows RAGFlow v0.26.4's /api/v2/ocr/jobs submit/poll/JSONL API. |
 | `RAYRAG_OCR_BASE_URL` | `http://127.0.0.1:8097` |  |
 | `PADDLEOCR_BASE_URL` | `https://paddleocr.aistudio-app.com` |  |
@@ -83,8 +156,8 @@
 | `RAYRAG_ADMIN_EMAIL` | `admin@rayrag.local` | 全新状态卷首次启动时必需；密码至少 12 个字符。 |
 | `RAYRAG_ADMIN_PASSWORD` | `replace-with-a-strong-admin-password` |  |
 | `RAYRAG_PASSWORD_PRIVATE_KEY_FILE` | `` | Optional RAGFlow-compatible password transport. Generate a deployment-only RSA PKCS#8/PKCS#1 key, mount it as a secret, and set the in-container path. Never reuse RAGFlow's repository-owned conf/private.pem. When unset, auth passwords are plain JSON and the deployment must terminate HTTPS upstream. |
-| `RAYRAG_POSTGRES_PASSWORD` | `change-me` | Enable with: cargo run --bin rayrag --features postgres-backend -- serve |
-| `RAYRAG_POSTGRES_URL` | `postgresql://rayrag:change-me@127.0.0.1:5432/rayrag` |  |
+| `RAYRAG_POSTGRES_PASSWORD` | `change-me` | Enable with: cargo run --bin rayrag --features postgres-backend -- serve RAYRAG_POSTGRES_PASSWORD 必须与下面 DSN 里的口令一致；docker compose 用它初始化数据库。 |
+| `RAYRAG_POSTGRES_URL` | `postgresql://rayrag:change-me@127.0.0.1:5432/rayrag` | PostgreSQL 元数据/快照库（不使用 MySQL）。两种运行方式： * 纯 Docker：compose 会用它自己的 DSN 覆盖本行（指向 postgres 服务），本行无需改动； * 纯 Linux：需要先有一个可连的 PostgreSQL 18.x。上面这行是标准本机地址， 请把用户/口令/库名/端口改成你实际的值；连不上时启动会明确报出被连的地址 （口令已脱敏）并给出处理建议，而不是只打印一句 db error。 留空 = 使用内置文件存储（JSON），适合先跑起来试用。 |
 | `RAYRAG_POSTGRES_REQUIRED_VERSION` | `18.4` |  |
 | `RAYRAG_POSTGRES_NAMESPACE` | `default` |  |
 | `RAYRAG_IMAGE` | `rayrag:local` | Docker application settings |
@@ -108,6 +181,17 @@
 | `REGISTER_ENABLED` | `1` | 上游 settings.REGISTER_ENABLED（0 关闭注册入口）/ DISABLE_PASSWORD_LOGIN（true 走 SSO-only 渠道登录） REGISTER_ENABLED 同时决定登录页是否显示注册入口（GET /api/v1/system/config 的 registerEnabled） 与 POST /api/v1/user/register 是否放行——两者读同一个解析值，不会出现"页面给了注册表单、提交却 403 Registration is disabled"。默认 1（与上游一致：不设置时注册开放）；要关闭注册请显式设为 0。 |
 | `DISABLE_PASSWORD_LOGIN` | `false` |  |
 | `RAYRAG_OAUTH_CONFIG` | `` | OAuth 登录渠道（对齐 RAGFlow service_conf.yaml 的 oauth: 块，JSON 形式；留空则登录页不显示渠道区） 例：RAYRAG_OAUTH_CONFIG={"github":{"type":"github","icon":"github","display_name":"Github","client_id":"x","client_secret":"y","redirect_uri":"http://127.0.0.1:9390/api/v1/auth/oauth/github/callback"}} |
+| `RAYRAG_CHANNELS_CONFIG` | `` | 通知渠道 / 会话默认（管理控制台的渠道页写入运行期配置；环境变量优先级更高） 渠道总配置（JSON，优先级高于下面各单项）；留空时按单项变量拼装。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_WEBHOOK_CALLBACK_URL` | `` | Webhook 出站回调地址与可选 bearer token。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_WEBHOOK_TOKEN` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_FEISHU_APP_ID` | `` | 飞书渠道（app_id 与 app_secret 同时非空才启用）；domain 默认飞书开放平台。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_FEISHU_APP_SECRET` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_FEISHU_DOMAIN` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_CHAT_LANGUAGE` | `` | 新会话默认语言与系统提示词（留空表示由页面/请求决定）。 （模板中默认注释，取消注释即生效） |
+| `RAYRAG_CHAT_SYSTEM_PROMPT` | `` | （模板中默认注释，取消注释即生效） |
+| `EMAIL_SMTP_PORT` | `465` | 邮件渠道 SMTP 端口，默认 465。 （模板中默认注释，取消注释即生效） |
+| `GOOGLE_OAUTH_TOKEN_URL` | `` | OAuth 换 token 端点覆盖（一般无需设置，默认走各提供商官方端点）。 （模板中默认注释，取消注释即生效） |
+| `BOX_OAUTH_TOKEN_URL` | `` | （模板中默认注释，取消注释即生效） |
 <!-- END GENERATED ENV -->
 
 ## 2. HTTP 接口登记表
@@ -178,6 +262,7 @@
 | GET | `/agents/{agent_id}` | `-` |
 | GET | `/agent-log-page/{agent_id}` | `-` |
 | GET | `/memories` | `-` |
+| GET | `/memory` | `-` |
 | GET | `/memory/memory-message/{memory_id}` | `-` |
 | GET | `/memory/memory-setting/{memory_id}` | `-` |
 | GET | `/admin` | `-` |

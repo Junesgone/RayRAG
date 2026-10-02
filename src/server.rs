@@ -389,11 +389,27 @@ async fn rename_file(
         let old_path = file_physical_path(&state.files.data_dir, &file_id, &record.name);
         let new_path = file_physical_path(&state.files.data_dir, &file_id, &name);
         if old_path != new_path && old_path.exists() {
-            let _ = std::fs::rename(&old_path, &new_path);
+            // The blob has to move with the record. Answering "renamed" while the bytes
+            // stayed behind leaves a row the UI lists and nobody can ever open.
+            if let Err(error) = std::fs::rename(&old_path, &new_path) {
+                tracing::error!(%error, %file_id, "Failed to rename the file blob");
+                return Json(serde_json::json!({
+                    "code": 500,
+                    "message": format!("Failed to rename file: {error}"),
+                }))
+                .into_response();
+            }
         }
         let mut updated = record.clone();
         updated.name = name;
-        let _ = state.files.remove(&file_id);
+        if let Err(error) = state.files.remove(&file_id) {
+            tracing::error!(%error, %file_id, "Failed to drop the old file record");
+            return Json(serde_json::json!({
+                "code": 500,
+                "message": format!("Failed to update file record: {error}"),
+            }))
+            .into_response();
+        }
         match state.files.add(updated) {
             Ok(_) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
             Err(error) => Json(serde_json::json!({ "code": 500, "message": error.to_string() }))
@@ -423,7 +439,16 @@ async fn copy_file(
     let source = file_physical_path(&state.files.data_dir, &file_id, &record.name);
     let target = file_physical_path(&state.files.data_dir, &new_id, &record.name);
     if source.exists() {
-        let _ = std::fs::copy(&source, &target);
+        // A copy that did not happen must not be reported as a new file: the row would
+        // be listed and downloadable-looking while its bytes do not exist.
+        if let Err(error) = std::fs::copy(&source, &target) {
+            tracing::error!(%error, %file_id, "Failed to copy the file blob");
+            return Json(serde_json::json!({
+                "code": 500,
+                "message": format!("Failed to copy file: {error}"),
+            }))
+            .into_response();
+        }
     }
     let mut copied = record.clone();
     copied.id = new_id;

@@ -233,15 +233,38 @@ impl OcrClient {
 
     /// RAGFlow's Paddle wrapper checks configuration locally; the legacy
     /// proxy retains its network health endpoint.
+    ///
+    /// An unhealthy backend is still reported to the caller as `Ok(false)` — the parsing
+    /// pipeline may legitimately continue without OCR — but the reason is logged here,
+    /// because "OCR switched itself off" is exactly what makes a scanned PDF come back
+    /// as `DONE, 0 chunks` with nothing in the log to explain it.
     pub async fn health(&self) -> Result<bool> {
         match &self.backend {
             OcrBackend::LegacyProxy { base_url } => {
                 match self.client.get(format!("{base_url}/health")).send().await {
-                    Ok(response) => Ok(response.status().is_success()),
-                    Err(_) => Ok(false),
+                    Ok(response) => {
+                        if !response.status().is_success() {
+                            tracing::warn!(
+                                %base_url,
+                                status = %response.status(),
+                                "OCR health endpoint answered with an error status"
+                            );
+                        }
+                        Ok(response.status().is_success())
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, %base_url, "OCR health probe failed");
+                        Ok(false)
+                    }
                 }
             }
-            OcrBackend::PaddleOcr(config) => Ok(config.validate().is_ok()),
+            OcrBackend::PaddleOcr(config) => match config.validate() {
+                Ok(()) => Ok(true),
+                Err(error) => {
+                    tracing::warn!(%error, "PaddleOCR configuration is invalid");
+                    Ok(false)
+                }
+            },
         }
     }
 

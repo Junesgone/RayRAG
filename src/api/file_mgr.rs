@@ -173,8 +173,12 @@ pub async fn delete_file(
     } else {
         format!("{file_id}.{extension}")
     });
-    if physical.exists() {
-        let _ = std::fs::remove_file(&physical);
+    if physical.exists()
+        && let Err(error) = std::fs::remove_file(&physical)
+    {
+        // The record is about to disappear while its bytes stay on disk: an orphan that
+        // keeps consuming the storage quota with nothing to point at it.
+        tracing::warn!(%error, %file_id, "Failed to remove the file blob");
     }
     match state.files.remove(&file_id) {
         Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),

@@ -273,7 +273,9 @@ pub async fn index_delete(
     kb_id: &str,
     condition: FilterCondition,
 ) {
-    let _ = store.delete(&condition, index_name, kb_id);
+    if let Err(error) = store.delete(&condition, index_name, kb_id) {
+        tracing::error!(%error, %index_name, %kb_id, "structure merge: index delete failed");
+    }
 }
 
 /// `_index_insert` (bulk refresh is a per-backend concern in RayRAG).
@@ -281,7 +283,15 @@ pub async fn index_insert(store: &dyn DocStore, index_name: &str, kb_id: &str, r
     if rows.is_empty() {
         return;
     }
-    let _ = store.insert(rows, index_name, kb_id);
+    if let Err(error) = store.insert(rows, index_name, kb_id) {
+        tracing::error!(
+            %error,
+            %index_name,
+            %kb_id,
+            rows = rows.len(),
+            "structure merge: index insert failed"
+        );
+    }
 }
 
 /// `_refresh_index`: no-op — the RayRAG store backends make writes visible

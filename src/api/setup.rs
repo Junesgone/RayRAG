@@ -594,6 +594,15 @@ fn field_specs() -> Vec<(
     ]
 }
 
+/// Every environment key the wizard can write, in page order.
+///
+/// Exposed so the environment-surface guard can prove that the guided page never writes
+/// a key the template does not mention: a value saved into `.env` that no template line
+/// documents is a setting the operator cannot find again.
+pub fn field_keys() -> Vec<&'static str> {
+    field_specs().into_iter().map(|spec| spec.0).collect()
+}
+
 /// The value the process falls back to when a variable is unset.
 ///
 /// These are the same constants the code reads (`cmd_timeout::DEFAULT_SECS` and friends),
@@ -828,9 +837,17 @@ fn content_digest(content: &[u8]) -> String {
 }
 
 /// Read `KEY=value` pairs from an environment file, ignoring comments.
+///
+/// A missing file is an empty configuration — that is the first-boot case. Any other
+/// read error is returned: showing an existing file as empty would let the next save
+/// overwrite settings the operator never saw.
 pub fn read_env_file(path: &Path) -> anyhow::Result<Vec<(String, String)>> {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Ok(Vec::new());
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(anyhow::anyhow!("cannot read {}: {error}", path.display()));
+        }
     };
     let mut entries = Vec::new();
     for line in content.lines() {
@@ -854,8 +871,20 @@ pub fn read_env_file(path: &Path) -> anyhow::Result<Vec<(String, String)>> {
 /// Existing lines keep their position (and their comment neighbors); new keys are
 /// appended under a header. The write is atomic, so a crash cannot leave a
 /// half-written file that the next boot would read.
+///
+/// A read error is *not* an empty file: rewriting from an empty base would delete every
+/// unrelated setting the operator had, while the page reports success.
 pub fn write_env_file(path: &Path, updates: &[(String, String)]) -> anyhow::Result<()> {
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let existing = match std::fs::read_to_string(path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "cannot read {} before updating it: {error}",
+                path.display()
+            ));
+        }
+    };
     let mut lines: Vec<String> = existing.lines().map(str::to_string).collect();
     let mut pending: Vec<(String, String)> = updates.to_vec();
 

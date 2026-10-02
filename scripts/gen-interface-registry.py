@@ -70,7 +70,19 @@ PREAMBLE = """# RayRAG 参数与功能接口登记表（内部文档，禁止发
 """
 
 
+def is_decorative(text):
+    """A comment that only draws a line (==== or ----) carries no meaning."""
+    return not text or set(text) <= set("=-#*/ ")
+
+
 def load_env_rows():
+    """Every key the template declares, active or commented out.
+
+    The template comments out values whose absence is meaningful (an auto-tuned worker
+    count, an endpoint with a built-in default), so a commented `#KEY=value` line is a
+    documented key too. Treating those as plain comments used to fold them into the note
+    of whatever key came next, which hid real parameters from this registry.
+    """
     rows = []
     comments = []
     try:
@@ -79,20 +91,24 @@ def load_env_rows():
         sys.exit(f"cannot read {ENV_EXAMPLE}: {error}")
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("#"):
-            comments.append(stripped.lstrip("#").strip())
-            continue
-        if not stripped or "=" not in stripped:
-            if not stripped:
-                comments = []
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+        if not stripped:
             comments = []
             continue
-        note = " ".join(part for part in comments if part)
-        rows.append((key, value.strip(), note))
+        assignment = re.fullmatch(r"(#\s*)?([A-Z][A-Z0-9_]*)=(.*)", stripped)
+        if assignment:
+            commented, key, value = assignment.groups()
+            note = " ".join(part for part in comments if not is_decorative(part))
+            if commented:
+                marker = "（模板中默认注释，取消注释即生效）"
+                note = f"{note} {marker}".strip() if note else marker
+            rows.append((key, value.strip(), note))
+            comments = []
+            continue
+        if stripped.startswith("#"):
+            comment = stripped.lstrip("#").strip()
+            if not is_decorative(comment):
+                comments.append(comment)
+            continue
         comments = []
     return rows
 

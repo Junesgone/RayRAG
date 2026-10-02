@@ -113,11 +113,22 @@ impl PdfParser {
         // otherwise hide a bomb (or a broken file) behind a successful status.
         let mut refused_streams = 0usize;
 
-        // Try OCR first if client is available
-        let use_ocr = if let Some(ref ocr) = self.ocr {
-            ocr.health().await.unwrap_or(false)
-        } else {
-            false
+        // Try OCR first if client is available. A probe that fails is reported instead of
+        // being folded into `false`: without the log line a scanned PDF becomes
+        // "DONE, 0 chunks" and nothing says the OCR backend was unreachable.
+        let use_ocr = match self.ocr.as_ref() {
+            Some(ocr) => match ocr.health().await {
+                Ok(true) => true,
+                Ok(false) => {
+                    tracing::warn!("OCR backend reports unhealthy; parsing this PDF without OCR");
+                    false
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "OCR health check failed; parsing this PDF without OCR");
+                    false
+                }
+            },
+            None => false,
         };
 
         // lopdf 0.34+: get_pages() returns HashMap; iterate directly

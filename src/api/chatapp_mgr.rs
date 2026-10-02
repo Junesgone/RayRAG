@@ -66,7 +66,14 @@ impl ChatAppStore {
         crate::persistence::restore_if_missing(std::path::Path::new(&metadata_path))?;
         let apps = if std::path::Path::new(&metadata_path).exists() {
             let content = std::fs::read_to_string(&metadata_path)?;
-            serde_json::from_str(&content).unwrap_or_default()
+            // Same rule as the data-source store: a corrupt file is an error, not an
+            // empty deployment. Reading it as empty would delete every chat app on the
+            // next save, silently and with HTTP 200 everywhere.
+            serde_json::from_str::<HashMap<String, ChatApp>>(&content).map_err(|error| {
+                anyhow::anyhow!(
+                    "{metadata_path} is not valid JSON ({error}); refusing to start from an empty store"
+                )
+            })?
         } else {
             HashMap::new()
         };

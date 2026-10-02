@@ -488,7 +488,15 @@ pub async fn list_chunks(
             doc_aggs: full.doc_aggs,
             pre_summary: None,
         },
-        Err(_) => Kbinfos::default(),
+        Err(error) => {
+            // Handing the agent an empty result set would let it conclude "this document
+            // has no matching content" — a wrong answer, not a visible error.
+            tracing::error!(%error, %doc_id, "Failed to fetch document chunks for list_chunks");
+            Kbinfos {
+                pre_summary: Some(format!("Failed to fetch document chunks: {error}")),
+                ..Kbinfos::default()
+            }
+        }
     }
 }
 

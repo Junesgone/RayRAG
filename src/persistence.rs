@@ -158,6 +158,26 @@ fn configure_snapshot_mirror() -> anyhow::Result<Option<Box<dyn SnapshotMirror>>
     }
 }
 
+/// A DSN safe to print in a log or an error message.
+///
+/// Connection failures are the most common first-deployment error, so the message has
+/// to name the endpoint — but a startup banner or an error report must never leak the
+/// database password.
+pub fn redact_dsn(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return "<unparsable DSN>".to_string();
+    };
+    let (scheme, rest) = url.split_at(scheme_end + 3);
+    let Some(at) = rest.rfind('@') else {
+        return format!("{scheme}{rest}");
+    };
+    let (credentials, host) = rest.split_at(at);
+    match credentials.split_once(':') {
+        Some((user, _)) => format!("{scheme}{user}:***{host}"),
+        None => format!("{scheme}{credentials}{host}"),
+    }
+}
+
 /// Fsync a directory after creating, renaming, or removing an entry in it.
 pub fn sync_parent(path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
@@ -250,7 +270,17 @@ mod postgres_backend {
         receiver: mpsc::Receiver<DatabaseRequest>,
         ready: &mpsc::SyncSender<anyhow::Result<()>>,
     ) -> anyhow::Result<()> {
-        let mut client = Client::connect(url, NoTls)?;
+        let mut client = Client::connect(url, NoTls).map_err(|error| {
+            // The driver's own message is just "db error": name the endpoint and say what
+            // to do, otherwise a first deployment fails with nothing to act on.
+            anyhow::anyhow!(
+                "cannot connect to PostgreSQL at {}: {error}. Start the bundled database \
+                 (`docker compose up -d postgres`), or point RAYRAG_POSTGRES_URL at a \
+                 reachable server, or leave RAYRAG_POSTGRES_URL empty to use the built-in \
+                 file store.",
+                super::redact_dsn(url)
+            )
+        })?;
         let version_num: i32 = client
             .query_one("SELECT current_setting('server_version_num')::int4", &[])?
             .get(0);
@@ -641,6 +671,29 @@ mod tests {
         let loaded: Option<serde_json::Value> = load_json(&path).unwrap();
         assert!(loaded.is_none());
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn dsn_diagnostics_never_print_the_password() {
+        assert_eq!(
+            redact_dsn("postgresql://rayrag:change-me@127.0.0.1:5432/rayrag"),
+            "postgresql://rayrag:***@127.0.0.1:5432/rayrag"
+        );
+        // No credentials at all: the endpoint still has to be recognisable.
+        assert_eq!(
+            redact_dsn("postgresql://127.0.0.1:55432/rayrag"),
+            "postgresql://127.0.0.1:55432/rayrag"
+        );
+        // A password containing '@' keeps only the last separator.
+        assert_eq!(
+            redact_dsn("postgresql://rayrag:p@ss@db:5432/rayrag"),
+            "postgresql://rayrag:***@db:5432/rayrag"
+        );
+        assert!(redact_dsn("not-a-dsn").contains("unparsable"));
+        assert!(
+            !redact_dsn("postgresql://rayrag:change-me@127.0.0.1:5432/rayrag")
+                .contains("change-me")
+        );
     }
 
     #[test]

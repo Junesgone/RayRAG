@@ -527,7 +527,11 @@ pub async fn start_run(
             Err(error) => server_error(&error.to_string()),
         },
         Err(error) => {
-            state.evaluations.fail_run(&run.id, &error.to_string()).ok();
+            if let Err(persist) = state.evaluations.fail_run(&run.id, &error.to_string()) {
+                // Without this the run row stays RUNNING for ever: the user sees a job
+                // that never finishes and never says why.
+                tracing::error!(%persist, run_id = %run.id, "Failed to persist the evaluation failure");
+            }
             bad_request(&error.to_string())
         }
     }
