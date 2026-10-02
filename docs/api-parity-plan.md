@@ -108,3 +108,28 @@
 5. **文档产物族**（缩略图/图片/产物/上传，5 条）：先定落盘约定，再暴露接口。
 6. 其余（连接器实例面、TTS/独立 ASR、搜索机器人流式问答、文件版本历史、插件工具元数据）：按需立项。
 
+
+## 数据集侧栏对标结论（本轮从上游源码确认）
+
+来源：`web/src/pages/dataset/sidebar/index.tsx`（`items` 列表）与 `web/src/routes.tsx`（路由表）。
+
+上游 v0.27.2 数据集侧栏**恰好 5 项**：
+
+| # | 上游 key | 标签 | 图标 |
+|---|---|---|---|
+| 1 | `Routes.Files` | `knowledgeDetails.subbarFiles` | FolderOpen |
+| 2 | `Routes.DatasetTesting` | `knowledgeDetails.testing` | TextSearch |
+| 3 | `Routes.DataSetOverview` | **`knowledgeDetails.overview`** | **Logs** |
+| 4 | `Routes.DataSetSetting` | `knowledgeDetails.configuration` | Settings |
+| 5 | `Routes.Compilation` | `Artifacts` | BookText |
+
+**知识图谱（`Routes.KnowledgeGraph` = `/knowledge-graph`）在 v0.27.2 里是一条独立路由，不在数据集侧栏**（`routes.tsx:214`），从概览页等处进入。
+
+**RayRAG 现状与差距**：侧栏为 文件列表 / **日志** / 检索测试 / 配置 / Artifacts —— 第 3 项被实现成 **Logs**，而上游这一项的**标签是 Overview（概览）只是复用了 Logs 图标**。
+
+**因此用户「想不起来的那个功能」= 数据集概览（Dataset Overview）**，对应上游 `pages/dataset/dataset-overview/overview-table.tsx`（该文件里同时引用了 knowledgeGraph，概览页是进入知识图谱的入口之一）。
+
+**待办**：
+1. 把第 3 项从「日志」改为「概览」，面板内容按上游 overview 表（文档数/分块数/存储/最近活动）实现，日志移入概览页内的入口（上游同样是 Logs 图标 + overview 标签）。
+2. 知识图谱：保持不在侧栏（与上游一致），但要给出**可达入口**（上游在概览页/解析配置里的图谱开关），并确认 `#tab4` 的 Build Graph 在接上 `/datasets/{id}/graph` 后真正可用。
+3. 用户报障「配置页排版溢出」已在 0.6.9 修复（页面横向溢出 0）。
