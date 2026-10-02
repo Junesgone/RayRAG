@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.3] - 2026-10-02
+
+- **接口对标第四批（会话簇 + 功能级缺口登记）**：同名应答 88 → **90**，未实现 53 → **51**，方法缺口保持 **0**。
+- **对话应用会话（上游 `chat_api` 会话簇，5 条）**：`POST/GET/DELETE /chats/{chat_id}/sessions`（新建、分页列表、按 `ids` 或 `delete_all` 删除）与 `GET/PATCH /chats/{chat_id}/sessions/{session_id}`（读取、重命名）。会话严格绑定其所属对话应用：跨应用读取返回 404，删除只作用于本应用的会话，未知应用一律 404。
+- **功能级缺口如实分类**：工作清单里原先含义模糊的三条已改写为明确的功能缺口——`/plugin/tools`（上游 pluginlib 插件注册表未移植；RayRAG 的画布工具目录在 `/api/v1/components`）、`/workspace-files/{id}/versions`（文件版本历史 FileCommitService 未移植，`/api/v1/file/commits` 目前为空实现）、`/files/link-to-datasets`（file2document 为占位实现）。**把"接线缺口"和"功能缺口"分开记账，避免用接线的进度掩盖功能尚未实现。**
+- **测试**：新增会话作用域回归（跨应用不可见/不可改、未知应用 404、分页包封、`delete_all` 清空后归零）。全量 **2127 passed / 0 failed**。
+
 ## [0.5.2] - 2026-10-02
 
 - **方法级缺口清零**：接口对照的「路径已存在但上游方法缺失」由 **4 → 0**。至此 RayRAG 应答的每条路径都覆盖上游注册的全部方法。本轮补齐：

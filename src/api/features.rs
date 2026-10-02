@@ -440,6 +440,223 @@ pub async fn bulk_delete_chats(
     Json(payload).into_response()
 }
 
+/// `POST /api/v1/chats/{chat_id}/sessions` — upstream `chat_api.create_session`.
+///
+/// Creates a conversation bound to the chat app named in the path. The response is the
+/// same session record the list returns, so a client can render it without a re-fetch.
+pub async fn create_chat_session(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let Some(app) = chat_app_for(&state, &auth, &chat_id) else {
+        return chat_not_found();
+    };
+    let name = body
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("New session")
+        .to_string();
+    match state.conversations.create_for_tenant_settings(
+        &auth.user_id,
+        &app.tenant_id,
+        &name,
+        app.kb_ids.clone(),
+        app.llm_id.clone(),
+        None,
+    ) {
+        Ok(session) => {
+            if let Err(error) = state.conversations.set_app_id(&session.id, &chat_id) {
+                tracing::warn!(%error, %chat_id, "Failed to bind the session to its chat app");
+            }
+            match state.conversations.get_for(&session.id, &auth.user_id) {
+                Some(session) => {
+                    Json(serde_json::json!({ "code": 0, "data": session })).into_response()
+                }
+                None => Json(serde_json::json!({
+                    "code": 102,
+                    "message": "Fail to create a session!"
+                }))
+                .into_response(),
+            }
+        }
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// The chat app behind an id, when this caller may use it.
+fn chat_app_for(
+    state: &AppState,
+    auth: &AuthContext,
+    chat_id: &str,
+) -> Option<crate::api::chatapp_mgr::ChatApp> {
+    let apps = state.chat_apps.as_ref()?;
+    apps.get(chat_id)
+        .filter(|app| app.tenant_id == auth.user_id || app.tenant_id.is_empty() || auth.is_admin)
+}
+
+/// Sessions of one chat app for the authenticated user (newest first), the shared lookup
+/// behind every `/chats/{chat_id}/sessions...` handler.
+fn chat_sessions_for(
+    state: &AppState,
+    auth: &AuthContext,
+    chat_id: &str,
+) -> Vec<crate::llm::Conversation> {
+    state
+        .conversations
+        .list_for(&auth.user_id)
+        .into_iter()
+        .filter(|session| session.app_id.as_deref() == Some(chat_id))
+        .collect()
+}
+
+/// `GET /api/v1/chats/{chat_id}/sessions` — upstream `chat_api.list_sessions`.
+pub async fn list_chat_sessions(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    if chat_app_for(&state, &auth, &chat_id).is_none() {
+        return chat_not_found();
+    }
+    let page: usize = query
+        .get("page")
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    let page_size: usize = query
+        .get("page_size")
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(30)
+        .min(100);
+    let mut sessions = chat_sessions_for(&state, &auth, &chat_id);
+    sessions.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let total = sessions.len();
+    let start = (page - 1) * page_size;
+    let rows: Vec<crate::llm::Conversation> =
+        sessions.into_iter().skip(start).take(page_size).collect();
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "items": rows, "total": total, "page": page, "page_size": page_size }
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/chats/{chat_id}/sessions/{session_id}` — one session of that chat.
+pub async fn get_chat_session(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((chat_id, session_id)): Path<(String, String)>,
+) -> axum::response::Response {
+    let Some(session) = state.conversations.get_for(&session_id, &auth.user_id) else {
+        return chat_not_found();
+    };
+    if session.app_id.as_deref() != Some(chat_id.as_str()) {
+        return chat_not_found();
+    }
+    Json(serde_json::json!({ "code": 0, "data": session })).into_response()
+}
+
+/// `PATCH /api/v1/chats/{chat_id}/sessions/{session_id}` — rename a session.
+pub async fn update_chat_session(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((chat_id, session_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let Some(session) = state.conversations.get_for(&session_id, &auth.user_id) else {
+        return chat_not_found();
+    };
+    if session.app_id.as_deref() != Some(chat_id.as_str()) {
+        return chat_not_found();
+    }
+    let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
+        return chat_bad_request(anyhow::anyhow!("`name` is required"));
+    };
+    match state
+        .conversations
+        .rename_for(&session_id, &auth.user_id, name)
+    {
+        Ok(Some(session)) => {
+            Json(serde_json::json!({ "code": 0, "data": session })).into_response()
+        }
+        Ok(None) => chat_not_found(),
+        Err(error) => chat_bad_request(error),
+    }
+}
+
+/// `DELETE /api/v1/chats/{chat_id}/sessions` — upstream `chat_api.delete_sessions`:
+/// `ids` for a selection, `delete_all` for the chat's whole history.
+pub async fn delete_chat_sessions(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    if chat_app_for(&state, &auth, &chat_id).is_none() {
+        return chat_not_found();
+    }
+    let mut ids: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let owned: std::collections::HashSet<String> = chat_sessions_for(&state, &auth, &chat_id)
+        .into_iter()
+        .map(|session| session.id)
+        .collect();
+    if ids.is_empty() {
+        if body.get("delete_all").and_then(|value| value.as_bool()) == Some(true) {
+            ids = owned.iter().cloned().collect();
+        } else {
+            return Json(serde_json::json!({ "code": 0, "data": true })).into_response();
+        }
+    } else {
+        ids.retain(|id| owned.contains(id));
+    }
+    let mut deleted = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for id in &ids {
+        match state.conversations.delete_for(id, &auth.user_id) {
+            Ok(true) => deleted += 1,
+            Ok(false) => errors.push(format!("Session({id}) not found.")),
+            Err(error) => {
+                tracing::error!(%error, %id, "Failed to delete chat session");
+                errors.push(format!("Session({id}) failed: {error}"));
+            }
+        }
+    }
+    if errors.is_empty() {
+        return Json(serde_json::json!({ "code": 0, "data": true })).into_response();
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "success_count": deleted, "errors": errors },
+    }))
+    .into_response()
+}
+
 /// DELETE /api/v1/chats/{session_id}/messages/{message_id} — delete one turn.
 pub async fn delete_chat_message(
     State(state): State<Arc<AppState>>,

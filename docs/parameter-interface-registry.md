@@ -346,6 +346,8 @@
 | PUT | `/api/v1/chats/{session_id}/messages/{message_id}/feedback` | `-` |
 | POST | `/api/v1/chats/{session_id}/messages/{message_id}` | `-` |
 | POST | `/api/v1/chats/{session_id}/messages/{message_id}/regenerate` | `-` |
+| GET | `/api/v1/chats/{chat_id}/sessions` | `-` |
+| GET | `/api/v1/chats/{chat_id}/sessions/{session_id}` | `-` |
 | POST | `/api/v1/chats/{chat_id}/sessions/{session_id}/messages/{message_id}` | `-` |
 | POST | `/api/v1/chats/{chat_id}/sessions/{session_id}/messages/{message_id}/regenerate` | `-` |
 | GET | `/api/v1/evaluations` | `-` |

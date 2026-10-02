@@ -5,12 +5,12 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**263**
-- 同名应答（exact）：**88**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**265**
+- 同名应答（exact）：**90**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**53**
-- 路径已有但方法缺失（method）：**4**
+- 尚未实现（missing，已登记）：**51**
+- 路径已有但方法缺失（method）：**0**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -32,8 +32,6 @@
 | `/searchbots/retrieval_test` | `bot_api.py` | 搜索应用检索测试 |
 | `/chat/audio/speech` | `chat_api.py` | TTS 语音合成 |
 | `/chat/audio/transcription` | `chat_api.py` | ASR 语音转写（当前仅有解析流水线内的 ASR） |
-| `/chats/<chat_id>/sessions` | `chat_api.py` | 会话（session）列表 |
-| `/chats/<chat_id>/sessions/<session_id>` | `chat_api.py` | 会话（session）详情/删除 |
 | `/datasets/<dataset_id>/chunks` | `chunk_api.py` | 数据集级分块列表 |
 | `/datasets/<dataset_id>/documents/<document_id>/structure/graph` | `chunk_api.py` | 文档结构图（编译产物） |
 | `/connectors/<connector_id>` | `connector_api.py` | 连接器实例读写（RayRAG 用 data_sources 面） |
@@ -62,9 +60,9 @@
 | `/documents/images/<image_id>` | `document_api.py` | 文档内图片读取 |
 | `/documents/upload` | `document_api.py` | 文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload） |
 | `/thumbnails` | `document_api.py` | 缩略图服务 |
-| `/files/link-to-datasets` | `file2document_api.py` | 文件关联数据集 |
-| `/workspace-files/<file_id>/versions` | `file_commit_api.py` | 文件版本历史（file_commit） |
-| `/plugin/tools` | `plugin_api.py` | 插件工具列表 |
+| `/files/link-to-datasets` | `file2document_api.py` | 功能级缺口：文件关联数据集（file2document 目前为占位实现） |
+| `/workspace-files/<file_id>/versions` | `file_commit_api.py` | 功能级缺口：文件版本历史（FileCommitService）未移植，/api/v1/file/commits 目前为空实现 |
+| `/plugin/tools` | `plugin_api.py` | 功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components |
 | `/auth/password/forgot/captcha` | `user_api.py` | 忘记密码-图形验证码 |
 | `/auth/password/forgot/otp` | `user_api.py` | 忘记密码-发送 OTP |
 | `/auth/password/forgot/otp/verify` | `user_api.py` | 忘记密码-校验 OTP |
@@ -86,7 +84,4 @@
 
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
-| `/agents/<agent_id>/sessions` | agent_api.py [DELETE] |
-| `/providers/<provider_id_or_name>/instances/<instance_id_or_name>` | provider_api.py [PUT] |
-| `/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models` | provider_api.py [DELETE] |
-| `/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models/<path:model_name>` | provider_api.py [POST] |
+| — | — |

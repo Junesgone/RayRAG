@@ -4325,6 +4325,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/chats/{session_id}/messages/{message_id}/regenerate",
             post(crate::api::features::regenerate_chat_message),
         )
+        // Upstream `chat_api` mounts the session collection and one session per chat app.
+        .route(
+            "/api/v1/chats/{chat_id}/sessions",
+            get(crate::api::features::list_chat_sessions)
+                .post(crate::api::features::create_chat_session)
+                .delete(crate::api::features::delete_chat_sessions),
+        )
+        .route(
+            "/api/v1/chats/{chat_id}/sessions/{session_id}",
+            get(crate::api::features::get_chat_session)
+                .patch(crate::api::features::update_chat_session),
+        )
         .route(
             "/api/v1/chats/{chat_id}/sessions/{session_id}/messages/{message_id}",
             post(crate::api::features::regenerate_chat_session_message)
@@ -15312,6 +15324,131 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// Chat-app sessions must be scoped to their app: a session created under one chat is
+    /// invisible to another, and every handler refuses an unknown chat.
+    #[tokio::test]
+    async fn chat_app_sessions_are_scoped_and_paginated() {
+        let env = test_env();
+        // `test_env` builds the router without the chat-app store; the session handlers
+        // need one, so the state is rebuilt with it (AppState is a clone of Arc fields).
+        let root = std::env::temp_dir().join(format!("rayrag-chat-apps-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = (*env.state).clone();
+        let apps =
+            Arc::new(crate::api::chatapp_mgr::ChatAppStore::new(root.to_str().unwrap()).unwrap());
+        state.chat_apps = Some(apps.clone());
+        for id in ["app-one", "app-two"] {
+            apps.insert(crate::api::chatapp_mgr::ChatApp {
+                id: id.into(),
+                name: id.into(),
+                description: String::new(),
+                icon: String::new(),
+                tenant_id: "test-user".into(),
+                kb_ids: Vec::new(),
+                llm_id: None,
+                llm_setting: None,
+                rerank_id: None,
+                top_k: None,
+                prompt_config: None,
+                created_at: 1,
+            })
+            .unwrap();
+        }
+        let state = Arc::new(state);
+        let router = build_router(state.clone());
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let created = call(
+            Method::POST,
+            "/api/v1/chats/app-one/sessions".to_string(),
+            r#"{"name":"First session"}"#,
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0);
+        let session_id = created["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(created["data"]["app_id"], "app-one");
+
+        let listed = call(
+            Method::GET,
+            "/api/v1/chats/app-one/sessions?page=1&page_size=10".to_string(),
+            "",
+        )
+        .await;
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 1);
+        assert_eq!(listed["data"]["items"][0]["id"], session_id.as_str());
+
+        // Another chat app cannot see it, and neither can it be fetched through it.
+        let other = call(
+            Method::GET,
+            "/api/v1/chats/app-two/sessions".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(response_json(other).await["data"]["total"], 0);
+
+        let cross = call(
+            Method::GET,
+            format!("/api/v1/chats/app-two/sessions/{session_id}"),
+            "",
+        )
+        .await;
+        assert_eq!(cross.status(), StatusCode::NOT_FOUND);
+
+        let renamed = call(
+            Method::PATCH,
+            format!("/api/v1/chats/app-one/sessions/{session_id}"),
+            r#"{"name":"Renamed session"}"#,
+        )
+        .await;
+        let renamed = response_json(renamed).await;
+        assert_eq!(renamed["code"], 0);
+        assert_eq!(renamed["data"]["name"], "Renamed session");
+
+        let unknown = call(
+            Method::GET,
+            "/api/v1/chats/missing-app/sessions".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+        let cleared = call(
+            Method::DELETE,
+            "/api/v1/chats/app-one/sessions".to_string(),
+            r#"{"delete_all":true}"#,
+        )
+        .await;
+        assert_eq!(response_json(cleared).await["data"], true);
+        let after = call(
+            Method::GET,
+            "/api/v1/chats/app-one/sessions".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(response_json(after).await["data"]["total"], 0);
     }
 
     /// The methods upstream registers on paths RayRAG already answered must be routed,

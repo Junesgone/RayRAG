@@ -111,15 +111,15 @@ KNOWN_MISSING: dict[str, str] = {
     "/documents/artifact/<filename>": "文档产物文件读取",
     "/documents/images/<image_id>": "文档内图片读取",
     "/documents/upload": "文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload）",
-    "/files/link-to-datasets": "文件关联数据集",
-    "/plugin/tools": "插件工具列表",
+    "/files/link-to-datasets": "功能级缺口：文件关联数据集（file2document 目前为占位实现）",
+    "/plugin/tools": "功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components",
     "/searchbots/ask": "搜索应用问答机器人（上游 bot_api 的公开问答面）",
     "/searchbots/detail": "搜索应用机器人详情",
     "/searchbots/mindmap": "搜索应用脑图",
     "/searchbots/retrieval_test": "搜索应用检索测试",
     "/thumbnails": "缩略图服务",
     "/users/me/models": "当前用户可用模型列表",
-    "/workspace-files/<file_id>/versions": "文件版本历史（file_commit）",
+    "/workspace-files/<file_id>/versions": "功能级缺口：文件版本历史（FileCommitService）未移植，/api/v1/file/commits 目前为空实现",
 }
 
 
