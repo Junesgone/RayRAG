@@ -202,3 +202,32 @@
 **同源收益**：这个适配器一旦存在，`structure_compile`（结构编译）与 wiki 生成里所有依赖 `EmbeddingBackend` 的路径一并解除。
 
 > 施工提示：本轮已写好端点主体但**因这一处不匹配而回退**（未提交半成品，仓库保持可编译）。下一轮顺序：① 先写 `Embedder`→`EmbeddingBackend` 适配器（+单测），② 再落端点主体（骨架与四条验收已在本文件中，代码可几乎照抄本轮回退版本）。
+
+## wiki / Artifacts 生成（下一块的施工配方：编排入口已找到）
+
+**编排入口**：`knowlege_wiki_incremental::wiki_compile_incremental`（`src/knowlege_wiki_incremental.rs:10191`）——
+
+```rust
+pub async fn wiki_compile_incremental(
+    store: &dyn DocStore,          // 用 OffThreadDocStore（本轮已具备，同导航）
+    chat: &dyn HarnessChat,        // LlmHarnessChat（0.7.5 已具备）
+    embd: Option<&dyn Embedder>,   // state.embedder —— 注意这里要的是 embed::Embedder，无需 EmbedderBridge
+    tenant_id: &str, kb_id: &str, mode: &str,
+    chunk_delta: &Map<String, Value>,        // 本批要编译的分块
+    previous_chunk_state: &Map<String, Value>,
+    current_chunk_state: &Map<String, Value>,
+    incremental: bool,
+    deleted_doc_ids: Option<&BTreeSet<String>>,
+    disabled_doc_ids: &BTreeSet<String>,
+    callback: Option<&(dyn Fn(f64, &str) + Send + Sync)>,
+) -> Value
+```
+
+**三块状态从哪来（已定位）**：
+- `current_chunk_state` ← `knowlege_wiki::scan_current_chunk_state(store, tenant, kb, &doc_ids)`（`src/knowlege_wiki.rs:1343`）；
+- 历史版本/上一批状态 ← `knowlege_wiki::load_map_versions(store, tenant, kb, &doc_set, requested)`（`src/knowlege_wiki.rs:1214`）；
+- `chunk_delta` 需由本批变更的分块构造（`doc_id → chunks`），可参照 `wiki_map_from_chunks` 的入参形状。
+
+**端点/UI**：`POST /datasets/{id}/wiki/compile`（或复用上游路径）+ Artifacts 面板 Generate 按钮调用它；返回值需含 `pages_created/updated/skipped` 与**逐文档跳过原因**。
+
+**验收**：① 缺 chat 模型 → `code 102` 指明；② 有分块 → 生成后 `GET /datasets/{id}/artifacts` 能读到页面（0.5.5 已实现该读取面）；③ 无分块文档 → 计入 skipped 带原因；④ **必须实测"会真正生成"的主路径**（导航那次就是这条路径 panic 的）。
