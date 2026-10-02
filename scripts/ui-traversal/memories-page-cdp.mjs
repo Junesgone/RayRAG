@@ -7,7 +7,7 @@ import { chromium } from "playwright-core";
 
 const CDP_EP = process.env.RAYRAG_CDP_ENDPOINT || "http://127.0.0.1:16002";
 const ORIGIN = process.env.RAYRAG_UI_ORIGIN || "http://127.0.0.1:9390";
-const PASSWORD = process.env.UI_DUMP_PASSWORD;
+const PASSWORD = process.env.RAYRAG_LOGIN_PASSWORD || process.env.UI_DUMP_PASSWORD;
 const EMAIL = process.env.UI_DUMP_EMAIL || "admin@rayrag.local";
 const SHOT_DIR = process.env.SHOT_DIR || "/tmp";
 
