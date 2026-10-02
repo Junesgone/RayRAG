@@ -251,7 +251,7 @@ impl AimlapiClient {
         let payload = json!({
             "partnerId": self.partner_id,
             "partnerName": self.partner_name,
-            "agentName": "RAGFlow",
+            "agentName": "RayRAG",
             "returnUrl": self.verification_base_url,
             "requestedUsdLimitMinor": self.requested_usd_limit_minor,
         });
@@ -520,7 +520,7 @@ mod tests {
         assert!(start.verification_uri.contains("source=agent%2Fragflow"));
         assert_eq!(start.interval, 5);
         assert_eq!(start.expires_in, 900);
-        assert_eq!(seen.start.lock().unwrap()[0]["agentName"], json!("RAGFlow"));
+        assert_eq!(seen.start.lock().unwrap()[0]["agentName"], json!("RayRAG"));
         assert_eq!(
             seen.start.lock().unwrap()[0]["returnUrl"],
             json!("https://verify.example")

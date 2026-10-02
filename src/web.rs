@@ -570,7 +570,7 @@ fn page_head(title: &str, zh: bool) -> String {
     let mut h = String::with_capacity(8192);
     h.push_str("<!DOCTYPE html><html lang='");
     h.push_str(lc);
-    h.push_str("'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>");
+    h.push_str("'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><link rel='icon' type='image/svg+xml' href='/logo.svg'><title>");
     h.push_str(title);
     h.push_str(" · RayRAG</title><style>");
     h.push_str(CSS);
@@ -639,7 +639,7 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     // Upstream `layouts/components/header.tsx`: logo, the DesktopNavbar pill,
     // then the right cluster — Discord, GitHub, language DropdownMenu, help
     // link, ThemeButton and the avatar link to `/user-setting`.
-    h.push_str("<header class='hdr'><a href='/' class='logo' aria-label='RayRAG'><svg width='32' height='32' aria-hidden='true'><circle cx='16' cy='16' r='14' fill='#4f46e5'/><text x='16' y='22' text-anchor='middle' fill='#fff' font-size='15' font-weight='700'>R</text></svg></a>");
+    h.push_str("<header class='hdr'><a href='/' class='logo' aria-label='RayRAG'><svg width='32' height='32' viewBox='0 0 64 64' aria-hidden='true'><rect x='2' y='2' width='60' height='60' rx='16' fill='#6d4aff'/><path d='M8 32h16' stroke='#ffd98a' stroke-width='5' stroke-linecap='round' fill='none'/><path d='M30 15v34a2 2 0 0 0 2 2h28Z' fill='#ffffff' fill-opacity='0.16' stroke='#ffffff' stroke-width='4' stroke-linejoin='round'/><path d='M42 24l14-8' stroke='#5ce1e6' stroke-width='4.5' stroke-linecap='round'/><path d='M47 32h11' stroke='#7ef0c0' stroke-width='4.5' stroke-linecap='round'/><path d='M42 42l14 8' stroke='#ff9ad5' stroke-width='4.5' stroke-linecap='round'/></svg></a>");
     h.push_str("<nav class='gnav' aria-label='Global'>");
     h.push_str("<a class='gnav-icon' href='/' data-nav='/' aria-label='");
     h.push_str(home);
@@ -2165,8 +2165,8 @@ const MEMORY_LLM_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
 };
 
 /// Upstream knowledgeDetails.rerankTip wording (verbatim from en.ts/zh.ts locales; rendered per-language on the retrieval-test panel).
-const RERANK_TIP_EN: &str = r#"Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity; if a rerank model is selected, a weighted reranking score will replace the weighted vector cosine similarity. Please be aware that using a rerank model will significantly increase the system's response time. If you wish to use a rerank model, ensure you use a SaaS reranker; if you prefer a locally deployed rerank model, ensure you start RAGFlow with docker-compose-gpu.yml."#;
-const RERANK_TIP_ZH: &str = r#"非必选项：若不选择 rerank 模型，系统将默认采用关键词相似度与向量余弦相似度相结合的混合查询方式；如果设置了 rerank 模型，则混合查询中的向量相似度部分将被 rerank 打分替代。请注意：采用 rerank 模型会非常耗时。如需选用 rerank 模型，建议使用 SaaS 的 rerank 模型服务；如果你倾向使用本地部署的 rerank 模型，请务必确保你使用 docker-compose-gpu.yml 启动 RAGFlow。"#;
+const RERANK_TIP_EN: &str = r#"Optional. If left empty, RayRAG will use a combination of weighted keyword similarity and weighted vector cosine similarity; if a rerank model is selected, a weighted reranking score will replace the weighted vector cosine similarity. Please be aware that using a rerank model will significantly increase the system's response time. If you wish to use a rerank model, ensure you use a SaaS reranker; if you prefer a locally deployed rerank model, ensure you start RayRAG with docker-compose-gpu.yml."#;
+const RERANK_TIP_ZH: &str = r#"非必选项：若不选择 rerank 模型，系统将默认采用关键词相似度与向量余弦相似度相结合的混合查询方式；如果设置了 rerank 模型，则混合查询中的向量相似度部分将被 rerank 打分替代。请注意：采用 rerank 模型会非常耗时。如需选用 rerank 模型，建议使用 SaaS 的 rerank 模型服务；如果你倾向使用本地部署的 rerank 模型，请务必确保你使用 docker-compose-gpu.yml 启动 RayRAG。"#;
 
 /// Retrieval-test-panel reranking tree selector field (upstream testing-form.tsx RerankFormFields -> ModelTreeSelect modelTypes=[rerank] allowClear optional; value is sent as `rerank_id` in the /retrieval request body only and is not persisted).
 const TEST_RERANK_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
@@ -2276,7 +2276,7 @@ pub async fn kb_detail_page(
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Configuration", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>");
-    b.push_str(t("Basic settings, parsing &amp; retrieval parameters (camelCase keys aligned with RAGFlow parser_config).", zh));
+    b.push_str(t("Basic settings, parsing &amp; retrieval parameters (camelCase keys aligned with RayRAG parser_config).", zh));
     b.push_str("</p><table style='width:100%'>");
     b.push_str("<tr><td style='width:220px'><span style='color:var(--d)'>*</span> ");
     b.push_str(t("Name", zh));
@@ -2720,7 +2720,7 @@ pub async fn dataset_page(
     b.push_str("<div id='tab2' style='display:none'><div class='card'><h2>");
     b.push_str(t("Retrieval testing", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>");
-    b.push_str(t("Conduct a retrieval test to check if RAGFlow can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.", zh));
+    b.push_str(t("Conduct a retrieval test to check if RayRAG can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.", zh));
     b.push_str("</p><div style='display:grid;grid-template-columns:1fr 1fr;gap:16px'><div><h3>");
     b.push_str(t("Setting", zh));
     b.push_str("</h3><label style='font-size:12px'>");
@@ -2840,7 +2840,7 @@ pub async fn dataset_page(
     b.push_str("<div id='tab3' style='display:none'><div class='card'><h2>");
     b.push_str(t("Configuration", zh));
     b.push_str("</h2><p style='color:var(--tm);margin-bottom:16px'>");
-    b.push_str(t("Basic settings, parsing &amp; retrieval parameters (keys aligned with RAGFlow camelCase). Saved via PUT /api/v1/datasets/{id}.", zh));
+    b.push_str(t("Basic settings, parsing &amp; retrieval parameters (keys aligned with RayRAG camelCase). Saved via PUT /api/v1/datasets/{id}.", zh));
     b.push_str("</p><table style='width:100%'>");
     b.push_str("<tr><td style='width:220px'><span style='color:var(--d)'>*</span> ");
     b.push_str(t("Name", zh));
@@ -4789,7 +4789,7 @@ pub async fn agent_share_page(req: axum::http::Request<axum::body::Body>) -> imp
     // Upstream `NextMessageInput` renders `chat.messagePlaceholder` on the box.
     let send_label = t("Type your message here...", zh);
     let mut b = String::with_capacity(16384);
-    b.push_str("<section class='agent-share-page' data-testid='agent-share-page'><div class='agent-share-brand' aria-hidden='true'><img src='/logo.svg' alt=''><span>RAGFlow</span></div><div class='agent-share-frame'><div class='agent-share-head'><div class='agent-share-identity'><span class='agent-share-avatar' id='shareAvatar' data-testid='share-avatar'></span><span class='agent-share-title' id='shareTitle' data-testid='share-title'></span></div><button class='btn btn-o agent-share-reset' type='button' id='shareReset' data-testid='share-reset' onclick='shareReset()'>");
+    b.push_str("<section class='agent-share-page' data-testid='agent-share-page'><div class='agent-share-brand' aria-hidden='true'><img src='/logo.svg' alt=''><span>RayRAG</span></div><div class='agent-share-frame'><div class='agent-share-head'><div class='agent-share-identity'><span class='agent-share-avatar' id='shareAvatar' data-testid='share-avatar'></span><span class='agent-share-title' id='shareTitle' data-testid='share-title'></span></div><button class='btn btn-o agent-share-reset' type='button' id='shareReset' data-testid='share-reset' onclick='shareReset()'>");
     b.push_str(SHARE_RESET_SVG);
     b.push_str("<span>Reset</span></button></div><div class='agent-share-body'><div class='agent-share-messages' id='shareMessages' data-testid='share-messages'></div><section class='agent-share-input'><div class='agent-share-input-row'><textarea id='shareInput' class='agent-share-textarea' data-testid='share-input' rows='1' placeholder='");
     b.push_str(send_label);
@@ -4943,9 +4943,9 @@ fn push_agent_embed_modal(b: &mut String, zh: bool) {
     b.push_str(t("Subtitle", zh));
     b.push_str("</span><input id='embedWidgetSubtitle' data-testid='embed-widget-subtitle' placeholder='We typically reply instantly' oninput='embedSync()'></label><label class='agent-embed-field'><span>");
     b.push_str(t("Footer text", zh));
-    b.push_str("</span><input id='embedWidgetFooter' data-testid='embed-widget-footer' placeholder='Powered by RAGFlow' oninput='embedSync()'></label><label class='agent-embed-field'><span>");
+    b.push_str("</span><input id='embedWidgetFooter' data-testid='embed-widget-footer' placeholder='Powered by RayRAG' oninput='embedSync()'></label><label class='agent-embed-field'><span>");
     b.push_str(t("Footer redirect link", zh));
-    b.push_str("</span><input id='embedWidgetFooterLink' data-testid='embed-widget-footer-link' placeholder='https://ragflow.io' oninput='embedSync()'></label>");
+    b.push_str("</span><input id='embedWidgetFooterLink' data-testid='embed-widget-footer-link' placeholder='https://github.com/Junesgone/RayRAG' oninput='embedSync()'></label>");
     for (id, testid, label_en, label_zh, default) in [
         (
             "embedWidgetAccent",
@@ -6866,7 +6866,7 @@ fn admin_console_shell(active: AdminConsoleSection, body: &str, zh: bool) -> Str
         nav.push_str("</span></a></li>");
     }
     format!(
-        r#"{identity}<main class='admin-console' data-testid='admin-console' data-section='{active_key}'><aside class='admin-console-aside'><div class='admin-console-brand'><img class='admin-console-logo' src='/logo.svg' alt=''><span class='admin-console-title'>RAGFlow</span></div><nav><ul class='admin-console-nav'>{nav}</ul></nav><div class='admin-console-footer'><div class='admin-console-footer-row'><span class='admin-console-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_state}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='admin-console-logout' onclick='adminConsoleLogout()'>{logout_label}</button></div></aside><section class='admin-console-main'>{body}</section></main><script>function adminConsoleTheme(){{document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){{node.setAttribute('aria-checked',light?'false':'true')}})}}function adminConsoleLogout(){{fetch('/api/v1/admin/logout').then(function(){{adminConsoleForget()}}).catch(function(){{adminConsoleForget()}})}}function adminConsoleForget(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';adminConsoleForgetIdentity();adminSetUserInfo(null,null);location.href='/admin'}}</script>"#,
+        r#"{identity}<main class='admin-console' data-testid='admin-console' data-section='{active_key}'><aside class='admin-console-aside'><div class='admin-console-brand'><img class='admin-console-logo' src='/logo.svg' alt=''><span class='admin-console-title'>RayRAG</span></div><nav><ul class='admin-console-nav'>{nav}</ul></nav><div class='admin-console-footer'><div class='admin-console-footer-row'><span class='admin-console-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_state}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='admin-console-logout' onclick='adminConsoleLogout()'>{logout_label}</button></div></aside><section class='admin-console-main'>{body}</section></main><script>function adminConsoleTheme(){{document.body.classList.toggle('light');var light=document.body.classList.contains('light');localStorage.setItem('theme',light?'light':'dark');Array.prototype.forEach.call(document.querySelectorAll('.theme-switch'),function(node){{node.setAttribute('aria-checked',light?'false':'true')}})}}function adminConsoleLogout(){{fetch('/api/v1/admin/logout').then(function(){{adminConsoleForget()}}).catch(function(){{adminConsoleForget()}})}}function adminConsoleForget(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';adminConsoleForgetIdentity();adminSetUserInfo(null,null);location.href='/admin'}}</script>"#,
         identity = ADMIN_CONSOLE_IDENTITY_JS,
         active_key = active.key(),
         version = crate::build_info::version_line(),
@@ -8793,7 +8793,7 @@ pub async fn providers_page(
     b.push_str(&rows);
     b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
     b.push_str(t(
-        "Click a provider row to browse its seeded model catalog (RAGFlow conf/models).",
+        "Click a provider row to browse its seeded model catalog (RayRAG conf/models).",
         zh,
     ));
     b.push_str("</p></details>");
@@ -15673,7 +15673,7 @@ connection: close
         // upstream testing/index.tsx + testing-form.tsx
         assert!(html.contains(">Retrieval testing</h2>"), "page title");
         assert!(
-            html.contains("Conduct a retrieval test to check if RAGFlow can recover"),
+            html.contains("Conduct a retrieval test to check if RayRAG can recover"),
             "testing description"
         );
         assert!(html.contains(">Setting</h3>"), "left column header");
