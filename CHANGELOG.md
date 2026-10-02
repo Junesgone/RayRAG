@@ -2,6 +2,11 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.5] - 2026-10-02
+
+- **模板里最后两处「活的占位凭据」改为注释态**：`RAYRAG_POSTGRES_PASSWORD=change-me` 与 `RAYRAG_TEST_RERANKER_KEY=mxbai-rerank-key`。照抄 `.env.example` 的部署原本会共用同一个数据库口令；现在留空，`docker compose` 会因缺少该变量**直接报错退出**（`${VAR:?set ...}`），而不是静默用弱口令建库。这是上一轮修掉管理员口令占位值后的同类收尾：**模板里不应带任何可直接使用的凭据**。
+- 全量 `cargo test --locked --lib` **2136 passed / 0 failed**；环境变量守卫（每个被文档化的键都要被代码读取、模板键不得重复）六条全过。
+
 ## [0.6.4] - 2026-10-02
 
 - **纯 Linux 文档路径端到端复验通过**：按 README 步骤用 `ZVEC_LIB_DIR` 重新构建 release 后，`readelf -d` 显示 RUNPATH 已烘焙进二进制；**不带任何命令行参数、不设 `LD_LIBRARY_PATH`** 运行 `rayrag serve`，端口取自 `.env` 里的 `RAYRAG_PORT`（9398），`/api/v1/version` 返回 **200**。「照文档做就能跑」这件事本身现在有证据。
