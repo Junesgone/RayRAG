@@ -2527,7 +2527,11 @@ pub async fn dataset_page(
     for (idx, tab, label_en, label_zh) in [
         (0usize, "files", "Files", "文件列表"),
         (2, "retrieval", "Retrieval testing", "检索测试"),
-        (1, "logs", "Logs", "日志"),
+        // Upstream v0.27.2 labels this dataset destination `knowledgeDetails.overview`
+        // (`pages/dataset/sidebar/index.tsx`) while reusing the Logs icon, and its route is
+        // `/dataset/logs`; the page carries the parse logs. RayRAG showed the icon's name
+        // ("Logs") instead of the destination's, which read as a missing feature.
+        (1, "logs", "Overview", "概览"),
         (3, "configuration", "Configuration", "配置"),
         (5, "compilation", "Artifacts", "Artifacts"),
     ] {
@@ -15860,7 +15864,7 @@ connection: close
         for (route, label) in [
             ("files", "Files"),
             ("retrieval", "Retrieval testing"),
-            ("logs", "Logs"),
+            ("logs", "Overview"),
             ("configuration", "Configuration"),
             ("compilation", "Artifacts"),
         ] {
