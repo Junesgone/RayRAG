@@ -92,62 +92,12 @@
 | `web/src/pages/user-setting/sidebar/hooks.tsx` | 47 | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) [v0.27.2 content changed: re-audit] |
 | `web/src/routes.tsx` | 466 | `src/server.rs; src/web.rs` | Rust registers the `/dataset/{files\|retrieval\|logs\|configuration\|knowledge-graph}/{id}` detail routes; `/dataset/{id}` answers a 307 redirect into `/dataset/files/{id}` (upstream `Routes.Dataset = /dataset/files`) and `/kbs/{id}` keeps the legacy 3-tab shell. The dataset sidebar mirrors `pages/dataset/sidebar/index.tsx`: five real route links in source order with the `knowledgeDetails.*` labels (Files / Retrieval testing / Logs / Configuration / Knowledge graph), the active entry marked client-side from the URL path and the panel selected on load; the parse-log table was merged into the Logs panel so the entry count matches upstream. Remaining gaps: `/dataset/testing`, `/dataset/knowledge-graph` and `/dataset/configuration` are the same Rust shell with a preselected panel rather than separate page bundles (v0.3.5g). v0.3.5x added a machine audit of the whole upstream route table (52 paths against the deployed instance) and closed six: `/login-next` (upstream serves `/login` and `/login-next` from the same page), the canonical singular `/agent/:id` and `/search/:id` detail paths (RayRAG keeps `/agents/{id}` and `/searches/{id}` as compatible aliases), upstream's standalone `/document/:id` viewer (resolved through the document record, real 404 for unknown ids) and the public `/search/share` embed (`?tenantId=` app resolution plus the `visible_avatar` owner row, sharing the `/search` markup through `search_page_markup`). v0.3.8n closed `/agent/:id/explore` (plus the `/agents/:id/explore` alias): the Launch surface renders upstream's PageHeader breadcrumb, the 296px session column and the SessionChat column, and the toolbar Launch button navigates there like `navigateToAgentExplore`. Still open from the same table: the `/admin` subtree (`/admin` is upstream's admin *login*, plus `/admin/services`, `/admin/users`, `/admin/users/:id`, `/admin/sandbox-settings` and the enterprise-only whitelist/roles/monitoring — all registered by RayRAG, per-file residuals tracked on their own rows), the `/chunk` subtree (`/chunk`, `/chunk/parsed/chunks`, `/chunk/chunk/:id`, `/chunk/result/:id`), v0.3.8o closed `/agent/share` (the embeddable chat with the `APIToken.beta` credential, `/api/v1/system/tokens` and the `agentbots` inputs/completions endpoints; the beta-only `logs/<message_id>` trace and the floating-widget embed remain open). v0.3.8p closed `/dataflow-result` (the ingestion-log viewer with the timeline, the step result panel, the chunk result bar, the rerun flow and the dataset-row `View result` entry, backed by the new ingestion endpoints). Still open from the same table: `/agent/:id/explore`, `/agent/share` and `/dataflow-result` are registered, while the beta-only `agentbots/logs/<message_id>` trace, the floating-widget embed and the enterprise-only `/admin` whitelist/roles/monitoring entries remain [v0.27.2 content changed: re-audit] |
 
-## 复核对账队列（re-audit，85 项）
+## 复核对账队列（re-audit，35 项）
 
 上游 v0.27.2 相对 v0.26.4 变更过的已审计行；逐行复核后移除 `[v0.27.2 content changed: re-audit]` 标记并更新注记。
 
 | 文件 | 状态 | RayRAG 对应 |
 |---|---|---|
-| `web/src/pages/dataset/testing/testing-form.tsx` | partial | `src/web.rs; web/static/` |
-| `web/src/pages/datasets/dataset-creating-dialog.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/datasets/hooks.ts` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/datasets/index.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/datasets/use-select-owners.ts` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/action-cell.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/create-folder-dialog/create-folder-form.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/files-table.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/hooks.ts` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/index.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/link-to-dataset-dialog.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/files/move-dialog.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/home/agent-list.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/home/applications.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/home/datasets.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/login-next/index.tsx` | partial | `src/web.rs; src/web_css.txt` |
-| `web/src/pages/memories/constants/index.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memories/hooks.ts` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memories/index.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memories/memory-card.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memory/memory-message/hook.ts` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memory/memory-message/message-table.tsx` | aligned | `src/web.rs; src/web_css.txt; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memory/memory-setting/advanced-settings-form.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memory/memory-setting/basic-form.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memory/memory-setting/index.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/memory/memory-setting/memory-model-form.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs; src/api/tenant_models.rs` |
-| `web/src/pages/memory/sidebar/index.tsx` | aligned | `src/web.rs; src/server.rs; src/api/features.rs` |
-| `web/src/pages/next-chats/index.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/next-search/hooks.ts` | partial | `src/web.rs; src/api/system.rs; src/api/searchapp_mgr.rs` |
-| `web/src/pages/next-search/search-setting.tsx` | partial | `src/web.rs; src/web_css.txt; src/api/searchapp_mgr.rs` |
-| `web/src/pages/next-search/search-view.tsx` | partial | `src/web.rs; src/web_css.txt` |
-| `web/src/pages/next-searches/index.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/next-searches/search-card.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/next-searches/search-dropdown.tsx` | aligned | `src/web.rs; web/static/` |
-| `web/src/pages/skills/components/search-config-modal.tsx` | partial | `src/web.rs; web/static/` |
-| `web/src/pages/user-setting/chat-channel/add-channel-modal.tsx` | full | `src/web.rs; src/api/chat_channel_mgr.rs` |
-| `web/src/pages/user-setting/chat-channel/component/added-channel-card.tsx` | aligned | `src/web.rs; src/web_css.txt` |
-| `web/src/pages/user-setting/chat-channel/component/delete-channel-modal.tsx` | aligned | `src/web.rs; src/api/chat_channel_mgr.rs` |
-| `web/src/pages/user-setting/chat-channel/constant/index.tsx` | partial | `src/web.rs` |
-| `web/src/pages/user-setting/chat-channel/hooks.ts` | aligned | `src/web.rs; src/api/chat_channel_mgr.rs` |
-| `web/src/pages/user-setting/chat-channel/index.tsx` | aligned | `src/web.rs; src/web_css.txt; src/api/chat_channel_mgr.rs` |
-| `web/src/pages/user-setting/data-source/add-datasource-modal.tsx` | aligned | `src/web.rs; src/api/data_source_mgr.rs; src/data_source/form_fields.rs` |
-| `web/src/pages/user-setting/data-source/component/added-source-card.tsx` | aligned | `src/web.rs; src/data_source/form_fields.rs` |
-| `web/src/pages/user-setting/data-source/component/box-token-field.tsx` | partial | `src/web.rs; src/api/oauth_web.rs` |
-| `web/src/pages/user-setting/data-source/component/delete-source-modal.tsx` | aligned | `src/web.rs` |
-| `web/src/pages/user-setting/data-source/component/gmail-token-field.tsx` | partial | `src/web.rs; src/api/oauth_web.rs` |
-| `web/src/pages/user-setting/data-source/component/google-drive-token-field.tsx` | aligned | `src/web.rs; src/api/oauth_web.rs` |
-| `web/src/pages/user-setting/data-source/constant/bitbucket-constant.tsx` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` |
-| `web/src/pages/user-setting/data-source/constant/confluence-constant.tsx` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` |
-| `web/src/pages/user-setting/data-source/constant/index.tsx` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` |
 | `web/src/pages/user-setting/data-source/constant/jira-constant.tsx` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` |
 | `web/src/pages/user-setting/data-source/constant/s3-constant.tsx` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` |
 | `web/src/pages/user-setting/data-source/constant/seafile-constant.tsx` | aligned | `src/data_source/form_fields.rs; src/data_source/form_schema.json` |
