@@ -188,3 +188,17 @@
 **端点骨架**：所有权检查 → 前置条件检查（缺嵌入/对话 → `code 102` **分别指明缺哪一个**）→ 解析 `documents`（缺省=数据集全部文档）→ 取分块 → 逐文档 `upsert_dataset_nav_doc`（顺序执行、用完即丢，避免一次性把整个数据集读进内存）→ 返回 `{generated, skipped:[{doc_id, reason}], total}`。
 
 **验收**：① 无嵌入或对话模型 → `code 102` 且文案指明缺哪个；② 有分块且有模型 → 生成后 `GET /datasets/{id}/navigation` 能读到节点；③ 无分块的文档 → 出现在 `skipped` 里并带原因，不静默略过；④ 越权数据集 → 400（沿用 `kb_accessible`）。
+
+### 第五块零件（本轮新发现）：`Embedder` → `EmbeddingBackend` 也需要适配器
+
+尝试实现端点时编译报错，暴露了最后一处不匹配：
+
+- `AppState.embedder: Option<SharedEmbedder>`，而 `SharedEmbedder = crate::embed::SharedEmbedder`（即 `Arc<dyn crate::embed::Embedder>`）；
+- 导航引擎要的是 `&dyn crate::structure_compile::EmbeddingBackend`；
+- **两者是不同的 trait**，`impl EmbeddingBackend for …` 目前**只存在于测试**（`knowlege_dataset_nav.rs:2961` 的 `MockEmbed`、`structure_compile.rs:7866/7875`）。
+
+即：和 `HarnessChat` 完全一样的缺件——**需要一个把 `dyn Embedder` 接到 `EmbeddingBackend` 上的生产适配器**（把 `EmbeddingBackend` 的方法映射到 `Embedder` 的嵌入调用；错误同样要 `Err` 带出，不能返回空向量，否则会写出"没有嵌入的行"）。
+
+**同源收益**：这个适配器一旦存在，`structure_compile`（结构编译）与 wiki 生成里所有依赖 `EmbeddingBackend` 的路径一并解除。
+
+> 施工提示：本轮已写好端点主体但**因这一处不匹配而回退**（未提交半成品，仓库保持可编译）。下一轮顺序：① 先写 `Embedder`→`EmbeddingBackend` 适配器（+单测），② 再落端点主体（骨架与四条验收已在本文件中，代码可几乎照抄本轮回退版本）。
