@@ -8809,6 +8809,24 @@ pub async fn providers_page(
         }
         b.push_str("</div></div><p class='available-provider-empty' id='availableProviderEmpty'>No model providers found.</p></div></aside>");
     }
+    // The seeded catalogue is a collapsed `<details>`: the closing tags below used to be
+    // emitted with **no opener**, so the browser rendered every provider and every model
+    // name as one permanently expanded table (the right column grew past 10,000 px and the
+    // only way to reach a provider was to scroll the whole page).
+    b.push_str(
+        "<details class='provider-catalog' id='providerCatalog' data-testid='provider-catalog'>\
+         <summary class='provider-catalog-summary'><span>",
+    );
+    b.push_str(t("Seeded provider catalog", zh));
+    b.push_str("</span><span class='provider-catalog-hint'>");
+    b.push_str(t("Click to expand", zh));
+    b.push_str("</span></summary><table class='provider-catalog-table'><thead><tr><th>");
+    b.push_str(t("Provider", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("API base", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Model", zh));
+    b.push_str("</th></tr></thead><tbody>");
     b.push_str(&rows);
     b.push_str("</tbody></table><p style='color:var(--tm);font-size:12px;margin-top:8px'>");
     b.push_str(t(

@@ -951,3 +951,13 @@ the paired colour picker + hex input. */
 .provider-picker-popover{position:absolute;z-index:40;top:calc(100% + 6px);left:0;right:0;display:grid;gap:10px;max-height:60vh;padding:12px;overflow:auto;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bg);box-shadow:0 12px 32px rgba(0,0,0,.18)}
 .provider-picker-popover[hidden]{display:none!important}
 @media (max-width:768px){.provider-picker-popover{position:fixed;top:auto;bottom:0;left:8px;right:8px;max-height:70vh}}
+
+/* Seeded provider catalogue: collapsed by default (it lists every provider and model). */
+.provider-catalog{margin-top:14px;border-top:1px solid var(--bd);padding-top:12px}
+.provider-catalog-summary{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--t2);list-style:none}
+.provider-catalog-summary::-webkit-details-marker{display:none}
+.provider-catalog-summary::before{content:'▸';color:var(--tm);transition:transform .15s}
+.provider-catalog[open] .provider-catalog-summary::before{transform:rotate(90deg)}
+.provider-catalog-hint{margin-left:auto;font-size:11px;color:var(--tm)}
+.provider-catalog-table{width:100%;margin-top:10px;border-collapse:collapse;font-size:13px}
+.provider-catalog-table th,.provider-catalog-table td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left}

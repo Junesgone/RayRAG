@@ -37,6 +37,30 @@ const info = await page.evaluate(() => {
     firstCardText: cards[0] ? cards[0].innerText.slice(0, 120) : '',
   };
 });
+// open the provider dropdown the way a user would, then screenshot
+const opened = await page.evaluate(() => {
+  const trigger = document.getElementById('providerPickerTrigger');
+  const pop = document.getElementById('providerPickerPopover');
+  return { trigger: !!trigger, hiddenBefore: pop ? pop.hidden : null };
+});
+if (await page.locator('#providerPickerTrigger').count()) {
+  await page.click('#providerPickerTrigger');
+  await page.waitForTimeout(600);
+}
+const after = await page.evaluate(() => {
+  const pop = document.getElementById('providerPickerPopover');
+  const trigger = document.getElementById('providerPickerTrigger');
+  const grid = document.getElementById('availableProviderGrid');
+  return {
+    hiddenAfter: pop ? pop.hidden : null,
+    expanded: trigger ? trigger.getAttribute('aria-expanded') : null,
+    popoverHeight: pop ? Math.round(pop.getBoundingClientRect().height) : 0,
+    bodyHeight: document.body.scrollHeight,
+    gridHeight: grid ? Math.round(grid.getBoundingClientRect().height) : 0,
+    visibleCards: [...document.querySelectorAll('.available-provider-card')].filter((c) => c.offsetParent !== null).length,
+  };
+});
+console.log('PICKER:', JSON.stringify({ opened, after }));
 await page.screenshot({ path: '/tmp/rr-model-page.png', fullPage: false });
 console.log(JSON.stringify({ info, errors }, null, 2));
 await page.close();
