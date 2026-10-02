@@ -122,12 +122,12 @@ try {
   });
   await page.waitForTimeout(1500);
   await page.evaluate(() => {
-    const c = document.getElementById("rerank");
+    const c = document.getElementById('sa_rerank');
     if (c) c.click();
   });
   await page.waitForTimeout(500);
   const toggled = await page.evaluate(() => {
-    const row = document.getElementById("searchRerankRow");
+    const row = document.getElementById('saRerankRow');
     return {
       rowVisible: row ? getComputedStyle(row).display !== "none" : false,
       catalogLen:
@@ -135,21 +135,21 @@ try {
           ? -1
           : DEFAULT_MODEL_CATALOG.length,
       rowCount: document.querySelectorAll(
-        "#searchRerankSelTree .default-model-node",
+        "#saRerankSelTree .default-model-node",
       ).length,
     };
   });
   results.toggled = toggled;
 
   await page
-    .locator("[data-testid='default-model-rerank_id']")
+    .locator("#saRerankSel")
     .click({ timeout: 8000 });
   await page.waitForTimeout(700);
   let picked = "";
   const pick = await page.evaluate(() => {
     const rows = Array.from(
       document.querySelectorAll(
-        "#searchRerankSelTree button.default-model-node",
+        "#saRerankSelTree button.default-model-node",
       ),
     );
     const diag = rows
@@ -169,7 +169,7 @@ try {
   results.pickDiag = pick;
   await page.waitForTimeout(600);
   picked = await page.evaluate(() => {
-    const t = document.querySelector("[data-testid='default-model-rerank_id']");
+    const t = document.querySelector("#saRerankSel");
     return (t && t.dataset.value) || "";
   });
   results.picked = picked;
@@ -220,8 +220,8 @@ try {
   });
   await page.waitForTimeout(2000);
   const seededSel = await page.evaluate(() => {
-    const t = document.querySelector("[data-testid='default-model-rerank_id']");
-    const row = document.getElementById("searchRerankRow");
+    const t = document.querySelector("#saRerankSel");
+    const row = document.getElementById('saRerankRow');
     const s = typeof window.__SAPP__ === "undefined" ? null : window.__SAPP__;
     return {
       triggerValue: (t && t.dataset.value) || "",
