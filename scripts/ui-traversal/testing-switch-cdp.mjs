@@ -6,10 +6,16 @@ const b = await chromium.connectOverCDP(CDP); const ctx = b.contexts()[0]; const
 await page.setViewportSize({ width: 1600, height: 1000 });
 const errs = []; page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));
 await page.goto(ORIGIN + "/login", { waitUntil: "domcontentloaded" });
-await page.evaluate(async (pw) => { const r = await fetch("/api/v1/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "admin@rayrag.local", password: pw }) }); const d = await r.json(); if (d.code === 0) localStorage.setItem("rayrag_token", d.data.access_token); }, process.env.UI_DUMP_PASSWORD);
+await page.evaluate(async (pw) => { const r = await fetch("/api/v1/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "admin@rayrag.local", password: pw }) }); const d = await r.json(); if (d.code === 0) localStorage.setItem("rayrag_token", d.data.access_token); }, process.env.RAYRAG_LOGIN_PASSWORD || process.env.UI_DUMP_PASSWORD);
 const cdp = await ctx.newCDPSession(page);
 await cdp.send("Network.clearBrowserCache").catch(() => {});
-const kb = await page.evaluate(async () => (await (await fetch("/api/v1/datasets")).json()).data[0].id);
+const kb = await page.evaluate(async () => {
+  const list = await (await fetch("/api/v1/datasets")).json();
+  const rows = list.data || [];
+  if (rows.length) return rows[0].id;
+  const created = await (await fetch("/api/v1/datasets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "testing-switch-probe-" + Date.now() }) })).json();
+  return created.data && created.data.id;
+});
 await page.goto(`${ORIGIN}/dataset/retrieval/${kb}`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(2000);
 console.log(JSON.stringify(await page.evaluate(() => {

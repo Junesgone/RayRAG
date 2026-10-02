@@ -25,7 +25,7 @@ const OUT_DIR =
   process.env.RAGFLOW_UI_DUMP_DIR || "docs/ui-traversal/ragflow-pages";
 const AUTH = process.env.UI_DUMP_AUTH || "none";
 const EMAIL = process.env.UI_DUMP_EMAIL || "admin@rayrag.local";
-const PASSWORD = process.env.UI_DUMP_PASSWORD || "";
+const PASSWORD = process.env.RAYRAG_LOGIN_PASSWORD || process.env.UI_DUMP_PASSWORD || "";
 // RayRAG detects its UI language from the `lang=zh-CN` cookie (English
 // otherwise). Pinning both dumps to one language keeps the parity diff
 // label-based instead of translation-based.

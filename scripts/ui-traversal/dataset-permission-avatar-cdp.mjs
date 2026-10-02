@@ -6,7 +6,7 @@ import { chromium } from "playwright-core";
 
 const CDP_EP = process.env.RAYRAG_CDP_ENDPOINT || "http://127.0.0.1:16002";
 const ORIGIN = process.env.RAYRAG_UI_ORIGIN || "http://127.0.0.1:9390";
-const PASSWORD = process.env.UI_DUMP_PASSWORD;
+const PASSWORD = process.env.RAYRAG_LOGIN_PASSWORD || process.env.UI_DUMP_PASSWORD;
 const SHOT = process.env.SHOT_DIR || "/tmp";
 
 const browser = await chromium.connectOverCDP(CDP_EP);
@@ -48,7 +48,13 @@ try {
     const d = await r.json();
     if (d.code === 0) localStorage.setItem("rayrag_token", d.data.access_token);
   }, PASSWORD);
-  const kb = await page.evaluate(async () => (await (await fetch("/api/v1/datasets")).json()).data[0].id);
+  const kb = await page.evaluate(async () => {
+  const list = await (await fetch("/api/v1/datasets")).json();
+  const rows = list.data || [];
+  if (rows.length) return rows[0].id;
+  const created = await (await fetch("/api/v1/datasets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "probe-" + Date.now() }) })).json();
+  return created.data && created.data.id;
+});
   await page.goto(`${ORIGIN}/dataset/configuration/${kb}`, { waitUntil: "domcontentloaded", timeout: 40000 });
   await page.waitForTimeout(2200);
   await snap("initial");

@@ -12,8 +12,8 @@ await page.evaluate(async (pw) => {
   const r = await fetch("/api/v1/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "admin@rayrag.local", password: pw }) });
   const d = await r.json();
   if (d.code === 0) localStorage.setItem("rayrag_token", d.data.access_token);
-}, process.env.UI_DUMP_PASSWORD);
-const path = process.env.RAYRAG_PATH || (await page.evaluate(async () => `/dataset/configuration/${(await (await fetch("/api/v1/datasets")).json()).data[0].id}`));
+}, process.env.RAYRAG_LOGIN_PASSWORD || process.env.UI_DUMP_PASSWORD);
+const path = process.env.RAYRAG_PATH || (await page.evaluate(async () => `/dataset/configuration/${(await (async () => { const list = await (await fetch("/api/v1/datasets")).json(); if (list.data && list.data.length) return list.data[0].id; const created = await (await fetch("/api/v1/datasets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "overflow-probe-" + Date.now() }) })).json(); return created.data && created.data.id; })())}`));
 await page.goto(ORIGIN + path, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(2500);
 const out = await page.evaluate(() => {

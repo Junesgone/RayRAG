@@ -15,7 +15,7 @@ const ORIGIN = process.env.RAGFLOW_UI_ORIGIN || "http://127.0.0.1:11526";
 const OUT = process.env.HEADER_PROBE_OUT || "";
 const AUTH = process.env.UI_DUMP_AUTH || "none";
 const EMAIL = process.env.UI_DUMP_EMAIL || "admin@rayrag.local";
-const PASSWORD = process.env.UI_DUMP_PASSWORD || "";
+const PASSWORD = process.env.RAYRAG_LOGIN_PASSWORD || process.env.UI_DUMP_PASSWORD || "";
 
 const browser = await chromium.connectOverCDP(CDP_EP);
 const ctx = browser.contexts()[0];

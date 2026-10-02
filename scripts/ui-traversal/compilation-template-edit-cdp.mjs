@@ -4,7 +4,7 @@ import { chromium } from 'playwright-core';
 import { readFileSync } from 'node:fs';
 
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:16002';
-const ORIGIN = process.env.RAYRAG_ORIGIN || 'http://127.0.0.1:9391';
+const ORIGIN = process.env.RAYRAG_CDP_ORIGIN || process.env.RAYRAG_ORIGIN || 'http://127.0.0.1:9391';
 const PROJECT = '/home/junesgone/.openclaw/workspace/RayRAG';
 
 function readEnv(path) {
@@ -20,7 +20,7 @@ function readEnv(path) {
   return out;
 }
 
-const password = process.env.RAYRAG_ADMIN_PASSWORD || readEnv(PROJECT + '/.env').RAYRAG_ADMIN_PASSWORD;
+const password = process.env.RAYRAG_LOGIN_PASSWORD || process.env.RAYRAG_ADMIN_PASSWORD || readEnv(PROJECT + '/.env').RAYRAG_ADMIN_PASSWORD;
 if (!password) {
   console.error('no admin password available');
   process.exit(2);
