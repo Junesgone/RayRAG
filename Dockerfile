@@ -41,7 +41,15 @@ ARG TARGETARCH
 # Supplied by docker compose from `git rev-parse --short HEAD`; the build
 # context has no .git, so build.rs cannot discover it on its own.
 ARG RAYRAG_BUILD_GIT_REV=
-RUN set -eux; \
+# BuildKit cache mounts: the crates.io registry, the git checkouts (a git dependency
+# pulls its whole history — the arrow repository alone is ~250k objects) and the target
+# directory are reused between builds, so a rebuild only recompiles what changed. The
+# binary is copied out of the cached target dir into the image because a cache mount is
+# not part of the layer.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    set -eux; \
     # Point the git dependency at the vendored crates so the build performs no
     # GitHub fetch; the lock file keeps every other dependency pinned.
     printf '\n[patch."https://github.com/zvec-ai/zvec-rust"]\nzvec-rust = { path = "/src/vendor/zvec-rust/zvec" }\nzvec-rust-sys = { path = "/src/vendor/zvec-rust/zvec-sys" }\n' >> Cargo.toml; \
@@ -75,7 +83,8 @@ RUN set -eux; \
       test -f /opt/zvec/lib/libzvec_c_api.so; \
     fi; \
     ZVEC_LIB_DIR=/opt/zvec/lib LIBRARY_PATH=/opt/zvec/lib \
-      cargo build --release --features "${RAYRAG_FEATURES}"
+      cargo build --release --features "${RAYRAG_FEATURES}"; \
+    install -D -m 0755 target/release/rayrag /usr/local/bin/rayrag-built
 
 FROM ${RUNTIME_IMAGE}
 
@@ -89,7 +98,7 @@ RUN chmod 0755 /usr/local/bin/rayrag-mirror-setup \
 # `agent/sandbox/providers/ssh.py`); `sshpass` only carries password auth.
 
 WORKDIR /app
-COPY --from=builder /src/target/release/rayrag /usr/local/bin/rayrag
+COPY --from=builder /usr/local/bin/rayrag-built /usr/local/bin/rayrag
 COPY --from=builder /opt/zvec/lib /opt/zvec/lib
 COPY web/static /opt/rayrag-static
 COPY docker-entrypoint.sh /usr/local/bin/rayrag-entrypoint
