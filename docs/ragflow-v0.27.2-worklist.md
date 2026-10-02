@@ -92,62 +92,12 @@
 | `web/src/pages/user-setting/sidebar/hooks.tsx` | 47 | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) [v0.27.2 content changed: re-audit] |
 | `web/src/routes.tsx` | 466 | `src/server.rs; src/web.rs` | Rust registers the `/dataset/{files\|retrieval\|logs\|configuration\|knowledge-graph}/{id}` detail routes; `/dataset/{id}` answers a 307 redirect into `/dataset/files/{id}` (upstream `Routes.Dataset = /dataset/files`) and `/kbs/{id}` keeps the legacy 3-tab shell. The dataset sidebar mirrors `pages/dataset/sidebar/index.tsx`: five real route links in source order with the `knowledgeDetails.*` labels (Files / Retrieval testing / Logs / Configuration / Knowledge graph), the active entry marked client-side from the URL path and the panel selected on load; the parse-log table was merged into the Logs panel so the entry count matches upstream. Remaining gaps: `/dataset/testing`, `/dataset/knowledge-graph` and `/dataset/configuration` are the same Rust shell with a preselected panel rather than separate page bundles (v0.3.5g). v0.3.5x added a machine audit of the whole upstream route table (52 paths against the deployed instance) and closed six: `/login-next` (upstream serves `/login` and `/login-next` from the same page), the canonical singular `/agent/:id` and `/search/:id` detail paths (RayRAG keeps `/agents/{id}` and `/searches/{id}` as compatible aliases), upstream's standalone `/document/:id` viewer (resolved through the document record, real 404 for unknown ids) and the public `/search/share` embed (`?tenantId=` app resolution plus the `visible_avatar` owner row, sharing the `/search` markup through `search_page_markup`). v0.3.8n closed `/agent/:id/explore` (plus the `/agents/:id/explore` alias): the Launch surface renders upstream's PageHeader breadcrumb, the 296px session column and the SessionChat column, and the toolbar Launch button navigates there like `navigateToAgentExplore`. Still open from the same table: the `/admin` subtree (`/admin` is upstream's admin *login*, plus `/admin/services`, `/admin/users`, `/admin/users/:id`, `/admin/sandbox-settings` and the enterprise-only whitelist/roles/monitoring — all registered by RayRAG, per-file residuals tracked on their own rows), the `/chunk` subtree (`/chunk`, `/chunk/parsed/chunks`, `/chunk/chunk/:id`, `/chunk/result/:id`), v0.3.8o closed `/agent/share` (the embeddable chat with the `APIToken.beta` credential, `/api/v1/system/tokens` and the `agentbots` inputs/completions endpoints; the beta-only `logs/<message_id>` trace and the floating-widget embed remain open). v0.3.8p closed `/dataflow-result` (the ingestion-log viewer with the timeline, the step result panel, the chunk result bar, the rerun flow and the dataset-row `View result` entry, backed by the new ingestion endpoints). Still open from the same table: `/agent/:id/explore`, `/agent/share` and `/dataflow-result` are registered, while the beta-only `agentbots/logs/<message_id>` trace, the floating-widget embed and the enterprise-only `/admin` whitelist/roles/monitoring entries remain [v0.27.2 content changed: re-audit] |
 
-## 复核对账队列（re-audit，335 项）
+## 复核对账队列（re-audit，285 项）
 
 上游 v0.27.2 相对 v0.26.4 变更过的已审计行；逐行复核后移除 `[v0.27.2 content changed: re-audit]` 标记并更新注记。
 
 | 文件 | 状态 | RayRAG 对应 |
 |---|---|---|
-| `api/db/joint_services/tenant_model_service.py` | full | `src/api/*` |
-| `api/db/joint_services/user_account_service.py` | full | `src/api/*` |
-| `api/db/services/api_service.py` | aligned | `src/auth.rs; src/api/system.rs` |
-| `api/db/services/canvas_service.py` | full | `src/api/joint_services.rs` |
-| `api/db/services/chat_channel_service.py` | full | `src/api/joint_services.rs` |
-| `api/db/services/common_service.py` | replaced | `src/persistence.rs; src/stores.rs` |
-| `api/db/services/compilation_template_group_service.py` | aligned | `src/api/compilation_templates.rs` |
-| `api/db/services/compilation_template_service.py` | aligned | `src/api/compilation_templates.rs; src/api/fixtures/; src/server.rs` |
-| `api/db/services/connector_service.py` | full | `src/api/joint_services.rs` |
-| `api/db/services/conversation_service.py` | aligned | `src/llm.rs; src/server.rs` |
-| `api/db/services/dialog_service.py` | full | `src/api/joint_services.rs` |
-| `api/db/services/doc_metadata_service.py` | aligned | `src/api/document_metadata.rs` |
-| `api/db/services/document_service.py` | aligned | `src/api/document.rs; src/server.rs` |
-| `api/db/services/file_commit_service.py` | replaced | `src/persistence.rs; src/api/file_mgr.rs` |
-| `api/db/services/file_service.py` | aligned | `src/api/file_mgr.rs` |
-| `api/db/services/knowledgebase_service.py` | aligned | `src/kb.rs; src/server.rs` |
-| `api/db/services/llm_service.py` | aligned | `src/llm.rs; src/llm_enhanced.rs; src/api/tenant_models.rs` |
-| `api/db/services/memory_service.py` | full | `src/api/features.rs; src/api/joint_services.rs; src/memory.rs; src/auth.rs` |
-| `api/db/services/pipeline_operation_log_service.py` | aligned | `src/api/features.rs; src/server.rs` |
-| `api/db/services/task_service.py` | full | `src/api/joint_services.rs` |
-| `api/db/services/tenant_llm_service.py` | aligned | `src/api/tenant_models.rs; src/kb.rs` |
-| `api/db/services/tenant_model_service.py` | aligned | `src/api/tenant_models.rs; src/kb.rs` |
-| `api/db/services/user_canvas_version.py` | aligned | `src/api/features.rs; src/server.rs` |
-| `api/db/services/user_service.py` | aligned | `src/auth.rs; src/api/system.rs` |
-| `api/ragflow_server.py` | aligned | `src/main.rs; src/server.rs` |
-| `api/utils/api_utils.py` | full | `src/api/utils.rs` |
-| `api/utils/common.py` | full | `src/api/utils.rs` |
-| `api/utils/crypt.py` | full | `src/password_transport.rs; src/auth.rs; src/server.rs` |
-| `api/utils/file_response.py` | full | `src/api/utils.rs` |
-| `api/utils/file_utils.py` | full | `src/api/utils.rs` |
-| `api/utils/health_utils.py` | full | `src/api/utils.rs` |
-| `api/utils/pagination_utils.py` | full | `src/api/utils.rs` |
-| `api/utils/validation_utils.py` | full | `src/api/utils.rs` |
-| `api/utils/web_utils.py` | full | `src/api/utils.rs` |
-| `api/validation.py` | full | `src/common.rs` |
-| `build.sh` | replaced | `Cargo.toml; Dockerfile; docker-compose.yml; scripts/mirror.sh` |
-| `common/config_utils.py` | full | `src/common.rs; src/api/common.rs` |
-| `common/constants.py` | full | `src/common.rs; src/api/common.rs` |
-| `common/data_source/__init__.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/airtable_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/asana_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/azure_blob_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/bigquery_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/bitbucket/connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/blob_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/box_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/config.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/confluence_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/connector_runner.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
-| `common/data_source/dingtalk_ai_table_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
 | `common/data_source/discord_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
 | `common/data_source/dropbox_connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
 | `common/data_source/github/connector.py` | full | `src/connectors.rs; src/api/data_source_mgr.rs` |
