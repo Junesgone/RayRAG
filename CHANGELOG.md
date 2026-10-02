@@ -44,14 +44,14 @@ All notable changes to RayRAG are documented in this file.
 - **补上嵌入侧的生产适配器 `EmbedderBridge`**：导航生成、wiki/Artifacts 生成、结构编译都依赖 `structure_compile::EmbeddingBackend`，而它和 `HarnessChat` 一样**只有测试替身**（`MockEmbed`、`FailingEmbed`）——上一轮写端点时正是被这处不匹配挡住的。`EmbedderBridge` 把运行期已持有的 `AppState.embedder`（`Arc<dyn Embedder>`）接到该 trait 上。
 - **错误语义（与前一个适配器一致）**：provider 失败**原样返回 `Err(String)`，绝不返回空向量**——调用方若收到 `Ok(vec![])` 会照样写出"没有嵌入的行"并报告成功。另外校验**返回向量数必须等于输入文本数**，数量不符也报错（这正是"静默产出错位数据"的典型来源）。
 - **测试**：新增三条 —— 批量映射（一次调用返回等量向量）、空输入短路（不调用 provider）、**provider 失败必须是错误而不是空向量**。全量 **2142 passed / 0 failed**。
-- **下一步**：两个适配器都已就位，下一轮直接落 `POST /datasets/{id}/navigation` 端点主体（骨架与四条验收在 `docs/api-parity-plan.md`）。
+- **下一步**：两个适配器都已就位，下一轮直接落 `POST /datasets/{id}/navigation` 端点主体（骨架与四条验收在 内部对标计划）。
 
 ## [0.7.5] - 2026-10-02
 
 - **补上 `HarnessChat` 的生产适配器（长期缺件）**：`crate::harness::HarnessChat` 是导航生成、wiki/Artifacts 生成、结构编译共同依赖的对话模型接口，但此前**只有测试用的 `FakeChat`**——这正是这些"引擎已移植、单测完备"的功能一直无法上线的原因：不是缺端点，而是**缺一个把真实对话客户端接到 trait 上的适配器**。新增 `LlmHarnessChat`：把 OpenAI 形状的 `history`（`{"role","content"}`）映射为 `ChatMessage`，空 system 不发送，实现 `max_length`（取模型 `max_tokens`，下限 1024）与 `model_name`。
 - **错误语义**：空输入返回 `Err("harness chat called with no system prompt and no history")`，**绝不返回空 `Ok`**——否则生成器会"成功"却什么都没产生。尚未转发的 `gen_conf`（temperature/top_p 等）以 debug 日志**明确说明使用模型默认值**，而不是静默忽略。
 - **测试**：新增两条（空输入必须报错且错误信息说明缺什么；`max_length`/`model_name` 来自客户端）。全量 **2139 passed / 0 failed**。
-- **下一步**：适配器已具备，下一轮接 `POST /datasets/{id}/navigation` 本体（施工单在 `docs/api-parity-plan.md`）。
+- **下一步**：适配器已具备，下一轮接 `POST /datasets/{id}/navigation` 本体（施工单在内部对标计划里）。
 
 ## [0.7.4] - 2026-10-02
 
@@ -638,7 +638,7 @@ All notable changes to RayRAG are documented in this file.
 
 ### Added
 
-- **内部参数/接口登记表**（`docs/parameter-interface-registry.md`，发布时剔除并在 publish 脚本中加守卫）：
+- **内部参数/接口登记表**（内部的参数/接口登记表，发布时剔除并在 publish 脚本中加守卫）：
   环境变量登记表（79 项，源自 `.env.example`）+ HTTP 接口登记表（310 条路由，从 `src/server.rs` 提取）
   由 `scripts/gen-interface-registry.py --check/--write` 生成与校验；契约段固定模型选择器格式
   （`model@provider@instance`）、`parser_config` camelCase、运行/切片状态枚举、`{code,message,data}`
@@ -694,7 +694,7 @@ All notable changes to RayRAG are documented in this file.
   Generate 在无 chunk/pipeline 时与上游一致保持禁用。
 - 台账：dataset/compilation 5 个已实现文件分类（index/constants/llm-wiki-view/empty-state → partial，
   wiki-generation-eligibility → full）；unmapped 472 → 467、partial 38 → 42，`--check` 通过。
-- 真点探针 `scripts/ui-traversal/dataset-artifacts-tab-cdp.mjs`（sidebar Artifacts 项/隐藏 knowledge-graph、
+- 真点探针 内部 UI 遍历脚本（`dataset-artifacts-tab-cdp.mjs`（sidebar Artifacts 项/隐藏 knowledge-graph、
   面板视图模式/空态/门控、Back 返回 files）**PASS**；全量 `cargo test --locked --offline --lib` **1638 passed / 0 failed / 27 ignored**（首跑出现一次 oauth 并行竞态偶发失败，单跑与复跑均通过）；`cargo fmt --check` 干净。
 
 ## [0.4.58] — 2026-10-01（对标批次 v0.3.10c）
@@ -713,7 +713,7 @@ All notable changes to RayRAG are documented in this file.
 
 ### Notes
 
-- 真浏览器（CDP，fnOS Chrome）探针 `scripts/ui-traversal/compilation-template-edit-cdp.mjs`：
+- 真浏览器（CDP，fnOS Chrome）探针 内部 UI 遍历脚本（`compilation-template-edit-cdp.mjs`：
   登录 → 创建（kind/global_rules/rechunk/rechunk_rules 持久化）→ 编辑回填 → 删除清理 →
   `/agents` 入口 Add/卡片/删除全链路 **PASS**。
 - 台账：edit-next 的 11 个核心文件由 `unmapped` 升为 `partial`（外壳/表单/保存/回填已实现，
@@ -744,8 +744,8 @@ All notable changes to RayRAG are documented in this file.
 
 ### Notes
 
-- v0.27.2 UI 遍历（真点，**34/34 路由**）刷新 `docs/ui-traversal/ragflow-ui-map.json`，
-  增量报告 `docs/ui-traversal/ragflow-ui-map-delta-v0.27.2.md`；v0.27 新增路由
+- v0.27.2 UI 遍历（真点，**34/34 路由**）刷新 内部 UI 遍历记录（ragflow-ui-map.json`，
+  增量报告 内部 UI 遍历记录（ragflow-ui-map-delta-v0.27.2.md`；v0.27 新增路由
   `/home`、`/chats/share`、`/chats/widget`、`/search/share`、`/agent`、`/agent/share`、
   `/compilation-templates/edit-next`、`/dataflow-result`。
 - 台账：59 行 `conf/models` 复核关闭（unmapped 492 → 483，full 559 → 568），`--check` 通过。
@@ -805,7 +805,7 @@ All notable changes to RayRAG are documented in this file.
   `--write` 刷新元数据、`--check` 通过（unmapped=0）。
 - 新增回归 2 条（tooltip/自定义值开关、未选模式的 S3 语义）；全量 `cargo test --locked --offline --lib`
   **1636 passed / 0 failed / 27 ignored**。
-- CDP 真点（`scripts/ui-traversal/data-source-form-cdp.mjs`，本版扩展）：SeaFile 全流程照旧；
+- CDP 真点（内部 UI 遍历脚本（`data-source-form-cdp.mjs`，本版扩展）：SeaFile 全流程照旧；
   新增 S3 段——真点 S3 卡片 → 地区字段是 `role=combobox` 且带 35 条建议 → 悬停 `Prefix` 提示浮层显示 →
   手输 `ap-southeast-9` → 保存后从 API 读回仍是 `ap-southeast-9` → 探针结束前删除该数据源。
 
@@ -849,7 +849,7 @@ All notable changes to RayRAG are documented in this file.
 - 新增回归 4 条：SeaFile 各 scope 的规则（含「任一 Token」与默认 scope）、S3/Confluence/Bitbucket/Jira
   的条件规则、说明面板的顺序与显隐、对话框渲染 + API 兜底（含 `{code, message}` 断言）。
 - 全量 `cargo test --locked --offline --lib` **1635 passed / 0 failed / 27 ignored**。
-- CDP 真点（`scripts/ui-traversal/data-source-form-cdp.mjs`，新脚本）：真点 SeaFile 卡片的 `+ Add` →
+- CDP 真点（内部 UI 遍历脚本（`data-source-form-cdp.mjs`，新脚本）：真点 SeaFile 卡片的 `+ Add` →
   账号 scope 面板/字段/3 个提示触发器 → 悬停显示、移开隐藏、`role=tooltip` → 切 `library` 后换成
   Token 面板并出现 Library Token / Library ID → 缺 Token 时用上游原句拦下且**未发出请求** →
   绕过网页直接 POST 同样被 400 拒绝并回同一句 → 填全后保存成功、探针结束前删除。
@@ -877,7 +877,7 @@ All notable changes to RayRAG are documented in this file.
   常量逐一对齐、端点类必须没有默认值）、`the_file_fingerprint_notices_a_real_change_and_ignores_a_rewrite`
   （同内容重写不算变化、内容变化必定被发现、文件不存在时如实报告）。页面回归补充预填徽标、
   同步条与轮询代码的断言。
-- CDP 真点（`scripts/ui-traversal/setup-wizard-cdp.mjs`，已扩展）：真点确认预填值（7200 / 33554432 /
+- CDP 真点（内部 UI 遍历脚本（`setup-wizard-cdp.mjs`，已扩展）：真点确认预填值（7200 / 33554432 /
   67108864 / 384 / zvec）、直接改写 `.env` 后页面在数秒内自动跟进新值、有未保存输入时出现警示条且
   输入保留、点 `Reload` 后才采用文件值；探针结束时把 `.env` 原样写回（实测与跑前逐字节一致）。
 - 全量 `cargo test --locked --offline --lib` **1631 passed / 0 failed / 27 ignored**。
@@ -971,7 +971,7 @@ All notable changes to RayRAG are documented in this file.
 ### Notes
 
 - 全量 `cargo test --locked --offline --lib` **1629 passed / 0 failed / 27 ignored**。
-- CDP 真点（`scripts/ui-traversal/setup-wizard-cdp.mjs`）：五组卡片齐全、只读行是 `<code>`
+- CDP 真点（内部 UI 遍历脚本（`setup-wizard-cdp.mjs`）：五组卡片齐全、只读行是 `<code>`
   且无输入框、点复制有反馈、直接 POST 写 `RAYRAG_MEMORY_LIMIT` 被拒、保存回执区分
   「立即生效 / 需重启」、交接按钮指向 `/user-setting/model`、重开页面值已持久化。
 
@@ -1022,7 +1022,7 @@ All notable changes to RayRAG are documented in this file.
   已知端点的自有模型回退与排序、失败信息、落盘往返与 TTL）、`server` 1 条
   （lookup / provider 目录 / 空结果 / 缺参 400）、`web` 1 条（页面标记、中英文案与 CSS）。
   全量 `cargo test --locked --offline --lib` **1621 passed / 0 failed / 27 ignored**。
-- 真点验证：`scripts/ui-traversal/model-catalog-lookup-cdp.mjs`（登录 → 目录状态 → lookup API →
+- 真点验证：内部 UI 遍历脚本（`model-catalog-lookup-cdp.mjs`（登录 → 目录状态 → lookup API →
   真点按钮填字段 → 覆盖按钮 → 取消后清空 → Add Provider 识别提供商）。
 
 ## [0.4.50] — 2026-09-24（对标批次 v0.3.9b）
@@ -1255,7 +1255,7 @@ All notable changes to RayRAG are documented in this file.
   `files_page_preview_button_follows_supported_preview_types`；服务端 3 条：
   `document_download_route_serves_attachment_bytes`、`file_blob_route_serves_raw_bytes`、
   `preview_reader_routes_return_workbook_grid_and_deck_text`。
-- 新增真点探针 `scripts/ui-traversal/document-preview-matrix-cdp.mjs`（14/14）：真实浏览器里上传
+- 新增真点探针 内部 UI 遍历脚本（`document-preview-matrix-cdp.mjs`（14/14）：真实浏览器里上传
   txt/md/csv/png/xlsx/pptx/docx 后逐个打开，断言渲染结果与上游语义（含 `?ext=csv` 在独立页返回
   `fileError`、`resource=files` 走文件路由、文件页 Eye 链接只出现在受支持类型上）。
 - PDF 分支的标记在这一批里被拆成 `document_toolbar_markup` / `pdf_viewer_markup` /
@@ -1291,7 +1291,7 @@ All notable changes to RayRAG are documented in this file.
   + 12 条脚本钩子 + 缩放步进表 + Fit 上限 + 5 条 CSS 选择器）、
   `server::tests::document_preview_serves_stored_bytes_inline`（MIME、`inline` 处置、字节内容、未知文档
   回 404 包体）。
-- 新增真点探针 `scripts/ui-traversal/document-viewer-cdp.mjs`：现场生成两页 PDF（坐标已知）→ 建库/上传/
+- 新增真点探针 内部 UI 遍历脚本（`document-viewer-cdp.mjs`：现场生成两页 PDF（坐标已知）→ 建库/上传/
   解析 → 打开预览页 → 断言 pdf.js 渲染出两页非空画布、切片行的 `positions` 存在、点击后高亮框数量等于
   `positions` 条数且 `left/top` 等于 `positions × scale`、弹层有文本、选中行被标记、放大后画布与高亮框同步
   缩放、上下页翻页、`?chunk=` 深链直接高亮。
@@ -1329,7 +1329,7 @@ All notable changes to RayRAG are documented in this file.
 
 ### Notes
 
-- 新增探针 `scripts/ui-traversal/pdf-positions-e2e.py`：现场生成坐标已知的两段式 PDF → 建库 → 上传 →
+- 新增探针 内部 UI 遍历脚本（`pdf-positions-e2e.py`：现场生成坐标已知的两段式 PDF → 建库 → 上传 →
   排队解析 → 轮询 → 拉切片接口，断言每个切片都有 5 元组坐标、页码 1 基、盒子良构、正文无标签残留、
   `page_num_int`/`top_int` 与 `positions` 一致，并且首个盒子的 x0/top 正是生成时写入的 72.0 / 83.0。
   部署镜像上 **22 项检查全 ok**。
@@ -1404,7 +1404,7 @@ All notable changes to RayRAG are documented in this file.
 - 新增/加强回归：`agent` 工具循环测试现在断言节点输出里的 `tool_trace`（工具名、`path`、
   解析后的 `arguments`、`result`、耗时），`api::agent_trace` 的采集用例断言工具记录与进度采样合并进
   同一数组，两个页面测试断言工具行的标记、美化函数与黑名单。
-- 新增端到端探针 `scripts/ui-traversal/agent-tool-trace-e2e.py`：自建 OpenAI 兼容 stub（首轮返回工具调用、
+- 新增端到端探针 内部 UI 遍历脚本（`agent-tool-trace-e2e.py`：自建 OpenAI 兼容 stub（首轮返回工具调用、
   次轮返回最终答案）+ 知识库 + 带 Retrieval 工具的智能体，真实跑一次智能体，断言轨迹里的工具记录字段，
   再用 Chrome CDP 打开试跑页 → 会话 → 运行轨迹抽屉 → 展开工具行核对 Arguments/Result。
 - 全量 `cargo test --locked --lib` **1572 passed / 0 failed / 27 ignored**。
@@ -2430,7 +2430,7 @@ All notable changes to RayRAG are documented in this file.
   `Related search` 标题与最多 5 个 chip，点击即以该问题重跑检索。
 - `POST /api/v1/chat/recommendation`：命中 `search_id` 时使用该应用的 `chat_id` 实例与 `llm_setting`（剔除
   `parameter`，默认 temperature 0.9），非法设置返回 400。
-- **CDP 探针** `scripts/ui-traversal/search-related-cdp.mjs`：开关置位、chip 数量与文本、请求体、点击重跑、
+- **CDP 探针** 内部 UI 遍历脚本（`search-related-cdp.mjs`：开关置位、chip 数量与文本、请求体、点击重跑、
   关闭后不再请求、编辑页保存后 GET 复核、探针应用清理。
 
 - **Joined teams 表逐列对齐上游 `tenant-table.tsx`**：四列 Name（头像+昵称）/ Update date（三态排序按钮，↕/↑/↓）/
@@ -2438,13 +2438,13 @@ All notable changes to RayRAG are documented in this file.
   补 loading 转圈行与 `No data` 空行；日期统一走上游 `utils/date.ts::formatDate` 的 `DD/MM/YYYY HH:mm:ss`，
   Quit 用 lucide `LogOut` 图标。后端 `/api/v1/tenants` 关联 owner 的 nickname/email/avatar 与 `update_date`
   （自持租户合成行回退到账号创建时间），成员接口同步补 avatar。
-- **CDP 探针** `scripts/ui-traversal/joined-teams-cdp.mjs`：live payload 键、loading 行、四态排序顺序与图标、
+- **CDP 探针** 内部 UI 遍历脚本（`joined-teams-cdp.mjs`：live payload 键、loading 行、四态排序顺序与图标、
   搜索过滤、空数据行、恢复默认。
 
 - **技能检索配置弹层对齐上游 `search-config-modal.tsx`**：补 `configDesc` 说明、权重/阈值改滑杆并带实时读数
   （`Hybrid (N% Keyword + M% Vector)` / `.toFixed(1)`）、三档说明与 Top K(1..100)、新增 Index Fields 四字段编辑器
   （Name/Tags/Description/Content 各带开关与权重，保存写入 `field_config` 并支持回填），全量文案中英双语。
-- **CDP 探针** `scripts/ui-traversal/skills-config-cdp.mjs`：滑块实时文案、字段编辑、保存后 GET 复核与重开回填。
+- **CDP 探针** 内部 UI 遍历脚本（`skills-config-cdp.mjs`：滑块实时文案、字段编辑、保存后 GET 复核与重开回填。
 
 
 ### Added
@@ -2454,7 +2454,7 @@ All notable changes to RayRAG are documented in this file.
   `dataset_api`；实现位于 `src/api/dataset_tags.rs`。
 - **配置页标签云 / 标签表**：Tag sets 行下新增上游 `tag-tabs.tsx` 形态的分段切换——CSS 词云（字号随 count 变化、
   hover 显示计数、点击重命名）与标签表（Tag/Count/重命名/删除、空态与状态行）。
-- **CDP 探针** `scripts/ui-traversal/dataset-tags-cdp.mjs`：种子标签 → 云/表视图 → 重命名 → 删除，逐步复核 GET 结果。
+- **CDP 探针** 内部 UI 遍历脚本（`dataset-tags-cdp.mjs`：种子标签 → 云/表视图 → 重命名 → 删除，逐步复核 GET 结果。
 
 ### Fixed
 
@@ -2472,7 +2472,7 @@ All notable changes to RayRAG are documented in this file.
 
 ### Added
 
-- **CDP 探针** `scripts/ui-traversal/search-rerank-cdp.mjs`：home→results 视图、无模型校验、选中模型后的
+- **CDP 探针** 内部 UI 遍历脚本（`search-rerank-cdp.mjs`：home→results 视图、无模型校验、选中模型后的
   请求体断言、关闭后 top_k=1024，逐步截图。
 
 
@@ -2484,7 +2484,7 @@ All notable changes to RayRAG are documented in this file.
   历史 `private` 自动纠正；`GET /api/v1/datasets` 现在返回 `me`/`team`。
 - **数据集头像改用上游 `AvatarUpload` 组合**：空态「＋ Upload」、64×64 预览 + 铅笔重选、圆形 `Remove image`、
   扩展名白名单与 64×64 canvas 裁剪，带 `ds-settings-basic-avatar-upload`。
-- **CDP 探针** `scripts/ui-traversal/dataset-permission-avatar-cdp.mjs`：覆盖权限弹层过滤/选择/保存回读与头像三态。
+- **CDP 探针** 内部 UI 遍历脚本（`dataset-permission-avatar-cdp.mjs`：覆盖权限弹层过滤/选择/保存回读与头像三态。
 
 ### Fixed
 
@@ -2540,7 +2540,7 @@ All notable changes to RayRAG are documented in this file.
 - **两个上游系统端点**（免登录）：`GET /api/v1/system/version`（返回版本字符串）与
   `GET /api/v1/system/config`（`registerEnabled` / `disablePasswordLogin`，取自 `REGISTER_ENABLED` /
   `DISABLE_PASSWORD_LOGIN`），并加入 `public_api_path` 白名单。
-- **CDP 探针** `scripts/ui-traversal/login-bg-cdp.mjs`：校验弧带高度/viewBox、spotlight 数量、动画名与时长、
+- **CDP 探针** 内部 UI 遍历脚本（`login-bg-cdp.mjs`：校验弧带高度/viewBox、spotlight 数量、动画名与时长、
   闸门开关与两个端点响应。
 
 
@@ -2552,7 +2552,7 @@ All notable changes to RayRAG are documented in this file.
   `Remove image` 按钮清空；文件名白名单 `jpg|jpeg|png|webp|bmp`；选中后 canvas 居中裁剪为 64×64 PNG 再上传。
 - **Profile 双语**：页面标签/说明/按钮与 JS 校验文案全部中英双语（概要/用户名/头像/时区/邮箱/密码/编辑、
   请选择图片文件、请确认新密码…），弹窗标题按上游保持英文硬编码。
-- **CDP 探针** `scripts/ui-traversal/profile-page-cdp.mjs`：验证空态→上传→预览→删除→非法扩展名拒绝→三个编辑弹窗→zh 文案。
+- **CDP 探针** 内部 UI 遍历脚本（`profile-page-cdp.mjs`：验证空态→上传→预览→删除→非法扩展名拒绝→三个编辑弹窗→zh 文案。
 
 ### Fixed
 
@@ -2568,7 +2568,7 @@ All notable changes to RayRAG are documented in this file.
   picker 厂（Ollama 等 10 个）保持模型列表并隐藏通用 Vision 开关。
 - **payload 对齐 `buildModelInfoFromValues`**：`model_info[0].extra.is_tools`、chat+vision → 追加 `image2text`、
   `provider_order` 随提交带上，开关字段不再泄漏进 `payload.extra`。
-- **CDP 探针** `scripts/ui-traversal/local-provider-modal-cdp.mjs`：逐个打开六个本地厂与 OpenRouter 模态，
+- **CDP 探针** 内部 UI 遍历脚本（`local-provider-modal-cdp.mjs`：逐个打开六个本地厂与 OpenRouter 模态，
   记录类型集/默认值/开关可见性与 payload。
 
 ### Fixed
@@ -2585,7 +2585,7 @@ All notable changes to RayRAG are documented in this file.
 - **自定义模型弹窗编辑模式**：悬停铅笔进入 `Edit model`（名称锁定、回填类型/最大 Token/Tool call），保存写回目录与选中项；
   对话框仅保留上游的 Cancel/Confirm 两个按钮，关闭时重置表单与错误文案；文案与校验按 `use-custom-model-fields.tsx`
   （`modelNameRequired`/`modelNameDuplicate`/`modelTypeRequired`/`modelMaxTokensMinMessage`）本地化。
-- **CDP 探针** `scripts/ui-traversal/provider-model-picker-cdp.mjs`：用 `page.route` 桩出 12 个模型，逐步验证展开、
+- **CDP 探针** 内部 UI 遍历脚本（`provider-model-picker-cdp.mjs`：用 `page.route` 桩出 12 个模型，逐步验证展开、
   勾选、全选、搜索无匹配、清空、编辑、新增自定义模型与校验，全程截图。
 
 ### Fixed
@@ -2607,7 +2607,7 @@ All notable changes to RayRAG are documented in this file.
   Hide models/隐藏模型），实例类型徽标改用共享 `crate::providers` 的 `mapModelKey` 映射（image2text→VLM、speech2text→ASR、chat→LLM 等）。
 - **弹层/弹窗不透明表面**：新增 `--bgm`（深色 `#15141c` / 浅色 `#fff`），`.modal` 与 6 个浮层选择器不再使用 5% 白的 `--bgc`，
   修复弹窗背后卡片透字问题。
-- **CDP 探针** `scripts/ui-traversal/provider-base-url-cdp.mjs`：真实点击卡片 → 弹窗 → 打开 Base-Url 弹层 → 切 region → 清除 →
+- **CDP 探针** 内部 UI 遍历脚本（`provider-base-url-cdp.mjs`：真实点击卡片 → 弹窗 → 打开 Base-Url 弹层 → 切 region → 清除 →
   输入自定义 URL，逐步记录值与派生 region 并截图。
 
 ### Fixed
@@ -2640,7 +2640,7 @@ All notable changes to RayRAG are documented in this file.
 - **开关控件对齐上游 Switch**：`.set-switch input[type=checkbox]` 与
   `input[type=checkbox][role=switch]` 渲染为 36×20 圆角滑块（`appearance:none` + 白色滑块），
   替换原先在深色主题下显示为大白方块的浏览器原生复选框。
-- **侧栏/导航全量实点脚本** `scripts/ui-traversal/sidebar-routes-cdp.mjs`：顶部导航 7 项、
+- **侧栏/导航全量实点脚本** 内部 UI 遍历脚本（`sidebar-routes-cdp.mjs`：顶部导航 7 项、
   用户设置侧栏 7 项、数据集详情侧栏 5 项与 `/user-setting` 共 21 条路由逐页点击，记录状态码、
   主列高度/文本长度、横向溢出、page error 与截图；本次结果 21/21 通过。
 - **诊断脚本**：`overflow-cdp.mjs`（定位横向溢出源头）、`testing-switch-cdp.mjs`（开关与伪标签）、
@@ -2800,10 +2800,10 @@ All notable changes to RayRAG are documented in this file.
   `POST /api/v1/retrieval` body 的 `rerank_id` 下发；`/search?sapp={id}` 打开时
   由 `__SAPP__.rerank_id` 反向播种。该选择器保持表单本地态（上游
   react-hook-form 语义），不写租户默认模型。
-- **RAGFlow UI 遍历工具链**（`scripts/ui-traversal/`）：`ragflow-auth-cdp.mjs`
+- **RAGFlow UI 遍历工具链**（内部 UI 遍历脚本（``）：`ragflow-auth-cdp.mjs`
   （翻转卡片登录/注册自举，会话持久化于 fnOS Chrome profile）、
   `ragflow-ui-dump.mjs`（逐路由导出按钮/链接/字段/表头/标签页 + 截图，产物
-  `docs/ui-traversal/ragflow-pages/`），作为 RayRAG UI 一比一对标的结构化基准。
+  内部 UI 遍历记录（ragflow-pages/`），作为 RayRAG UI 一比一对标的结构化基准。
 
 ### Changed
 
