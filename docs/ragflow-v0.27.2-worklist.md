@@ -92,62 +92,12 @@
 | `web/src/pages/user-setting/sidebar/hooks.tsx` | 47 | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) [v0.27.2 content changed: re-audit] |
 | `web/src/routes.tsx` | 466 | `src/server.rs; src/web.rs` | Rust registers the `/dataset/{files\|retrieval\|logs\|configuration\|knowledge-graph}/{id}` detail routes; `/dataset/{id}` answers a 307 redirect into `/dataset/files/{id}` (upstream `Routes.Dataset = /dataset/files`) and `/kbs/{id}` keeps the legacy 3-tab shell. The dataset sidebar mirrors `pages/dataset/sidebar/index.tsx`: five real route links in source order with the `knowledgeDetails.*` labels (Files / Retrieval testing / Logs / Configuration / Knowledge graph), the active entry marked client-side from the URL path and the panel selected on load; the parse-log table was merged into the Logs panel so the entry count matches upstream. Remaining gaps: `/dataset/testing`, `/dataset/knowledge-graph` and `/dataset/configuration` are the same Rust shell with a preselected panel rather than separate page bundles (v0.3.5g). v0.3.5x added a machine audit of the whole upstream route table (52 paths against the deployed instance) and closed six: `/login-next` (upstream serves `/login` and `/login-next` from the same page), the canonical singular `/agent/:id` and `/search/:id` detail paths (RayRAG keeps `/agents/{id}` and `/searches/{id}` as compatible aliases), upstream's standalone `/document/:id` viewer (resolved through the document record, real 404 for unknown ids) and the public `/search/share` embed (`?tenantId=` app resolution plus the `visible_avatar` owner row, sharing the `/search` markup through `search_page_markup`). v0.3.8n closed `/agent/:id/explore` (plus the `/agents/:id/explore` alias): the Launch surface renders upstream's PageHeader breadcrumb, the 296px session column and the SessionChat column, and the toolbar Launch button navigates there like `navigateToAgentExplore`. Still open from the same table: the `/admin` subtree (`/admin` is upstream's admin *login*, plus `/admin/services`, `/admin/users`, `/admin/users/:id`, `/admin/sandbox-settings` and the enterprise-only whitelist/roles/monitoring — all registered by RayRAG, per-file residuals tracked on their own rows), the `/chunk` subtree (`/chunk`, `/chunk/parsed/chunks`, `/chunk/chunk/:id`, `/chunk/result/:id`), v0.3.8o closed `/agent/share` (the embeddable chat with the `APIToken.beta` credential, `/api/v1/system/tokens` and the `agentbots` inputs/completions endpoints; the beta-only `logs/<message_id>` trace and the floating-widget embed remain open). v0.3.8p closed `/dataflow-result` (the ingestion-log viewer with the timeline, the step result panel, the chunk result bar, the rerun flow and the dataset-row `View result` entry, backed by the new ingestion endpoints). Still open from the same table: `/agent/:id/explore`, `/agent/share` and `/dataflow-result` are registered, while the beta-only `agentbots/logs/<message_id>` trace, the floating-widget embed and the enterprise-only `/admin` whitelist/roles/monitoring entries remain [v0.27.2 content changed: re-audit] |
 
-## 复核对账队列（re-audit，435 项）
+## 复核对账队列（re-audit，385 项）
 
 上游 v0.27.2 相对 v0.26.4 变更过的已审计行；逐行复核后移除 `[v0.27.2 content changed: re-audit]` 标记并更新注记。
 
 | 文件 | 状态 | RayRAG 对应 |
 |---|---|---|
-| `Dockerfile` | replaced | `Dockerfile` |
-| `Dockerfile_deepdoc_oss` | replaced | `Dockerfile` |
-| `admin/client/parser.py` | full | `src/api/admin.rs; src/server.rs` |
-| `admin/client/ragflow_client.py` | full | `src/api/admin.rs; src/server.rs` |
-| `admin/server/admin_server.py` | full | `src/api/admin.rs; src/server.rs` |
-| `admin/server/auth.py` | full | `src/api/admin.rs; src/server.rs` |
-| `admin/server/config.py` | full | `src/api/admin.rs; src/server.rs` |
-| `admin/server/routes.py` | full | `src/api/admin.rs; src/api/sandbox_admin.rs; src/server.rs` |
-| `admin/server/services.py` | full | `src/api/admin.rs; src/server.rs; src/api/sandbox_admin.rs` |
-| `agent/canvas.py` | full | `src/agent.rs; src/settings.rs` |
-| `agent/component/agent_with_tools.py` | full | `src/runtime.rs` |
-| `agent/component/base.py` | full | `src/runtime.rs` |
-| `agent/component/begin.py` | full | `src/runtime.rs` |
-| `agent/component/browser.py` | full | `src/runtime.rs` |
-| `agent/component/categorize.py` | aligned | `src/agent.rs; src/llm.rs; src/api/features.rs` |
-| `agent/component/docs_generator.py` | full | `src/runtime.rs` |
-| `agent/component/excel_processor.py` | full | `src/runtime.rs` |
-| `agent/component/fillup.py` | full | `src/runtime.rs` |
-| `agent/component/invoke.py` | full | `src/runtime.rs` |
-| `agent/component/iteration.py` | full | `src/runtime.rs` |
-| `agent/component/list_operations.py` | aligned | `src/agent.rs` |
-| `agent/component/llm.py` | full | `src/runtime.rs` |
-| `agent/component/message.py` | full | `src/runtime.rs` |
-| `agent/component/string_transform.py` | full | `src/runtime.rs` |
-| `agent/component/variable_aggregator.py` | aligned | `src/agent.rs` |
-| `agent/sandbox/client.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/executor_manager/api/handlers.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/executor_manager/api/routes.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/executor_manager/core/config.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/executor_manager/core/container.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/executor_manager/services/execution.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/executor_manager/services/limiter.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/providers/__init__.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/providers/base.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/sandbox/providers/self_managed.py` | full | `src/sandbox.rs; src/code_exec.rs` |
-| `agent/tools/base.py` | full | `src/runtime.rs; src/agent.rs` |
-| `agent/tools/code_exec.py` | full | `src/code_exec.rs; src/agent.rs; src/runtime.rs` |
-| `agent/tools/deepl.py` | full | `src/translate.rs; src/runtime.rs; src/agent.rs` |
-| `agent/tools/duckduckgo.py` | full | `src/runtime.rs; src/agent.rs` |
-| `agent/tools/email.py` | full | `src/email.rs; src/agent.rs; src/runtime.rs` |
-| `agent/tools/exesql.py` | full | `src/exesql.rs; src/agent.rs; src/runtime.rs` |
-| `agent/tools/github.py` | full | `src/runtime.rs; src/agent.rs` |
-| `agent/tools/google.py` | full | `src/runtime.rs; src/agent.rs` |
-| `agent/tools/keenable.py` | full | `src/runtime.rs; src/agent.rs` |
-| `agent/tools/qweather.py` | full | `src/runtime.rs; src/agent.rs` |
-| `agent/tools/retrieval.py` | full | `src/runtime.rs; src/agent.rs` |
-| `api/apps/auth/README.md` | aligned | `src/server.rs; src/api/` |
-| `api/apps/auth/oidc.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/backward_compat.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/_generation_params.py` | aligned | `src/generation_params.rs; src/llm.rs; src/api/features.rs; src/api/openai_proxy.rs` |
 | `api/apps/restful_apis/agent_api.py` | aligned | `src/server.rs; src/api/agent_log.rs; src/api/features.rs` |
 | `api/apps/restful_apis/bot_api.py` | aligned | `src/server.rs; src/api/` |
 | `api/apps/restful_apis/chat_api.py` | aligned | `src/server.rs; src/api/system.rs; src/api/searchapp_mgr.rs` |
