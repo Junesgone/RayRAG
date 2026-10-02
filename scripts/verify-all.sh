@@ -20,6 +20,14 @@ run() { # name, command...
   if "$@"; then echo "   OK"; else echo "   FAILED"; fail=1; fi
 }
 
+# The running image, the crate version and the published release must agree: twice the
+# container lagged a docs-only release, which made "version matches release?" ambiguous.
+run "Running version matches Cargo.toml" bash -c '
+  crate=$(grep -m1 "^version" Cargo.toml | cut -d\" -f2)
+  live=$(curl -fsS --max-time 20 "${RAYRAG_ORIGIN}/api/v1/version" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"data\"][\"version\"])" 2>/dev/null)
+  echo "   Cargo.toml=$crate  running=$live"
+  [ -n "$live" ] && [ "$crate" = "$live" ]
+'
 run "API parity ledger" python3 scripts/api-parity-audit.py --check
 run "HTML tag balance" python3 scripts/ui-traversal/tag-balance-check.py
 run "Sidebar routes (CDP)" node scripts/ui-traversal/sidebar-routes-cdp.mjs
