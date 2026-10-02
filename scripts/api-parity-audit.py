@@ -64,6 +64,7 @@ COVERED: dict[str, str] = {
 # Upstream methods on paths RayRAG already answers with other methods. A path-only audit
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
+    "/datasets/<dataset_id>/navigation": "POST 生成导航树需要租户嵌入/LLM 编译任务（读取/删除面已实现）",
 }
 
 KNOWN_MISSING: dict[str, str] = {
@@ -96,10 +97,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/datasets/<dataset_id>/graph": "功能级缺口：数据集知识图谱读取未实现（产物按 kb 存储但缺公开读取路径）",
     "/datasets/<dataset_id>/index": "功能级缺口：按索引类型重建索引未实现",
     "/datasets/<dataset_id>/metadata/config": "功能级缺口：数据集自动元数据配置未实现",
-    "/datasets/<dataset_id>/navigation": "功能级缺口：数据集导航引擎已移植（knowlege_dataset_nav.rs）但未接入运行期存储",
-    "/datasets/<dataset_id>/navigation/<path:name>": "功能级缺口：同上（导航引擎未接线）",
-    "/datasets/<dataset_id>/navigation/<path:name>/children": "功能级缺口：同上（导航引擎未接线）",
-    "/datasets/<dataset_id>/navigation/search": "功能级缺口：同上（导航引擎未接线）",
     "/datasets/<dataset_id>/skills": "功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*）",
     "/datasets/<dataset_id>/skills/<path:skill_kwd>": "功能级缺口：同上（Skills 面未实现）",
     "/documents/artifact/<filename>": "功能级缺口：文档产物文件读取未实现",

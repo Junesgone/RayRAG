@@ -288,6 +288,9 @@
 | GET | `/api/v1/datasets/{dataset_id}/artifacts` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/topics` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/navigation` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/navigation/{name}/children` | `-` |
+| ANY | `/api/v1/datasets/{dataset_id}/navigation/{name}` | `axum::routing` |
 | GET | `/api/v1/datasets/metadata/flattened` | `-` |
 | GET | `/api/v1/datasets/tags/aggregation` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/documents/parse` | `-` |

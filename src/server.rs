@@ -4078,6 +4078,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 // Upstream `dataset_api.update_wiki_page`: save an edited page.
                 .put(crate::api::dataset_artifacts::update_artifact_page),
         )
+        // Upstream `dataset_api.py` navigation surface over the ported nav engine.
+        .route(
+            "/api/v1/datasets/{dataset_id}/navigation",
+            get(crate::api::dataset_navigation::list_nav)
+                .delete(crate::api::dataset_navigation::delete_nav),
+        )
+        .route(
+            // The literal `search` segment must stay ahead of `{name}`.
+            "/api/v1/datasets/{dataset_id}/navigation/search",
+            get(crate::api::dataset_navigation::search_nav),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/navigation/{name}/children",
+            get(crate::api::dataset_navigation::list_nav_children),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/navigation/{name}",
+            axum::routing::delete(crate::api::dataset_navigation::delete_nav_node),
+        )
         // Upstream `dataset_api.py::get_flattened_metadata` / `aggregate_tags`.
         .route(
             "/api/v1/datasets/metadata/flattened",
@@ -15357,6 +15376,173 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The navigation surface reads the rows the nav engine writes: seed a cluster, a
+    /// sub-cluster and a document leaf, then walk list → children → lexical search →
+    /// subtree delete → whole-tree delete.
+    #[tokio::test]
+    async fn navigation_tree_is_served_from_the_shared_doc_store() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Navigation", "")
+            .unwrap();
+        let store = env.state.doc_store.get_conn().unwrap();
+        let row = |id: &str, name: &str, parent: &str, kind: &str, payload: &str| {
+            serde_json::json!({
+                "id": id,
+                "compile_kwd": "dataset_nav",
+                "kind_placeholder": serde_json::Value::Null,
+                "name": name,
+                "parent_kwd": parent,
+                "type_kwd": kind,
+                "doc_count_int": if kind == "nav_cluster" { 2 } else { 1 },
+                "doc_id": if kind == "nav_cluster" { "" } else { "doc-1" },
+                "content_with_weight": payload,
+            })
+            .as_object()
+            .cloned()
+            .unwrap()
+        };
+        let rows: Vec<crate::doc_store::DocRow> = vec![
+            row(
+                "n1",
+                "Storage",
+                "root",
+                "nav_cluster",
+                r#"{"description":"Storage engines and formats","keywords":["storage"],"entities":[]}"#,
+            ),
+            row(
+                "n2",
+                "Vector storage",
+                "Storage",
+                "nav_cluster",
+                r#"{"description":"Vector indexes","keywords":["vector"],"entities":[]}"#,
+            ),
+            row(
+                "n3",
+                "doc-leaf",
+                "Vector storage",
+                "nav_doc",
+                r#"{"description":"HNSW paper summary","keywords":["hnsw","vector"],"entities":[]}"#,
+            ),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("test-user"),
+                &kb.id,
+            )
+            .unwrap();
+
+        let call = |method: Method, uri: String| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The tree lists clusters only at the top level.
+        let listed = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+        assert_eq!(listed["data"]["items"][0]["name"], "Storage");
+        assert_eq!(listed["data"]["items"][0]["type"], "cluster");
+        assert_eq!(listed["data"]["items"][0]["doc_count"], 2);
+        assert_eq!(listed["data"]["items"][0]["has_children"], true);
+
+        let children = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation/Storage/children", kb.id),
+        )
+        .await;
+        let children = response_json(children).await;
+        assert_eq!(children["data"]["total"], 1);
+        assert_eq!(children["data"]["items"][0]["name"], "Vector storage");
+
+        let leaves = call(
+            Method::GET,
+            format!(
+                "/api/v1/datasets/{}/navigation/Vector%20storage/children",
+                kb.id
+            ),
+        )
+        .await;
+        let leaves = response_json(leaves).await;
+        assert_eq!(leaves["data"]["items"][0]["type"], "doc");
+        assert_eq!(leaves["data"]["items"][0]["doc_id"], "doc-1");
+
+        let found = call(
+            Method::GET,
+            format!(
+                "/api/v1/datasets/{}/navigation/search?q=hnsw&mode=nav_doc",
+                kb.id
+            ),
+        )
+        .await;
+        let found = response_json(found).await;
+        assert_eq!(found["data"]["mode"], "nav_doc");
+        assert_eq!(found["data"]["items"][0]["name"], "doc-leaf", "{found}");
+
+        let bad_mode = call(
+            Method::GET,
+            format!(
+                "/api/v1/datasets/{}/navigation/search?q=x&mode=chunk",
+                kb.id
+            ),
+        )
+        .await;
+        // The embedding-driven modes are declared missing rather than half-answered.
+        assert_eq!(response_json(bad_mode).await["code"], 102);
+
+        // Deleting a node takes its subtree with it (children point at the parent by name).
+        let deleted_node = call(
+            Method::DELETE,
+            format!("/api/v1/datasets/{}/navigation/Vector%20storage", kb.id),
+        )
+        .await;
+        assert_eq!(response_json(deleted_node).await["code"], 0);
+        let after = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        let after = response_json(after).await;
+        assert_eq!(
+            after["data"]["total"], 1,
+            "the surviving top-level cluster: {after}"
+        );
+
+        let cleared = call(
+            Method::DELETE,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        assert_eq!(response_json(cleared).await["code"], 0);
+        let empty = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        assert_eq!(response_json(empty).await["data"]["total"], 0);
     }
 
     /// The artifact surface reads the rows the wiki engines write: seed one page in the

@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.6] - 2026-10-02
+
+- **数据集导航树接口 5 条落地**（复用上一轮接通的产物存储）：`GET /datasets/{id}/navigation`（顶层簇，支持 `keywords`/`top_k`）、`GET /datasets/{id}/navigation/{name}/children`（直接子节点：子簇与文档叶子）、`GET /datasets/{id}/navigation/search`（词法检索，返回 `mode` 与带 `score` 的节点）、`DELETE /datasets/{id}/navigation`（清空整棵树，返回删除条数）、`DELETE /datasets/{id}/navigation/{name}`（**连同子树**删除——子节点只按名字引用父节点，所以逐层收集后一次删除）。数字：同名 **94→98**、未实现 **47→43**。
+- **跨后端一致的过滤口径（本轮踩坑）**：上游用 `*_kwd` 列表条件过滤（`type_kwd: ["nav_cluster"]`、`parent_kwd: ["root"]`），但内存后端按**值全等**比较，Postgres/ES 按列表成员比较——条件下推到存储会让同一份数据在不同后端返回不同结果。现在存储层只过滤 `compile_kwd`（每行都是普通字符串），`type_kwd`/`parent_kwd` 在取回后统一过滤（导航树规模有限）；同时把 `parent_kwd` 加入查询字段（上游靠存储过滤，所以它不在 `_NAV_SEARCH_FIELDS` 里）。
+- **逐条差异说明**：`POST /datasets/{id}/navigation`（生成导航树）需要租户嵌入与 LLM 编译任务，已登记为方法级缺口并在 `--check` 中显式豁免；`search` 的 `chunk` / `navigation_tree` 模式同样需要嵌入模型，当前返回明确的 `code 102` 提示，而不是返回半个答案。
+- **测试**：新增导航全链路回归（顶层簇 → 子节点 → 叶子（`type=doc`、`doc_id` 正确）→ 词法检索命中 → 未实现模式返回 102 → 删除节点连同子树 → 清空后归零）。全量 **2129 passed / 0 failed**。
+
 ## [0.5.5] - 2026-10-02
 
 - **接上编译产物存储（解锁 17 条接口的前置条件）**：`DocStorePool` 此前在自身模块之外没有任何调用点——移植好的 wiki / 数据集导航 / 结构编译引擎（合计约 1.9 万行、单测完备）因此**读不到也写不进运行期数据**。现在它作为共享池挂在 `AppState` 上（有 `RAYRAG_POSTGRES_URL` 时走 PostgreSQL，否则内存后端），引擎与接口看到的是同一份数据。

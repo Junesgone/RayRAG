@@ -5,12 +5,12 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**269**
-- 同名应答（exact）：**94**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**273**
+- 同名应答（exact）：**98**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**47**
-- 路径已有但方法缺失（method）：**0**
+- 尚未实现（missing，已登记）：**43**
+- 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -45,10 +45,6 @@
 | `/datasets/<dataset_id>/graph` | `dataset_api.py` | 功能级缺口：数据集知识图谱读取未实现（产物按 kb 存储但缺公开读取路径） |
 | `/datasets/<dataset_id>/index` | `dataset_api.py` | 功能级缺口：按索引类型重建索引未实现 |
 | `/datasets/<dataset_id>/metadata/config` | `dataset_api.py` | 功能级缺口：数据集自动元数据配置未实现 |
-| `/datasets/<dataset_id>/navigation` | `dataset_api.py` | 功能级缺口：数据集导航引擎已移植（knowlege_dataset_nav.rs）但未接入运行期存储 |
-| `/datasets/<dataset_id>/navigation/<path:name>` | `dataset_api.py` | 功能级缺口：同上（导航引擎未接线） |
-| `/datasets/<dataset_id>/navigation/<path:name>/children` | `dataset_api.py` | 功能级缺口：同上（导航引擎未接线） |
-| `/datasets/<dataset_id>/navigation/search` | `dataset_api.py` | 功能级缺口：同上（导航引擎未接线） |
 | `/datasets/<dataset_id>/skills` | `dataset_api.py` | 功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*） |
 | `/datasets/<dataset_id>/skills/<path:skill_kwd>` | `dataset_api.py` | 功能级缺口：同上（Skills 面未实现） |
 | `/datasets/<dataset_id>/documents/<document_id>/metadata/config` | `document_api.py` | 功能级缺口：文档级元数据配置未实现 |
@@ -80,4 +76,4 @@
 
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
-| — | — |
+| `/datasets/<dataset_id>/navigation` | dataset_api.py [POST] |
