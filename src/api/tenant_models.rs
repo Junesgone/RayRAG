@@ -5996,3 +5996,101 @@ mod tests {
         assert!(!json.contains("extra"));
     }
 }
+
+/// `GET /api/v1/models/endpoints/check` — probe every configured model endpoint.
+///
+/// Added after a real incident: artifact extraction silently produced nothing because
+/// `LLM_API_BASE` pointed at a service that was not running, and the only way to find out was
+/// a manual `curl` on the host. This answers the same question in one call, per capability,
+/// with the failure text — and it reports *reachability*, which is exactly what a dataset
+/// cannot tell you.
+#[derive(serde::Serialize)]
+pub struct EndpointProbe {
+    pub capability: &'static str,
+    pub env: &'static str,
+    pub base: String,
+    pub reachable: bool,
+    pub detail: String,
+}
+
+pub async fn check_model_endpoints(
+    State(_state): State<Arc<AppState>>,
+    Extension(_auth): Extension<AuthContext>,
+) -> Response {
+    const CAPABILITIES: [(&str, &str, bool); 5] = [
+        ("chat", "LLM_API_BASE", false),
+        ("embedding", "EMBED_API_BASE", false),
+        ("rerank", "RERANK_API_BASE", false),
+        ("asr", "RAYRAG_ASR_API_BASE", false),
+        ("vision", "IMG2TXT_API_BASE", false),
+    ];
+    let mut probes: Vec<EndpointProbe> = Vec::new();
+    for (capability, env, _flag) in CAPABILITIES {
+        let Some(base) = std::env::var(env)
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            probes.push(EndpointProbe {
+                capability,
+                env,
+                base: String::new(),
+                reachable: false,
+                detail: format!("{env} is not set"),
+            });
+            continue;
+        };
+        // `/models` is the cheapest documented listing on OpenAI-compatible servers; a 4xx
+        // still proves something is listening there, which is the question being asked.
+        let url = format!("{base}/models");
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(6))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                probes.push(EndpointProbe {
+                    capability,
+                    env,
+                    base,
+                    reachable: false,
+                    detail: error.to_string(),
+                });
+                continue;
+            }
+        };
+        match client.get(&url).send().await {
+            Ok(response) => {
+                let status = response.status();
+                probes.push(EndpointProbe {
+                    capability,
+                    env,
+                    base,
+                    reachable: true,
+                    detail: format!("HTTP {status} from {url}"),
+                });
+            }
+            Err(error) => probes.push(EndpointProbe {
+                capability,
+                env,
+                base,
+                detail: format!("{url}: {error}"),
+                reachable: false,
+            }),
+        }
+    }
+    let unreachable: Vec<&str> = probes
+        .iter()
+        .filter(|probe| !probe.reachable)
+        .map(|probe| probe.capability)
+        .collect();
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "endpoints": probes,
+            "unreachable": unreachable,
+            "note": "A reachable embedding endpoint does not mean the chat endpoint is reachable, and an embedding server will answer chat requests with nonsense - check each capability separately."
+        }
+    }))
+    .into_response()
+}

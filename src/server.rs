@@ -4439,6 +4439,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .post(crate::api::dataset_navigation::generate_navigation)
                 .delete(crate::api::dataset_navigation::delete_nav),
         )
+        // Added by RayRAG: probe every configured model endpoint, because "the dataset has no
+        // entities" and "the chat endpoint is down" look identical from a dataset page.
+        .route(
+            "/api/v1/models/endpoints/check",
+            get(crate::api::tenant_models::check_model_endpoints),
+        )
         // Upstream `user_api.py::tenant_info`: the tenant's per-capability default models
         // under RAGFlow's own column names.
         .route(
