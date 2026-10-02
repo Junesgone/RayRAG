@@ -1176,6 +1176,53 @@ pub mod ssrf_guard {
             .map(|ip| (hostname, ip))
             .ok_or(SsrfError::NoAddresses)
     }
+
+    /// `common/ssrf_guard.py::assert_host_is_safe` — the guard for connections that take a
+    /// **raw host and port** rather than a URL (the agent canvas' database component).
+    ///
+    /// Same rule as the URL form: every address the host resolves to must be globally
+    /// routable, so a component cannot be pointed at an internal service. Returns the
+    /// first resolved IP for the caller's diagnostics.
+    pub fn assert_host_is_safe(host: &str) -> Result<String, SsrfError> {
+        let host = host.trim();
+        if host.is_empty() {
+            return Err(SsrfError::MissingHost);
+        }
+        // A bare IP literal is checked directly; a name is resolved first.
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            let ip = effective_ip(ip);
+            if !is_global_ip(ip) {
+                return Err(SsrfError::NonPublicAddress(ip.to_string()));
+            }
+            return Ok(ip.to_string());
+        }
+        // Bracketed IPv6 literals (`[::1]`) arrive from URL-style inputs.
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or(host);
+        if let Ok(ip) = bare.parse::<IpAddr>() {
+            let ip = effective_ip(ip);
+            if !is_global_ip(ip) {
+                return Err(SsrfError::NonPublicAddress(ip.to_string()));
+            }
+            return Ok(ip.to_string());
+        }
+        let addrs = (bare, 0)
+            .to_socket_addrs()
+            .map_err(|e| SsrfError::ResolutionFailed(format!("{bare}: {e}")))?;
+        let mut resolved: Option<String> = None;
+        for addr in addrs {
+            let ip = effective_ip(addr.ip());
+            if !is_global_ip(ip) {
+                return Err(SsrfError::NonPublicAddress(ip.to_string()));
+            }
+            if resolved.is_none() {
+                resolved = Some(ip.to_string());
+            }
+        }
+        resolved.ok_or(SsrfError::NoAddresses)
+    }
 }
 
 /// `api/validation.py` semantics — generic parameter validators. RAGFlow's
@@ -1968,6 +2015,50 @@ mod tests {
             assert_url_is_safe("http:///nohost"),
             Err(SsrfError::MissingHost)
         ));
+    }
+
+    /// The raw host/port guard used by the database component: literals, bracketed IPv6,
+    /// empty hosts and non-public names are all decided without a network round trip.
+    #[test]
+    fn host_guard_rejects_non_public_hosts() {
+        use ssrf_guard::{SsrfError, assert_host_is_safe};
+
+        assert!(matches!(
+            assert_host_is_safe(""),
+            Err(SsrfError::MissingHost)
+        ));
+        assert!(matches!(
+            assert_host_is_safe("   "),
+            Err(SsrfError::MissingHost)
+        ));
+        for host in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "192.168.1.1",
+            "172.16.0.1",
+            "169.254.1.1",
+            "::1",
+            "[::1]",
+            "[fe80::1]",
+            "0.0.0.0",
+        ] {
+            assert!(
+                matches!(
+                    assert_host_is_safe(host),
+                    Err(SsrfError::NonPublicAddress(_))
+                ),
+                "{host} must be rejected"
+            );
+        }
+        // A public literal passes and answers the address it checked.
+        assert_eq!(
+            assert_host_is_safe("8.8.8.8").unwrap(),
+            "8.8.8.8".to_string()
+        );
+        assert_eq!(
+            assert_host_is_safe("[2001:4860:4860::8888]").unwrap(),
+            "2001:4860:4860::8888".to_string()
+        );
     }
 
     #[test]

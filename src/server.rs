@@ -2998,6 +2998,100 @@ async fn agent_prompts(
 }
 
 #[derive(serde::Deserialize)]
+struct TestDbConnectionRequest {
+    db_type: String,
+    database: String,
+    username: String,
+    host: String,
+    port: serde_json::Value,
+    password: String,
+}
+
+/// `POST /api/v1/agents/test_db_connection` — upstream `agent_api.test_db_connection`.
+///
+/// The canvas' database component asks the server to verify a connection before saving it.
+/// Two rules are enforced here rather than trusted to the caller:
+///
+/// * the host goes through `assert_host_is_safe` (the raw host/port form of the SSRF guard),
+///   so a component cannot be pointed at an internal service;
+/// * **the check is a real connect-and-authenticate for PostgreSQL**, because a port probe
+///   would report success for reachable-but-wrong credentials — exactly the silent error the
+///   canvas must not show. Types without a client in this build answer an explicit
+///   unsupported message instead of a guess.
+async fn test_db_connection(
+    State(_state): State<Arc<AppState>>,
+    Extension(_auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let request: TestDbConnectionRequest = match serde_json::from_value(body) {
+        Ok(request) => request,
+        Err(error) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "db_type, database, username, host, port and password are required ({error})"
+                ),
+            );
+        }
+    };
+    let port = match &request.port {
+        serde_json::Value::Number(number) => number.as_u64().unwrap_or(0) as u16,
+        serde_json::Value::String(text) => text.trim().parse::<u16>().unwrap_or(0),
+        _ => 0,
+    };
+    if port == 0 {
+        return api_error(StatusCode::BAD_REQUEST, "port must be a positive integer");
+    }
+    // SSRF guard: a rejected host is a data error naming the reason, never a silent skip.
+    if let Err(error) = crate::common::ssrf_guard::assert_host_is_safe(&request.host) {
+        tracing::warn!(host = %request.host, %error, "rejected test_db_connection host");
+        return Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
+            .into_response();
+    }
+    let db_type = request.db_type.trim().to_ascii_lowercase();
+    if db_type != "postgresql" && db_type != "postgres" {
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": format!(
+                "db_type '{}' has no client in this build; only PostgreSQL connections can be verified",
+                request.db_type
+            )
+        }))
+        .into_response();
+    }
+    let dsn = format!(
+        "host={} port={} user={} password={} dbname={} connect_timeout=10",
+        request.host, port, request.username, request.password, request.database
+    );
+    // The driver is synchronous, so the attempt runs on a blocking thread (the same rule
+    // the doc store obeys).
+    let outcome = tokio::task::spawn_blocking(move || {
+        postgres::Client::connect(&dsn, postgres::NoTls).map(|_| ())
+    })
+    .await;
+    match outcome {
+        Ok(Ok(())) => Json(serde_json::json!({
+            "code": 0,
+            "data": { "success": true, "message": "Connection succeeded." }
+        }))
+        .into_response(),
+        Ok(Err(error)) => {
+            // The password must never travel back in an error string.
+            let message = error.to_string().replace(&request.password, "***");
+            Json(serde_json::json!({
+                "code": 102,
+                "message": format!("Connection failed: {message}")
+            }))
+            .into_response()
+        }
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("connection task failed: {error}"),
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
 struct AgentDownloadQuery {
     #[serde(default)]
     id: Option<String>,
@@ -4249,6 +4343,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // id-addressed file download the canvas uses.
         .route("/api/v1/agents/prompts", get(agent_prompts))
         .route("/api/v1/agents/download", get(agent_download))
+        .route(
+            "/api/v1/agents/test_db_connection",
+            post(test_db_connection),
+        )
         // Upstream `bot_api.py` embedded search-bot surface (beta-token clients).
         .route("/api/v1/searchbots/detail", get(searchbot_detail))
         .route(
@@ -15548,6 +15646,84 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The database component check: unsafe hosts and unsupported engines are coded misses,
+    /// never a silent success. A real PostgreSQL attempt is left to the live deployment.
+    #[tokio::test]
+    async fn db_connection_test_refuses_unsafe_hosts_and_unknown_engines() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/agents/test_db_connection")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let base = |host: &str, db_type: &str| {
+            serde_json::json!({
+                "db_type": db_type,
+                "database": "demo",
+                "username": "reader",
+                "host": host,
+                "port": 5432,
+                "password": "secret",
+            })
+        };
+
+        // The SSRF guard runs before any connection attempt.
+        for host in ["127.0.0.1", "10.0.0.5", "192.168.1.10"] {
+            let response = call(base(host, "postgresql")).await;
+            let response = response_json(response).await;
+            assert_eq!(response["code"], 102, "{response}");
+            assert!(
+                response["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("non-public"),
+                "{response}"
+            );
+        }
+
+        // An engine without a client says so instead of guessing.
+        let unsupported = call(base("8.8.8.8", "mysql")).await;
+        let unsupported = response_json(unsupported).await;
+        assert_eq!(unsupported["code"], 102);
+        assert!(
+            unsupported["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no client in this build"),
+            "{unsupported}"
+        );
+
+        // Missing fields are a coded argument error, not a panic.
+        let incomplete = call(serde_json::json!({"db_type": "postgresql"})).await;
+        assert_eq!(incomplete.status(), StatusCode::BAD_REQUEST);
+
+        // A zero/absent port is rejected before connecting.
+        let bad_port = call(serde_json::json!({
+            "db_type": "postgresql",
+            "database": "demo",
+            "username": "reader",
+            "host": "8.8.8.8",
+            "port": 0,
+            "password": "secret",
+        }))
+        .await;
+        assert_eq!(bad_port.status(), StatusCode::BAD_REQUEST);
     }
 
     /// Canvas utilities: the prompt set the UI displays must be the constants the runtime

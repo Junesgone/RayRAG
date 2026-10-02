@@ -74,7 +74,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/agents/<agent_id>/webhook/test": "功能级缺口：同上（Agent Webhook）",
     "/agents/attachments/<attachment_id>/download": "功能级缺口：同上（Agent 附件子系统）",
     "/agents/attachments/<attachment_id>/preview": "功能级缺口：同上（Agent 附件子系统）",
-    "/agents/test_db_connection": "功能级缺口：数据库组件连接测试未实现",
     "/auth/password/forgot/captcha": "功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现",
     "/auth/password/forgot/otp": "功能级缺口：同上（忘记密码流程）",
     "/auth/password/forgot/otp/verify": "功能级缺口：同上（忘记密码流程）",

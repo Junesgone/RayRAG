@@ -291,6 +291,7 @@
 | GET | `/api/v1/datasets/{dataset_id}/navigation` | `-` |
 | GET | `/api/v1/agents/prompts` | `-` |
 | GET | `/api/v1/agents/download` | `-` |
+| POST | `/api/v1/agents/test_db_connection` | `-` |
 | GET | `/api/v1/searchbots/detail` | `-` |
 | POST | `/api/v1/searchbots/retrieval_test` | `-` |
 | POST | `/api/v1/searchbots/mindmap` | `-` |

@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.9] - 2026-10-02
+
+- **移植逐主机 SSRF 守卫**：`common/ssrf_guard.py::assert_host_is_safe` 是上游给「接受原始 host/port 而非 URL」的连接准备的防线（画布数据库组件就走这条）。RayRAG 此前只有 URL 版本（`assert_url_is_safe`），本轮补齐：裸 IP、`[::1]` 形式的 IPv6 字面量、空主机、以及解析到非公网地址的域名全部拒绝，并补充了不依赖网络的守卫单测。
+- **`POST /agents/test_db_connection`**：画布数据库组件保存前先验证连接。两条硬规则：① 主机必须通过上面那条 SSRF 守卫，否则返回带原因的 `code 102` 而不是跳过检查；② **PostgreSQL 做真实的连接与认证**——只探测端口会在"端口通、密码错"时报告成功，那正是画布最不该出现的静默假成功。本构建中没有客户端的引擎返回明确的 unsupported 文案，绝不猜测。返回的错误串会把密码替换为 `***`。
+- 数字：同名 **103→104**、未实现 **38→37**、方法缺口 1。
+- **测试**：新增守卫单测（私网/回环/链路本地/CGNAT/映射地址全部拒绝、公网字面量通过）+ 端到端回归（三类私网主机被拒且原因含 non-public、mysql 明确 unsupported、缺字段 400、端口为 0 拒绝）。全量 **2133 passed / 0 failed**。
+
 ## [0.5.8] - 2026-10-02
 
 - **画布工具接口 2 条**：`GET /agents/prompts`（返回画布展示的四段提示词：任务分析 / 规划 / 反思 / 引用规范，**直接引用运行期常量**而不是复制一份，页面与运行时不可能不一致）、`GET /agents/download?id=`（按 id 下载已存文件，复用文件存储）。
