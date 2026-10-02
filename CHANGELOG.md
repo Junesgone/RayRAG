@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.94] — 2026-10-02（对标批次 v0.3.10ah，W-4 收尾轮）
+
+> - runner wiki synth 契约接线完成（`src/harness/wiki_synth.rs`：`WikiSynthHost` 绑定 `knowlege_wiki` 的 PLAN/REFINE；端到端测试绿）。
+> - 复核对账队列 435 项九批复核清零（台账标记摘除；每批 `coverage --check` 通过）。
+> - GPU 探测补全（`nvidia-smi` 尽力而为 + 启动日志 `gpus=` 字段）。
+> - task-4 实机证据：全新引导管理员、向导 .env 写回、开放注册与权限门、资源探测日志。
+> - 提供商对照归零：73/73 词根覆盖，补齐 LeptonAI/PerfXCloud presets 与 Jina 多向量别名（等价别名书面化）。
+
+**构建**：`cargo build --release --locked`；全量测试见发布时段。
+
 ## [0.4.93] — 2026-10-01（对标批次 v0.3.10ah，W-4 收口）
 
 > wiki.py（4154 行 / 68 定义）与 wiki_incremental.py（5004 行 / 73 定义）全量收敛为 \`full\`：
