@@ -805,7 +805,7 @@ impl ConnectorRegistry {
             ConnectorTypeInfo {
                 kind: "dingtalk",
                 label: "钉钉云盘 (DingTalk Drive)",
-                hint: "token=app_key:app_secret, target=可选 space_id (RAGFlow 无此源，本土扩展)",
+                hint: "token=app_key:app_secret, target=可选 space_id （本土扩展源）",
             },
             ConnectorTypeInfo {
                 kind: "tencent_docs",

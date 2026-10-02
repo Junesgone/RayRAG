@@ -3821,6 +3821,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::web::agent_log_page),
         )
         .route("/memories", get(crate::web::memories_page_v2))
+        .route("/memory", get(crate::web::memory_shell_page))
         .route(
             "/memory/memory-message/{memory_id}",
             get(crate::web::memory_message_page),
@@ -5973,7 +5974,7 @@ mod tests {
                 assert!(service.get(key).is_some(), "service {index} lacks {key}");
             }
         }
-        assert_eq!(list[0]["service_type"], "ragflow_server");
+        assert_eq!(list[0]["service_type"], "rayrag_server");
         assert_eq!(list[1]["service_type"], "meta_data");
         assert_eq!(list[2]["service_type"], "retrieval");
         assert_eq!(list[3]["service_type"], "file_store");

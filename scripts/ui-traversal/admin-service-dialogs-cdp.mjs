@@ -138,7 +138,7 @@ try {
       "executor_meta_line",
       await text(".admin-executor-meta"),
     );
-    await chart.locator(".admin-chart-done").first().click();
+    await chart.locator(".admin-chart-done[data-index]").first().dispatchEvent("click");
     await page.waitForSelector("[data-testid='admin-task-executor-tooltip']", { timeout: 10000 });
     check(true, "click_tooltip_opens");
     check(

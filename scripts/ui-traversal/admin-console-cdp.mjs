@@ -133,12 +133,12 @@ try {
   await page
     .locator("[data-testid='admin-service-row']")
     .first()
-    .locator("button")
+    .locator("button[title='Show details']")
     .click();
   await page.waitForTimeout(600);
   results.serviceDialog = {
     visible: await page.locator("#adminServiceDialog").isVisible(),
-    name: await text("#adminServiceName"),
+    name: await text("#adminServiceDialogTitle"),
     detailHasKeys: (await text("#adminServiceDetail")).includes("{"),
   };
   await page.click("#adminServiceDialog button:has-text('Close')");
@@ -176,6 +176,7 @@ try {
   await page.waitForTimeout(300);
   await page.fill("#adminNewUserEmail", PROBE_USER);
   await page.fill("#adminNewUserPassword", "probe-password-12345");
+  await page.fill("#adminNewUserConfirm", "probe-password-12345");
   await page.selectOption("#adminNewUserRole", "normal");
   await page.click("[data-testid='admin-create-user-submit']");
   await page.waitForTimeout(1200);
@@ -209,7 +210,7 @@ try {
       document.querySelectorAll("[data-testid='admin-user-row']"),
     ).find((candidate) => candidate.textContent.includes(email));
     Array.from(row.querySelectorAll("button"))
-      .find((button) => button.textContent === "Delete")
+      .find((button) => button.getAttribute("data-testid") === "admin-user-action-delete" || button.title === "Delete user" || button.textContent === "Delete")
       .click();
   }, PROBE_USER);
   await page.waitForTimeout(300);
@@ -283,8 +284,8 @@ try {
   });
   await page.waitForTimeout(1000);
   results.sandbox = await page.evaluate(() => ({
-    title: document.querySelector(".admin-panel-title").textContent,
-    description: document.querySelector(".admin-panel-description").textContent,
+    title: (document.querySelector(".admin-panel-title, .admin-sandbox-page h1, .admin-sandbox-page h2, .admin-sandbox-title") || {}).textContent || "",
+    description: (document.querySelector(".admin-panel-description, .admin-sandbox-description") || {}).textContent || "",
     rowCount: document.querySelectorAll("#adminSandboxRows tr").length,
     firstCell: (document.querySelector("#adminSandboxRows td") || {}).textContent,
   }));

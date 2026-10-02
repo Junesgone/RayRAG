@@ -194,9 +194,9 @@ try {
   await page.waitForTimeout(300);
 
   // --- Change-password form ----------------------------------------------
-  const targetRow = page.locator("[data-testid='admin-user-row']").first();
+  const targetRow = page.locator("[data-testid='admin-user-row']").filter({ has: page.locator("[data-testid='admin-user-action-password']") }).first();
   const targetRowText = (await targetRow.innerText()).replace(/\s+/g, " ").trim();
-  await targetRow.getByRole("button", { name: "Change password" }).click();
+  await targetRow.locator("[data-testid='admin-user-action-password']").click();
   await page.waitForSelector("#adminPasswordDialog.show", { timeout: 10000 });
   results.password_fields = {
     labels: await page

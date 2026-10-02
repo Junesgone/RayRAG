@@ -2379,7 +2379,7 @@ pub async fn kb_detail_page(
     b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'> <span class='tip' data-tip='The number of retrieved chunks to be fed into the LLM for answer generation. Higher values improve accuracy at the cost of retrieval speed.'>?</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Similarity Threshold", zh));
-    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'> <span class='tip' data-tip='Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity. If you set it to 0.2, the system will only use weighted keyword similarity.'></span></td></tr>");
+    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'> <span class='tip' data-tip='Optional. If left empty, RayRAG will use a combination of weighted keyword similarity and weighted vector cosine similarity. If you set it to 0.2, the system will only use weighted keyword similarity.'></span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Vector Weight", zh));
     b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'> <span class='tip' data-tip='Weight of the vector cosine similarity in the combined hybrid score. Remaining weight goes to keyword similarity.'></span></td></tr>");
@@ -3022,7 +3022,7 @@ pub async fn dataset_page(
     b.push_str("</td><td><input type='number' id='cfgTopK' min='1' max='100' value='10' style='max-width:120px'> <span class='tip' data-tip='The number of retrieved chunks to be fed into the LLM for answer generation. Higher values improve accuracy at the cost of retrieval speed.'>?</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Similarity Threshold", zh));
-    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'> <span class='tip' data-tip='Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity. If you set it to 0.2, the system will only use weighted keyword similarity.'></span></td></tr>");
+    b.push_str(": <span id='cfgThrV' class='co'>0.2</span></td><td><input type='range' id='cfgThreshold' min='0' max='1' step='0.05' value='0.2' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgThrV\\\").textContent=this.value'> <span class='tip' data-tip='Optional. If left empty, RayRAG will use a combination of weighted keyword similarity and weighted vector cosine similarity. If you set it to 0.2, the system will only use weighted keyword similarity.'></span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Vector Weight", zh));
     b.push_str(": <span id='cfgVecV' class='co'>0.3</span></td><td><input type='range' id='cfgVector' min='0' max='1' step='0.05' value='0.3' style='width:100%;max-width:280px' oninput='document.getElementById(\\\"cfgVecV\\\").textContent=this.value'> <span class='tip' data-tip='Weight of the vector cosine similarity in the combined hybrid score. Remaining weight goes to keyword similarity.'></span></td></tr>");
@@ -6514,6 +6514,25 @@ const MEMORY_LIST_LLM_SELECTOR_FIELD: DefaultModelField = DefaultModelField {
     tooltip: "",
     placeholder: "Select a model",
 };
+
+/// `/memory` — the parent shell from upstream `pages/memory/index.tsx`: the
+/// memory sidebar (avatar, name, Messages / Configuration) beside the content
+/// pane. Children (`memory-message`, `memory-setting`) render their own copy of
+/// the sidebar, so the shell stays free of tenant data until the authenticated
+/// fetch fills it.
+pub async fn memory_shell_page(req: axum::http::Request<axum::body::Body>) -> impl IntoResponse {
+    let zh = detect_lang(req.headers());
+    let mut b = String::new();
+    b.push_str("<section class='card memory-detail-card'><div class='ds-layout'><aside class='ds-sidebar'><div class='av-lg' id='memoryAvatar'>M</div><h3 id='memoryName'>Memory</h3><p class='stats' id='memoryDescription'></p><p class='stats' id='memoryCreated'></p><ul class='ds-nav'><li><a id='memoryMessagesLink' href='#'>");
+    b.push_str(t("Messages", zh));
+    b.push_str("</a></li><li><a id='memorySettingLink' href='#'>");
+    b.push_str(t("Configuration", zh));
+    b.push_str("</a></li></ul></aside><main class='memory-detail-main'></main></div></section>");
+    b.push_str(
+        "<script>const byId=(id)=>document.getElementById(id);async function loadMemoryShell(){try{const response=await fetch('/api/v1/memories');const data=await response.json();if(data.code!==0)throw new Error(data.message||'Load failed');const list=(data.data&&data.data.memory_list)||[];const memory=list[0];if(!memory)return;byId('memoryName').textContent=memory.name||'Memory';byId('memoryDescription').textContent=memory.description||'';byId('memoryCreated').textContent='Created '+new Date(memory.created_at||Date.now()).toLocaleDateString();byId('memoryAvatar').textContent=(memory.name||'M').trim().charAt(0).toUpperCase()||'M';byId('memoryMessagesLink').href='/memory/memory-message/'+encodeURIComponent(memory.id);byId('memorySettingLink').href='/memory/memory-setting/'+encodeURIComponent(memory.id)}catch(error){byId('memoryName').textContent=String(error.message||error)}}loadMemoryShell();</script>",
+    );
+    Html(layout(t("Memory", zh), &b, zh))
+}
 
 /// `/memory/memory-message/:id` — the fixed Memory detail hierarchy and
 /// message operations, rendered as a data-free Rust shell. All mutable or

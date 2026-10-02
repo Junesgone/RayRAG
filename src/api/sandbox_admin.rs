@@ -417,7 +417,7 @@ pub fn sandbox_provider_schema(provider_id: &str) -> Option<Vec<SandboxField>> {
             SandboxField::string(
                 "endpoint",
                 "Executor Manager Endpoint",
-                "HTTP endpoint used by RAGFlow to call sandbox-executor-manager.",
+                "HTTP endpoint used by RayRAG to call sandbox-executor-manager.",
                 Some("http://sandbox-executor-manager:9385"),
             )
             .required()

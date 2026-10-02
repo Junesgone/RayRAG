@@ -480,7 +480,7 @@ impl ToolRegistry {
     pub fn ragflow_retrieval_tool(dataset_description: &str) -> McpTool {
         McpTool {
             name: "ragflow_retrieval".into(),
-            description: "Retrieve relevant chunks from the RAGFlow retrieve interface based on the question. You can optionally specify dataset_ids to search only specific datasets, or omit dataset_ids entirely to search across ALL available datasets. You can also optionally specify document_ids to search within specific documents. When dataset_ids is not provided or is empty, the system will automatically search across all available datasets. Below is the list of all available datasets, including their descriptions and IDs:\n".to_string()
+            description: "Retrieve relevant chunks from the RayRAG retrieve interface based on the question. You can optionally specify dataset_ids to search only specific datasets, or omit dataset_ids entirely to search across ALL available datasets. You can also optionally specify document_ids to search within specific documents. When dataset_ids is not provided or is empty, the system will automatically search across all available datasets. Below is the list of all available datasets, including their descriptions and IDs:\n".to_string()
                 + dataset_description,
             input_schema: json!({
                 "type": "object",

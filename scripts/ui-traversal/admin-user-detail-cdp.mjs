@@ -57,10 +57,6 @@ try {
     return { code: data.code, count: (data.data || []).length, first: (data.data || [])[0] || null };
   }, EMAIL);
   check(before.code === 0, "datasets_endpoint_ok");
-  check(
-    before.first && "language" in before.first && "chunk_num" in before.first,
-    "dataset_rows_carry_the_upstream_fields",
-  );
   const agents = await page.evaluate(async (email) => {
     const res = await fetch(`/api/v1/admin/users/${encodeURIComponent(email)}/agents`);
     const data = await res.json();
@@ -92,6 +88,16 @@ try {
     if (id) created.push(id);
   }
   check(created.length === EXTRA, "throwaway_datasets_created", String(created.length));
+
+  const seeded = await page.evaluate(async (email) => {
+    const res = await fetch(`/api/v1/admin/users/${encodeURIComponent(email)}/datasets`);
+    const data = await res.json();
+    return { code: data.code, first: (data.data || [])[0] || null };
+  }, EMAIL);
+  check(
+    seeded.code === 0 && seeded.first && "language" in seeded.first && "chunk_num" in seeded.first,
+    "dataset_rows_carry_the_upstream_fields",
+  );
 
   await page.goto(`${ORIGIN}/admin/users/${encodeURIComponent(EMAIL)}`, {
     waitUntil: "domcontentloaded",

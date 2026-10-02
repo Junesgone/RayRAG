@@ -236,7 +236,7 @@ fn admin_services_payload(state: &Arc<AppState>) -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
             "name": "rayrag_server",
-            "service_type": "ragflow_server",
+            "service_type": "rayrag_server",
             "host": host,
             "port": port,
             "status": "alive",

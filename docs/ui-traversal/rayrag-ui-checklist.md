@@ -427,53 +427,58 @@
 ## /admin
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| (icon) (button) | — | 🔶 |
-| Sign in (button) | — | 🔶 |
-| Email (label) | — | 🔶 |
-| Password (label) | — | 🔶 |
-| Remember me (label) | — | 🔶 |
+| (icon) (button) | 品牌标（RayRAG 棱镜图标 /logo.svg） | ✅ |
+| Sign in (button) | 登录提交（空提交拦截 / 提交高亮） | ✅ |
+| Email (label) | 邮箱（必填标签 + 实时校验） | ✅ |
+| Password (label) | 密码（必填标签 + 实时校验） | ✅ |
+| Remember me (label) | 记住我（着色态） | ✅ |
+| — | 卡片几何 / 聚光层 / 错误登录提示 | ✅ |
+（证据：admin-login-form-cdp.mjs 8 项断言全 ok；截图 rayrag-audit/admin-login-20260919.png、admin-login-form-failure.png；0 pageerror）
 
 ## /admin/services
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| (icon) (button) | — | 🔶 |
-| Sign in (button) | — | 🔶 |
-| Email (label) | — | 🔶 |
-| Password (label) | — | 🔶 |
-| Remember me (label) | — | 🔶 |
+| 服务行 (icon)(button) | 行图标钮：详情（定义列表）＋ Extra information（JsonView 树） | ✅ |
+| Service type (combobox) | 类型筛选下拉 | ✅ |
+| Reset (button) | 复位（清筛选，服务/用户两处） | ✅ |
+| 50 / Page (combobox) | 分页尺寸选择 | ✅ |
+| 详情/Extra 弹窗 | `#adminServiceDialog` 定义列表；`#adminExtraDialog` JsonView 树（折叠真实生效、无原样 JSON 泄露） | ✅ |
+（证据：admin-services-table-cdp.mjs / admin-console-cdp.mjs EXIT=0；截图 admin-services-*.png、admin-service-details-*.png、admin-service-extra-*.png）
 
 ## /admin/users
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| (icon) (button) | — | 🔶 |
-| Sign in (button) | — | 🔶 |
-| Email (label) | — | 🔶 |
-| Password (label) | — | 🔶 |
-| Remember me (label) | — | 🔶 |
+| 用户行/单元格 | `[data-testid='admin-user-row']` + 状态/角色徽标 | ✅ |
+| New user (button) | 新建弹窗（邮箱/密码/确认密码/角色；缺确认密码被客户端拦截） | ✅ |
+| 行操作 (icon)(button) | Account details / Change password / Delete user（testid 化，自号行仅详情） | ✅ |
+| Delete 流程 | 删除确认弹窗（`#adminDeleteTarget` + `admin-delete-user-submit`） | ✅ |
+| Change password 流程 | 只读邮箱、字段标签、占位提示、显隐切换 | ✅ |
+| 用户详情 | 头部邮箱/状态/角色、字段卡、Datasets/Agents 标签页、分页；数据集行含 `language`/`chunk_num` | ✅ |
+（证据：admin-users-cells / admin-user-detail / admin-user-detail-tables / admin-user-forms / admin-console 五脚本 EXIT=0；截图 admin-users-*.png、admin-user-detail*.png）
 
 ## /admin/sandbox-settings
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| (icon) (button) | — | 🔶 |
-| Sign in (button) | — | 🔶 |
-| Email (label) | — | 🔶 |
-| Password (label) | — | 🔶 |
-| Remember me (label) | — | 🔶 |
+| 提供商卡片 ×7 | local / self_managed / ssh / aliyun_codeinterpreter / e2b / tenki / ucloud_agent_sandbox（= 上游 providers 目录 7 模块） | ✅ |
+| 字段编辑器 | host/port/username/private_key 等（与 provider fields 对齐） | ✅ |
+| Test (button) | 连通性测试模态（失败摘要文案；缺凭据被拒） | ✅ |
+| SSH 实测 | 真 sshd（127.0.0.1:2323，抛掷密钥）远端执行 python 并回传 stdout | ✅ |
+（证据：admin-sandbox-providers-cdp.mjs、admin-sandbox-ssh-test-cdp.mjs EXIT=0；截图 admin-sandbox-providers.png、admin-sandbox-20260919.png）
 
 ## /admin/whitelist
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| Business (button) | — | 🔶 |
+| Business (button) | 企业版专属；上游 OSS v0.27.2 以 `IS_ENTERPRISE = VITE_RAGFLOW_ENTERPRISE==='RAGFLOW_ENTERPRISE'` 门控，开源构建不注册该路由 | ✅（说明：双方一致 404，不实现） |
 
 ## /admin/roles
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| Business (button) | — | 🔶 |
+| Business (button) | 同上（企业版专属，与上游 OSS 一致不注册） | ✅（说明） |
 
 ## /admin/monitoring
 | RagFlow 元素 | RayRAG 对应 | 状态 |
 |---|---|---|
-| Business (button) | — | 🔶 |
+| Business (button) | 同上（企业版专属，与上游 OSS 一致不注册） | ✅（说明） |
 
 ## /dataset/files/a710b71c52b611f193f62728e4a35a69
 | RagFlow 元素 | RayRAG 对应 | 状态 |
@@ -633,6 +638,14 @@
 | Attach file (button) | — | 🔶 |
 | Send message (button) | — | 🔶 |
 | (icon) (textarea) | — | 🔶 |
+
+## /memory
+| RagFlow 元素 | RayRAG 对应 | 状态 |
+|---|---|---|
+| SideBar（Messages / Configuration） | 记忆侧栏（头像/名称/描述/创建时间 + 两项导航） | ✅ |
+| 内容面板（Outlet） | `main.memory-detail-main`（子页嵌入其中；SSR 壳 + 认证后水合首个记忆） | ✅ |
+| 路由嵌套 | `/memory`（此前缺失 → 已补）＋ `/memory/memory-message/:id`、`/memory/memory-setting/:id` | ✅ |
+（证据：本机 404 探针；上游对照 web/src/routes.tsx + pages/memory/index.tsx；`memory_shell_page` 门禁 2112 passed）
 
 ## /memory/memory-message/0ee40d8a52b711f193f62728e4a35a69
 | RagFlow 元素 | RayRAG 对应 | 状态 |

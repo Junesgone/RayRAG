@@ -852,7 +852,7 @@ const COMPONENT_REGISTRY: &[StaticComponentDescriptor] = &[
             ),
             (
                 "category_description",
-                "RAGFlow CategorizeParam: category name -> {to, description, examples}",
+                "RayRAG CategorizeParam: category name -> {to, description, examples}",
             ),
             ("query", "Query variable reference; defaults to sys.query"),
             (

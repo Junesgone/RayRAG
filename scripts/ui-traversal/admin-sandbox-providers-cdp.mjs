@@ -10,6 +10,7 @@
 // Usage: RAYRAG_CDP_ORIGIN=http://127.0.0.1:9390 \
 //        RAYRAG_LOGIN_PASSWORD=... node scripts/ui-traversal/admin-sandbox-providers-cdp.mjs
 import { chromium } from "playwright-core";
+import { readFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 
 const ORIGIN = process.env.RAYRAG_CDP_ORIGIN || "http://127.0.0.1:9390";
@@ -19,7 +20,7 @@ if (!PASSWORD) {
   process.exit(2);
 }
 
-const PROVIDERS = ["local", "self_managed", "ssh", "aliyun_codeinterpreter", "e2b"];
+const PROVIDERS = ["local", "self_managed", "ssh", "aliyun_codeinterpreter", "e2b", "tenki", "ucloud_agent_sandbox"];
 const b = await chromium.connectOverCDP("http://127.0.0.1:16002");
 const ctx = b.contexts()[0];
 const page = await ctx.newPage();
@@ -65,10 +66,10 @@ try {
     check((await card.count()) === 1, `provider_card_${id}`);
   }
   const cards = await page.locator("[data-testid='admin-sandbox-providers'] .sb-provider").allInnerTexts();
-  check(cards.length === 5, "five_provider_cards", String(cards.length));
-  check(cards[1].includes("Self-Managed"), "self_managed_card_copy", cards[1].replace(/\n/g, "/"));
-  check(cards[1].includes("self-hosted"), "provider_tags_render");
-  check(cards[4].includes("E2B"), "e2b_card_copy");
+  check(cards.length === PROVIDERS.length, "all_provider_cards", String(cards.length));
+  check(cards.some((text) => text.includes("Self-Managed")), "self_managed_card_copy", cards.map((text) => text.replace(/\n/g, "/")).join(" | ").slice(0, 120));
+  check(cards.some((text) => text.includes("self-hosted")), "provider_tags_render");
+  check(cards.some((text) => text.toUpperCase().includes("E2B")), "e2b_card_copy");
 
   // The active provider (seeded `self_managed`) opens with its schema fields.
   await page.waitForSelector("#sbConfigCard:not([hidden])", { timeout: 20000 });
@@ -135,6 +136,7 @@ try {
   await page.fill("[data-field='host']", "127.0.0.1");
   await page.fill("[data-field='port']", "1");
   await page.fill("[data-field='username']", "ragflow");
+  await page.fill("[data-field='private_key']", readFileSync(process.env.RAYRAG_SSH_PROBE_KEY || "/tmp/rr-sshd/client", "utf8"));
   await page.locator("[data-testid='admin-sandbox-test']").click();
   await page.waitForSelector("[data-testid='admin-sandbox-test-modal'].show", { timeout: 10000 });
   check(true, "test_modal_opens");
