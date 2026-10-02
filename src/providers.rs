@@ -669,6 +669,8 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
             ProviderKind::Rerank,
         ],
         models: &[
+            "jina-embeddings-v4",
+            "jina-multivec",
             "jina-chat",
             "jina-embeddings-v3",
             "jina-reranker-v2-base-multilingual",
@@ -1038,6 +1040,28 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         kinds: &[ProviderKind::Chat, ProviderKind::TextToSpeech],
         models: &["orcarouter/auto", "openai/tts-1"],
         note: "模型路由 (需国际网络)",
+    },
+    ProviderPreset {
+        id: "LeptonAI",
+        name: "LeptonAI",
+        base_url: "https://<model>.lepton.run/api/v1",
+        api_key_env: "LEPTON_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: false,
+        kinds: &[ProviderKind::Chat],
+        models: &[],
+        note: "LeptonAI（按模型子域 <model>.lepton.run，需国际网络）",
+    },
+    ProviderPreset {
+        id: "PerfXCloud",
+        name: "PerfXCloud",
+        base_url: "https://cloud.perfxlab.cn/v1",
+        api_key_env: "PERFX_API_KEY",
+        dialect: ProviderDialect::OpenAiCompatible,
+        domestic: true,
+        kinds: &[ProviderKind::Embedding],
+        models: &[],
+        note: "PerfXCloud 嵌入（国内直连）",
     },
 ];
 
@@ -1543,7 +1567,11 @@ mod tests {
                     || preset.id == "Qiniu"
                     || preset.id == "HuaweiCloud"
                     || preset.id == "TokenHub"
-                    || preset.id == "OrcaRouter",
+                    || preset.id == "OrcaRouter"
+                    // Code-only upstream classes (rag/llm/*.py) that are absent
+                    // from conf/llm_factories.json: LeptonAI chat, PerfXCloud embed.
+                    || preset.id == "LeptonAI"
+                    || preset.id == "PerfXCloud",
                 "factory {} ({}) missing from embedded catalog",
                 preset.id,
                 preset.name
