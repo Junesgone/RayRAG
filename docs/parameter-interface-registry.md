@@ -292,6 +292,8 @@
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/navigation` | `-` |
 | GET | `/api/v1/models/endpoints/check` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/index` | `-` |
+| ANY | `/api/v1/datasets/{dataset_id}/{index_type}` | `axum::routing` |
 | GET | `/api/v1/users/me/models` | `-` |
 | GET | `/api/v1/agents/prompts` | `-` |
 | GET | `/api/v1/agents/download` | `-` |

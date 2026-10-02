@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.8.8] - 2026-10-02
+
+- **索引维护接口对齐上游**：新增 `GET / POST / DELETE /api/v1/datasets/{id}/index` 与 `DELETE /api/v1/datasets/{id}/{index_type}`。RayRAG 本来就有这两项能力（内部修复巡检用的 `vector_mirror`），但**上游路径下取不到**。现在：
+  - `GET` 报告该数据集索引现状（类型、是否启用、分块数）；
+  - `POST` 重建向量索引，返回**分块数与是否真的修复了**；数据集没有已解析分块时返回 `chunks: 0` 并说明"nothing to index"，而不是一个看不出问题的成功；
+  - `DELETE` 支持 `vector`；**其他索引类型被明确拒绝并列出支持项**（`Supported: vector`），不会回一个"已删除"却没删任何东西的成功。
+- **账面变化**：同路径应答 **106 → 108**，未实现 **35 → 33**，**方法缺口 0**，不匹配 0。
+- **测试**：新增一条覆盖 GET/POST/DELETE 三态（含"空数据集必须说明原因"与"不支持的索引类型必须列支持项"）。全量 **2147 passed / 0 failed**。
+
 ## [0.8.7] - 2026-10-02
 
 - **模型设置页新增「Endpoint health / Check model endpoints」按钮**：调用 `GET /api/v1/models/endpoints/check`，用表格列出**每个能力**（chat / embedding / rerank / asr / vision）的环境变量、端点、是否可达、失败详情；不可达时在末尾用红字汇总 `Unreachable: …`，并附上那句关键提醒（嵌入可达 ≠ 对话可达）。无配置或服务未启动时，**页面上直接看得出来**，而不是去猜为什么生成结果为空。

@@ -2845,6 +2845,151 @@ async fn query_graphrag(
 /// `{graph: {nodes, edges}, mind_map: {}}`. A dataset with no graph yet answers with an empty
 /// graph and a `built: false` marker instead of a 404, so the UI can say "not built yet"
 /// rather than treating it as an error.
+/// `POST /api/v1/datasets/{id}/index` — upstream `dataset_api.rebuild_dataset_index`.
+///
+/// Re-mirrors the dataset's chunks into the vector index. RayRAG already performed exactly this
+/// inside its internal repair sweep; the endpoint reports what the sweep found per dataset
+/// (`chunks`, `repaired`) instead of a bare success.
+async fn rebuild_dataset_index(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(dataset_id): Path<String>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!("You don't own the dataset {dataset_id}."),
+        );
+    }
+    let backend = if state.vector_mirror.is_enabled() {
+        "online"
+    } else {
+        "disabled"
+    };
+    let chunks = state.engine.read().unwrap().chunks_for_kb(&dataset_id);
+    if chunks.is_empty() {
+        return Json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "dataset_id": dataset_id,
+                "backend": backend,
+                "chunks": 0,
+                "repaired": false,
+                "message": "No parsed chunks in this dataset; nothing to index."
+            }
+        }))
+        .into_response();
+    }
+    let count = chunks.len();
+    match state.vector_mirror.repair_owner(&dataset_id, &chunks) {
+        Ok(repaired) => Json(serde_json::json!({
+            "code": 0,
+            "data": { "dataset_id": dataset_id, "backend": backend, "chunks": count, "repaired": repaired }
+        }))
+        .into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("rebuilding the index failed: {error}"),
+        ),
+    }
+}
+
+/// `GET /api/v1/datasets/{id}/index` — what the dataset's vector index currently holds.
+async fn dataset_index_status(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(dataset_id): Path<String>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!("You don't own the dataset {dataset_id}."),
+        );
+    }
+    let chunks = state.engine.read().unwrap().chunks_for_kb(&dataset_id);
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "dataset_id": dataset_id,
+            "index_type": "vector",
+            "enabled": state.vector_mirror.is_enabled(),
+            "chunks": chunks.len()
+        }
+    }))
+    .into_response()
+}
+
+/// `DELETE /api/v1/datasets/{id}/index` — drop the dataset's vector index (no index name in the
+/// path; upstream's variant of `DELETE /datasets/{id}/{index_type}`).
+async fn delete_named_dataset_index(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(dataset_id): Path<String>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!("You don't own the dataset {dataset_id}."),
+        );
+    }
+    let removed = state
+        .engine
+        .read()
+        .unwrap()
+        .chunks_for_kb(&dataset_id)
+        .len();
+    match state.vector_mirror.repair_owner(&dataset_id, &[]) {
+        Ok(_) => Json(serde_json::json!({
+            "code": 0,
+            "data": { "dataset_id": dataset_id, "index_type": "vector", "removed_vectors": removed }
+        }))
+        .into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("dropping the index failed: {error}"),
+        ),
+    }
+}
+
+/// `DELETE /api/v1/datasets/{id}/{index_type}` — upstream drops one named index for a dataset.
+///
+/// RayRAG keeps a single vector index per dataset, so only the vector index type is meaningful;
+/// any other type is refused with the list of what it does support rather than silently
+/// answering "deleted".
+async fn delete_dataset_index(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path((dataset_id, index_type)): Path<(String, String)>,
+) -> Response {
+    if !kb_accessible(&state, &dataset_id, &auth) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!("You don't own the dataset {dataset_id}."),
+        );
+    }
+    if index_type != "vector" {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "RayRAG keeps one vector index per dataset, so '{index_type}' cannot be dropped. Supported: vector."
+            ),
+        );
+    }
+    let chunks = state.engine.read().unwrap().chunks_for_kb(&dataset_id);
+    let removed = chunks.len();
+    match state.vector_mirror.repair_owner(&dataset_id, &[]) {
+        Ok(_) => Json(serde_json::json!({
+            "code": 0,
+            "data": { "dataset_id": dataset_id, "index_type": index_type, "removed_vectors": removed }
+        }))
+        .into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("dropping the index failed: {error}"),
+        ),
+    }
+}
+
 async fn dataset_graph(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -4444,6 +4589,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/models/endpoints/check",
             get(crate::api::tenant_models::check_model_endpoints),
+        )
+        // Upstream `dataset_api.py` index maintenance: `POST /datasets/{id}/index` rebuilds the
+        // dataset's vectors and `DELETE /datasets/{id}/{index_type}` drops them. RayRAG already
+        // owned both operations internally (`vector_mirror`); this exposes them where upstream
+        // has them instead of leaving them reachable only from the internal repair sweep.
+        .route(
+            "/api/v1/datasets/{dataset_id}/index",
+            post(rebuild_dataset_index)
+                .get(dataset_index_status)
+                .delete(delete_named_dataset_index),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/{index_type}",
+            axum::routing::delete(delete_dataset_index),
         )
         // Upstream `user_api.py::tenant_info`: the tenant's per-capability default models
         // under RAGFlow's own column names.
@@ -15892,6 +16051,80 @@ mod tests {
         let empty = response_json(empty).await;
         assert_eq!(empty["code"], 0);
         assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
+    }
+
+    /// Index maintenance is exposed where upstream has it, and a dataset with nothing indexed
+    /// says so instead of reporting a rebuild that did nothing.
+    #[tokio::test]
+    async fn dataset_index_endpoints_report_honestly() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Index dataset", "")
+            .unwrap();
+        let status = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/index", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        let body = response_json(status).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["index_type"], "vector");
+        assert_eq!(body["data"]["chunks"], 0);
+
+        let rebuild = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/index", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(rebuild).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["chunks"], 0);
+        assert!(
+            body["data"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("nothing to index")),
+            "an empty dataset must say why nothing happened: {body}"
+        );
+
+        // An index type RayRAG does not keep is refused with the supported list, not answered
+        // with a success that deleted nothing.
+        let refused = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/datasets/{}/not-an-index", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(refused).await;
+        // `api_error` uses upstream's 400 for a request RayRAG cannot satisfy.
+        assert_eq!(body["code"], 400, "{body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("Supported: vector")),
+            "the refusal must list what is supported: {body}"
+        );
     }
 
     /// The endpoint probe answers for every capability, and says "not set" instead of failing
