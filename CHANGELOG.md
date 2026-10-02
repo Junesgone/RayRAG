@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.7] - 2026-10-02
+
+- **修掉"同步存储 vs 异步引擎"这个反复出现的坑**：新增 `OffThreadDocStore` —— 一个把**每一次**存储调用都放到**独立 OS 线程**执行的 `DocStore` 实现（`std::thread::scope` + join）。原因是：存储后端从头到尾是同步的（PostgreSQL 驱动自带 `block_on`），在 tokio worker 上调用会 panic（`Cannot start a runtime from within a runtime`）；处理器可以用 `spawn_blocking` 规避，但**移植过来的引擎是在 async 函数内部直接调存储**，外层包不住。OS 线程没有 tokio 上下文，驱动在那儿就合法——**引擎代码一行都不用改**。
+- **这是上一轮导航生成端点 panic 的根因修复**。它同时解锁 wiki/Artifacts 生成与结构编译——那两条路径的引擎结构与导航完全一致。
+- **测试**：新增两条（在 tokio 任务里通过该适配器写入并读回、在 tokio 任务里搜索并取回文档 id）——**这两条正是在"直接用同步存储"时会 panic 的调用形态**。全量 **2145 passed / 0 failed**。
+
 ## [0.7.6] - 2026-10-02
 
 - **补上嵌入侧的生产适配器 `EmbedderBridge`**：导航生成、wiki/Artifacts 生成、结构编译都依赖 `structure_compile::EmbeddingBackend`，而它和 `HarnessChat` 一样**只有测试替身**（`MockEmbed`、`FailingEmbed`）——上一轮写端点时正是被这处不匹配挡住的。`EmbedderBridge` 把运行期已持有的 `AppState.embedder`（`Arc<dyn Embedder>`）接到该 trait 上。

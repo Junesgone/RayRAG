@@ -1095,6 +1095,140 @@ pub enum DocStoreBackend {
 /// with `CONNECT_RETRY_SLEEP_SECS` between attempts, a mandatory health check
 /// before the connection is handed out, and an explicit `refresh_conn` that
 /// reconnects when the current connection is unhealthy.
+/// A [`DocStore`] whose every call runs on a **fresh OS thread**.
+///
+/// The pool's backends are synchronous end to end (the PostgreSQL driver runs its own
+/// `block_on`), which panics if it happens on a tokio worker: "Cannot start a runtime from
+/// within a runtime". Handlers can avoid that by wrapping their store work in
+/// `spawn_blocking`, but the ported engines (dataset navigation, wiki/artifact compilation,
+/// structure compilation) call the store **from inside async functions** — the outer caller
+/// cannot wrap those calls.
+///
+/// This adapter is the fix: it implements the same trait but hands each call to a plain OS
+/// thread, which has no tokio context, so the synchronous driver is legal there. The
+/// engines stay unchanged.
+pub struct OffThreadDocStore {
+    pool: Arc<DocStorePool>,
+}
+
+impl OffThreadDocStore {
+    pub fn new(pool: Arc<DocStorePool>) -> Self {
+        Self { pool }
+    }
+
+    /// Run one store operation on its own thread and return its result.
+    fn run<T, F>(&self, operation: F) -> crate::Result<T>
+    where
+        T: Send,
+        F: FnOnce(&dyn DocStore) -> crate::Result<T> + Send,
+    {
+        let pool = Arc::clone(&self.pool);
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(move || {
+                let store = pool.get_conn()?;
+                operation(store.as_ref())
+            });
+            match handle.join() {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!("doc store operation thread panicked")),
+            }
+        })
+    }
+}
+
+impl DocStore for OffThreadDocStore {
+    fn db_type(&self) -> &'static str {
+        "off-thread"
+    }
+
+    fn health(&self) -> crate::Result<HealthStatus> {
+        self.run(|store| store.health())
+    }
+
+    fn create_idx(
+        &self,
+        index_name: &str,
+        dataset_id: &str,
+        vector_size: usize,
+    ) -> crate::Result<()> {
+        let index_name = index_name.to_string();
+        let dataset_id = dataset_id.to_string();
+        self.run(move |store| store.create_idx(&index_name, &dataset_id, vector_size))
+    }
+
+    fn delete_idx(&self, index_name: &str, dataset_id: &str) -> crate::Result<()> {
+        let index_name = index_name.to_string();
+        let dataset_id = dataset_id.to_string();
+        self.run(move |store| store.delete_idx(&index_name, &dataset_id))
+    }
+
+    fn index_exist(&self, index_name: &str, dataset_id: &str) -> crate::Result<bool> {
+        let index_name = index_name.to_string();
+        let dataset_id = dataset_id.to_string();
+        self.run(move |store| store.index_exist(&index_name, &dataset_id))
+    }
+
+    fn insert(
+        &self,
+        rows: &[DocRow],
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<Vec<String>> {
+        let rows = rows.to_vec();
+        let index_name = index_name.to_string();
+        let dataset_id = dataset_id.to_string();
+        self.run(move |store| store.insert(&rows, &index_name, &dataset_id))
+    }
+
+    fn get(
+        &self,
+        data_id: &str,
+        index_name: &str,
+        dataset_ids: &[String],
+    ) -> crate::Result<Option<DocRow>> {
+        let data_id = data_id.to_string();
+        let index_name = index_name.to_string();
+        let dataset_ids = dataset_ids.to_vec();
+        self.run(move |store| store.get(&data_id, &index_name, &dataset_ids))
+    }
+
+    fn update(
+        &self,
+        condition: &FilterCondition,
+        new_value: &DocRow,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<bool> {
+        let condition = condition.clone();
+        let new_value = new_value.clone();
+        let index_name = index_name.to_string();
+        let dataset_id = dataset_id.to_string();
+        self.run(move |store| store.update(&condition, &new_value, &index_name, &dataset_id))
+    }
+
+    fn delete(
+        &self,
+        condition: &FilterCondition,
+        index_name: &str,
+        dataset_id: &str,
+    ) -> crate::Result<usize> {
+        let condition = condition.clone();
+        let index_name = index_name.to_string();
+        let dataset_id = dataset_id.to_string();
+        self.run(move |store| store.delete(&condition, &index_name, &dataset_id))
+    }
+
+    fn search(&self, query: &SearchQuery) -> crate::Result<SearchResponse> {
+        let query = query.clone();
+        self.run(move |store| store.search(&query))
+    }
+
+    fn sql(&self, sql: &str, fetch_size: usize) -> crate::Result<Vec<Value>> {
+        let sql = sql.to_string();
+        self.run(move |store| store.sql(&sql, fetch_size))
+    }
+}
+
 pub struct DocStorePool {
     backend: DocStoreBackend,
     inner: RwLock<Option<Arc<dyn DocStore>>>,
@@ -1410,5 +1544,52 @@ mod tests {
                 .is_some(),
             true
         );
+    }
+}
+
+#[cfg(test)]
+mod off_thread_doc_store_tests {
+    use super::*;
+
+    /// Reading through the adapter works from inside a tokio task — the case that panics when
+    /// a synchronous backend is called directly on a worker.
+    #[tokio::test]
+    async fn off_thread_store_is_usable_from_an_async_task() {
+        let pool = Arc::new(DocStorePool::memory());
+        let store = OffThreadDocStore::new(pool);
+        let rows: Vec<DocRow> = vec![
+            serde_json::json!({"id": "row-1", "kb_id": "kb-1"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, "idx", "kb-1").unwrap();
+        let found = store.get("row-1", "idx", &["kb-1".to_string()]).unwrap();
+        assert!(
+            found.is_some(),
+            "the row written through the adapter is readable"
+        );
+        assert_eq!(store.db_type(), "off-thread");
+    }
+
+    /// A search round-trips as well, so the engines' read paths are covered too.
+    #[tokio::test]
+    async fn off_thread_store_answers_searches() {
+        let pool = Arc::new(DocStorePool::memory());
+        let store = OffThreadDocStore::new(pool);
+        let rows: Vec<DocRow> = vec![
+            serde_json::json!({"id": "row-2", "kb_id": "kb-2"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, "idx", "kb-2").unwrap();
+        let query = SearchQuery {
+            index_names: vec!["idx".to_string()],
+            dataset_ids: vec!["kb-2".to_string()],
+            ..Default::default()
+        };
+        let response = store.search(&query).unwrap();
+        assert_eq!(store.get_doc_ids(&response), vec!["row-2".to_string()]);
     }
 }
