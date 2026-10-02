@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.1] - 2026-10-02
+
+- **知识图谱终于有入口了**：知识图谱面板（含 Build Graph）一直存在，按上游 v0.27.2 它**不是数据集侧栏项**而是独立路由 `/knowledge-graph/:id`——但 RayRAG 里**没有任何地方链接到它**，所以用户从界面上根本进不去，表现为"数据集没有知识图谱功能"。现在**数据集概览面板顶部**多了一个 `Knowledge graph` 按钮，指向 `/dataset/knowledge-graph/{id}`（该路由本就映射到图谱面板），与上游"从数据集进入图谱"的行为一致。
+- 这与上一轮改标签是同一类问题的两个面：**功能在、入口不在**，不会报错也不会 404，只能靠对着上游逐项核对才能发现。
+- **测试**：全量 **2136 passed / 0 failed**（kb_ui 123 条全过；插入时特意保持 div 配对，`dataset_panels_stay_siblings_of_the_overview_tab` 通过）。
+
 ## [0.7.0] - 2026-10-02
 
 - **数据集侧栏第 3 项由「日志」改为「概览」（对齐上游语义）**：读上游 v0.27.2 源码确认，`pages/dataset/sidebar/index.tsx` 里这一项的**标签是 `knowledgeDetails.overview`（概览），只是复用了 Logs 图标**，路由同样是 `/dataset/logs`。RayRAG 之前直接用了图标的名字显示成「日志」，用户因此感觉"少了一个功能"。现在英文显示 **Overview**、中文显示 **概览**，深链接与面板内容不变。

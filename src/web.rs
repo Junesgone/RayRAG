@@ -2687,6 +2687,16 @@ pub async fn dataset_page(
     b.push_str(
         "<div id='tab1' style='display:none'><div class='st'><div class='sc'><span class='lbl'>",
     );
+    // Upstream reaches the knowledge graph through its own dataset route
+    // (`/knowledge-graph/:id`). The panel here existed but nothing linked to it, so the
+    // feature was unreachable from the UI; this link gives it the same affordance.
+    b.push_str(
+        "<a class='btn btn-o btn-sm ov-kg' id='ovKnowledgeGraph' href='/dataset/knowledge-graph/",
+    );
+    b.push_str(&id);
+    b.push_str("'>");
+    b.push_str(t("Knowledge graph", zh));
+    b.push_str("</a>");
     b.push_str(t("Total Docs", zh));
     b.push_str("</span><span class='val'>");
     b.push_str(&docs.to_string());
