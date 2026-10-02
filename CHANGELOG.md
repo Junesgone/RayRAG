@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.95] — 2026-10-02（对标批次 v0.3.10ah，task-6 收敛轮）
+
+> - zvec-rust 升级至 **v0.7.2**（最新 tag；预编译 libzvec_c_api.so 装机；check/定向测/doc_store 全绿）。
+> - docker compose 双容器 Up (healthy)（9390→8080 / 55432→5432）；docker 构建 EXIT=0（国内镜像）。
+> - 纯 Linux debug 冒烟多实例实测（setup/登录/注册/写回）；内存采样 RSS 稳定 ~75-77MB。
+> - 按需流水线式加载解析证据（src/parser/pdf_stream.rs 流式限额与保护流拒绝，4 测）。
+
+**构建**：`cargo build --release --locked`；全量测试见发布时段。
+
 ## [0.4.94] — 2026-10-02（对标批次 v0.3.10ah，W-4 收尾轮）
 
 > - runner wiki synth 契约接线完成（`src/harness/wiki_synth.rs`：`WikiSynthHost` 绑定 `knowlege_wiki` 的 PLAN/REFINE；端到端测试绿）。
