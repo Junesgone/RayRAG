@@ -1100,6 +1100,25 @@ pub struct DocStorePool {
     inner: RwLock<Option<Arc<dyn DocStore>>>,
 }
 
+/// Read the pool's connection slot through a poisoned lock.
+///
+/// A failed connect used to poison the lock, which then turned *every* later call into a
+/// second panic ("called `Result::unwrap()` on an `Err` value: PoisonError"). The slot is
+/// only ever replaced wholesale, so reading through the poison marker is safe.
+fn lock_read(
+    pool: &RwLock<Option<Arc<dyn DocStore>>>,
+) -> std::sync::RwLockReadGuard<'_, Option<Arc<dyn DocStore>>> {
+    pool.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Write the pool's connection slot through a poisoned lock; see [`lock_read`].
+fn lock_write(
+    pool: &RwLock<Option<Arc<dyn DocStore>>>,
+) -> std::sync::RwLockWriteGuard<'_, Option<Arc<dyn DocStore>>> {
+    pool.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 impl DocStorePool {
     pub fn memory() -> Self {
         Self {
@@ -1147,13 +1166,17 @@ impl DocStorePool {
     }
 
     /// Get the shared connection, connecting on first use with bounded retries.
+    ///
+    /// **Blocking.** The PostgreSQL backend connects through a synchronous driver, so this
+    /// must not be called on an async worker: use [`Self::get_conn_blocking`] from a
+    /// request handler, which moves the work to a blocking thread.
     pub fn get_conn(&self) -> crate::Result<Arc<dyn DocStore>> {
-        if let Some(conn) = self.inner.read().unwrap().as_ref()
+        if let Some(conn) = lock_read(&self.inner).as_ref()
             && conn.health().map(|h| h.status == "green").unwrap_or(false)
         {
             return Ok(conn.clone());
         }
-        let mut guard = self.inner.write().unwrap();
+        let mut guard = lock_write(&self.inner);
         if let Some(conn) = guard.as_ref()
             && conn.health().map(|h| h.status == "green").unwrap_or(false)
         {
@@ -1186,11 +1209,28 @@ impl DocStorePool {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("failed to connect doc store")))
     }
 
+    /// [`Self::get_conn`] for async callers: the blocking connect runs on a blocking
+    /// thread. Calling the synchronous form from a request handler panicked with
+    /// "Cannot start a runtime from within a runtime" (the driver's own `block_on`) and
+    /// then poisoned the connection lock, so this is the only form handlers may use.
+    pub async fn get_conn_blocking(self: &Arc<Self>) -> crate::Result<Arc<dyn DocStore>> {
+        let backend = self.backend_name();
+        // The same pool instance moves to the blocking thread, so the established
+        // connection is cached and reused exactly like the synchronous form.
+        let pool = Arc::clone(self);
+        match tokio::task::spawn_blocking(move || pool.get_conn()).await {
+            Ok(result) => result,
+            Err(error) => Err(anyhow::anyhow!(
+                "doc store ({backend}) connection task failed: {error}"
+            )),
+        }
+    }
+
     /// Close and reconnect when the current connection is unhealthy
     /// (es_conn_pool.refresh_conn).
     pub fn refresh_conn(&self) -> crate::Result<Arc<dyn DocStore>> {
         {
-            let guard = self.inner.read().unwrap();
+            let guard = lock_read(&self.inner);
             if let Some(conn) = guard.as_ref()
                 && conn.health().map(|h| h.status == "green").unwrap_or(false)
             {

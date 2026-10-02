@@ -54,8 +54,13 @@ fn scalar(row: &Value, key: &str) -> String {
     }
 }
 
-fn workspace(state: &AppState) -> Result<Arc<dyn crate::doc_store::DocStore>, Response> {
-    state.doc_store.get_conn().map_err(|error| {
+/// The compiled-artifact store, connected off the async runtime.
+///
+/// `DocStorePool::get_conn` blocks (the PostgreSQL driver runs its own `block_on`), so the
+/// handler awaits the blocking variant; calling the synchronous form from a request
+/// panicked the worker thread and poisoned the pool's lock.
+async fn workspace(state: &Arc<AppState>) -> Result<Arc<dyn crate::doc_store::DocStore>, Response> {
+    state.doc_store.get_conn_blocking().await.map_err(|error| {
         tracing::error!(%error, "compiled-artifact store is unavailable");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -84,7 +89,7 @@ pub async fn has_any_wiki(
     if !kb_accessible(&state, &kb_id, &auth) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let store = match workspace(&state) {
+    let store = match workspace(&state).await {
         Ok(store) => store,
         Err(response) => return response,
     };
@@ -108,7 +113,7 @@ pub async fn list_artifacts(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state) {
+    let store = match workspace(&state).await {
         Ok(store) => store,
         Err(response) => return response,
     };
@@ -213,7 +218,7 @@ pub async fn get_artifact_page(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state) {
+    let store = match workspace(&state).await {
         Ok(store) => store,
         Err(response) => return response,
     };
@@ -317,7 +322,7 @@ pub async fn update_artifact_page(
     if body.get("comments").is_some_and(|value| !value.is_string()) {
         return invalid_ids("'comments' must be a string.");
     }
-    let store = match workspace(&state) {
+    let store = match workspace(&state).await {
         Ok(store) => store,
         Err(response) => return response,
     };
@@ -387,7 +392,7 @@ pub async fn clear_artifacts(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state) {
+    let store = match workspace(&state).await {
         Ok(store) => store,
         Err(response) => return response,
     };
@@ -420,7 +425,7 @@ pub async fn list_artifact_topics(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state) {
+    let store = match workspace(&state).await {
         Ok(store) => store,
         Err(response) => return response,
     };
