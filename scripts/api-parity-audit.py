@@ -64,10 +64,6 @@ COVERED: dict[str, str] = {
 # Upstream methods on paths RayRAG already answers with other methods. A path-only audit
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
-    "/agents/<agent_id>/sessions": "DELETE 删除 Agent 会话",
-    "/providers/<provider_id_or_name>/instances/<instance_id_or_name>": "PUT 更新模型实例",
-    "/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models": "DELETE 移除实例内模型",
-    "/providers/<provider_id_or_name>/instances/<instance_id_or_name>/models/<path:model_name>": "POST 新增实例内模型",
 }
 
 KNOWN_MISSING: dict[str, str] = {

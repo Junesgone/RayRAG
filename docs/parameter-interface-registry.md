@@ -406,9 +406,7 @@
 | GET | `/api/v1/providers/{provider_name}/models/{model_name}` | `-` |
 | GET | `/api/v1/providers/{provider_name}/instances` | `-` |
 | POST | `/api/v1/providers/{provider_name}/connection` | `-` |
-| GET | `/api/v1/providers/{provider_name}/instances/{instance_name}` | `-` |
 | GET | `/api/v1/providers/{provider_name}/instances/{instance_name}/models` | `-` |
-| ANY | `/api/v1/providers/{provider_name}/instances/{instance_name}/models/{model_name}` | `axum::routing` |
 | GET | `/api/v1/tenant/models` | `-` |
 | GET | `/api/v1/tenant/default-chat-model` | `-` |
 | PUT | `/api/v1/tenant/models/{provider_id}/{instance_id}` | `-` |

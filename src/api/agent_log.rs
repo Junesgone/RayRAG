@@ -482,6 +482,71 @@ pub async fn list_agent_sessions(
     list_canvas_sessions(state, auth, Path(agent_id), query).await
 }
 
+/// `DELETE /api/v1/agents/{agent_id}/sessions` — upstream `agent_api.delete_agent_session`.
+///
+/// Body `{"ids": [...]}` deletes a selection; `{"delete_all": true}` clears every session
+/// of that agent; an empty body is a no-op that still answers success, exactly like
+/// upstream (`get_result()` with no payload).
+pub async fn delete_agent_sessions(
+    State(state): State<Arc<AppState>>,
+    auth: axum::extract::Extension<AuthContext>,
+    Path(agent_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut ids: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let sessions_of_agent = || {
+        state
+            .conversations
+            .list_for(&auth.user_id)
+            .into_iter()
+            .filter(|session| session.canvas_id.as_deref() == Some(agent_id.as_str()))
+            .map(|session| session.id)
+            .collect::<Vec<String>>()
+    };
+    if ids.is_empty() {
+        if body.get("delete_all").and_then(|value| value.as_bool()) == Some(true) {
+            ids = sessions_of_agent();
+        } else {
+            return Json(serde_json::json!({ "code": 0, "data": true })).into_response();
+        }
+    } else {
+        // Only sessions that really belong to this agent may be deleted through it.
+        let owned: std::collections::HashSet<String> = sessions_of_agent().into_iter().collect();
+        ids.retain(|id| owned.contains(id));
+    }
+    let mut deleted = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for id in &ids {
+        match state.conversations.delete_for(id, &auth.user_id) {
+            Ok(true) => deleted += 1,
+            Ok(false) => errors.push(format!("Session({id}) not found.")),
+            Err(error) => {
+                tracing::error!(%error, %id, "Failed to delete agent session");
+                errors.push(format!("Session({id}) failed: {error}"));
+            }
+        }
+    }
+    if errors.is_empty() {
+        return Json(serde_json::json!({ "code": 0, "data": true })).into_response();
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "success_count": deleted, "errors": errors },
+    }))
+    .into_response()
+}
+
 /// `GET /api/v1/agents/{agent_id}/sessions/{session_id}` — `get_agent_session`
 /// answers the stored conversation (`conv.to_dict()`), guarding that the
 /// session belongs to the requested canvas.

@@ -3087,6 +3087,259 @@ pub async fn edit_ragflow_instance_models(
     Json(serde_json::json!({ "code": 0, "data": true })).into_response()
 }
 
+/// `PUT /api/v1/providers/{provider}/instances/{instance}` — upstream
+/// `provider_api.update_provider_instance`.
+///
+/// Upstream addresses the instance by *name* in the path and updates its display name,
+/// credentials, base URL and model list. RayRAG's store keys instances by an internal id,
+/// so the name is resolved first; when the body omits `model_info` the existing models are
+/// kept rather than wiping the instance.
+pub async fn update_ragflow_provider_instance(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((provider_name, instance_name)): Path<(String, String)>,
+    Json(update): Json<CreateRagflowProviderInstanceRequest>,
+) -> Response {
+    let tenant_id = selected_tenant(&auth, update.tenant_id.as_deref()).to_string();
+    if !state.tenants.can_manage(&tenant_id, &auth.user_id) {
+        return forbidden("Tenant administrator access required");
+    }
+    let Some(provider) = provider_by_wire_name(&state.providers, &provider_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Provider not found" })),
+        )
+            .into_response();
+    };
+    let configured = state.tenant_models.list_configured(&tenant_id);
+    let Some(instance) = instance_by_wire_name(&configured, &provider.id, &instance_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Model instance not found" })),
+        )
+            .into_response();
+    };
+    let models = if update.model_info.is_empty() {
+        instance.models.clone()
+    } else {
+        match create_model_specs(&provider.name, update.model_info) {
+            Ok(models) => models,
+            Err(error) => return tenant_model_mutation_error(error),
+        }
+    };
+    let instance_name = update.instance_name.trim();
+    let instance_name = if instance_name.is_empty() {
+        instance.instance_name.clone()
+    } else {
+        instance_name.to_string()
+    };
+    if let Err(error) = state.tenant_models.upsert(
+        &state.providers,
+        &tenant_id,
+        &provider.id,
+        &instance.instance_id,
+        TenantModelInstanceUpdate {
+            tenant_id: Some(tenant_id.clone()),
+            instance_name,
+            api_base: update.base_url.clone(),
+            api_key: update.api_key.clone(),
+            clear_api_key: false,
+            models,
+        },
+    ) {
+        return tenant_model_mutation_error(error);
+    }
+    Json(serde_json::json!({ "code": 0, "data": true })).into_response()
+}
+
+/// `DELETE /api/v1/providers/{provider}/instances/{instance}/models` — upstream
+/// `provider_api.delete_models_from_instance`: drop one model by name.
+pub async fn delete_ragflow_instance_model(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((provider_name, instance_name)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let tenant_id =
+        selected_tenant(&auth, body.get("tenant_id").and_then(|v| v.as_str())).to_string();
+    if !state.tenants.can_manage(&tenant_id, &auth.user_id) {
+        return forbidden("Tenant administrator access required");
+    }
+    let Some(model_name) = body
+        .get("model_name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "model_name is required" })),
+        )
+            .into_response();
+    };
+    let Some(provider) = provider_by_wire_name(&state.providers, &provider_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Provider not found" })),
+        )
+            .into_response();
+    };
+    let configured = state.tenant_models.list_configured(&tenant_id);
+    let Some(instance) = instance_by_wire_name(&configured, &provider.id, &instance_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Model instance not found" })),
+        )
+            .into_response();
+    };
+    let remaining: Vec<TenantModelSpec> = instance
+        .models
+        .iter()
+        .filter(|model| model.name != model_name)
+        .cloned()
+        .collect();
+    if remaining.len() == instance.models.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": 404,
+                "message": format!("Model not found: {model_name}")
+            })),
+        )
+            .into_response();
+    }
+    if let Err(error) = state.tenant_models.upsert(
+        &state.providers,
+        &tenant_id,
+        &provider.id,
+        &instance.instance_id,
+        TenantModelInstanceUpdate {
+            tenant_id: Some(tenant_id.clone()),
+            instance_name: instance.instance_name.clone(),
+            api_base: None,
+            api_key: None,
+            clear_api_key: false,
+            models: remaining,
+        },
+    ) {
+        return tenant_model_mutation_error(error);
+    }
+    Json(serde_json::json!({ "code": 0, "data": true })).into_response()
+}
+
+/// `POST /api/v1/providers/{provider}/instances/{instance}/models/{model}` — upstream
+/// `provider_api.chat_to_model`: a direct chat against one configured model.
+///
+/// Upstream answers `{answer, reasoning_content}` when `stream` is false and an SSE
+/// stream of `data: [MESSAGE]<chunk>` frames when it is true; both are reproduced here.
+pub async fn chat_to_provider_model(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path((provider_name, instance_name, model_name)): Path<(String, String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let tenant_id =
+        selected_tenant(&auth, body.get("tenant_id").and_then(|v| v.as_str())).to_string();
+    let Some(message) = body
+        .get("message")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "message is required" })),
+        )
+            .into_response();
+    };
+    let stream = body
+        .get("stream")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let Some(provider) = provider_by_wire_name(&state.providers, &provider_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Provider not found" })),
+        )
+            .into_response();
+    };
+    let configured = state.tenant_models.list_configured(&tenant_id);
+    let Some(instance) = instance_by_wire_name(&configured, &provider.id, &instance_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "Model instance not found" })),
+        )
+            .into_response();
+    };
+    let Some(spec) = instance
+        .models
+        .iter()
+        .find(|model| model.name == model_name)
+        .cloned()
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": 404,
+                "message": format!("Model not found: {model_name}")
+            })),
+        )
+            .into_response();
+    };
+    let resolved = resolved_tenant_model(
+        &tenant_id,
+        &provider,
+        &instance,
+        &spec,
+        ModelCapability::Chat,
+    );
+    let client = resolved.llm_client();
+    let messages = vec![crate::llm::ChatMessage::new("user", message.clone())];
+    if !stream {
+        return match client.chat(&messages).await {
+            Ok(answer) => Json(serde_json::json!({
+                "code": 0,
+                "data": { "answer": answer, "reasoning_content": "" }
+            }))
+            .into_response(),
+            Err(error) => {
+                tracing::error!(%error, %provider_name, %instance_name, %model_name, "Chat to model failed");
+                Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
+                    .into_response()
+            }
+        };
+    }
+    type Frame = Result<axum::response::sse::Event, std::convert::Infallible>;
+    let (tx, rx) = tokio::sync::mpsc::channel::<Frame>(32);
+    let model_for_log = model_name.clone();
+    tokio::spawn(async move {
+        let result = client
+            .chat_stream(
+                &messages,
+                crate::generation_params::GenerationParamsPatch::default(),
+                |chunk: &str| {
+                    // Upstream frames each chunk as `data: [MESSAGE]<chunk>`; axum's
+                    // `Event::data` emits exactly that line plus the blank separator.
+                    let event =
+                        axum::response::sse::Event::default().data(format!("[MESSAGE]{chunk}"));
+                    if tx.blocking_send(Ok(event)).is_err() {
+                        tracing::warn!("chat_to_model stream receiver dropped");
+                    }
+                },
+            )
+            .await;
+        if let Err(error) = result {
+            tracing::error!(%error, model = %model_for_log, "Chat to model stream failed");
+        }
+        let _ = tx
+            .send(Ok(axum::response::sse::Event::default().data("[DONE]")))
+            .await;
+    });
+    axum::response::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
+}
+
 /// PATCH `/api/v1/providers/{provider}/instances/{instance}/models/{model}` —
 /// activate or deactivate the entire model row.
 pub async fn update_ragflow_instance_model_status(

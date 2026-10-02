@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.2] - 2026-10-02
+
+- **方法级缺口清零**：接口对照的「路径已存在但上游方法缺失」由 **4 → 0**。至此 RayRAG 应答的每条路径都覆盖上游注册的全部方法。本轮补齐：
+  - `PUT /providers/{p}/instances/{i}`（上游按名字更新实例：显示名/凭据/基址/模型列表；请求体省略 `model_info` 时保留原有模型，不清空实例）
+  - `DELETE /providers/{p}/instances/{i}/models`（按 `model_name` 移除单个模型；模型不存在返回 404 并给出名字）
+  - `POST /providers/{p}/instances/{i}/models/{m}`（上游 `chat_to_model`：直接与某个已配置模型对话，非流式返回 `{answer, reasoning_content}`，`stream:true` 时按上游帧格式 `data: [MESSAGE]<chunk>` + `data: [DONE]` 输出 SSE）
+  - `DELETE /agents/{id}/sessions`（按 `ids` 选择或 `delete_all` 清空该智能体会话；只会删属于该智能体的会话，空体为幂等成功）
+- **测试**：新增方法路由任务级回归，逐条断言这些方法返回的是处理器结果（404/400）而不是路由器的 405，并验证空体删除会话的成功包封。全量 **2126 passed / 0 failed**。
+
 ## [0.5.1] - 2026-10-02
 
 - **接口对标第三批（文件树 + 会话批量删除 + 4 处方法缺口）**：数字由「同名 85 / 别名 38 / 未实现 56 / 方法缺 8」推进到「同名 **88** / 别名 **38** / 未实现 **53** / 方法缺 **4**」。

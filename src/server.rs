@@ -4601,17 +4601,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/providers/{provider_name}/instances/{instance_name}",
-            get(crate::api::tenant_models::show_ragflow_provider_instance),
+            // Upstream `provider_api.update_provider_instance` updates the instance
+            // addressed by name in the path.
+            get(crate::api::tenant_models::show_ragflow_provider_instance)
+                .put(crate::api::tenant_models::update_ragflow_provider_instance),
         )
         .route(
             "/api/v1/providers/{provider_name}/instances/{instance_name}/models",
             get(crate::api::tenant_models::list_ragflow_instance_models)
                 .post(crate::api::tenant_models::add_ragflow_instance_model)
-                .put(crate::api::tenant_models::edit_ragflow_instance_models),
+                .put(crate::api::tenant_models::edit_ragflow_instance_models)
+                // Upstream `provider_api.delete_models_from_instance`.
+                .delete(crate::api::tenant_models::delete_ragflow_instance_model),
         )
         .route(
             "/api/v1/providers/{provider_name}/instances/{instance_name}/models/{model_name}",
-            axum::routing::patch(crate::api::tenant_models::update_ragflow_instance_model_status),
+            // Upstream registers PATCH (model row status) and POST (`chat_to_model`, a
+            // direct chat through that model) on this path.
+            axum::routing::patch(crate::api::tenant_models::update_ragflow_instance_model_status)
+                .post(crate::api::tenant_models::chat_to_provider_model),
         )
         .route(
             "/api/v1/tenant/models",
@@ -4718,7 +4726,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/agents/{id}/sessions",
             get(crate::api::agent_log::list_agent_sessions)
-                .post(crate::api::agent_log::create_agent_session),
+                .post(crate::api::agent_log::create_agent_session)
+                // Upstream `agent_api.delete_agent_session`: `ids` selection or
+                // `delete_all` for the agent's whole history.
+                .delete(crate::api::agent_log::delete_agent_sessions),
         )
         .route(
             "/api/v1/agents/{id}/sessions/{session_id}",
@@ -15301,6 +15312,72 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The methods upstream registers on paths RayRAG already answered must be routed,
+    /// not rejected with 405. Each call is checked at its first validation layer, which is
+    /// enough to prove the method exists and the handler runs.
+    #[tokio::test]
+    async fn upstream_registered_methods_are_routed_onto_existing_paths() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let json_call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // Upstream `provider_api.update_provider_instance`: PUT addressed by name. An
+        // unknown instance is a 404 from the handler, not a 405 from the router.
+        let put_instance = json_call(
+            Method::PUT,
+            "/api/v1/providers/minimax/instances/missing".to_string(),
+            r#"{"instance_name":"missing","model_info":[]}"#,
+        )
+        .await;
+        assert_ne!(put_instance.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(put_instance.status(), StatusCode::NOT_FOUND);
+
+        let delete_models = json_call(
+            Method::DELETE,
+            "/api/v1/providers/minimax/instances/missing/models".to_string(),
+            r#"{"model_name":"MiniMax-M3"}"#,
+        )
+        .await;
+        assert_ne!(delete_models.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let chat_to_model = json_call(
+            Method::POST,
+            "/api/v1/providers/minimax/instances/missing/models/MiniMax-M3".to_string(),
+            r#"{"message":"ping"}"#,
+        )
+        .await;
+        assert_ne!(chat_to_model.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // Upstream `agent_api.delete_agent_session` with an empty body is a no-op that
+        // still answers success.
+        let delete_sessions = json_call(
+            Method::DELETE,
+            "/api/v1/agents/missing-agent/sessions".to_string(),
+            "{}",
+        )
+        .await;
+        assert_eq!(delete_sessions.status(), StatusCode::OK);
+        assert_eq!(response_json(delete_sessions).await["data"], true);
     }
 
     /// The file tree and the bulk-delete paths must behave like upstream's: a folder can
