@@ -299,6 +299,29 @@ Docker mode runs on both (arm64 / Apple Silicon included). The bare-metal binary
 
 ---
 
+## 4b. Artifact / navigation generation produces nothing
+
+If "Build navigation tree" or the artifact **Generate** button reports
+`extracts: 0` / `failed: n` instead of pages, the usual cause is the **chat model endpoint**, not the
+dataset. Check it in this order:
+
+1. **Is the endpoint actually running?** From the host:
+   `curl -s -o /dev/null -w '%{http_code}\n' "$LLM_API_BASE/v1/models"` — `000` means nothing is
+   listening. RayRAG logs the reason (`wiki_gen_json: the chat call failed error=error sending request
+   for url (…)`) and reports the run as failed rather than pretending the dataset was empty.
+2. **Is it reachable from inside the container?** A service on the machine running RayRAG is **not**
+   `127.0.0.1` from inside the container; use the docker gateway address
+   (`docker compose exec rayrag ip route` shows it). The embedding endpoint answering `200` proves the
+   path works — if it does and the chat endpoint does not, the chat service is simply down.
+3. **Do not point `LLM_API_BASE` at the embedding port.** An embedding server will happily answer
+   `/v1/chat/completions` with HTTP 200 and return nonsense (`systemsystemsystem…`), so the failure
+   looks like "the model produced no entities" instead of "wrong model". `EMBED_API_BASE` is for
+   embeddings, `LLM_API_BASE` for chat.
+
+Then re-run the compile; `extracts > 0` proves the model is really being used.
+
+---
+
 ## 5. Day-2 operations: upgrade / backup / uninstall
 
 ```bash
