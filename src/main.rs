@@ -73,12 +73,17 @@ enum Commands {
 
     /// Start the web server (static SPA + API)
     Serve {
-        /// Port to listen on (default: 9380, same as RAGFlow)
-        #[arg(long, default_value = "9380")]
+        /// Port to listen on. Precedence: `--port`, then `RAYRAG_PORT` from the env
+        /// file, then 9380 (RAGFlow's own default).
+        ///
+        /// The environment fallback matters on a host that already runs RAGFlow: its
+        /// default port is occupied, so `rayrag serve` with no arguments used to die with
+        /// `Address already in use` even though the user had set `RAYRAG_PORT` in `.env`.
+        #[arg(long, env = "RAYRAG_PORT", default_value = "9380")]
         port: u16,
 
-        /// Static files directory (default: web/static)
-        #[arg(long, default_value = "web/static")]
+        /// Static files directory. `RAYRAG_STATIC_DIR` overrides the built-in default.
+        #[arg(long, env = "RAYRAG_STATIC_DIR", default_value = "web/static")]
         static_dir: String,
     },
 

@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]
@@ -64,7 +64,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Logging
 tracing = "0.1"

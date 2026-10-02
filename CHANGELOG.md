@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.3] - 2026-10-02
+
+- **修掉纯 Linux 启动阻塞**：`rayrag serve` 的 `--port` 硬默认 9380（RAGFlow 自己的端口），**完全不读 `RAYRAG_PORT`**。在已经跑着 RAGFlow 的机器上，用 `.env` 里写好端口再运行，仍然会撞端口并以 `Address already in use` 退出——这正是上一轮纯 Linux 实测卡住的地方。现在命令行遵循统一优先级：**`--port` 参数 > env 文件里的 `RAYRAG_PORT` > 内置默认 9380**（`--static-dir` 同理接受 `RAYRAG_STATIC_DIR`）。
+- **实测证据（非 Docker，直接跑二进制）**：`RAYRAG_PORT=9398` 写进 env 文件、**不带任何命令行参数**运行 `rayrag serve`，日志为 `RayRAG v0.6.3 … on http://0.0.0.0:9398`，`/api/v1/version` 返回 **200**，并成功连上现有 PostgreSQL（未连上时给出的仍是我此前加的可操作提示）。试跑进程与临时数据目录已清理，仓库无污染。
+- **测试**：全量 **2136 passed / 0 failed**。
+
 ## [0.6.2] - 2026-10-02
 
 - **补上 `PATCH /users/me/models`（上游 `set_tenant_info`）**，把上一轮登记的字段适配缺口真正关掉：上游的请求体是"每个能力一个选择器"（`llm_id` / `embd_id` / `rerank_id` / `asr_id` / `img2txt_id` / `tts_id` / `ocr_id`），而 RayRAG 内部是拆开的 `{provider, instance, name, model_type}`。适配层同时接受**两种写法**：RayRAG 的三段式 `model@instance@provider` 与上游的两段式 `model@provider`（此时实例名取 provider 名）。只应用请求里出现的字段，并在 `data.applied` 里回报实际生效的字段——**部分更新不会静默**。
