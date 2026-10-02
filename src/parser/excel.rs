@@ -1050,7 +1050,9 @@ mod tests {
     fn csv_extracts_well_formed_rows_and_survives_a_broken_quote() {
         let parser = ExcelParser::new();
         let data = b"name,qty\nwidget,3\ngadget,4\n";
-        let text = parser.parse_csv(data).expect("csv parse must not fail hard");
+        let text = parser
+            .parse_csv(data)
+            .expect("csv parse must not fail hard");
         assert!(text.contains("| name | qty |"), "header preserved: {text}");
         assert!(text.contains("| widget | 3 |"), "first row: {text}");
         assert!(text.contains("| gadget | 4 |"), "second row: {text}");
@@ -1067,7 +1069,10 @@ mod tests {
             .parse_csv(b"name,qty\n\"broken,9\ngadget,4\n")
             .expect("csv parse must not fail hard");
         assert!(text.contains("| name | qty |"), "{text}");
-        assert!(text.contains("broken,9"), "the swallowed tail is visible: {text}");
+        assert!(
+            text.contains("broken,9"),
+            "the swallowed tail is visible: {text}"
+        );
         assert!(text.starts_with("<!--TABLE_START-->"), "{text}");
         assert!(text.trim_end().ends_with("<!--TABLE_END-->"), "{text}");
     }
