@@ -1,0 +1,6 @@
+target
+.git
+.env
+zvec-data
+web/uploads
+web/*.json
