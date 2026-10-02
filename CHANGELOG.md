@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.7] - 2026-10-02
+
+- **嵌入搜索机器人面 3 条落地**（上游 `bot_api.py`，beta token 客户端）：`GET /searchbots/detail`（返回应用记录，未知应用/非本人返回上游文案的 `code 102`）、`POST /searchbots/retrieval_test`（把嵌入端用的**单数 `kb_id`** 与 `size` 翻译成共享检索处理器认识的 `kb_ids`/`page_size`，一个检索实现三个入口）、`POST /searchbots/mindmap`（与聊天脑图共用同一实现，`kb_ids` 被接受而不报错）。数字：同名 **98→101**、未实现 **43→40**。
+- **明确登记的剩余缺口**：`POST /searchbots/ask` 使用上游**自己的** SSE 帧格式（`code/message/data` 包封），与既有搜索补全的 `chat.completion` 帧不同，需要单独的流式处理器——已在工作清单写明，而不是用现有帧格式冒充。
+- **测试**：新增嵌入端形态回归（未知应用 → 102、缺少范围 → 上游文案的 dataset 提示、单数 `kb_id` 被正确翻译、空脑图请求 → 400）。全量 **2130 passed / 0 failed**。
+
 ## [0.5.6] - 2026-10-02
 
 - **数据集导航树接口 5 条落地**（复用上一轮接通的产物存储）：`GET /datasets/{id}/navigation`（顶层簇，支持 `keywords`/`top_k`）、`GET /datasets/{id}/navigation/{name}/children`（直接子节点：子簇与文档叶子）、`GET /datasets/{id}/navigation/search`（词法检索，返回 `mode` 与带 `score` 的节点）、`DELETE /datasets/{id}/navigation`（清空整棵树，返回删除条数）、`DELETE /datasets/{id}/navigation/{name}`（**连同子树**删除——子节点只按名字引用父节点，所以逐层收集后一次删除）。数字：同名 **94→98**、未实现 **47→43**。

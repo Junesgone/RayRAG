@@ -2972,6 +2972,116 @@ async fn logout(
     Json(serde_json::json!({ "code": 0, "data": true })).into_response()
 }
 
+/// `GET /api/v1/searchbots/detail` — upstream `bot_api.detail_share_embedded`.
+///
+/// The embedded search widget reads the app it was minted from: the beta token in the URL
+/// identifies the tenant, `search_id` names the app. Upstream requires the app to belong to
+/// that tenant, which is the ownership check performed here.
+async fn searchbot_detail(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<SearchBotDetailQuery>,
+) -> Response {
+    let Some(search_id) = query
+        .search_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return api_error(StatusCode::BAD_REQUEST, "search_id is required");
+    };
+    let Some(app) = state
+        .search_apps
+        .as_ref()
+        .and_then(|store| store.get(search_id))
+    else {
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": "Can't find this Search App!"
+        }))
+        .into_response();
+    };
+    if app.owner_id != auth.user_id && !auth.is_admin {
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": "Has no permission for this operation."
+        }))
+        .into_response();
+    }
+    Json(serde_json::json!({ "code": 0, "data": app })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct SearchBotDetailQuery {
+    #[serde(default)]
+    search_id: Option<String>,
+}
+
+/// `POST /api/v1/searchbots/retrieval_test` — upstream `bot_api.retrieval_test_embedded`.
+///
+/// Upstream's embedded retrieval test names its scope with the *singular* `kb_id`; the
+/// shared retrieval handler reads `kb_ids`/`dataset_ids`, so the wrapper translates the
+/// body and then defers to it. One retrieval implementation, three entry points.
+async fn searchbot_retrieval_test(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(mut body): Json<serde_json::Value>,
+) -> Response {
+    if let Some(object) = body.as_object_mut() {
+        if !object.contains_key("kb_ids")
+            && let Some(kb_id) = object.get("kb_id").cloned()
+        {
+            match kb_id {
+                serde_json::Value::String(id) => {
+                    object.insert("kb_ids".into(), serde_json::json!([id]));
+                }
+                serde_json::Value::Array(ids) => {
+                    object.insert("kb_ids".into(), serde_json::Value::Array(ids));
+                }
+                _ => {}
+            }
+        }
+        // Upstream maps `size` onto `page_size` for the embedded client.
+        if !object.contains_key("page_size")
+            && let Some(size) = object.get("size").cloned()
+        {
+            object.insert("page_size".into(), size);
+        }
+    }
+    if body
+        .get("kb_ids")
+        .and_then(|value| value.as_array())
+        .is_none_or(|ids| ids.is_empty())
+    {
+        return api_error(StatusCode::BAD_REQUEST, "Please specify dataset firstly.");
+    }
+    retrieval(State(state), Extension(auth), Json(body)).await
+}
+
+/// `POST /api/v1/searchbots/mindmap` — upstream `bot_api.mindmap`.
+///
+/// The body is the same `{question, kb_ids}` shape the chat mind-map endpoint takes, so
+/// the embedded widget and the chat page share one implementation.
+async fn searchbot_mindmap(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // The chat endpoint's request type carries the question only; `kb_ids` is accepted and
+    // ignored here rather than rejected, so the embedded client's body passes unchanged.
+    let Some(question) = body.get("question").and_then(|value| value.as_str()) else {
+        return api_error(StatusCode::BAD_REQUEST, "question is required");
+    };
+    crate::api::features::chat_mindmap(
+        State(state),
+        Extension(auth),
+        Json(crate::api::features::MindMapRequest {
+            question: question.to_string(),
+        }),
+    )
+    .await
+}
+
 /// POST /api/v1/datasets/{dataset_id}/search — upstream `chunk_api.retrieval_test`.
 ///
 /// Upstream registers the *same* handler on `/retrieval`, `/datasets/search` and
@@ -4084,6 +4194,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::dataset_navigation::list_nav)
                 .delete(crate::api::dataset_navigation::delete_nav),
         )
+        // Upstream `bot_api.py` embedded search-bot surface (beta-token clients).
+        .route("/api/v1/searchbots/detail", get(searchbot_detail))
+        .route(
+            "/api/v1/searchbots/retrieval_test",
+            post(searchbot_retrieval_test),
+        )
+        .route("/api/v1/searchbots/mindmap", post(searchbot_mindmap))
         .route(
             // The literal `search` segment must stay ahead of `{name}`.
             "/api/v1/datasets/{dataset_id}/navigation/search",
@@ -15376,6 +15493,83 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The embedded search-bot surface: an unknown app is a coded miss, `kb_id` (the
+    /// singular spelling the widget sends) is accepted, and a missing scope is rejected
+    /// with upstream's own message.
+    #[tokio::test]
+    async fn searchbot_surface_accepts_the_embedded_client_shapes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Bot dataset", "")
+            .unwrap();
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let missing = call(
+            Method::GET,
+            "/api/v1/searchbots/detail?search_id=missing".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::OK);
+        assert_eq!(response_json(missing).await["code"], 102);
+
+        let no_scope = call(
+            Method::POST,
+            "/api/v1/searchbots/retrieval_test".to_string(),
+            r#"{"question":"x"}"#,
+        )
+        .await;
+        let no_scope = response_json(no_scope).await;
+        assert!(
+            no_scope["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("dataset"),
+            "{no_scope}"
+        );
+
+        // The singular `kb_id` the widget sends is translated, so the selection reaches
+        // the shared retrieval handler instead of being reported as empty.
+        let singular = call(
+            Method::POST,
+            "/api/v1/searchbots/retrieval_test".to_string(),
+            &serde_json::json!({"question": "x", "kb_id": kb.id, "size": 10}).to_string(),
+        )
+        .await;
+        let singular = response_json(singular).await;
+        assert!(
+            !singular["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("accessible kb_id"),
+            "kb_id was not translated: {singular}"
+        );
+
+        let mindmap = call(Method::POST, "/api/v1/searchbots/mindmap".to_string(), "{}").await;
+        assert_eq!(mindmap.status(), StatusCode::BAD_REQUEST);
     }
 
     /// The navigation surface reads the rows the nav engine writes: seed a cluster, a
