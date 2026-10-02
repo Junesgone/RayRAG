@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.7] - 2026-10-02
+
+- **`POST /datasets/{id}/navigation` 落地——方法缺口清零**：上游 `dataset_api.generate_dataset_nav` 的语义是"按数据集（或其指定文档）生成/增量更新导航树"。实现要点全部按施工单执行：所有权检查 → **缺嵌入模型或缺对话模型分别返回 `code 102` 并指明缺哪一个** → 解析 `documents` 作用域（缺省=该数据集全部文档）→ 按 `kb_id` 取分块并**按文档聚合、每文档限 4000 字符**（用完即丢，符合按需流水线、避免一次性把整个数据集读进内存）→ 顺序调用 `upsert_dataset_nav_doc` → 返回 `{generated, skipped, total}`。
+- **不静默**：请求里指定了但**没有已解析分块的文档**会出现在 `skipped` 里并带原因（`no parsed chunks in this dataset`）；数据集本身没有分块时返回 `generated: 0` 加一句说明，而不是一个看不出问题的"成功"。
+- **数字**：同名 **106**、未实现 **35**、**方法缺口 1 → 0**、不匹配 0——**接口层面已无"路径已实现但方法缺失"的条目**。
+- **测试**：新增回归（无模型时必须是 `code 102` 且文案指明缺嵌入还是对话模型）。全量 **2143 passed / 0 failed**。
+
 ## [0.7.6] - 2026-10-02
 
 - **补上嵌入侧的生产适配器 `EmbedderBridge`**：导航生成、wiki/Artifacts 生成、结构编译都依赖 `structure_compile::EmbeddingBackend`，而它和 `HarnessChat` 一样**只有测试替身**（`MockEmbed`、`FailingEmbed`）——上一轮写端点时正是被这处不匹配挡住的。`EmbedderBridge` 把运行期已持有的 `AppState.embedder`（`Arc<dyn Embedder>`）接到该 trait 上。

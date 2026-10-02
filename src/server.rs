@@ -4431,6 +4431,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/datasets/{dataset_id}/navigation",
             get(crate::api::dataset_navigation::list_nav)
+                // Upstream `dataset_api.generate_dataset_nav`.
+                .post(crate::api::dataset_navigation::generate_navigation)
                 .delete(crate::api::dataset_navigation::delete_nav),
         )
         // Upstream `user_api.py::tenant_info`: the tenant's per-capability default models
@@ -15880,6 +15882,42 @@ mod tests {
         let empty = response_json(empty).await;
         assert_eq!(empty["code"], 0);
         assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
+    }
+
+    /// Navigation generation reports its prerequisites instead of pretending: without models it
+    /// is a coded error naming the missing piece, and on a dataset with no chunks it answers
+    /// `generated: 0` with a reason rather than a silent success.
+    #[tokio::test]
+    async fn navigation_generation_reports_prerequisites() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Nav dataset", "")
+            .unwrap();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/navigation", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The test environment has no embedding/chat model configured, so the handler must say
+        // which one is missing instead of returning a success with nothing generated.
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102, "{body}");
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("embedding model") || message.contains("chat model"),
+            "the error must name the missing model: {message}"
+        );
     }
 
     /// The graph endpoint answers in upstream's shape, and a dataset that has never built a
