@@ -192,6 +192,7 @@
 | `EMAIL_SMTP_PORT` | `465` | 邮件渠道 SMTP 端口，默认 465。 （模板中默认注释，取消注释即生效） |
 | `GOOGLE_OAUTH_TOKEN_URL` | `` | OAuth 换 token 端点覆盖（一般无需设置，默认走各提供商官方端点）。 （模板中默认注释，取消注释即生效） |
 | `BOX_OAUTH_TOKEN_URL` | `` | （模板中默认注释，取消注释即生效） |
+| `RAYRAG_ALLOW_PRIVATE_DB_HOSTS` | `0` | Agent database component: allow `test_db_connection` to reach private/loopback addresses. Off by default (SSRF guard); turn it on when the database really is on your LAN, which is the normal case on a NAS. （模板中默认注释，取消注释即生效） |
 <!-- END GENERATED ENV -->
 
 ## 2. HTTP 接口登记表

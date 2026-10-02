@@ -2972,6 +2972,31 @@ async fn logout(
     Json(serde_json::json!({ "code": 0, "data": true })).into_response()
 }
 
+/// The last resort for a path no route matched.
+///
+/// An unrouted `/api/...` path used to be answered with the **application shell HTML**.
+/// A client then called `response.json()` on `<!DOCTYPE html>`, which surfaced in the UI as
+/// `Unexpected token '<', "<!DOCTYPE "...` — and because the shell boots the SPA, the user
+/// was thrown back to the login page with no indication that the request 404'd. An API path
+/// now answers JSON with the status that matches it, so a wrong URL is visible instead of
+/// masquerading as a session problem. Page paths keep the friendly HTML 404.
+async fn unrouted_path(req: axum::http::Request<axum::body::Body>) -> axum::response::Response {
+    let path = req.uri().path().to_string();
+    if path.starts_with("/api/") {
+        tracing::warn!(%path, "unrouted API path answered with JSON 404");
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": 404,
+                "message": format!("No such API endpoint: {path}"),
+                "data": null
+            })),
+        )
+            .into_response();
+    }
+    crate::web::not_found_page(req).await.into_response()
+}
+
 /// `GET /api/v1/agents/prompts` — upstream `agent_api.prompts`.
 ///
 /// The canvas shows the exact guidance its planner, reflector and citation steps run with.
@@ -3043,10 +3068,30 @@ async fn test_db_connection(
         return api_error(StatusCode::BAD_REQUEST, "port must be a positive integer");
     }
     // SSRF guard: a rejected host is a data error naming the reason, never a silent skip.
-    if let Err(error) = crate::common::ssrf_guard::assert_host_is_safe(&request.host) {
+    // An operator who really needs to reach a database on the local network (the common
+    // case on a NAS, where the database *is* local) opts in with
+    // `RAYRAG_ALLOW_PRIVATE_DB_HOSTS=1`; the default stays closed, and the message says so
+    // instead of leaving the user with a bare rejection.
+    let allow_private = matches!(
+        std::env::var("RAYRAG_ALLOW_PRIVATE_DB_HOSTS")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    );
+    if !allow_private
+        && let Err(error) = crate::common::ssrf_guard::assert_host_is_safe(&request.host)
+    {
         tracing::warn!(host = %request.host, %error, "rejected test_db_connection host");
-        return Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
-            .into_response();
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": format!(
+                "{error} Set RAYRAG_ALLOW_PRIVATE_DB_HOSTS=1 to allow database connections \
+                 to private addresses."
+            )
+        }))
+        .into_response();
     }
     let db_type = request.db_type.trim().to_ascii_lowercase();
     if db_type != "postgresql" && db_type != "postgres" {
@@ -5505,7 +5550,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             ServeDir::new(sd)
                 .precompressed_gzip()
                 .precompressed_br()
-                .not_found_service(axum::routing::get(crate::web::not_found_page)),
+                .not_found_service(axum::routing::get(unrouted_path)),
         )
         .layer(DefaultBodyLimit::max(
             max_upload_bytes()
@@ -15646,6 +15691,59 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// An unrouted API path must answer JSON, never the application shell: the shell made
+    /// clients parse `<!DOCTYPE html>` as JSON and bounce the user to the login page.
+    #[tokio::test]
+    async fn unrouted_api_paths_answer_json_not_the_app_shell() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/definitely-not-a-route")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            content_type.starts_with("application/json"),
+            "unrouted API path answered {content_type}"
+        );
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 404);
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("definitely-not-a-route"),
+            "{body}"
+        );
+
+        // A page path keeps the human-readable HTML 404.
+        let page = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/some/missing/page")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::NOT_FOUND);
     }
 
     /// The database component check: unsafe hosts and unsupported engines are coded misses,
