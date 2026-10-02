@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.9] - 2026-10-02
+
+- **接口有了自家按钮**：数据集「概览」面板新增 **Build navigation tree** 按钮，调用上一版落地的 `POST /datasets/{id}/navigation`，并把结果表明出来——`Generated N of M document(s)`，若有文档没有已解析分块，追加 `skipped K without parsed chunks`；失败时红字显示具体原因，并在 `data.message` 存在时一并展示（例如"该数据集没有分块"）。**不留一句"完成"就了事**。
+- 这补齐了用户要求里的一条硬规则：**每个功能在界面上都要有对应的交互按钮**——否则接口做得再好，用户也点不到。经验上这正是"功能看起来不存在"的来源（本阶段已遇到三次：概览标签、知识图谱入口、以及本次的导航生成）。
+- **测试**：全量 **2145 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.7.8] - 2026-10-02
 
 - **`POST /datasets/{id}/navigation` 重新落地——方法缺口清零**：这次跑在上一版新增的 `OffThreadDocStore` 之上（引擎从 async 函数内部调用同步存储时不再 panic）。语义与施工单一致：所有权检查 → **缺嵌入模型或缺对话模型分别 `code 102` 并指明缺哪一个** → `documents` 作用域（缺省=数据集全部文档）→ 按 `kb_id` 取分块、**按文档聚合且每文档限 4000 字符**（用完即丢）→ 顺序调用引擎逐文档生成 → 返回 `{generated, skipped, total}`。
