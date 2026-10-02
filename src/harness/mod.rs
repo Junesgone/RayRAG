@@ -33,6 +33,7 @@ pub mod stats;
 pub mod structure_qa;
 pub mod think_log;
 pub mod tools;
+pub mod wiki_synth;
 
 /// Minimal chat-model surface the harness drives — the subset of RAGFlow's
 /// `LLMBundle` the ported modules call (`async_chat` + `max_length` +
